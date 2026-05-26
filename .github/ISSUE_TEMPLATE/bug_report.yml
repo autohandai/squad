@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a reproducible Autohand Squad problem.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Web UI
+        - CLI launcher
+        - Daemon
+        - Analytics
+        - Tray or menu bar
+        - Installer or updater
+        - Release pipeline
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Squad version
+      placeholder: 0.1.0
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Run `squad`
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste only logs that do not contain secrets.
+      render: shell

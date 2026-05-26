@@ -1,0 +1,29 @@
+{
+  "name": "update_package_json_script",
+  "description": "Add or update a single npm package.json script in the current workspace.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "script_name": {
+        "type": "string",
+        "description": "The package.json scripts key to add or update."
+      },
+      "script_command": {
+        "type": "string",
+        "description": "The command to assign to the script."
+      }
+    },
+    "required": [
+      "script_name",
+      "script_command"
+    ],
+    "additionalProperties": false
+  },
+  "handler": "node -e \"const fs=require('fs'); const p='package.json'; const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.scripts={...(pkg.scripts||{}), [process.argv[1]]: process.argv[2]}; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+'\\n');\" {{script_name}} {{script_command}}",
+  "source": "agent",
+  "scope": "project",
+  "schemaVersion": 1,
+  "createdAt": "2026-05-25T08:11:21.002Z",
+  "updatedAt": "2026-05-25T08:11:21.002Z",
+  "fingerprint": "6b5bd0728ce4ede11a3f8eee827e8d424be752d793f6ef6a9910f82e4e17c44d"
+}

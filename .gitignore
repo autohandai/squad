@@ -1,0 +1,16 @@
+.DS_Store
+
+node_modules/
+daemon/target/
+release/
+
+.env
+.env.*
+!.env.example
+
+.autohand/agents/
+.autohand/runs/
+.autohand/tmp/
+
+*.log
+*.tmp

@@ -1,0 +1,49 @@
+[package]
+name = "autohand-squad-runtime"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Standalone Autohand Squad runtime and daemon"
+
+[lib]
+name = "autohand_squad_runtime"
+path = "src/lib.rs"
+
+[[bin]]
+name = "squad"
+path = "src/bin/squad.rs"
+
+[[bin]]
+name = "autohand-squad-daemon"
+path = "src/bin/autohand-squad-daemon.rs"
+
+[[bin]]
+name = "autohand-squad-analytics"
+path = "src/bin/autohand-squad-analytics.rs"
+
+[[bin]]
+name = "autohand-squad-tray"
+path = "src/bin/autohand-squad-tray.rs"
+
+[[bin]]
+name = "autohand-squad-ui"
+path = "src/bin/autohand-squad-ui.rs"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+clap = { version = "4.5", features = ["derive"] }
+libc = "0.2"
+png = "0.17"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+reqwest = { version = "0.13", features = ["json"] }
+tao = "0.35"
+tokio = { version = "1.41", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tray-icon = "0.24"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.3", features = ["NSData", "NSDictionary", "NSAttributedString", "NSString"] }
