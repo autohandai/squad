@@ -188,6 +188,9 @@ jobs:
     name: Publish release
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment:
+      name: ${{ needs.release-meta.outputs.channel }}
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.release-meta.outputs.tag }}
     needs:
       - release-meta
       - web-bundle

@@ -89,6 +89,18 @@ Recommended required checks:
 Require at least one owner review for changes under `.github/`, `daemon/`,
 `server.mjs`, `scripts/`, and release documentation.
 
+## GitHub Runner Readiness
+
+This private repository uses GitHub-hosted Linux, macOS, and Windows runners.
+Before remote CI can prove the matrix, the account must have GitHub Actions
+billing available and a spending limit high enough for private-repository
+runner minutes. If GitHub refuses to start jobs with a billing or spending-limit
+annotation, fix Billing & plans first, then rerun `CI` and `Release`.
+
+The release publish job targets channel environments named `canary`, `beta`, and
+`stable`. Add approval rules to the `stable` environment when the repo moves
+from test releases to customer releases.
+
 ## Local Preflight
 
 Before a release PR, run:
