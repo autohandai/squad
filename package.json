@@ -11,6 +11,7 @@
     "check:web": "bun run build",
     "check:runtime": "cd daemon && cargo fmt -- --check && cargo test -j1 && cargo build --bins -j1",
     "ci": "bun run check:server && bun run check:web && bun run check:runtime",
+    "release:version": "node scripts/resolve-squad-version.mjs",
     "release:package": "node scripts/package-squad-release.mjs",
     "release:merge-manifests": "node scripts/merge-release-manifests.mjs"
   },

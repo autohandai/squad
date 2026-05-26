@@ -2,14 +2,16 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "squad-v*"
       - "v*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release, for example 0.1.0"
-        required: true
+        description: "Optional version. Leave blank to auto-resolve the next version."
+        required: false
         type: string
       channel:
         description: "Release channel"
@@ -48,47 +50,29 @@ jobs:
   release-meta:
     name: Release metadata
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
       channel: ${{ steps.meta.outputs.channel }}
       draft: ${{ steps.meta.outputs.draft }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      latest: ${{ steps.meta.outputs.latest }}
+      title: ${{ steps.meta.outputs.title }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
       - id: meta
         name: Resolve release metadata
-        shell: bash
-        run: |
-          input_version='${{ inputs.version }}'
-          input_channel='${{ inputs.channel }}'
-          input_draft='${{ inputs.draft }}'
-          input_prerelease='${{ inputs.prerelease }}'
-
-          if [ -n "$input_version" ]; then
-            version="$input_version"
-          else
-            version="${GITHUB_REF_NAME#squad-v}"
-            version="${version#v}"
-          fi
-
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="squad-v${version}"
-          else
-            tag="${GITHUB_REF_NAME}"
-          fi
-
-          channel="${input_channel:-stable}"
-          draft="${input_draft:-false}"
-          prerelease="${input_prerelease:-false}"
-          if [ "$channel" != "stable" ]; then
-            prerelease="true"
-          fi
-
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "channel=$channel" >> "$GITHUB_OUTPUT"
-          echo "draft=$draft" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+        run: node scripts/resolve-squad-version.mjs --mode release
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_DRAFT: ${{ inputs.draft }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
 
   web-bundle:
     name: Web bundle
@@ -166,7 +150,6 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install Rust toolchain
-        shell: bash
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt
           rustup default stable
@@ -183,7 +166,6 @@ jobs:
             cargo-release-${{ runner.os }}-
 
       - name: Build release binaries
-        shell: bash
         run: cargo build --release --bins -j1
         working-directory: daemon
 
@@ -229,10 +211,10 @@ jobs:
           merge-multiple: true
 
       - name: Merge installer manifest
-        shell: bash
         run: |
           RELEASE_VERSION='${{ needs.release-meta.outputs.version }}' \
           RELEASE_CHANNEL='${{ needs.release-meta.outputs.channel }}' \
+          REQUIRED_RELEASE_OS=linux,darwin,win32 \
           node scripts/merge-release-manifests.mjs release-downloads
 
           mkdir -p release/publish
@@ -250,26 +232,34 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release-meta.outputs.tag }}
-          RELEASE_VERSION: ${{ needs.release-meta.outputs.version }}
+          RELEASE_TITLE: ${{ needs.release-meta.outputs.title }}
           RELEASE_DRAFT: ${{ needs.release-meta.outputs.draft }}
           RELEASE_PRERELEASE: ${{ needs.release-meta.outputs.prerelease }}
+          RELEASE_LATEST: ${{ needs.release-meta.outputs.latest }}
         shell: bash
         run: |
-          flags=()
+          create_flags=()
+          edit_flags=(--draft="$RELEASE_DRAFT" --prerelease="$RELEASE_PRERELEASE")
           if [ "$RELEASE_DRAFT" = "true" ]; then
-            flags+=(--draft)
+            create_flags+=(--draft)
           fi
           if [ "$RELEASE_PRERELEASE" = "true" ]; then
-            flags+=(--prerelease)
+            create_flags+=(--prerelease)
+          fi
+          if [ "$RELEASE_LATEST" = "true" ]; then
+            create_flags+=(--latest)
+            edit_flags+=(--latest)
+          else
+            create_flags+=(--latest=false)
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" release/publish/* --clobber
-            gh release edit "$RELEASE_TAG" --title "Autohand Squad ${RELEASE_VERSION}" --notes-file release/release-summary.md "${flags[@]}"
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes-file release/release-summary.md "${edit_flags[@]}"
           else
             gh release create "$RELEASE_TAG" release/publish/* \
-              --title "Autohand Squad ${RELEASE_VERSION}" \
+              --title "$RELEASE_TITLE" \
               --notes-file release/release-summary.md \
               --target "$GITHUB_SHA" \
-              "${flags[@]}"
+              "${create_flags[@]}"
           fi
