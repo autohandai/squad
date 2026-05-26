@@ -21,6 +21,7 @@ const inputPrerelease = env('INPUT_PRERELEASE', '').trim();
 const packageVersion = normalizeVersion(packageJson.version) || '0.0.0';
 const tagVersion = versionFromTag(refName);
 const latestStable = latestStableTagVersion();
+const releaseChannels = new Set(['stable', 'beta', 'canary']);
 
 const metadata = mode === 'dry-run'
   ? dryRunMetadata()
@@ -48,6 +49,7 @@ function dryRunMetadata() {
 
 function releaseMetadata() {
   const channel = resolveChannel();
+  assertReleaseChannel(channel);
   const version = resolveVersion(channel);
   const prerelease = boolString(
     inputPrerelease ? inputPrerelease : channel !== 'stable' || hasPrerelease(version),
@@ -75,6 +77,11 @@ function resolveChannel() {
     if (tagVersion.includes('-beta.')) return 'beta';
   }
   return 'stable';
+}
+
+function assertReleaseChannel(channel) {
+  if (releaseChannels.has(channel)) return;
+  throw new Error(`Invalid release channel: ${channel}. Expected stable, beta, or canary.`);
 }
 
 function resolveVersion(channel) {
@@ -127,9 +134,10 @@ function versionFromTag(tag) {
 }
 
 function normalizeVersion(value) {
-  const match = String(value || '').trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/);
+  const match = String(value || '').trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?$/);
   if (!match) return null;
   const [, major, minor, patch, prerelease] = match;
+  if (prerelease && prerelease.split('.').some((identifier) => identifier.length === 0)) return null;
   return `${Number(major)}.${Number(minor)}.${Number(patch)}${prerelease ? `-${prerelease}` : ''}`;
 }
 

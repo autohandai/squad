@@ -8,6 +8,8 @@ const resolver = new URL('./resolve-squad-version.mjs', import.meta.url).pathnam
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const releaseWorkflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 const smokeWorkflow = readFileSync(new URL('../.github/workflows/actions-smoke.yml', import.meta.url), 'utf8');
+const releaseNotes = readFileSync(new URL('../.github/release.yml', import.meta.url), 'utf8');
+const packager = readFileSync(new URL('./package-squad-release.mjs', import.meta.url), 'utf8');
 
 assertEqual(
   resolve({
@@ -49,6 +51,15 @@ assertEqual(stableTag.version, '1.2.3', 'stable tag version');
 assertEqual(stableTag.channel, 'stable', 'stable tag channel');
 assertEqual(stableTag.latest, 'true', 'stable tag latest flag');
 
+const betaTag = resolve({
+  GITHUB_EVENT_NAME: 'push',
+  GITHUB_REF_NAME: 'squad-v1.2.3-beta.1',
+  GITHUB_SHA: 'abcdef1234567890',
+}, ['--mode', 'release']);
+assertEqual(betaTag.version, '1.2.3-beta.1', 'beta tag version');
+assertEqual(betaTag.channel, 'beta', 'beta tag channel');
+assertEqual(betaTag.latest, 'false', 'beta tag latest flag');
+
 const explicitStable = resolve({
   GITHUB_EVENT_NAME: 'workflow_dispatch',
   INPUT_CHANNEL: 'stable',
@@ -59,6 +70,19 @@ const explicitStable = resolve({
 }, ['--mode', 'release']);
 assertEqual(explicitStable.version, '2.0.0', 'manual stable version');
 assertEqual(explicitStable.draft, 'true', 'manual stable draft default');
+
+assertThrows({
+  GITHUB_EVENT_NAME: 'workflow_dispatch',
+  INPUT_CHANNEL: 'nightly',
+  GITHUB_SHA: 'abcdef1234567890',
+}, ['--mode', 'release'], 'invalid release channel');
+
+assertThrows({
+  GITHUB_EVENT_NAME: 'workflow_dispatch',
+  INPUT_CHANNEL: 'stable',
+  INPUT_VERSION: '1.2.3-',
+  GITHUB_SHA: 'abcdef1234567890',
+}, ['--mode', 'release'], 'invalid release version');
 
 const tempPatch = 900 + (process.pid % 50);
 const tempTag = `squad-v99.88.${tempPatch}`;
@@ -92,7 +116,10 @@ assertIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN', 'Release publishing us
 assertIncludes(releaseWorkflow, 'contents: read', 'Release workflow defaults to read-only token permissions');
 assertNotIncludes(releaseWorkflow, 'contents: write', 'Release workflow does not require default token write permissions');
 assertNotIncludes(releaseWorkflow, 'attestations: write', 'Release workflow does not require org-blocked attestation permissions');
+assertIncludes(releaseWorkflow, 'edit_flags+=(--latest=false)', 'Release edit keeps non-stable releases out of latest');
 assertIncludes(smokeWorkflow, 'Runner startup', 'Actions smoke workflow checks runner startup separately');
+assertIncludes(releaseNotes, 'Release Engineering', 'Release notes group release engineering changes');
+assertIncludes(packager, 'autohandai/squad', 'Release packager defaults to the org repo');
 
 console.log('Release workflow metadata checks passed.');
 
@@ -120,4 +147,17 @@ function assertNotIncludes(value, expected, label) {
   if (value.includes(expected)) {
     throw new Error(`${label}: workflow must not include ${expected}`);
   }
+}
+
+function assertThrows(env, args, label) {
+  try {
+    execFileSync(process.execPath, [resolver, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return;
+  }
+  throw new Error(`${label}: expected resolver to fail`);
 }
