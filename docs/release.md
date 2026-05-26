@@ -115,6 +115,12 @@ requires an `AUTOHAND_RELEASE_TOKEN` secret on the `canary`, `beta`, and
 test mode. That token should be a fine-grained token or GitHub App token with
 release/content write access only for this repository.
 
+Release channels are intentionally limited to `stable`, `beta`, and `canary`.
+Invalid channels fail during the metadata step before any release assets are
+published. Existing beta and canary releases are edited with `--latest=false`
+as well as created with `--latest=false`, so reruns cannot accidentally promote
+a prerelease to GitHub's latest release.
+
 GitHub artifact attestations can be added after the organization enables
 workflow `id-token` and `attestations` write permissions. Until then, release
 integrity is enforced with SHA-256 checksums and manifest validation.

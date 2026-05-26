@@ -264,6 +264,7 @@ jobs:
             edit_flags+=(--latest)
           else
             create_flags+=(--latest=false)
+            edit_flags+=(--latest=false)
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then

@@ -1,0 +1,26 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+    authors:
+      - dependabot[bot]
+  categories:
+    - title: Runtime
+      labels:
+        - runtime
+        - daemon
+        - desktop
+        - tray
+    - title: Web App
+      labels:
+        - web
+        - ui
+        - analytics
+    - title: Release Engineering
+      labels:
+        - ci
+        - release
+        - dependencies
+    - title: Other Changes
+      labels:
+        - "*"
