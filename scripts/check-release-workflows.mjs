@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
 const resolver = new URL('./resolve-squad-version.mjs', import.meta.url).pathname;
+const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+const releaseWorkflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+const smokeWorkflow = readFileSync(new URL('../.github/workflows/actions-smoke.yml', import.meta.url), 'utf8');
 
 assertEqual(
   resolve({
@@ -14,6 +18,16 @@ assertEqual(
   }, ['--mode', 'dry-run']).version,
   '0.0.0-pr.17.abcdef123456',
   'PR dry-run version',
+);
+
+assertEqual(
+  resolve({
+    GITHUB_EVENT_NAME: 'push',
+    GITHUB_SHA: 'abcdef1234567890',
+    GITHUB_RUN_NUMBER: '42',
+  }, ['--mode', 'dry-run']).version,
+  '0.0.0-ci.42.abcdef123456',
+  'push dry-run version',
 );
 
 const canary = resolve({
@@ -67,6 +81,19 @@ try {
   execFileSync('git', ['tag', '-d', tempTag], { stdio: 'ignore' });
 }
 
+assertIncludes(ciWorkflow, 'ubuntu-latest', 'CI matrix includes Linux');
+assertIncludes(ciWorkflow, 'macos-latest', 'CI matrix includes macOS');
+assertIncludes(ciWorkflow, 'windows-latest', 'CI matrix includes Windows');
+assertIncludes(ciWorkflow, 'REQUIRED_RELEASE_OS=linux,darwin,win32', 'CI validates all release OS entries');
+assertIncludes(releaseWorkflow, 'branches:', 'Release workflow handles branch pushes');
+assertIncludes(releaseWorkflow, '"squad-v*"', 'Release workflow handles squad release tags');
+assertIncludes(releaseWorkflow, '"v*"', 'Release workflow handles legacy release tags');
+assertIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN', 'Release publishing uses explicit token secret');
+assertIncludes(releaseWorkflow, 'contents: read', 'Release workflow defaults to read-only token permissions');
+assertNotIncludes(releaseWorkflow, 'contents: write', 'Release workflow does not require default token write permissions');
+assertNotIncludes(releaseWorkflow, 'attestations: write', 'Release workflow does not require org-blocked attestation permissions');
+assertIncludes(smokeWorkflow, 'Runner startup', 'Actions smoke workflow checks runner startup separately');
+
 console.log('Release workflow metadata checks passed.');
 
 function resolve(env, args) {
@@ -80,5 +107,17 @@ function resolve(env, args) {
 function assertEqual(actual, expected, label) {
   if (actual !== expected) {
     throw new Error(`${label}: expected ${expected}, got ${actual}`);
+  }
+}
+
+function assertIncludes(value, expected, label) {
+  if (!value.includes(expected)) {
+    throw new Error(`${label}: expected workflow to include ${expected}`);
+  }
+}
+
+function assertNotIncludes(value, expected, label) {
+  if (value.includes(expected)) {
+    throw new Error(`${label}: workflow must not include ${expected}`);
   }
 }

@@ -34,9 +34,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -99,8 +97,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build web app
-        run: bun run build
+      - name: Run web release checks
+        run: |
+          bun run check:server
+          bun run check:release
+          bun run build
 
       - name: Package web server bundle
         shell: bash
@@ -165,6 +166,10 @@ jobs:
           restore-keys: |
             cargo-release-${{ runner.os }}-
 
+      - name: Run runtime tests
+        run: cargo test -j1
+        working-directory: daemon
+
       - name: Build release binaries
         run: cargo build --release --bins -j1
         working-directory: daemon
@@ -226,14 +231,19 @@ jobs:
           cp release/checksums.txt release/publish/
           cp release/release-summary.md release/publish/
 
-      - name: Generate artifact attestations
-        uses: actions/attest@v4
-        with:
-          subject-path: release/publish/*
+      - name: Verify release publish token
+        env:
+          AUTOHAND_RELEASE_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "${AUTOHAND_RELEASE_TOKEN:-}" ]; then
+            echo "::error title=Missing AUTOHAND_RELEASE_TOKEN::Set AUTOHAND_RELEASE_TOKEN as an environment or repository secret with contents:write release access."
+            exit 1
+          fi
 
       - name: Publish GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN }}
           RELEASE_TAG: ${{ needs.release-meta.outputs.tag }}
           RELEASE_TITLE: ${{ needs.release-meta.outputs.title }}
           RELEASE_DRAFT: ${{ needs.release-meta.outputs.draft }}

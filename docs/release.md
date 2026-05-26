@@ -46,7 +46,6 @@ before release assets can publish.
    - checksums for every runtime asset
    - a web bundle containing `dist/`, `server.mjs`, and package metadata
    - `manifest-<channel>.json` for the installer/update path
-   - GitHub artifact attestations for the published files
 
 5. Smoke test the published assets before moving a draft release to public.
 
@@ -57,6 +56,10 @@ the next stable base plus the run number and commit, for example:
 Pull requests do not publish releases. They use dry-run versions such as
 `0.0.0-pr.17.abc123def456` so installer-manifest generation is still exercised
 without creating customer-facing artifacts.
+
+Non-PR CI dry runs use versions such as `0.0.0-ci.42.abc123def456`. That keeps
+pull-request provenance clear while still exercising package metadata from
+manual or branch-triggered CI runs.
 
 ## Release Channels
 
@@ -80,11 +83,15 @@ unless it contains a security or legal issue.
 
 Recommended required checks:
 
+- `Runner startup`
 - `Web checks`
 - `Runtime checks (ubuntu-latest)`
 - `Runtime checks (macos-latest)`
 - `Runtime checks (windows-latest)`
-- `Release dry run`
+- `Release dry run (ubuntu-latest)`
+- `Release dry run (macos-latest)`
+- `Release dry run (windows-latest)`
+- `Validate release manifest`
 
 Require at least one owner review for changes under `.github/`, `daemon/`,
 `server.mjs`, `scripts/`, and release documentation.
@@ -100,6 +107,17 @@ annotation, fix Billing & plans first, then rerun `CI` and `Release`.
 The release publish job targets channel environments named `canary`, `beta`, and
 `stable`. Add approval rules to the `stable` environment when the repo moves
 from test releases to customer releases.
+
+The release workflow intentionally keeps the default `GITHUB_TOKEN` read-only so
+it can run in organizations that disable workflow write permissions. Publishing
+requires an `AUTOHAND_RELEASE_TOKEN` secret on the `canary`, `beta`, and
+`stable` environments, or as a repository secret while this repo is still in
+test mode. That token should be a fine-grained token or GitHub App token with
+release/content write access only for this repository.
+
+GitHub artifact attestations can be added after the organization enables
+workflow `id-token` and `attestations` write permissions. Until then, release
+integrity is enforced with SHA-256 checksums and manifest validation.
 
 ## Local Preflight
 
