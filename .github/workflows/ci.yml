@@ -46,6 +46,9 @@ jobs:
       - name: Check web server syntax
         run: bun run check:server
 
+      - name: Check release metadata logic
+        run: bun run check:release
+
       - name: Build web app
         run: bun run build
 
