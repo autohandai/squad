@@ -30,11 +30,14 @@ writeOutputs(metadata);
 console.log(JSON.stringify(metadata, null, 2));
 
 function dryRunMetadata() {
-  const version = `0.0.0-pr.${cleanIdentifier(prNumber)}.${cleanIdentifier(shortSha)}`;
+  const source = eventName === 'pull_request'
+    ? `pr.${cleanIdentifier(prNumber)}`
+    : `ci.${cleanIdentifier(runNumber)}`;
+  const version = `0.0.0-${source}.${cleanIdentifier(shortSha)}`;
   return {
     mode: 'dry-run',
     version,
-    tag: `ci-${shortSha}`,
+    tag: `${source.replaceAll('.', '-')}-${shortSha}`,
     channel: 'canary',
     draft: 'true',
     prerelease: 'true',

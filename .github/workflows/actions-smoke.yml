@@ -1,0 +1,30 @@
+name: Actions Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/**"
+      - ".github/dependabot.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actions-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runner-startup:
+    name: Runner startup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm GitHub-hosted runner startup
+        run: |
+          echo "repository=${GITHUB_REPOSITORY}"
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "ref=${GITHUB_REF}"
+          echo "sha=${GITHUB_SHA}"
