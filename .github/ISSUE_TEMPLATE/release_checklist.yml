@@ -1,0 +1,43 @@
+name: Release checklist
+description: Track a planned Autohand Squad release.
+title: "[Release]: Squad "
+labels:
+  - release
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Channel
+      options:
+        - stable
+        - beta
+        - canary
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: gates
+    attributes:
+      label: Required gates
+      options:
+        - label: CI is green on the release commit
+        - label: Release dry run produced a valid manifest
+        - label: Web bundle opens the built Squad UI
+        - label: Runtime binaries start, stop, restart, and report status
+        - label: Tray/menu smoke check passed on the target OS
+        - label: Rollback version is known
+        - label: Release notes are reviewed
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      placeholder: Risks, rollout notes, or manual verification evidence.

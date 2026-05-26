@@ -1,0 +1,8 @@
+# Replace these owners with the production Autohand GitHub teams when the repo is moved under the release org.
+* @igorcosta
+
+/daemon/ @igorcosta
+/server.mjs @igorcosta
+/src/ @igorcosta
+/.github/ @igorcosta
+/scripts/ @igorcosta
