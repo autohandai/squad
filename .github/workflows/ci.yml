@@ -106,18 +106,47 @@ jobs:
         run: cargo build --bins -j1
         working-directory: daemon
 
-  release-dry-run:
-    name: Release dry run
+  dry-run-meta:
+    name: Dry-run release metadata
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      channel: ${{ steps.meta.outputs.channel }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: meta
+        name: Resolve PR/canary dry-run version
+        run: node scripts/resolve-squad-version.mjs --mode dry-run
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+  release-dry-run:
+    name: Release dry run (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
     needs:
       - web
       - runtime
+      - dry-run-meta
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
       - name: Install Linux tray dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
@@ -126,12 +155,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build web app
-        run: bun run build
 
       - name: Install Rust toolchain
         run: |
@@ -143,20 +166,44 @@ jobs:
         working-directory: daemon
 
       - name: Package release manifest
+        shell: bash
         run: |
-          RELEASE_VERSION=0.0.0-ci \
-          RELEASE_TAG=ci-${{ github.sha }} \
-          RELEASE_OS=linux \
-          RELEASE_ARCH=x64 \
+          RELEASE_VERSION='${{ needs.dry-run-meta.outputs.version }}' \
+          RELEASE_TAG='${{ needs.dry-run-meta.outputs.tag }}' \
+          RELEASE_CHANNEL='${{ needs.dry-run-meta.outputs.channel }}' \
           bun run release:package
-
-      - name: Merge release manifest
-        run: bun run release:merge-manifests release/linux-x64/manifest-linux-x64.json
 
       - name: Upload dry-run release assets
         uses: actions/upload-artifact@v7
         with:
-          name: release-dry-run-${{ github.sha }}
+          name: release-dry-run-${{ runner.os }}-${{ runner.arch }}
+          path: release
+          if-no-files-found: error
+          retention-days: 7
+
+  validate-release-manifest:
+    name: Validate release manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: release-dry-run
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Download dry-run release assets
+        uses: actions/download-artifact@v8
+        with:
+          path: release-downloads
+          pattern: release-dry-run-*
+          merge-multiple: true
+
+      - name: Merge and validate platform manifests
+        run: REQUIRED_RELEASE_OS=linux,darwin,win32 node scripts/merge-release-manifests.mjs release-downloads
+
+      - name: Upload merged dry-run manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-manifest-${{ github.sha }}
           path: release
           if-no-files-found: error
           retention-days: 7

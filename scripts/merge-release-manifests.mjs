@@ -4,6 +4,10 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const requiredComponents = new Set(['cli', 'daemon', 'analytics', 'tray', 'ui']);
+const requiredReleaseOs = (process.env.REQUIRED_RELEASE_OS || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
 const releaseVersion = process.env.RELEASE_VERSION?.trim();
 const releaseChannel = process.env.RELEASE_CHANNEL?.trim();
 const outDir = process.env.RELEASE_OUT_DIR?.trim() || 'release';
@@ -28,6 +32,7 @@ const artifacts = dedupeArtifacts(
 );
 
 validateComponentCoverage(artifacts);
+validateOsCoverage(artifacts);
 await mkdir(outDir, { recursive: true });
 
 const merged = {
@@ -49,7 +54,7 @@ console.log(`Artifacts: ${artifacts.length}`);
 async function findManifestPaths(paths) {
   const results = [];
   for (const input of paths) {
-    if (input.endsWith('.json') && basenameLike(input).startsWith('manifest-')) {
+    if (input.endsWith('.json') && isPlatformManifestName(basenameLike(input))) {
       results.push(input);
       continue;
     }
@@ -70,7 +75,7 @@ async function scan(root) {
     const filePath = join(root, entry.name);
     if (entry.isDirectory()) {
       results.push(...await scan(filePath));
-    } else if (entry.isFile() && entry.name.startsWith('manifest-') && entry.name.endsWith('.json')) {
+    } else if (entry.isFile() && isPlatformManifestName(entry.name)) {
       results.push(filePath);
     }
   }
@@ -139,6 +144,16 @@ function validateComponentCoverage(artifacts) {
   }
 }
 
+function validateOsCoverage(artifacts) {
+  if (requiredReleaseOs.length === 0) return;
+  const present = new Set(artifacts.map((artifact) => artifact.os));
+  for (const required of requiredReleaseOs) {
+    if (!present.has(required)) {
+      throw new Error(`Merged release manifest is missing required OS ${required}`);
+    }
+  }
+}
+
 function releaseSummary(manifest) {
   const targets = [...new Set(manifest.artifacts.map((artifact) => `${artifact.os}/${artifact.arch}`))].sort();
   const components = [...new Set(manifest.artifacts.map((artifact) => artifact.component))].sort();
@@ -158,6 +173,10 @@ function releaseSummary(manifest) {
 
 function basenameLike(filePath) {
   return filePath.split(/[\\/]/).pop() || filePath;
+}
+
+function isPlatformManifestName(fileName) {
+  return /^manifest-[^-]+-.+\.json$/.test(fileName);
 }
 
 function uniqueChecksumLines(artifacts) {
