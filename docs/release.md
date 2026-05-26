@@ -11,6 +11,7 @@ This repo ships three release surfaces together:
 Every pull request should pass:
 
 - web server syntax check: `bun run check:server`
+- release metadata check: `bun run check:release`
 - web build: `bun run build`
 - Rust formatting: `cd daemon && cargo fmt -- --check`
 - Rust tests: `cd daemon && cargo test -j1`
@@ -94,6 +95,7 @@ Before a release PR, run:
 
 ```bash
 bun run check:server
+bun run check:release
 bun run build
 cd daemon
 cargo fmt -- --check
