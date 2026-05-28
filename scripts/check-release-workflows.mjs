@@ -84,26 +84,13 @@ assertThrows({
   GITHUB_SHA: 'abcdef1234567890',
 }, ['--mode', 'release'], 'invalid release version');
 
-const tempPatch = 900 + (process.pid % 50);
-const tempTag = `squad-v99.88.${tempPatch}`;
-try {
-  execFileSync('git', ['rev-parse', '-q', '--verify', `refs/tags/${tempTag}`], { stdio: 'ignore' });
-  throw new Error(`temporary test tag already exists: ${tempTag}`);
-} catch {
-  // Expected when the tag does not exist.
-}
-
-try {
-  execFileSync('git', ['tag', tempTag]);
-  const autoStable = resolve({
-    GITHUB_EVENT_NAME: 'workflow_dispatch',
-    INPUT_CHANNEL: 'stable',
-    GITHUB_SHA: 'abcdef1234567890',
-  }, ['--mode', 'release']);
-  assertEqual(autoStable.version, `99.88.${tempPatch + 1}`, 'auto-increment stable version');
-} finally {
-  execFileSync('git', ['tag', '-d', tempTag], { stdio: 'ignore' });
-}
+const autoStable = resolve({
+  GITHUB_EVENT_NAME: 'workflow_dispatch',
+  INPUT_CHANNEL: 'stable',
+  GITHUB_SHA: 'abcdef1234567890',
+  RELEASE_KNOWN_TAGS: 'squad-v99.88.903,v99.88.900,squad-v99.88.901-beta.1',
+}, ['--mode', 'release']);
+assertEqual(autoStable.version, '99.88.904', 'auto-increment stable version');
 
 assertIncludes(ciWorkflow, 'ubuntu-latest', 'CI matrix includes Linux');
 assertIncludes(ciWorkflow, 'macos-latest', 'CI matrix includes macOS');
