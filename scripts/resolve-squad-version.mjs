@@ -106,6 +106,11 @@ function nextReleaseBase() {
 }
 
 function latestStableTagVersion() {
+  const injectedTags = process.env.RELEASE_KNOWN_TAGS;
+  if (injectedTags !== undefined) {
+    return latestStableVersionFromTags(splitTagList(injectedTags));
+  }
+
   let tags = [];
   try {
     tags = execFileSync('git', ['tag', '--list', 'squad-v*', 'v*'], {
@@ -118,6 +123,10 @@ function latestStableTagVersion() {
   } catch {
     return null;
   }
+  return latestStableVersionFromTags(tags);
+}
+
+function latestStableVersionFromTags(tags) {
   const versions = tags
     .map(versionFromTag)
     .filter(Boolean)
@@ -126,6 +135,13 @@ function latestStableTagVersion() {
   versions.sort(compareSemver).reverse();
   const latest = versions[0];
   return latest ? `${latest.major}.${latest.minor}.${latest.patch}` : null;
+}
+
+function splitTagList(value) {
+  return String(value || '')
+    .split(/[,\n]/)
+    .map((tag) => tag.trim())
+    .filter(Boolean);
 }
 
 function versionFromTag(tag) {
