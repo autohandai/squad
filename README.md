@@ -1,16 +1,23 @@
 # Autohand Squad
 
-Local-first Autohand Squad console for launching and monitoring isolated Autohand CLI squad members from a repository browser.
+**A new native workspace for human + agent teams.**
 
-## What was mapped
+Chat with teammates and specialized agents in one shared space, then move
+directly into planning, project management, coding, and pull requests. Create
+agents tailored to your workflows, let them collaborate with agents across
+your team, and bring work once scattered across chat, trackers, and developer
+tools into one place.
 
-- Web stack: Bun-packed executable serving an Express/Vite React app from `http://127.0.0.1:19821`
-- Local store: browser local storage for roster/message preferences and `.autohand/agents` for isolated CLI profiles
-- Main data concepts: agents, sessions, tasks, triggers, skills, MCPs, connectors, memory events, and extension status
-- Main UI surfaces: squad member roster, conversation task composer, new squad member form, squad member home, work record, memory, skills, automations, permissions, feedback, and extensions
-- Public reference: Autohand Squad presents squad members as always-on digital employees with role templates, configurable tools, memory, guardrails, conversation tasks, and automated tasks
+Autohand Squad is local-first. It launches and monitors isolated Autohand CLI
+squad members from a repository browser.
 
-This prototype implements a fresh Autohand Squad interface around local Autohand CLI processes.
+## What it brings together
+
+- Runtime: a Bun-packed executable serving an Express/Vite React app from `http://127.0.0.1:19821`
+- Local data: browser storage for roster and message preferences, plus `.autohand/agents` for isolated CLI profiles
+- Core concepts: agents, sessions, tasks, triggers, skills, MCPs, connectors, memory events, and extension status
+- Workspace: the squad roster, shared conversations, member profiles, work records, memory, skills, automations, permissions, feedback, and extensions
+- Squad members: always-on digital teammates with role templates, configurable tools, memory, guardrails, conversational tasks, and automations
 
 ## Run
 
@@ -85,27 +92,6 @@ The GitHub release lane lives under `.github/workflows/`:
   GitHub artifact attestations.
 
 The team runbook is in [docs/release.md](docs/release.md).
-
-## Product Goals
-
-The implementation roadmap lives in [goals/README.md](goals/README.md). Each
-goal also has a paste-ready Codex `/goal` prompt in
-[goals/codex/README.md](goals/codex/README.md).
-
-| Goal | Codex `/goal` |
-| --- | --- |
-| [01: Agent Mission Control](goals/01-agent-mission-control.md) | [Start Goal 01](goals/codex/01-agent-mission-control.goal.md) |
-| [02: Role Depth Brain Cards](goals/02-role-depth-brain-cards.md) | [Start Goal 02](goals/codex/02-role-depth-brain-cards.goal.md) |
-| [03: Memory Inbox](goals/03-memory-inbox.md) | [Start Goal 03](goals/codex/03-memory-inbox.goal.md) |
-| [04: Permission Ladder](goals/04-permission-ladder.md) | [Start Goal 04](goals/codex/04-permission-ladder.goal.md) |
-| [05: Task Evidence Timeline](goals/05-task-evidence-timeline.md) | [Start Goal 05](goals/codex/05-task-evidence-timeline.goal.md) |
-| [06: Layered Context Model](goals/06-layered-context-model.md) | [Start Goal 06](goals/codex/06-layered-context-model.goal.md) |
-| [07: Evaluation Hooks](goals/07-evaluation-hooks.md) | [Start Goal 07](goals/codex/07-evaluation-hooks.goal.md) |
-| [08: Context Packs](goals/08-context-packs.md) | [Start Goal 08](goals/codex/08-context-packs.goal.md) |
-| [09: Run Recipes](goals/09-run-recipes.md) | [Start Goal 09](goals/codex/09-run-recipes.goal.md) |
-| [10: Agent Handoffs](goals/10-agent-handoffs.md) | [Start Goal 10](goals/codex/10-agent-handoffs.goal.md) |
-| [11: Skill Health Panel](goals/11-skill-health-panel.md) | [Start Goal 11](goals/codex/11-skill-health-panel.goal.md) |
-| [12: Failure Replay](goals/12-failure-replay.md) | [Start Goal 12](goals/codex/12-failure-replay.goal.md) |
 
 ## Standalone runtime
 
