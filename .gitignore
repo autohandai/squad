@@ -12,5 +12,10 @@ release/
 .autohand/runs/
 .autohand/tmp/
 
+.codex-artifacts/
+screenshots/
+CLAUDE.md
+goals/
+
 *.log
 *.tmp
