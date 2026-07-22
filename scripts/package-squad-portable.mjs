@@ -17,6 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
+import { tarCreateArgs } from './release-archive.mjs';
 
 const nativeComponents = [
   'squad',
@@ -108,7 +109,7 @@ async function stageProductionModules() {
 async function createArchive() {
   await mkdir(outDir, { recursive: true });
   await rm(archivePath, { force: true });
-  const result = spawnSync('tar', ['-czf', archivePath, bundleName], {
+  const result = spawnSync('tar', tarCreateArgs(archivePath, bundleName, releaseOs), {
     cwd: scratchDir,
     encoding: 'utf8',
   });
