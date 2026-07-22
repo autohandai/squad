@@ -159,17 +159,32 @@ pub async fn run_squad_command_with_paths(
     args: SquadCli,
     paths: StatePaths,
 ) -> Result<CommandOutput> {
+    run_squad_command_with_paths_inner(args, paths, true).await
+}
+
+pub async fn run_squad_service_command_with_paths(
+    args: SquadCli,
+    paths: StatePaths,
+) -> Result<CommandOutput> {
+    run_squad_command_with_paths_inner(args, paths, false).await
+}
+
+async fn run_squad_command_with_paths_inner(
+    args: SquadCli,
+    paths: StatePaths,
+    tray_requested: bool,
+) -> Result<CommandOutput> {
     paths.ensure()?;
     let config = resolve_config(&paths, overrides_from_args(&args))?;
     let command = args.command.unwrap_or(SquadCommand::Open);
     record_launcher_command(&paths, &config, command_name(&command));
     match command {
-        SquadCommand::Start => start_stack(&paths, &config, false).await,
+        SquadCommand::Start => start_stack(&paths, &config, false, tray_requested).await,
         SquadCommand::Status => stack_status(&paths, &config).await,
-        SquadCommand::Restart => restart_stack(&paths, &config).await,
+        SquadCommand::Restart => restart_stack(&paths, &config, tray_requested).await,
         SquadCommand::Stop => stop_stack(&paths, &config).await,
         SquadCommand::Queue => queue(&paths, &config).await,
-        SquadCommand::Open => start_stack(&paths, &config, true).await,
+        SquadCommand::Open => start_stack(&paths, &config, true, tray_requested).await,
         SquadCommand::Config => json_output(&config),
         SquadCommand::AnalyticsStart { analytics_port } => {
             analytics_start(&paths, &config, analytics_port).await
@@ -249,6 +264,7 @@ async fn start_stack(
     paths: &StatePaths,
     config: &SquadConfig,
     open_requested: bool,
+    tray_requested: bool,
 ) -> Result<CommandOutput> {
     let web_port = web_port_from_open_url(&config.open_url).unwrap_or(DEFAULT_WEB_PORT);
     let daemon_config = stack_daemon_config(config, Some(web_port));
@@ -275,12 +291,14 @@ async fn start_stack(
         output.push(result.stderr);
     }
 
-    match spawn_tray(paths, &daemon_config, &config.open_url) {
-        Ok(Some(message)) => output.push(message),
-        Ok(None) => {}
-        Err(error) => {
-            code = 1;
-            output.push(format!("Autohand Squad tray did not start: {error:#}\n"));
+    if tray_requested {
+        match spawn_tray(paths, &daemon_config, &config.open_url) {
+            Ok(Some(message)) => output.push(message),
+            Ok(None) => {}
+            Err(error) => {
+                code = 1;
+                output.push(format!("Autohand Squad tray did not start: {error:#}\n"));
+            }
         }
     }
 
@@ -350,9 +368,13 @@ async fn stack_status(paths: &StatePaths, config: &SquadConfig) -> Result<Comman
     }))
 }
 
-async fn restart_stack(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput> {
+async fn restart_stack(
+    paths: &StatePaths,
+    config: &SquadConfig,
+    tray_requested: bool,
+) -> Result<CommandOutput> {
     let stop_output = stop_stack(paths, config).await?;
-    let start_output = start_stack(paths, config, false).await?;
+    let start_output = start_stack(paths, config, false, tray_requested).await?;
     Ok(CommandOutput {
         code: stop_output.code.max(start_output.code),
         stdout: format!("{}{}", stop_output.stdout, start_output.stdout),
@@ -395,6 +417,16 @@ async fn stop_stack(paths: &StatePaths, config: &SquadConfig) -> Result<CommandO
         }
         output.push(result.stdout);
         output.push(result.stderr);
+    }
+
+    match terminate_associated_squad_processes() {
+        Ok(count) if count > 0 => output.push(format!(
+            "Autohand Squad leftover processes stopped: {count}\n"
+        )),
+        Ok(_) => {}
+        Err(error) => output.push(format!(
+            "Autohand Squad leftover process cleanup skipped: {error:#}\n"
+        )),
     }
 
     Ok(CommandOutput {
@@ -579,7 +611,7 @@ async fn serve(
         )));
     }
 
-    let server_path = locate_web_server(server_path)?;
+    let server_path = locate_web_server(paths, server_path)?;
     if !dev {
         let dist_index = server_path
             .parent()
@@ -811,25 +843,99 @@ fn terminate_squad_member_processes() -> Result<usize> {
             .context("list Squad member processes")?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut stopped = 0;
-        for pid in squad_member_pids_from_ps(&stdout) {
-            if pid != std::process::id() && terminate_process(pid) {
+        for pid in squad_member_pids_from_process_list(&stdout, std::process::id()) {
+            if terminate_process(pid) {
                 stopped += 1;
             }
         }
         Ok(stopped)
     }
 
-    #[cfg(not(target_family = "unix"))]
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                r#"Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { "$($_.ProcessId)`t$($_.CommandLine)" } }"#,
+            ])
+            .output()
+            .context("list Squad member processes")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut stopped = 0;
+        for pid in squad_member_pids_from_process_list(&stdout, std::process::id()) {
+            if terminate_process(pid) {
+                stopped += 1;
+            }
+        }
+        Ok(stopped)
+    }
+
+    #[cfg(not(any(target_family = "unix", target_os = "windows")))]
     {
         Ok(0)
     }
 }
 
-fn squad_member_pids_from_ps(output: &str) -> Vec<u32> {
+fn terminate_associated_squad_processes() -> Result<usize> {
+    #[cfg(target_family = "unix")]
+    {
+        let output = Command::new("ps")
+            .args(["-axo", "pid=,command="])
+            .output()
+            .context("list Autohand Squad processes")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut stopped = 0;
+        for pid in associated_squad_pids_from_process_list(&stdout, std::process::id()) {
+            if terminate_process(pid) {
+                stopped += 1;
+            }
+        }
+        Ok(stopped)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                r#"Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { "$($_.ProcessId)`t$($_.CommandLine)" } }"#,
+            ])
+            .output()
+            .context("list Autohand Squad processes")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut stopped = 0;
+        for pid in associated_squad_pids_from_process_list(&stdout, std::process::id()) {
+            if terminate_process(pid) {
+                stopped += 1;
+            }
+        }
+        Ok(stopped)
+    }
+
+    #[cfg(not(any(target_family = "unix", target_os = "windows")))]
+    {
+        Ok(0)
+    }
+}
+
+fn squad_member_pids_from_process_list(output: &str, current_pid: u32) -> Vec<u32> {
     output
         .lines()
         .filter_map(parse_ps_pid_and_command)
+        .filter(|(pid, _)| *pid != current_pid)
         .filter(|(_, command)| is_squad_member_process(command))
+        .map(|(pid, _)| pid)
+        .collect()
+}
+
+fn associated_squad_pids_from_process_list(output: &str, current_pid: u32) -> Vec<u32> {
+    output
+        .lines()
+        .filter_map(parse_ps_pid_and_command)
+        .filter(|(pid, _)| *pid != current_pid)
+        .filter(|(_, command)| is_associated_squad_process(command))
         .map(|(pid, _)| pid)
         .collect()
 }
@@ -843,15 +949,53 @@ fn parse_ps_pid_and_command(line: &str) -> Option<(u32, &str)> {
 
 fn is_squad_member_process(command: &str) -> bool {
     let command = command.replace("\\012", "\n");
-    let is_autohand = command.contains("autohand ")
-        || command.ends_with("/autohand")
-        || command.contains("/autohand ");
+    let command = command.replace('\\', "/");
+    let lower = command.to_ascii_lowercase().replace(['"', '\''], "");
+    let is_autohand = is_autohand_cli_process(&lower);
+    let is_squad_runtime = lower.contains("autohand-squad-daemon")
+        || lower.contains("autohand-squad-analytics")
+        || lower.contains("autohand-squad-tray")
+        || lower.contains("autohand-squad-ui");
     is_autohand
-        && !command.contains("autohand-squad-")
-        && (command.contains(".autohand/agents/")
-            || command.contains(".autohandsquad/data/workers/")
-            || command.contains("AUTOHAND_CLIENT_NAME=autohand-squad-")
-            || command.contains("Autohand Squad member profile"))
+        && !is_squad_runtime
+        && (lower.contains(".autohand/agents/")
+            || lower.contains(".autohandsquad/data/workers/")
+            || lower.contains("autohand_client_name=autohand-squad-")
+            || lower.contains("autohand squad member profile"))
+}
+
+fn is_autohand_cli_process(lower: &str) -> bool {
+    lower.starts_with("autohand ")
+        || lower.starts_with("autohand.exe ")
+        || lower.starts_with("autohand.cmd ")
+        || lower.ends_with("/autohand")
+        || lower.ends_with("/autohand.exe")
+        || lower.ends_with("/autohand.cmd")
+        || lower.contains("/autohand ")
+        || lower.contains("/autohand.exe ")
+        || lower.contains("/autohand.cmd ")
+        || lower.contains(" autohand ")
+        || lower.contains(" autohand.exe ")
+        || lower.contains(" autohand.cmd ")
+        || lower.contains("/autohand-cli/")
+        || lower.contains("\\autohand-cli\\")
+        || lower.contains("@autohandai/autohand")
+        || lower.contains("@autohandai/cli")
+}
+
+fn is_associated_squad_process(command: &str) -> bool {
+    is_squad_member_process(command)
+        || is_squad_runtime_process(command)
+        || is_squad_web_process(command)
+}
+
+fn is_squad_runtime_process(command: &str) -> bool {
+    let command = command.replace('\\', "/");
+    let lower = command.to_ascii_lowercase().replace(['"', '\''], "");
+    lower.contains("autohand-squad-daemon")
+        || lower.contains("autohand-squad-analytics")
+        || lower.contains("autohand-squad-tray")
+        || lower.contains("autohand-squad-ui")
 }
 
 fn terminate_squad_web_listener(web_port: u16) -> bool {
@@ -915,7 +1059,12 @@ fn listener_pids_from_lsof_output(output: &str) -> Vec<u32> {
 }
 
 fn is_squad_web_process(command: &str) -> bool {
-    command.contains("server.mjs") && command.contains("autohandSWE")
+    let command = command.replace('\\', "/");
+    let lower = command.to_ascii_lowercase();
+    lower.contains("server.mjs")
+        && (lower.contains("autohandswe")
+            || lower.contains("autohand squad.app/contents/resources/server.mjs")
+            || lower.contains("autohand squad/server.mjs"))
 }
 
 fn daemon_config_from_record(paths: &StatePaths, config: &SquadConfig) -> SquadConfig {
@@ -1070,7 +1219,7 @@ fn locate_tray_binary(paths: &StatePaths) -> Result<PathBuf> {
     })
 }
 
-fn locate_web_server(server_path: Option<PathBuf>) -> Result<PathBuf> {
+fn locate_web_server(paths: &StatePaths, server_path: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(candidate) = server_path {
         if candidate.exists() {
             return candidate
@@ -1089,8 +1238,7 @@ fn locate_web_server(server_path: Option<PathBuf>) -> Result<PathBuf> {
         }
     }
 
-    let current_dir = std::env::current_dir().context("read current directory")?;
-    server_candidates(&current_dir)
+    web_server_candidates(paths)
         .into_iter()
         .find(|candidate| candidate.exists())
         .ok_or_else(|| anyhow!("server.mjs was not found. Run from the autohandSWE prototype directory or set AUTOHAND_SQUAD_WEB_SERVER."))?
@@ -1098,9 +1246,41 @@ fn locate_web_server(server_path: Option<PathBuf>) -> Result<PathBuf> {
         .context("resolve server.mjs")
 }
 
-fn server_candidates(current_dir: &Path) -> Vec<PathBuf> {
+fn web_server_candidates(paths: &StatePaths) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    for dir in current_dir.ancestors().take(6) {
+
+    // Installed applications must prefer their immutable bundled resources
+    // even when launched from a source checkout that also has server.mjs.
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            candidates.extend(packaged_resource_candidates_from(exe_dir));
+        }
+    }
+    candidates.push(paths.root.join("web").join("server.mjs"));
+    candidates.push(paths.root.join("server.mjs"));
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.extend(server_candidates_from(&current_dir));
+    }
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            candidates.extend(server_candidates_from(exe_dir));
+        }
+    }
+    candidates
+}
+
+fn packaged_resource_candidates_from(exe_dir: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![exe_dir.join("server.mjs")];
+    if let Some(contents_dir) = exe_dir.parent() {
+        candidates.push(contents_dir.join("Resources").join("server.mjs"));
+    }
+    candidates
+}
+
+fn server_candidates_from(root: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for dir in root.ancestors().take(8) {
         candidates.push(dir.join("server.mjs"));
         candidates.push(
             dir.join("web")
@@ -1117,6 +1297,72 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     std::env::split_paths(&path)
         .map(|dir| dir.join(name))
         .find(|candidate| candidate.exists())
+}
+
+fn node_executable_name() -> &'static str {
+    if cfg!(windows) {
+        "node.exe"
+    } else {
+        "node"
+    }
+}
+
+fn locate_node_runtime() -> Result<PathBuf> {
+    if let Ok(value) = std::env::var("AUTOHAND_SQUAD_NODE") {
+        let candidate = PathBuf::from(value);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    let executable_name = node_executable_name();
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            let bundled = exe_dir.join(executable_name);
+            if bundled.exists() {
+                return Ok(bundled);
+            }
+        }
+    }
+
+    find_on_path(executable_name).ok_or_else(|| {
+        anyhow!(
+            "Node.js was not found. Reinstall Autohand Squad or set AUTOHAND_SQUAD_NODE to a Node.js 18.17+ executable."
+        )
+    })
+}
+
+fn is_bundled_node_runtime(node_runtime: &Path) -> bool {
+    let Ok(current_exe) = std::env::current_exe() else {
+        return false;
+    };
+    current_exe.parent() == node_runtime.parent()
+}
+
+fn bundled_autohand_cli_name() -> Option<&'static str> {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Some("autohand-macos-arm64")
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        Some("autohand-macos-x64")
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        Some("autohand-windows-x64.exe")
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        Some("autohand-linux-x64")
+    } else {
+        None
+    }
+}
+
+fn bundled_autohand_cli(server_path: &Path) -> Option<PathBuf> {
+    let name = bundled_autohand_cli_name()?;
+    let server_dir = server_path.parent()?;
+    let candidate = server_dir
+        .join("node_modules")
+        .join("@autohandai")
+        .join("agent-sdk")
+        .join("cli")
+        .join(name);
+    candidate.exists().then_some(candidate)
 }
 
 fn spawn_daemon(paths: &StatePaths, config: &SquadConfig, daemon: &Path) -> Result<()> {
@@ -1151,6 +1397,12 @@ fn spawn_daemon(paths: &StatePaths, config: &SquadConfig, daemon: &Path) -> Resu
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
+    if let Ok(server_path) = locate_web_server(paths, None) {
+        command.env("AUTOHAND_SQUAD_WEB_SERVER", &server_path);
+        if let Some(autohand) = bundled_autohand_cli(&server_path) {
+            command.env("AUTOHAND_SQUAD_AUTOHAND_BIN", autohand);
+        }
+    }
     detach_background(&mut command);
     command
         .spawn()
@@ -1231,6 +1483,12 @@ fn spawn_tray(
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
+    if let Ok(server_path) = locate_web_server(paths, None) {
+        command.env("AUTOHAND_SQUAD_WEB_SERVER", &server_path);
+        if let Some(autohand) = bundled_autohand_cli(&server_path) {
+            command.env("AUTOHAND_SQUAD_AUTOHAND_BIN", autohand);
+        }
+    }
     detach_background(&mut command);
     let child = command
         .spawn()
@@ -1261,7 +1519,8 @@ fn spawn_web_server(
         .with_context(|| format!("open {}", paths.web_server_log.display()))?;
     let err = log.try_clone()?;
     let server_dir = server_path.parent().unwrap_or_else(|| Path::new("."));
-    let mut command = Command::new("node");
+    let node_runtime = locate_node_runtime()?;
+    let mut command = Command::new(&node_runtime);
     command
         .arg(server_path)
         .arg("--host")
@@ -1273,13 +1532,22 @@ fn spawn_web_server(
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
+    if is_bundled_node_runtime(&node_runtime) {
+        command.env("AUTOHAND_SQUAD_APP_STATE_DIR", paths.root.join("web-state"));
+    }
+    if let Some(autohand) = bundled_autohand_cli(server_path) {
+        command.env("AUTOHAND_SQUAD_AUTOHAND_BIN", autohand);
+    }
+    if let Ok(tray) = locate_tray_binary(paths) {
+        command.env("AUTOHAND_SQUAD_TRAY", tray);
+    }
     if dev {
         command.arg("--dev");
     }
     detach_background(&mut command);
     let child = command
         .spawn()
-        .with_context(|| format!("start node {}", server_path.display()))?;
+        .with_context(|| format!("start {} {}", node_runtime.display(), server_path.display()))?;
     let record = WebServerRecord {
         pid: child.id(),
         host: config.host.clone(),
@@ -1302,6 +1570,14 @@ fn detach_background(command: &mut Command) {
             }
             Ok(())
         });
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 
@@ -1506,12 +1782,33 @@ mod tests {
             "autohand --path /tmp/work --config /repo/.autohand/agents/b3/config.json --prompt hi"
         ));
         assert!(is_squad_member_process(
+            r#"C:\Users\me\.local\bin\autohand.exe --path C:\repo --config C:\repo\.autohand\agents\b3\config.json --prompt hi"#
+        ));
+        assert!(is_squad_member_process(
+            r#""C:\Users\me\.local\bin\autohand.exe" --path C:\repo --config C:\repo\.autohand\agents\b3\config.json --prompt hi"#
+        ));
+        assert!(is_squad_member_process(
             "autohand --path /Users/me/.autohandsquad/data/workers/b3 --append-sys-prompt Autohand Squad member profile"
+        ));
+        assert!(is_squad_member_process(
+            r#"cmd /C set AUTOHAND_CLIENT_NAME=autohand-squad-b3 && C:\bin\autohand.exe --path C:\repo"#
+        ));
+        assert!(is_squad_member_process(
+            r#"C:\Users\me\AppData\Roaming\npm\autohand.cmd --path C:\repo --config C:\repo\.autohand\agents\b3\config.json --prompt hi"#
+        ));
+        assert!(is_squad_member_process(
+            "node /Users/me/.npm/_npx/123/node_modules/autohand-cli/dist/index.js --path /repo --config /repo/.autohand/agents/b3/config.json --prompt hi"
+        ));
+        assert!(is_squad_member_process(
+            "bun /Users/me/project/node_modules/@autohandai/cli/dist/index.js --path /repo --config /repo/.autohand/agents/b3/config.json --prompt hi"
         ));
         assert!(!is_squad_member_process(
             "/Users/me/.autohand/squad/bin/autohand-squad-tray --port 19822"
         ));
         assert!(!is_squad_member_process("node server.mjs --port 19821"));
+        assert!(!is_squad_member_process(
+            "node /Users/me/.npm/_npx/123/node_modules/autohand-cli/dist/index.js --path /tmp/other --prompt hi"
+        ));
     }
 
     #[test]
@@ -1520,8 +1817,51 @@ mod tests {
  123 node server.mjs --port 19821
  456 autohand --path /tmp/work --config /repo/.autohand/agents/b3/config.json
  789 /Users/me/.autohand/squad/bin/autohand-squad-daemon --port 19822
+ 101 C:\\Users\\me\\.local\\bin\\autohand.exe --config C:\\repo\\.autohand\\agents\\b3\\config.json
+ 202 node /Users/me/node_modules/autohand-cli/dist/index.js --config /repo/.autohand/agents/b4/config.json
+	";
+        assert_eq!(
+            squad_member_pids_from_process_list(output, 0),
+            vec![456, 101, 202]
+        );
+    }
+
+    #[test]
+    fn detects_associated_squad_processes_for_quit_cleanup() {
+        assert!(is_associated_squad_process(
+            "/Users/me/.autohand/squad/bin/autohand-squad-daemon --port 19822"
+        ));
+        assert!(is_associated_squad_process(
+            "C:\\Users\\me\\.autohand\\squad\\bin\\autohand-squad-analytics.exe --port 19823"
+        ));
+        assert!(is_associated_squad_process(
+            "/Users/me/.autohand/squad/bin/autohand-squad-tray --port 19822"
+        ));
+        assert!(is_associated_squad_process(
+            "node /Users/me/Documents/autohand/web/prototypes/autohandSWE/server.mjs --port 19821"
+        ));
+        assert!(is_associated_squad_process(
+            "autohand --path /tmp/work --config /repo/.autohand/agents/b3/config.json --prompt hi"
+        ));
+        assert!(!is_associated_squad_process(
+            "autohand --path /tmp/other --prompt not a squad member"
+        ));
+        assert!(!is_associated_squad_process(
+            "/Users/me/.local/bin/not-autohand --prompt hi"
+        ));
+    }
+
+    #[test]
+    fn associated_cleanup_skips_current_process() {
+        let output = "\
+ 111 /Users/me/.autohand/squad/bin/autohand-squad-tray --port 19822
+ 222 node /Users/me/Documents/autohand/web/prototypes/autohandSWE/server.mjs --port 19821
+ 333 autohand --path /tmp/work --config /repo/.autohand/agents/b3/config.json
 ";
-        assert_eq!(squad_member_pids_from_ps(output), vec![456]);
+        assert_eq!(
+            associated_squad_pids_from_process_list(output, 111),
+            vec![222, 333]
+        );
     }
 
     #[test]
@@ -1535,6 +1875,41 @@ mod tests {
         });
         assert!(is_squad_web_runtime(&payload));
         assert!(!is_squad_web_runtime(&json!({"success": true, "data": {}})));
+        assert!(is_squad_web_process(
+            "node /Applications/Autohand Squad.app/Contents/Resources/server.mjs --port 19821"
+        ));
+        assert!(is_squad_web_process(
+            r#"node.exe C:\Users\me\AppData\Local\Autohand Squad\server.mjs --port 19821"#
+        ));
+    }
+
+    #[test]
+    fn web_server_candidates_cover_state_and_binary_ancestor_layouts() {
+        let paths = StatePaths::from_root("/tmp/autohand-squad");
+        let candidates = web_server_candidates(&paths);
+
+        assert!(candidates.contains(&PathBuf::from("/tmp/autohand-squad/web/server.mjs")));
+        assert!(server_candidates_from(Path::new(
+            "/Users/me/Documents/autohand/web/prototypes/autohandSWE/daemon/target/debug"
+        ))
+        .contains(&PathBuf::from(
+            "/Users/me/Documents/autohand/web/prototypes/autohandSWE/server.mjs"
+        )));
+        assert!(packaged_resource_candidates_from(Path::new(
+            "/Applications/Autohand Squad.app/Contents/MacOS"
+        ))
+        .contains(&PathBuf::from(
+            "/Applications/Autohand Squad.app/Contents/Resources/server.mjs"
+        )));
+    }
+
+    #[test]
+    fn packaged_node_runtime_name_matches_the_current_platform() {
+        if cfg!(windows) {
+            assert_eq!(node_executable_name(), "node.exe");
+        } else {
+            assert_eq!(node_executable_name(), "node");
+        }
     }
 
     #[test]

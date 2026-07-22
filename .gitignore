@@ -9,6 +9,8 @@ release/
 !.env.example
 
 .autohand/agents/
+.autohand/goals.local.json
+.autohand/provider-settings.json
 .autohand/runs/
 .autohand/tmp/
 
@@ -19,3 +21,4 @@ goals/
 
 *.log
 *.tmp
+goals/

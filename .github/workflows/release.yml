@@ -20,6 +20,7 @@ concurrency:
 
 env:
   BUN_VERSION: "1.3.13"
+  NODE_VERSION: "22.23.1"
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -143,13 +144,14 @@ jobs:
       - name: Package web server bundle
         shell: bash
         run: |
-          mkdir -p release/web release/web-staging
+          mkdir -p release/web/runtime release/web-staging
           web_asset="autohand-squad-web-${{ needs.setup.outputs.version }}.tar.gz"
           cp -R dist server.mjs package.json bun.lock README.md release/web-staging/
           node -e "const fs = require('fs'); const file = process.argv[1]; const metadata = JSON.parse(fs.readFileSync(file, 'utf8')); metadata.version = process.argv[2]; fs.writeFileSync(file, JSON.stringify(metadata, null, 2) + '\n');" \
             release/web-staging/package.json \
             '${{ needs.setup.outputs.version }}'
           tar -czf "release/web/$web_asset" -C release/web-staging .
+          cp -R release/web-staging/. release/web/runtime/
           cd release/web
           shasum -a 256 "$web_asset" > checksums-web.txt
 
@@ -164,7 +166,9 @@ jobs:
     name: Runtime artifacts (${{ matrix.id }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
-    needs: setup
+    needs:
+      - setup
+      - web-bundle
     strategy:
       fail-fast: false
       matrix:
@@ -210,6 +214,13 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Set up bundled Node.js runtime
+        if: matrix.os != 'linux'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
       - name: Cache Bun packages
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
@@ -223,6 +234,12 @@ jobs:
 
       - name: Check Autohand SDK on native target
         run: bun run check:sdk
+
+      - name: Download built web runtime
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: web-bundle-${{ needs.setup.outputs.version }}
+          path: ${{ runner.temp }}/squad-web-bundle
 
       - name: Install Rust toolchain
         run: |
@@ -252,13 +269,193 @@ jobs:
 
       - name: Package release assets
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+          RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+          RELEASE_CHANNEL: ${{ needs.setup.outputs.channel }}
+          RELEASE_OS: ${{ matrix.os }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+          WEB_RUNTIME_DIR: ${{ runner.temp }}/squad-web-bundle/runtime
         run: |
-          RELEASE_VERSION='${{ needs.setup.outputs.version }}' \
-          RELEASE_TAG='${{ needs.setup.outputs.tag }}' \
-          RELEASE_CHANNEL='${{ needs.setup.outputs.channel }}' \
-          RELEASE_OS='${{ matrix.os }}' \
-          RELEASE_ARCH='${{ matrix.arch }}' \
           bun run release:package
+          bun run release:portable
+
+      - name: Package native installer
+        if: matrix.os != 'linux'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+          RELEASE_OS: ${{ matrix.os }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+          WEB_RUNTIME_DIR: ${{ runner.temp }}/squad-web-bundle/runtime
+        run: |
+          NODE_RUNTIME_PATH="$(node -p 'process.execPath')" bun run release:installers
+
+      - name: Smoke test portable application
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+          RELEASE_OS: ${{ matrix.os }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          bundle_name="autohand-squad-${RELEASE_VERSION}-${RELEASE_OS}-${RELEASE_ARCH}"
+          archive="release/${RELEASE_OS}-${RELEASE_ARCH}/${bundle_name}.tar.gz"
+          smoke_root="${RUNNER_TEMP}/squad-portable-smoke-${{ matrix.id }}"
+          rm -rf "$smoke_root"
+          mkdir -p "$smoke_root"
+          tar -xzf "$archive" -C "$smoke_root"
+
+          bundle_root="$smoke_root/$bundle_name"
+          test -f "$bundle_root/server.mjs"
+          test -f "$bundle_root/dist/index.html"
+          (cd "$bundle_root" && node -e "import('@autohandai/agent-sdk').then(({ AutohandSDK }) => { if (typeof AutohandSDK !== 'function') process.exit(1); })")
+          if [[ "$RELEASE_OS" == "win32" ]]; then
+            "$bundle_root/bin/squad.exe" --help
+          else
+            "$bundle_root/bin/squad" --help
+          fi
+
+      - name: Mount and smoke test macOS installer
+        if: matrix.os == 'darwin'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          installer="release/darwin-${RELEASE_ARCH}/autohand-squad-${RELEASE_VERSION}-macos-${RELEASE_ARCH}.dmg"
+          mount_root="${RUNNER_TEMP}/autohand-squad-dmg-${RELEASE_ARCH}"
+          state_root="${RUNNER_TEMP}/autohand-squad-state-${RELEASE_ARCH}"
+          web_port=19931
+          mkdir -p "$mount_root" "$state_root"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_root" "$installer"
+
+          app="$mount_root/Autohand Squad.app"
+          squad="$app/Contents/MacOS/squad"
+          node="$app/Contents/MacOS/node"
+          server="$app/Contents/Resources/server.mjs"
+
+          cleanup() {
+            AUTOHAND_SQUAD_HOME="$state_root" "$squad" serve-stop --web-port "$web_port" >/dev/null 2>&1 || true
+            hdiutil detach "$mount_root" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          test -x "$app/Contents/MacOS/autohand-squad-ui"
+          test -x "$squad"
+          test -x "$node"
+          test -f "$server"
+          test -f "$app/Contents/Resources/dist/index.html"
+          "$node" --version
+          "$squad" --help
+
+          AUTOHAND_HOME="$state_root/autohand-home" AUTOHAND_SQUAD_HOME="$state_root" "$squad" serve --server-path "$server" --web-port "$web_port"
+          ready=false
+          runtime_json=""
+          for attempt in {1..30}; do
+            if runtime_json="$(curl -fsS "http://127.0.0.1:${web_port}/api/runtime")"; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != "true" ]]; then
+            echo "::error::The web runtime inside the mounted DMG did not start."
+            exit 1
+          fi
+          RUNTIME_JSON="$runtime_json" "$node" -e '
+            const response = JSON.parse(process.env.RUNTIME_JSON);
+            const runtime = response.data || {};
+            if (!response.success || !runtime.available) throw new Error("Bundled Autohand CLI is unavailable");
+            if (!String(runtime.autohandPath || "").includes("/Contents/Resources/node_modules/@autohandai/agent-sdk/cli/")) {
+              throw new Error(`Unexpected Autohand CLI path: ${runtime.autohandPath || "missing"}`);
+            }
+            if (String(runtime.defaultWorkspace || "").includes("/Contents/Resources")) {
+              throw new Error(`Packaged resources became the default workspace: ${runtime.defaultWorkspace}`);
+            }
+          '
+          test -d "$state_root/web-state"
+
+      - name: Install and smoke test Windows installer
+        if: matrix.os == 'win32'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = (Resolve-Path "release/win32-x64/autohand-squad-$env:RELEASE_VERSION-windows-x64-setup.exe").Path
+          $stateRoot = Join-Path $env:RUNNER_TEMP 'autohand-squad-installer-state'
+          $webPort = 19931
+          New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
+
+          $install = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait
+          if ($install.ExitCode -ne 0) {
+            throw "NSIS installer exited with code $($install.ExitCode)"
+          }
+
+          $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+            Where-Object DisplayName -eq 'Autohand Squad' |
+            Select-Object -First 1
+          if (-not $entry) {
+            throw 'Autohand Squad was not registered as an installed application.'
+          }
+
+          $installRoot = $entry.InstallLocation
+          if (-not $installRoot) {
+            $uninstaller = $entry.UninstallString.Trim('"')
+            $installRoot = Split-Path $uninstaller -Parent
+          }
+          $squad = Join-Path $installRoot 'squad.exe'
+          $node = Join-Path $installRoot 'node.exe'
+          $server = Join-Path $installRoot 'server.mjs'
+          $ui = Join-Path $installRoot 'autohand-squad-ui.exe'
+          foreach ($path in @($squad, $node, $server, $ui)) {
+            if (-not (Test-Path $path)) { throw "Missing installed runtime file: $path" }
+          }
+
+          & $node --version
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled Node.js did not start.' }
+          & $squad --help
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Squad CLI did not start.' }
+
+          try {
+            $env:AUTOHAND_HOME = Join-Path $stateRoot 'autohand-home'
+            $env:AUTOHAND_SQUAD_HOME = $stateRoot
+            & $squad serve --server-path $server --web-port $webPort
+            if ($LASTEXITCODE -ne 0) { throw 'Installed web runtime did not start.' }
+            $ready = $false
+            $runtime = $null
+            foreach ($attempt in 1..30) {
+              try {
+                $runtime = Invoke-RestMethod "http://127.0.0.1:$webPort/api/runtime"
+                $ready = $true
+                break
+              } catch {
+                Start-Sleep -Seconds 1
+              }
+            }
+            if (-not $ready) { throw 'The web runtime installed by NSIS did not become ready.' }
+            if (-not $runtime.success -or -not $runtime.data.available) {
+              throw 'The installed runtime could not start its bundled Autohand CLI.'
+            }
+            $expectedCliRoot = Join-Path $installRoot 'node_modules\@autohandai\agent-sdk\cli'
+            if (-not $runtime.data.autohandPath.StartsWith($expectedCliRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "Unexpected installed Autohand CLI path: $($runtime.data.autohandPath)"
+            }
+            if ($runtime.data.defaultWorkspace -and $runtime.data.defaultWorkspace.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "The install directory became the default workspace: $($runtime.data.defaultWorkspace)"
+            }
+            if (-not (Test-Path (Join-Path $stateRoot 'web-state'))) {
+              throw 'The installed runtime did not redirect writable web state.'
+            }
+          } finally {
+            & $squad serve-stop --web-port $webPort | Out-Null
+            $uninstaller = $entry.UninstallString.Trim('"')
+            if (Test-Path $uninstaller) {
+              Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
+            }
+          }
 
       - name: Upload runtime artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -324,8 +521,7 @@ jobs:
 
       - name: Publish GitHub release
         env:
-          DEFAULT_GH_TOKEN: ${{ github.token }}
-          AUTOHAND_RELEASE_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.setup.outputs.tag }}
           RELEASE_TITLE: ${{ needs.setup.outputs.title }}
           RELEASE_PRERELEASE: ${{ needs.setup.outputs.prerelease }}
@@ -335,19 +531,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          token_can_publish() {
-            local token="$1"
-            [[ -n "$token" ]] || return 1
-            [[ "$(GH_TOKEN="$token" gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions.push // false' 2>/dev/null)" == "true" ]]
-          }
-
-          if token_can_publish "$DEFAULT_GH_TOKEN"; then
-            export GH_TOKEN="$DEFAULT_GH_TOKEN"
-          elif token_can_publish "$AUTOHAND_RELEASE_TOKEN"; then
-            export GH_TOKEN="$AUTOHAND_RELEASE_TOKEN"
-            echo "The workflow token cannot publish releases; using AUTOHAND_RELEASE_TOKEN."
-          else
-            echo "::error::Neither the job-scoped GITHUB_TOKEN nor AUTOHAND_RELEASE_TOKEN has release write access."
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::The job-scoped GITHUB_TOKEN is unavailable."
             exit 1
           fi
 

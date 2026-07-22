@@ -1,9 +1,11 @@
 pub mod analytics;
 pub mod api;
+pub mod auth;
 pub mod cli;
 pub mod config;
 pub mod daemon;
 pub mod install;
+pub mod live_status;
 pub mod native_tray;
 pub mod state;
 pub mod telemetry;

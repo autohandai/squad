@@ -1,10 +1,11 @@
 # Autohand Squad Release Runbook
 
-This repo ships three release surfaces together:
+This repo ships four release surfaces together:
 
 - the built web UI in `dist/`
 - the local Node bridge in `server.mjs`
 - the Rust runtime binaries in `daemon/`
+- native macOS DMG and Windows NSIS installers with a bundled Node runtime
 
 ## CI Gates
 
@@ -52,11 +53,33 @@ platform. The merged manifest must include `linux/x64`, `darwin/arm64`,
    - checksums for every runtime asset
    - a web bundle containing `dist/`, `server.mjs`, and package metadata stamped
      with the resolved release version
+   - one extract-and-run portable archive per platform, combining the five
+     native binaries, web runtime, and minimal production Node modules
+   - DMG installers for macOS Apple Silicon and Intel, each containing the
+     desktop app, web runtime, production modules, Autohand CLI, and Node
+   - a current-user NSIS setup EXE for Windows x64 with the same bundled runtime
    - `manifest-<channel>.json` for the installer/update path
 
-5. Smoke test the published web bundle and native runtime assets from the new
-   GitHub release. A stable tag creates a normal release; a prerelease version
-   creates a GitHub prerelease.
+5. Every platform job extracts its portable archive, imports the bundled Agent
+   SDK, and starts the packaged `squad --help` command before publication. The
+   macOS jobs also mount each DMG and start its bundled web runtime; the Windows
+   job silently installs, exercises, and uninstalls the NSIS package. Smoke test
+   the published artifacts from the new GitHub release as well. A stable tag
+   creates a normal release; a prerelease version creates a GitHub prerelease.
+
+Portable archives are named
+`autohand-squad-<version>-<os>-<arch>.tar.gz`. After extraction, run
+`bin/squad` (`bin/squad.exe` on Windows). Node 18.17 or newer must be on `PATH`;
+the archive vendors the web runtime and its production modules but not Node
+itself. These archives are directly runnable distributions, not code-signed
+installers.
+
+Native installers are named
+`autohand-squad-<version>-macos-<arch>.dmg` and
+`autohand-squad-<version>-windows-x64-setup.exe`. They bundle Node, so users do
+not need a system Node installation. The current workflow does not code-sign
+the Windows installer or sign and notarize the macOS app; release notes must
+not claim a verified publisher until those credentials and steps are added.
 
 The setup job rejects leading-zero or malformed versions, confirms that
 `GITHUB_REF` is exactly `refs/tags/v<VERSION>`, and resolves both the tag and
@@ -138,11 +161,13 @@ from test releases to customer releases. Environment reviewers do not change
 the tag or source commit; they only approve the already-built release.
 
 The release workflow keeps its default `GITHUB_TOKEN` read-only. Only the final
-publish job requests `contents: write` and prefers GitHub's short-lived workflow
-token. If organization policy still makes that token read-only, an optional
-`AUTOHAND_RELEASE_TOKEN` repository or environment secret may provide the same
-repository-scoped release permission. The workflow selects that fallback only
-after a read-only permission check shows the workflow token cannot publish.
+publish job requests `contents: write` and passes GitHub's short-lived,
+job-scoped workflow token directly to the GitHub CLI. Do not infer this granular
+token's access from the repository API's user-oriented `permissions.push`
+field: that field can be absent even when the job log confirms the
+`Contents: write` permission. A policy that blocks the requested job permission
+must be fixed in the repository or organization Actions settings before
+publishing.
 
 Release integrity is checked with SHA-256 checksum files, exact target coverage
 in the installer manifest, immutable commit pins for third-party GitHub
@@ -173,8 +198,14 @@ cd daemon
 cargo build --release --bins -j1
 cd ..
 RELEASE_VERSION=0.1.0 RELEASE_TAG=v0.1.0 bun run release:package
+WEB_RUNTIME_DIR=release/web/runtime RELEASE_VERSION=0.1.0 RELEASE_OS="$(node -p process.platform)" RELEASE_ARCH="$(node -p process.arch)" bun run release:portable
+NODE_RUNTIME_PATH="$(node -p process.execPath)" WEB_RUNTIME_DIR="$PWD" RELEASE_VERSION=0.1.0 RELEASE_OS="$(node -p process.platform)" RELEASE_ARCH="$(node -p process.arch)" bun run release:installers
 bun run release:merge-manifests release
 ```
+
+`release:installers` runs only on macOS or Windows and refuses a cross-target
+build. Mount the resulting DMG or install the resulting EXE and exercise the
+bundled `squad` runtime before creating a version tag.
 
 To check an existing tag locally with the same immutable-source guard:
 

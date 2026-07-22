@@ -36,8 +36,9 @@ squad restart
 squad stop
 ```
 
-to inspect, restart, or stop the stack. The tray remains a separate controller
-process so it can keep offering Start/Restart/Quit actions after services stop.
+to inspect, restart, or stop the stack. Stop leaves the tray available as a
+separate controller so it can start services again; Quit exits the tray after
+stopping local Squad services and isolated member CLI processes.
 
 ## State
 
@@ -60,6 +61,7 @@ It contains:
 - `analytics.json`
 - `analytics-snapshot.json`
 - `web-server.json`
+- `channels.json`
 - `tray.json`
 
 ## Config Precedence
@@ -103,8 +105,19 @@ the daemon API to the next port and passes that port to the tray.
 - `POST /auth/logout`
 - `POST /launch-at-login/toggle`
 - `GET /config`
+- `GET /channels`
+- `POST|PUT /channels`
 - `POST /restart`
 - `POST /stop`
+
+`GET /channels` returns the squad channel/thread snapshot from `channels.json`
+(channel `visibility`, `memberIds`, `autoModeDefault`, and thread
+`channelId`/`parentMessageId` metadata). `POST|PUT /channels` persists the
+snapshot proxied from the web app so channel orchestration survives web reloads
+and daemon restarts; `GET /status` reports `channels` and `channelThreads`
+counts, and queue/run records carry optional `channelId`/`threadId` fields for
+channel-dispatched work. Auto mode (self-judge) metadata defaults to off when
+absent.
 
 `POST /restart` requests a drain: the daemon stops accepting new work, records
 the drain in `daemon.json`, then exits so the launcher can start a fresh daemon.
@@ -116,14 +129,25 @@ process, and stores logs next to the run record.
 `autohand-squad-tray --describe` prints the current platform integration,
 daemon summary, and menu model. `--action <id>` executes a menu action. The
 controller talks to the local daemon for status, updates, heartbeat/logout, and
-launch-at-login requests; start/restart actions use the local launcher path so
-the full stack can be started when it is not already listening. Open uses the
-configured web app URL, not the daemon API URL.
+launch-at-login requests; start/restart actions use the launcher path for
+services without spawning another tray controller. Open uses the configured web
+app URL, not the daemon API URL.
 
 Menu actions include Open Autohand Squad, Update Autohand Squad, Login /
-Re-login, Logout, Start Service, Stop Service, Restart Service, Open Queue,
-Launch at Login, About, and Quit. Since the controller is a separate binary, a
-UI crash does not stop the daemon.
+Logout, Start Service, Stop Service, Restart Service, Open Queue, Launch at
+Login, Settings, About, and Quit. The auth row shows Login only when no account
+is signed in and Logout when an account is signed in. Login opens the
+Autohand browser auth flow, stores the returned token and account email in the
+local runtime config, and refreshes the daemon account state when the daemon is
+running.
+Quit runs the same cleanup as `squad stop`, then exits the tray controller.
+Since the controller is a separate binary, a UI crash does not stop the daemon.
+The native controller records its own PID and exits early when another
+controller instance is already running, so the user should only get one Squad
+menu-bar/tray process per machine.
+When Restart Service is selected while sessions, agents, queued jobs, or
+trigger work are active, the native controller asks for confirmation before it
+requests the service restart.
 
 On macOS the tray icon is a template status item: the icon is rendered by the
 system as white in a dark menu bar and black in a light menu bar. The tray runs

@@ -13,7 +13,10 @@ const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.me
 const releaseWorkflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 const smokeWorkflow = readFileSync(new URL('../.github/workflows/actions-smoke.yml', import.meta.url), 'utf8');
 const releaseNotes = readFileSync(new URL('../.github/release.yml', import.meta.url), 'utf8');
+const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const packager = readFileSync(new URL('./package-squad-release.mjs', import.meta.url), 'utf8');
+const portablePackager = readFileSync(new URL('./package-squad-portable.mjs', import.meta.url), 'utf8');
+const installerPackager = readFileSync(new URL('./package-squad-installers.mjs', import.meta.url), 'utf8');
 
 assertEqual(
   resolve({
@@ -139,18 +142,30 @@ assertNativeReleaseMatrix(releaseWorkflow, [
   ['macos-x64', 'macos-26-intel', 'darwin', 'x64'],
   ['windows-x64', 'windows-2025', 'win32', 'x64'],
 ]);
-assertNotIncludes(releaseWorkflow, 'WEB_RUNTIME_DIR', 'Release workflow keeps the web bundle separate from native assets');
-assertNotIncludes(releaseWorkflow, 'bun run release:portable', 'Release workflow does not require the incomplete portable packager');
-assertNotIncludes(releaseWorkflow, 'Download built web runtime', 'Native release jobs do not download a web runtime');
 assertIncludes(releaseWorkflow, 'AUTOHAND_SQUAD_RELEASE_VERSION', 'Release binaries embed resolved release versions');
 assertIncludes(releaseWorkflow, 'bun run check:sdk', 'Release workflow verifies the published Autohand SDK');
+assertIncludes(releaseWorkflow, 'Download built web runtime', 'Native release jobs download the versioned web runtime');
+assertIncludes(releaseWorkflow, 'WEB_RUNTIME_DIR', 'Native packaging receives the bundled web runtime');
+assertIncludes(releaseWorkflow, 'bun run release:portable', 'Release workflow assembles portable application archives');
+assertIncludes(releaseWorkflow, 'name: Smoke test portable application', 'Release workflow smoke-tests portable application archives');
+assertIncludes(releaseWorkflow, "import('@autohandai/agent-sdk')", 'Portable smoke test imports the bundled Agent SDK');
+assertIncludes(releaseWorkflow, 'NODE_VERSION: "22.23.1"', 'Release workflow pins the bundled Node.js runtime');
+assertIncludes(releaseWorkflow, 'bun run release:installers', 'Release workflow builds native installers');
+assertIncludes(releaseWorkflow, 'NODE_RUNTIME_PATH="$(node -p', 'Native installer packaging receives an explicit Node.js binary');
+assertIncludes(releaseWorkflow, 'name: Mount and smoke test macOS installer', 'Release workflow mounts and tests each DMG');
+assertIncludes(releaseWorkflow, 'name: Install and smoke test Windows installer', 'Release workflow installs and tests the NSIS executable');
+assertCount(releaseWorkflow, '--server-path', 2, 'Native installer smoke tests force the installed web server payload');
+assertIncludes(releaseWorkflow, 'autohand-squad-${RELEASE_VERSION}-macos-${RELEASE_ARCH}.dmg', 'macOS smoke test uses the public DMG name');
+assertIncludes(releaseWorkflow, 'autohand-squad-$env:RELEASE_VERSION-windows-x64-setup.exe', 'Windows smoke test uses the public installer name');
 assertIncludes(releaseWorkflow, 'REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64,darwin/x64,win32/x64', 'Release publishing requires every native target');
+assertIncludes(releaseWorkflow, "-name 'autohand-squad-*'", 'Release publishing includes native installer assets');
 assertIncludes(releaseWorkflow, 'contents: read', 'Release workflow defaults to read-only token permissions');
 assertIncludes(releaseWorkflow, 'contents: write', 'Release publish job has scoped content write permission');
 assertCount(releaseWorkflow, 'contents: write', 1, 'Only the publish job receives content write permission');
-assertIncludes(releaseWorkflow, 'DEFAULT_GH_TOKEN: ${{ github.token }}', 'Release publishing prefers the short-lived workflow token');
-assertIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN }}', 'Release publishing supports an explicit policy fallback token');
-assertIncludes(releaseWorkflow, 'token_can_publish "$DEFAULT_GH_TOKEN"', 'Release publishing checks the workflow token first');
+assertIncludes(releaseWorkflow, 'GH_TOKEN: ${{ github.token }}', 'Release publishing uses the short-lived job-scoped workflow token');
+assertNotIncludes(releaseWorkflow, '.permissions.push', 'Release publishing does not infer job-token permissions from repository metadata');
+assertNotIncludes(releaseWorkflow, 'token_can_publish', 'Release publishing does not reject valid granular job tokens with a repository permission probe');
+assertNotIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN', 'Release publishing does not expose a long-lived fallback token');
 assertNotIncludes(releaseWorkflow, 'attestations: write', 'Release workflow does not require org-blocked attestation permissions');
 assertIncludes(releaseWorkflow, 'gh release view "$RELEASE_TAG"', 'Release publishing detects an existing release');
 assertIncludes(releaseWorkflow, 'Refusing to replace published assets', 'Release publishing refuses to mutate an existing release');
@@ -165,6 +180,17 @@ assertIncludes(smokeWorkflow, 'Runner startup', 'Actions smoke workflow checks r
 assertIncludes(releaseNotes, 'Release Engineering', 'Release notes group release engineering changes');
 assertIncludes(packager, 'autohandai/squad', 'Release packager defaults to the org repo');
 assertIncludes(packager, 'binaryName: sourceName', 'Windows manifests retain executable suffixes');
+assertIncludes(portablePackager, "'autohand-squad-ui'", 'Portable bundle includes every native runtime binary');
+assertIncludes(portablePackager, "'autohand-windows-x64.exe'", 'Portable bundle includes the Windows Agent SDK CLI');
+assertIncludes(portablePackager, "for (const dependency of ['toml', 'yaml'])", 'Portable bundle vendors production SDK dependencies');
+assertIncludes(portablePackager, "spawnSync('tar'", 'Portable bundle creates one extractable archive');
+assertIncludes(installerPackager, "requiredEnv('NODE_RUNTIME_PATH')", 'Native installer requires an explicit Node.js runtime');
+assertIncludes(installerPackager, "binary === 'autohand-squad-ui'", 'Native installer launches the desktop UI binary');
+assertIncludes(installerPackager, "formats: [releaseOs === 'darwin' ? 'dmg' : 'nsis']", 'Native installer emits DMG and NSIS formats');
+assertIncludes(installerPackager, "installMode: 'currentUser'", 'Windows installer does not require administrator access');
+assertIncludes(installerPackager, "'autohand-windows-x64.exe'", 'Native installer vendors the Windows Agent SDK CLI');
+assertIncludes(installerPackager, 'validateNodeRuntime(nodeRuntimePath)', 'Native installer validates the staged Node.js runtime');
+assertEqual(packageMetadata.devDependencies?.['@crabnebula/packager'], '0.11.2', 'Native packager pin');
 
 checkManifestTargetValidation();
 checkReleaseRefVerification();
@@ -327,7 +353,6 @@ function assertNativeReleaseMatrix(workflow, expected) {
   assertEqual(entries.length, expected.length, 'Native release matrix complete entry count');
   assertEqual(JSON.stringify(entries), JSON.stringify(expected), 'Native release matrix entries');
 }
-
 function assertPinnedActionUses(workflow, label) {
   const uses = [...workflow.matchAll(/uses:\s+([^@\s]+)@([^\s#]+)/g)];
   if (uses.length === 0) {

@@ -1,4 +1,5 @@
 use crate::daemon::read_queue_items;
+use crate::live_status::{read_fresh_live_status_snapshot, LiveStatusSnapshot};
 use crate::state::{
     now_string, read_analytics_record, read_daemon_record, read_install_record,
     read_web_server_record, remove_analytics_record, write_analytics_record, AnalyticsRecord,
@@ -34,6 +35,7 @@ pub struct AnalyticsSnapshot {
     pub versions: VersionMetrics,
     pub work: WorkMetrics,
     pub telemetry: TelemetryMetrics,
+    pub usage: UsageMetrics,
     pub timestamps: RuntimeTimestamps,
     pub recent_errors: Vec<RecentError>,
 }
@@ -101,6 +103,49 @@ pub struct TelemetryMetrics {
     pub queue_failed: usize,
     pub errors: usize,
     pub last_event_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageMetrics {
+    pub total_records: usize,
+    pub active_sessions: usize,
+    pub total_tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_duration_ms: u64,
+    pub average_duration_ms: u64,
+    pub last_usage_at: Option<String>,
+    pub top_harnesses: Vec<UsageBreakdown>,
+    pub top_providers: Vec<UsageBreakdown>,
+    pub top_models: Vec<UsageBreakdown>,
+    pub recent: Vec<UsageRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageBreakdown {
+    pub label: String,
+    pub count: usize,
+    pub tokens: u64,
+    pub duration_ms: u64,
+    pub last_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageRecord {
+    pub at: Option<String>,
+    pub source: String,
+    pub harness: String,
+    pub agent_id: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub duration_ms: u64,
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -220,12 +265,14 @@ pub fn collect_analytics_snapshot(
 ) -> AnalyticsSnapshot {
     let queue = read_queue_items(paths).unwrap_or_default();
     let runs = read_json_values_from_dir(&paths.runs_dir);
+    let live_status = read_fresh_live_status_snapshot(paths);
     let telemetry = read_json_lines(&paths.telemetry_log);
     let generated_at = now_string();
     let services = service_metrics(paths);
     let versions = version_metrics(paths);
-    let work = work_metrics(&queue, &runs);
+    let work = work_metrics(&queue, &runs, live_status.as_ref());
     let telemetry_metrics = telemetry_metrics(&telemetry);
+    let usage = usage_metrics(&runs, &telemetry);
     let timestamps = runtime_timestamps(paths, Some(generated_at.clone()));
     let recent_errors = recent_errors(paths, &runs, &telemetry);
     let snapshot = AnalyticsSnapshot {
@@ -237,6 +284,7 @@ pub fn collect_analytics_snapshot(
         versions,
         work,
         telemetry: telemetry_metrics,
+        usage,
         timestamps,
         recent_errors,
     };
@@ -307,7 +355,11 @@ fn version_metrics(paths: &StatePaths) -> VersionMetrics {
     }
 }
 
-fn work_metrics(queue: &[crate::daemon::QueueItem], runs: &[Value]) -> WorkMetrics {
+fn work_metrics(
+    queue: &[crate::daemon::QueueItem],
+    runs: &[Value],
+    live_status: Option<&LiveStatusSnapshot>,
+) -> WorkMetrics {
     let running_statuses = ["queued", "running"];
     let mut active_agent_ids = HashSet::new();
     let mut running_runs = 0;
@@ -348,7 +400,18 @@ fn work_metrics(queue: &[crate::daemon::QueueItem], runs: &[Value]) -> WorkMetri
         .filter(|item| running_statuses.contains(&item.status.as_str()))
         .count();
     let active_work = running_runs + queue_active;
-    let working_agents = active_agent_ids.len().max(active_work);
+    let live_queue_depth = live_status.map(|status| status.queue_depth).unwrap_or(0);
+    let live_queued_jobs = live_status.map(|status| status.queued_jobs).unwrap_or(0);
+    let live_scheduled_jobs = live_status.map(|status| status.scheduled_jobs).unwrap_or(0);
+    let live_active_work = live_status.map(|status| status.active_work).unwrap_or(0);
+    let live_online_members = live_status.map(|status| status.online_members).unwrap_or(0);
+    let live_working_agents = live_status.map(|status| status.working_agents).unwrap_or(0);
+    let live_total_runs = live_status.map(|status| status.total_runs).unwrap_or(0);
+    let merged_active_work = active_work + live_active_work;
+    let working_agents = active_agent_ids
+        .len()
+        .max(active_work)
+        .max(live_working_agents);
     let completed_or_failed = completed_runs + failed_runs;
     let failure_rate = if completed_or_failed == 0 {
         0.0
@@ -357,18 +420,18 @@ fn work_metrics(queue: &[crate::daemon::QueueItem], runs: &[Value]) -> WorkMetri
     };
 
     WorkMetrics {
-        queue_depth,
-        queued_jobs,
-        scheduled_jobs,
-        active_work,
-        online_members: working_agents,
+        queue_depth: queue_depth + live_queue_depth,
+        queued_jobs: queued_jobs + live_queued_jobs,
+        scheduled_jobs: scheduled_jobs + live_scheduled_jobs,
+        active_work: merged_active_work,
+        online_members: working_agents.max(live_online_members),
         working_agents,
-        total_runs: runs.len(),
+        total_runs: runs.len() + live_total_runs,
         running_runs,
         completed_runs,
         failed_runs,
         rejected_runs,
-        queue_volume: queue.len() + runs.len(),
+        queue_volume: queue.len() + runs.len() + live_queue_depth + live_total_runs,
         failure_rate,
     }
 }
@@ -415,6 +478,277 @@ fn telemetry_metrics(events: &[Value]) -> TelemetryMetrics {
         errors,
         last_event_at,
     }
+}
+
+fn usage_metrics(runs: &[Value], events: &[Value]) -> UsageMetrics {
+    let mut records = Vec::new();
+
+    for event in events {
+        if let Some(record) = usage_record_from_event(event) {
+            records.push(record);
+        }
+    }
+
+    for run in runs {
+        if let Some(record) = usage_record_from_run(run) {
+            records.push(record);
+        }
+    }
+
+    records.sort_by(|a, b| b.at.cmp(&a.at));
+
+    let total_records = records.len();
+    let active_sessions = records
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.status.as_deref(),
+                Some("queued" | "running" | "launching")
+            )
+        })
+        .count();
+    let total_tokens = records.iter().map(|record| record.tokens).sum();
+    let input_tokens = records.iter().map(|record| record.input_tokens).sum();
+    let output_tokens = records.iter().map(|record| record.output_tokens).sum();
+    let total_duration_ms = records.iter().map(|record| record.duration_ms).sum();
+    let timed_records = records
+        .iter()
+        .filter(|record| record.duration_ms > 0)
+        .count() as u64;
+    let average_duration_ms = if timed_records > 0 {
+        total_duration_ms / timed_records
+    } else {
+        0
+    };
+    let last_usage_at = records.first().and_then(|record| record.at.clone());
+
+    UsageMetrics {
+        total_records,
+        active_sessions,
+        total_tokens,
+        input_tokens,
+        output_tokens,
+        total_duration_ms,
+        average_duration_ms,
+        last_usage_at,
+        top_harnesses: usage_breakdown(&records, |record| Some(record.harness.clone())),
+        top_providers: usage_breakdown(&records, |record| record.provider.clone()),
+        top_models: usage_breakdown(&records, |record| record.model.clone()),
+        recent: records.into_iter().take(12).collect(),
+    }
+}
+
+fn usage_record_from_event(event: &Value) -> Option<UsageRecord> {
+    let metadata = event.get("metadata").unwrap_or(event);
+    let event_name = string_field(event, &["event"]).unwrap_or_default();
+    let tokens = number_field(metadata, &["tokens", "totalTokens", "total_tokens"])
+        .or_else(|| {
+            nested_number_field(
+                metadata,
+                &[
+                    &["usage", "tokens"],
+                    &["usage", "totalTokens"],
+                    &["usage", "total_tokens"],
+                ],
+            )
+        })
+        .unwrap_or(0);
+    let input_tokens = number_field(
+        metadata,
+        &[
+            "inputTokens",
+            "input_tokens",
+            "promptTokens",
+            "prompt_tokens",
+        ],
+    )
+    .or_else(|| {
+        nested_number_field(
+            metadata,
+            &[
+                &["usage", "inputTokens"],
+                &["usage", "promptTokens"],
+                &["usage", "input_tokens"],
+            ],
+        )
+    })
+    .unwrap_or(0);
+    let output_tokens = number_field(
+        metadata,
+        &[
+            "outputTokens",
+            "output_tokens",
+            "completionTokens",
+            "completion_tokens",
+        ],
+    )
+    .or_else(|| {
+        nested_number_field(
+            metadata,
+            &[
+                &["usage", "outputTokens"],
+                &["usage", "completionTokens"],
+                &["usage", "output_tokens"],
+            ],
+        )
+    })
+    .unwrap_or(0);
+    let duration_ms = number_field(
+        metadata,
+        &["durationMs", "duration_ms", "elapsedMs", "elapsed_ms"],
+    )
+    .unwrap_or(0);
+    let provider = string_field(metadata, &["provider"]).or_else(|| {
+        nested_string_field(
+            metadata,
+            &[&["effectiveModel", "provider"], &["model", "provider"]],
+        )
+    });
+    let model = string_field(metadata, &["model"]).or_else(|| {
+        nested_string_field(
+            metadata,
+            &[&["effectiveModel", "model"], &["model", "model"]],
+        )
+    });
+    let harness = string_field(
+        metadata,
+        &["harness", "transport", "clientType", "client_type"],
+    )
+    .or_else(|| string_field(event, &["surface", "clientType", "client_type"]))
+    .unwrap_or_else(|| "telemetry".to_string());
+    let status = string_field(metadata, &["status"]).or_else(|| {
+        if event_name.is_empty() {
+            None
+        } else {
+            Some(event_name.clone())
+        }
+    });
+
+    let has_usage_signal = tokens > 0
+        || input_tokens > 0
+        || output_tokens > 0
+        || duration_ms > 0
+        || provider.is_some()
+        || model.is_some()
+        || event_name.contains("usage")
+        || event_name.contains("chat")
+        || event_name.starts_with("launcher.");
+    if !has_usage_signal {
+        return None;
+    }
+
+    Some(UsageRecord {
+        at: string_field(event, &["timestamp"]),
+        source: event_name,
+        harness,
+        agent_id: string_field(metadata, &["agentId", "agent_id"]),
+        provider,
+        model,
+        tokens: tokens.max(input_tokens + output_tokens),
+        input_tokens,
+        output_tokens,
+        duration_ms,
+        status,
+    })
+}
+
+fn usage_record_from_run(run: &Value) -> Option<UsageRecord> {
+    let status = string_field(run, &["status"]);
+    let started_at = string_field(run, &["startedAt", "started_at", "createdAt", "created_at"]);
+    let finished_at = string_field(
+        run,
+        &["finishedAt", "finished_at", "completedAt", "completed_at"],
+    );
+    let effective_model = run
+        .get("effectiveModel")
+        .or_else(|| run.get("effective_model"));
+    let provider = effective_model
+        .and_then(|value| string_field(value, &["provider"]))
+        .or_else(|| string_field(run, &["provider"]));
+    let model = effective_model
+        .and_then(|value| string_field(value, &["model"]))
+        .or_else(|| string_field(run, &["model"]));
+    let harness = string_field(run, &["transport"])
+        .or_else(|| string_field(run, &["harness"]))
+        .or_else(|| command_harness(string_field(run, &["command"]).as_deref()))
+        .unwrap_or_else(|| "autohand-cli".to_string());
+    let duration_ms = number_field(run, &["durationMs", "duration_ms"])
+        .or_else(|| duration_between(started_at.as_deref(), finished_at.as_deref()))
+        .unwrap_or(0);
+
+    if started_at.is_none() && finished_at.is_none() && status.is_none() {
+        return None;
+    }
+
+    Some(UsageRecord {
+        at: finished_at.or(started_at),
+        source: "run".to_string(),
+        harness,
+        agent_id: string_field(run, &["agentId", "agent_id"]),
+        provider,
+        model,
+        tokens: number_field(run, &["tokens", "totalTokens", "total_tokens"]).unwrap_or(0),
+        input_tokens: number_field(
+            run,
+            &[
+                "inputTokens",
+                "input_tokens",
+                "promptTokens",
+                "prompt_tokens",
+            ],
+        )
+        .unwrap_or(0),
+        output_tokens: number_field(
+            run,
+            &[
+                "outputTokens",
+                "output_tokens",
+                "completionTokens",
+                "completion_tokens",
+            ],
+        )
+        .unwrap_or(0),
+        duration_ms,
+        status,
+    })
+}
+
+fn usage_breakdown<F>(records: &[UsageRecord], label_for: F) -> Vec<UsageBreakdown>
+where
+    F: Fn(&UsageRecord) -> Option<String>,
+{
+    let mut by_label: BTreeMap<String, UsageBreakdown> = BTreeMap::new();
+    for record in records {
+        let Some(label) = label_for(record).filter(|label| !label.trim().is_empty()) else {
+            continue;
+        };
+        let entry = by_label
+            .entry(label.clone())
+            .or_insert_with(|| UsageBreakdown {
+                label,
+                count: 0,
+                tokens: 0,
+                duration_ms: 0,
+                last_at: None,
+            });
+        entry.count += 1;
+        entry.tokens += record.tokens;
+        entry.duration_ms += record.duration_ms;
+        if entry.last_at.as_deref().unwrap_or("") < record.at.as_deref().unwrap_or("") {
+            entry.last_at = record.at.clone();
+        }
+    }
+
+    let mut rows = by_label.into_values().collect::<Vec<_>>();
+    rows.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| b.tokens.cmp(&a.tokens))
+            .then_with(|| b.duration_ms.cmp(&a.duration_ms))
+            .then_with(|| a.label.cmp(&b.label))
+    });
+    rows.truncate(8);
+    rows
 }
 
 fn runtime_timestamps(paths: &StatePaths, last_snapshot_at: Option<String>) -> RuntimeTimestamps {
@@ -671,6 +1005,89 @@ fn string_field(value: &Value, fields: &[&str]) -> Option<String> {
     })
 }
 
+fn number_field(value: &Value, fields: &[&str]) -> Option<u64> {
+    fields.iter().find_map(|field| {
+        value.get(*field).and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| {
+                    value
+                        .as_f64()
+                        .filter(|number| *number >= 0.0)
+                        .map(|number| number as u64)
+                })
+                .or_else(|| {
+                    value
+                        .as_str()
+                        .and_then(|text| text.trim().parse::<u64>().ok())
+                })
+        })
+    })
+}
+
+fn nested_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some(current)
+}
+
+fn nested_string_field(value: &Value, paths: &[&[&str]]) -> Option<String> {
+    paths.iter().find_map(|path| {
+        nested_value(value, path)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn nested_number_field(value: &Value, paths: &[&[&str]]) -> Option<u64> {
+    paths.iter().find_map(|path| {
+        nested_value(value, path).and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| {
+                    value
+                        .as_f64()
+                        .filter(|number| *number >= 0.0)
+                        .map(|number| number as u64)
+                })
+                .or_else(|| {
+                    value
+                        .as_str()
+                        .and_then(|text| text.trim().parse::<u64>().ok())
+                })
+        })
+    })
+}
+
+fn command_harness(command: Option<&str>) -> Option<String> {
+    let lower = command?.to_ascii_lowercase();
+    if lower.contains("autohand") {
+        Some("autohand-cli".to_string())
+    } else if lower.contains("codex") {
+        Some("codex-cli".to_string())
+    } else if lower.contains("claude") {
+        Some("claude-code-cli".to_string())
+    } else {
+        None
+    }
+}
+
+fn timestamp_millis(value: Option<&str>) -> Option<u64> {
+    let text = value?.trim();
+    text.strip_prefix("unix-ms:")
+        .and_then(|millis| millis.parse::<u64>().ok())
+        .or_else(|| text.parse::<u64>().ok())
+}
+
+fn duration_between(started_at: Option<&str>, finished_at: Option<&str>) -> Option<u64> {
+    let started = timestamp_millis(started_at)?;
+    let finished = timestamp_millis(finished_at)?;
+    (finished >= started).then_some(finished - started)
+}
+
 fn tail_lines(path: &Path, limit: usize) -> Vec<String> {
     let mut lines = fs::read_to_string(path)
         .unwrap_or_default()
@@ -783,6 +1200,8 @@ mod tests {
                 r#"{"event":"queue.failed","timestamp":"unix-ms:2","clientType":"squad","surface":"squad-daemon"}"#,
                 "\n",
                 r#"{"event":"error","timestamp":"unix-ms:3","clientType":"squad","surface":"squad-daemon","metadata":{"runId":"run-2","error":"boom"}}"#,
+                "\n",
+                r#"{"event":"usage.recorded","timestamp":"unix-ms:4","clientType":"squad","surface":"squad-web","metadata":{"harness":"autohand-cli","provider":"openrouter","model":"openrouter/auto","tokens":1200,"inputTokens":700,"outputTokens":500,"durationMs":2300,"agentId":"asq_1","status":"completed"}}"#,
                 "\n"
             ),
         )
@@ -794,10 +1213,16 @@ mod tests {
         assert_eq!(snapshot.work.scheduled_jobs, 1);
         assert_eq!(snapshot.work.active_work, 2);
         assert_eq!(snapshot.work.failed_runs, 1);
-        assert_eq!(snapshot.telemetry.total_events, 3);
+        assert_eq!(snapshot.telemetry.total_events, 4);
         assert_eq!(snapshot.telemetry.queue_created, 1);
         assert_eq!(snapshot.telemetry.queue_failed, 1);
         assert_eq!(snapshot.telemetry.errors, 1);
+        assert_eq!(snapshot.usage.total_tokens, 1200);
+        assert_eq!(snapshot.usage.input_tokens, 700);
+        assert_eq!(snapshot.usage.output_tokens, 500);
+        assert_eq!(snapshot.usage.top_harnesses[0].label, "autohand-cli");
+        assert_eq!(snapshot.usage.top_providers[0].label, "openrouter");
+        assert_eq!(snapshot.usage.top_models[0].label, "openrouter/auto");
         assert!(!snapshot.recent_errors.is_empty());
         let _ = fs::remove_dir_all(paths.root);
     }

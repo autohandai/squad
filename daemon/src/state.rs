@@ -31,6 +31,8 @@ pub struct StatePaths {
     pub analytics_snapshot_json: PathBuf,
     pub web_server_json: PathBuf,
     pub web_server_log: PathBuf,
+    pub web_status_json: PathBuf,
+    pub channels_json: PathBuf,
     pub tray_json: PathBuf,
     pub tray_log: PathBuf,
 }
@@ -78,6 +80,69 @@ pub struct WebServerRecord {
     pub started_at: String,
 }
 
+fn default_channel_visibility() -> String {
+    "public".to_string()
+}
+
+/// Squad channel metadata mirrored from the web app's channels.json so the
+/// daemon can surface channel/thread state in queue/run telemetry across
+/// restarts. Auto mode (self-judge) defaults OFF: absent fields deserialize
+/// to `false`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelRecord {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "default_channel_visibility")]
+    pub visibility: String,
+    #[serde(default)]
+    pub member_ids: Vec<String>,
+    #[serde(default)]
+    pub creator_id: String,
+    #[serde(default)]
+    pub auto_mode_default: bool,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelThreadRecord {
+    pub id: String,
+    pub channel_id: String,
+    #[serde(default)]
+    pub parent_message_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub creator_id: String,
+    #[serde(default)]
+    pub member_ids: Vec<String>,
+    #[serde(default)]
+    pub auto_mode: bool,
+    #[serde(default)]
+    pub self_judge: bool,
+    #[serde(default)]
+    pub reply_count: usize,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelsState {
+    #[serde(default)]
+    pub channels: Vec<ChannelRecord>,
+    #[serde(default)]
+    pub threads: Vec<ChannelThreadRecord>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TrayRecord {
@@ -112,6 +177,8 @@ impl StatePaths {
             analytics_snapshot_json: root.join("analytics-snapshot.json"),
             web_server_json: root.join("web-server.json"),
             web_server_log: root.join("web-server.log"),
+            web_status_json: root.join("web-status.json"),
+            channels_json: root.join("channels.json"),
             tray_json: root.join("tray.json"),
             tray_log: root.join("tray.log"),
             root,
@@ -139,9 +206,16 @@ pub fn default_state_root() -> PathBuf {
     let autohand_home = env::var("AUTOHAND_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            env::var("HOME")
-                .map(|home| PathBuf::from(home).join(".autohand"))
-                .unwrap_or_else(|_| PathBuf::from(".autohand"))
+            ["HOME", "USERPROFILE"]
+                .into_iter()
+                .find_map(|name| {
+                    env::var(name)
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                        .map(PathBuf::from)
+                })
+                .map(|home| home.join(".autohand"))
+                .unwrap_or_else(|| PathBuf::from(".autohand"))
         });
 
     autohand_home.join("squad")
@@ -241,6 +315,15 @@ pub fn remove_web_server_record(paths: &StatePaths) -> Result<()> {
     Ok(())
 }
 
+pub fn read_channels_state(paths: &StatePaths) -> Result<Option<ChannelsState>> {
+    read_json_file(&paths.channels_json)
+}
+
+pub fn write_channels_state(paths: &StatePaths, state: &ChannelsState) -> Result<()> {
+    paths.ensure()?;
+    write_json_file(&paths.channels_json, state)
+}
+
 pub fn read_tray_record(paths: &StatePaths) -> Result<Option<TrayRecord>> {
     read_json_file(&paths.tray_json)
 }
@@ -306,6 +389,37 @@ mod tests {
         assert!(paths.queue_dir.is_dir());
         assert!(paths.runs_dir.is_dir());
         assert_eq!(device_id, fs::read_to_string(paths.device_id).unwrap());
+        let _ = fs::remove_dir_all(paths.root);
+    }
+
+    #[test]
+    fn channels_state_round_trips_and_defaults_auto_mode_off() {
+        let paths = temp_state_paths();
+
+        assert_eq!(read_channels_state(&paths).unwrap(), None);
+
+        // Legacy/partial records omit autoModeDefault, memberIds, and thread
+        // flags; deserialization must fall back to auto mode OFF.
+        fs::create_dir_all(&paths.root).unwrap();
+        fs::write(
+            &paths.channels_json,
+            r#"{
+                "channels": [{ "id": "channel_general", "name": "general" }],
+                "threads": [{ "id": "thread_1", "channelId": "channel_general" }]
+            }"#,
+        )
+        .unwrap();
+        let state = read_channels_state(&paths).unwrap().unwrap();
+        assert_eq!(state.channels.len(), 1);
+        assert_eq!(state.channels[0].visibility, "public");
+        assert!(!state.channels[0].auto_mode_default);
+        assert!(state.channels[0].member_ids.is_empty());
+        assert_eq!(state.threads.len(), 1);
+        assert!(!state.threads[0].auto_mode);
+        assert!(!state.threads[0].self_judge);
+
+        write_channels_state(&paths, &state).unwrap();
+        assert_eq!(read_channels_state(&paths).unwrap().unwrap(), state);
         let _ = fs::remove_dir_all(paths.root);
     }
 }

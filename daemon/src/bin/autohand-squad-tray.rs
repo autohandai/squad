@@ -2,6 +2,7 @@ use autohand_squad_runtime::config::PartialSquadConfig;
 use autohand_squad_runtime::native_tray::run_native_tray;
 use autohand_squad_runtime::ui::{default_paths, describe_tray, run_tray_action, TrayAction};
 use clap::Parser;
+use std::path::Path;
 use tokio::runtime::Runtime;
 
 #[derive(Debug, Parser)]
@@ -85,6 +86,25 @@ fn run() -> anyhow::Result<()> {
     }
 
     if !args.describe {
+        if std::env::current_exe()
+            .ok()
+            .as_deref()
+            .is_some_and(is_desktop_ui_executable)
+        {
+            let runtime = Runtime::new()?;
+            let output = runtime.block_on(run_tray_action(
+                paths.clone(),
+                overrides.clone(),
+                TrayAction::StartService,
+            ))?;
+            print!("{output}");
+            let output = runtime.block_on(run_tray_action(
+                paths.clone(),
+                overrides.clone(),
+                TrayAction::OpenSquad,
+            ))?;
+            print!("{output}");
+        }
         return run_native_tray(paths, overrides);
     }
 
@@ -92,4 +112,26 @@ fn run() -> anyhow::Result<()> {
     let snapshot = runtime.block_on(describe_tray(paths, overrides, args.platform))?;
     println!("{}", serde_json::to_string_pretty(&snapshot)?);
     Ok(())
+}
+
+fn is_desktop_ui_executable(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("autohand-squad-ui"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_ui_binary_bootstraps_the_stack() {
+        assert!(is_desktop_ui_executable(Path::new(
+            "/Applications/Autohand Squad.app/Contents/MacOS/autohand-squad-ui"
+        )));
+        assert!(is_desktop_ui_executable(Path::new("autohand-squad-ui.exe")));
+        assert!(!is_desktop_ui_executable(Path::new(
+            "/usr/local/bin/autohand-squad-tray"
+        )));
+    }
 }

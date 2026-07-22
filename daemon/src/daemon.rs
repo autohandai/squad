@@ -1,8 +1,12 @@
 use crate::api::{ApiClient, RemoteMetrics, TelemetryFlushSnapshot};
 use crate::config::{resolve_config, ConfigOverrides, SquadConfig};
+use crate::live_status::{
+    read_fresh_live_status_snapshot, LiveStatusAutomation, LiveStatusJob, LiveStatusMember,
+};
 use crate::state::{
-    default_state_paths, ensure_device_id, now_string, read_daemon_record, remove_daemon_record,
-    write_daemon_record, DaemonRecord, StatePaths,
+    default_state_paths, ensure_device_id, now_string, read_channels_state, read_daemon_record,
+    remove_daemon_record, write_channels_state, write_daemon_record, ChannelsState, DaemonRecord,
+    StatePaths,
 };
 use crate::telemetry::{append_telemetry_event, daemon_event, TelemetryEvent};
 use crate::VERSION;
@@ -17,7 +21,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::Command;
@@ -36,6 +40,10 @@ pub struct QueueItem {
     pub created_at: Option<String>,
     pub scheduled_for: Option<String>,
     pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -57,11 +65,25 @@ pub struct StatusResponse {
     pub accepting_work: bool,
     pub queue_depth: usize,
     pub active_runs: usize,
+    #[serde(default)]
+    pub running_sessions: usize,
+    #[serde(default)]
+    pub active_trigger_work: usize,
     pub account: AccountState,
     pub online_members: usize,
     pub working_agents: usize,
     pub queued_jobs: usize,
     pub scheduled_jobs: usize,
+    #[serde(default)]
+    pub channels: usize,
+    #[serde(default)]
+    pub channel_threads: usize,
+    #[serde(default)]
+    pub members: Vec<LiveStatusMember>,
+    #[serde(default)]
+    pub jobs: Vec<LiveStatusJob>,
+    #[serde(default)]
+    pub automations: Vec<LiveStatusAutomation>,
     pub launch_at_login_policy: String,
     pub telemetry_policy: String,
     pub last_device_registration_at: Option<String>,
@@ -89,10 +111,20 @@ pub struct LifecycleResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct LoginRequest {
+    pub email: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct EnqueueRequest {
     pub prompt: String,
     pub workspace: Option<String>,
     pub scheduled_for: Option<String>,
+    #[serde(default)]
+    pub channel_id: Option<String>,
+    #[serde(default)]
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -102,6 +134,10 @@ pub struct RunRequest {
     pub workspace: Option<String>,
     pub agent_id: Option<String>,
     pub extra_args: Option<Vec<String>>,
+    #[serde(default)]
+    pub channel_id: Option<String>,
+    #[serde(default)]
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -118,6 +154,10 @@ pub struct RunRecord {
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
     pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -176,6 +216,7 @@ pub struct UpdateSnapshot {
 struct AppState {
     paths: StatePaths,
     config: SquadConfig,
+    account_email: Arc<StdMutex<Option<String>>>,
     accepting_work: Arc<AtomicBool>,
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
     device_id: String,
@@ -219,6 +260,7 @@ pub async fn run_daemon_with_paths(paths: StatePaths, overrides: ConfigOverrides
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
     let state = Arc::new(AppState {
         paths: paths.clone(),
+        account_email: Arc::new(StdMutex::new(config.account_email.clone())),
         config,
         accepting_work: Arc::new(AtomicBool::new(true)),
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
@@ -350,6 +392,18 @@ async fn route_request(
             let (status, item) = enqueue_response(state, input);
             write_json_response(stream, status, &item).await
         }
+        ("GET", "/channels") => {
+            let channels = read_channels_state(&state.paths)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            write_json_response(stream, 200, &channels).await
+        }
+        ("POST" | "PUT", "/channels") => {
+            let input = parse_json_body::<ChannelsState>(&request.body)?;
+            let (status, response) = channels_sync_response(state, input);
+            write_json_response(stream, status, &response).await
+        }
         ("GET", "/config") => write_json_response(stream, 200, &state.config).await,
         ("GET", "/runs") => write_json_response(stream, 200, &runs_response(state)).await,
         ("POST", "/runs") => {
@@ -386,6 +440,11 @@ async fn route_request(
         ("POST", "/heartbeat") => {
             let response = heartbeat_response(state).await;
             write_json_response(stream, 200, &response).await
+        }
+        ("POST", "/auth/login") => {
+            let input = parse_json_body::<LoginRequest>(&request.body)?;
+            let (status, response) = login_response(state, input);
+            write_json_response(stream, status, &response).await
         }
         ("POST", "/auth/logout") => {
             let response = logout_response(state);
@@ -444,6 +503,7 @@ where
         200 => "OK",
         201 => "Created",
         202 => "Accepted",
+        400 => "Bad Request",
         404 => "Not Found",
         503 => "Service Unavailable",
         _ => "OK",
@@ -483,6 +543,8 @@ fn enqueue_response(state: &AppState, request: EnqueueRequest) -> (u16, QueueIte
                 created_at: Some(now_string()),
                 scheduled_for: request.scheduled_for,
                 workspace: request.workspace,
+                channel_id: request.channel_id,
+                thread_id: request.thread_id,
             },
         );
     }
@@ -494,6 +556,8 @@ fn enqueue_response(state: &AppState, request: EnqueueRequest) -> (u16, QueueIte
         created_at: Some(now_string()),
         scheduled_for: request.scheduled_for,
         workspace: request.workspace,
+        channel_id: request.channel_id,
+        thread_id: request.thread_id,
     };
     if let Err(error) = write_queue_item(&state.paths, &item) {
         append_server_log(&state.paths, &format!("queue write failed: {error:#}"));
@@ -505,6 +569,8 @@ fn enqueue_response(state: &AppState, request: EnqueueRequest) -> (u16, QueueIte
             "id": item.id,
             "workspace": item.workspace,
             "scheduledFor": item.scheduled_for,
+            "channelId": item.channel_id,
+            "threadId": item.thread_id,
             "queueDepth": read_queue_items(&state.paths).map(|items| items.len()).unwrap_or(0)
         }),
     );
@@ -623,15 +689,58 @@ async fn heartbeat_response(state: &AppState) -> LifecycleResponse {
 }
 
 fn logout_response(state: &AppState) -> LifecycleResponse {
+    let previous_account = current_account_email(state);
+    if let Ok(mut account_email) = state.account_email.lock() {
+        *account_email = None;
+    }
     record_daemon_event(
         state,
         "account.logout_requested",
-        json!({ "accountEmail": state.config.account_email }),
+        json!({ "accountEmail": previous_account }),
     );
     LifecycleResponse {
         success: true,
-        message: "logout requested".to_string(),
+        message: previous_account
+            .map(|email| format!("logged out {email}"))
+            .unwrap_or_else(|| "already logged out".to_string()),
     }
+}
+
+fn login_response(state: &AppState, request: LoginRequest) -> (u16, LifecycleResponse) {
+    let Some(email) = normalize_account_email(&request.email) else {
+        return (
+            400,
+            LifecycleResponse {
+                success: false,
+                message: "email is required".to_string(),
+            },
+        );
+    };
+
+    if let Ok(mut account_email) = state.account_email.lock() {
+        *account_email = Some(email.clone());
+    } else {
+        return (
+            503,
+            LifecycleResponse {
+                success: false,
+                message: "account state unavailable".to_string(),
+            },
+        );
+    }
+
+    record_daemon_event(
+        state,
+        "account.login_requested",
+        json!({ "accountEmail": email }),
+    );
+    (
+        200,
+        LifecycleResponse {
+            success: true,
+            message: format!("logged in as {email}"),
+        },
+    )
 }
 
 fn launch_at_login_response(state: &AppState) -> LifecycleResponse {
@@ -907,9 +1016,32 @@ async fn stop_response(state: &AppState) -> LifecycleResponse {
     }
 }
 
+// Persist the channel/thread snapshot proxied from the web server so channel
+// orchestration metadata survives web reloads and daemon restarts.
+fn channels_sync_response(state: &AppState, mut input: ChannelsState) -> (u16, ChannelsState) {
+    input.updated_at = Some(now_string());
+    if let Err(error) = write_channels_state(&state.paths, &input) {
+        append_server_log(&state.paths, &format!("channels write failed: {error:#}"));
+        return (503, input);
+    }
+    record_daemon_event(
+        state,
+        "channels.synced",
+        json!({
+            "channels": input.channels.len(),
+            "threads": input.threads.len(),
+        }),
+    );
+    (200, input)
+}
+
 fn status_payload(state: &AppState) -> StatusResponse {
     let daemon = read_daemon_record(&state.paths).ok().flatten();
     let metrics = daemon_metrics(state);
+    let channels_state = read_channels_state(&state.paths)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     StatusResponse {
         success: true,
         service: "autohand-squad-daemon".to_string(),
@@ -920,14 +1052,21 @@ fn status_payload(state: &AppState) -> StatusResponse {
         accepting_work: state.accepting_work.load(Ordering::SeqCst),
         queue_depth: metrics.queue_depth,
         active_runs: metrics.active_runs,
+        running_sessions: metrics.running_sessions,
+        active_trigger_work: metrics.active_trigger_work,
         account: AccountState {
-            email: state.config.account_email.clone(),
+            email: current_account_email(state),
             plan_state: state.config.plan_state.clone(),
         },
         online_members: metrics.online_members,
         working_agents: metrics.working_agents,
         queued_jobs: metrics.queued_jobs,
         scheduled_jobs: metrics.scheduled_jobs,
+        channels: channels_state.channels.len(),
+        channel_threads: channels_state.threads.len(),
+        members: metrics.members,
+        jobs: metrics.jobs,
+        automations: metrics.automations,
         launch_at_login_policy: state.config.launch_at_login_policy.clone(),
         telemetry_policy: state.config.telemetry_policy.clone(),
         last_device_registration_at: read_timestamp_field(
@@ -949,19 +1088,42 @@ fn status_payload(state: &AppState) -> StatusResponse {
     }
 }
 
+fn current_account_email(state: &AppState) -> Option<String> {
+    state
+        .account_email
+        .lock()
+        .ok()
+        .and_then(|account_email| account_email.as_deref().and_then(normalize_account_email))
+}
+
+fn normalize_account_email(email: &str) -> Option<String> {
+    let trimmed = email.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 struct DaemonMetrics {
     queue_depth: usize,
     queued_jobs: usize,
     scheduled_jobs: usize,
     active_runs: usize,
+    running_sessions: usize,
+    active_trigger_work: usize,
     working_agents: usize,
     online_members: usize,
     run_count: usize,
+    members: Vec<LiveStatusMember>,
+    jobs: Vec<LiveStatusJob>,
+    automations: Vec<LiveStatusAutomation>,
 }
 
 fn daemon_metrics(state: &AppState) -> DaemonMetrics {
     let queue = read_queue_items(&state.paths).unwrap_or_default();
     let runs = read_run_records(&state.paths).unwrap_or_default();
+    let live_status = read_fresh_live_status_snapshot(&state.paths);
     let active_runs: Vec<&RunRecord> = runs.iter().filter(|run| run_is_active(run)).collect();
     let agent_ids = active_runs
         .iter()
@@ -970,18 +1132,46 @@ fn daemon_metrics(state: &AppState) -> DaemonMetrics {
         .collect::<HashSet<_>>();
     let active_count = active_runs.len();
     let agent_count = agent_ids.len();
+    let live = live_status.as_ref();
+    let live_queue_depth = live.map(|snapshot| snapshot.queue_depth).unwrap_or(0);
+    let live_queued_jobs = live.map(|snapshot| snapshot.queued_jobs).unwrap_or(0);
+    let live_scheduled_jobs = live.map(|snapshot| snapshot.scheduled_jobs).unwrap_or(0);
+    let live_active_work = live.map(|snapshot| snapshot.active_work).unwrap_or(0);
+    let live_online_members = live.map(|snapshot| snapshot.online_members).unwrap_or(0);
+    let live_working_agents = live.map(|snapshot| snapshot.working_agents).unwrap_or(0);
+    let live_run_count = live.map(|snapshot| snapshot.total_runs).unwrap_or(0);
+    let live_members = live
+        .map(|snapshot| snapshot.members.clone())
+        .unwrap_or_default();
+    let live_jobs = live
+        .map(|snapshot| snapshot.jobs.clone())
+        .unwrap_or_default();
+    let live_automations = live
+        .map(|snapshot| snapshot.automations.clone())
+        .unwrap_or_default();
+    let queued_jobs = queue.iter().filter(|item| item.status == "queued").count();
+    let running_queue_jobs = queue.iter().filter(|item| item.status == "running").count();
+    let scheduled_jobs = queue
+        .iter()
+        .filter(|item| item.scheduled_for.is_some())
+        .count();
+    let active_trigger_work = running_queue_jobs + live_active_work;
+    let working_agents = agent_count.max(active_count).max(live_working_agents);
+    let online_members = agent_count.max(active_count).max(live_online_members);
 
     DaemonMetrics {
-        queue_depth: queue.len(),
-        queued_jobs: queue.iter().filter(|item| item.status == "queued").count(),
-        scheduled_jobs: queue
-            .iter()
-            .filter(|item| item.scheduled_for.is_some())
-            .count(),
-        active_runs: active_count,
-        working_agents: agent_count.max(active_count),
-        online_members: agent_count.max(active_count),
-        run_count: runs.len(),
+        queue_depth: queue.len() + live_queue_depth,
+        queued_jobs: queued_jobs + live_queued_jobs,
+        scheduled_jobs: scheduled_jobs + live_scheduled_jobs,
+        active_runs: active_count + active_trigger_work,
+        running_sessions: active_count,
+        active_trigger_work,
+        working_agents,
+        online_members,
+        run_count: runs.len() + live_run_count,
+        members: live_members,
+        jobs: live_jobs,
+        automations: live_automations,
     }
 }
 
@@ -1068,6 +1258,16 @@ pub fn read_queue_items(paths: &StatePaths) -> Result<Vec<QueueItem>> {
                 .get("workspace")
                 .and_then(|value| value.as_str())
                 .map(ToString::to_string),
+            channel_id: parsed
+                .get("channelId")
+                .or_else(|| parsed.get("channel_id"))
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
+            thread_id: parsed
+                .get("threadId")
+                .or_else(|| parsed.get("thread_id"))
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
         });
     }
     items.sort_by(|a, b| {
@@ -1112,6 +1312,8 @@ fn new_run_record(paths: &StatePaths, request: RunRequest, status: &str) -> RunR
         started_at: None,
         completed_at: None,
         exit_code: None,
+        channel_id: request.channel_id,
+        thread_id: request.thread_id,
     }
 }
 
@@ -1361,6 +1563,8 @@ mod tests {
                 workspace: Some(paths.root.display().to_string()),
                 agent_id: Some("agent-1".to_string()),
                 extra_args: Some(vec!["--dry-run".to_string()]),
+                channel_id: None,
+                thread_id: None,
             },
             "running",
         );
@@ -1368,6 +1572,7 @@ mod tests {
 
         let state = AppState {
             paths: paths.clone(),
+            account_email: Arc::new(StdMutex::new(None)),
             config: SquadConfig::defaults(),
             accepting_work: Arc::new(AtomicBool::new(true)),
             shutdown_tx: Arc::new(Mutex::new(None)),
@@ -1377,7 +1582,74 @@ mod tests {
 
         assert_eq!(read_run_records(&paths).unwrap().len(), 1);
         assert_eq!(status.active_runs, 1);
+        assert_eq!(status.running_sessions, 1);
+        assert_eq!(status.active_trigger_work, 0);
         assert_eq!(status.queue_depth, 0);
+        let _ = fs::remove_dir_all(paths.root);
+    }
+
+    #[test]
+    fn status_counts_live_web_snapshot_members_and_progress() {
+        let paths = temp_state_paths();
+        paths.ensure().unwrap();
+        fs::write(
+            &paths.web_status_json,
+            r#"{"source":"web-console","updatedAt":"2026-05-27T00:00:00Z","onlineMembers":5,"workingAgents":2,"queuedJobs":1,"scheduledJobs":3,"activeWork":2,"queueDepth":1,"totalRuns":4,"members":[{"id":"asq_1","name":"Eva","role":"QA","status":"online","working":true,"queuedJobs":1,"scheduledJobs":0}],"jobs":[{"id":"job_1","title":"Ship check","status":"queued","agentId":"asq_1","agentName":"Eva"}],"automations":[{"id":"auto_1","name":"Daily triage","status":"active","agentId":"asq_1","agentName":"Eva","triggerType":"schedule"}]}"#,
+        )
+        .unwrap();
+
+        let state = AppState {
+            paths: paths.clone(),
+            account_email: Arc::new(StdMutex::new(None)),
+            config: SquadConfig::defaults(),
+            accepting_work: Arc::new(AtomicBool::new(true)),
+            shutdown_tx: Arc::new(Mutex::new(None)),
+            device_id: "device-1".to_string(),
+        };
+        let status = status_payload(&state);
+
+        assert_eq!(status.online_members, 5);
+        assert_eq!(status.working_agents, 2);
+        assert_eq!(status.active_runs, 2);
+        assert_eq!(status.running_sessions, 0);
+        assert_eq!(status.active_trigger_work, 2);
+        assert_eq!(status.queue_depth, 1);
+        assert_eq!(status.queued_jobs, 1);
+        assert_eq!(status.scheduled_jobs, 3);
+        assert_eq!(status.members[0].name, "Eva");
+        assert_eq!(status.jobs[0].title, "Ship check");
+        assert_eq!(status.automations[0].name, "Daily triage");
+        let _ = fs::remove_dir_all(paths.root);
+    }
+
+    #[test]
+    fn login_and_logout_update_local_account_state() {
+        let paths = temp_state_paths();
+        let state = AppState {
+            paths: paths.clone(),
+            account_email: Arc::new(StdMutex::new(None)),
+            config: SquadConfig::defaults(),
+            accepting_work: Arc::new(AtomicBool::new(true)),
+            shutdown_tx: Arc::new(Mutex::new(None)),
+            device_id: "device-1".to_string(),
+        };
+
+        let (status, login) = login_response(
+            &state,
+            LoginRequest {
+                email: " ops@example.com ".to_string(),
+            },
+        );
+        assert_eq!(status, 200);
+        assert!(login.success);
+        assert_eq!(
+            status_payload(&state).account.email.as_deref(),
+            Some("ops@example.com")
+        );
+
+        let logout = logout_response(&state);
+        assert!(logout.success);
+        assert_eq!(status_payload(&state).account.email, None);
         let _ = fs::remove_dir_all(paths.root);
     }
 
@@ -1441,6 +1713,8 @@ mod tests {
                     prompt: "ship it".to_string(),
                     workspace: Some(paths.root.display().to_string()),
                     scheduled_for: Some("2026-05-25T00:00:00Z".to_string()),
+                    channel_id: Some("channel_general".to_string()),
+                    thread_id: Some("thread_1".to_string()),
                 })
                 .unwrap(),
             ),
@@ -1448,6 +1722,38 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(queued.status, "queued");
+        assert_eq!(queued.channel_id.as_deref(), Some("channel_general"));
+        assert_eq!(queued.thread_id.as_deref(), Some("thread_1"));
+
+        let synced: ChannelsState = local_json_request(
+            &record,
+            "PUT",
+            "/channels",
+            Some(
+                r#"{
+                    "channels": [{ "id": "channel_general", "name": "general", "memberIds": ["agent-1"] }],
+                    "threads": [{ "id": "thread_1", "channelId": "channel_general", "title": "ship it" }]
+                }"#,
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(synced.channels.len(), 1);
+
+        let channels: ChannelsState = local_json_request(&record, "GET", "/channels", None)
+            .await
+            .unwrap();
+        assert_eq!(channels.channels[0].id, "channel_general");
+        assert_eq!(channels.channels[0].visibility, "public");
+        assert!(!channels.channels[0].auto_mode_default);
+        assert_eq!(channels.threads.len(), 1);
+
+        let status_with_channels: StatusResponse =
+            local_json_request(&record, "GET", "/status", None)
+                .await
+                .unwrap();
+        assert_eq!(status_with_channels.channels, 1);
+        assert_eq!(status_with_channels.channel_threads, 1);
 
         let sync: SyncSnapshot = local_json_request(&record, "POST", "/sync", Some(""))
             .await
@@ -1462,6 +1768,8 @@ mod tests {
                 workspace: Some(paths.root.display().to_string()),
                 agent_id: Some("agent-1".to_string()),
                 extra_args: None,
+                channel_id: None,
+                thread_id: None,
             },
             "running",
         );
@@ -1489,7 +1797,9 @@ mod tests {
     }
 
     async fn wait_for_daemon_record(paths: &StatePaths) -> DaemonRecord {
-        for _ in 0..50 {
+        // Native CI runners can spend more than a second scheduling the loopback task
+        // while the rest of the test binary is active.
+        for _ in 0..250 {
             if let Ok(Some(record)) = read_daemon_record(paths) {
                 return record;
             }

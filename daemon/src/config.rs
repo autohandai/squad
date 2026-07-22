@@ -1,9 +1,13 @@
 use crate::state::{StatePaths, DEFAULT_HOST, DEFAULT_PORT};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 
 const DEFAULT_API_BASE_URL: &str = "https://api.autohand.ai";
 const DEFAULT_UPDATE_CHANNEL: &str = "stable";
@@ -177,6 +181,159 @@ pub fn resolve_config(paths: &StatePaths, cli: ConfigOverrides) -> Result<SquadC
     Ok(config)
 }
 
+pub fn write_user_auth_config(
+    paths: &StatePaths,
+    api_auth_token: Option<&str>,
+    account_email: Option<&str>,
+) -> Result<()> {
+    paths.ensure()?;
+    let mut config = if paths.config_json.exists() {
+        let content = fs::read_to_string(&paths.config_json)
+            .with_context(|| format!("read {}", paths.config_json.display()))?;
+        serde_json::from_str::<Value>(&content)
+            .with_context(|| format!("parse {}", paths.config_json.display()))?
+    } else {
+        Value::Object(Map::new())
+    };
+
+    if !config.is_object() {
+        config = Value::Object(Map::new());
+    }
+    let object = config.as_object_mut().expect("config object");
+    object.insert(
+        "apiAuthToken".to_string(),
+        Value::String(api_auth_token.unwrap_or("").to_string()),
+    );
+    object.insert(
+        "accountEmail".to_string(),
+        Value::String(account_email.unwrap_or("").to_string()),
+    );
+
+    let content = format!("{}\n", serde_json::to_string_pretty(&config)?);
+    write_private_config(&paths.config_json, &content, "Squad config")
+}
+
+/// Merge the Squad browser session into the Autohand CLI config used as the
+/// source for isolated member configs. Passing `None` clears only the persisted
+/// token so logout does not discard provider, permission, or user-profile data.
+pub fn write_autohand_auth_config(
+    api_auth_token: Option<&str>,
+    account_email: Option<&str>,
+) -> Result<()> {
+    merge_autohand_auth_config_at(&autohand_user_config_path(), api_auth_token, account_email)
+}
+
+fn autohand_user_config_path() -> PathBuf {
+    if let Some(path) = non_empty_env("AUTOHAND_USER_CONFIG_PATH") {
+        return PathBuf::from(path);
+    }
+    if let Some(root) = non_empty_env("AUTOHAND_HOME") {
+        return PathBuf::from(root).join("config.json");
+    }
+
+    let home_vars = if cfg!(target_os = "windows") {
+        ["USERPROFILE", "HOME"]
+    } else {
+        ["HOME", "USERPROFILE"]
+    };
+    home_vars
+        .into_iter()
+        .find_map(non_empty_env)
+        .map(PathBuf::from)
+        .map(|home| home.join(".autohand").join("config.json"))
+        .unwrap_or_else(|| PathBuf::from(".autohand").join("config.json"))
+}
+
+fn merge_autohand_auth_config_at(
+    path: &Path,
+    api_auth_token: Option<&str>,
+    account_email: Option<&str>,
+) -> Result<()> {
+    let mut config = if path.exists() {
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("read Autohand config {}", path.display()))?;
+        serde_json::from_str::<Value>(&content)
+            .with_context(|| format!("parse Autohand config {}", path.display()))?
+    } else {
+        Value::Object(Map::new())
+    };
+
+    let config_object = config
+        .as_object_mut()
+        .context("Autohand config root must be a JSON object")?;
+    let auth = config_object
+        .entry("auth")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !auth.is_object() {
+        *auth = Value::Object(Map::new());
+    }
+    let auth_object = auth.as_object_mut().expect("auth object");
+
+    match api_auth_token {
+        Some(token) => {
+            let token = token.trim();
+            if token.is_empty() {
+                bail!("Autohand auth token must not be empty");
+            }
+            auth_object.insert("token".to_string(), Value::String(token.to_string()));
+            // The device-login response does not supply expiry metadata. An
+            // expiresAt value from an older session would make the fresh token
+            // look expired to the web preflight.
+            auth_object.remove("expiresAt");
+            auth_object.remove("refreshToken");
+        }
+        None => {
+            auth_object.remove("token");
+            auth_object.remove("refreshToken");
+            auth_object.remove("expiresAt");
+        }
+    }
+
+    if let Some(email) = account_email {
+        let email = email.trim();
+        if email.is_empty() {
+            bail!("Autohand account email must not be empty");
+        }
+        // Do not retain identity fields from a different account when the tray
+        // is used to re-login. The device flow supplies only a trusted email,
+        // so persist that minimal user shape.
+        let mut user = Map::new();
+        user.insert("email".to_string(), Value::String(email.to_string()));
+        auth_object.insert("user".to_string(), Value::Object(user));
+    }
+
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create Autohand config directory {}", parent.display()))?;
+    }
+    let content = format!("{}\n", serde_json::to_string_pretty(&config)?);
+    write_private_config(path, &content, "Autohand config")
+}
+
+fn write_private_config(path: &Path, content: &str, description: &str) -> Result<()> {
+    #[cfg(unix)]
+    if path.exists() {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("secure {description} {}", path.display()))?;
+    }
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("open {description} {}", path.display()))?;
+    file.write_all(content.as_bytes())
+        .with_context(|| format!("write {description} {}", path.display()))?;
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("secure {description} {}", path.display()))?;
+    Ok(())
+}
+
 fn read_partial_config(path: &PathBuf) -> Result<Option<PartialSquadConfig>> {
     if !path.exists() {
         return Ok(None);
@@ -241,6 +398,10 @@ fn non_empty(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    env::var(name).ok().and_then(|value| non_empty(Some(value)))
 }
 
 #[cfg(test)]
@@ -332,6 +493,189 @@ mod tests {
         assert!(!config.telemetry_enabled());
         assert_eq!(config.account_email.as_deref(), Some("ops@example.com"));
         assert_eq!(config.plan_state, "enterprise");
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn user_auth_config_patch_preserves_existing_runtime_fields() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        env::remove_var("AUTOHAND_SQUAD_ADMIN_CONFIG");
+        let temp = temp_root();
+        let paths = StatePaths::from_root(temp.join("state"));
+        paths.ensure().unwrap();
+        fs::write(
+            &paths.config_json,
+            r#"{"apiBaseUrl":"https://gateway.example.com","updateChannel":"beta"}"#,
+        )
+        .unwrap();
+
+        write_user_auth_config(&paths, Some("session-token"), Some("ops@example.com")).unwrap();
+        let value: Value =
+            serde_json::from_str(&fs::read_to_string(&paths.config_json).unwrap()).unwrap();
+
+        assert_eq!(
+            value.get("apiBaseUrl").and_then(Value::as_str),
+            Some("https://gateway.example.com")
+        );
+        assert_eq!(
+            value.get("updateChannel").and_then(Value::as_str),
+            Some("beta")
+        );
+        assert_eq!(
+            value.get("apiAuthToken").and_then(Value::as_str),
+            Some("session-token")
+        );
+        assert_eq!(
+            value.get("accountEmail").and_then(Value::as_str),
+            Some("ops@example.com")
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&paths.config_json)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn autohand_auth_merge_creates_nested_auth_and_preserves_existing_config() {
+        let temp = temp_root();
+        let config_path = temp.join("user-home").join(".autohand").join("config.json");
+        fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        fs::write(
+            &config_path,
+            r#"{
+              "provider": "openrouter",
+              "permissions": { "mode": "restricted" },
+              "auth": {
+                "expiresAt": "2000-01-01T00:00:00.000Z",
+                "user": { "id": "user-1", "name": "Existing Name" }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        merge_autohand_auth_config_at(
+            &config_path,
+            Some("fresh-session-token"),
+            Some("ops@example.com"),
+        )
+        .unwrap();
+        let value: Value =
+            serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+
+        assert_eq!(
+            value.get("provider").and_then(Value::as_str),
+            Some("openrouter")
+        );
+        assert_eq!(
+            value.pointer("/permissions/mode").and_then(Value::as_str),
+            Some("restricted")
+        );
+        assert_eq!(
+            value.pointer("/auth/token").and_then(Value::as_str),
+            Some("fresh-session-token")
+        );
+        assert_eq!(
+            value.pointer("/auth/user/email").and_then(Value::as_str),
+            Some("ops@example.com")
+        );
+        assert!(value.pointer("/auth/user/id").is_none());
+        assert!(value.pointer("/auth/user/name").is_none());
+        assert!(value.pointer("/auth/expiresAt").is_none());
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn autohand_auth_merge_creates_a_fresh_user_config() {
+        let temp = temp_root();
+        let config_path = temp.join("new-home").join(".autohand").join("config.json");
+
+        merge_autohand_auth_config_at(
+            &config_path,
+            Some("fresh-session-token"),
+            Some("first-login@example.com"),
+        )
+        .unwrap();
+        let value: Value =
+            serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+
+        assert_eq!(
+            value.pointer("/auth/token").and_then(Value::as_str),
+            Some("fresh-session-token")
+        );
+        assert_eq!(
+            value.pointer("/auth/user/email").and_then(Value::as_str),
+            Some("first-login@example.com")
+        );
+        assert_eq!(value.as_object().map(Map::len), Some(1));
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&config_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn autohand_auth_logout_removes_session_credentials_only() {
+        let temp = temp_root();
+        let config_path = temp.join("config.json");
+        fs::create_dir_all(&temp).unwrap();
+        fs::write(
+            &config_path,
+            r#"{
+              "provider": "openai",
+              "auth": {
+                "token": "session-to-clear",
+                "refreshToken": "refresh-to-clear",
+                "expiresAt": "2099-01-01T00:00:00.000Z",
+                "user": { "email": "ops@example.com", "id": "user-1" }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        merge_autohand_auth_config_at(&config_path, None, None).unwrap();
+        let value: Value =
+            serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+
+        assert!(value.pointer("/auth/token").is_none());
+        assert!(value.pointer("/auth/refreshToken").is_none());
+        assert!(value.pointer("/auth/expiresAt").is_none());
+        assert_eq!(
+            value.pointer("/auth/user/email").and_then(Value::as_str),
+            Some("ops@example.com")
+        );
+        assert_eq!(
+            value.get("provider").and_then(Value::as_str),
+            Some("openai")
+        );
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn autohand_auth_merge_does_not_replace_a_non_object_config() {
+        let temp = temp_root();
+        let config_path = temp.join("config.json");
+        fs::create_dir_all(&temp).unwrap();
+        fs::write(&config_path, "[]\n").unwrap();
+
+        let error = merge_autohand_auth_config_at(
+            &config_path,
+            Some("fresh-session-token"),
+            Some("ops@example.com"),
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("Autohand config root must be a JSON object"));
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), "[]\n");
         let _ = fs::remove_dir_all(temp);
     }
 }
