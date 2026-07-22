@@ -102,6 +102,9 @@ jobs:
       - name: Check Autohand SDK on native target
         run: bun run check:sdk
 
+      - name: Check native release packager
+        run: node -e "import('@crabnebula/packager').then(({ packageApp }) => { if (typeof packageApp !== 'function') process.exit(1); })"
+
       - name: Install Linux tray dependencies
         if: runner.os == 'Linux'
         run: |
