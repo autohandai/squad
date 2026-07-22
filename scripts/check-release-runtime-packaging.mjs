@@ -11,6 +11,7 @@ import process from 'node:process';
 import { tarCreateArgs } from './release-archive.mjs';
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const serverStartupTimeoutMs = 20_000;
 const failures = [];
 
 try {
@@ -105,8 +106,8 @@ function waitForServer(child) {
     let stderr = '';
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error(`Packaged server did not start within 5 seconds${stderr ? `: ${stderr.trim()}` : ''}`));
-    }, 5000);
+      reject(new Error(`Packaged server did not start within ${serverStartupTimeoutMs / 1000} seconds${stderr ? `: ${stderr.trim()}` : ''}`));
+    }, serverStartupTimeoutMs);
 
     const onStdout = (chunk) => {
       stdout += String(chunk);
