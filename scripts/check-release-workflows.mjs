@@ -265,7 +265,21 @@ function assertManifestMergeThrows(input, env, label) {
 function resolve(env, args) {
   const output = execFileSync(process.execPath, [resolver, ...args], {
     encoding: 'utf8',
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      GITHUB_EVENT_NAME: '',
+      GITHUB_REF_NAME: '',
+      GITHUB_REF_TYPE: '',
+      GITHUB_RUN_NUMBER: '',
+      GITHUB_SHA: '',
+      INPUT_CHANNEL: '',
+      INPUT_DRAFT: '',
+      INPUT_PRERELEASE: '',
+      INPUT_VERSION: '',
+      PR_NUMBER: '',
+      RELEASE_KNOWN_TAGS: '',
+      ...env,
+    },
   });
   return JSON.parse(output);
 }
