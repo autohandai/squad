@@ -108,7 +108,8 @@ async function stageProductionModules() {
 async function createArchive() {
   await mkdir(outDir, { recursive: true });
   await rm(archivePath, { force: true });
-  const result = spawnSync('tar', ['-czf', archivePath, bundleName], {
+  const scratchArchivePath = join(scratchDir, archiveName);
+  const result = spawnSync('tar', ['-czf', archiveName, bundleName], {
     cwd: scratchDir,
     encoding: 'utf8',
   });
@@ -116,6 +117,7 @@ async function createArchive() {
     const detail = String(result.stderr || result.stdout || '').trim();
     throw new Error(`Unable to create ${archiveName}${detail ? `: ${detail}` : ''}`);
   }
+  await copyFile(scratchArchivePath, archivePath);
   const info = await stat(archivePath);
   if (!info.isFile() || info.size === 0) {
     throw new Error(`Portable archive is empty: ${archivePath}`);

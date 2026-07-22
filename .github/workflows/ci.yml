@@ -199,6 +199,19 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify native packager binding
+        if: matrix.os != 'linux'
+        run: node -e "import('@crabnebula/packager').then(({ packageApp }) => { if (typeof packageApp !== 'function') process.exit(1) })"
+
+      - name: Download built web app
+        uses: actions/download-artifact@v8
+        with:
+          name: web-dist-${{ github.sha }}
+          path: dist
+
       - name: Install Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt
@@ -212,13 +225,16 @@ jobs:
 
       - name: Package release manifest
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.dry-run-meta.outputs.version }}
+          RELEASE_TAG: ${{ needs.dry-run-meta.outputs.tag }}
+          RELEASE_CHANNEL: ${{ needs.dry-run-meta.outputs.channel }}
+          RELEASE_OS: ${{ matrix.os }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+          WEB_RUNTIME_DIR: ${{ github.workspace }}
         run: |
-          RELEASE_VERSION='${{ needs.dry-run-meta.outputs.version }}' \
-          RELEASE_TAG='${{ needs.dry-run-meta.outputs.tag }}' \
-          RELEASE_CHANNEL='${{ needs.dry-run-meta.outputs.channel }}' \
-          RELEASE_OS='${{ matrix.os }}' \
-          RELEASE_ARCH='${{ matrix.arch }}' \
           bun run release:package
+          bun run release:portable
 
       - name: Upload dry-run release assets
         uses: actions/upload-artifact@v7

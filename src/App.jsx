@@ -19922,7 +19922,7 @@ function AboutDialog({ open, runtime, onOpenChange, onGiveFeedback }) {
             <AboutFact label="Workspace root" value={runtime?.workspaceRoot || "User directory"} />
           </div>
           <p className="text-sm leading-6 text-muted-foreground">
-            Copyright (c) 2026 Autohand AI LLC. All rights reserved.
+            Copyright (c) 2026 Autohand AI Ltd. Released under the MIT License.
           </p>
         </div>
         <DialogFooter className="border-t bg-background px-6 py-4">

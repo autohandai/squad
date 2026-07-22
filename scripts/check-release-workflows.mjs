@@ -14,6 +14,7 @@ const releaseWorkflow = readFileSync(new URL('../.github/workflows/release.yml',
 const smokeWorkflow = readFileSync(new URL('../.github/workflows/actions-smoke.yml', import.meta.url), 'utf8');
 const releaseNotes = readFileSync(new URL('../.github/release.yml', import.meta.url), 'utf8');
 const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const bunLock = readFileSync(new URL('../bun.lock', import.meta.url), 'utf8');
 const packager = readFileSync(new URL('./package-squad-release.mjs', import.meta.url), 'utf8');
 const portablePackager = readFileSync(new URL('./package-squad-portable.mjs', import.meta.url), 'utf8');
 const installerPackager = readFileSync(new URL('./package-squad-installers.mjs', import.meta.url), 'utf8');
@@ -119,6 +120,8 @@ assertIncludes(ciWorkflow, 'macos-26-intel', 'CI matrix includes macOS Intel');
 assertIncludes(ciWorkflow, 'windows-2025', 'CI matrix includes Windows x64');
 assertIncludes(ciWorkflow, 'libxdo-dev', 'CI installs the Linux xdo linker dependency');
 assertIncludes(ciWorkflow, 'bun run check:sdk', 'CI verifies the published Autohand SDK');
+assertIncludes(ciWorkflow, 'bun run release:portable', 'CI dry run exercises portable packaging on every target');
+assertIncludes(ciWorkflow, 'name: Verify native packager binding', 'CI checks native installer bindings on macOS and Windows');
 assertIncludes(ciWorkflow, 'REQUIRED_RELEASE_OS=linux,darwin,win32', 'CI validates all release OS entries');
 assertIncludes(ciWorkflow, 'REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64,darwin/x64,win32/x64', 'CI validates every native release target');
 assertIncludes(releaseWorkflow, 'name: Release', 'Release workflow has the public Release name');
@@ -144,6 +147,7 @@ assertNativeReleaseMatrix(releaseWorkflow, [
 ]);
 assertIncludes(releaseWorkflow, 'AUTOHAND_SQUAD_RELEASE_VERSION', 'Release binaries embed resolved release versions');
 assertIncludes(releaseWorkflow, 'bun run check:sdk', 'Release workflow verifies the published Autohand SDK');
+assertIncludes(releaseWorkflow, 'name: Verify native packager binding', 'Release workflow fails early when a native packager binding is unavailable');
 assertIncludes(releaseWorkflow, 'Download built web runtime', 'Native release jobs download the versioned web runtime');
 assertIncludes(releaseWorkflow, 'WEB_RUNTIME_DIR', 'Native packaging receives the bundled web runtime');
 assertIncludes(releaseWorkflow, 'bun run release:portable', 'Release workflow assembles portable application archives');
@@ -155,6 +159,8 @@ assertIncludes(releaseWorkflow, 'NODE_RUNTIME_PATH="$(node -p', 'Native installe
 assertIncludes(releaseWorkflow, 'name: Mount and smoke test macOS installer', 'Release workflow mounts and tests each DMG');
 assertIncludes(releaseWorkflow, 'name: Install and smoke test Windows installer', 'Release workflow installs and tests the NSIS executable');
 assertCount(releaseWorkflow, '--server-path', 2, 'Native installer smoke tests force the installed web server payload');
+assertCount(releaseWorkflow, '/api/provider-settings', 2, 'Native installer smoke tests exercise writable app state');
+assertCount(releaseWorkflow, 'web-state/provider-settings.json', 2, 'Native installer smoke tests verify redirected state files');
 assertIncludes(releaseWorkflow, 'autohand-squad-${RELEASE_VERSION}-macos-${RELEASE_ARCH}.dmg', 'macOS smoke test uses the public DMG name');
 assertIncludes(releaseWorkflow, 'autohand-squad-$env:RELEASE_VERSION-windows-x64-setup.exe', 'Windows smoke test uses the public installer name');
 assertIncludes(releaseWorkflow, 'REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64,darwin/x64,win32/x64', 'Release publishing requires every native target');
@@ -184,13 +190,16 @@ assertIncludes(portablePackager, "'autohand-squad-ui'", 'Portable bundle include
 assertIncludes(portablePackager, "'autohand-windows-x64.exe'", 'Portable bundle includes the Windows Agent SDK CLI');
 assertIncludes(portablePackager, "for (const dependency of ['toml', 'yaml'])", 'Portable bundle vendors production SDK dependencies');
 assertIncludes(portablePackager, "spawnSync('tar'", 'Portable bundle creates one extractable archive');
+assertIncludes(portablePackager, "['-czf', archiveName, bundleName]", 'Portable archive output uses a cross-platform local tar path');
+assertNotIncludes(portablePackager, "['-czf', archivePath", 'Portable archive avoids GNU tar remote-path parsing on Windows');
 assertIncludes(installerPackager, "requiredEnv('NODE_RUNTIME_PATH')", 'Native installer requires an explicit Node.js runtime');
 assertIncludes(installerPackager, "binary === 'autohand-squad-ui'", 'Native installer launches the desktop UI binary');
 assertIncludes(installerPackager, "formats: [releaseOs === 'darwin' ? 'dmg' : 'nsis']", 'Native installer emits DMG and NSIS formats');
 assertIncludes(installerPackager, "installMode: 'currentUser'", 'Windows installer does not require administrator access');
 assertIncludes(installerPackager, "'autohand-windows-x64.exe'", 'Native installer vendors the Windows Agent SDK CLI');
 assertIncludes(installerPackager, 'validateNodeRuntime(nodeRuntimePath)', 'Native installer validates the staged Node.js runtime');
-assertEqual(packageMetadata.devDependencies?.['@crabnebula/packager'], '0.11.2', 'Native packager pin');
+assertEqual(packageMetadata.devDependencies?.['@crabnebula/packager'], '0.8.1', 'Native packager pin');
+assertIncludes(bunLock, '@crabnebula/packager-darwin-x64@0.8.1', 'Lockfile contains the published Intel macOS packager binding');
 
 checkManifestTargetValidation();
 checkReleaseRefVerification();

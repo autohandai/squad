@@ -14,7 +14,7 @@ tools in one place.
   <a href="#features">Features</a> ·
   <a href="#run-locally">Run locally</a> ·
   <a href="https://github.com/autohandai/squad/releases">Releases</a> ·
-  <a href="#how-to-develop-and-contribute">Contribute</a>
+  <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
 <p align="center">
@@ -71,7 +71,7 @@ project context, tasks, and execution history together.
 This repository currently provides a local, single-user workspace for working
 with specialized agents. Multi-human collaboration and agent federation across
 different people's workspaces remain product direction rather than an
-access-controlled service in this prototype.
+access-controlled service in the current build.
 
 | Area | Current boundary |
 | --- | --- |
@@ -191,13 +191,19 @@ bun run build
 
 ## How to Develop and Contribute
 
-Internal setup and troubleshooting live in [SETUP_GUIDE.md](SETUP_GUIDE.md).
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for
+the complete workflow and project conventions. All participation follows our
+[Code of Conduct](CODE_OF_CONDUCT.md); use [SECURITY.md](SECURITY.md) to report
+vulnerabilities privately and [SUPPORT.md](SUPPORT.md) for help choosing the
+right support channel.
+
+Development setup and troubleshooting live in [SETUP_GUIDE.md](SETUP_GUIDE.md).
 
 Use the web-only development loop for React UI, copy, route, and local bridge
 changes:
 
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run dev
 ```
 
@@ -214,7 +220,7 @@ cargo build --bins -j1
 ./target/debug/squad
 ```
 
-Before opening an internal PR, run the checks that match the change:
+Before opening a pull request, run the checks that match the change:
 
 ```bash
 bun run check:server
@@ -222,7 +228,7 @@ bun run check:onboarding
 bun run build
 cd daemon
 cargo fmt -- --check
-cargo test -j1
+cargo test -j1 -- --test-threads=1
 cargo build --bins -j1
 ```
 
@@ -253,6 +259,8 @@ Contribution expectations:
   manifest, or runtime artifact contracts change.
 - Request owner review for changes under `src/`, `server.mjs`, `daemon/`,
   `.github/`, `scripts/`, and release documentation.
+- Review the contribution guide before submitting and complete the pull request
+  template with reproducible verification evidence.
 
 ## CI and Release
 
@@ -266,7 +274,7 @@ The GitHub release lane lives under `.github/workflows/`:
   SHA-256 checksums, publishes the release manifest, and attaches the verified
   assets to the tag-bound GitHub release.
 
-The team runbook is in [docs/release.md](docs/release.md).
+The maintainer runbook is in [docs/release.md](docs/release.md).
 
 ## Native runtime
 
@@ -347,3 +355,7 @@ leftover Squad runtime processes before the tray exits.
   `AUTOHAND_CONFIG`, and `--config`.
 - Keep agents, messages, handoff settings, and appearance preferences local,
   with light and dark themes available in the workspace.
+
+## License
+
+Autohand Squad is available under the [MIT License](LICENSE).
