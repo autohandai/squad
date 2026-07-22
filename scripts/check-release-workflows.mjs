@@ -149,8 +149,9 @@ assertIncludes(releaseWorkflow, 'contents: read', 'Release workflow defaults to 
 assertIncludes(releaseWorkflow, 'contents: write', 'Release publish job has scoped content write permission');
 assertCount(releaseWorkflow, 'contents: write', 1, 'Only the publish job receives content write permission');
 assertIncludes(releaseWorkflow, 'GH_TOKEN: ${{ github.token }}', 'Release publishing uses the short-lived job-scoped workflow token');
-assertNotIncludes(releaseWorkflow, "'.permissions.push // false'", 'Release publishing does not infer job-token permissions from repository metadata');
+assertNotIncludes(releaseWorkflow, '.permissions.push', 'Release publishing does not infer job-token permissions from repository metadata');
 assertNotIncludes(releaseWorkflow, 'token_can_publish', 'Release publishing does not reject valid granular job tokens with a repository permission probe');
+assertNotIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN', 'Release publishing does not expose a long-lived fallback token');
 assertNotIncludes(releaseWorkflow, 'attestations: write', 'Release workflow does not require org-blocked attestation permissions');
 assertIncludes(releaseWorkflow, 'gh release view "$RELEASE_TAG"', 'Release publishing detects an existing release');
 assertIncludes(releaseWorkflow, 'Refusing to replace published assets', 'Release publishing refuses to mutate an existing release');
