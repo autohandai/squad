@@ -2,36 +2,14 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
     tags:
-      - "squad-v*"
-      - "v*"
+      - "v[0-9]*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Optional version. Leave blank to auto-resolve the next version."
-        required: false
+        description: "Semver version matching the v-prefixed dispatch tag"
+        required: true
         type: string
-      channel:
-        description: "Release channel"
-        required: true
-        default: stable
-        type: choice
-        options:
-          - stable
-          - beta
-          - canary
-      draft:
-        description: "Create the GitHub release as a draft"
-        required: true
-        default: true
-        type: boolean
-      prerelease:
-        description: "Mark the GitHub release as a prerelease"
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -45,49 +23,107 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release-meta:
-    name: Release metadata
+  setup:
+    name: Setup
+    if: github.repository == 'autohandai/squad'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
-      version: ${{ steps.meta.outputs.version }}
-      tag: ${{ steps.meta.outputs.tag }}
-      channel: ${{ steps.meta.outputs.channel }}
-      draft: ${{ steps.meta.outputs.draft }}
-      prerelease: ${{ steps.meta.outputs.prerelease }}
-      latest: ${{ steps.meta.outputs.latest }}
-      title: ${{ steps.meta.outputs.title }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      channel: ${{ steps.metadata.outputs.channel }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+      latest: ${{ steps.metadata.outputs.latest }}
+      title: ${{ steps.metadata.outputs.title }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - id: meta
-        name: Resolve release metadata
-        run: node scripts/resolve-squad-version.mjs --mode release
+      - id: version
+        name: Determine and validate version
+        shell: bash
         env:
+          EVENT_NAME: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
-          INPUT_CHANNEL: ${{ inputs.channel }}
-          INPUT_DRAFT: ${{ inputs.draft }}
-          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$INPUT_VERSION"
+          fi
+
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::A release version is required."
+            exit 1
+          fi
+
+          scripts/verify-release-ref.sh v "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - id: source
+        name: Record verified release source
+        shell: bash
+        run: echo "source_sha=$(git rev-parse 'HEAD^{commit}')" >> "$GITHUB_OUTPUT"
+
+      - id: metadata
+        name: Derive release metadata
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel=stable
+          prerelease=false
+          latest=true
+
+          if [[ "$VERSION" == *-* ]]; then
+            prerelease=true
+            latest=false
+            suffix="${VERSION#*-}"
+            if [[ "$suffix" == canary || "$suffix" == canary.* ]]; then
+              channel=canary
+            else
+              channel=beta
+            fi
+          fi
+
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "title=Autohand Squad $VERSION" >> "$GITHUB_OUTPUT"
 
   web-bundle:
     name: Web bundle
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: release-meta
+    needs: setup
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.setup.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag-bound release source
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+        shell: bash
+        run: scripts/verify-release-ref.sh v "$VERSION"
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Cache Bun packages
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
@@ -99,6 +135,7 @@ jobs:
 
       - name: Run web release checks
         run: |
+          bun run check:sdk
           bun run check:server
           bun run check:release
           bun run build
@@ -106,49 +143,86 @@ jobs:
       - name: Package web server bundle
         shell: bash
         run: |
-          mkdir -p release/web
-          web_asset="release/web/autohand-squad-web-${{ needs.release-meta.outputs.version }}.tar.gz"
-          tar -czf "$web_asset" \
-            dist \
-            server.mjs \
-            package.json \
-            bun.lock \
-            README.md
-          shasum -a 256 "$web_asset" > release/web/checksums-web.txt
+          mkdir -p release/web release/web-staging
+          web_asset="autohand-squad-web-${{ needs.setup.outputs.version }}.tar.gz"
+          cp -R dist server.mjs package.json bun.lock README.md release/web-staging/
+          node -e "const fs = require('fs'); const file = process.argv[1]; const metadata = JSON.parse(fs.readFileSync(file, 'utf8')); metadata.version = process.argv[2]; fs.writeFileSync(file, JSON.stringify(metadata, null, 2) + '\n');" \
+            release/web-staging/package.json \
+            '${{ needs.setup.outputs.version }}'
+          tar -czf "release/web/$web_asset" -C release/web-staging .
+          cd release/web
+          shasum -a 256 "$web_asset" > checksums-web.txt
 
       - name: Upload web bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: web-bundle-${{ needs.release-meta.outputs.version }}
+          name: web-bundle-${{ needs.setup.outputs.version }}
           path: release/web
           if-no-files-found: error
 
   runtime-artifacts:
-    name: Runtime artifacts (${{ matrix.runner }})
+    name: Runtime artifacts (${{ matrix.id }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
-    needs: release-meta
+    needs: setup
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        include:
+          - id: linux-x64
+            runner: ubuntu-24.04
+            os: linux
+            arch: x64
+          - id: macos-arm64
+            runner: macos-26
+            os: darwin
+            arch: arm64
+          - id: macos-x64
+            runner: macos-26-intel
+            os: darwin
+            arch: x64
+          - id: windows-x64
+            runner: windows-2025
+            os: win32
+            arch: x64
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.setup.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag-bound release source
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+        shell: bash
+        run: scripts/verify-release-ref.sh v "$VERSION"
 
       - name: Install Linux tray dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev pkg-config
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache Bun packages
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-release-${{ matrix.id }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-release-${{ matrix.id }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check Autohand SDK on native target
+        run: bun run check:sdk
 
       - name: Install Rust toolchain
         run: |
@@ -156,36 +230,40 @@ jobs:
           rustup default stable
 
       - name: Cache Cargo packages
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             daemon/target
-          key: cargo-release-${{ runner.os }}-${{ hashFiles('daemon/Cargo.lock') }}
+          key: cargo-release-${{ matrix.id }}-${{ hashFiles('daemon/Cargo.lock') }}
           restore-keys: |
-            cargo-release-${{ runner.os }}-
+            cargo-release-${{ matrix.id }}-
 
       - name: Run runtime tests
-        run: cargo test -j1
+        run: cargo test -j1 -- --test-threads=1
         working-directory: daemon
 
       - name: Build release binaries
         run: cargo build --release --bins -j1
         working-directory: daemon
+        env:
+          AUTOHAND_SQUAD_RELEASE_VERSION: ${{ needs.setup.outputs.version }}
 
       - name: Package release assets
         shell: bash
         run: |
-          RELEASE_VERSION='${{ needs.release-meta.outputs.version }}' \
-          RELEASE_TAG='${{ needs.release-meta.outputs.tag }}' \
-          RELEASE_CHANNEL='${{ needs.release-meta.outputs.channel }}' \
+          RELEASE_VERSION='${{ needs.setup.outputs.version }}' \
+          RELEASE_TAG='${{ needs.setup.outputs.tag }}' \
+          RELEASE_CHANNEL='${{ needs.setup.outputs.channel }}' \
+          RELEASE_OS='${{ matrix.os }}' \
+          RELEASE_ARCH='${{ matrix.arch }}' \
           bun run release:package
 
       - name: Upload runtime artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: runtime-${{ runner.os }}-${{ runner.arch }}
+          name: runtime-${{ matrix.id }}
           path: release
           if-no-files-found: error
 
@@ -193,26 +271,38 @@ jobs:
     name: Publish release
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     environment:
-      name: ${{ needs.release-meta.outputs.channel }}
-      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.release-meta.outputs.tag }}
+      name: ${{ needs.setup.outputs.channel }}
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.setup.outputs.tag }}
     needs:
-      - release-meta
+      - setup
       - web-bundle
       - runtime-artifacts
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.setup.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag-bound release source
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+        shell: bash
+        run: scripts/verify-release-ref.sh v "$VERSION"
 
       - name: Download runtime artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: release-downloads
           pattern: runtime-*
           merge-multiple: true
 
       - name: Download web bundle
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: release-downloads/web
           pattern: web-bundle-*
@@ -220,60 +310,71 @@ jobs:
 
       - name: Merge installer manifest
         run: |
-          RELEASE_VERSION='${{ needs.release-meta.outputs.version }}' \
-          RELEASE_CHANNEL='${{ needs.release-meta.outputs.channel }}' \
+          RELEASE_VERSION='${{ needs.setup.outputs.version }}' \
+          RELEASE_CHANNEL='${{ needs.setup.outputs.channel }}' \
           REQUIRED_RELEASE_OS=linux,darwin,win32 \
+          REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64,darwin/x64,win32/x64 \
           node scripts/merge-release-manifests.mjs release-downloads
 
           mkdir -p release/publish
           find release-downloads -type f \( -name 'squad-*' -o -name 'autohand-squad-*' -o -name 'checksums-*.txt' \) -exec cp {} release/publish/ \;
-          cp "release/manifest-${{ needs.release-meta.outputs.channel }}.json" release/publish/
+          cp "release/manifest-${{ needs.setup.outputs.channel }}.json" release/publish/
           cp release/checksums.txt release/publish/
           cp release/release-summary.md release/publish/
 
-      - name: Verify release publish token
+      - name: Publish GitHub release
         env:
+          DEFAULT_GH_TOKEN: ${{ github.token }}
           AUTOHAND_RELEASE_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN }}
+          RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+          RELEASE_TITLE: ${{ needs.setup.outputs.title }}
+          RELEASE_PRERELEASE: ${{ needs.setup.outputs.prerelease }}
+          RELEASE_LATEST: ${{ needs.setup.outputs.latest }}
+          SOURCE_SHA: ${{ needs.setup.outputs.source_sha }}
         shell: bash
         run: |
-          if [ -z "${AUTOHAND_RELEASE_TOKEN:-}" ]; then
-            echo "::error title=Missing AUTOHAND_RELEASE_TOKEN::Set AUTOHAND_RELEASE_TOKEN as an environment or repository secret with contents:write release access."
+          set -euo pipefail
+
+          token_can_publish() {
+            local token="$1"
+            [[ -n "$token" ]] || return 1
+            [[ "$(GH_TOKEN="$token" gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions.push // false' 2>/dev/null)" == "true" ]]
+          }
+
+          if token_can_publish "$DEFAULT_GH_TOKEN"; then
+            export GH_TOKEN="$DEFAULT_GH_TOKEN"
+          elif token_can_publish "$AUTOHAND_RELEASE_TOKEN"; then
+            export GH_TOKEN="$AUTOHAND_RELEASE_TOKEN"
+            echo "The workflow token cannot publish releases; using AUTOHAND_RELEASE_TOKEN."
+          else
+            echo "::error::Neither the job-scoped GITHUB_TOKEN nor AUTOHAND_RELEASE_TOKEN has release write access."
             exit 1
           fi
 
-      - name: Publish GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN }}
-          RELEASE_TAG: ${{ needs.release-meta.outputs.tag }}
-          RELEASE_TITLE: ${{ needs.release-meta.outputs.title }}
-          RELEASE_DRAFT: ${{ needs.release-meta.outputs.draft }}
-          RELEASE_PRERELEASE: ${{ needs.release-meta.outputs.prerelease }}
-          RELEASE_LATEST: ${{ needs.release-meta.outputs.latest }}
-        shell: bash
-        run: |
-          create_flags=()
-          edit_flags=(--draft="$RELEASE_DRAFT" --prerelease="$RELEASE_PRERELEASE")
-          if [ "$RELEASE_DRAFT" = "true" ]; then
-            create_flags+=(--draft)
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Release $RELEASE_TAG already exists. Refusing to replace published assets."
+            exit 1
           fi
+
+          remote_source_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
+          if [[ "$remote_source_sha" != "$SOURCE_SHA" ]]; then
+            echo "::error::Remote tag $RELEASE_TAG now resolves to $remote_source_sha, not verified source $SOURCE_SHA."
+            exit 1
+          fi
+
+          create_flags=()
           if [ "$RELEASE_PRERELEASE" = "true" ]; then
             create_flags+=(--prerelease)
           fi
           if [ "$RELEASE_LATEST" = "true" ]; then
             create_flags+=(--latest)
-            edit_flags+=(--latest)
           else
             create_flags+=(--latest=false)
-            edit_flags+=(--latest=false)
           fi
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release/publish/* --clobber
-            gh release edit "$RELEASE_TAG" --title "$RELEASE_TITLE" --notes-file release/release-summary.md "${edit_flags[@]}"
-          else
-            gh release create "$RELEASE_TAG" release/publish/* \
-              --title "$RELEASE_TITLE" \
-              --notes-file release/release-summary.md \
-              --target "$GITHUB_SHA" \
-              "${create_flags[@]}"
-          fi
+          gh release create "$RELEASE_TAG" release/publish/* \
+            --verify-tag \
+            --target "$SOURCE_SHA" \
+            --title "$RELEASE_TITLE" \
+            --notes-file release/release-summary.md \
+            "${create_flags[@]}"

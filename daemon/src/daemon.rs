@@ -1117,7 +1117,8 @@ fn new_run_record(paths: &StatePaths, request: RunRequest, status: &str) -> RunR
 
 fn next_id() -> String {
     let sequence = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    format!("{}-{sequence}", now_string())
+    let timestamp = now_string().replace(':', "-");
+    format!("{timestamp}-{sequence}")
 }
 
 fn spawn_run_worker(
@@ -1316,6 +1317,19 @@ mod tests {
     }
 
     #[test]
+    fn generated_ids_are_safe_as_cross_platform_file_names() {
+        let id = next_id();
+
+        assert!(id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_')));
+        assert!(!id.chars().any(|character| matches!(
+            character,
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+        )));
+    }
+
+    #[test]
     fn reads_queue_items_from_state_directory() {
         let paths = temp_state_paths();
         paths.ensure().unwrap();
@@ -1395,7 +1409,7 @@ mod tests {
     async fn daemon_serves_status_queue_sync_and_drain_restart() {
         let paths = temp_state_paths();
         let daemon_paths = paths.clone();
-        let handle = tokio::spawn(async move {
+        let mut handle = tokio::spawn(async move {
             run_daemon_with_paths(
                 daemon_paths,
                 PartialSquadConfig {
@@ -1408,7 +1422,10 @@ mod tests {
             .await
         });
 
-        let record = wait_for_daemon_record(&paths).await;
+        let record = tokio::select! {
+            result = &mut handle => panic!("daemon exited before writing its record: {result:?}"),
+            record = wait_for_daemon_record(&paths) => record,
+        };
         let status: StatusResponse = local_json_request(&record, "GET", "/status", None)
             .await
             .unwrap();

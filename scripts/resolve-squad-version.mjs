@@ -10,6 +10,7 @@ const packageJson = JSON.parse(await readFile(new URL('../package.json', import.
 const eventName = env('GITHUB_EVENT_NAME', 'local');
 const mode = option('mode', 'RELEASE_MODE', inferMode());
 const refName = env('GITHUB_REF_NAME', '');
+const refType = env('GITHUB_REF_TYPE', '');
 const sha = env('GITHUB_SHA', shortTimestamp());
 const shortSha = sha.slice(0, 12);
 const runNumber = env('GITHUB_RUN_NUMBER', '0');
@@ -48,11 +49,19 @@ function dryRunMetadata() {
 }
 
 function releaseMetadata() {
+  const tagPush = eventName === 'push'
+    && (refType === 'tag' || (!refType && refName !== 'main'));
+  if (tagPush && !tagVersion) {
+    throw new Error(`Invalid release tag: ${refName}. Expected squad-v<semver> or v<semver>.`);
+  }
   const channel = resolveChannel();
   assertReleaseChannel(channel);
   const version = resolveVersion(channel);
+  if (channel === 'stable' && hasPrerelease(version)) {
+    throw new Error(`Stable releases require a stable version, received ${version}.`);
+  }
   const prerelease = boolString(
-    inputPrerelease ? inputPrerelease : channel !== 'stable' || hasPrerelease(version),
+    channel !== 'stable' || hasPrerelease(version) || boolString(inputPrerelease) === 'true',
   );
   const draft = boolString(
     inputDraft ? inputDraft : eventName === 'workflow_dispatch' && channel === 'stable',
@@ -146,7 +155,9 @@ function splitTagList(value) {
 
 function versionFromTag(tag) {
   if (!tag) return null;
-  return normalizeVersion(tag.replace(/^refs\/tags\//, '').replace(/^squad-v/, '').replace(/^v/, ''));
+  const name = tag.replace(/^refs\/tags\//, '');
+  if (!name.startsWith('squad-v') && !name.startsWith('v')) return null;
+  return normalizeVersion(name.replace(/^squad-v/, '').replace(/^v/, ''));
 }
 
 function normalizeVersion(value) {

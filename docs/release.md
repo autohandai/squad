@@ -10,48 +10,61 @@ This repo ships three release surfaces together:
 
 Every pull request should pass:
 
+- Autohand SDK 1.0.4 import and bundled CLI startup: `bun run check:sdk`
 - web server syntax check: `bun run check:server`
 - release metadata check: `bun run check:release`
 - web build: `bun run build`
 - Rust formatting: `cd daemon && cargo fmt -- --check`
-- Rust tests: `cd daemon && cargo test -j1`
+- Rust tests: `cd daemon && cargo test -j1 -- --test-threads=1`
 - Rust binary build: `cd daemon && cargo build --bins -j1`
-- release dry run: builds release binaries on Linux, macOS, and Windows,
-  packages checksums, and merges an installer manifest
+- release dry run: builds native release binaries on Linux x64, macOS Apple
+  Silicon, macOS Intel, and Windows x64, packages checksums, and merges an
+  installer manifest
 
 The release dry run protects the contract used by the Autohand CLI launcher:
 `squad`, `autohand-squad-daemon`, `autohand-squad-analytics`,
 `autohand-squad-tray`, and `autohand-squad-ui` must all exist for the current
-platform. The merged manifest must include Linux, macOS, and Windows entries
-before release assets can publish.
+platform. The merged manifest must include `linux/x64`, `darwin/arm64`,
+`darwin/x64`, and `win32/x64` entries before release assets can publish.
 
 ## Release Flow
 
 1. Open a release checklist issue with the target version and channel.
 2. Merge only when CI is green and release-impacting PRs have review.
-3. Create a stable release with either:
+3. Tag the exact reviewed commit with a `v`-prefixed SemVer and push the tag:
 
    ```bash
-   git tag squad-v0.1.0
-   git push origin squad-v0.1.0
+   git tag v0.1.0
+   git push origin v0.1.0
    ```
 
-   or run the `Release` workflow manually with channel `stable`. If no version
-   is provided, the workflow resolves the next patch version from the latest
-   stable `squad-v*` or `v*` tag and falls back to `package.json`.
+   Tags such as `v1.0.0-beta.1` and `v1.0.0-canary.1` create prereleases.
+   Ordinary pushes to `main` never publish a release.
+
+   To rerun a failed pre-publication build through `workflow_dispatch`, select
+   the existing `v0.1.0` tag as the workflow ref and enter `0.1.0` as the
+   required version. Manual dispatch does not create or move a tag; the selected
+   tag and input must match exactly.
 
 4. The workflow builds:
 
-   - macOS, Windows, and Linux runtime binaries
+   - macOS Apple Silicon, macOS Intel, Windows x64, and Linux x64 runtime binaries
    - checksums for every runtime asset
-   - a web bundle containing `dist/`, `server.mjs`, and package metadata
+   - a web bundle containing `dist/`, `server.mjs`, and package metadata stamped
+     with the resolved release version
    - `manifest-<channel>.json` for the installer/update path
 
-5. Smoke test the published assets before moving a draft release to public.
+5. Smoke test the published web bundle and native runtime assets from the new
+   GitHub release. A stable tag creates a normal release; a prerelease version
+   creates a GitHub prerelease.
 
-Pushes to `main` automatically publish a canary prerelease. Canary versions use
-the next stable base plus the run number and commit, for example:
-`0.1.1-canary.42.abc123def456`.
+The setup job rejects leading-zero or malformed versions, confirms that
+`GITHUB_REF` is exactly `refs/tags/v<VERSION>`, and resolves both the tag and
+`HEAD` to the same commit. Every build and publish job checks out that resolved
+commit SHA and repeats the verification before doing work. A tag cannot be used
+to release a different commit, including through manual dispatch. Immediately
+before creating the GitHub release, the publish job also resolves the remote tag
+through the GitHub API and requires it to match the verified source SHA.
 
 Pull requests do not publish releases. They use dry-run versions such as
 `0.0.0-pr.17.abc123def456` so installer-manifest generation is still exercised
@@ -63,21 +76,29 @@ manual or branch-triggered CI runs.
 
 ## Release Channels
 
-- `stable`: normal customer release
-- `beta`: pre-release customer validation
-- `canary`: internal or very early rollout
+- `stable`: a version without a prerelease suffix, such as `v1.2.3`
+- `beta`: any prerelease except `canary`, such as `v1.2.3-beta.1` or
+  `v1.2.3-rc.1`
+- `canary`: a `canary` prerelease, such as `v1.2.3-canary.1`
 
-Non-stable channels are marked as prereleases by the workflow.
+The channel is derived from the immutable tag; it is not a manual release
+switch. Non-stable channels are marked as GitHub prereleases.
 
-Stable releases are allowed to become GitHub's latest release. Canary and beta
-releases are explicitly created with `--latest=false`.
+Stable releases become GitHub's latest release. Canary and beta releases are
+created with `--latest=false`.
+
+Publishing is append-only. If a GitHub release already exists for the tag, the
+workflow stops instead of replacing assets or editing release metadata. Fix a
+failed build before publication and rerun it from the same tag. If publication
+itself partially completed, inspect the existing release and resolve it
+manually rather than using an automated overwrite.
 
 ## Rollback
 
-Rollback is manifest-driven. Point the hosted channel manifest back to the last
-known-good version, or republish the previous `manifest-<channel>.json` as the
-active channel manifest. Keep the failed release available for investigation
-unless it contains a security or legal issue.
+Do not mutate a published release in place. Revert the faulty change, create a
+new patch version from the restored source, and publish that new immutable tag.
+Keep the failed release available for investigation unless it contains a
+security or legal issue.
 
 ## Branch Protection
 
@@ -85,16 +106,23 @@ Recommended required checks:
 
 - `Runner startup`
 - `Web checks`
-- `Runtime checks (ubuntu-latest)`
-- `Runtime checks (macos-latest)`
-- `Runtime checks (windows-latest)`
-- `Release dry run (ubuntu-latest)`
-- `Release dry run (macos-latest)`
-- `Release dry run (windows-latest)`
+- `Runtime checks (linux-x64)`
+- `Runtime checks (macos-arm64)`
+- `Runtime checks (macos-x64)`
+- `Runtime checks (windows-x64)`
+- `Release dry run (linux-x64)`
+- `Release dry run (macos-arm64)`
+- `Release dry run (macos-x64)`
+- `Release dry run (windows-x64)`
 - `Validate release manifest`
 
 Require at least one owner review for changes under `.github/`, `daemon/`,
 `server.mjs`, `scripts/`, and release documentation.
+
+Add a repository ruleset for `refs/tags/v*` that blocks tag updates and
+deletions. The workflow checks the remote tag again immediately before release
+creation, while the ruleset closes the remaining force-move race at the
+repository boundary.
 
 ## GitHub Runner Readiness
 
@@ -106,36 +134,34 @@ annotation, fix Billing & plans first, then rerun `CI` and `Release`.
 
 The release publish job targets channel environments named `canary`, `beta`, and
 `stable`. Add approval rules to the `stable` environment when the repo moves
-from test releases to customer releases.
+from test releases to customer releases. Environment reviewers do not change
+the tag or source commit; they only approve the already-built release.
 
-The release workflow intentionally keeps the default `GITHUB_TOKEN` read-only so
-it can run in organizations that disable workflow write permissions. Publishing
-requires an `AUTOHAND_RELEASE_TOKEN` secret on the `canary`, `beta`, and
-`stable` environments, or as a repository secret while this repo is still in
-test mode. That token should be a fine-grained token or GitHub App token with
-release/content write access only for this repository.
+The release workflow keeps its default `GITHUB_TOKEN` read-only. Only the final
+publish job requests `contents: write` and prefers GitHub's short-lived workflow
+token. If organization policy still makes that token read-only, an optional
+`AUTOHAND_RELEASE_TOKEN` repository or environment secret may provide the same
+repository-scoped release permission. The workflow selects that fallback only
+after a read-only permission check shows the workflow token cannot publish.
 
-Release channels are intentionally limited to `stable`, `beta`, and `canary`.
-Invalid channels fail during the metadata step before any release assets are
-published. Existing beta and canary releases are edited with `--latest=false`
-as well as created with `--latest=false`, so reruns cannot accidentally promote
-a prerelease to GitHub's latest release.
-
-GitHub artifact attestations can be added after the organization enables
-workflow `id-token` and `attestations` write permissions. Until then, release
-integrity is enforced with SHA-256 checksums and manifest validation.
+Release integrity is checked with SHA-256 checksum files, exact target coverage
+in the installer manifest, immutable commit pins for third-party GitHub
+Actions, and the tag-to-commit verification described above. The workflow does
+not claim artifact signing, code signing, notarization, or GitHub artifact
+attestation.
 
 ## Local Preflight
 
 Before a release PR, run:
 
 ```bash
+bun run check:sdk
 bun run check:server
 bun run check:release
 bun run build
 cd daemon
 cargo fmt -- --check
-cargo test -j1
+cargo test -j1 -- --test-threads=1
 cargo build --bins -j1
 ```
 
@@ -146,6 +172,13 @@ node scripts/resolve-squad-version.mjs --mode dry-run
 cd daemon
 cargo build --release --bins -j1
 cd ..
-RELEASE_VERSION=0.1.0 RELEASE_TAG=squad-v0.1.0 bun run release:package
+RELEASE_VERSION=0.1.0 RELEASE_TAG=v0.1.0 bun run release:package
 bun run release:merge-manifests release
+```
+
+To check an existing tag locally with the same immutable-source guard:
+
+```bash
+git checkout v0.1.0
+GITHUB_REF=refs/tags/v0.1.0 scripts/verify-release-ref.sh v 0.1.0
 ```

@@ -8,6 +8,10 @@ const requiredReleaseOs = (process.env.REQUIRED_RELEASE_OS || '')
   .split(',')
   .map((item) => item.trim())
   .filter(Boolean);
+const requiredReleaseTargets = (process.env.REQUIRED_RELEASE_TARGETS || '')
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
 const releaseVersion = process.env.RELEASE_VERSION?.trim();
 const releaseChannel = process.env.RELEASE_CHANNEL?.trim();
 const outDir = process.env.RELEASE_OUT_DIR?.trim() || 'release';
@@ -25,14 +29,19 @@ for (const filePath of manifestPaths) {
   manifests.push({ filePath, manifest });
 }
 
-const version = releaseVersion || uniqueValue(manifests, 'latestAllowedVersion');
-const channel = releaseChannel || uniqueValue(manifests, 'channel');
+const manifestVersion = uniqueValue(manifests, 'latestAllowedVersion');
+const manifestChannel = uniqueValue(manifests, 'channel');
+assertExpectedValue('latestAllowedVersion', manifestVersion, releaseVersion);
+assertExpectedValue('channel', manifestChannel, releaseChannel);
+const version = releaseVersion || manifestVersion;
+const channel = releaseChannel || manifestChannel;
 const artifacts = dedupeArtifacts(
   manifests.flatMap(({ manifest }) => manifest.artifacts),
 );
 
 validateComponentCoverage(artifacts);
 validateOsCoverage(artifacts);
+validateTargetCoverage(artifacts);
 await mkdir(outDir, { recursive: true });
 
 const merged = {
@@ -107,6 +116,12 @@ function uniqueValue(manifests, field) {
   return values[0];
 }
 
+function assertExpectedValue(field, actual, expected) {
+  if (expected && actual !== expected) {
+    throw new Error(`Release manifests use ${field} ${actual}, expected ${expected}`);
+  }
+}
+
 function dedupeArtifacts(artifacts) {
   const seen = new Map();
   for (const artifact of artifacts) {
@@ -150,6 +165,16 @@ function validateOsCoverage(artifacts) {
   for (const required of requiredReleaseOs) {
     if (!present.has(required)) {
       throw new Error(`Merged release manifest is missing required OS ${required}`);
+    }
+  }
+}
+
+function validateTargetCoverage(artifacts) {
+  if (requiredReleaseTargets.length === 0) return;
+  const present = new Set(artifacts.map((artifact) => `${artifact.os}/${artifact.arch}`));
+  for (const required of requiredReleaseTargets) {
+    if (!present.has(required)) {
+      throw new Error(`Merged release manifest is missing required target ${required}`);
     }
   }
 }

@@ -1,0 +1,6 @@
+self-hosted-runner:
+  # actionlint releases before v1.7.10 do not know these GitHub-hosted labels.
+  labels:
+    - macos-26
+    - macos-26-intel
+    - windows-2025
