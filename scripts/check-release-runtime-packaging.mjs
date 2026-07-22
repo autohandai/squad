@@ -66,6 +66,7 @@ async function assertPackagedServerCreatesState() {
 
 function waitForServer(child) {
   return new Promise((resolve, reject) => {
+    let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
       cleanup();
@@ -73,7 +74,8 @@ function waitForServer(child) {
     }, 5000);
 
     const onStdout = (chunk) => {
-      if (String(chunk).includes('autohandSWE listening on')) {
+      stdout += String(chunk);
+      if (stdout.includes('autohandSWE listening on')) {
         cleanup();
         resolve();
       }
