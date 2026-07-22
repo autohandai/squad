@@ -1,10 +1,11 @@
 import process from 'node:process';
 
-export function tarCreateArgs(archivePath, bundleName, platform = process.platform) {
+export function tarCreateArgs(archiveName, sourceDir, bundleName, platform = process.platform) {
   return [
-    ...(platform === 'win32' ? ['--force-local'] : []),
     '-czf',
-    archivePath,
+    archiveName,
+    '-C',
+    platform === 'win32' ? sourceDir.replaceAll('\\', '/') : sourceDir,
     bundleName,
   ];
 }

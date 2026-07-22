@@ -109,8 +109,8 @@ async function stageProductionModules() {
 async function createArchive() {
   await mkdir(outDir, { recursive: true });
   await rm(archivePath, { force: true });
-  const result = spawnSync('tar', tarCreateArgs(archivePath, bundleName, releaseOs), {
-    cwd: scratchDir,
+  const result = spawnSync('tar', tarCreateArgs(archiveName, scratchDir, bundleName, releaseOs), {
+    cwd: outDir,
     encoding: 'utf8',
   });
   if (result.status !== 0) {
