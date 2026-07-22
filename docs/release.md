@@ -138,11 +138,13 @@ from test releases to customer releases. Environment reviewers do not change
 the tag or source commit; they only approve the already-built release.
 
 The release workflow keeps its default `GITHUB_TOKEN` read-only. Only the final
-publish job requests `contents: write` and prefers GitHub's short-lived workflow
-token. If organization policy still makes that token read-only, an optional
-`AUTOHAND_RELEASE_TOKEN` repository or environment secret may provide the same
-repository-scoped release permission. The workflow selects that fallback only
-after a read-only permission check shows the workflow token cannot publish.
+publish job requests `contents: write` and passes GitHub's short-lived,
+job-scoped workflow token directly to the GitHub CLI. Do not infer this granular
+token's access from the repository API's user-oriented `permissions.push`
+field: that field can be absent even when the job log confirms the
+`Contents: write` permission. A policy that blocks the requested job permission
+must be fixed in the repository or organization Actions settings before
+publishing.
 
 Release integrity is checked with SHA-256 checksum files, exact target coverage
 in the installer manifest, immutable commit pins for third-party GitHub

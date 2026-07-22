@@ -324,8 +324,7 @@ jobs:
 
       - name: Publish GitHub release
         env:
-          DEFAULT_GH_TOKEN: ${{ github.token }}
-          AUTOHAND_RELEASE_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.setup.outputs.tag }}
           RELEASE_TITLE: ${{ needs.setup.outputs.title }}
           RELEASE_PRERELEASE: ${{ needs.setup.outputs.prerelease }}
@@ -335,19 +334,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          token_can_publish() {
-            local token="$1"
-            [[ -n "$token" ]] || return 1
-            [[ "$(GH_TOKEN="$token" gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions.push // false' 2>/dev/null)" == "true" ]]
-          }
-
-          if token_can_publish "$DEFAULT_GH_TOKEN"; then
-            export GH_TOKEN="$DEFAULT_GH_TOKEN"
-          elif token_can_publish "$AUTOHAND_RELEASE_TOKEN"; then
-            export GH_TOKEN="$AUTOHAND_RELEASE_TOKEN"
-            echo "The workflow token cannot publish releases; using AUTOHAND_RELEASE_TOKEN."
-          else
-            echo "::error::Neither the job-scoped GITHUB_TOKEN nor AUTOHAND_RELEASE_TOKEN has release write access."
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::The job-scoped GITHUB_TOKEN is unavailable."
             exit 1
           fi
 

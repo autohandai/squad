@@ -148,9 +148,9 @@ assertIncludes(releaseWorkflow, 'REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64
 assertIncludes(releaseWorkflow, 'contents: read', 'Release workflow defaults to read-only token permissions');
 assertIncludes(releaseWorkflow, 'contents: write', 'Release publish job has scoped content write permission');
 assertCount(releaseWorkflow, 'contents: write', 1, 'Only the publish job receives content write permission');
-assertIncludes(releaseWorkflow, 'DEFAULT_GH_TOKEN: ${{ github.token }}', 'Release publishing prefers the short-lived workflow token');
-assertIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN }}', 'Release publishing supports an explicit policy fallback token');
-assertIncludes(releaseWorkflow, 'token_can_publish "$DEFAULT_GH_TOKEN"', 'Release publishing checks the workflow token first');
+assertIncludes(releaseWorkflow, 'GH_TOKEN: ${{ github.token }}', 'Release publishing uses the short-lived job-scoped workflow token');
+assertNotIncludes(releaseWorkflow, "'.permissions.push // false'", 'Release publishing does not infer job-token permissions from repository metadata');
+assertNotIncludes(releaseWorkflow, 'token_can_publish', 'Release publishing does not reject valid granular job tokens with a repository permission probe');
 assertNotIncludes(releaseWorkflow, 'attestations: write', 'Release workflow does not require org-blocked attestation permissions');
 assertIncludes(releaseWorkflow, 'gh release view "$RELEASE_TAG"', 'Release publishing detects an existing release');
 assertIncludes(releaseWorkflow, 'Refusing to replace published assets', 'Release publishing refuses to mutate an existing release');
