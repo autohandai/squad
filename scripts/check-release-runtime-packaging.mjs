@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,13 +14,22 @@ const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const failures = [];
 
 try {
-  const args = tarCreateArgs('D:\\release\\autohand-squad-win32-x64.tar.gz', 'bundle', 'win32');
-  assert.equal(args[0], '--force-local', 'Windows GNU tar must treat drive-letter archives as local paths');
-  assert.equal(
-    tarCreateArgs('/tmp/autohand-squad-darwin-arm64.tar.gz', 'bundle', 'darwin')[0],
-    '-czf',
+  assert.deepEqual(
+    tarCreateArgs('autohand-squad-win32-x64.tar.gz', 'D:\\runner\\temp\\bundle', 'bundle', 'win32'),
+    ['-czf', 'autohand-squad-win32-x64.tar.gz', '-C', 'D:/runner/temp/bundle', 'bundle'],
+    'Windows tar must receive a relative archive name and a normalized source directory',
+  );
+  assert.deepEqual(
+    tarCreateArgs('autohand-squad-darwin-arm64.tar.gz', '/tmp/bundle', 'bundle', 'darwin'),
+    ['-czf', 'autohand-squad-darwin-arm64.tar.gz', '-C', '/tmp/bundle', 'bundle'],
     'Non-Windows tar invocation must remain compatible with BSD tar',
   );
+} catch (error) {
+  failures.push(error);
+}
+
+try {
+  await assertTarCreatesPortableArchive();
 } catch (error) {
   failures.push(error);
 }
@@ -36,6 +45,32 @@ if (failures.length > 0) {
 }
 
 console.log('Release runtime packaging checks passed.');
+
+async function assertTarCreatesPortableArchive() {
+  const root = await mkdtemp(join(tmpdir(), 'autohand-squad-tar-'));
+  const outDir = join(root, 'out');
+  const sourceDir = join(root, 'source');
+  const bundleName = 'bundle';
+  const archiveName = 'portable.tar.gz';
+
+  try {
+    await mkdir(join(outDir), { recursive: true });
+    await mkdir(join(sourceDir, bundleName), { recursive: true });
+    await writeFile(join(sourceDir, bundleName, 'proof.txt'), 'portable\n', 'utf8');
+    const result = spawnSync('tar', tarCreateArgs(archiveName, sourceDir, bundleName), {
+      cwd: outDir,
+      encoding: 'utf8',
+    });
+    assert.equal(
+      result.status,
+      0,
+      `Native tar failed: ${String(result.stderr || result.stdout || '').trim()}`,
+    );
+    assert.ok((await stat(join(outDir, archiveName))).size > 0, 'Native tar must create a non-empty archive');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 async function assertPackagedServerCreatesState() {
   const root = await mkdtemp(join(tmpdir(), 'autohand-squad-packaged-state-'));

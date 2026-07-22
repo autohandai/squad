@@ -124,6 +124,7 @@ assertIncludes(ciWorkflow, 'macos-26-intel', 'CI matrix includes macOS Intel');
 assertIncludes(ciWorkflow, 'windows-2025', 'CI matrix includes Windows x64');
 assertIncludes(ciWorkflow, 'libxdo-dev', 'CI installs the Linux xdo linker dependency');
 assertIncludes(ciWorkflow, 'bun run check:sdk', 'CI verifies the published Autohand SDK');
+assertIncludes(ciWorkflow, 'name: Check release runtime packaging', 'CI exercises native tar and packaged state on every release target');
 assertIncludes(ciWorkflow, 'name: Check native release packager', 'CI loads the native packager on every release target');
 assertIncludes(ciWorkflow, "import('@crabnebula/packager')", 'CI verifies the platform-specific packager binding');
 assertIncludes(ciWorkflow, 'REQUIRED_RELEASE_OS=linux,darwin,win32', 'CI validates all release OS entries');

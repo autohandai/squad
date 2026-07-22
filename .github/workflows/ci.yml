@@ -102,6 +102,9 @@ jobs:
       - name: Check Autohand SDK on native target
         run: bun run check:sdk
 
+      - name: Check release runtime packaging
+        run: node scripts/check-release-runtime-packaging.mjs
+
       - name: Check native release packager
         run: node -e "import('@crabnebula/packager').then(({ packageApp }) => { if (typeof packageApp !== 'function') process.exit(1); })"
 
