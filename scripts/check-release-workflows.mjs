@@ -13,10 +13,14 @@ const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.me
 const releaseWorkflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 const smokeWorkflow = readFileSync(new URL('../.github/workflows/actions-smoke.yml', import.meta.url), 'utf8');
 const releaseNotes = readFileSync(new URL('../.github/release.yml', import.meta.url), 'utf8');
+const bunLock = readFileSync(new URL('../bun.lock', import.meta.url), 'utf8');
 const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const packager = readFileSync(new URL('./package-squad-release.mjs', import.meta.url), 'utf8');
 const portablePackager = readFileSync(new URL('./package-squad-portable.mjs', import.meta.url), 'utf8');
 const installerPackager = readFileSync(new URL('./package-squad-installers.mjs', import.meta.url), 'utf8');
+const runtimePackagingCheck = new URL('./check-release-runtime-packaging.mjs', import.meta.url).pathname;
+
+execFileSync(process.execPath, [runtimePackagingCheck], { stdio: 'inherit' });
 
 assertEqual(
   resolve({
@@ -190,7 +194,12 @@ assertIncludes(installerPackager, "formats: [releaseOs === 'darwin' ? 'dmg' : 'n
 assertIncludes(installerPackager, "installMode: 'currentUser'", 'Windows installer does not require administrator access');
 assertIncludes(installerPackager, "'autohand-windows-x64.exe'", 'Native installer vendors the Windows Agent SDK CLI');
 assertIncludes(installerPackager, 'validateNodeRuntime(nodeRuntimePath)', 'Native installer validates the staged Node.js runtime');
-assertEqual(packageMetadata.devDependencies?.['@crabnebula/packager'], '0.11.2', 'Native packager pin');
+assertEqual(packageMetadata.devDependencies?.['@crabnebula/packager'], '0.8.1', 'Native packager pin');
+assertIncludes(
+  bunLock,
+  '"@crabnebula/packager-darwin-x64": ["@crabnebula/packager-darwin-x64@0.8.1"',
+  'Native packager lock includes the macOS Intel binary',
+);
 
 checkManifestTargetValidation();
 checkReleaseRefVerification();
