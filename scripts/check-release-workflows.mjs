@@ -312,21 +312,7 @@ function assertManifestMergeThrows(input, env, label) {
 function resolve(env, args) {
   const output = execFileSync(process.execPath, [resolver, ...args], {
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      GITHUB_EVENT_NAME: '',
-      GITHUB_REF_NAME: '',
-      GITHUB_REF_TYPE: '',
-      GITHUB_RUN_NUMBER: '',
-      GITHUB_SHA: '',
-      INPUT_CHANNEL: '',
-      INPUT_DRAFT: '',
-      INPUT_PRERELEASE: '',
-      INPUT_VERSION: '',
-      PR_NUMBER: '',
-      RELEASE_KNOWN_TAGS: '',
-      ...env,
-    },
+    env: resolverEnv(env),
   });
   return JSON.parse(output);
 }
@@ -399,11 +385,31 @@ function assertThrows(env, args, label) {
   try {
     execFileSync(process.execPath, [resolver, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, ...env },
+      env: resolverEnv(env),
       stdio: ['ignore', 'pipe', 'ignore'],
     });
   } catch {
     return;
   }
   throw new Error(`${label}: expected resolver to fail`);
+}
+
+function resolverEnv(overrides) {
+  return {
+    ...process.env,
+    GITHUB_EVENT_NAME: '',
+    GITHUB_OUTPUT: '',
+    GITHUB_REF_NAME: '',
+    GITHUB_REF_TYPE: '',
+    GITHUB_RUN_NUMBER: '',
+    GITHUB_SHA: '',
+    INPUT_CHANNEL: '',
+    INPUT_DRAFT: '',
+    INPUT_PRERELEASE: '',
+    INPUT_VERSION: '',
+    PR_NUMBER: '',
+    RELEASE_KNOWN_TAGS: '',
+    RELEASE_MODE: '',
+    ...overrides,
+  };
 }
