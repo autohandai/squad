@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose an improvement to an Autohand Squad workflow.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find the same request.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or contributor problem should Autohand Squad solve?
+      placeholder: Describe the current workflow, who it affects, and why it matters.
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the behavior or result you want, without assuming a particular implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or other approaches have you tried?
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Additional context
+      description: Add mockups, examples, compatibility concerns, or related issues. Remove private data from attachments.

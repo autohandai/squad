@@ -152,11 +152,11 @@ repository boundary.
 
 ## GitHub Runner Readiness
 
-This private repository uses GitHub-hosted Linux, macOS, and Windows runners.
-Before remote CI can prove the matrix, the account must have GitHub Actions
-billing available and a spending limit high enough for private-repository
-runner minutes. If GitHub refuses to start jobs with a billing or spending-limit
-annotation, fix Billing & plans first, then rerun `CI` and `Release`.
+This public repository uses GitHub-hosted Linux, macOS, and Windows runners.
+The repository and organization must allow GitHub Actions and the job-scoped
+permissions declared by each workflow. If GitHub refuses to start a job because
+of an Actions policy, fix the repository or organization policy first, then
+rerun `CI` or create a new immutable release tag as appropriate.
 
 The release publish job targets channel environments named `canary`, `beta`, and
 `stable`. Add approval rules to the `stable` environment when the repo moves

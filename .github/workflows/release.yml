@@ -232,6 +232,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Verify native packager binding
+        if: matrix.os != 'linux'
+        run: node -e "import('@crabnebula/packager').then(({ packageApp }) => { if (typeof packageApp !== 'function') process.exit(1) })"
+
       - name: Check Autohand SDK on native target
         run: bun run check:sdk
 
@@ -375,7 +379,8 @@ jobs:
               throw new Error(`Packaged resources became the default workspace: ${runtime.defaultWorkspace}`);
             }
           '
-          test -d "$state_root/web-state"
+          curl -fsS "http://127.0.0.1:${web_port}/api/provider-settings" >/dev/null
+          test -f "$state_root/web-state/provider-settings.json"
 
       - name: Install and smoke test Windows installer
         if: matrix.os == 'win32'
@@ -446,7 +451,8 @@ jobs:
             if ($runtime.data.defaultWorkspace -and $runtime.data.defaultWorkspace.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
               throw "The install directory became the default workspace: $($runtime.data.defaultWorkspace)"
             }
-            if (-not (Test-Path (Join-Path $stateRoot 'web-state'))) {
+            Invoke-RestMethod "http://127.0.0.1:$webPort/api/provider-settings" | Out-Null
+            if (-not (Test-Path (Join-Path $stateRoot 'web-state/provider-settings.json'))) {
               throw 'The installed runtime did not redirect writable web state.'
             }
           } finally {
