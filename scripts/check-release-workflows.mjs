@@ -125,6 +125,8 @@ assertIncludes(ciWorkflow, 'windows-2025', 'CI matrix includes Windows x64');
 assertIncludes(ciWorkflow, 'libxdo-dev', 'CI installs the Linux xdo linker dependency');
 assertIncludes(ciWorkflow, 'bun run check:sdk', 'CI verifies the published Autohand SDK');
 assertIncludes(ciWorkflow, 'bun run release:portable', 'CI dry run exercises portable packaging on every target');
+assertIncludes(ciWorkflow, 'release-dry-run-manifest-${{ matrix.id }}', 'CI uploads small per-target manifests for validation');
+assertIncludes(ciWorkflow, 'pattern: release-dry-run-manifest-*', 'CI validates manifest-only artifacts without downloading native bundles');
 assertIncludes(ciWorkflow, 'name: Check release runtime packaging', 'CI exercises native tar and packaged state on every release target');
 assertIncludes(ciWorkflow, 'name: Check native release packager', 'CI loads the native packager on every release target');
 assertIncludes(ciWorkflow, "import('@crabnebula/packager')", 'CI verifies the platform-specific packager binding');

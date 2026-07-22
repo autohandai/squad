@@ -246,6 +246,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Upload dry-run platform manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dry-run-manifest-${{ matrix.id }}
+          path: release/${{ matrix.os }}-${{ matrix.arch }}/manifest-${{ matrix.os }}-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 7
+
   validate-release-manifest:
     name: Validate release manifest
     runs-on: ubuntu-latest
@@ -255,11 +263,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Download dry-run release assets
+      - name: Download dry-run platform manifests
         uses: actions/download-artifact@v8
         with:
           path: release-downloads
-          pattern: release-dry-run-*
+          pattern: release-dry-run-manifest-*
           merge-multiple: true
 
       - name: Merge and validate platform manifests
