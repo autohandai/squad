@@ -302,6 +302,9 @@ jobs:
           bundle_name="autohand-squad-${RELEASE_VERSION}-${RELEASE_OS}-${RELEASE_ARCH}"
           archive="release/${RELEASE_OS}-${RELEASE_ARCH}/${bundle_name}.tar.gz"
           smoke_root="${RUNNER_TEMP}/squad-portable-smoke-${{ matrix.id }}"
+          if [[ "$RELEASE_OS" == "win32" ]]; then
+            smoke_root="${smoke_root//\\//}"
+          fi
           rm -rf "$smoke_root"
           mkdir -p "$smoke_root"
           tar -xzf "$archive" -C "$smoke_root"

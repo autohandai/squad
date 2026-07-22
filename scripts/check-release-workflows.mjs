@@ -156,6 +156,7 @@ assertIncludes(releaseWorkflow, 'Download built web runtime', 'Native release jo
 assertIncludes(releaseWorkflow, 'WEB_RUNTIME_DIR', 'Native packaging receives the bundled web runtime');
 assertIncludes(releaseWorkflow, 'bun run release:portable', 'Release workflow assembles portable application archives');
 assertIncludes(releaseWorkflow, 'name: Smoke test portable application', 'Release workflow smoke-tests portable application archives');
+assertIncludes(releaseWorkflow, 'smoke_root="${smoke_root//\\\\//}"', 'Windows portable smoke test normalizes the runner temp path for GNU tar');
 assertIncludes(releaseWorkflow, "import('@autohandai/agent-sdk')", 'Portable smoke test imports the bundled Agent SDK');
 assertIncludes(releaseWorkflow, 'NODE_VERSION: "22.23.1"', 'Release workflow pins the bundled Node.js runtime');
 assertIncludes(releaseWorkflow, 'bun run release:installers', 'Release workflow builds native installers');
