@@ -24,6 +24,8 @@ const releaseRepository = env('RELEASE_REPOSITORY', env('GITHUB_REPOSITORY', 'au
 const buildProfile = env('BUILD_PROFILE', 'release');
 const os = env('RELEASE_OS', process.platform);
 const cpu = env('RELEASE_ARCH', process.arch);
+assertNativeTarget('RELEASE_OS', os, process.platform);
+assertNativeTarget('RELEASE_ARCH', cpu, process.arch);
 const outDir = env('RELEASE_OUT_DIR', join('release', `${os}-${cpu}`));
 const targetDir = join('daemon', 'target', buildProfile);
 const assetBaseUrl = `https://github.com/${releaseRepository}/releases/download/${releaseTag}`;
@@ -50,7 +52,7 @@ for (const item of components) {
       os: target.os,
       arch: target.arch,
       component: item.component,
-      binaryName: item.binaryName,
+      binaryName: sourceName,
       url: `${assetBaseUrl}/${assetName}`,
       sha256,
     });
@@ -73,6 +75,11 @@ console.log(`Release manifest: ${join(outDir, manifestName)}`);
 function env(name, fallback) {
   const value = process.env[name];
   return value && value.trim() ? value.trim() : fallback;
+}
+
+function assertNativeTarget(name, requested, actual) {
+  if (requested === actual) return;
+  throw new Error(`${name} is ${requested}, but this native build runner is ${actual}`);
 }
 
 function executableName(binaryName, osName) {

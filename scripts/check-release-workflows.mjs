@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import process from 'node:process';
 
 const resolver = new URL('./resolve-squad-version.mjs', import.meta.url).pathname;
+const manifestMerger = new URL('./merge-release-manifests.mjs', import.meta.url).pathname;
+const releaseRefVerifier = new URL('./verify-release-ref.sh', import.meta.url).pathname;
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const releaseWorkflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 const smokeWorkflow = readFileSync(new URL('../.github/workflows/actions-smoke.yml', import.meta.url), 'utf8');
@@ -84,6 +88,20 @@ assertThrows({
   GITHUB_SHA: 'abcdef1234567890',
 }, ['--mode', 'release'], 'invalid release version');
 
+assertThrows({
+  GITHUB_EVENT_NAME: 'workflow_dispatch',
+  INPUT_CHANNEL: 'stable',
+  INPUT_VERSION: '1.2.3-beta.1',
+  GITHUB_SHA: 'abcdef1234567890',
+}, ['--mode', 'release'], 'prerelease version on stable channel');
+
+assertThrows({
+  GITHUB_EVENT_NAME: 'push',
+  GITHUB_REF_NAME: 'squad-vgarbage',
+  GITHUB_REF_TYPE: 'tag',
+  GITHUB_SHA: 'abcdef1234567890',
+}, ['--mode', 'release'], 'invalid release tag');
+
 const autoStable = resolve({
   GITHUB_EVENT_NAME: 'workflow_dispatch',
   INPUT_CHANNEL: 'stable',
@@ -92,23 +110,157 @@ const autoStable = resolve({
 }, ['--mode', 'release']);
 assertEqual(autoStable.version, '99.88.904', 'auto-increment stable version');
 
-assertIncludes(ciWorkflow, 'ubuntu-latest', 'CI matrix includes Linux');
-assertIncludes(ciWorkflow, 'macos-latest', 'CI matrix includes macOS');
-assertIncludes(ciWorkflow, 'windows-latest', 'CI matrix includes Windows');
+assertIncludes(ciWorkflow, 'ubuntu-24.04', 'CI matrix includes Linux x64');
+assertIncludes(ciWorkflow, 'macos-26\n', 'CI matrix includes macOS Apple Silicon');
+assertIncludes(ciWorkflow, 'macos-26-intel', 'CI matrix includes macOS Intel');
+assertIncludes(ciWorkflow, 'windows-2025', 'CI matrix includes Windows x64');
+assertIncludes(ciWorkflow, 'libxdo-dev', 'CI installs the Linux xdo linker dependency');
+assertIncludes(ciWorkflow, 'bun run check:sdk', 'CI verifies the published Autohand SDK');
 assertIncludes(ciWorkflow, 'REQUIRED_RELEASE_OS=linux,darwin,win32', 'CI validates all release OS entries');
-assertIncludes(releaseWorkflow, 'branches:', 'Release workflow handles branch pushes');
-assertIncludes(releaseWorkflow, '"squad-v*"', 'Release workflow handles squad release tags');
-assertIncludes(releaseWorkflow, '"v*"', 'Release workflow handles legacy release tags');
-assertIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN', 'Release publishing uses explicit token secret');
+assertIncludes(ciWorkflow, 'REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64,darwin/x64,win32/x64', 'CI validates every native release target');
+assertIncludes(releaseWorkflow, 'name: Release', 'Release workflow has the public Release name');
+assertIncludes(releaseWorkflow, '- "v[0-9]*"', 'Release workflow handles v-prefixed SemVer tags');
+assertNotIncludes(releaseWorkflow, 'branches:', 'Release workflow does not publish branch pushes');
+assertNotIncludes(releaseWorkflow, '"squad-v*"', 'Release workflow rejects legacy squad tag triggers');
+assertIncludes(releaseWorkflow, 'description: "Semver version matching the v-prefixed dispatch tag"', 'Manual release version documents the exact-tag contract');
+assertIncludes(releaseWorkflow, 'version:\n        description:', 'Release workflow exposes a version dispatch input');
+assertIncludes(releaseWorkflow, 'required: true', 'Manual release version is required');
+assertIncludes(releaseWorkflow, 'name: Setup', 'Release workflow has a shared setup job');
+assertIncludes(releaseWorkflow, "if: github.repository == 'autohandai/squad'", 'Release setup cannot publish from a fork');
+assertIncludes(releaseWorkflow, 'source_sha: ${{ steps.source.outputs.source_sha }}', 'Release setup exports the verified source SHA');
+assertCount(releaseWorkflow, 'scripts/verify-release-ref.sh v "$VERSION"', 4, 'Every release job verifies the tag-bound source');
+assertCount(releaseWorkflow, 'ref: ${{ needs.setup.outputs.source_sha }}', 3, 'Every build and publish job checks out the verified source SHA');
+assertCount(releaseWorkflow, 'fetch-depth: 0', 4, 'Every release checkout fetches tag history');
+assertCount(releaseWorkflow, 'persist-credentials: false', 4, 'Every release checkout drops persisted credentials');
+assertIncludes(releaseWorkflow, 'macos-26-intel', 'Release workflow builds macOS Intel');
+assertNativeReleaseMatrix(releaseWorkflow, [
+  ['linux-x64', 'ubuntu-24.04', 'linux', 'x64'],
+  ['macos-arm64', 'macos-26', 'darwin', 'arm64'],
+  ['macos-x64', 'macos-26-intel', 'darwin', 'x64'],
+  ['windows-x64', 'windows-2025', 'win32', 'x64'],
+]);
+assertNotIncludes(releaseWorkflow, 'WEB_RUNTIME_DIR', 'Release workflow keeps the web bundle separate from native assets');
+assertNotIncludes(releaseWorkflow, 'bun run release:portable', 'Release workflow does not require the incomplete portable packager');
+assertNotIncludes(releaseWorkflow, 'Download built web runtime', 'Native release jobs do not download a web runtime');
+assertIncludes(releaseWorkflow, 'AUTOHAND_SQUAD_RELEASE_VERSION', 'Release binaries embed resolved release versions');
+assertIncludes(releaseWorkflow, 'bun run check:sdk', 'Release workflow verifies the published Autohand SDK');
+assertIncludes(releaseWorkflow, 'REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64,darwin/x64,win32/x64', 'Release publishing requires every native target');
 assertIncludes(releaseWorkflow, 'contents: read', 'Release workflow defaults to read-only token permissions');
-assertNotIncludes(releaseWorkflow, 'contents: write', 'Release workflow does not require default token write permissions');
+assertIncludes(releaseWorkflow, 'contents: write', 'Release publish job has scoped content write permission');
+assertCount(releaseWorkflow, 'contents: write', 1, 'Only the publish job receives content write permission');
+assertIncludes(releaseWorkflow, 'DEFAULT_GH_TOKEN: ${{ github.token }}', 'Release publishing prefers the short-lived workflow token');
+assertIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN }}', 'Release publishing supports an explicit policy fallback token');
+assertIncludes(releaseWorkflow, 'token_can_publish "$DEFAULT_GH_TOKEN"', 'Release publishing checks the workflow token first');
 assertNotIncludes(releaseWorkflow, 'attestations: write', 'Release workflow does not require org-blocked attestation permissions');
-assertIncludes(releaseWorkflow, 'edit_flags+=(--latest=false)', 'Release edit keeps non-stable releases out of latest');
+assertIncludes(releaseWorkflow, 'gh release view "$RELEASE_TAG"', 'Release publishing detects an existing release');
+assertIncludes(releaseWorkflow, 'Refusing to replace published assets', 'Release publishing refuses to mutate an existing release');
+assertIncludes(releaseWorkflow, 'commits/$RELEASE_TAG', 'Release publishing rechecks the remote tag immediately before publication');
+assertIncludes(releaseWorkflow, 'remote_source_sha" != "$SOURCE_SHA', 'Release publishing rejects a remotely moved tag');
+assertNotIncludes(releaseWorkflow, '--clobber', 'Release publishing never overwrites an asset');
+assertNotIncludes(releaseWorkflow, 'gh release edit', 'Release publishing never edits an existing release');
+assertIncludes(releaseWorkflow, '--verify-tag', 'Release publishing requires the remote tag');
+assertIncludes(releaseWorkflow, '--target "$SOURCE_SHA"', 'Release publishing targets the verified source SHA');
+assertPinnedActionUses(releaseWorkflow, 'Release workflow');
 assertIncludes(smokeWorkflow, 'Runner startup', 'Actions smoke workflow checks runner startup separately');
 assertIncludes(releaseNotes, 'Release Engineering', 'Release notes group release engineering changes');
 assertIncludes(packager, 'autohandai/squad', 'Release packager defaults to the org repo');
+assertIncludes(packager, 'binaryName: sourceName', 'Windows manifests retain executable suffixes');
+
+checkManifestTargetValidation();
+checkReleaseRefVerification();
 
 console.log('Release workflow metadata checks passed.');
+
+function checkManifestTargetValidation() {
+  const root = mkdtempSync(join(tmpdir(), 'autohand-squad-release-check-'));
+  const manifestPath = join(root, 'manifest-linux-x64.json');
+  const components = ['cli', 'daemon', 'analytics', 'tray', 'ui'];
+  const artifacts = components.map((component) => ({
+    os: 'linux',
+    arch: 'x64',
+    component,
+    binaryName: component,
+    url: `https://example.test/${component}`,
+    sha256: component.padEnd(64, '0'),
+  }));
+  writeFileSync(manifestPath, JSON.stringify({
+    latestAllowedVersion: '1.2.3',
+    channel: 'stable',
+    artifacts,
+  }));
+
+  try {
+    mergeManifests(root, {
+      REQUIRED_RELEASE_TARGETS: 'linux/x64',
+      RELEASE_VERSION: '1.2.3',
+      RELEASE_CHANNEL: 'stable',
+    });
+    assertManifestMergeThrows(root, {
+      REQUIRED_RELEASE_TARGETS: 'linux/x64,darwin/x64',
+    }, 'missing native release target');
+    assertManifestMergeThrows(root, {
+      REQUIRED_RELEASE_TARGETS: 'linux/x64',
+      RELEASE_VERSION: '9.9.9',
+    }, 'mismatched release version');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function checkReleaseRefVerification() {
+  const root = mkdtempSync(join(tmpdir(), 'autohand-squad-release-ref-'));
+  const git = (...args) => execFileSync('git', ['-C', root, ...args], {
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  const verify = (version, ref) => execFileSync('bash', [releaseRefVerifier, 'v', version], {
+    cwd: root,
+    env: { ...process.env, GITHUB_REF: ref },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+
+  try {
+    git('init', '--quiet');
+    writeFileSync(join(root, 'fixture.txt'), 'tagged\n');
+    git('add', 'fixture.txt');
+    git('-c', 'user.name=Release Check', '-c', 'user.email=release-check@example.test', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'tagged source');
+    git('-c', 'tag.gpgSign=false', 'tag', 'v1.2.3');
+    git('-c', 'tag.gpgSign=false', 'tag', 'v1.2.3-beta.1');
+
+    verify('1.2.3', 'refs/tags/v1.2.3');
+    verify('1.2.3-beta.1', 'refs/tags/v1.2.3-beta.1');
+    assertCommandThrows(() => verify('1.2.3', 'refs/heads/main'), 'manual dispatch from a branch');
+    assertCommandThrows(() => verify('01.2.3', 'refs/tags/v01.2.3'), 'leading-zero release version');
+    assertCommandThrows(() => verify('1.2.3-01', 'refs/tags/v1.2.3-01'), 'leading-zero numeric prerelease');
+    assertCommandThrows(() => verify('1.2.3+build.1', 'refs/tags/v1.2.3+build.1'), 'release build metadata');
+
+    writeFileSync(join(root, 'fixture.txt'), 'moved head\n');
+    git('add', 'fixture.txt');
+    git('-c', 'user.name=Release Check', '-c', 'user.email=release-check@example.test', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'move head');
+    assertCommandThrows(() => verify('1.2.3', 'refs/tags/v1.2.3'), 'HEAD different from release tag');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function mergeManifests(input, env) {
+  execFileSync(process.execPath, [manifestMerger, input], {
+    env: {
+      ...process.env,
+      RELEASE_OUT_DIR: join(input, 'merged'),
+      ...env,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+}
+
+function assertManifestMergeThrows(input, env, label) {
+  try {
+    mergeManifests(input, env);
+  } catch {
+    return;
+  }
+  throw new Error(`${label}: expected manifest merge to fail`);
+}
 
 function resolve(env, args) {
   const output = execFileSync(process.execPath, [resolver, ...args], {
@@ -134,6 +286,53 @@ function assertNotIncludes(value, expected, label) {
   if (value.includes(expected)) {
     throw new Error(`${label}: workflow must not include ${expected}`);
   }
+}
+
+function assertCount(value, expected, count, label) {
+  const actual = value.split(expected).length - 1;
+  if (actual !== count) {
+    throw new Error(`${label}: expected ${count} occurrences of ${expected}, got ${actual}`);
+  }
+}
+
+function assertNativeReleaseMatrix(workflow, expected) {
+  const job = workflow.split('\n  runtime-artifacts:\n')[1]?.split('\n  publish:\n')[0];
+  const matrix = job
+    ?.split('\n      matrix:\n        include:\n')[1]
+    ?.split('\n    steps:\n')[0];
+  if (!matrix) {
+    throw new Error('Native release matrix: expected runtime-artifacts include matrix');
+  }
+
+  const idRows = matrix.match(/^          - id:/gm) || [];
+  const entries = [...matrix.matchAll(
+    /^          - id: ([^\n]+)\n            runner: ([^\n]+)\n            os: ([^\n]+)\n            arch: ([^\n]+)$/gm,
+  )].map((match) => match.slice(1));
+
+  assertEqual(idRows.length, expected.length, 'Native release matrix entry count');
+  assertEqual(entries.length, expected.length, 'Native release matrix complete entry count');
+  assertEqual(JSON.stringify(entries), JSON.stringify(expected), 'Native release matrix entries');
+}
+
+function assertPinnedActionUses(workflow, label) {
+  const uses = [...workflow.matchAll(/uses:\s+([^@\s]+)@([^\s#]+)/g)];
+  if (uses.length === 0) {
+    throw new Error(`${label}: expected at least one action reference`);
+  }
+  for (const [, action, reference] of uses) {
+    if (!/^[0-9a-f]{40}$/.test(reference)) {
+      throw new Error(`${label}: ${action}@${reference} must use an immutable 40-character commit SHA`);
+    }
+  }
+}
+
+function assertCommandThrows(command, label) {
+  try {
+    command();
+  } catch {
+    return;
+  }
+  throw new Error(`${label}: expected command to fail`);
 }
 
 function assertThrows(env, args, label) {
