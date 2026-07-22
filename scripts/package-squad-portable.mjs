@@ -17,6 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
+import { tarCreateArgs } from './release-archive.mjs';
 
 const nativeComponents = [
   'squad',
@@ -108,16 +109,14 @@ async function stageProductionModules() {
 async function createArchive() {
   await mkdir(outDir, { recursive: true });
   await rm(archivePath, { force: true });
-  const scratchArchivePath = join(scratchDir, archiveName);
-  const result = spawnSync('tar', ['-czf', archiveName, bundleName], {
-    cwd: scratchDir,
+  const result = spawnSync('tar', tarCreateArgs(archiveName, scratchDir, bundleName, releaseOs), {
+    cwd: outDir,
     encoding: 'utf8',
   });
   if (result.status !== 0) {
     const detail = String(result.stderr || result.stdout || '').trim();
     throw new Error(`Unable to create ${archiveName}${detail ? `: ${detail}` : ''}`);
   }
-  await copyFile(scratchArchivePath, archivePath);
   const info = await stat(archivePath);
   if (!info.isFile() || info.size === 0) {
     throw new Error(`Portable archive is empty: ${archivePath}`);

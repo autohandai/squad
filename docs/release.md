@@ -14,6 +14,9 @@ Every pull request should pass:
 - Autohand SDK 1.0.4 import and bundled CLI startup: `bun run check:sdk`
 - web server syntax check: `bun run check:server`
 - release metadata check: `bun run check:release`
+- native portable packaging check on every target, including the host `tar`
+  implementation and redirected packaged-state startup
+- native CrabNebula packager binding import on every release target
 - web build: `bun run build`
 - Rust formatting: `cd daemon && cargo fmt -- --check`
 - Rust tests: `cd daemon && cargo test -j1 -- --test-threads=1`

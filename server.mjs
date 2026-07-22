@@ -5967,6 +5967,10 @@ process.once("SIGINT", () => {
   stopAndExitFromSignal("SIGINT").catch(() => process.exit(1));
 });
 
+if (isPackagedRuntime) {
+  await mkdir(appStateDir, { recursive: true });
+}
+
 server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${host}:${port}`);
   if (await handleApi(req, res, url)) return;

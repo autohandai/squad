@@ -5,19 +5,23 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
-const resolver = new URL('./resolve-squad-version.mjs', import.meta.url).pathname;
-const manifestMerger = new URL('./merge-release-manifests.mjs', import.meta.url).pathname;
-const releaseRefVerifier = new URL('./verify-release-ref.sh', import.meta.url).pathname;
+const resolver = fileURLToPath(new URL('./resolve-squad-version.mjs', import.meta.url));
+const manifestMerger = fileURLToPath(new URL('./merge-release-manifests.mjs', import.meta.url));
+const releaseRefVerifier = fileURLToPath(new URL('./verify-release-ref.sh', import.meta.url));
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const releaseWorkflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 const smokeWorkflow = readFileSync(new URL('../.github/workflows/actions-smoke.yml', import.meta.url), 'utf8');
 const releaseNotes = readFileSync(new URL('../.github/release.yml', import.meta.url), 'utf8');
-const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const bunLock = readFileSync(new URL('../bun.lock', import.meta.url), 'utf8');
+const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const packager = readFileSync(new URL('./package-squad-release.mjs', import.meta.url), 'utf8');
 const portablePackager = readFileSync(new URL('./package-squad-portable.mjs', import.meta.url), 'utf8');
 const installerPackager = readFileSync(new URL('./package-squad-installers.mjs', import.meta.url), 'utf8');
+const runtimePackagingCheck = fileURLToPath(new URL('./check-release-runtime-packaging.mjs', import.meta.url));
+
+execFileSync(process.execPath, [runtimePackagingCheck], { stdio: 'inherit' });
 
 assertEqual(
   resolve({
@@ -121,7 +125,9 @@ assertIncludes(ciWorkflow, 'windows-2025', 'CI matrix includes Windows x64');
 assertIncludes(ciWorkflow, 'libxdo-dev', 'CI installs the Linux xdo linker dependency');
 assertIncludes(ciWorkflow, 'bun run check:sdk', 'CI verifies the published Autohand SDK');
 assertIncludes(ciWorkflow, 'bun run release:portable', 'CI dry run exercises portable packaging on every target');
-assertIncludes(ciWorkflow, 'name: Verify native packager binding', 'CI checks native installer bindings on macOS and Windows');
+assertIncludes(ciWorkflow, 'name: Check release runtime packaging', 'CI exercises native tar and packaged state on every release target');
+assertIncludes(ciWorkflow, 'name: Check native release packager', 'CI loads the native packager on every release target');
+assertIncludes(ciWorkflow, "import('@crabnebula/packager')", 'CI verifies the platform-specific packager binding');
 assertIncludes(ciWorkflow, 'REQUIRED_RELEASE_OS=linux,darwin,win32', 'CI validates all release OS entries');
 assertIncludes(ciWorkflow, 'REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64,darwin/x64,win32/x64', 'CI validates every native release target');
 assertIncludes(releaseWorkflow, 'name: Release', 'Release workflow has the public Release name');
@@ -190,7 +196,7 @@ assertIncludes(portablePackager, "'autohand-squad-ui'", 'Portable bundle include
 assertIncludes(portablePackager, "'autohand-windows-x64.exe'", 'Portable bundle includes the Windows Agent SDK CLI');
 assertIncludes(portablePackager, "for (const dependency of ['toml', 'yaml'])", 'Portable bundle vendors production SDK dependencies');
 assertIncludes(portablePackager, "spawnSync('tar'", 'Portable bundle creates one extractable archive');
-assertIncludes(portablePackager, "['-czf', archiveName, bundleName]", 'Portable archive output uses a cross-platform local tar path');
+assertIncludes(portablePackager, 'tarCreateArgs(archiveName, scratchDir, bundleName, releaseOs)', 'Portable archive uses cross-platform tar arguments');
 assertNotIncludes(portablePackager, "['-czf', archivePath", 'Portable archive avoids GNU tar remote-path parsing on Windows');
 assertIncludes(installerPackager, "requiredEnv('NODE_RUNTIME_PATH')", 'Native installer requires an explicit Node.js runtime');
 assertIncludes(installerPackager, "binary === 'autohand-squad-ui'", 'Native installer launches the desktop UI binary');
@@ -199,7 +205,11 @@ assertIncludes(installerPackager, "installMode: 'currentUser'", 'Windows install
 assertIncludes(installerPackager, "'autohand-windows-x64.exe'", 'Native installer vendors the Windows Agent SDK CLI');
 assertIncludes(installerPackager, 'validateNodeRuntime(nodeRuntimePath)', 'Native installer validates the staged Node.js runtime');
 assertEqual(packageMetadata.devDependencies?.['@crabnebula/packager'], '0.8.1', 'Native packager pin');
-assertIncludes(bunLock, '@crabnebula/packager-darwin-x64@0.8.1', 'Lockfile contains the published Intel macOS packager binding');
+assertIncludes(
+  bunLock,
+  '"@crabnebula/packager-darwin-x64": ["@crabnebula/packager-darwin-x64@0.8.1"',
+  'Native packager lock includes the macOS Intel binary',
+);
 
 checkManifestTargetValidation();
 checkReleaseRefVerification();
