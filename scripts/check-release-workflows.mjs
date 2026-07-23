@@ -190,10 +190,13 @@ assertIncludes(releaseWorkflow, 'name: Upload platform assets to GitHub release'
 assertIncludes(releaseWorkflow, 'gh release upload "$RELEASE_TAG" "${assets[@]}"', 'Platform jobs attach their verified assets without waiting for other targets');
 assertIncludes(releaseWorkflow, 'name: Upload release manifest and checksums', 'Finalization adds the merged installer manifest after platform uploads');
 assertIncludes(releaseWorkflow, 'gh release upload "$RELEASE_TAG" release/publish/*', 'Finalization uploads the manifest and checksums to the existing release');
-assertIncludes(releaseWorkflow, 'GH_TOKEN: ${{ github.token }}', 'Release jobs use the short-lived job-scoped workflow token');
+assertIncludes(
+  releaseWorkflow,
+  'GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}',
+  'Release jobs use the workflow token or an explicit enterprise-policy fallback',
+);
 assertNotIncludes(releaseWorkflow, '.permissions.push', 'Release publishing does not infer job-token permissions from repository metadata');
 assertNotIncludes(releaseWorkflow, 'token_can_publish', 'Release publishing does not reject valid granular job tokens with a repository permission probe');
-assertNotIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN', 'Release publishing does not expose a long-lived fallback token');
 assertNotIncludes(releaseWorkflow, 'attestations: write', 'Release workflow does not require org-blocked attestation permissions');
 assertIncludes(releaseWorkflow, 'gh release view "$RELEASE_TAG"', 'Release setup detects an existing release');
 assertIncludes(releaseWorkflow, 'Refusing to replace published assets', 'Release setup refuses to mutate an existing release');
