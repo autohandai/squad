@@ -95,6 +95,10 @@ to release a different commit, including through manual dispatch. Immediately
 before creating the GitHub release, the publish job also resolves the remote tag
 through the GitHub API and requires it to match the verified source SHA.
 
+For a retry, dispatch the workflow from the default branch with the existing
+version. Setup checks out that exact tag before verification, so workflow fixes
+can be applied without moving or recreating the release tag.
+
 Pull requests do not publish releases. They use dry-run versions such as
 `0.0.0-pr.17.abc123def456` so installer-manifest generation is still exercised
 without creating customer-facing artifacts.

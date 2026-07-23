@@ -42,14 +42,8 @@ jobs:
       latest: ${{ steps.metadata.outputs.latest }}
       title: ${{ steps.metadata.outputs.title }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
       - id: version
-        name: Determine and validate version
+        name: Determine version
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -67,9 +61,27 @@ jobs:
             exit 1
           fi
 
-          scripts/verify-release-ref.sh v "$VERSION"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid release version: $VERSION"
+            exit 1
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag-bound release source
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          EXPECTED_REF: refs/tags/${{ steps.version.outputs.tag }}
+        shell: bash
+        run: GITHUB_REF="$EXPECTED_REF" scripts/verify-release-ref.sh v "$VERSION"
 
       - id: source
         name: Record verified release source

@@ -141,6 +141,8 @@ assertIncludes(releaseWorkflow, 'version:\n        description:', 'Release workf
 assertIncludes(releaseWorkflow, 'required: true', 'Manual release version is required');
 assertIncludes(releaseWorkflow, 'name: Setup', 'Release workflow has a shared setup job');
 assertIncludes(releaseWorkflow, "if: github.repository == 'autohandai/squad'", 'Release setup cannot publish from a fork');
+assertIncludes(releaseWorkflow, 'ref: ${{ steps.version.outputs.tag }}', 'Setup checks out the requested immutable tag for push and manual releases');
+assertIncludes(releaseWorkflow, 'GITHUB_REF="$EXPECTED_REF" scripts/verify-release-ref.sh', 'Manual retries verify the checked-out tag instead of the dispatch branch');
 assertIncludes(releaseWorkflow, 'source_sha: ${{ steps.source.outputs.source_sha }}', 'Release setup exports the verified source SHA');
 assertCount(releaseWorkflow, 'scripts/verify-release-ref.sh v "$VERSION"', 4, 'Every release job verifies the tag-bound source');
 assertCount(releaseWorkflow, 'ref: ${{ needs.setup.outputs.source_sha }}', 3, 'Every build and publish job checks out the verified source SHA');
