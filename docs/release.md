@@ -70,7 +70,8 @@ platform. The merged manifest must include `linux/x64`, `darwin/arm64`,
    the published artifacts from the new GitHub release as well. A stable tag
    creates a normal release; a prerelease version creates a GitHub prerelease.
    GitHub generates the release notes from merged changes using the categories
-   in `.github/release.yml`.
+   in `.github/release.yml`. A manual retry may set `notes_start_tag` when the
+   automatic comparison would otherwise start from an unpublished tag.
 
 Portable archives are named
 `autohand-squad-<version>-<os>-<arch>.tar.gz`. After extraction, run

@@ -197,6 +197,9 @@ assertNotIncludes(releaseWorkflow, 'gh release edit', 'Release publishing never 
 assertIncludes(releaseWorkflow, '--verify-tag', 'Release publishing requires the remote tag');
 assertIncludes(releaseWorkflow, '--target "$SOURCE_SHA"', 'Release publishing targets the verified source SHA');
 assertIncludes(releaseWorkflow, '--generate-notes', 'Release publishing generates notes from merged changes');
+assertIncludes(releaseWorkflow, 'notes_start_tag:', 'Manual releases can override the generated-notes comparison tag');
+assertIncludes(releaseWorkflow, '--notes-start-tag "$RELEASE_NOTES_START_TAG"', 'Generated notes use the validated comparison override');
+assertIncludes(releaseWorkflow, 'git merge-base --is-ancestor', 'Release-note comparison tags must belong to the release history');
 assertIncludes(
   releaseWorkflow,
   '--notes "$(cat release/release-summary.md)"',
