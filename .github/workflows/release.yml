@@ -10,6 +10,10 @@ on:
         description: "Semver version matching the v-prefixed dispatch tag"
         required: true
         type: string
+      notes_start_tag:
+        description: "Optional prior tag for generated release notes"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -29,6 +33,8 @@ jobs:
     if: github.repository == 'autohandai/squad'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -38,14 +44,8 @@ jobs:
       latest: ${{ steps.metadata.outputs.latest }}
       title: ${{ steps.metadata.outputs.title }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
       - id: version
-        name: Determine and validate version
+        name: Determine version
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -63,9 +63,27 @@ jobs:
             exit 1
           fi
 
-          scripts/verify-release-ref.sh v "$VERSION"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid release version: $VERSION"
+            exit 1
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag-bound release source
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          EXPECTED_REF: refs/tags/${{ steps.version.outputs.tag }}
+        shell: bash
+        run: GITHUB_REF="$EXPECTED_REF" scripts/verify-release-ref.sh v "$VERSION"
 
       - id: source
         name: Record verified release source
@@ -99,11 +117,81 @@ jobs:
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "title=Autohand Squad $VERSION" >> "$GITHUB_OUTPUT"
 
+      # Create the immutable release first so completed platform jobs can make
+      # their installers available immediately, rather than waiting for every
+      # other platform to finish.
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.metadata.outputs.title }}
+          RELEASE_PRERELEASE: ${{ steps.metadata.outputs.prerelease }}
+          RELEASE_LATEST: ${{ steps.metadata.outputs.latest }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          RELEASE_NOTES_START_TAG: ${{ inputs.notes_start_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::The job-scoped GITHUB_TOKEN is unavailable."
+            exit 1
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Release $RELEASE_TAG already exists. Refusing to replace published assets."
+            exit 1
+          fi
+
+          remote_source_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
+          if [[ "$remote_source_sha" != "$SOURCE_SHA" ]]; then
+            echo "::error::Remote tag $RELEASE_TAG now resolves to $remote_source_sha, not verified source $SOURCE_SHA."
+            exit 1
+          fi
+
+          create_flags=()
+          if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+            create_flags+=(--prerelease)
+          fi
+          if [[ "$RELEASE_LATEST" == "true" ]]; then
+            create_flags+=(--latest)
+          else
+            create_flags+=(--latest=false)
+          fi
+
+          notes_flags=()
+          if [[ -n "$RELEASE_NOTES_START_TAG" ]]; then
+            if ! [[ "$RELEASE_NOTES_START_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::Invalid release-notes start tag: $RELEASE_NOTES_START_TAG"
+              exit 1
+            fi
+            if ! git rev-parse --verify --quiet "refs/tags/${RELEASE_NOTES_START_TAG}^{commit}" >/dev/null; then
+              echo "::error::Release-notes start tag does not exist: $RELEASE_NOTES_START_TAG"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "${RELEASE_NOTES_START_TAG}^{commit}" "$SOURCE_SHA"; then
+              echo "::error::Release-notes start tag is not an ancestor of $RELEASE_TAG: $RELEASE_NOTES_START_TAG"
+              exit 1
+            fi
+            notes_flags+=(--notes-start-tag "$RELEASE_NOTES_START_TAG")
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            --verify-tag \
+            --target "$SOURCE_SHA" \
+            --title "$RELEASE_TITLE" \
+            --generate-notes \
+            --notes "Installers and verified runtime assets upload as each platform build completes." \
+            "${notes_flags[@]}" \
+            "${create_flags[@]}"
+
   web-bundle:
     name: Web bundle
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: setup
+    permissions:
+      contents: write
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -162,10 +250,23 @@ jobs:
           path: release/web
           if-no-files-found: error
 
+      - name: Upload web bundle to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            "release/web/autohand-squad-web-${{ needs.setup.outputs.version }}.tar.gz" \
+            release/web/checksums-web.txt
+
   runtime-artifacts:
     name: Runtime artifacts (${{ matrix.id }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
+    permissions:
+      contents: write
     needs:
       - setup
       - web-bundle
@@ -216,10 +317,9 @@ jobs:
 
       - name: Set up bundled Node.js runtime
         if: matrix.os != 'linux'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
-          package-manager-cache: false
 
       - name: Cache Bun packages
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -305,7 +405,11 @@ jobs:
           set -euo pipefail
           bundle_name="autohand-squad-${RELEASE_VERSION}-${RELEASE_OS}-${RELEASE_ARCH}"
           archive="release/${RELEASE_OS}-${RELEASE_ARCH}/${bundle_name}.tar.gz"
-          smoke_root="${RUNNER_TEMP}/squad-portable-smoke-${{ matrix.id }}"
+          runner_temp="$RUNNER_TEMP"
+          if [[ "$RELEASE_OS" == "win32" ]]; then
+            runner_temp="$(cygpath -u "$RUNNER_TEMP")"
+          fi
+          smoke_root="${runner_temp}/squad-portable-smoke-${{ matrix.id }}"
           rm -rf "$smoke_root"
           mkdir -p "$smoke_root"
           tar -xzf "$archive" -C "$smoke_root"
@@ -463,6 +567,27 @@ jobs:
             }
           }
 
+      - name: Upload platform assets to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+          RELEASE_OS: ${{ matrix.os }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_dir="release/${RELEASE_OS}-${RELEASE_ARCH}"
+          mapfile -t assets < <(find "$asset_dir" -maxdepth 1 -type f \( \
+            -name 'squad-*' -o \
+            -name 'autohand-squad-*' -o \
+            -name 'checksums-*.txt' \
+          \) -print | sort)
+          if [[ "${#assets[@]}" -eq 0 ]]; then
+            echo "::error::No platform assets found in $asset_dir."
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" "${assets[@]}"
+
       - name: Upload runtime artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -471,7 +596,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish release
+    name: Finalize release
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -520,52 +645,17 @@ jobs:
           node scripts/merge-release-manifests.mjs release-downloads
 
           mkdir -p release/publish
-          find release-downloads -type f \( -name 'squad-*' -o -name 'autohand-squad-*' -o -name 'checksums-*.txt' \) -exec cp {} release/publish/ \;
           cp "release/manifest-${{ needs.setup.outputs.channel }}.json" release/publish/
           cp release/checksums.txt release/publish/
           cp release/release-summary.md release/publish/
+          cp release-downloads/web/checksums-web.txt release/publish/
 
-      - name: Publish GitHub release
+      - name: Upload release manifest and checksums
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.setup.outputs.tag }}
-          RELEASE_TITLE: ${{ needs.setup.outputs.title }}
-          RELEASE_PRERELEASE: ${{ needs.setup.outputs.prerelease }}
-          RELEASE_LATEST: ${{ needs.setup.outputs.latest }}
-          SOURCE_SHA: ${{ needs.setup.outputs.source_sha }}
         shell: bash
         run: |
           set -euo pipefail
-
-          if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "::error::The job-scoped GITHUB_TOKEN is unavailable."
-            exit 1
-          fi
-
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "::error::Release $RELEASE_TAG already exists. Refusing to replace published assets."
-            exit 1
-          fi
-
-          remote_source_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
-          if [[ "$remote_source_sha" != "$SOURCE_SHA" ]]; then
-            echo "::error::Remote tag $RELEASE_TAG now resolves to $remote_source_sha, not verified source $SOURCE_SHA."
-            exit 1
-          fi
-
-          create_flags=()
-          if [ "$RELEASE_PRERELEASE" = "true" ]; then
-            create_flags+=(--prerelease)
-          fi
-          if [ "$RELEASE_LATEST" = "true" ]; then
-            create_flags+=(--latest)
-          else
-            create_flags+=(--latest=false)
-          fi
-
-          gh release create "$RELEASE_TAG" release/publish/* \
-            --verify-tag \
-            --target "$SOURCE_SHA" \
-            --title "$RELEASE_TITLE" \
-            --notes-file release/release-summary.md \
-            "${create_flags[@]}"
+          gh release view "$RELEASE_TAG" >/dev/null
+          gh release upload "$RELEASE_TAG" release/publish/*

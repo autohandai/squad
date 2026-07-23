@@ -45,10 +45,10 @@ platform. The merged manifest must include `linux/x64`, `darwin/arm64`,
    Tags such as `v1.0.0-beta.1` and `v1.0.0-canary.1` create prereleases.
    Ordinary pushes to `main` never publish a release.
 
-   To rerun a failed pre-publication build through `workflow_dispatch`, select
-   the existing `v0.1.0` tag as the workflow ref and enter `0.1.0` as the
-   required version. Manual dispatch does not create or move a tag; the selected
-   tag and input must match exactly.
+   To retry a failed release through `workflow_dispatch`, select the default
+   branch as the workflow ref and enter the existing version, such as `0.1.0`.
+   Setup checks out and verifies `v0.1.0` itself, so the retry uses the immutable
+   tag source while still benefiting from workflow fixes on the default branch.
 
 4. The workflow builds:
 
@@ -63,12 +63,17 @@ platform. The merged manifest must include `linux/x64`, `darwin/arm64`,
    - a current-user NSIS setup EXE for Windows x64 with the same bundled runtime
    - `manifest-<channel>.json` for the installer/update path
 
-5. Every platform job extracts its portable archive, imports the bundled Agent
-   SDK, and starts the packaged `squad --help` command before publication. The
-   macOS jobs also mount each DMG and start its bundled web runtime; the Windows
-   job silently installs, exercises, and uninstalls the NSIS package. Smoke test
-   the published artifacts from the new GitHub release as well. A stable tag
-   creates a normal release; a prerelease version creates a GitHub prerelease.
+5. Setup immediately creates the versioned GitHub release and generates notes
+   from merged changes using `.github/release.yml`. Every platform job extracts
+   its portable archive, imports the bundled Agent SDK, and starts the packaged
+   `squad --help` command before uploading. The macOS jobs also mount each DMG
+   and start its bundled web runtime; the Windows job silently installs,
+   exercises, and uninstalls the NSIS package. Each successful platform job
+   uploads its verified assets directly to the existing release; finalization
+   uploads the merged installer manifest and checksums. A stable tag creates a
+   normal release; a prerelease version creates a GitHub prerelease. A manual
+   retry may set `notes_start_tag` when the automatic comparison would otherwise
+   start from an unpublished tag.
 
 Portable archives are named
 `autohand-squad-<version>-<os>-<arch>.tar.gz`. After extraction, run
@@ -86,11 +91,15 @@ not claim a verified publisher until those credentials and steps are added.
 
 The setup job rejects leading-zero or malformed versions, confirms that
 `GITHUB_REF` is exactly `refs/tags/v<VERSION>`, and resolves both the tag and
-`HEAD` to the same commit. Every build and publish job checks out that resolved
-commit SHA and repeats the verification before doing work. A tag cannot be used
-to release a different commit, including through manual dispatch. Immediately
-before creating the GitHub release, the publish job also resolves the remote tag
+`HEAD` to the same commit. Every build and finalization job checks out that
+resolved commit SHA and repeats the verification before doing work. A tag cannot
+be used to release a different commit, including through manual dispatch.
+Immediately before creating the GitHub release, setup resolves the remote tag
 through the GitHub API and requires it to match the verified source SHA.
+
+For a retry, dispatch the workflow from the default branch with the existing
+version. Setup checks out that exact tag before verification, so workflow fixes
+can be applied without moving or recreating the release tag.
 
 Pull requests do not publish releases. They use dry-run versions such as
 `0.0.0-pr.17.abc123def456` so installer-manifest generation is still exercised
@@ -158,15 +167,10 @@ permissions declared by each workflow. If GitHub refuses to start a job because
 of an Actions policy, fix the repository or organization policy first, then
 rerun `CI` or create a new immutable release tag as appropriate.
 
-The release publish job targets channel environments named `canary`, `beta`, and
-`stable`. Add approval rules to the `stable` environment when the repo moves
-from test releases to customer releases. Environment reviewers do not change
-the tag or source commit; they only approve the already-built release.
-
-The release workflow keeps its default `GITHUB_TOKEN` read-only. Only the final
-publish job requests `contents: write` and passes GitHub's short-lived,
-job-scoped workflow token directly to the GitHub CLI. Do not infer this granular
-token's access from the repository API's user-oriented `permissions.push`
+The release workflow keeps its default `GITHUB_TOKEN` read-only. Setup creates
+the empty versioned release, and the web, platform, and finalization jobs each
+request only `contents: write` to append their verified assets. Do not infer this
+granular token's access from the repository API's user-oriented `permissions.push`
 field: that field can be absent even when the job log confirms the
 `Contents: write` permission. A policy that blocks the requested job permission
 must be fixed in the repository or organization Actions settings before

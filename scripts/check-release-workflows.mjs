@@ -141,6 +141,8 @@ assertIncludes(releaseWorkflow, 'version:\n        description:', 'Release workf
 assertIncludes(releaseWorkflow, 'required: true', 'Manual release version is required');
 assertIncludes(releaseWorkflow, 'name: Setup', 'Release workflow has a shared setup job');
 assertIncludes(releaseWorkflow, "if: github.repository == 'autohandai/squad'", 'Release setup cannot publish from a fork');
+assertIncludes(releaseWorkflow, 'ref: ${{ steps.version.outputs.tag }}', 'Setup checks out the requested immutable tag for push and manual releases');
+assertIncludes(releaseWorkflow, 'GITHUB_REF="$EXPECTED_REF" scripts/verify-release-ref.sh', 'Manual retries verify the checked-out tag instead of the dispatch branch');
 assertIncludes(releaseWorkflow, 'source_sha: ${{ steps.source.outputs.source_sha }}', 'Release setup exports the verified source SHA');
 assertCount(releaseWorkflow, 'scripts/verify-release-ref.sh v "$VERSION"', 4, 'Every release job verifies the tag-bound source');
 assertCount(releaseWorkflow, 'ref: ${{ needs.setup.outputs.source_sha }}', 3, 'Every build and publish job checks out the verified source SHA');
@@ -160,8 +162,15 @@ assertIncludes(releaseWorkflow, 'Download built web runtime', 'Native release jo
 assertIncludes(releaseWorkflow, 'WEB_RUNTIME_DIR', 'Native packaging receives the bundled web runtime');
 assertIncludes(releaseWorkflow, 'bun run release:portable', 'Release workflow assembles portable application archives');
 assertIncludes(releaseWorkflow, 'name: Smoke test portable application', 'Release workflow smoke-tests portable application archives');
+assertIncludes(releaseWorkflow, 'cygpath -u "$RUNNER_TEMP"', 'Windows portable smoke tests use a Git Bash-compatible temp path');
 assertIncludes(releaseWorkflow, "import('@autohandai/agent-sdk')", 'Portable smoke test imports the bundled Agent SDK');
 assertIncludes(releaseWorkflow, 'NODE_VERSION: "22.23.1"', 'Release workflow pins the bundled Node.js runtime');
+assertIncludes(
+  releaseWorkflow,
+  'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7',
+  'Release workflow uses the Node 24-compatible setup-node action',
+);
+assertNotIncludes(releaseWorkflow, 'package-manager-cache:', 'Release workflow avoids unsupported setup-node inputs');
 assertIncludes(releaseWorkflow, 'bun run release:installers', 'Release workflow builds native installers');
 assertIncludes(releaseWorkflow, 'NODE_RUNTIME_PATH="$(node -p', 'Native installer packaging receives an explicit Node.js binary');
 assertIncludes(releaseWorkflow, 'name: Mount and smoke test macOS installer', 'Release workflow mounts and tests each DMG');
@@ -174,21 +183,36 @@ assertIncludes(releaseWorkflow, 'autohand-squad-$env:RELEASE_VERSION-windows-x64
 assertIncludes(releaseWorkflow, 'REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64,darwin/x64,win32/x64', 'Release publishing requires every native target');
 assertIncludes(releaseWorkflow, "-name 'autohand-squad-*'", 'Release publishing includes native installer assets');
 assertIncludes(releaseWorkflow, 'contents: read', 'Release workflow defaults to read-only token permissions');
-assertIncludes(releaseWorkflow, 'contents: write', 'Release publish job has scoped content write permission');
-assertCount(releaseWorkflow, 'contents: write', 1, 'Only the publish job receives content write permission');
-assertIncludes(releaseWorkflow, 'GH_TOKEN: ${{ github.token }}', 'Release publishing uses the short-lived job-scoped workflow token');
+assertCount(releaseWorkflow, 'contents: write', 4, 'Only release setup, web, platform, and finalization jobs receive write permission');
+assertIncludes(releaseWorkflow, 'name: Create GitHub release', 'Release setup creates the versioned GitHub release before builds start');
+assertIncludes(releaseWorkflow, 'name: Upload web bundle to GitHub release', 'Web bundle uploads directly to the early GitHub release');
+assertIncludes(releaseWorkflow, 'name: Upload platform assets to GitHub release', 'Each successful platform job uploads its own assets');
+assertIncludes(releaseWorkflow, 'gh release upload "$RELEASE_TAG" "${assets[@]}"', 'Platform jobs attach their verified assets without waiting for other targets');
+assertIncludes(releaseWorkflow, 'name: Upload release manifest and checksums', 'Finalization adds the merged installer manifest after platform uploads');
+assertIncludes(releaseWorkflow, 'gh release upload "$RELEASE_TAG" release/publish/*', 'Finalization uploads the manifest and checksums to the existing release');
+assertIncludes(releaseWorkflow, 'GH_TOKEN: ${{ github.token }}', 'Release jobs use the short-lived job-scoped workflow token');
 assertNotIncludes(releaseWorkflow, '.permissions.push', 'Release publishing does not infer job-token permissions from repository metadata');
 assertNotIncludes(releaseWorkflow, 'token_can_publish', 'Release publishing does not reject valid granular job tokens with a repository permission probe');
 assertNotIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN', 'Release publishing does not expose a long-lived fallback token');
 assertNotIncludes(releaseWorkflow, 'attestations: write', 'Release workflow does not require org-blocked attestation permissions');
-assertIncludes(releaseWorkflow, 'gh release view "$RELEASE_TAG"', 'Release publishing detects an existing release');
-assertIncludes(releaseWorkflow, 'Refusing to replace published assets', 'Release publishing refuses to mutate an existing release');
-assertIncludes(releaseWorkflow, 'commits/$RELEASE_TAG', 'Release publishing rechecks the remote tag immediately before publication');
-assertIncludes(releaseWorkflow, 'remote_source_sha" != "$SOURCE_SHA', 'Release publishing rejects a remotely moved tag');
+assertIncludes(releaseWorkflow, 'gh release view "$RELEASE_TAG"', 'Release setup detects an existing release');
+assertIncludes(releaseWorkflow, 'Refusing to replace published assets', 'Release setup refuses to mutate an existing release');
+assertIncludes(releaseWorkflow, 'commits/$RELEASE_TAG', 'Release setup rechecks the remote tag immediately before creation');
+assertIncludes(releaseWorkflow, 'remote_source_sha" != "$SOURCE_SHA', 'Release setup rejects a remotely moved tag');
 assertNotIncludes(releaseWorkflow, '--clobber', 'Release publishing never overwrites an asset');
 assertNotIncludes(releaseWorkflow, 'gh release edit', 'Release publishing never edits an existing release');
-assertIncludes(releaseWorkflow, '--verify-tag', 'Release publishing requires the remote tag');
-assertIncludes(releaseWorkflow, '--target "$SOURCE_SHA"', 'Release publishing targets the verified source SHA');
+assertIncludes(releaseWorkflow, '--verify-tag', 'Release setup requires the remote tag');
+assertIncludes(releaseWorkflow, '--target "$SOURCE_SHA"', 'Release setup targets the verified source SHA');
+assertIncludes(releaseWorkflow, '--generate-notes', 'Release setup generates notes from merged changes');
+assertIncludes(releaseWorkflow, 'notes_start_tag:', 'Manual releases can override the generated-notes comparison tag');
+assertIncludes(releaseWorkflow, '--notes-start-tag "$RELEASE_NOTES_START_TAG"', 'Generated notes use the validated comparison override');
+assertIncludes(releaseWorkflow, 'git merge-base --is-ancestor', 'Release-note comparison tags must belong to the release history');
+assertIncludes(
+  releaseWorkflow,
+  '--notes "Installers and verified runtime assets upload as each platform build completes."',
+  'Release notes explain that assets arrive as verified platform jobs finish',
+);
+assertNotIncludes(releaseWorkflow, '--notes-file', 'Release setup does not replace generated notes with a static summary');
 assertPinnedActionUses(releaseWorkflow, 'Release workflow');
 assertIncludes(smokeWorkflow, 'Runner startup', 'Actions smoke workflow checks runner startup separately');
 assertIncludes(releaseNotes, 'Release Engineering', 'Release notes group release engineering changes');
