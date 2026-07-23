@@ -169,12 +169,14 @@ rerun `CI` or create a new immutable release tag as appropriate.
 
 The release workflow keeps its default `GITHUB_TOKEN` read-only. Setup creates
 the empty versioned release, and the web, platform, and finalization jobs each
-request only `contents: write` to append their verified assets. Do not infer this
-granular token's access from the repository API's user-oriented `permissions.push`
-field: that field can be absent even when the job log confirms the
-`Contents: write` permission. A policy that blocks the requested job permission
-must be fixed in the repository or organization Actions settings before
-publishing.
+request only `contents: write` to append their verified assets. When an
+enterprise policy disables write-capable workflow tokens, add a fine-grained
+token with repository Contents read/write permission as the
+`AUTOHAND_RELEASE_TOKEN` Actions secret. The workflow uses that secret only when
+present; otherwise it uses the short-lived job-scoped token. Do not infer either
+token's access from the repository API's user-oriented `permissions.push` field:
+that field can be absent even when the job log confirms the `Contents: write`
+permission.
 
 Release integrity is checked with SHA-256 checksum files, exact target coverage
 in the installer manifest, immutable commit pins for third-party GitHub

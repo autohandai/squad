@@ -122,7 +122,7 @@ jobs:
       # other platform to finish.
       - name: Create GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           RELEASE_TITLE: ${{ steps.metadata.outputs.title }}
           RELEASE_PRERELEASE: ${{ steps.metadata.outputs.prerelease }}
@@ -252,7 +252,7 @@ jobs:
 
       - name: Upload web bundle to GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ needs.setup.outputs.tag }}
         shell: bash
         run: |
@@ -569,7 +569,7 @@ jobs:
 
       - name: Upload platform assets to GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ needs.setup.outputs.tag }}
           RELEASE_OS: ${{ matrix.os }}
           RELEASE_ARCH: ${{ matrix.arch }}
@@ -652,7 +652,7 @@ jobs:
 
       - name: Upload release manifest and checksums
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ needs.setup.outputs.tag }}
         shell: bash
         run: |
