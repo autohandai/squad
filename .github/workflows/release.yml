@@ -216,10 +216,9 @@ jobs:
 
       - name: Set up bundled Node.js runtime
         if: matrix.os != 'linux'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
-          package-manager-cache: false
 
       - name: Cache Bun packages
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -305,7 +304,11 @@ jobs:
           set -euo pipefail
           bundle_name="autohand-squad-${RELEASE_VERSION}-${RELEASE_OS}-${RELEASE_ARCH}"
           archive="release/${RELEASE_OS}-${RELEASE_ARCH}/${bundle_name}.tar.gz"
-          smoke_root="${RUNNER_TEMP}/squad-portable-smoke-${{ matrix.id }}"
+          runner_temp="$RUNNER_TEMP"
+          if [[ "$RELEASE_OS" == "win32" ]]; then
+            runner_temp="$(cygpath -u "$RUNNER_TEMP")"
+          fi
+          smoke_root="${runner_temp}/squad-portable-smoke-${{ matrix.id }}"
           rm -rf "$smoke_root"
           mkdir -p "$smoke_root"
           tar -xzf "$archive" -C "$smoke_root"
@@ -567,5 +570,6 @@ jobs:
             --verify-tag \
             --target "$SOURCE_SHA" \
             --title "$RELEASE_TITLE" \
-            --notes-file release/release-summary.md \
+            --generate-notes \
+            --notes "$(cat release/release-summary.md)" \
             "${create_flags[@]}"

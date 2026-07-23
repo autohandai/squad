@@ -69,6 +69,8 @@ platform. The merged manifest must include `linux/x64`, `darwin/arm64`,
    job silently installs, exercises, and uninstalls the NSIS package. Smoke test
    the published artifacts from the new GitHub release as well. A stable tag
    creates a normal release; a prerelease version creates a GitHub prerelease.
+   GitHub generates the release notes from merged changes using the categories
+   in `.github/release.yml`.
 
 Portable archives are named
 `autohand-squad-<version>-<os>-<arch>.tar.gz`. After extraction, run

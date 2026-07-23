@@ -160,8 +160,15 @@ assertIncludes(releaseWorkflow, 'Download built web runtime', 'Native release jo
 assertIncludes(releaseWorkflow, 'WEB_RUNTIME_DIR', 'Native packaging receives the bundled web runtime');
 assertIncludes(releaseWorkflow, 'bun run release:portable', 'Release workflow assembles portable application archives');
 assertIncludes(releaseWorkflow, 'name: Smoke test portable application', 'Release workflow smoke-tests portable application archives');
+assertIncludes(releaseWorkflow, 'cygpath -u "$RUNNER_TEMP"', 'Windows portable smoke tests use a Git Bash-compatible temp path');
 assertIncludes(releaseWorkflow, "import('@autohandai/agent-sdk')", 'Portable smoke test imports the bundled Agent SDK');
 assertIncludes(releaseWorkflow, 'NODE_VERSION: "22.23.1"', 'Release workflow pins the bundled Node.js runtime');
+assertIncludes(
+  releaseWorkflow,
+  'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7',
+  'Release workflow uses the Node 24-compatible setup-node action',
+);
+assertNotIncludes(releaseWorkflow, 'package-manager-cache:', 'Release workflow avoids unsupported setup-node inputs');
 assertIncludes(releaseWorkflow, 'bun run release:installers', 'Release workflow builds native installers');
 assertIncludes(releaseWorkflow, 'NODE_RUNTIME_PATH="$(node -p', 'Native installer packaging receives an explicit Node.js binary');
 assertIncludes(releaseWorkflow, 'name: Mount and smoke test macOS installer', 'Release workflow mounts and tests each DMG');
@@ -189,6 +196,13 @@ assertNotIncludes(releaseWorkflow, '--clobber', 'Release publishing never overwr
 assertNotIncludes(releaseWorkflow, 'gh release edit', 'Release publishing never edits an existing release');
 assertIncludes(releaseWorkflow, '--verify-tag', 'Release publishing requires the remote tag');
 assertIncludes(releaseWorkflow, '--target "$SOURCE_SHA"', 'Release publishing targets the verified source SHA');
+assertIncludes(releaseWorkflow, '--generate-notes', 'Release publishing generates notes from merged changes');
+assertIncludes(
+  releaseWorkflow,
+  '--notes "$(cat release/release-summary.md)"',
+  'Release publishing prepends the verified installer summary to generated notes',
+);
+assertNotIncludes(releaseWorkflow, '--notes-file', 'Release publishing does not replace generated notes with a static summary');
 assertPinnedActionUses(releaseWorkflow, 'Release workflow');
 assertIncludes(smokeWorkflow, 'Runner startup', 'Actions smoke workflow checks runner startup separately');
 assertIncludes(releaseNotes, 'Release Engineering', 'Release notes group release engineering changes');
