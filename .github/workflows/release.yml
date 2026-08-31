@@ -618,7 +618,10 @@ jobs:
         run: |
           set -euo pipefail
           asset_dir="release/${RELEASE_OS}-${RELEASE_ARCH}"
-          mapfile -t assets < <(find "$asset_dir" -maxdepth 1 -type f \( \
+          assets=()
+          while IFS= read -r asset; do
+            assets+=("$asset")
+          done < <(find "$asset_dir" -maxdepth 1 -type f \( \
             -name 'squad-*' -o \
             -name 'autohand-squad-*' -o \
             -name 'checksums-*.txt' \

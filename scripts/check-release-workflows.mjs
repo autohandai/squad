@@ -200,6 +200,8 @@ assertIncludes(releaseWorkflow, 'name: Create GitHub release', 'Release setup cr
 assertIncludes(releaseWorkflow, 'name: Upload web bundle to GitHub release', 'Web bundle uploads directly to the early GitHub release');
 assertIncludes(releaseWorkflow, 'name: Upload platform assets to GitHub release', 'Each successful platform job uploads its own assets');
 assertIncludes(releaseWorkflow, 'gh release upload "$RELEASE_TAG" "${assets[@]}"', 'Platform jobs attach their verified assets without waiting for other targets');
+assertIncludes(releaseWorkflow, 'while IFS= read -r asset; do', 'Platform asset upload works with the Bash version bundled by macOS runners');
+assertNotIncludes(releaseWorkflow, 'mapfile -t assets', 'Platform asset upload avoids Bash 4-only mapfile on macOS runners');
 assertIncludes(releaseWorkflow, 'name: Upload release manifest and checksums', 'Finalization adds the merged installer manifest after platform uploads');
 assertIncludes(releaseWorkflow, 'gh release upload "$RELEASE_TAG" release/publish/*', 'Finalization uploads the manifest and checksums to the existing release');
 assertIncludes(
