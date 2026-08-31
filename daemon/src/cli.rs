@@ -1274,6 +1274,7 @@ fn packaged_resource_candidates_from(exe_dir: &Path) -> Vec<PathBuf> {
     let mut candidates = vec![exe_dir.join("server.mjs")];
     if let Some(contents_dir) = exe_dir.parent() {
         candidates.push(contents_dir.join("Resources").join("server.mjs"));
+        candidates.push(contents_dir.join("lib").join("server.mjs"));
     }
     candidates
 }
@@ -1901,6 +1902,8 @@ mod tests {
         .contains(&PathBuf::from(
             "/Applications/Autohand Squad.app/Contents/Resources/server.mjs"
         )));
+        assert!(packaged_resource_candidates_from(Path::new("/usr/bin"))
+            .contains(&PathBuf::from("/usr/lib/server.mjs")));
     }
 
     #[test]

@@ -5,7 +5,7 @@ This repo ships four release surfaces together:
 - the built web UI in `dist/`
 - the local Node bridge in `server.mjs`
 - the Rust runtime binaries in `daemon/`
-- native macOS DMG and Windows NSIS installers with a bundled Node runtime
+- native macOS DMG, Windows NSIS, Linux Debian, and Linux AppImage installers with a bundled Node runtime
 
 ## CI Gates
 
@@ -61,6 +61,7 @@ platform. The merged manifest must include `linux/x64`, `darwin/arm64`,
    - DMG installers for macOS Apple Silicon and Intel, each containing the
      desktop app, web runtime, production modules, Autohand CLI, and Node
    - a current-user NSIS setup EXE for Windows x64 with the same bundled runtime
+   - Debian (`.deb`) and AppImage (`.AppImage`) packages for Linux x64 with the same bundled runtime
    - `manifest-<channel>.json` for the installer/update path
 
 5. Every platform job extracts its portable archive, imports the bundled Agent
@@ -78,11 +79,15 @@ itself. These archives are directly runnable distributions, not code-signed
 installers.
 
 Native installers are named
-`autohand-squad-<version>-macos-<arch>.dmg` and
-`autohand-squad-<version>-windows-x64-setup.exe`. They bundle Node, so users do
-not need a system Node installation. The current workflow does not code-sign
-the Windows installer or sign and notarize the macOS app; release notes must
-not claim a verified publisher until those credentials and steps are added.
+`autohand-squad-<version>-macos-<arch>.dmg`,
+`autohand-squad-<version>-windows-x64-setup.exe`,
+`autohand-squad-<version>-linux-x64.deb`, and
+`autohand-squad-<version>-linux-x64.AppImage`. They bundle Node, so users do
+not need a system Node installation. The Debian package registers the desktop
+application; AppImage users make the downloaded file executable and open it.
+The current workflow does not code-sign the Windows installer or sign and
+notarize the macOS app; release notes must not claim a verified publisher until
+those credentials and steps are added.
 
 The setup job rejects leading-zero or malformed versions, confirms that
 `GITHUB_REF` is exactly `refs/tags/v<VERSION>`, and resolves both the tag and
@@ -206,9 +211,9 @@ NODE_RUNTIME_PATH="$(node -p process.execPath)" WEB_RUNTIME_DIR="$PWD" RELEASE_V
 bun run release:merge-manifests release
 ```
 
-`release:installers` runs only on macOS or Windows and refuses a cross-target
-build. Mount the resulting DMG or install the resulting EXE and exercise the
-bundled `squad` runtime before creating a version tag.
+`release:installers` runs natively on each supported platform and refuses a
+cross-target build. Mount the resulting DMG, install the resulting EXE or
+Debian package, and inspect the AppImage payload before creating a version tag.
 
 To check an existing tag locally with the same immutable-source guard:
 

@@ -215,7 +215,6 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Set up bundled Node.js runtime
-        if: matrix.os != 'linux'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -281,7 +280,6 @@ jobs:
           bun run release:portable
 
       - name: Package native installer
-        if: matrix.os != 'linux'
         shell: bash
         env:
           RELEASE_VERSION: ${{ needs.setup.outputs.version }}
@@ -459,6 +457,41 @@ jobs:
               Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
             }
           }
+
+      - name: Inspect Linux installers
+        if: matrix.os == 'linux'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          package_dir="release/linux-${RELEASE_ARCH}"
+          deb="$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.deb"
+          appimage="$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.AppImage"
+          extract_root="${RUNNER_TEMP}/autohand-squad-deb-${RELEASE_ARCH}"
+          appimage_root="${RUNNER_TEMP}/autohand-squad-appimage-${RELEASE_ARCH}"
+
+          test -s "$deb"
+          test -s "$appimage"
+          dpkg-deb --contents "$deb" | grep -F 'usr/bin/autohand-squad-ui' >/dev/null
+          dpkg-deb -x "$deb" "$extract_root"
+          test -x "$extract_root/usr/bin/squad"
+          test -x "$extract_root/usr/bin/autohand-squad-ui"
+          test -x "$extract_root/usr/bin/node"
+          test -f "$extract_root/usr/lib/server.mjs"
+          test -f "$extract_root/usr/lib/node_modules/@autohandai/agent-sdk/package.json"
+
+          mkdir -p "$appimage_root"
+          (
+            cd "$appimage_root"
+            "$appimage" --appimage-extract >/dev/null
+          )
+          test -x "$appimage_root/squashfs-root/usr/bin/squad"
+          test -x "$appimage_root/squashfs-root/usr/bin/autohand-squad-ui"
+          test -x "$appimage_root/squashfs-root/usr/bin/node"
+          test -f "$appimage_root/squashfs-root/usr/lib/server.mjs"
+          test -f "$appimage_root/squashfs-root/usr/lib/node_modules/@autohandai/agent-sdk/package.json"
 
       - name: Upload runtime artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

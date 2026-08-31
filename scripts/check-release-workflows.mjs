@@ -160,9 +160,11 @@ assertIncludes(releaseWorkflow, 'smoke_root="${smoke_root//\\\\//}"', 'Windows p
 assertIncludes(releaseWorkflow, "import('@autohandai/agent-sdk')", 'Portable smoke test imports the bundled Agent SDK');
 assertIncludes(releaseWorkflow, 'NODE_VERSION: "22.23.1"', 'Release workflow pins the bundled Node.js runtime');
 assertIncludes(releaseWorkflow, 'bun run release:installers', 'Release workflow builds native installers');
+assertNotIncludes(releaseWorkflow, "if: matrix.os != 'linux'", 'Release workflow packages Linux installables');
 assertIncludes(releaseWorkflow, 'NODE_RUNTIME_PATH="$(node -p', 'Native installer packaging receives an explicit Node.js binary');
 assertIncludes(releaseWorkflow, 'name: Mount and smoke test macOS installer', 'Release workflow mounts and tests each DMG');
 assertIncludes(releaseWorkflow, 'name: Install and smoke test Windows installer', 'Release workflow installs and tests the NSIS executable');
+assertIncludes(releaseWorkflow, 'name: Inspect Linux installers', 'Release workflow verifies Linux Debian and AppImage packages');
 assertCount(releaseWorkflow, '--server-path', 2, 'Native installer smoke tests force the installed web server payload');
 assertIncludes(releaseWorkflow, 'autohand-squad-${RELEASE_VERSION}-macos-${RELEASE_ARCH}.dmg', 'macOS smoke test uses the public DMG name');
 assertIncludes(releaseWorkflow, 'autohand-squad-$env:RELEASE_VERSION-windows-x64-setup.exe', 'Windows smoke test uses the public installer name');
@@ -195,7 +197,9 @@ assertIncludes(portablePackager, "for (const dependency of ['toml', 'yaml'])", '
 assertIncludes(portablePackager, "spawnSync('tar'", 'Portable bundle creates one extractable archive');
 assertIncludes(installerPackager, "requiredEnv('NODE_RUNTIME_PATH')", 'Native installer requires an explicit Node.js runtime');
 assertIncludes(installerPackager, "binary === 'autohand-squad-ui'", 'Native installer launches the desktop UI binary');
-assertIncludes(installerPackager, "formats: [releaseOs === 'darwin' ? 'dmg' : 'nsis']", 'Native installer emits DMG and NSIS formats');
+assertIncludes(installerPackager, "['deb', 'appimage']", 'Native installer emits Debian and AppImage formats on Linux');
+assertIncludes(installerPackager, "'linux/x64': 'autohand-linux-x64'", 'Linux installer vendors the Linux Agent SDK CLI');
+assertNotIncludes(installerPackager, 'Native Linux installers are not supported yet', 'Native installer supports Linux packages');
 assertIncludes(installerPackager, "installMode: 'currentUser'", 'Windows installer does not require administrator access');
 assertIncludes(installerPackager, "'autohand-windows-x64.exe'", 'Native installer vendors the Windows Agent SDK CLI');
 assertIncludes(installerPackager, 'validateNodeRuntime(nodeRuntimePath)', 'Native installer validates the staged Node.js runtime');
