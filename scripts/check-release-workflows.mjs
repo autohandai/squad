@@ -164,7 +164,9 @@ assertNotIncludes(releaseWorkflow, "if: matrix.os != 'linux'", 'Release workflow
 assertIncludes(releaseWorkflow, 'NODE_RUNTIME_PATH="$(node -p', 'Native installer packaging receives an explicit Node.js binary');
 assertIncludes(releaseWorkflow, 'name: Mount and smoke test macOS installer', 'Release workflow mounts and tests each DMG');
 assertIncludes(releaseWorkflow, 'name: Install and smoke test Windows installer', 'Release workflow installs and tests the NSIS executable');
+assertIncludes(releaseWorkflow, '$installRoot = $entry.InstallLocation.Trim(\'"\')', 'Windows installer smoke test normalizes quoted NSIS install locations');
 assertIncludes(releaseWorkflow, 'name: Inspect Linux installers', 'Release workflow verifies Linux Debian and AppImage packages');
+assertIncludes(releaseWorkflow, 'appimage="$(realpath "$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.AppImage")"', 'Linux AppImage inspection uses an absolute path after changing directories');
 assertCount(releaseWorkflow, '--server-path', 2, 'Native installer smoke tests force the installed web server payload');
 assertIncludes(releaseWorkflow, 'autohand-squad-${RELEASE_VERSION}-macos-${RELEASE_ARCH}.dmg', 'macOS smoke test uses the public DMG name');
 assertIncludes(releaseWorkflow, 'autohand-squad-$env:RELEASE_VERSION-windows-x64-setup.exe', 'Windows smoke test uses the public installer name');

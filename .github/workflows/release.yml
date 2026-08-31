@@ -402,7 +402,7 @@ jobs:
             throw 'Autohand Squad was not registered as an installed application.'
           }
 
-          $installRoot = $entry.InstallLocation
+          $installRoot = $entry.InstallLocation.Trim('"')
           if (-not $installRoot) {
             $uninstaller = $entry.UninstallString.Trim('"')
             $installRoot = Split-Path $uninstaller -Parent
@@ -468,7 +468,7 @@ jobs:
           set -euo pipefail
           package_dir="release/linux-${RELEASE_ARCH}"
           deb="$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.deb"
-          appimage="$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.AppImage"
+          appimage="$(realpath "$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.AppImage")"
           extract_root="${RUNNER_TEMP}/autohand-squad-deb-${RELEASE_ARCH}"
           appimage_root="${RUNNER_TEMP}/autohand-squad-appimage-${RELEASE_ARCH}"
 
