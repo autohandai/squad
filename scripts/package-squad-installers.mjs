@@ -44,8 +44,7 @@ assertSupportedTarget(releaseOs, releaseArch);
 assertSafePathSegment('RELEASE_VERSION', releaseVersion);
 assertSafePathSegment('BUILD_PROFILE', buildProfile);
 
-const installerName = installerFileName(releaseVersion, releaseOs, releaseArch);
-const installerPath = join(outDir, installerName);
+const installerSpecs = installerSpecsForTarget(releaseVersion, releaseOs, releaseArch);
 const scratchDir = await mkdtemp(join(tmpdir(), 'autohand-squad-installer-'));
 const binariesDir = join(scratchDir, 'binaries');
 const resourcesDir = join(scratchDir, 'resources');
@@ -62,13 +61,13 @@ try {
   const nodeLicenseName = await stageNodeLicense();
   const configPath = await writePackagerConfig(nodeLicenseName);
   await runPackager(configPath);
-  await moveGeneratedInstaller();
-  await recordChecksum();
+  const installerPaths = await moveGeneratedInstallers();
+  await recordChecksums(installerPaths);
 } finally {
   await rm(scratchDir, { recursive: true, force: true });
 }
 
-console.log(`Native installer: ${installerPath}`);
+console.log(`Native installers: ${installerSpecs.map((spec) => join(outDir, spec.name)).join(', ')}`);
 
 async function stageExecutables() {
   const targetDir = resolve('daemon', 'target', buildProfile);
@@ -143,7 +142,7 @@ async function writePackagerConfig(nodeLicenseName) {
     description: 'A native workspace for human and agent teams.',
     publisher: 'Autohand',
     category: 'Productivity',
-    formats: [releaseOs === 'darwin' ? 'dmg' : 'nsis'],
+    formats: packageFormats(releaseOs),
     outDir: packagerOutDir,
     binariesDir,
     targetTriple: targetTriple(releaseOs, releaseArch),
@@ -165,10 +164,21 @@ async function writePackagerConfig(nodeLicenseName) {
             infoPlistPath: await writeMacInfoPlist(),
           },
         }
-      : {
+      : releaseOs === 'win32'
+        ? {
           nsis: {
             installMode: 'currentUser',
             installerIcon: resolve('public', 'favicon.ico'),
+          },
+        }
+        : {
+          deb: {
+            depends: [
+              'libgtk-3-0',
+              'libayatana-appindicator3-1',
+              'librsvg2-2',
+              'libxdo3',
+            ],
           },
         }),
   };
@@ -198,25 +208,31 @@ async function runPackager(configPath) {
   try {
     await packageApp(config);
   } catch (error) {
-    throw new Error(`Unable to package ${installerName}: ${errorMessage(error)}`, {
+    throw new Error(`Unable to package ${installerSpecs.map((spec) => spec.name).join(', ')}: ${errorMessage(error)}`, {
       cause: error,
     });
   }
 }
 
-async function moveGeneratedInstaller() {
-  const extension = releaseOs === 'darwin' ? '.dmg' : '.exe';
+async function moveGeneratedInstallers() {
+  const paths = [];
+  for (const spec of installerSpecs) paths.push(await moveGeneratedInstaller(spec));
+  return paths;
+}
+
+async function moveGeneratedInstaller(spec) {
   const generated = (await collectFiles(packagerOutDir)).filter(
-    (filePath) => filePath.toLowerCase().endsWith(extension),
+    (filePath) => filePath.toLowerCase().endsWith(spec.extension.toLowerCase()),
   );
   if (generated.length !== 1) {
     const detail = generated.length ? `: ${generated.join(', ')}` : '';
     throw new Error(
-      `Expected exactly one generated ${extension} installer, found ${generated.length}${detail}`,
+      `Expected exactly one generated ${spec.extension} installer, found ${generated.length}${detail}`,
     );
   }
 
   await mkdir(outDir, { recursive: true });
+  const installerPath = join(outDir, spec.name);
   await rm(installerPath, { force: true });
   try {
     await rename(generated[0], installerPath);
@@ -230,10 +246,10 @@ async function moveGeneratedInstaller() {
   if (!info.isFile() || info.size === 0) {
     throw new Error(`Generated installer is empty: ${installerPath}`);
   }
+  return installerPath;
 }
 
-async function recordChecksum() {
-  const checksum = await hashFile(installerPath);
+async function recordChecksums(installerPaths) {
   const checksumPath = join(outDir, `checksums-${releaseOs}-${releaseArch}.txt`);
   let lines = [];
   try {
@@ -241,11 +257,14 @@ async function recordChecksum() {
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean)
-      .filter((line) => !line.endsWith(`  ${installerName}`));
+      .filter((line) => !installerSpecs.some((spec) => line.endsWith(`  ${spec.name}`)));
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
-  lines.push(`${checksum}  ${installerName}`);
+  for (const installerPath of installerPaths) {
+    const checksum = await hashFile(installerPath);
+    lines.push(`${checksum}  ${installerPath.split(/[\\/]/).pop()}`);
+  }
   await writeFile(checksumPath, `${lines.join('\n')}\n`);
 }
 
@@ -338,9 +357,23 @@ async function hashFile(filePath) {
   return hash.digest('hex');
 }
 
-function installerFileName(version, osName, archName) {
-  if (osName === 'darwin') return `autohand-squad-${version}-macos-${archName}.dmg`;
-  return `autohand-squad-${version}-windows-x64-setup.exe`;
+function installerSpecsForTarget(version, osName, archName) {
+  if (osName === 'darwin') {
+    return [{ extension: '.dmg', name: `autohand-squad-${version}-macos-${archName}.dmg` }];
+  }
+  if (osName === 'win32') {
+    return [{ extension: '.exe', name: `autohand-squad-${version}-windows-x64-setup.exe` }];
+  }
+  return [
+    { extension: '.deb', name: `autohand-squad-${version}-linux-${archName}.deb` },
+    { extension: '.AppImage', name: `autohand-squad-${version}-linux-${archName}.AppImage` },
+  ];
+}
+
+function packageFormats(osName) {
+  if (osName === 'darwin') return ['dmg'];
+  if (osName === 'win32') return ['nsis'];
+  return ['deb', 'appimage'];
 }
 
 async function stagePlatformIcons(osName) {
@@ -352,6 +385,7 @@ async function stagePlatformIcons(osName) {
     await copyRequiredFile(resolve('public', 'icon-1024.png'), retinaIcon);
     return [standardIcon, retinaIcon];
   }
+  if (osName === 'linux') return [resolve('public', 'icon-512.png')];
   return [resolve('public', 'favicon.ico')];
 }
 
@@ -389,6 +423,7 @@ async function validateNodeRuntime(executablePath) {
 
 function sdkCliName(osName, archName) {
   const names = {
+    'linux/x64': 'autohand-linux-x64',
     'darwin/arm64': 'autohand-macos-arm64',
     'darwin/x64': 'autohand-macos-x64',
     'win32/x64': 'autohand-windows-x64.exe',
@@ -400,6 +435,7 @@ function sdkCliName(osName, archName) {
 
 function targetTriple(osName, archName) {
   const triples = {
+    'linux/x64': 'x86_64-unknown-linux-gnu',
     'darwin/arm64': 'aarch64-apple-darwin',
     'darwin/x64': 'x86_64-apple-darwin',
     'win32/x64': 'x86_64-pc-windows-msvc',
@@ -412,9 +448,6 @@ function executableName(binaryName, osName) {
 }
 
 function assertSupportedTarget(osName, archName) {
-  if (osName === 'linux') {
-    throw new Error('Native Linux installers are not supported yet; use the portable package');
-  }
   if (!targetTriple(osName, archName)) {
     throw new Error(`Unsupported native installer target: ${osName}/${archName}`);
   }

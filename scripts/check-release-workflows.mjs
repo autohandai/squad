@@ -167,14 +167,26 @@ assertIncludes(releaseWorkflow, "import('@autohandai/agent-sdk')", 'Portable smo
 assertIncludes(releaseWorkflow, 'NODE_VERSION: "22.23.1"', 'Release workflow pins the bundled Node.js runtime');
 assertIncludes(
   releaseWorkflow,
-  'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7',
-  'Release workflow uses the Node 24-compatible setup-node action',
+  'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
+  'Release workflow uses current checkout action',
 );
+assertIncludes(releaseWorkflow, 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0', 'Release workflow uses current setup-node action');
+assertIncludes(releaseWorkflow, 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0', 'Release workflow uses current cache action');
+assertIncludes(releaseWorkflow, 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1', 'Release workflow uses current download-artifact action');
+assertIncludes(releaseWorkflow, 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1', 'Release workflow uses current upload-artifact action');
+assertIncludes(releaseWorkflow, 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0', 'Release workflow uses current setup-bun action');
 assertNotIncludes(releaseWorkflow, 'package-manager-cache:', 'Release workflow avoids unsupported setup-node inputs');
 assertIncludes(releaseWorkflow, 'bun run release:installers', 'Release workflow builds native installers');
+assertNotIncludes(releaseWorkflow, "name: Package native installer\n        if: matrix.os != 'linux'", 'Release workflow packages Linux installables');
 assertIncludes(releaseWorkflow, 'NODE_RUNTIME_PATH="$(node -p', 'Native installer packaging receives an explicit Node.js binary');
 assertIncludes(releaseWorkflow, 'name: Mount and smoke test macOS installer', 'Release workflow mounts and tests each DMG');
 assertIncludes(releaseWorkflow, 'name: Install and smoke test Windows installer', 'Release workflow installs and tests the NSIS executable');
+assertIncludes(releaseWorkflow, '$installRoot = $entry.InstallLocation.Trim(\'"\')', 'Windows installer smoke test normalizes quoted NSIS install locations');
+assertIncludes(releaseWorkflow, '$serveExit = $LASTEXITCODE', 'Windows installer smoke test continues polling after a delayed launcher readiness result');
+assertIncludes(releaseWorkflow, 'Get-Content $webServerLog', 'Windows installer smoke test prints the web-server log on failure');
+assertIncludes(releaseWorkflow, 'name: Inspect Linux installers', 'Release workflow verifies Linux Debian and AppImage packages');
+assertIncludes(releaseWorkflow, 'appimage="$(realpath "$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.AppImage")"', 'Linux AppImage inspection uses an absolute path after changing directories');
+assertIncludes(releaseWorkflow, 'set -x', 'Linux installer inspection traces the failing payload assertion');
 assertCount(releaseWorkflow, '--server-path', 2, 'Native installer smoke tests force the installed web server payload');
 assertCount(releaseWorkflow, '/api/provider-settings', 2, 'Native installer smoke tests exercise writable app state');
 assertCount(releaseWorkflow, 'web-state/provider-settings.json', 2, 'Native installer smoke tests verify redirected state files');
@@ -217,6 +229,7 @@ assertIncludes(
 );
 assertNotIncludes(releaseWorkflow, '--notes-file', 'Release setup does not replace generated notes with a static summary');
 assertPinnedActionUses(releaseWorkflow, 'Release workflow');
+assertPinnedActionUses(ciWorkflow, 'CI workflow');
 assertIncludes(smokeWorkflow, 'Runner startup', 'Actions smoke workflow checks runner startup separately');
 assertIncludes(releaseNotes, 'Release Engineering', 'Release notes group release engineering changes');
 assertIncludes(packager, 'autohandai/squad', 'Release packager defaults to the org repo');
@@ -229,7 +242,9 @@ assertIncludes(portablePackager, 'tarCreateArgs(archiveName, scratchDir, bundleN
 assertNotIncludes(portablePackager, "['-czf', archivePath", 'Portable archive avoids GNU tar remote-path parsing on Windows');
 assertIncludes(installerPackager, "requiredEnv('NODE_RUNTIME_PATH')", 'Native installer requires an explicit Node.js runtime');
 assertIncludes(installerPackager, "binary === 'autohand-squad-ui'", 'Native installer launches the desktop UI binary');
-assertIncludes(installerPackager, "formats: [releaseOs === 'darwin' ? 'dmg' : 'nsis']", 'Native installer emits DMG and NSIS formats');
+assertIncludes(installerPackager, "['deb', 'appimage']", 'Native installer emits Debian and AppImage formats on Linux');
+assertIncludes(installerPackager, "'linux/x64': 'autohand-linux-x64'", 'Linux installer vendors the Linux Agent SDK CLI');
+assertNotIncludes(installerPackager, 'Native Linux installers are not supported yet', 'Native installer supports Linux packages');
 assertIncludes(installerPackager, "installMode: 'currentUser'", 'Windows installer does not require administrator access');
 assertIncludes(installerPackager, "'autohand-windows-x64.exe'", 'Native installer vendors the Windows Agent SDK CLI');
 assertIncludes(installerPackager, 'validateNodeRuntime(nodeRuntimePath)', 'Native installer validates the staged Node.js runtime');

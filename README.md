@@ -269,8 +269,9 @@ The GitHub release lane lives under `.github/workflows/`:
 - `ci.yml` runs web checks, Rust runtime checks on macOS/Windows/Linux, and a
   release-manifest dry run.
 - `release.yml` builds platform runtime assets, packages the web bundle,
-  assembles one portable application archive per target, creates macOS DMGs and
-  a Windows NSIS setup EXE, smoke-tests the installed runtimes, generates
+  assembles one portable application archive per target, creates macOS DMGs, a
+  Windows NSIS setup EXE, and Linux Debian and AppImage packages, smoke-tests
+  the installed runtimes, generates
   SHA-256 checksums, publishes the release manifest, and attaches the verified
   assets to the tag-bound GitHub release.
 
@@ -292,9 +293,9 @@ events, API sync snapshots, and update checks. The launcher checks account
 entitlement and the `squad_daemon` feature flag before starting the stack.
 Release metadata carries SHA-256 checksums for the installer/update path;
 each platform release also carries a portable application archive containing
-the native runtime and web app. Native macOS and Windows installers bundle
-Node; portable archives require Node 18.17+ on `PATH`. Installer code signing
-and macOS notarization are not configured yet.
+the native runtime and web app. Native macOS, Windows, and Linux installers
+bundle Node; portable archives require Node 18.17+ on `PATH`. Installer code
+signing and macOS notarization are not configured yet.
 
 The tray/UI binary is intentionally separate from the daemon. It renders the
 cross-platform menu model for macOS menu bar, Windows tray, Linux

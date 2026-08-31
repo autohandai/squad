@@ -1274,6 +1274,12 @@ fn packaged_resource_candidates_from(exe_dir: &Path) -> Vec<PathBuf> {
     let mut candidates = vec![exe_dir.join("server.mjs")];
     if let Some(contents_dir) = exe_dir.parent() {
         candidates.push(contents_dir.join("Resources").join("server.mjs"));
+        candidates.push(
+            contents_dir
+                .join("lib")
+                .join("autohand-squad-ui")
+                .join("server.mjs"),
+        );
     }
     candidates
 }
@@ -1519,10 +1525,11 @@ fn spawn_web_server(
         .with_context(|| format!("open {}", paths.web_server_log.display()))?;
     let err = log.try_clone()?;
     let server_dir = server_path.parent().unwrap_or_else(|| Path::new("."));
+    let server_argument = web_server_launch_argument(server_path);
     let node_runtime = locate_node_runtime()?;
     let mut command = Command::new(&node_runtime);
     command
-        .arg(server_path)
+        .arg(server_argument)
         .arg("--host")
         .arg(&config.host)
         .arg("--port")
@@ -1559,6 +1566,10 @@ fn spawn_web_server(
     };
     write_web_server_record(paths, &record)?;
     Ok(())
+}
+
+fn web_server_launch_argument(server_path: &Path) -> &std::ffi::OsStr {
+    server_path.file_name().unwrap_or(server_path.as_os_str())
 }
 
 fn detach_background(command: &mut Command) {
@@ -1901,6 +1912,16 @@ mod tests {
         .contains(&PathBuf::from(
             "/Applications/Autohand Squad.app/Contents/Resources/server.mjs"
         )));
+        assert!(packaged_resource_candidates_from(Path::new("/usr/bin"))
+            .contains(&PathBuf::from("/usr/lib/autohand-squad-ui/server.mjs")));
+    }
+
+    #[test]
+    fn web_server_launch_argument_is_relative_to_its_working_directory() {
+        assert_eq!(
+            web_server_launch_argument(Path::new("/installed/resources/server.mjs")),
+            std::ffi::OsStr::new("server.mjs"),
+        );
     }
 
     #[test]
