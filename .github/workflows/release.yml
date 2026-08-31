@@ -422,8 +422,9 @@ jobs:
           try {
             $env:AUTOHAND_HOME = Join-Path $stateRoot 'autohand-home'
             $env:AUTOHAND_SQUAD_HOME = $stateRoot
-            & $squad serve --server-path $server --web-port $webPort
-            if ($LASTEXITCODE -ne 0) { throw 'Installed web runtime did not start.' }
+            $serveOutput = & $squad serve --server-path $server --web-port $webPort 2>&1
+            $serveExit = $LASTEXITCODE
+            $serveOutput | ForEach-Object { Write-Host $_ }
             $ready = $false
             $runtime = $null
             foreach ($attempt in 1..30) {
@@ -435,7 +436,13 @@ jobs:
                 Start-Sleep -Seconds 1
               }
             }
-            if (-not $ready) { throw 'The web runtime installed by NSIS did not become ready.' }
+            if (-not $ready) {
+              $webServerLog = Join-Path $stateRoot 'web-server.log'
+              if (Test-Path $webServerLog) { Get-Content $webServerLog }
+              if ($serveExit -ne 0) { throw 'Installed web runtime did not start.' }
+              throw 'The web runtime installed by NSIS did not become ready.'
+            }
+            if ($serveExit -ne 0) { Write-Warning 'Installed web runtime became ready after the launcher readiness window.' }
             if (-not $runtime.success -or -not $runtime.data.available) {
               throw 'The installed runtime could not start its bundled Autohand CLI.'
             }
@@ -465,6 +472,7 @@ jobs:
           RELEASE_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
+          set -x
           package_dir="release/linux-${RELEASE_ARCH}"
           deb="$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.deb"
           appimage="$(realpath "$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.AppImage")"
