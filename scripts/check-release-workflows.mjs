@@ -182,7 +182,9 @@ assertIncludes(releaseWorkflow, 'NODE_RUNTIME_PATH="$(node -p', 'Native installe
 assertIncludes(releaseWorkflow, 'name: Mount and smoke test macOS installer', 'Release workflow mounts and tests each DMG');
 assertIncludes(releaseWorkflow, 'name: Install and smoke test Windows installer', 'Release workflow installs and tests the NSIS executable');
 assertIncludes(releaseWorkflow, '$installRoot = $entry.InstallLocation.Trim(\'"\')', 'Windows installer smoke test normalizes quoted NSIS install locations');
-assertIncludes(releaseWorkflow, '$serveExit = $LASTEXITCODE', 'Windows installer smoke test continues polling after a delayed launcher readiness result');
+assertIncludes(releaseWorkflow, "Start-Process -FilePath $squad -ArgumentList @('serve', '--server-path', $server, '--web-port', \"$webPort\")", 'Windows installer smoke test starts the installer launcher without blocking on its child process');
+assertIncludes(releaseWorkflow, 'Stop-Process -Id $launcher.Id -Force', 'Windows installer smoke test terminates a lingering launcher process');
+assertIncludes(releaseWorkflow, 'WaitForExit(120000)', 'Windows installer smoke test fails clearly if the uninstaller hangs');
 assertIncludes(releaseWorkflow, 'Get-Content $webServerLog', 'Windows installer smoke test prints the web-server log on failure');
 assertIncludes(releaseWorkflow, 'name: Inspect Linux installers', 'Release workflow verifies Linux Debian and AppImage packages');
 assertIncludes(releaseWorkflow, 'appimage="$(realpath "$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.AppImage")"', 'Linux AppImage inspection uses an absolute path after changing directories');

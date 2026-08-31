@@ -529,9 +529,9 @@ jobs:
           try {
             $env:AUTOHAND_HOME = Join-Path $stateRoot 'autohand-home'
             $env:AUTOHAND_SQUAD_HOME = $stateRoot
-            $serveOutput = & $squad serve --server-path $server --web-port $webPort 2>&1
-            $serveExit = $LASTEXITCODE
-            $serveOutput | ForEach-Object { Write-Host $_ }
+            $launcherOutput = Join-Path $stateRoot 'serve-launcher.out.log'
+            $launcherError = Join-Path $stateRoot 'serve-launcher.err.log'
+            $launcher = Start-Process -FilePath $squad -ArgumentList @('serve', '--server-path', $server, '--web-port', "$webPort") -PassThru -RedirectStandardOutput $launcherOutput -RedirectStandardError $launcherError
             $ready = $false
             $runtime = $null
             foreach ($attempt in 1..30) {
@@ -546,10 +546,11 @@ jobs:
             if (-not $ready) {
               $webServerLog = Join-Path $stateRoot 'web-server.log'
               if (Test-Path $webServerLog) { Get-Content $webServerLog }
-              if ($serveExit -ne 0) { throw 'Installed web runtime did not start.' }
+              if (Test-Path $launcherOutput) { Get-Content $launcherOutput }
+              if (Test-Path $launcherError) { Get-Content $launcherError }
+              if ($launcher.HasExited -and $launcher.ExitCode -ne 0) { throw "Installed web-runtime launcher exited with code $($launcher.ExitCode)." }
               throw 'The web runtime installed by NSIS did not become ready.'
             }
-            if ($serveExit -ne 0) { Write-Warning 'Installed web runtime became ready after the launcher readiness window.' }
             if (-not $runtime.success -or -not $runtime.data.available) {
               throw 'The installed runtime could not start its bundled Autohand CLI.'
             }
@@ -566,9 +567,19 @@ jobs:
             }
           } finally {
             & $squad serve-stop --web-port $webPort | Out-Null
+            if ($launcher -and -not $launcher.HasExited) {
+              Stop-Process -Id $launcher.Id -Force
+            }
             $uninstaller = $entry.UninstallString.Trim('"')
             if (Test-Path $uninstaller) {
-              Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
+              $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
+              if (-not $uninstall.WaitForExit(120000)) {
+                Stop-Process -Id $uninstall.Id -Force
+                throw 'NSIS uninstaller did not exit within two minutes.'
+              }
+              if ($uninstall.ExitCode -ne 0) {
+                throw "NSIS uninstaller exited with code $($uninstall.ExitCode)"
+              }
             }
           }
 
