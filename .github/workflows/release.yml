@@ -486,8 +486,8 @@ jobs:
           test -x "$extract_root/usr/bin/squad"
           test -x "$extract_root/usr/bin/autohand-squad-ui"
           test -x "$extract_root/usr/bin/node"
-          test -f "$extract_root/usr/lib/server.mjs"
-          test -f "$extract_root/usr/lib/node_modules/@autohandai/agent-sdk/package.json"
+          test -f "$extract_root/usr/lib/autohand-squad-ui/server.mjs"
+          test -f "$extract_root/usr/lib/autohand-squad-ui/node_modules/@autohandai/agent-sdk/package.json"
 
           mkdir -p "$appimage_root"
           (
