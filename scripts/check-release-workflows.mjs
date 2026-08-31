@@ -159,6 +159,13 @@ assertIncludes(releaseWorkflow, 'name: Smoke test portable application', 'Releas
 assertIncludes(releaseWorkflow, 'smoke_root="${smoke_root//\\\\//}"', 'Windows portable smoke test normalizes the runner temp path for GNU tar');
 assertIncludes(releaseWorkflow, "import('@autohandai/agent-sdk')", 'Portable smoke test imports the bundled Agent SDK');
 assertIncludes(releaseWorkflow, 'NODE_VERSION: "22.23.1"', 'Release workflow pins the bundled Node.js runtime');
+assertIncludes(releaseWorkflow, 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1', 'Release workflow uses current checkout action');
+assertIncludes(releaseWorkflow, 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0', 'Release workflow uses current setup-node action');
+assertIncludes(releaseWorkflow, 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0', 'Release workflow uses current cache action');
+assertIncludes(releaseWorkflow, 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1', 'Release workflow uses current download-artifact action');
+assertIncludes(releaseWorkflow, 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1', 'Release workflow uses current upload-artifact action');
+assertIncludes(releaseWorkflow, 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0', 'Release workflow uses current setup-bun action');
+assertNotIncludes(releaseWorkflow, 'package-manager-cache:', 'Release workflow avoids unsupported setup-node cache inputs');
 assertIncludes(releaseWorkflow, 'bun run release:installers', 'Release workflow builds native installers');
 assertNotIncludes(releaseWorkflow, "if: matrix.os != 'linux'", 'Release workflow packages Linux installables');
 assertIncludes(releaseWorkflow, 'NODE_RUNTIME_PATH="$(node -p', 'Native installer packaging receives an explicit Node.js binary');
@@ -189,6 +196,7 @@ assertNotIncludes(releaseWorkflow, 'gh release edit', 'Release publishing never 
 assertIncludes(releaseWorkflow, '--verify-tag', 'Release publishing requires the remote tag');
 assertIncludes(releaseWorkflow, '--target "$SOURCE_SHA"', 'Release publishing targets the verified source SHA');
 assertPinnedActionUses(releaseWorkflow, 'Release workflow');
+assertPinnedActionUses(ciWorkflow, 'CI workflow');
 assertIncludes(smokeWorkflow, 'Runner startup', 'Actions smoke workflow checks runner startup separately');
 assertIncludes(releaseNotes, 'Release Engineering', 'Release notes group release engineering changes');
 assertIncludes(packager, 'autohandai/squad', 'Release packager defaults to the org repo');
