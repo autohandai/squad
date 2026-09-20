@@ -814,15 +814,32 @@ fn recent_errors(paths: &StatePaths, runs: &[Value], telemetry: &[Value]) -> Vec
         }
     }
 
-    for line in tail_lines(&paths.server_log, 40) {
-        let lower = line.to_ascii_lowercase();
-        if lower.contains("failed") || lower.contains("error") {
+    for record in crate::otel::read_records(&paths.daemon_otel_log, 80) {
+        if record.severity >= crate::otel::Severity::Error as u8 {
             errors.push(RecentError {
-                at: line.split_whitespace().next().map(ToString::to_string),
-                source: "server-log".to_string(),
-                message: line,
-                run_id: None,
+                at: Some(format!("unix-ms:{}", record.time_ms)),
+                source: "daemon-otel".to_string(),
+                message: record.body,
+                run_id: record
+                    .attributes
+                    .get("autohand.run.id")
+                    .and_then(|value| value.as_str())
+                    .map(ToString::to_string),
             });
+        }
+    }
+    if errors.is_empty() {
+        // Older state directories only have the plain server.log capture.
+        for line in tail_lines(&paths.server_log, 40) {
+            let lower = line.to_ascii_lowercase();
+            if lower.contains("failed") || lower.contains("error") {
+                errors.push(RecentError {
+                    at: line.split_whitespace().next().map(ToString::to_string),
+                    source: "server-log".to_string(),
+                    message: line,
+                    run_id: None,
+                });
+            }
         }
     }
 

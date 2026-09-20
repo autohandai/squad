@@ -35,6 +35,10 @@ pub struct StatePaths {
     pub channels_json: PathBuf,
     pub tray_json: PathBuf,
     pub tray_log: PathBuf,
+    /// Structured logs (OpenTelemetry Logs Data Model, OTLP/JSON lines).
+    pub logs_dir: PathBuf,
+    pub daemon_otel_log: PathBuf,
+    pub tray_otel_log: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -181,6 +185,9 @@ impl StatePaths {
             channels_json: root.join("channels.json"),
             tray_json: root.join("tray.json"),
             tray_log: root.join("tray.log"),
+            logs_dir: root.join("logs"),
+            daemon_otel_log: root.join("logs").join("daemon.otlp.jsonl"),
+            tray_otel_log: root.join("logs").join("tray.otlp.jsonl"),
             root,
         }
     }

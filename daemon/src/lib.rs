@@ -8,6 +8,7 @@ pub mod gui_bootstrap;
 pub mod install;
 pub mod live_status;
 pub mod native_tray;
+pub mod otel;
 pub mod preflight;
 pub mod state;
 pub mod telemetry;

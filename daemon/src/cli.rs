@@ -1568,6 +1568,12 @@ fn bundled_autohand_cli_name() -> Option<&'static str> {
 pub(crate) fn bundled_autohand_cli(server_path: &Path) -> Option<PathBuf> {
     let name = bundled_autohand_cli_name()?;
     let server_dir = server_path.parent()?;
+    // The vendored release (vendor/autohand-cli, pinned by package.json) is
+    // what the app ships; the Agent SDK's own build is only a fallback.
+    let vendored = server_dir.join("vendor").join("autohand-cli").join(name);
+    if vendored.exists() {
+        return Some(vendored);
+    }
     let candidate = server_dir
         .join("node_modules")
         .join("@autohandai")

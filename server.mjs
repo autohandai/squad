@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { hostname } from "node:os";
+import { OtelLogger, SEVERITY, parseLogEnvelope, resourceFromEnv, traceIdFor, spanIdFor } from "./server/otel-logs.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -38,6 +40,25 @@ const port = Number(args.get("port") || 19821);
 const rootDir = process.cwd();
 const isPackagedRuntime = Boolean(process.env.AUTOHAND_SQUAD_APP_STATE_DIR);
 const packageMetadata = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8"));
+const otel = new OtelLogger({
+  resource: resourceFromEnv({
+    serviceName: "autohand-squad-web",
+    serviceVersion: packageMetadata.version || "",
+    instanceId: `${hostname()}-${process.pid}`,
+    extra: { "host.name": hostname(), "deployment.environment": process.argv.includes("--dev") ? "development" : "production" },
+  }),
+  scope: { name: "autohand.squad.web", version: packageMetadata.version || "" },
+});
+
+// One structured record for the bridge's own events (startup, requests that
+// fail, run lifecycle, telemetry mirrors). Never throws.
+function logEvent(severityNumber, body, attributes = {}, { traceId = "", spanId = "" } = {}) {
+  try {
+    otel.record({ file: webOtelLogPath, body, severityNumber, attributes, traceId, spanId });
+  } catch {
+    // Logging must never take the bridge down.
+  }
+}
 const distDir = join(rootDir, "dist");
 const homeDir = resolve(homedir());
 const squadMemberIdPrefix = "asq_";
@@ -49,6 +70,12 @@ const appStateDir = process.env.AUTOHAND_SQUAD_APP_STATE_DIR
   : join(rootDir, ".autohand");
 const isolatedAgentsDir = join(appStateDir, "agents");
 const runLogsDir = join(appStateDir, "run-logs");
+// Structured logs (OpenTelemetry Logs Data Model, OTLP/JSON lines). See
+// server/otel-logs.mjs and docs/observability.md.
+const otelLogsDir = process.env.AUTOHAND_SQUAD_LOGS_DIR
+  ? resolve(process.env.AUTOHAND_SQUAD_LOGS_DIR)
+  : join(appStateDir, "logs");
+const webOtelLogPath = join(otelLogsDir, "web.otlp.jsonl");
 const providerSettingsPath = join(appStateDir, "provider-settings.json");
 const maxRunLogLines = 600;
 const childTerminationGraceMs = 2500;
@@ -58,6 +85,10 @@ const autohandStateRoot = process.env.AUTOHAND_HOME
 const userConfigPath = process.env.AUTOHAND_USER_CONFIG_PATH
   ? resolve(process.env.AUTOHAND_USER_CONFIG_PATH)
   : join(autohandStateRoot, "config.json");
+// The CLI home (model catalog, sessions) sits beside the user config.
+const autohandHomeDir = process.env.AUTOHAND_HOME
+  ? resolve(process.env.AUTOHAND_HOME)
+  : dirname(userConfigPath);
 const squadStateDir = process.env.AUTOHAND_SQUAD_HOME
   ? resolve(process.env.AUTOHAND_SQUAD_HOME)
   : join(autohandStateRoot, "squad");
@@ -91,7 +122,18 @@ const sdkImportCache = { promise: null };
 const projectLimitUpperBound = 5;
 const maxProjectsPerMember = normalizeProjectLimit(process.env.AUTOHAND_SQUAD_MAX_PROJECTS_PER_MEMBER);
 const handoffRetryMode = normalizeHandoffRetryMode(process.env.AUTOHAND_SQUAD_HANDOFF_RETRY_MODE);
+// Autohand AI is the first-party provider: it authenticates with the user's
+// Autohand account (`autohand login`, synced into every member config) and
+// optionally with an API key. The base URL is managed by the CLI unless a
+// private gateway is configured. Model ids come from the CLI model catalog.
+const AUTOHAND_AI_FALLBACK_MODELS = [
+  { id: "auto", label: "Auto", reasoning: true, contextWindow: 262144 },
+  { id: "fantail", label: "Fantail", reasoning: false, contextWindow: 262144 },
+  { id: "moa", label: "Moa (Thinking)", reasoning: true, contextWindow: 1000000 },
+];
+const AUTOHAND_AI_DEFAULT_BASE_URL = "https://inference.autohand.ai/v1";
 const providerDefinitions = [
+  { id: "autohandai", label: "Autohand AI", kind: "cloud", baseUrl: "", model: "auto", requiresApiKey: false, auth: "account" },
   { id: "openrouter", label: "OpenRouter", kind: "cloud", baseUrl: "https://openrouter.ai/api/v1", model: "openrouter/auto", requiresApiKey: true },
   { id: "openai", label: "OpenAI", kind: "cloud", baseUrl: "https://api.openai.com/v1", model: "gpt-5", requiresApiKey: true },
   { id: "ollama", label: "Ollama", kind: "local", baseUrl: "http://127.0.0.1:11434", model: "llama3.1", requiresApiKey: false },
@@ -309,23 +351,45 @@ function agentSdkPackageDirs() {
   return dirs;
 }
 
-function resolveAutohandBinary() {
+// The vendored CLI (scripts/fetch-autohand-cli.mjs, pinned by package.json
+// `autohand.cliVersion`) is the release the app ships. The Agent SDK's own
+// bundled build is only a fallback for checkouts that have not fetched it.
+const vendoredAutohandCliDir = process.env.AUTOHAND_SQUAD_CLI_DIR
+  ? resolve(process.env.AUTOHAND_SQUAD_CLI_DIR)
+  : join(rootDir, "vendor", "autohand-cli");
+
+function vendoredAutohandCliInfo() {
+  try {
+    return JSON.parse(readFileSync(join(vendoredAutohandCliDir, "BUILD_INFO.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function resolveAutohandBinaryDetailed() {
   const explicit = String(process.env.AUTOHAND_SQUAD_AUTOHAND_BIN || "").trim();
-  if (explicit && existsSync(explicit)) return explicit;
+  if (explicit && existsSync(explicit)) return { path: explicit, source: "explicit" };
 
   const bundledName = bundledAutohandCliName();
   if (bundledName) {
+    const vendored = join(vendoredAutohandCliDir, bundledName);
+    if (existsSync(vendored)) return { path: vendored, source: "vendored" };
     for (const packageDir of agentSdkPackageDirs()) {
       const bundled = join(packageDir, "cli", bundledName);
-      if (existsSync(bundled)) return bundled;
+      if (existsSync(bundled)) return { path: bundled, source: "agent-sdk" };
     }
   }
 
   const finder = osPlatform() === "win32" ? "where" : "which";
-  return commandOutput(finder, ["autohand"])
+  const onPath = commandOutput(finder, ["autohand"])
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find(Boolean) || "";
+  return { path: onPath, source: onPath ? "path" : "none" };
+}
+
+function resolveAutohandBinary() {
+  return resolveAutohandBinaryDetailed().path;
 }
 
 function autohandHelpText() {
@@ -345,10 +409,15 @@ function autohandSupportsFlag(flag) {
 }
 
 function getRuntime() {
-  const autohandPath = resolveAutohandBinary();
+  const resolved = resolveAutohandBinaryDetailed();
+  const autohandPath = resolved.path;
   const version = autohandPath ? commandOutput(autohandPath, ["--version"]) : "";
+  const vendored = vendoredAutohandCliInfo();
   return {
     autohandPath,
+    autohandSource: resolved.source,
+    pinnedCliVersion: String(packageMetadata.autohand?.cliVersion || ""),
+    vendoredCliVersion: vendored?.version || "",
     version,
     squadVersion: packageMetadata.version || "0.0.0",
     available: Boolean(autohandPath),
@@ -367,6 +436,15 @@ function getRuntime() {
       retryMode: handoffRetryMode,
     },
     account: readRuntimeAccount(),
+    observability: {
+      logFormat: "otlp-json",
+      logsDir: otelLogsDir,
+      runLogsDir,
+      exportEnabled: otel.exportEnabled,
+      exportEndpoint: otel.exportEnabled ? maskEndpoint(otel.exporter.endpoint) : "",
+      exportFailures: otel.exportFailures,
+      lastExportError: otel.lastExportError,
+    },
     harnesses: {
       default: DEFAULT_HARNESS_ID,
       ids: ["autohand", "codex", "claude"],
@@ -374,6 +452,15 @@ function getRuntime() {
     },
     serverStartedAt,
   };
+}
+
+function maskEndpoint(endpoint) {
+  try {
+    const url = new URL(endpoint);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return "";
+  }
 }
 
 function autohandReadinessContext() {
@@ -1164,11 +1251,11 @@ async function installAgentSkills(agent, agentHome, agentId) {
 
 function defaultAgentConfig(workspace) {
   return {
-    provider: "openrouter",
-    openrouter: {
-      apiKey: "",
-      baseUrl: "https://openrouter.ai/api/v1",
-      model: "openrouter/auto",
+    provider: "autohandai",
+    autohandai: {
+      plan: "cloud",
+      authMode: "account",
+      model: "auto",
     },
     workspace: {
       defaultRoot: workspace,
@@ -1199,7 +1286,7 @@ function providerTemplate(providerId) {
   const definition = providerDefinitionMap.get(providerId) || providerDefinitions[0];
   return {
     id: definition.id,
-    enabled: definition.id === "openrouter",
+    enabled: definition.id === "autohandai",
     apiKey: "",
     baseUrl: definition.baseUrl || "",
     model: definition.model || "",
@@ -1208,7 +1295,7 @@ function providerTemplate(providerId) {
   };
 }
 
-function normalizedProviderId(value, fallback = "openrouter") {
+function normalizedProviderId(value, fallback = "autohandai") {
   const providerId = String(value || "").trim().toLowerCase();
   return providerDefinitionMap.has(providerId) ? providerId : fallback;
 }
@@ -1252,13 +1339,20 @@ function normalizeProviderSettings(input = {}, previous = null) {
     );
   }
 
-  const defaultProvider = normalizedProviderId(source.defaultProvider || prior.defaultProvider);
+  let defaultProvider = normalizedProviderId(source.defaultProvider || prior.defaultProvider);
+  // Settings written before Autohand AI existed (version 1) move to the
+  // first-party default once, but only when the account can actually run it;
+  // an unauthenticated workspace keeps its working provider.
+  const storedVersion = Number(source.version || prior.version || 0);
+  if (storedVersion < 2 && defaultProvider !== "autohandai" && autohandAiAccountReady()) {
+    defaultProvider = "autohandai";
+  }
   if (providers[defaultProvider]) {
     providers[defaultProvider].enabled = true;
   }
 
   return {
-    version: 1,
+    version: 2,
     defaultProvider,
     providers,
     updatedAt: String(source.updatedAt || prior.updatedAt || new Date().toISOString()),
@@ -1320,13 +1414,24 @@ function publicProviderSettings(settings) {
   const normalized = normalizeProviderSettings(settings);
   const providers = {};
   for (const [providerId, provider] of Object.entries(normalized.providers)) {
+    const definition = providerDefinitionMap.get(providerId);
+    const account = definition?.auth === "account" ? readRuntimeAccount() : null;
     providers[providerId] = {
       ...provider,
       apiKey: "",
       apiKeyConfigured: Boolean(provider.apiKey),
-      requiresApiKey: providerDefinitionMap.get(providerId)?.requiresApiKey === true,
-      label: providerDefinitionMap.get(providerId)?.label || providerId,
-      kind: providerDefinitionMap.get(providerId)?.kind || "cloud",
+      requiresApiKey: definition?.requiresApiKey === true,
+      auth: definition?.auth || "api-key",
+      label: definition?.label || providerId,
+      kind: definition?.kind || "cloud",
+      ...(definition?.auth === "account"
+        ? {
+            accountReady: autohandAiAccountReady(),
+            accountEmail: account?.email || "",
+            models: autohandAiModels(),
+            managedBaseUrl: AUTOHAND_AI_DEFAULT_BASE_URL,
+          }
+        : {}),
     };
   }
   return {
@@ -1342,11 +1447,44 @@ async function saveProviderSettingsPatch(input = {}) {
   return publicProviderSettings(await writeProviderSettings(next));
 }
 
+function autohandAiAccountReady() {
+  return autohandAuthUsable(readAutohandAuth(userConfigPath));
+}
+
+function autohandAiModels() {
+  try {
+    const catalog = JSON.parse(readFileSync(join(autohandHomeDir, "model-catalog", "models.json"), "utf8"));
+    const entries = catalog && typeof catalog.autohandai === "object" ? Object.values(catalog.autohandai) : [];
+    const models = entries
+      .filter((entry) => entry && typeof entry.id === "string")
+      .map((entry) => ({
+        id: entry.id,
+        label: entry.name || entry.id,
+        reasoning: entry.reasoning === true,
+        contextWindow: Number(entry.contextWindow) || 0,
+      }));
+    if (models.length) {
+      // Keep the product default first so selects open on it.
+      return models.sort((a, b) => (a.id === "auto" ? -1 : b.id === "auto" ? 1 : 0));
+    }
+  } catch {
+    // Catalog missing or unreadable: fall back to the known cloud models.
+  }
+  return AUTOHAND_AI_FALLBACK_MODELS;
+}
+
+function providerCredentialReady(provider) {
+  const definition = providerDefinitionMap.get(provider?.id);
+  if (!definition) return false;
+  if (definition.auth === "account") return Boolean(provider.apiKey) || autohandAiAccountReady();
+  return !definition.requiresApiKey || Boolean(provider.apiKey);
+}
+
 function providerConfigured(provider) {
   if (!provider?.enabled) return false;
   const definition = providerDefinitionMap.get(provider.id);
   if (!definition) return false;
-  if (definition.requiresApiKey && !provider.apiKey) return false;
+  if (!providerCredentialReady(provider)) return false;
   if (!provider.model) return false;
   return true;
 }
@@ -1365,10 +1503,14 @@ async function testProviderSettings(input = {}) {
   if (!providerConfigured(provider)) {
     const definition = providerDefinitionMap.get(providerId);
     const missing = [
-      definition?.requiresApiKey && !provider.apiKey ? "API key" : "",
+      definition?.auth === "account" && !providerCredentialReady(provider) ? "a signed-in Autohand account (autohand login) or an API key" : "",
+      definition?.auth !== "account" && definition?.requiresApiKey && !provider.apiKey ? "API key" : "",
       !provider.model ? "default model" : "",
     ].filter(Boolean);
     throw new Error(`${definition?.label || providerId} is missing ${missing.join(" and ") || "required fields"}.`);
+  }
+  if (providerId === "autohandai") {
+    return testAutohandAiConnection(provider);
   }
   return {
     provider: providerId,
@@ -1376,6 +1518,50 @@ async function testProviderSettings(input = {}) {
     status: "configured",
     message: `${providerDefinitionMap.get(providerId)?.label || providerId} is configured for new runs.`,
   };
+}
+
+// A real round trip to the inference gateway with the credential the CLI
+// would use, so "Test connection" proves the account token or key works.
+async function testAutohandAiConnection(provider) {
+  const auth = readAutohandAuth(userConfigPath);
+  const token = provider.apiKey || (autohandAuthUsable(auth) ? auth.token : "");
+  const baseUrl = String(provider.baseUrl || AUTOHAND_AI_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(`${baseUrl}/models`, {
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        provider.apiKey
+          ? "Autohand AI rejected the API key."
+          : "Autohand AI rejected the account token. Run `autohand login` again."
+      );
+    }
+    if (!response.ok) {
+      throw new Error(`Autohand AI responded ${response.status} from ${baseUrl}.`);
+    }
+    let served = 0;
+    try {
+      const body = await response.json();
+      served = Array.isArray(body?.data) ? body.data.length : Array.isArray(body) ? body.length : 0;
+    } catch {
+      // A reachable gateway with a non-JSON body still proves connectivity.
+    }
+    return {
+      provider: "autohandai",
+      model: provider.model,
+      status: "connected",
+      message: `Autohand AI reachable as ${provider.apiKey ? "API key" : readRuntimeAccount().email || "your account"}${served ? ` (${served} models)` : ""}; ${provider.model} is the default model.`,
+    };
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error(`Autohand AI did not answer within 10 s (${baseUrl}).`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizeModelAssignment(assignment) {
@@ -1414,8 +1600,12 @@ async function resolveProviderForAgent(agent) {
   if (!provider.enabled) {
     throw new Error(`${definition.label} is assigned to this agent, but it is not enabled in Settings.`);
   }
-  if (definition.requiresApiKey && !provider.apiKey) {
-    throw new Error(`${definition.label} is assigned to this agent, but its API key is missing in Settings.`);
+  if (!providerCredentialReady(provider)) {
+    throw new Error(
+      definition.auth === "account"
+        ? `${definition.label} needs a signed-in Autohand account (run \`autohand login\`) or an API key in Settings.`
+        : `${definition.label} is assigned to this agent, but its API key is missing in Settings.`
+    );
   }
 
   const model = assignment.mode === "override" ? assignment.model : provider.model;
@@ -1438,6 +1628,12 @@ async function resolveProviderForAgent(agent) {
 
 function providerConfigForResolved(resolvedProvider) {
   const config = {};
+  if (resolvedProvider.provider === "autohandai") {
+    // Mirrors the CLI's AutohandAISettings: cloud plan, account auth unless an
+    // API key is supplied; the account token itself is the synced `auth` block.
+    config.plan = "cloud";
+    config.authMode = resolvedProvider.apiKey ? "api-key" : "account";
+  }
   if (resolvedProvider.apiKey) config.apiKey = resolvedProvider.apiKey;
   if (resolvedProvider.baseUrl) config.baseUrl = resolvedProvider.baseUrl;
   if (resolvedProvider.model) config.model = resolvedProvider.model;
@@ -1469,6 +1665,7 @@ const fileGuardTargetTools = [
   "delete_path",
 ];
 const modelSecurityProviders = new Set([
+  "autohandai",
   "openrouter",
   "openai",
   "llmgateway",
@@ -1538,7 +1735,7 @@ function normalizeAgentPermissions(agent) {
       )
     : {};
   const modelSecurity = permissions.modelSecurity && typeof permissions.modelSecurity === "object" ? permissions.modelSecurity : {};
-  const provider = modelSecurityProviders.has(modelSecurity.provider) ? modelSecurity.provider : "openrouter";
+  const provider = modelSecurityProviders.has(modelSecurity.provider) ? modelSecurity.provider : "autohandai";
   const model = String(modelSecurity.model || "").trim();
 
   return {
@@ -2217,10 +2414,17 @@ function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
     timeout: 300000,
   };
   if (autohandPath) options.cliPath = autohandPath;
-  if (model) options.model = model;
-  if (agentRuntime.resolvedProvider?.provider) options.provider = agentRuntime.resolvedProvider.provider;
+  // The SDK infers a provider from `model` ("moa", "fantail") or takes it from
+  // `provider`, and then requires an API key for cloud providers. Account-
+  // authenticated Autohand AI has none: the member config (--config) already
+  // selects `autohandai` with the synced account token, so neither option is
+  // passed and the model goes through the CLI flag instead.
+  const accountAuthenticated = agentRuntime.resolvedProvider?.provider === "autohandai" && !agentRuntime.resolvedProvider?.apiKey;
+  if (model && accountAuthenticated) extraArgs.push("--model", model);
+  else if (model) options.model = model;
+  if (agentRuntime.resolvedProvider?.provider && !accountAuthenticated) options.provider = agentRuntime.resolvedProvider.provider;
   if (agentRuntime.resolvedProvider?.apiKey) options.apiKey = agentRuntime.resolvedProvider.apiKey;
-  if (agentRuntime.resolvedProvider?.baseUrl) options.baseUrl = agentRuntime.resolvedProvider.baseUrl;
+  if (agentRuntime.resolvedProvider?.baseUrl && !accountAuthenticated) options.baseUrl = agentRuntime.resolvedProvider.baseUrl;
   if (profile) options.appendSystemPrompt = profile;
 
   return {
@@ -3061,6 +3265,8 @@ async function stopManagedRuns(reason = "service stopped") {
 function shutdownServer() {
   if (shuttingDown) return;
   shuttingDown = true;
+  logEvent(SEVERITY.INFO, "bridge shutting down");
+  void otel.close();
   setTimeout(() => {
     const exit = () => process.exit(0);
     if (server) {
@@ -3072,21 +3278,42 @@ function shutdownServer() {
   }, 50).unref();
 }
 
+function runLogSeverity(source, line) {
+  if (source === "stderr") return /\b(error|failed|panic|fatal)\b/i.test(line) ? SEVERITY.ERROR : SEVERITY.WARN;
+  if (source === "system" && /\b(failed|error)\b/i.test(line)) return SEVERITY.ERROR;
+  return SEVERITY.INFO;
+}
+
 function appendLog(run, source, chunk) {
   const lines = String(chunk)
     .replace(/\u001b\[[0-9;]*m/g, "")
     .split(/\r?\n/)
     .filter(Boolean);
+  const at = new Date().toISOString();
   for (const line of lines) {
-    run.logs.push({ source, line, at: new Date().toISOString() });
+    run.logs.push({ source, line, at });
+    if (run.logPath) {
+      // Each line is one OTLP/JSON log record appended to the run's file; the
+      // run id doubles as the trace id so every record of a run correlates.
+      otel.record({
+        file: run.logPath,
+        body: line,
+        severityNumber: runLogSeverity(source, line),
+        timestamp: Date.parse(at),
+        traceId: traceIdFor(run.id),
+        spanId: spanIdFor(run.id),
+        attributes: {
+          "log.source": source,
+          "autohand.run.id": run.id,
+          "autohand.run.kind": run.kind || "",
+          "autohand.harness": run.harness || run.harnessId || "autohand",
+          "autohand.member.id": run.agentId || "",
+          "autohand.workspace": run.workspace || "",
+        },
+      });
+    }
   }
   if (run.logs.length > maxRunLogLines) run.logs.splice(0, run.logs.length - maxRunLogLines);
-  if (run.logPath) {
-    const rawLog = run.logs.map((log) => `[${log.at || ""}] [${log.source || "run"}] ${log.line || ""}`).join("\n");
-    void mkdir(dirname(run.logPath), { recursive: true })
-      .then(() => writeFile(run.logPath, rawLog ? `${rawLog}\n` : ""))
-      .catch(() => {});
-  }
 }
 
 function stripAnsi(value) {
@@ -3299,17 +3526,22 @@ async function readRecentLogFile(path, source, cutoffMs) {
     const fallbackMs = info.mtimeMs;
     if (fallbackMs < cutoffMs) return [];
     const content = await readFile(path, "utf8");
-    return content
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .slice(-120)
-      .map((line) => ({
-        source,
-        timestamp: new Date(lineTimestampMs(line, fallbackMs)).toISOString(),
-        line: sanitizeFeedbackText(line, 1200),
-      }))
-      .filter((entry) => Date.parse(entry.timestamp) >= cutoffMs)
-      .slice(-40);
+    const lines = content.split(/\r?\n/).filter(Boolean).slice(-120);
+    const entries = path.endsWith(".otlp.jsonl")
+      ? lines.flatMap((line) =>
+          parseLogEnvelope(line).map((record) => ({
+            source,
+            timestamp: record.timestamp,
+            severity: record.severityText,
+            line: sanitizeFeedbackText(typeof record.body === "string" ? record.body : JSON.stringify(record.body), 1200),
+          }))
+        )
+      : lines.map((line) => ({
+          source,
+          timestamp: new Date(lineTimestampMs(line, fallbackMs)).toISOString(),
+          line: sanitizeFeedbackText(line, 1200),
+        }));
+    return entries.filter((entry) => Date.parse(entry.timestamp) >= cutoffMs).slice(-40);
   } catch {
     return [];
   }
@@ -3323,11 +3555,14 @@ async function collectRecentFeedbackLogs() {
     [join(squadStateDir, "web-server.log"), "web-server"],
     [join(squadStateDir, "analytics.log"), "squad-analytics"],
     [join(squadStateDir, "telemetry.jsonl"), "squad-telemetry"],
+    [webOtelLogPath, "web-otel"],
+    [join(squadStateDir, "logs", "daemon.otlp.jsonl"), "squad-daemon-otel"],
+    [join(squadStateDir, "logs", "tray.otlp.jsonl"), "squad-tray-otel"],
   ];
   try {
     const entries = await readdir(runLogsDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith(".log")) {
+      if (entry.isFile() && (entry.name.endsWith(".log") || entry.name.endsWith(".otlp.jsonl"))) {
         candidates.push([join(runLogsDir, entry.name), "web-run"]);
       }
     }
@@ -4085,6 +4320,19 @@ async function appendTelemetryEvent(event, metadata = {}) {
   };
   await mkdir(squadStateDir, { recursive: true });
   await appendFile(join(squadStateDir, "telemetry.jsonl"), `${JSON.stringify(record)}\n`, "utf8");
+  // telemetry.jsonl keeps its analytics contract; the same event is also a
+  // structured log record so OTLP consumers see it.
+  logEvent(SEVERITY.INFO, record.event, { "event.name": record.event, "event.domain": "autohand.squad", ...flattenAttributes(metadata) });
+}
+
+function flattenAttributes(value, prefix = "", output = {}, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 3) return output;
+  for (const [key, item] of Object.entries(value)) {
+    const name = prefix ? `${prefix}.${key}` : key;
+    if (item && typeof item === "object" && !Array.isArray(item)) flattenAttributes(item, name, output, depth + 1);
+    else if (item !== undefined && item !== null) output[name] = Array.isArray(item) ? item.map(String).join(",") : item;
+  }
+  return output;
 }
 
 function valueField(value, fields) {
@@ -5471,7 +5719,7 @@ async function startExternalHarnessRun(payload) {
     harness: adapter.id,
     harnessVersion: prepared.readiness.version || "",
     command: externalCommandLabel(adapter, initialArgs.displayArgs),
-    logPath: join(runLogsDir, `${id}.log`),
+    logPath: join(runLogsDir, `${id}.otlp.jsonl`),
     status: "running",
     exitCode: null,
     startedAt: new Date().toISOString(),
@@ -5563,7 +5811,7 @@ async function startRun(payload) {
     brainCard: agentRuntime.brainCard,
     transport: "cli",
     command: `autohand ${displayArgs.map(shellQuote).join(" ")}`,
-    logPath: join(runLogsDir, `${id}.log`),
+    logPath: join(runLogsDir, `${id}.otlp.jsonl`),
     status: "running",
     exitCode: null,
     startedAt: new Date().toISOString(),
@@ -6443,6 +6691,12 @@ server = createServer(async (req, res) => {
     try {
       if (await handleApi(req, res, url)) return;
     } catch (error) {
+      logEvent(SEVERITY.ERROR, `API request failed: ${error?.message || error}`, {
+        "http.request.method": req.method,
+        "url.path": url.pathname,
+        "http.response.status_code": error?.status || 500,
+        "error.type": error?.name || "Error",
+      });
       if (!res.headersSent) json(res, error?.status || 500, { success: false, error: error?.message || "internal error" });
       return;
     }
@@ -6470,4 +6724,11 @@ server = createServer(async (req, res) => {
 
 server.listen(port, host, () => {
   console.log(`autohandSWE listening on http://${host}:${port}`);
+  logEvent(SEVERITY.INFO, `bridge listening on http://${host}:${port}`, {
+    "server.address": host,
+    "server.port": port,
+    "autohand.cli.version": getRuntime().version,
+    "autohand.cli.source": getRuntime().autohandSource,
+    "autohand.otel.export": otel.exportEnabled,
+  });
 });

@@ -176,6 +176,30 @@ profile, verifies `/` routes into `/welcome`, skips into `/squad`, resumes setup
 from the app shell, opens the Settings LLM provider controls, and writes
 screenshots to `.codex-artifacts/`.
 
+## LLM Provider
+
+Autohand AI is the default provider and uses the account from `autohand login`;
+`bun run dev` then reports it as configured with no further setup. Settings →
+Providers lists the catalog models (Auto, Fantail, Moa) and accepts an optional
+Autohand AI API key or a private gateway base URL. Settings files written before
+this default (version 1) are moved to Autohand AI once when the account is
+signed in; an unauthenticated workspace keeps its previous default.
+
+## Autohand Code Version
+
+`package.json` pins the Autohand Code CLI release (`autohand.cliVersion`).
+`bun run cli:fetch` downloads and checksum-verifies that release into
+`vendor/autohand-cli/` (git-ignored); `bun run check:sdk` proves the Agent SDK
+drives it, and packaging refuses to ship anything else. Bump the pin, run the
+fetch, and run `check:sdk` to upgrade. `AUTOHAND_SQUAD_CLI_DIR` points the
+bridge, checks, and packagers at a different vendored directory.
+
+## Logs
+
+Structured logs use the OpenTelemetry Logs Data Model (OTLP/JSON lines). Run
+`bun run check:otel` for the format checks and read `docs/observability.md`
+for file locations, attributes, and the `OTEL_EXPORTER_OTLP_*` export settings.
+
 ## Agent Harnesses
 
 Members run on one of three engines, chosen per member in **Runs with** and

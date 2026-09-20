@@ -166,6 +166,15 @@ fn record(paths: &StatePaths, config: &SquadConfig, name: &str, data: serde_json
 
 fn append_bootstrap_log(paths: &StatePaths, failure: &BootstrapFailure) {
     let _ = paths.ensure();
+    crate::otel::launcher_log(
+        paths,
+        crate::otel::Severity::Fatal,
+        &failure.title,
+        &[(
+            "autohand.launch.detail",
+            serde_json::Value::String(failure.body.clone()),
+        )],
+    );
     let line = format!(
         "[{}] {}\n{}\n\n",
         crate::state::now_string(),

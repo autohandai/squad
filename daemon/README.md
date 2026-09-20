@@ -56,6 +56,15 @@ one.
 squad doctor   # JSON preflight report; exit 1 when a check fails
 ```
 
+## Structured Logs
+
+The daemon and the launcher write OpenTelemetry log records (OTLP/JSON lines)
+to `logs/daemon.otlp.jsonl` and `logs/tray.otlp.jsonl` in the state root, in
+addition to the plain `server.log` / `tray.log` captures. Records at ERROR and
+above feed the analytics "recent errors" list. `OTEL_EXPORTER_OTLP_ENDPOINT`
+enables OTLP/HTTP export from a background thread; `OTEL_LOG_LEVEL` sets the
+minimum severity. See `docs/observability.md`.
+
 ## State
 
 The shared state directory is `~/.autohand/squad/` unless `AUTOHAND_SQUAD_HOME`

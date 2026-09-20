@@ -121,11 +121,36 @@ a blank page. The same checks are available from a terminal:
 "%LOCALAPPDATA%\Autohand Squad\squad.exe" doctor                 # Windows
 ```
 
+## Autohand AI provider
+
+Autohand AI is the default LLM provider. It runs on your Autohand account
+(`autohand login`), so a signed-in workspace needs no API key; an Autohand AI
+API key can be added in Settings instead. The default model is **Auto**, with
+Fantail and Moa (Thinking) available from the CLI model catalog. OpenRouter,
+OpenAI, Ollama, Bedrock, and the other providers stay available as workspace
+or per-member overrides. **Test connection** in Settings makes a real request
+to the inference gateway with the credential the CLI will use.
+
 ## Agent harnesses
 
 Every member has a **Runs with** engine. Autohand Code is bundled and the
 default; Codex and Claude Code are detected from your own installation and
-never installed, updated, or signed in by Squad. `GET /api/harnesses` and the
+never installed, updated, or signed in by Squad.
+
+The bundled Autohand Code release is pinned in `package.json`
+(`autohand.cliVersion`, currently 0.9.7) and vendored by `bun run cli:fetch`
+from the GitHub release with checksum verification; releases fail if the
+vendored binary is missing or does not match the pin. `GET /api/runtime`
+reports the running CLI version and whether it came from the vendored release,
+the Agent SDK package, or `PATH`.
+
+## Logs and OpenTelemetry
+
+Structured logs are written in the OpenTelemetry Logs Data Model as OTLP/JSON
+lines (`~/.autohand/squad/logs/*.otlp.jsonl`, `<app state>/logs/web.otlp.jsonl`,
+and one `run-logs/<run id>.otlp.jsonl` per tracked run). Set
+`OTEL_EXPORTER_OTLP_ENDPOINT` (plus the usual `OTEL_*` headers and resource
+variables) to export them over OTLP/HTTP. See `docs/observability.md`. `GET /api/harnesses` and the
 member's Harness page report Ready, Setup required, Not detected, or
 Unsupported version. A member whose engine is not ready is blocked with the
 setup step; Squad never falls back to a different engine silently.

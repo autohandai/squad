@@ -3,6 +3,7 @@
 node_modules/
 daemon/target/
 release/
+vendor/autohand-cli/
 
 .env
 .env.*

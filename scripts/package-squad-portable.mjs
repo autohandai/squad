@@ -17,6 +17,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
+import { createRequire } from 'node:module';
+const appPackageForCli = createRequire(import.meta.url)('../package.json');
 import { tarCreateArgs } from './release-archive.mjs';
 
 const nativeComponents = [
@@ -97,11 +99,9 @@ async function stageProductionModules() {
   const sdkDestination = join(bundleRoot, 'node_modules', '@autohandai', 'agent-sdk');
   const sdkCli = sdkCliName(releaseOs, releaseArch);
 
-  await mkdir(join(sdkDestination, 'cli'), { recursive: true });
   await copyRequiredFile(join(sdkSource, 'package.json'), join(sdkDestination, 'package.json'));
   await copyRequiredDirectory(join(sdkSource, 'dist'), join(sdkDestination, 'dist'));
-  await copyRequiredFile(join(sdkSource, 'cli', sdkCli), join(sdkDestination, 'cli', sdkCli));
-  if (releaseOs !== 'win32') await chmod(join(sdkDestination, 'cli', sdkCli), 0o755);
+  await stageVendoredAutohandCli(sdkCli, join(bundleRoot, 'vendor', 'autohand-cli'));
 
   for (const dependency of ['toml', 'yaml']) {
     await copyRequiredDirectory(
@@ -186,6 +186,35 @@ async function hashFile(filePath) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
   return hash.digest('hex');
+}
+
+// The app ships the Autohand Code release pinned in package.json
+// (`autohand.cliVersion`), vendored by scripts/fetch-autohand-cli.mjs. A
+// release must never fall back to the Agent SDK's older bundled build, so a
+// missing or mismatched vendored binary fails packaging.
+async function stageVendoredAutohandCli(cliName, destinationDir) {
+  const pinned = String(appPackageForCli.autohand?.cliVersion || '').trim();
+  const vendorDir = process.env.AUTOHAND_SQUAD_CLI_DIR ? resolve(process.env.AUTOHAND_SQUAD_CLI_DIR) : resolve('vendor', 'autohand-cli');
+  const infoPath = join(vendorDir, 'BUILD_INFO.json');
+  let info;
+  try {
+    info = JSON.parse(await readFile(infoPath, 'utf8'));
+  } catch {
+    throw new Error(`Vendored Autohand CLI is missing (${infoPath}); run \`bun run cli:fetch\` first`);
+  }
+  if (!pinned || info.version !== pinned) {
+    throw new Error(`Vendored Autohand CLI is ${info.version || 'unknown'}, package.json pins ${pinned || 'nothing'}`);
+  }
+  const source = join(vendorDir, cliName);
+  const digest = info.sha256?.[cliName];
+  if (!digest) throw new Error(`Vendored Autohand CLI ${cliName} has no recorded sha256 in ${infoPath}`);
+  const actual = createHash('sha256').update(await readFile(source)).digest('hex');
+  if (actual !== digest) throw new Error(`Vendored Autohand CLI ${cliName} sha256 ${actual} does not match ${digest}`);
+  await mkdir(destinationDir, { recursive: true });
+  await copyRequiredFile(source, join(destinationDir, cliName));
+  if (!cliName.endsWith('.exe')) await chmod(join(destinationDir, cliName), 0o755);
+  await copyRequiredFile(infoPath, join(destinationDir, 'BUILD_INFO.json'));
+  return { version: info.version, sha256: digest };
 }
 
 function sdkCliName(osName, archName) {

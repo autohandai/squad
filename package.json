@@ -13,12 +13,19 @@
   },
   "homepage": "https://github.com/autohandai/squad#readme",
   "type": "module",
+  "autohand": {
+    "cliVersion": "0.9.7",
+    "cliRepository": "autohandai/code-cli"
+  },
   "scripts": {
     "dev": "node server.mjs --dev --host 127.0.0.1 --port 19821",
     "build": "vite build",
     "preview": "node server.mjs --host 127.0.0.1 --port 19821",
+    "cli:fetch": "node scripts/fetch-autohand-cli.mjs",
+    "cli:fetch:all": "node scripts/fetch-autohand-cli.mjs --all",
     "check:sdk": "node scripts/check-agent-sdk.mjs",
     "check:harness": "node scripts/check-harness-adapters.mjs",
+    "check:otel": "node scripts/check-otel-logs.mjs",
     "check:server": "node --check server.mjs",
     "check:onboarding": "node scripts/verify-onboarding-flow.mjs",
     "check:onboarding:browser": "node scripts/verify-onboarding-browser.mjs",
@@ -26,7 +33,7 @@
     "check:web": "bun run build",
     "check:runtime": "cd daemon && cargo fmt -- --check && cargo test -j1 -- --test-threads=1 && cargo build --bins -j1",
     "check:release": "node scripts/check-release-workflows.mjs",
-    "ci": "bun run check:sdk && bun run check:harness && bun run check:server && bun run check:release && bun run check:web && bun run check:runtime",
+    "ci": "bun run cli:fetch && bun run check:sdk && bun run check:harness && bun run check:otel && bun run check:server && bun run check:release && bun run check:web && bun run check:runtime",
     "release:version": "node scripts/resolve-squad-version.mjs",
     "release:package": "node scripts/package-squad-release.mjs",
     "release:portable": "node scripts/package-squad-portable.mjs",

@@ -134,10 +134,16 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Fetch pinned Autohand Code CLI
+        run: bun run cli:fetch
+
       - name: Run web release checks
+        env:
+          AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI: "1"
         run: |
           bun run check:sdk
           bun run check:harness
+          bun run check:otel
           bun run check:server
           bun run check:release
           bun run build
@@ -231,8 +237,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Fetch pinned Autohand Code CLI
+        run: bun run cli:fetch
+
       - name: Check Autohand SDK on native target
         run: bun run check:sdk
+        env:
+          AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI: "1"
 
       - name: Download built web runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

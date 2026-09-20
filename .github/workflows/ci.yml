@@ -45,11 +45,19 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Fetch pinned Autohand Code CLI
+        run: bun run cli:fetch
+
       - name: Check Autohand SDK
         run: bun run check:sdk
+        env:
+          AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI: "1"
 
       - name: Check web server syntax
         run: bun run check:server
+
+      - name: Check OpenTelemetry log format
+        run: bun run check:otel
 
       - name: Check release metadata logic
         run: bun run check:release
@@ -103,8 +111,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Fetch pinned Autohand Code CLI
+        run: bun run cli:fetch
+
       - name: Check Autohand SDK on native target
         run: bun run check:sdk
+        env:
+          AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI: "1"
 
       - name: Check release runtime packaging
         run: node scripts/check-release-runtime-packaging.mjs

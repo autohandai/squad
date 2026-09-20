@@ -1608,6 +1608,20 @@ fn append_server_log(paths: &StatePaths, message: &str) {
     {
         let _ = writeln!(file, "{} {}", now_string(), message);
     }
+    // The same message as an OpenTelemetry log record (logs/daemon.otlp.jsonl),
+    // classified by content so collectors can alert on ERROR without grep.
+    let lower = message.to_ascii_lowercase();
+    let severity = if lower.contains("failed") || lower.contains("error") {
+        crate::otel::Severity::Error
+    } else {
+        crate::otel::Severity::Info
+    };
+    let run_id = message
+        .strip_prefix("run ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .map(|id| serde_json::Value::String(id.to_string()))
+        .unwrap_or(serde_json::Value::Null);
+    crate::otel::daemon_log(paths, severity, message, &[("autohand.run.id", run_id)]);
 }
 
 fn read_telemetry_events(paths: &StatePaths, limit: usize) -> Vec<TelemetryEvent> {

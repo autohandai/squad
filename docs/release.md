@@ -105,6 +105,17 @@ Non-PR CI dry runs use versions such as `0.0.0-ci.42.abc123def456`. That keeps
 pull-request provenance clear while still exercising package metadata from
 manual or branch-triggered CI runs.
 
+## Autohand Code CLI
+
+Releases ship the Autohand Code CLI pinned in `package.json`
+(`autohand.cliVersion`). Every workflow job runs `bun run cli:fetch` before the
+SDK check, which downloads the matching GitHub release asset for the runner's
+platform, verifies it against the published `.sha256`, and writes
+`vendor/autohand-cli/BUILD_INFO.json`. `check:sdk` runs with
+`AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI=1` so a missing or mismatched binary fails
+early, and both packagers copy only the vendored binary (plus its build info)
+into the app; the Agent SDK's own bundled CLI is never shipped.
+
 ## Code Signing And Notarization
 
 Signing is optional and driven entirely by repository secrets. Without them

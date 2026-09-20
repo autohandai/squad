@@ -1871,6 +1871,7 @@ const MERGE_BLOCKED_TOOLS = new Set([
 ]);
 
 const MODEL_PROVIDER_OPTIONS = [
+  "autohandai",
   "openrouter",
   "openai",
   "llmgateway",
@@ -1883,6 +1884,7 @@ const MODEL_PROVIDER_OPTIONS = [
 ];
 
 const DEFAULT_PROVIDER_DEFINITIONS = [
+  { id: "autohandai", label: "Autohand AI", kind: "cloud", baseUrl: "", model: "auto", requiresApiKey: false, auth: "account" },
   { id: "openrouter", label: "OpenRouter", kind: "cloud", baseUrl: "https://openrouter.ai/api/v1", model: "openrouter/auto", requiresApiKey: true },
   { id: "openai", label: "OpenAI", kind: "cloud", baseUrl: "https://api.openai.com/v1", model: "gpt-5", requiresApiKey: true },
   { id: "ollama", label: "Ollama", kind: "local", baseUrl: "http://127.0.0.1:11434", model: "llama3.1", requiresApiKey: false },
@@ -1904,7 +1906,7 @@ function providerDefinition(settings, providerId) {
 
 function normalizeModelAssignment(assignment) {
   if (!assignment || typeof assignment !== "object" || assignment.mode !== "override") return { mode: "inherit" };
-  const provider = MODEL_PROVIDER_OPTIONS.includes(assignment.provider) ? assignment.provider : "openrouter";
+  const provider = MODEL_PROVIDER_OPTIONS.includes(assignment.provider) ? assignment.provider : "autohandai";
   return {
     mode: "override",
     provider,
@@ -1930,13 +1932,19 @@ function providerIsConfigured(settings, providerId) {
   const provider = settings?.providers?.[providerId];
   if (!provider?.enabled) return false;
   const definition = providerDefinition(settings, providerId);
-  if (definition?.requiresApiKey && !provider.apiKeyConfigured) return false;
+  // Account-backed providers (Autohand AI) are ready with a signed-in account
+  // or an API key; key-backed providers need the key.
+  if (definition?.auth === "account") {
+    if (!provider.apiKeyConfigured && !provider.accountReady) return false;
+  } else if (definition?.requiresApiKey && !provider.apiKeyConfigured) {
+    return false;
+  }
   return Boolean(provider.model);
 }
 
 function effectiveModelForAgent(agent, settings) {
   const assignment = modelAssignmentForAgent(agent);
-  const providerId = assignment.mode === "override" ? assignment.provider : settings?.defaultProvider || "openrouter";
+  const providerId = assignment.mode === "override" ? assignment.provider : settings?.defaultProvider || "autohandai";
   const provider = settings?.providers?.[providerId];
   const definition = providerDefinition(settings, providerId);
   return {
@@ -1960,10 +1968,11 @@ function defaultProviderSettings(reason = "") {
       definition.id,
       {
         id: definition.id,
-        enabled: definition.id === "openrouter",
+        enabled: definition.id === "autohandai",
         apiKey: "",
         apiKeyConfigured: false,
         requiresApiKey: definition.requiresApiKey,
+        auth: definition.auth || "api-key",
         label: definition.label,
         kind: definition.kind,
         baseUrl: definition.baseUrl || "",
@@ -1974,8 +1983,8 @@ function defaultProviderSettings(reason = "") {
     ])
   );
   return {
-    version: 1,
-    defaultProvider: "openrouter",
+    version: 2,
+    defaultProvider: "autohandai",
     definitions: DEFAULT_PROVIDER_DEFINITIONS,
     providers,
     updatedAt: "",
@@ -2389,8 +2398,8 @@ function createDefaultPermissionState() {
     sensitivePaths: [...DEFAULT_SENSITIVE_PATHS],
     workspaceOverrides: {},
     modelSecurity: {
-      provider: "openrouter",
-      model: "openrouter/auto",
+      provider: "autohandai",
+      model: "auto",
       thinkingLevel: "normal",
       toolChoice: "auto",
       requireNativeToolCalling: true,
@@ -7692,7 +7701,7 @@ function OnboardingPage({
             </section>
 
             <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={Brain} title="LLM provider" description="Reuse the workspace provider registry." />
+              <OnboardingSectionTitle icon={Brain} title="LLM provider" description="Autohand AI is the default and uses your account. Other providers are optional." />
               <div className="grid gap-4">
                 <div className="flex flex-wrap items-center gap-3">
                   <StatusBadge status={providerReady ? "ready" : "offline"} copy={getLocaleCopy(DEFAULT_LOCALE)} />
@@ -17557,7 +17566,7 @@ function AgentModelPage({ agent, providerSettings, navigate, updateAgent }) {
   const [draft, setDraft] = useState(currentAssignment);
   const definitions = providerDefinitionsFromSettings(providerSettings);
   const effectiveModel = effectiveModelForAgent({ ...agent, modelAssignment: draft }, providerSettings);
-  const selectedProvider = draft.mode === "override" ? draft.provider : providerSettings?.defaultProvider || "openrouter";
+  const selectedProvider = draft.mode === "override" ? draft.provider : providerSettings?.defaultProvider || "autohandai";
   const configuredProviderIds = definitions.filter((definition) => providerIsConfigured(providerSettings, definition.id)).map((definition) => definition.id);
   const canSave = JSON.stringify(draft) !== JSON.stringify(currentAssignment);
   const overrideReady = draft.mode !== "override" || (providerIsConfigured(providerSettings, draft.provider) && Boolean(draft.model));
@@ -21105,7 +21114,7 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
 
   useEffect(() => {
     setDraft(providerSettings);
-    setExpandedProvider(String(providerSettings?.defaultProvider || "openrouter"));
+    setExpandedProvider(String(providerSettings?.defaultProvider || "autohandai"));
     setStatus("");
     setTestStatus({});
   }, [providerSettings]);
@@ -21243,7 +21252,13 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                       {definition.id === draft.defaultProvider ? <Badge variant="secondary" className="rounded-md text-[10px]">Default</Badge> : null}
                     </div>
                     <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                      {definition.kind === "local" ? "Local runtime provider." : "Provider connection used for new runs."}
+                      {definition.auth === "account"
+                        ? provider.accountReady
+                          ? `Autohand's hosted models. Signed in${provider.accountEmail ? ` as ${provider.accountEmail}` : ""}; an API key is optional.`
+                          : "Autohand's hosted models. Sign in with `autohand login`, or add an API key."
+                        : definition.kind === "local"
+                          ? "Local runtime provider."
+                          : "Provider connection used for new runs."}
                     </p>
                   </div>
                 </div>
@@ -21268,14 +21283,20 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                   <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
                     <div className="min-w-0" />
                     <div className="grid gap-3 md:grid-cols-2">
-                      {definition.requiresApiKey ? (
+                      {definition.requiresApiKey || definition.auth === "account" ? (
                         <Field className="gap-2">
-                          <FieldLabel>API key</FieldLabel>
+                          <FieldLabel>{definition.auth === "account" ? "API key (optional)" : "API key"}</FieldLabel>
                           <Input
                             type="password"
                             value={provider.apiKey || ""}
                             onChange={(event) => updateProvider(definition.id, { apiKey: event.target.value })}
-                            placeholder={provider.apiKeyConfigured ? "Configured; enter a new key to replace" : "Enter API key"}
+                            placeholder={
+                              provider.apiKeyConfigured
+                                ? "Configured; enter a new key to replace"
+                                : definition.auth === "account"
+                                  ? "Uses your Autohand account unless set"
+                                  : "Enter API key"
+                            }
                             className="h-10"
                           />
                         </Field>
@@ -21283,12 +21304,28 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
 
                       <Field className="gap-2">
                         <FieldLabel>Default model</FieldLabel>
-                        <Input
-                          value={provider.model || ""}
-                          onChange={(event) => updateProvider(definition.id, { model: event.target.value })}
-                          placeholder={definition.model || "Model ID"}
-                          className="h-10"
-                        />
+                        {Array.isArray(provider.models) && provider.models.length ? (
+                          <Select value={provider.model || definition.model || ""} onValueChange={(model) => updateProvider(definition.id, { model })}>
+                            <SelectTrigger className="h-10 w-full justify-between">
+                              <SelectValue placeholder="Choose a model" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {provider.models.map((model) => (
+                                <SelectItem key={model.id} value={model.id}>
+                                  {model.label}
+                                  {model.contextWindow ? ` · ${Math.round(model.contextWindow / 1000)}k` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            value={provider.model || ""}
+                            onChange={(event) => updateProvider(definition.id, { model: event.target.value })}
+                            placeholder={definition.model || "Model ID"}
+                            className="h-10"
+                          />
+                        )}
                       </Field>
 
                       <Field className="gap-2">
@@ -21296,7 +21333,7 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                         <Input
                           value={provider.baseUrl || ""}
                           onChange={(event) => updateProvider(definition.id, { baseUrl: event.target.value })}
-                          placeholder={definition.baseUrl || "Optional"}
+                          placeholder={definition.auth === "account" ? `Managed (${provider.managedBaseUrl || "inference.autohand.ai"})` : definition.baseUrl || "Optional"}
                           className="h-10"
                         />
                       </Field>
@@ -21333,9 +21370,13 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                         {providerStatus?.message ||
                           (bridgeUnavailable
                             ? "Restart Autohand Squad to test this provider."
-                            : definition.requiresApiKey && provider.apiKeyConfigured
-                              ? "Secret is stored server-side and masked here."
-                              : "Changes apply to new runs after Save.")}
+                            : definition.auth === "account" && !provider.apiKeyConfigured
+                              ? provider.accountReady
+                                ? "Runs use your Autohand account token."
+                                : "Not signed in. Run `autohand login` in a terminal, then reopen Settings."
+                              : definition.requiresApiKey && provider.apiKeyConfigured
+                                ? "Secret is stored server-side and masked here."
+                                : "Changes apply to new runs after Save.")}
                       </div>
                       <Button type="button" variant="outline" size="sm" onClick={() => testProvider(definition.id)} disabled={bridgeUnavailable || providerStatus?.state === "testing"}>
                         {providerStatus?.state === "testing" ? <Spinner /> : <CheckCircle2 data-icon="inline-start" />}
