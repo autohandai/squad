@@ -17,6 +17,7 @@ import {
   Ban,
   BookOpen,
   Bot,
+  Cpu,
   Boxes,
   Brain,
   BrainCog,
@@ -210,6 +211,23 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import "./styles.css";
+import { WorkspaceSidebar } from "@/components/shell/WorkspaceSidebar";
+import { SearchCommand } from "@/components/shell/SearchCommand";
+import { ChannelStream } from "@/components/channels/ChannelStream";
+import { MessageComposer } from "@/components/channels/MessageComposer";
+import { AgentStatusBar } from "@/components/channels/AgentStatusBar";
+import { InboxPage } from "@/components/inbox/InboxPage";
+import { HarnessSelect } from "@/components/members/HarnessSelect";
+import {
+  fetchHarnesses,
+  harnessForAgent,
+  harnessLabel,
+  normalizeHarnessAssignment as normalizeHarnessAssignmentCopy,
+  readinessFor,
+  readinessLabel,
+  readinessTone,
+  testHarness,
+} from "@/lib/harness";
 
 class RenderErrorBoundary extends React.Component {
   constructor(props) {
@@ -248,6 +266,9 @@ const STORAGE_KEYS = {
   channels: "autohandSquad.v1.channels",
   channelThreads: "autohandSquad.v1.channelThreads",
   channelMessages: "autohandSquad.v1.channelMessages",
+  channelReads: "autohandSquad.v1.channelReads",
+  agentReads: "autohandSquad.v1.agentReads",
+  channelReactions: "autohandSquad.v1.channelReactions",
   chatSettings: "autohandSquad.v1.chatSettings",
   locale: "autohandSquad.v1.locale",
   handoffSettings: "autohandSquad.v1.handoffSettings",
@@ -997,6 +1018,73 @@ const THEME_PRESET_MAP = THEME_SURFACES.reduce((map, surface) => {
 const MISSION_CONTROL_ROUTE = "/mission-control";
 const SQUAD_DIRECTORY_ROUTE = "/squad";
 const CHANNELS_ROUTE = "/channels";
+const INBOX_ROUTE = "/inbox";
+const AGENTS_ROUTE = "/agents";
+const SEARCH_SHORTCUT_LABEL =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘K" : "Ctrl K";
+
+function inboxPath() {
+  return INBOX_ROUTE;
+}
+
+function sidebarActiveTarget(route, activeAgent) {
+  const [path, query = ""] = String(route || "").split("?");
+  if (path === INBOX_ROUTE) return { kind: "inbox", id: "" };
+  if (path === SQUAD_DIRECTORY_ROUTE || path === AGENTS_ROUTE) return { kind: "agents", id: "" };
+  if (path.startsWith(CHANNELS_ROUTE)) return { kind: "channel", id: channelIdFromRoute(route) };
+  if (path === "/conversations/new") {
+    const member = new URLSearchParams(query).get("member") || activeAgent?.id || "";
+    return member ? { kind: "member", id: member } : { kind: "", id: "" };
+  }
+  return { kind: "", id: "" };
+}
+
+// Attachments become prompt context: text-like files are inlined as fenced
+// blocks (bounded), anything else is referenced by name so the member knows
+// the user tried to share it.
+const ATTACHMENT_TEXT_LIMIT = 200 * 1024;
+const ATTACHMENT_TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-yaml|yaml|toml|x-sh))/;
+
+async function attachFilesToDraft(files, setDraft) {
+  const blocks = [];
+  for (const file of files.slice(0, 5)) {
+    const textLike = ATTACHMENT_TEXT_TYPES.test(file.type || "") || /\.(md|txt|json|ya?ml|toml|js|jsx|ts|tsx|mjs|cjs|css|html|py|rs|go|sh|log|csv)$/i.test(file.name);
+    if (textLike && file.size <= ATTACHMENT_TEXT_LIMIT) {
+      try {
+        const content = await file.text();
+        blocks.push(`\n\n<attachment name="${file.name}">\n${content}\n</attachment>`);
+        continue;
+      } catch {
+        // fall through to a reference-only attachment
+      }
+    }
+    blocks.push(`\n\n[attachment: ${file.name} (${Math.round(file.size / 1024)} KB, not inlined)]`);
+  }
+  if (blocks.length) setDraft((current) => `${current}${blocks.join("")}`.replace(/^\n+/, ""));
+}
+
+// localStorage can throw (quota, private mode, locked-down webviews). A failed
+// write must never unmount the app; the in-memory state stays authoritative.
+function persistLocal(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    if (!persistLocal.warned) {
+      persistLocal.warned = true;
+      console.warn(`Local storage write failed for ${key}: ${error?.message || error}`);
+    }
+  }
+}
+
+function activeAgentForReads(route, agents = []) {
+  const member = new URLSearchParams(String(route || "").split("?")[1] || "").get("member") || "";
+  return agents.find((agent) => agent.id === member) || agents[0] || null;
+}
+
+function messageTimestampMs(message) {
+  const value = Date.parse(message?.createdAt || message?.completedAt || message?.updatedAt || message?.startedAt || "");
+  return Number.isFinite(value) ? value : 0;
+}
 const CHANNEL_VISIBILITY_OPTIONS = [
   { id: CHANNEL_VISIBILITY_PUBLIC, icon: Globe2, labelKey: "channelPublic", detailKey: "channelPublicDetail" },
   { id: CHANNEL_VISIBILITY_PRIVATE, icon: Lock, labelKey: "channelPrivate", detailKey: "channelPrivateDetail" },
@@ -1918,6 +2006,7 @@ const MEMBER_SECTIONS = [
   { id: "task", label: "Tasks", icon: CalendarCheck2 },
   { id: "memory", label: "Memory", icon: BrainCog },
   { id: "model", label: "Model", icon: Brain },
+  { id: "harness", label: "Harness", icon: Cpu },
   { id: "skill", label: "Skill", icon: Sparkles },
   { id: "connector", label: "Connector", icon: Unplug },
   { id: "im", label: "IM", icon: MessageSquareText },
@@ -2962,6 +3051,7 @@ function normalizeAgentCopy(agent) {
       : { activeDays: 0, automations: 0, tasks: 0, projects: projects.length },
     permissions: normalizePermissionState(agent.permissions),
     modelAssignment: normalizeModelAssignment(agent.modelAssignment),
+    harness: normalizeHarnessAssignmentCopy(agent.harness),
     projects,
     brainCard,
     memory: Array.isArray(agent.memory) ? agent.memory.map((item) => String(item || "")) : agent.memory,
@@ -4202,12 +4292,19 @@ function App() {
   const [loginRequestStatus, setLoginRequestStatus] = useState("");
   const [systemTheme, setSystemTheme] = useState(getSystemColorMode);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(
-    () => readLocalStorage(storageKeysFor("sidebarCollapsed")) !== "false"
+    () => readLocalStorage(storageKeysFor("sidebarCollapsed")) === "true"
   );
   const [localePreference, setLocalePreference] = useState(readLocalePreference);
   const [systemLanguages, setSystemLanguages] = useState(getNavigatorLanguages);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
+  const [harnesses, setHarnesses] = useState([]);
+  const [harnessesLoading, setHarnessesLoading] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [channelReads, setChannelReads] = useState(() => readStored(storageKeysFor("channelReads"), {}));
+  const [agentReads, setAgentReads] = useState(() => readStored(storageKeysFor("agentReads"), {}));
+  const [channelReactions, setChannelReactions] = useState(() => readStored(storageKeysFor("channelReactions"), {}));
+  const channelViewMarkerRef = useRef({ channelId: "", lastReadAt: 0 });
   const localeResolution = useMemo(
     () => resolveLocalePreference(localePreference, systemLanguages),
     [localePreference, systemLanguages]
@@ -4234,6 +4331,9 @@ function App() {
   useEffect(() => {
     const path = route.split("?")[0];
     if (path === "/" || path === "") {
+      // The runtime fetch decides where "/" lands; redirecting before it
+      // resolves sent every signed-in user to onboarding.
+      if (!runtime) return;
       const accountReady = onboardingAccountReady(runtime);
       const setupRequired = !accountReady || onboardingIsIncomplete(onboardingState);
       const baseTarget = setupRequired ? ONBOARDING_ROUTE : SQUAD_DIRECTORY_ROUTE;
@@ -4341,32 +4441,87 @@ function App() {
   }, [localePreference, localeResolution.locale]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.agents, JSON.stringify(agents));
+    persistLocal(STORAGE_KEYS.agents, agents);
   }, [agents]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.automations, JSON.stringify(automations));
+    persistLocal(STORAGE_KEYS.automations, automations);
   }, [automations]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.tasks, JSON.stringify(tasks));
+    persistLocal(STORAGE_KEYS.tasks, tasks);
   }, [tasks]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.messages, JSON.stringify(messagesByAgent));
+    persistLocal(STORAGE_KEYS.messages, messagesByAgent);
   }, [messagesByAgent]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.channels, JSON.stringify(channels));
+    persistLocal(STORAGE_KEYS.channels, channels);
   }, [channels]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.channelThreads, JSON.stringify(channelThreads));
+    persistLocal(STORAGE_KEYS.channelThreads, channelThreads);
   }, [channelThreads]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.channelMessages, JSON.stringify(messagesByChannel));
+    persistLocal(STORAGE_KEYS.channelMessages, messagesByChannel);
   }, [messagesByChannel]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.channelReads, JSON.stringify(channelReads));
+      window.localStorage.setItem(STORAGE_KEYS.agentReads, JSON.stringify(agentReads));
+      window.localStorage.setItem(STORAGE_KEYS.channelReactions, JSON.stringify(channelReactions));
+    } catch {
+      // Ignore storage failures in private browsing or locked-down webviews.
+    }
+  }, [channelReads, agentReads, channelReactions]);
+
+  async function refreshHarnesses(refresh = false) {
+    setHarnessesLoading(true);
+    try {
+      setHarnesses(await fetchHarnesses(api, { refresh }));
+    } finally {
+      setHarnessesLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refreshHarnesses(false);
+  }, []);
+
+  // Unread bookkeeping: the channel you are looking at is always read; the
+  // NEW divider uses the read marker captured when the channel was opened.
+  useEffect(() => {
+    const path = route.split("?")[0];
+    const channelId = channelIdFromRoute(route);
+    if (!(path.startsWith(CHANNELS_ROUTE) && channelId)) return;
+    if (channelViewMarkerRef.current.channelId !== channelId) {
+      channelViewMarkerRef.current = { channelId, lastReadAt: Date.parse(channelReads[channelId] || "") || 0 };
+    }
+    const now = new Date().toISOString();
+    setChannelReads((current) => (current[channelId] === now ? current : { ...current, [channelId]: now }));
+  }, [route, messagesByChannel]);
+
+  useEffect(() => {
+    const target = sidebarActiveTarget(route, activeAgentForReads(route, agents));
+    if (target.kind !== "member" || !target.id) return;
+    const now = new Date().toISOString();
+    setAgentReads((current) => (current[target.id] === now ? current : { ...current, [target.id]: now }));
+  }, [route, messagesByAgent, agents]);
+
+  function toggleReaction(messageId, emoji) {
+    setChannelReactions((current) => {
+      const list = Array.isArray(current[messageId]) ? current[messageId] : [];
+      const existing = list.find((item) => item.emoji === emoji);
+      let next;
+      if (!existing) next = [...list, { emoji, count: 1, mine: true }];
+      else if (existing.mine) next = list.map((item) => (item.emoji === emoji ? { ...item, count: item.count - 1, mine: false } : item)).filter((item) => item.count > 0);
+      else next = list.map((item) => (item.emoji === emoji ? { ...item, count: item.count + 1, mine: true } : item));
+      return { ...current, [messageId]: next };
+    });
+  }
 
   // Mirror channel/thread state to the local bridge so the daemon can surface
   // the same channels.json in queue/run telemetry across reloads and restarts.
@@ -4395,12 +4550,18 @@ function App() {
     });
   }, [memoryInbox, memoryInboxBridgeReady]);
 
+  const liveStatusRef = useRef({ agents, tasks, runs, automations, messagesByChannel, route });
+  liveStatusRef.current = { agents, tasks, runs, automations, messagesByChannel, route };
+
   useEffect(() => {
+    // The payload is read from a ref so the 15 s cadence survives the run
+    // poller replacing `runs` every 1.8 s.
     const controller = new AbortController();
     const postStatusSnapshot = () => {
+      const snapshot = liveStatusRef.current;
       api("/api/status/snapshot", {
         method: "POST",
-        body: JSON.stringify(buildLiveStatusSnapshot({ agents, tasks, runs, automations, messagesByChannel, currentRoute: route })),
+        body: JSON.stringify(buildLiveStatusSnapshot({ ...snapshot, currentRoute: snapshot.route })),
         signal: controller.signal,
       }).catch(() => {
         // The tray can still fall back to daemon-owned queue and run records.
@@ -4414,7 +4575,7 @@ function App() {
       window.clearTimeout(timer);
       window.clearInterval(interval);
     };
-  }, [agents, automations, messagesByChannel, route, runs, tasks]);
+  }, []);
 
   useEffect(() => {
     if (!runtime?.workspaceRoot) return;
@@ -4450,8 +4611,13 @@ function App() {
       setRuntime(data);
       return data;
     } catch {
-      const fallback = { available: false, autohandPath: "", version: "" };
-      setRuntime(fallback);
+      // Keep the last known account so a bridge restart does not eject the
+      // user to onboarding; only runtime availability is reset.
+      let fallback = { available: false, autohandPath: "", version: "" };
+      setRuntime((current) => {
+        fallback = { ...(current || {}), ...fallback, bridgeUnavailable: true };
+        return fallback;
+      });
       return fallback;
     }
   }
@@ -4760,6 +4926,59 @@ function App() {
     return ["appearance", "language", "providers", "chat", "handoff", "runtime"].includes(section) ? section : "";
   }, [route]);
 
+  const unreadChannelIds = useMemo(() => {
+    const set = new Set();
+    for (const channel of channels) {
+      const last = Date.parse(channelReads[channel.id] || "") || 0;
+      const list = Array.isArray(messagesByChannel[channel.id]) ? messagesByChannel[channel.id] : [];
+      if (list.some((message) => message.role !== "user" && message.status !== "loading" && messageTimestampMs(message) > last)) {
+        set.add(channel.id);
+      }
+    }
+    return set;
+  }, [channels, channelReads, messagesByChannel]);
+
+  const unreadCountByAgent = useMemo(() => {
+    const map = new Map();
+    for (const agent of agents) {
+      const last = Date.parse(agentReads[agent.id] || "") || 0;
+      const list = Array.isArray(messagesByAgent[agent.id]) ? messagesByAgent[agent.id] : [];
+      const count = list.filter((message) => message.role === "agent" && message.status !== "loading" && messageTimestampMs(message) > last).length;
+      if (count) map.set(agent.id, count);
+    }
+    return map;
+  }, [agents, agentReads, messagesByAgent]);
+
+  const inboxHandoffs = useMemo(
+    () =>
+      tasks.flatMap((task) => {
+        const handoff = latestPendingHandoff(task);
+        return handoff
+          ? [{ id: `${task.id}-${handoff.id}`, task, title: task.title || "Handoff", detail: handoff.reason || handoff.expectedOutput || "", at: handoff.createdAt || task.updatedAt || "" }]
+          : [];
+      }),
+    [tasks]
+  );
+  const inboxMemory = useMemo(
+    () =>
+      memoryInbox
+        .filter((item) => item?.status === "pending")
+        .map((item) => ({ id: item.id, item, title: item.projectLabel || item.scope || "Memory proposal", detail: item.content || "", at: item.updatedAt || item.createdAt || "" })),
+    [memoryInbox]
+  );
+  const inboxUnreadChannels = useMemo(
+    () =>
+      channels
+        .filter((channel) => unreadChannelIds.has(channel.id))
+        .map((channel) => {
+          const list = Array.isArray(messagesByChannel[channel.id]) ? messagesByChannel[channel.id] : [];
+          const latest = [...list].reverse().find((message) => message.role !== "user" && message.body);
+          return { channel, preview: String(latest?.body || "").slice(0, 160), latestAt: latest?.createdAt || latest?.updatedAt || "" };
+        }),
+    [channels, unreadChannelIds, messagesByChannel]
+  );
+  const inboxCount = inboxUnreadChannels.length + inboxHandoffs.length + inboxMemory.length;
+
   function navigate(path) {
     window.history.pushState({}, "", path);
     setRoute(path);
@@ -4843,6 +5062,13 @@ function App() {
     const normalized = normalizeSquadMemberId(agentId);
     if (!normalized) return;
     setAgents((current) => current.filter((agent) => normalizeSquadMemberId(agent.id) !== normalized));
+    setChannels((current) =>
+      current.map((channel) =>
+        Array.isArray(channel.memberIds) && channel.memberIds.includes(agentId)
+          ? { ...channel, memberIds: channel.memberIds.filter((id) => id !== agentId), updatedAt: new Date().toISOString() }
+          : channel
+      )
+    );
     setMessagesByAgent((current) => {
       const next = { ...current };
       delete next[agentId];
@@ -5557,6 +5783,7 @@ function App() {
     const projects = normalizeAgentProjects([{ path: workspace, addedAt: timestamp }], "", workspaces, configuredProjectLimit(runtime));
     const baseAgent = {
       id,
+      harness: normalizeHarnessAssignmentCopy(draft.harness),
       staffId: `member-${String(agents.length + 1).padStart(3, "0")}`,
       name: draft.name.trim(),
       role: draft.role,
@@ -6331,7 +6558,8 @@ function App() {
   const isCreate = isCreateMemberRoute(route);
   const isExtensions = routePath.startsWith("/extensions");
   const isMissionControl = routePath === MISSION_CONTROL_ROUTE;
-  const isSquadDirectory = routePath === SQUAD_DIRECTORY_ROUTE;
+  const isSquadDirectory = routePath === SQUAD_DIRECTORY_ROUTE || routePath === AGENTS_ROUTE;
+  const isInbox = routePath === INBOX_ROUTE;
   const isChannels = routePath === CHANNELS_ROUTE || routePath.startsWith(`${CHANNELS_ROUTE}/`);
   const isOnboarding = routePath === ONBOARDING_ROUTE;
   const isAnalytics = routePath === "/usage" || routePath.startsWith("/settings/analytics");
@@ -6373,6 +6601,10 @@ function App() {
             onOnboarding={openOnboarding}
             onAnalytics={openAnalytics}
             onCreateChannel={createChannel}
+            unreadChannelIds={unreadChannelIds}
+            unreadCountByAgent={unreadCountByAgent}
+            inboxCount={inboxCount}
+            onSearch={() => setSearchOpen(true)}
             onCollapsedChange={setDesktopSidebarCollapsed}
           />
           <main className="min-w-0">
@@ -6407,6 +6639,23 @@ function App() {
               />
             ) : isAnalytics ? (
               <SettingsAnalyticsPage locale={localeResolution.locale} copy={localeCopy} />
+            ) : isInbox ? (
+              <InboxPage
+                unreadChannels={inboxUnreadChannels}
+                handoffs={inboxHandoffs}
+                memoryProposals={inboxMemory}
+                copy={localeCopy}
+                timeLabel={(value) => (value ? formatRelativeTime(value, localeResolution.locale) : "")}
+                navigate={{
+                  channel: (channelId) => navigate(channelsPath(channelId)),
+                  task: (item) => navigate(missionControlPath()),
+                  memory: (item) => navigate(memberProfilePath(item.item?.ownerAgentId || item.item?.agentId || agents[0]?.id, "memory")),
+                }}
+                onMarkAllRead={() => {
+                  const now = new Date().toISOString();
+                  setChannelReads((current) => ({ ...current, ...Object.fromEntries(channels.map((channel) => [channel.id, now])) }));
+                }}
+              />
             ) : isSquadDirectory ? (
               <SquadDirectoryPage
                 agents={agents}
@@ -6437,6 +6686,9 @@ function App() {
                 onToggleMember={toggleChannelMember}
                 onDispatch={sendChannelPrompt}
                 onFollowUp={sendThreadFollowUp}
+                reactionsByMessage={channelReactions}
+                onReact={toggleReaction}
+                lastReadAt={channelViewMarkerRef.current.channelId === channelIdFromRoute(route) ? channelViewMarkerRef.current.lastReadAt : 0}
               />
             ) : isMissionControl ? (
               <MissionControlPage
@@ -6483,6 +6735,9 @@ function App() {
                 onCancel={() => navigate("/conversations/new")}
                 defaultWorkspace={requestedWorkspace || fallbackWorkspace}
                 workspaceRoot={runtime?.workspaceRoot}
+                harnesses={harnesses}
+                harnessesLoading={harnessesLoading}
+                onRefreshHarnesses={() => refreshHarnesses(true)}
               />
             ) : isProfile ? (
               <SquadMemberPage
@@ -6510,6 +6765,9 @@ function App() {
                 updateAgent={updateAgent}
                 startAutohand={startAutohand}
                 runAutomation={runAutomation}
+                harnesses={harnesses}
+                harnessesLoading={harnessesLoading}
+                onRefreshHarnesses={() => refreshHarnesses(true)}
               />
             ) : isExtensions ? (
               <Extensions runtime={runtime} runs={runs} />
@@ -6575,6 +6833,24 @@ function App() {
           }}
         />
 
+        <SearchCommand
+          open={searchOpen}
+          onOpenChange={setSearchOpen}
+          agents={agents}
+          channels={channels}
+          messagesByChannel={messagesByChannel}
+          messagesByAgent={messagesByAgent}
+          copy={localeCopy}
+          onNavigate={{
+            inbox: () => navigate(inboxPath()),
+            agents: () => navigate(squadDirectoryPath()),
+            missionControl: () => navigate(missionControlPath()),
+            settings: () => openSettings(),
+            channel: (channelId) => navigate(channelsPath(channelId)),
+            member: (memberId) => navigate(memberChatPath(memberId)),
+          }}
+        />
+
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
           <SheetContent side="left" className="w-[310px] border-border/80 p-0 sm:max-w-[310px]">
             <SheetHeader className="sr-only">
@@ -6605,7 +6881,14 @@ function App() {
               onOnboarding={openOnboarding}
               onAnalytics={openAnalytics}
               onCreateChannel={createChannel}
-              />
+              unreadChannelIds={unreadChannelIds}
+              unreadCountByAgent={unreadCountByAgent}
+              inboxCount={inboxCount}
+              onSearch={() => {
+                setMobileSidebarOpen(false);
+                setSearchOpen(true);
+              }}
+            />
           </SheetContent>
         </Sheet>
       </div>
@@ -7027,10 +7310,15 @@ function ChannelsPage({
   onToggleMember,
   onDispatch,
   onFollowUp,
+  reactionsByMessage = {},
+  onReact,
+  lastReadAt = 0,
 }) {
   const [manageMembersOpen, setManageMembersOpen] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [replyTo, setReplyTo] = useState(null);
+  const [draft, setDraft] = useState("");
   const channel = channels.find((item) => item.id === activeChannelId) || null;
   const threads = channel ? channelThreads[channel.id] || [] : [];
   const channelMessages = channel ? messagesByChannel[channel.id] || [] : [];
@@ -7041,7 +7329,28 @@ function ChannelsPage({
   useEffect(() => {
     setManageMembersOpen(false);
     setDeleteArmed(false);
+    setReplyTo(null);
+    setDraft("");
   }, [activeChannelId]);
+
+  const workingItems = useMemo(() => {
+    const seen = new Map();
+    for (const message of channelMessages) {
+      if (message.role !== "agent" || message.status !== "loading") continue;
+      const agent = agents.find((item) => item.id === message.agentId);
+      if (agent && !seen.has(agent.id)) seen.set(agent.id, { agent, label: copy.working || "Working" });
+    }
+    return Array.from(seen.values());
+  }, [channelMessages, agents, copy]);
+
+  const mentionItems = useMemo(
+    () =>
+      members.map((member) => {
+        const handle = channelMentionAliases(member)[0] || member.name;
+        return { id: member.id, handle, label: `@${handle}`, detail: member.role || "" };
+      }),
+    [members]
+  );
 
   function exportChannelLog() {
     if (!channel) return;
@@ -7056,8 +7365,21 @@ function ChannelsPage({
     downloadMarkdownLog(`${sanitizeMarkdownFilename(channel.name)}-chat-log.md`, markdown);
   }
 
+  function submitDraft(text) {
+    if (!channel) return;
+    if (replyTo?.threadId) {
+      onFollowUp?.(channel.id, replyTo.threadId, text);
+      setReplyTo(null);
+      return;
+    }
+    onDispatch?.(channel.id, { prompt: text, autoMode: channel.autoModeDefault === true, selfJudge: channel.autoModeDefault === true });
+  }
+
+  const replyThread = replyTo ? threads.find((thread) => thread.id === replyTo.threadId) : null;
+  const replyName = replyTo ? channelMessageAuthorName(replyTo, agents, ACCOUNT_PROFILE.name) : "";
+
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-56px)] w-full max-w-5xl flex-col px-4 py-4 lg:min-h-screen lg:px-10 lg:py-7">
+    <div className="flex h-[calc(100vh-56px)] min-h-0 w-full flex-col lg:h-screen">
       <ChannelCreateDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -7066,169 +7388,163 @@ function ChannelsPage({
         onCreateChannel={onCreateChannel}
       />
 
-        {!channel ? (
-          <div className="flex flex-1 flex-col items-start justify-center gap-2">
-            <p className="text-sm text-muted-foreground">
-              {channels.length ? copy.channelSelectPrompt : copy.channelNoChannels}
-            </p>
-            <p className="max-w-md text-sm text-muted-foreground">{copy.channelsDescription}</p>
-            <Button variant="outline" className="mt-3" onClick={() => setCreateOpen(true)}>
-              <Plus data-icon="inline-start" />
-              {copy.createChannel}
-            </Button>
-          </div>
-        ) : (
-          <>
-            <header className="flex flex-wrap items-start justify-between gap-3 pb-3">
-              <div className="min-w-0">
-                <h1 className="flex items-center gap-2 text-lg font-semibold">
-                  {channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? (
-                    <Lock className="size-4 text-muted-foreground" aria-hidden="true" />
-                  ) : (
-                    <Hash className="size-4 text-muted-foreground" aria-hidden="true" />
-                  )}
-                  <span className="min-w-0 truncate">{channel.name}</span>
-                </h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? copy.channelPrivate : copy.channelPublic}
-                  {" · "}
-                  {formatCopy(copy.channelMemberCount, { count: formatLocalizedNumber(channel.memberIds.length, locale) })}
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-2 text-sm text-muted-foreground" htmlFor={`auto-mode-${channel.id}`}>
-                  {copy.channelAutoMode}
-                  <Switch
-                    id={`auto-mode-${channel.id}`}
-                    checked={channel.autoModeDefault === true}
-                    onCheckedChange={(checked) => onUpdateChannel?.(channel.id, { autoModeDefault: checked === true })}
-                  />
-                </label>
-                <Button variant="ghost" size="sm" onClick={exportChannelLog}>
-                  <FileCode2 data-icon="inline-start" />
-                  Export markdown
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setManageMembersOpen((open) => !open)}>
-                  {copy.manageChannelMembers}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => {
-                    if (!deleteArmed) {
-                      setDeleteArmed(true);
-                      return;
-                    }
-                    onDeleteChannel?.(channel.id);
-                  }}
-                  onBlur={() => setDeleteArmed(false)}
-                >
-                  {deleteArmed ? `${copy.deleteChannel}?` : copy.deleteChannel}
-                </Button>
-              </div>
-            </header>
-
-            {manageMembersOpen ? (
-              <div className="flex flex-col gap-2 pb-3">
-                <p className="text-xs text-muted-foreground">{copy.channelMembersDetail}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {agents.map((agent) => {
-                    const isMember = channel.memberIds.includes(agent.id);
-                    return (
-                      <button
-                        key={agent.id}
-                        type="button"
-                        aria-pressed={isMember}
-                        className={cn(
-                          "rounded-md border px-2.5 py-1 text-sm transition-colors",
-                          isMember
-                            ? "border-primary/50 bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-                        )}
-                        onClick={() => onToggleMember?.(channel.id, agent.id)}
-                      >
-                        {agent.name} · {isMember ? copy.leaveChannel : copy.joinChannel}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <p className="pb-3 text-sm text-muted-foreground">
-                {members.length ? members.map((member) => member.name).join(", ") : copy.channelNoMembers}
-              </p>
-            )}
-
-            <Separator />
-
-            <ScrollArea className="min-h-0 flex-1 py-4">
-              {threads.length === 0 ? (
-                <p className="text-sm text-muted-foreground">{copy.channelNoThreads}</p>
+      {!channel ? (
+        <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-start justify-center gap-2 px-4 lg:px-10">
+          <p className="text-sm text-muted-foreground">{channels.length ? copy.channelSelectPrompt : copy.channelNoChannels}</p>
+          <p className="max-w-md text-sm text-muted-foreground">{copy.channelsDescription}</p>
+          <Button variant="outline" className="mt-3" onClick={() => setCreateOpen(true)}>
+            <Plus data-icon="inline-start" />
+            {copy.createChannel}
+          </Button>
+        </div>
+      ) : (
+        <>
+          <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border/70 px-4 lg:px-6">
+            <h1 className="flex min-w-0 items-center gap-1.5 text-base font-semibold">
+              {channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? (
+                <Lock className="size-4 text-muted-foreground" aria-hidden="true" />
               ) : (
-                <div className="flex flex-col gap-5 pr-3">
-                  {threads.map((thread) => {
-                    const threadMessages = channelMessages.filter((message) => message.threadId === thread.id);
-                    const rootMessage =
-                      threadMessages.find((message) => message.id === `${thread.id}-root`) ||
-                      threadMessages.find((message) => message.role === "user");
-                    const recordedReplyCount =
-                      Number.isFinite(Number(thread.replyCount)) && Number(thread.replyCount) > 0
-                        ? Math.floor(Number(thread.replyCount))
-                        : 0;
-                    const fallbackRootMessage =
-                      !rootMessage && (thread.title || recordedReplyCount > 0)
-                        ? {
-                            id: `${thread.id}-summary`,
-                            role: "user",
-                            body: [
-                              thread.title || copy.channelThreads,
-                              recordedReplyCount > 0
-                                ? `${formatLocalizedNumber(recordedReplyCount, locale)} replies were recorded in this thread, but their message bodies are not loaded in this browser session.`
-                                : "",
-                            ]
-                              .filter(Boolean)
-                              .join("\n\n"),
-                            status: "complete",
-                            time: "",
-                            threadId: thread.id,
-                            parentMessageId: "",
-                          }
-                        : rootMessage;
-                    const replies = threadMessages.filter((message) => message.id !== rootMessage?.id);
-                    const busy = replies.some((message) => message.status === "loading");
-                    return (
-                      <ChannelThreadItem
-                        key={thread.id}
-                        thread={thread}
-                        rootMessage={fallbackRootMessage}
-                        replies={replies}
-                        agents={agents}
-                        userName={ACCOUNT_PROFILE.name}
-                        copy={copy}
-                        locale={locale}
-                        busy={busy}
-                        onFollowUp={({ prompt }) => onFollowUp?.(channel.id, thread.id, prompt)}
-                      />
-                    );
-                  })}
-                </div>
+                <Hash className="size-4 text-muted-foreground" aria-hidden="true" />
               )}
-            </ScrollArea>
+              <span className="min-w-0 truncate">{channel.name}</span>
+            </h1>
+            <span className="flex-1" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-pressed={manageMembersOpen} onClick={() => setManageMembersOpen((open) => !open)}>
+                  <Users className="size-4" />
+                  {formatLocalizedNumber(channel.memberIds.length, locale)}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{copy.manageChannelMembers}</TooltipContent>
+            </Tooltip>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label={copy.settings || "Channel settings"}>
+                  <Settings className="size-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72 p-3">
+                <div className="flex flex-col gap-3">
+                  <label className="flex items-center justify-between gap-3 text-sm" htmlFor={`auto-mode-${channel.id}`}>
+                    <span>
+                      <span className="block font-medium">{copy.channelAutoMode}</span>
+                      <span className="block text-xs text-muted-foreground">{copy.channelAutoModeDetail}</span>
+                    </span>
+                    <Switch
+                      id={`auto-mode-${channel.id}`}
+                      checked={channel.autoModeDefault === true}
+                      onCheckedChange={(checked) => onUpdateChannel?.(channel.id, { autoModeDefault: checked === true })}
+                    />
+                  </label>
+                  <Separator />
+                  <Button variant="ghost" size="sm" className="justify-start" onClick={exportChannelLog}>
+                    <FileCode2 data-icon="inline-start" />
+                    Export markdown
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="justify-start text-destructive hover:text-destructive"
+                    onClick={() => {
+                      if (!deleteArmed) {
+                        setDeleteArmed(true);
+                        return;
+                      }
+                      onDeleteChannel?.(channel.id);
+                    }}
+                    onBlur={() => setDeleteArmed(false)}
+                  >
+                    {deleteArmed ? `${copy.deleteChannel}?` : copy.deleteChannel}
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </header>
 
-            <div className="pt-2">
-              <ChannelMentionComposer
+          {manageMembersOpen ? (
+            <div className="flex flex-col gap-2 border-b border-border/70 px-4 py-3 lg:px-6">
+              <p className="text-xs text-muted-foreground">{copy.channelMembersDetail}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {agents.map((agent) => {
+                  const isMember = channel.memberIds.includes(agent.id);
+                  return (
+                    <button
+                      key={agent.id}
+                      type="button"
+                      aria-pressed={isMember}
+                      className={cn(
+                        "rounded-md border px-2.5 py-1 text-sm transition-colors",
+                        isMember
+                          ? "border-primary/50 bg-primary/10 text-foreground"
+                          : "border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                      )}
+                      onClick={() => onToggleMember?.(channel.id, agent.id)}
+                    >
+                      {agent.name} · {isMember ? copy.leaveChannel : copy.joinChannel}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          <ScrollArea className="min-h-0 flex-1 px-2 lg:px-4">
+            <div className="mx-auto w-full max-w-5xl py-3">
+              <ChannelStream
                 channel={channel}
-                members={members}
-                copy={copy}
-                busy={false}
-                onDispatch={({ prompt, autoMode, selfJudge, targetMemberIds, targetLabel }) =>
-                  onDispatch?.(channel.id, { prompt, autoMode, selfJudge, targetMemberIds, targetLabel })
-                }
+                messages={channelMessages}
+                agents={agents}
+                userName={ACCOUNT_PROFILE.name}
+                locale={locale}
+                lastReadAt={lastReadAt}
+                reactionsByMessage={reactionsByMessage}
+                renderBody={(message) => <MarkdownBlocks text={message.body || ""} />}
+                renderAvatar={(message) => <ChannelMessageAvatar message={message} agents={agents} />}
+                authorName={(message) => channelMessageAuthorName(message, agents, ACCOUNT_PROFILE.name)}
+                onReact={onReact}
+                onReply={(message) => setReplyTo(message)}
+                emptyLabel={members.length ? copy.channelNoThreads : copy.channelNoMembers}
+                newLabel={copy.newMessages || "New"}
+                typingLabel={copy.isTyping || "is typing…"}
               />
             </div>
-          </>
-        )}
+          </ScrollArea>
+
+          <div className="shrink-0 px-4 pb-3 pt-2 lg:px-6">
+            <div className="mx-auto w-full max-w-5xl">
+              {replyTo ? (
+                <div className="mb-1.5 flex items-center gap-2 px-1 text-xs text-muted-foreground">
+                  <CornerDownRight className="size-3.5" aria-hidden="true" />
+                  <span className="min-w-0 truncate">
+                    {formatCopy(copy.replyingTo || "Replying to {name}", { name: replyName })}
+                    {replyThread?.title ? ` · ${replyThread.title.slice(0, 60)}` : ""}
+                  </span>
+                  <Button variant="ghost" size="sm" className="h-6 px-1.5" onClick={() => setReplyTo(null)}>
+                    {copy.cancel || "Cancel"}
+                  </Button>
+                </div>
+              ) : null}
+              <MessageComposer
+                placeholder={formatCopy(copy.messageChannel || "Message #{name}", { name: channel.name })}
+                mentionItems={mentionItems}
+                value={draft}
+                onValueChange={setDraft}
+                busy={false}
+                disabled={!members.length && !replyTo}
+                onSubmit={submitDraft}
+                onAttach={(files) => attachFilesToDraft(files, setDraft)}
+                hint={!members.length ? copy.channelNoMembers : ""}
+              />
+              <AgentStatusBar
+                items={workingItems}
+                workingLabel={copy.working || "Working"}
+                renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
+              />
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -8277,6 +8593,7 @@ function agentLaunchPayload(agent, workspace) {
     profileFiles: buildAgentProfileFiles(agent),
     profileDocs: agent?.profileDocs,
     modelAssignment: modelAssignmentForAgent(agent),
+    harness: harnessForAgent(agent),
     permissions,
   };
 }
@@ -8525,9 +8842,9 @@ function SidebarChannelsSection({
                   onClick={() => onSelectChannel?.(channel.id)}
                 >
                   {channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? (
-                    <Lock className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPrivate} />
+                    <Lock role="img" className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPrivate} />
                   ) : (
-                    <Hash className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPublic} />
+                    <Hash role="img" className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPublic} />
                   )}
                   <span className="min-w-0 flex-1 truncate">{channel.name}</span>
                   {threadCount > 0 ? (
@@ -8877,8 +9194,13 @@ function SidebarContent({
   onAnalytics,
   onCollapse,
   onCreateChannel,
+  unreadChannelIds = new Set(),
+  unreadCountByAgent = new Map(),
+  inboxCount = 0,
+  onSearch,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const memberId = activeAgent?.id || visibleAgents[0]?.id;
   const chatPath = memberChatPath(memberId);
   const isCreatingMember = isCreateMemberRoute(route);
@@ -8920,122 +9242,51 @@ function SidebarContent({
   }
 
   return (
-    <div className="flex h-full min-h-screen flex-col bg-card/70">
-      <div className="flex h-14 items-center gap-2 px-4">
-        <Button variant="ghost" className="h-10 justify-start gap-2 px-1 hover:bg-transparent" onClick={() => navigate(squadDirectoryPath())}>
-          <BrandMark theme={theme} className="size-9" />
-          <span className="text-base font-bold">Autohand Squad</span>
-        </Button>
-        <Badge variant="secondary" className="ml-1 rounded-sm bg-primary/15 px-1.5 text-[10px] text-primary">Beta</Badge>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col gap-3 px-2 pb-4 pt-2">
-        <div className="flex items-center gap-2 px-2 text-sm text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate">
-            {copy.mySquadMembers} ({formatLocalizedNumber(visibleAgents.length, locale)})
-          </span>
-          {onCollapse ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onCollapse}
-                  aria-label="Collapse sidebar"
-                  aria-keyshortcuts="Meta+B Control+B"
-                >
-                  <PanelLeftClose />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Collapse sidebar ({SIDEBAR_SHORTCUT_LABEL})</TooltipContent>
-            </Tooltip>
-          ) : null}
-        </div>
-
+    <WorkspaceSidebar
+      brand={
         <Button
           variant="ghost"
-          className={cn(
-            "h-11 w-full justify-start rounded-md px-3 text-muted-foreground hover:bg-muted/55 hover:text-foreground",
-            isSquadDirectory && "bg-muted/80 text-foreground"
-          )}
+          className="h-10 min-w-0 justify-start gap-2 px-1 hover:bg-transparent"
           onClick={() => navigate(squadDirectoryPath())}
-          aria-current={isSquadDirectory ? "page" : undefined}
+          aria-label="Open Autohand Squad"
         >
-          <Users data-icon="inline-start" />
-          <span className="min-w-0 flex-1 truncate">Squad</span>
-          <Badge variant="secondary" className="rounded-md px-1.5">
-            {formatLocalizedNumber(visibleAgents.length, locale)}
-          </Badge>
+          <BrandMark theme={theme} className="size-8" />
+          <span className="truncate text-base font-bold">Autohand Squad</span>
         </Button>
-
-        <SidebarChannelsSection
-          channels={channels}
-          agents={visibleAgents}
-          activeChannelId={activeChannelId}
-          active={isChannelsRoute}
-          expanded={channelsExpanded}
-          threadCounts={channelThreadCounts}
-          copy={copy}
-          onExpandedChange={setChannelsExpanded}
-          onOpenChannels={() => navigate(channelsPath())}
-          onSelectChannel={(channelId) => navigate(channelsPath(channelId))}
-          onCreateChannel={onCreateChannel}
-        />
-
-        <Button
-          variant="outline"
-          className={cn(
-            "h-11 w-full justify-center rounded-md border-dashed bg-transparent text-muted-foreground hover:bg-muted/45 hover:text-foreground",
-            isCreatingMember && "border-primary/70 bg-primary/10 text-foreground"
-          )}
-          onClick={() => navigate(`${MEMBER_ROUTE_PREFIX}/new`)}
-        >
-          <Plus data-icon="inline-start" />
-          {copy.createSquadMember}
-        </Button>
-
-        <ScrollArea className="min-h-0 flex-1 pr-1">
-          <div className="flex flex-col gap-1.5">
-            {visibleAgents.map((agent) => {
-              const isActive =
-                activeAgent?.id === agent.id && !isCreatingMember && !isMissionControl && !isSquadDirectory && !isChannelsRoute;
-              const presence = memberPresenceForAgent(agent, { tasks, runs, messagesByAgent, messagesByChannel });
-              return (
-                <button
-                  key={agent.id}
-                  type="button"
-                  aria-current={isActive ? "page" : undefined}
-                  aria-label={`${agent.name}, ${presence.label}, ${agentSidebarPreview(agent)}`}
-                  className={cn(
-                    "grid min-h-[66px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-2 text-left transition-colors",
-                    isActive ? "bg-muted/80 text-foreground" : "text-foreground/88 hover:bg-muted/55"
-                  )}
-                  onClick={() => navigate(memberChatPath(agent.id))}
-                >
-                  <span className="relative size-8">
-                    <AgentAvatar agent={agent} />
-                    <MemberPresenceBadge presence={presence} className="absolute -bottom-0.5 -right-0.5" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold">{agent.name}</span>
-                    <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs">
-                      <span className={cn("shrink-0 font-medium", presence.textClassName)}>{presence.label}</span>
-                      <span className="text-muted-foreground/60" aria-hidden="true">·</span>
-                      <span className="min-w-0 truncate text-muted-foreground">{agentSidebarPreview(agent)}</span>
-                    </span>
-                  </span>
-                  <time className="self-start pt-1 text-[11px] font-semibold text-muted-foreground/75">
-                    {agentSidebarTime(agent, locale)}
-                  </time>
-                </button>
-              );
-            })}
-          </div>
-        </ScrollArea>
-      </div>
-
-      <SidebarAccountFooter copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
-    </div>
+      }
+      copy={copy}
+      agents={visibleAgents}
+      channels={channels}
+      active={sidebarActiveTarget(route, activeAgent)}
+      unreadChannelIds={unreadChannelIds}
+      unreadCountByAgent={unreadCountByAgent}
+      inboxCount={inboxCount}
+      presenceFor={(agent) => memberPresenceForAgent(agent, { tasks, runs, messagesByAgent, messagesByChannel })}
+      renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
+      onNavigate={{
+        search: onSearch,
+        inbox: () => navigate(inboxPath()),
+        agents: () => navigate(squadDirectoryPath()),
+        channel: (channelId) => navigate(channelsPath(channelId)),
+        member: (targetId) => navigate(memberChatPath(targetId)),
+        createChannel: () => setCreateChannelOpen(true),
+        createMember: () => navigate(`${MEMBER_ROUTE_PREFIX}/new`),
+      }}
+      footer={
+        <>
+          <ChannelCreateDialog
+            open={createChannelOpen}
+            onOpenChange={setCreateChannelOpen}
+            agents={visibleAgents}
+            copy={copy}
+            onCreateChannel={onCreateChannel}
+          />
+          <SidebarAccountFooter copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
+        </>
+      }
+      onCollapse={onCollapse}
+      searchShortcutLabel={SEARCH_SHORTCUT_LABEL}
+    />
   );
 }
 
@@ -9884,7 +10135,9 @@ function Conversation({
             activeChatControllerRef.current = { ...activeChatControllerRef.current, [targetAgentId]: null };
           }
           setActiveChatSending(targetAgentId, false);
-          window.setTimeout(() => sendNextQueuedFollowup(targetAgentId), 0);
+          if (!controller.signal.aborted) {
+            window.setTimeout(() => sendNextQueuedFollowup(targetAgentId), 0);
+          }
         });
     } catch {
       if (activeChatControllerRef.current[targetAgentId] === controller) {
@@ -10817,6 +11070,8 @@ function SquadStatusRow({ agent, activeMode, latestRun, runtime, workspace, work
         <span>{statusLabel(latestStatus, copy)}</span>
         <span className="h-1 w-1 rounded-full bg-muted-foreground/45" />
         <span className="min-w-0 truncate">{workspaceLabel(workspace, workspaces)}</span>
+        <span className="h-1 w-1 rounded-full bg-muted-foreground/45" />
+        <span>{formatCopy(copy.runsWithLabel || "Runs with {name}", { name: harnessLabel(harnessForAgent(agent).id) })}</span>
       </div>
       {!runtime?.available ? (
         <Alert variant="destructive">
@@ -15774,7 +16029,7 @@ function buildCustomRoleInstructions(templateDraft) {
     .join("\n\n");
 }
 
-function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot }) {
+function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harnesses = [], harnessesLoading = false, onRefreshHarnesses }) {
   const [customTemplates, setCustomTemplates] = useState([]);
   const [customTemplateDialogOpen, setCustomTemplateDialogOpen] = useState(false);
   const [templateId, setTemplateId] = useState("");
@@ -15797,6 +16052,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot }) {
     avatar: "",
     profileFiles: normalizeProfileFiles(template.profileFiles),
     brainCard: normalizeBrainCard(template.brainCard, template),
+    harness: normalizeHarnessAssignmentCopy(null),
   }));
 
   useEffect(() => {
@@ -16020,6 +16276,16 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot }) {
                 onChange={(event) => setDraft({ ...draft, description: event.target.value })}
                 placeholder="Describe this squad member's responsibilities, strengths, and working style."
                 className="min-h-[148px] resize-y bg-card leading-6"
+              />
+            </Field>
+
+            <Field>
+              <HarnessSelect
+                value={draft.harness}
+                onChange={(harness) => setDraft((current) => ({ ...current, harness }))}
+                harnesses={harnesses}
+                loading={harnessesLoading}
+                onRefresh={onRefreshHarnesses}
               />
             </Field>
 
@@ -17480,8 +17746,25 @@ function SquadMemberSectionPage({
   purgeHiddenRejectedMemory,
   locale = DEFAULT_LOCALE,
   copy = getLocaleCopy(DEFAULT_LOCALE),
+  harnesses = [],
+  harnessesLoading = false,
+  onRefreshHarnesses,
 }) {
   const sectionMeta = MEMBER_SECTIONS.find((item) => item.id === section) || MEMBER_SECTIONS[0];
+
+  if (section === "harness") {
+    return (
+      <AgentHarnessPage
+        agent={agent}
+        harnesses={harnesses}
+        harnessesLoading={harnessesLoading}
+        onRefreshHarnesses={onRefreshHarnesses}
+        navigate={navigate}
+        updateAgent={updateAgent}
+        copy={copy}
+      />
+    );
+  }
   const Icon = sectionMeta.icon;
   const sectionLabel = localizedSectionLabel(sectionMeta.id, copy);
 
@@ -19510,6 +19793,122 @@ function BrainCardPanel({ agent, onEdit }) {
   );
 }
 
+function ProfileHarnessSummary({ agent, harnesses = [], navigate }) {
+  const assignment = harnessForAgent(agent);
+  const readiness = readinessFor(harnesses, assignment.id);
+  return (
+    <section className="border-b border-border/75 pb-5" aria-labelledby="profile-harness-summary">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 id="profile-harness-summary" className="text-base font-semibold">Harness</h3>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            {harnessLabel(assignment.id)}
+            {readiness?.version ? ` ${readiness.version}` : ""}
+            {" / "}
+            <span className={readinessTone(readiness?.status)}>{readinessLabel(readiness?.status)}</span>
+            {assignment.model ? ` / ${assignment.model}` : ""}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "harness"))}>
+          <Cpu data-icon="inline-start" />
+          Harness
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onRefreshHarnesses, navigate, updateAgent, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+  const [assignment, setAssignment] = useState(() => harnessForAgent(agent));
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [testError, setTestError] = useState("");
+  const dirty = JSON.stringify(assignment) !== JSON.stringify(harnessForAgent(agent));
+
+  useEffect(() => {
+    setAssignment(harnessForAgent(agent));
+    setTestResult(null);
+    setTestError("");
+  }, [agent.id]);
+
+  async function runTest(candidate) {
+    setTesting(true);
+    setTestError("");
+    try {
+      setTestResult(await testHarness(api, candidate));
+    } catch (error) {
+      setTestResult(null);
+      setTestError(error.message || "Harness test failed.");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <PageTitle title="Harness" />
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
+        <div>
+          <h2 className="text-lg font-semibold">Runs with</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {agent.name} keeps the same brain card, model assignment, and permission ladder whichever engine executes it. A harness that is not ready blocks launches for this member only; nothing falls back silently.
+          </p>
+        </div>
+        <HarnessSelect
+          id="profile-harness"
+          label="Engine"
+          value={assignment}
+          onChange={setAssignment}
+          harnesses={harnesses}
+          loading={harnessesLoading}
+          onRefresh={onRefreshHarnesses}
+          onTest={runTest}
+          testing={testing}
+          testResult={testResult}
+          description=""
+        />
+        {testError ? <p className="text-sm text-destructive">{testError}</p> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            disabled={!dirty}
+            onClick={() => {
+              updateAgent?.(agent.id, { harness: normalizeHarnessAssignmentCopy(assignment) });
+              setTestResult(null);
+            }}
+          >
+            {copy.save || "Save"}
+          </Button>
+          <Button variant="ghost" onClick={() => navigate(memberProfilePath(agent.id, "home"))}>
+            {copy.close || "Close"}
+          </Button>
+        </div>
+        <Separator />
+        <dl className="grid gap-3 text-sm sm:grid-cols-[160px_minmax(0,1fr)]">
+          {(harnesses.length ? harnesses : []).map((item) => (
+            <React.Fragment key={item.id}>
+              <dt className="font-medium">{item.label}</dt>
+              <dd className="text-muted-foreground">
+                <span className={readinessTone(item.status)}>{readinessLabel(item.status)}</span>
+                {item.version ? ` · ${item.version}` : ""}
+                {item.executable ? ` · ${item.executable}` : ""}
+                {item.setup ? (
+                  <>
+                    {" · "}
+                    <code className="rounded bg-muted px-1 py-0.5 text-xs">{item.setup}</code>
+                  </>
+                ) : null}
+              </dd>
+            </React.Fragment>
+          ))}
+          {!harnesses.length && !harnessesLoading ? (
+            <dd className="text-muted-foreground sm:col-span-2">The local bridge has not reported harness readiness yet.</dd>
+          ) : null}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
 function ProfileModelSummary({ agent, providerSettings, navigate }) {
   const effectiveModel = effectiveModelForAgent(agent, providerSettings);
   return (
@@ -19531,7 +19930,7 @@ function ProfileModelSummary({ agent, providerSettings, navigate }) {
   );
 }
 
-function Profile({ agent, agents = [], tasks, automations, runtime, workspaces = [], runs, providerSettings, navigate, openTerminal, updateAgent, startAutohand, initialWorkRecordTab = "timeline", locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+function Profile({ agent, agents = [], tasks, automations, runtime, workspaces = [], runs, providerSettings, navigate, openTerminal, updateAgent, startAutohand, initialWorkRecordTab = "timeline", locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), harnesses = [] }) {
   const activity = useMemo(() => buildActivity(), []);
   const [workRecordTab, setWorkRecordTab] = useState(initialWorkRecordTab);
   const [profileEditOpen, setProfileEditOpen] = useState(false);
@@ -19602,6 +20001,8 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
         <ProfilePermissionLadder agent={agent} runtime={runtime} workspaces={workspaces} navigate={navigate} copy={copy} />
 
         <ProfileModelSummary agent={agent} providerSettings={providerSettings} navigate={navigate} />
+
+        <ProfileHarnessSummary agent={agent} harnesses={harnesses} navigate={navigate} />
 
         <BrainCardPanel agent={agent} onEdit={() => setProfileEditOpen(true)} />
 

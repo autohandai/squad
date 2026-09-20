@@ -134,6 +134,9 @@ pub struct RunRequest {
     pub workspace: Option<String>,
     pub agent_id: Option<String>,
     pub extra_args: Option<Vec<String>>,
+    /// Execution harness: `autohand` (default), `codex`, or `claude`.
+    #[serde(default)]
+    pub harness: Option<String>,
     #[serde(default)]
     pub channel_id: Option<String>,
     #[serde(default)]
@@ -148,6 +151,8 @@ pub struct RunRecord {
     pub prompt: String,
     pub workspace: Option<String>,
     pub agent_id: Option<String>,
+    #[serde(default = "default_harness_id")]
+    pub harness: String,
     pub command: Vec<String>,
     pub log_path: String,
     pub created_at: String,
@@ -305,11 +310,56 @@ struct HttpRequest {
     method: String,
     path: String,
     body: String,
+    /// Present when a browser sent the request cross-site; the loopback API
+    /// only serves same-machine callers without an Origin.
+    origin: Option<String>,
 }
 
 async fn handle_connection(mut stream: TcpStream, state: Arc<AppState>) -> Result<()> {
     let request = read_http_request(&mut stream).await?;
+    if let Some(origin) = request.origin.as_deref() {
+        if !origin_is_loopback(origin) {
+            return write_json_response(
+                &mut stream,
+                403,
+                &LifecycleResponse {
+                    success: false,
+                    message: "cross-origin requests to the local daemon are not allowed"
+                        .to_string(),
+                },
+            )
+            .await;
+        }
+    }
     route_request(&mut stream, &state, request).await
+}
+
+fn origin_is_loopback(origin: &str) -> bool {
+    let lower = origin.trim().to_ascii_lowercase();
+    let Some(rest) = lower
+        .strip_prefix("http://")
+        .or_else(|| lower.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let host = rest.split('/').next().unwrap_or(rest);
+    let host = if let Some(inner) = host.strip_prefix('[') {
+        inner.split(']').next().unwrap_or("")
+    } else {
+        host.split(':').next().unwrap_or("")
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
+fn parse_origin(headers: &str) -> Option<String> {
+    headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        if name.trim().eq_ignore_ascii_case("origin") {
+            Some(value.trim().to_string())
+        } else {
+            None
+        }
+    })
 }
 
 async fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest> {
@@ -359,7 +409,12 @@ async fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest> {
     let body_bytes = &buffer[end + 4..end + 4 + content_length.min(buffer.len() - end - 4)];
     let body = String::from_utf8_lossy(body_bytes).to_string();
 
-    Ok(HttpRequest { method, path, body })
+    Ok(HttpRequest {
+        method,
+        path,
+        body,
+        origin: parse_origin(&headers),
+    })
 }
 
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
@@ -1284,24 +1339,112 @@ fn write_queue_item(paths: &StatePaths, item: &QueueItem) -> Result<()> {
     write_json(&path, item)
 }
 
+pub fn default_harness_id() -> String {
+    "autohand".to_string()
+}
+
+pub fn normalize_harness_id(value: Option<&str>) -> String {
+    match value.map(|item| item.trim().to_ascii_lowercase()) {
+        Some(id) if id == "codex" => "codex".to_string(),
+        Some(id) if id == "claude" || id == "claude-code" => "claude".to_string(),
+        _ => default_harness_id(),
+    }
+}
+
+fn harness_executable(harness: &str) -> String {
+    let env_name = match harness {
+        "codex" => "AUTOHAND_SQUAD_CODEX_BIN",
+        "claude" => "AUTOHAND_SQUAD_CLAUDE_BIN",
+        _ => "AUTOHAND_SQUAD_AUTOHAND_BIN",
+    };
+    std::env::var(env_name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            match harness {
+                "codex" => "codex",
+                "claude" => "claude",
+                _ => "autohand",
+            }
+            .to_string()
+        })
+}
+
+/// Build the non-interactive command for a queued run under the selected
+/// harness. Every harness receives the prompt as one argument (never through
+/// a shell) and the workspace as its working root.
+pub fn harness_command(
+    harness: &str,
+    prompt: &str,
+    workspace: Option<&str>,
+    extra_args: Option<&[String]>,
+) -> Vec<String> {
+    let executable = harness_executable(harness);
+    let mut command = match harness {
+        "codex" => {
+            let mut command = vec![
+                executable,
+                "exec".to_string(),
+                "--json".to_string(),
+                "--skip-git-repo-check".to_string(),
+                "--color".to_string(),
+                "never".to_string(),
+            ];
+            if let Some(workspace) = workspace {
+                command.push("-C".to_string());
+                command.push(workspace.to_string());
+            }
+            command
+        }
+        "claude" => {
+            let mut command = vec![
+                executable,
+                "-p".to_string(),
+                "--output-format".to_string(),
+                "json".to_string(),
+                "--verbose".to_string(),
+            ];
+            if let Some(workspace) = workspace {
+                command.push("--add-dir".to_string());
+                command.push(workspace.to_string());
+            }
+            command
+        }
+        _ => {
+            let mut command = vec![executable, "--prompt".to_string(), prompt.to_string()];
+            if let Some(workspace) = workspace {
+                command.push("--path".to_string());
+                command.push(workspace.to_string());
+            }
+            command
+        }
+    };
+    if let Some(extra_args) = extra_args {
+        command.extend(extra_args.iter().cloned());
+    }
+    if harness == "codex" || harness == "claude" {
+        // Prompt goes last so vendor flags parse before the free-form text.
+        command.push(prompt.to_string());
+    }
+    command
+}
+
 fn new_run_record(paths: &StatePaths, request: RunRequest, status: &str) -> RunRecord {
     let id = next_id();
-    let autohand_bin =
-        std::env::var("AUTOHAND_SQUAD_AUTOHAND_BIN").unwrap_or_else(|_| "autohand".to_string());
-    let mut command = vec![autohand_bin, "--prompt".to_string(), request.prompt.clone()];
-    if let Some(workspace) = &request.workspace {
-        command.push("--path".to_string());
-        command.push(workspace.clone());
-    }
-    if let Some(extra_args) = &request.extra_args {
-        command.extend(extra_args.clone());
-    }
+    let harness = normalize_harness_id(request.harness.as_deref());
+    let command = harness_command(
+        &harness,
+        &request.prompt,
+        request.workspace.as_deref(),
+        request.extra_args.as_deref(),
+    );
     RunRecord {
         id: id.clone(),
         status: status.to_string(),
         prompt: request.prompt,
         workspace: request.workspace,
         agent_id: request.agent_id,
+        harness,
         command,
         log_path: paths
             .runs_dir
@@ -1352,6 +1495,8 @@ fn spawn_run_worker(
         let log_path = PathBuf::from(&record.log_path);
         let mut command = Command::new(&record.command[0]);
         command.args(&record.command[1..]);
+        command.env("PATH", crate::cli::gui_path_env());
+        command.stdin(std::process::Stdio::null());
         if let Some(workspace) = &record.workspace {
             command.current_dir(workspace);
         }
@@ -1563,6 +1708,7 @@ mod tests {
                 workspace: Some(paths.root.display().to_string()),
                 agent_id: Some("agent-1".to_string()),
                 extra_args: Some(vec!["--dry-run".to_string()]),
+                harness: None,
                 channel_id: None,
                 thread_id: None,
             },
@@ -1768,6 +1914,7 @@ mod tests {
                 workspace: Some(paths.root.display().to_string()),
                 agent_id: Some("agent-1".to_string()),
                 extra_args: None,
+                harness: None,
                 channel_id: None,
                 thread_id: None,
             },

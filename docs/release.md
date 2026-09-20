@@ -105,6 +105,31 @@ Non-PR CI dry runs use versions such as `0.0.0-ci.42.abc123def456`. That keeps
 pull-request provenance clear while still exercising package metadata from
 manual or branch-triggered CI runs.
 
+## Code Signing And Notarization
+
+Signing is optional and driven entirely by repository secrets. Without them
+the release still builds; the release summary and installer trust records
+(`trust-<os>-<arch>.json`) say so honestly.
+
+| Secret | Purpose |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Base64 `.p12` containing a Developer ID Application certificate |
+| `APPLE_CERTIFICATE_PASSWORD` | Password of that `.p12` |
+| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | App-specific password and team for `notarytool`; all three enable notarization |
+| `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD` | Base64 `.pfx` Authenticode certificate imported into the runner store |
+| `WINDOWS_TIMESTAMP_URL` | Optional RFC 3161 timestamp server (default DigiCert) |
+
+The macOS job imports the certificate into a temporary keychain and exports
+`APPLE_SIGNING_IDENTITY`; the packager signs every binary and the bundle with
+the hardened runtime and the entitlements the bundled Node runtime needs, then
+notarizes when the Apple account secrets are present. Without an identity the
+bundle is ad-hoc signed (`-`) so it stays internally consistent; users must
+clear the quarantine flag once. The Windows job imports the PFX and exports
+`WINDOWS_CERTIFICATE_THUMBPRINT`; `WINDOWS_SIGN_COMMAND` can replace it for
+Azure Trusted Signing or another external signer. The macOS smoke test runs
+`codesign --verify --deep --strict` on every DMG and `spctl --assess` when an
+identity was used.
+
 ## Release Channels
 
 - `stable`: a version without a prerelease suffix, such as `v1.2.3`
@@ -157,11 +182,11 @@ repository boundary.
 
 ## GitHub Runner Readiness
 
-This private repository uses GitHub-hosted Linux, macOS, and Windows runners.
-Before remote CI can prove the matrix, the account must have GitHub Actions
-billing available and a spending limit high enough for private-repository
-runner minutes. If GitHub refuses to start jobs with a billing or spending-limit
-annotation, fix Billing & plans first, then rerun `CI` and `Release`.
+This public repository uses GitHub-hosted Linux, macOS, and Windows runners.
+The repository and organization must allow GitHub Actions and the job-scoped
+permissions declared by each workflow. If GitHub refuses to start a job because
+of an Actions policy, fix the repository or organization policy first, then
+rerun `CI` or create a new immutable release tag as appropriate.
 
 The release publish job targets channel environments named `canary`, `beta`, and
 `stable`. Add approval rules to the `stable` environment when the repo moves
@@ -206,7 +231,7 @@ cd daemon
 cargo build --release --bins -j1
 cd ..
 RELEASE_VERSION=0.1.0 RELEASE_TAG=v0.1.0 bun run release:package
-WEB_RUNTIME_DIR=release/web/runtime RELEASE_VERSION=0.1.0 RELEASE_OS="$(node -p process.platform)" RELEASE_ARCH="$(node -p process.arch)" bun run release:portable
+WEB_RUNTIME_DIR="$PWD" RELEASE_VERSION=0.1.0 RELEASE_OS="$(node -p process.platform)" RELEASE_ARCH="$(node -p process.arch)" bun run release:portable
 NODE_RUNTIME_PATH="$(node -p process.execPath)" WEB_RUNTIME_DIR="$PWD" RELEASE_VERSION=0.1.0 RELEASE_OS="$(node -p process.platform)" RELEASE_ARCH="$(node -p process.arch)" bun run release:installers
 bun run release:merge-manifests release
 ```

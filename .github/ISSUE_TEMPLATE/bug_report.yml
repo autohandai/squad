@@ -4,6 +4,16 @@ title: "[Bug]: "
 labels:
   - bug
 body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find the same problem.
+          required: true
+        - label: This report does not disclose a security vulnerability or secret.
+          required: true
+
   - type: textarea
     id: problem
     attributes:
@@ -31,7 +41,17 @@ body:
     id: version
     attributes:
       label: Squad version
-      placeholder: 0.1.0
+      description: Use the release version or commit SHA you tested.
+      placeholder: 0.1.0-rc.3 or 416078f
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include your operating system, architecture, browser, and Autohand CLI version when relevant.
+      placeholder: macOS 15, Apple Silicon, Chrome 140, Autohand CLI 1.2.3
+    validations:
+      required: true
 
   - type: textarea
     id: steps
@@ -48,5 +68,5 @@ body:
     id: logs
     attributes:
       label: Logs or screenshots
-      description: Paste only logs that do not contain secrets.
+      description: Paste only relevant evidence with credentials, private prompts, customer data, and local paths removed.
       render: shell

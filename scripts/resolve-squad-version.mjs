@@ -82,8 +82,10 @@ function resolveChannel() {
   if (inputChannel) return inputChannel;
   if (eventName === 'push' && refName === 'main') return 'canary';
   if (tagVersion && hasPrerelease(tagVersion)) {
-    if (tagVersion.includes('-canary.')) return 'canary';
-    if (tagVersion.includes('-beta.')) return 'beta';
+    // Same contract as release.yml: `canary` prereleases are canary, every
+    // other prerelease (beta, rc, alpha, ...) is beta.
+    const suffix = tagVersion.slice(tagVersion.indexOf('-') + 1);
+    return suffix === 'canary' || suffix.startsWith('canary.') ? 'canary' : 'beta';
   }
   return 'stable';
 }

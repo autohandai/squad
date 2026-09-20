@@ -2,8 +2,10 @@
 name = "autohand-squad-runtime"
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT"
 description = "Standalone Autohand Squad runtime and daemon"
+repository = "https://github.com/autohandai/squad"
+homepage = "https://github.com/autohandai/squad"
 
 [lib]
 name = "autohand_squad_runtime"

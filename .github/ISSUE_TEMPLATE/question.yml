@@ -1,0 +1,39 @@
+name: Setup or usage question
+description: Ask for help using or developing Autohand Squad.
+title: "[Question]: "
+labels:
+  - question
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the README, setup guide, support guide, and existing issues.
+          required: true
+        - label: This question does not disclose a security vulnerability or secret.
+          required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe the outcome you want and the point where you are blocked.
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempts
+    attributes:
+      label: What have you tried?
+      description: Include relevant commands and secret-free output.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include your Squad version or commit, operating system, architecture, and Autohand CLI version when relevant.
+    validations:
+      required: true

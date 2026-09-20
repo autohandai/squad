@@ -63,6 +63,7 @@ pub struct SquadCli {
 #[derive(Debug, Clone, Subcommand)]
 pub enum SquadCommand {
     Start,
+    Doctor,
     Status,
     Restart,
     Stop,
@@ -99,7 +100,9 @@ pub enum SquadCommand {
     },
 }
 
-const DEFAULT_WEB_PORT: u16 = 19821;
+pub const DEFAULT_WEB_PORT: u16 = 19821;
+const DEFAULT_READY_TIMEOUT_MS: u64 = 30_000;
+const READY_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
@@ -180,6 +183,7 @@ async fn run_squad_command_with_paths_inner(
     record_launcher_command(&paths, &config, command_name(&command));
     match command {
         SquadCommand::Start => start_stack(&paths, &config, false, tray_requested).await,
+        SquadCommand::Doctor => doctor(&paths, &config),
         SquadCommand::Status => stack_status(&paths, &config).await,
         SquadCommand::Restart => restart_stack(&paths, &config, tray_requested).await,
         SquadCommand::Stop => stop_stack(&paths, &config).await,
@@ -228,6 +232,7 @@ fn overrides_from_args(args: &SquadCli) -> ConfigOverrides {
 fn command_name(command: &SquadCommand) -> &'static str {
     match command {
         SquadCommand::Start => "start",
+        SquadCommand::Doctor => "doctor",
         SquadCommand::Status => "status",
         SquadCommand::Restart => "restart",
         SquadCommand::Stop => "stop",
@@ -449,15 +454,14 @@ async fn start(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput
 
     let daemon = locate_daemon_binary(paths)?;
     spawn_daemon(paths, config, &daemon)?;
-    for _ in 0..40 {
-        if let Ok(status) = fetch_status(config).await {
-            return Ok(CommandOutput::ok(format!(
-                "Autohand Squad started at {}\nstate: {}\n",
-                status.url,
-                paths.root.display()
-            )));
-        }
-        sleep(Duration::from_millis(100)).await;
+    if let Some(status) =
+        wait_until(|| fetch_status_blocking(config).ok(), readiness_timeout()).await
+    {
+        return Ok(CommandOutput::ok(format!(
+            "Autohand Squad started at {}\nstate: {}\n",
+            status.url,
+            paths.root.display()
+        )));
     }
 
     Ok(CommandOutput::error(format!(
@@ -516,14 +520,16 @@ async fn analytics_start(
 
     let analytics = locate_analytics_binary(paths)?;
     spawn_analytics(paths, config, analytics_port, &analytics)?;
-    for _ in 0..40 {
-        if let Ok(snapshot) = fetch_analytics(config, analytics_port).await {
-            return Ok(CommandOutput::ok(format!(
-                "Autohand Squad analytics started at http://{}:{}\nactive daemons: {}\n",
-                config.host, analytics_port, snapshot.services.active_daemons
-            )));
-        }
-        sleep(Duration::from_millis(100)).await;
+    if let Some(snapshot) = wait_until(
+        || fetch_analytics_blocking(config, analytics_port).ok(),
+        readiness_timeout(),
+    )
+    .await
+    {
+        return Ok(CommandOutput::ok(format!(
+            "Autohand Squad analytics started at http://{}:{}\nactive daemons: {}\n",
+            config.host, analytics_port, snapshot.services.active_daemons
+        )));
     }
 
     Ok(CommandOutput::error(format!(
@@ -626,14 +632,11 @@ async fn serve(
         }
     }
     spawn_web_server(paths, config, &server_path, dev, web_port)?;
-    for _ in 0..50 {
-        if fetch_web_runtime(config.host.as_str(), web_port).is_ok() {
-            return Ok(CommandOutput::ok(format!(
-                "Autohand Squad web server started at http://{}:{}\n",
-                config.host, web_port
-            )));
-        }
-        sleep(Duration::from_millis(100)).await;
+    if wait_for_web_runtime(config.host.as_str(), web_port, readiness_timeout()).await {
+        return Ok(CommandOutput::ok(format!(
+            "Autohand Squad web server started at http://{}:{}\n",
+            config.host, web_port
+        )));
     }
 
     Ok(CommandOutput::error(format!(
@@ -738,7 +741,63 @@ async fn serve_stop(
 }
 
 async fn fetch_status(config: &SquadConfig) -> Result<StatusResponse> {
+    fetch_status_blocking(config)
+}
+
+pub(crate) fn fetch_status_blocking(config: &SquadConfig) -> Result<StatusResponse> {
     local_json_request(config, "GET", "/status", None)
+}
+
+/// Readiness window for daemon, analytics, and web startup. Cold machines
+/// (especially Windows with the bundled Node runtime) regularly exceed the
+/// old five-second window; the desktop entry point must not report failure
+/// while the service is still coming up.
+pub fn readiness_timeout() -> Duration {
+    std::env::var("AUTOHAND_SQUAD_READY_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value >= 1_000)
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(DEFAULT_READY_TIMEOUT_MS))
+}
+
+async fn wait_until<T>(mut probe: impl FnMut() -> Option<T>, timeout: Duration) -> Option<T> {
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(value) = probe() {
+            return Some(value);
+        }
+        if started.elapsed() >= timeout {
+            return None;
+        }
+        sleep(READY_POLL_INTERVAL).await;
+    }
+}
+
+pub async fn wait_for_web_runtime(host: &str, web_port: u16, timeout: Duration) -> bool {
+    wait_until(|| fetch_web_runtime(host, web_port).ok(), timeout)
+        .await
+        .is_some()
+}
+
+/// Start the daemon, analytics, and web server without opening a browser or
+/// spawning a tray. Used by the desktop entry point after preflight.
+pub async fn start_services(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput> {
+    start_stack(paths, config, false, false).await
+}
+
+pub fn web_port_for(config: &SquadConfig) -> u16 {
+    web_port_from_open_url(&config.open_url).unwrap_or(DEFAULT_WEB_PORT)
+}
+
+fn doctor(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput> {
+    let report = crate::preflight::run_preflight(paths, config);
+    let text = format!("{}\n", serde_json::to_string_pretty(&report)?);
+    Ok(CommandOutput {
+        code: if report.ok { 0 } else { 1 },
+        stdout: text,
+        stderr: String::new(),
+    })
 }
 
 async fn fetch_queue(config: &SquadConfig) -> Result<QueueResponse> {
@@ -799,6 +858,13 @@ where
 }
 
 async fn fetch_analytics(config: &SquadConfig, analytics_port: u16) -> Result<AnalyticsSnapshot> {
+    fetch_analytics_blocking(config, analytics_port)
+}
+
+pub(crate) fn fetch_analytics_blocking(
+    config: &SquadConfig,
+    analytics_port: u16,
+) -> Result<AnalyticsSnapshot> {
     post_to(
         config.host.as_str(),
         analytics_port,
@@ -808,8 +874,12 @@ async fn fetch_analytics(config: &SquadConfig, analytics_port: u16) -> Result<An
     )
 }
 
-fn fetch_web_runtime(host: &str, web_port: u16) -> Result<serde_json::Value> {
+pub(crate) fn fetch_web_runtime(host: &str, web_port: u16) -> Result<serde_json::Value> {
     post_to(host, web_port, "GET", "/api/runtime", None)
+}
+
+pub(crate) fn fetch_web_runtime_blocking(host: &str, web_port: u16) -> Result<serde_json::Value> {
+    fetch_web_runtime(host, web_port)
 }
 
 async fn wait_for_web_stop(host: &str, web_port: u16) -> bool {
@@ -853,14 +923,14 @@ fn terminate_squad_member_processes() -> Result<usize> {
 
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                r#"Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { "$($_.ProcessId)`t$($_.CommandLine)" } }"#,
-            ])
-            .output()
-            .context("list Squad member processes")?;
+        let mut command = Command::new("powershell");
+        command.args([
+            "-NoProfile",
+            "-Command",
+            r#"Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { "$($_.ProcessId)`t$($_.CommandLine)" } }"#,
+        ]);
+        detach_background(&mut command);
+        let output = command.output().context("list Squad member processes")?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut stopped = 0;
         for pid in squad_member_pids_from_process_list(&stdout, std::process::id()) {
@@ -896,14 +966,14 @@ fn terminate_associated_squad_processes() -> Result<usize> {
 
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                r#"Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { "$($_.ProcessId)`t$($_.CommandLine)" } }"#,
-            ])
-            .output()
-            .context("list Autohand Squad processes")?;
+        let mut command = Command::new("powershell");
+        command.args([
+            "-NoProfile",
+            "-Command",
+            r#"Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { "$($_.ProcessId)`t$($_.CommandLine)" } }"#,
+        ]);
+        detach_background(&mut command);
+        let output = command.output().context("list Autohand Squad processes")?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut stopped = 0;
         for pid in associated_squad_pids_from_process_list(&stdout, std::process::id()) {
@@ -981,6 +1051,12 @@ fn is_autohand_cli_process(lower: &str) -> bool {
         || lower.contains("\\autohand-cli\\")
         || lower.contains("@autohandai/autohand")
         || lower.contains("@autohandai/cli")
+        || lower.contains("agent-sdk/cli/autohand-")
+        || lower.contains("autohand-macos-arm64")
+        || lower.contains("autohand-macos-x64")
+        || lower.contains("autohand-linux-x64")
+        || lower.contains("autohand-linux-arm64")
+        || lower.contains("autohand-windows-x64.exe")
 }
 
 fn is_associated_squad_process(command: &str) -> bool {
@@ -1061,10 +1137,21 @@ fn listener_pids_from_lsof_output(output: &str) -> Vec<u32> {
 fn is_squad_web_process(command: &str) -> bool {
     let command = command.replace('\\', "/");
     let lower = command.to_ascii_lowercase();
-    lower.contains("server.mjs")
-        && (lower.contains("autohandswe")
-            || lower.contains("autohand squad.app/contents/resources/server.mjs")
-            || lower.contains("autohand squad/server.mjs"))
+    if !lower.contains("server.mjs") {
+        return false;
+    }
+    // The launcher starts `node server.mjs --host … --port …` with the
+    // working directory set to the resources folder, so the command line
+    // usually carries no path at all; the listener-port filter that calls
+    // this function already scopes it to the Squad web port.
+    let launcher_shape =
+        (lower.contains("/node ") || lower.starts_with("node ") || lower.contains("node.exe "))
+            && lower.contains("server.mjs --host");
+    launcher_shape
+        || lower.contains("autohandswe")
+        || lower.contains("autohand squad.app/contents/resources/server.mjs")
+        || lower.contains("autohand squad/server.mjs")
+        || lower.contains("autohand-squad-ui/server.mjs")
 }
 
 fn daemon_config_from_record(paths: &StatePaths, config: &SquadConfig) -> SquadConfig {
@@ -1076,7 +1163,7 @@ fn daemon_config_from_record(paths: &StatePaths, config: &SquadConfig) -> SquadC
     next
 }
 
-fn stack_daemon_config(config: &SquadConfig, web_port: Option<u16>) -> SquadConfig {
+pub(crate) fn stack_daemon_config(config: &SquadConfig, web_port: Option<u16>) -> SquadConfig {
     let mut next = config.clone();
     if web_port.is_some_and(|port| port == next.port) {
         next.port = next.port.saturating_add(1).max(1);
@@ -1085,7 +1172,7 @@ fn stack_daemon_config(config: &SquadConfig, web_port: Option<u16>) -> SquadConf
     next
 }
 
-fn web_port_from_open_url(open_url: &str) -> Option<u16> {
+pub(crate) fn web_port_from_open_url(open_url: &str) -> Option<u16> {
     let after_scheme = open_url
         .strip_prefix("http://")
         .or_else(|| open_url.strip_prefix("https://"))?;
@@ -1094,24 +1181,26 @@ fn web_port_from_open_url(open_url: &str) -> Option<u16> {
     port.parse::<u16>().ok()
 }
 
-fn is_local_open_url(open_url: &str) -> bool {
+pub(crate) fn is_local_open_url(open_url: &str) -> bool {
     let Some(after_scheme) = open_url
         .strip_prefix("http://")
         .or_else(|| open_url.strip_prefix("https://"))
     else {
         return false;
     };
-    let host = after_scheme
-        .split('/')
-        .next()
-        .unwrap_or(after_scheme)
-        .split(':')
-        .next()
-        .unwrap_or("");
-    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+    let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']')
+            .next()
+            .map(|inner| format!("[{inner}]"))
+            .unwrap_or_default()
+    } else {
+        authority.split(':').next().unwrap_or("").to_string()
+    };
+    matches!(host.as_str(), "127.0.0.1" | "localhost" | "[::1]")
 }
 
-fn locate_daemon_binary(paths: &StatePaths) -> Result<PathBuf> {
+pub(crate) fn locate_daemon_binary(paths: &StatePaths) -> Result<PathBuf> {
     if let Ok(value) = std::env::var("AUTOHAND_SQUAD_DAEMON") {
         let candidate = PathBuf::from(value);
         if candidate.exists() {
@@ -1147,7 +1236,7 @@ fn locate_daemon_binary(paths: &StatePaths) -> Result<PathBuf> {
     })
 }
 
-fn locate_analytics_binary(paths: &StatePaths) -> Result<PathBuf> {
+pub(crate) fn locate_analytics_binary(paths: &StatePaths) -> Result<PathBuf> {
     if let Ok(value) = std::env::var("AUTOHAND_SQUAD_ANALYTICS") {
         let candidate = PathBuf::from(value);
         if candidate.exists() {
@@ -1183,7 +1272,7 @@ fn locate_analytics_binary(paths: &StatePaths) -> Result<PathBuf> {
     })
 }
 
-fn locate_tray_binary(paths: &StatePaths) -> Result<PathBuf> {
+pub(crate) fn locate_tray_binary(paths: &StatePaths) -> Result<PathBuf> {
     if let Ok(value) = std::env::var("AUTOHAND_SQUAD_TRAY") {
         let candidate = PathBuf::from(value);
         if candidate.exists() {
@@ -1219,7 +1308,10 @@ fn locate_tray_binary(paths: &StatePaths) -> Result<PathBuf> {
     })
 }
 
-fn locate_web_server(paths: &StatePaths, server_path: Option<PathBuf>) -> Result<PathBuf> {
+pub(crate) fn locate_web_server(
+    paths: &StatePaths,
+    server_path: Option<PathBuf>,
+) -> Result<PathBuf> {
     if let Some(candidate) = server_path {
         if candidate.exists() {
             return candidate
@@ -1299,10 +1391,122 @@ fn server_candidates_from(root: &Path) -> Vec<PathBuf> {
 }
 
 fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
+    std::env::split_paths(&gui_path_env())
         .map(|dir| dir.join(name))
         .find(|candidate| candidate.exists())
+}
+
+/// GUI applications launched from Finder, the Dock, Explorer, or a desktop
+/// launcher inherit a minimal `PATH` (macOS: `/usr/bin:/bin:/usr/sbin:/sbin`).
+/// Tools installed by npm, bun, cargo, Homebrew, fnm/nvm, Codex, or Claude Code
+/// live outside that list. Every process we spawn receives this augmented
+/// `PATH` so discovery behaves the same as in a terminal.
+pub fn gui_path_env() -> std::ffi::OsString {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let mut entries: Vec<PathBuf> = Vec::new();
+    let mut push = |candidate: PathBuf| {
+        if !candidate.as_os_str().is_empty() && !entries.contains(&candidate) {
+            entries.push(candidate);
+        }
+    };
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(dir) = current_exe.parent() {
+            push(dir.to_path_buf());
+        }
+    }
+    for dir in std::env::split_paths(&inherited) {
+        push(dir);
+    }
+    for dir in well_known_tool_dirs() {
+        push(dir);
+    }
+    std::env::join_paths(entries).unwrap_or(inherited)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .find_map(|name| std::env::var_os(name))
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+fn well_known_tool_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let home = home_dir();
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(home) = &home {
+            dirs.push(home.join(".local").join("bin"));
+            dirs.push(home.join(".bun").join("bin"));
+            dirs.push(home.join(".cargo").join("bin"));
+            dirs.push(home.join(".autohand").join("bin"));
+        }
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            dirs.push(PathBuf::from(&appdata).join("npm"));
+        }
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let local = PathBuf::from(local);
+            dirs.push(local.join("Programs").join("nodejs"));
+            dirs.push(local.join("fnm_multishells"));
+            dirs.push(local.join("Microsoft").join("WinGet").join("Links"));
+        }
+        if let Some(program_files) = std::env::var_os("ProgramFiles") {
+            dirs.push(PathBuf::from(&program_files).join("nodejs"));
+            dirs.push(PathBuf::from(&program_files).join("Git").join("bin"));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        dirs.push(PathBuf::from("/opt/homebrew/bin"));
+        dirs.push(PathBuf::from("/usr/local/bin"));
+        dirs.push(PathBuf::from("/usr/local/sbin"));
+        dirs.push(PathBuf::from("/usr/bin"));
+        dirs.push(PathBuf::from("/bin"));
+        dirs.push(PathBuf::from("/usr/sbin"));
+        dirs.push(PathBuf::from("/sbin"));
+        dirs.push(PathBuf::from("/snap/bin"));
+        if let Some(home) = &home {
+            dirs.push(home.join(".local").join("bin"));
+            dirs.push(home.join(".bun").join("bin"));
+            dirs.push(home.join(".cargo").join("bin"));
+            dirs.push(home.join(".autohand").join("bin"));
+            dirs.push(home.join(".npm-global").join("bin"));
+            dirs.push(home.join(".volta").join("bin"));
+            dirs.push(home.join(".claude").join("local"));
+            dirs.push(home.join("bin"));
+            for versions in [
+                home.join(".nvm").join("versions").join("node"),
+                home.join(".local")
+                    .join("share")
+                    .join("fnm")
+                    .join("node-versions"),
+                home.join("Library")
+                    .join("Application Support")
+                    .join("fnm")
+                    .join("node-versions"),
+            ] {
+                if let Ok(entries) = std::fs::read_dir(&versions) {
+                    let mut found: Vec<PathBuf> = entries
+                        .flatten()
+                        .map(|entry| entry.path())
+                        .filter(|path| path.is_dir())
+                        .collect();
+                    found.sort();
+                    for path in found.into_iter().rev().take(3) {
+                        let bin = path.join("bin");
+                        let installation_bin = path.join("installation").join("bin");
+                        if installation_bin.is_dir() {
+                            dirs.push(installation_bin);
+                        } else if bin.is_dir() {
+                            dirs.push(bin);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    dirs
 }
 
 fn node_executable_name() -> &'static str {
@@ -1313,7 +1517,7 @@ fn node_executable_name() -> &'static str {
     }
 }
 
-fn locate_node_runtime() -> Result<PathBuf> {
+pub(crate) fn locate_node_runtime() -> Result<PathBuf> {
     if let Ok(value) = std::env::var("AUTOHAND_SQUAD_NODE") {
         let candidate = PathBuf::from(value);
         if candidate.exists() {
@@ -1354,12 +1558,14 @@ fn bundled_autohand_cli_name() -> Option<&'static str> {
         Some("autohand-windows-x64.exe")
     } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         Some("autohand-linux-x64")
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        Some("autohand-linux-arm64")
     } else {
         None
     }
 }
 
-fn bundled_autohand_cli(server_path: &Path) -> Option<PathBuf> {
+pub(crate) fn bundled_autohand_cli(server_path: &Path) -> Option<PathBuf> {
     let name = bundled_autohand_cli_name()?;
     let server_dir = server_path.parent()?;
     let candidate = server_dir
@@ -1400,6 +1606,7 @@ fn spawn_daemon(paths: &StatePaths, config: &SquadConfig, daemon: &Path) -> Resu
         .arg("--plan-state")
         .arg(&config.plan_state)
         .env("AUTOHAND_SQUAD_HOME", &paths.root)
+        .env("PATH", gui_path_env())
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
@@ -1436,6 +1643,7 @@ fn spawn_analytics(
         .arg("--port")
         .arg(analytics_port.to_string())
         .env("AUTOHAND_SQUAD_HOME", &paths.root)
+        .env("PATH", gui_path_env())
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
@@ -1486,6 +1694,7 @@ fn spawn_tray(
         .arg("--plan-state")
         .arg(&daemon_config.plan_state)
         .env("AUTOHAND_SQUAD_HOME", &paths.root)
+        .env("PATH", gui_path_env())
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
@@ -1536,6 +1745,7 @@ fn spawn_web_server(
         .arg(web_port.to_string())
         .current_dir(server_dir)
         .env("AUTOHAND_SQUAD_HOME", &paths.root)
+        .env("PATH", gui_path_env())
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err));
@@ -1624,8 +1834,12 @@ fn terminate_process(pid: u32) -> bool {
 
     #[cfg(target_os = "windows")]
     {
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
+        let mut command = Command::new("taskkill");
+        command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        detach_background(&mut command);
+        command
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
@@ -1647,7 +1861,7 @@ fn wait_for_process_exit(pid: u32, attempts: usize) -> bool {
     false
 }
 
-fn process_is_running(pid: u32) -> bool {
+pub(crate) fn process_is_running(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
@@ -1666,10 +1880,21 @@ fn process_is_running(pid: u32) -> bool {
 
     #[cfg(target_os = "windows")]
     {
-        Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}")])
+        let mut command = Command::new("tasklist");
+        command.args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]);
+        detach_background(&mut command);
+        command
             .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
+            .map(|output| {
+                // CSV rows look like "name","1234",… ; match the pid column
+                // exactly instead of any substring of the output.
+                String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+                    line.split(',')
+                        .nth(1)
+                        .map(|cell| cell.trim_matches('"') == pid.to_string())
+                        .unwrap_or(false)
+                })
+            })
             .unwrap_or(false)
     }
 
@@ -1679,7 +1904,7 @@ fn process_is_running(pid: u32) -> bool {
     }
 }
 
-fn open_url(url: &str) -> Result<()> {
+pub(crate) fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = Command::new("open");
@@ -1696,12 +1921,21 @@ fn open_url(url: &str) -> Result<()> {
 
     #[cfg(target_os = "windows")]
     let mut command = {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let mut command = Command::new("cmd");
         command.args(["/C", "start", "", url]);
+        command.creation_flags(CREATE_NO_WINDOW);
         command
     };
 
-    command.spawn().context("open Squad URL")?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("open Squad URL")?;
     Ok(())
 }
 

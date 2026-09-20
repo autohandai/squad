@@ -1,12 +1,27 @@
 import { createServer } from "node:http";
 import { spawn, spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
-import { appendFile, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { arch, homedir, platform as osPlatform, release as osRelease, tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
+import {
+  DEFAULT_HARNESS_ID,
+  HarnessNotReadyError,
+  assertHarnessReady,
+  detectHarness,
+  getAdapter,
+  harnessAssignmentFromAgent,
+  isExternalHarness,
+  listHarnesses,
+  normalizeHarnessAssignment,
+  publicReadiness,
+  readResumeId,
+  runExternalHarness,
+  writeResumeId,
+} from "./server/harness/index.mjs";
 
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 1) {
@@ -62,8 +77,14 @@ const defaultSkillsRepo = "autohandai/community-skills";
 const localCommunitySkillsDir = process.env.AUTOHAND_SKILLS_REPO_DIR
   ? resolve(process.env.AUTOHAND_SKILLS_REPO_DIR)
   : resolve(rootDir, "../../..", "community-skills");
+// AUTOHAND_AGENT_SDK_DIR points at a local SDK checkout (for example
+// agentsdk/tin-wrapper/typescript) and is used for both the JS entry and the
+// bundled per-platform CLI binaries under <dir>/cli.
+const localAgentSdkDir = process.env.AUTOHAND_AGENT_SDK_DIR ? resolve(process.env.AUTOHAND_AGENT_SDK_DIR) : "";
 const localAgentSdkEntry = process.env.AUTOHAND_AGENT_SDK_ENTRY
   ? resolve(process.env.AUTOHAND_AGENT_SDK_ENTRY)
+  : localAgentSdkDir
+    ? join(localAgentSdkDir, "dist", "index.js")
   : resolve(rootDir, "../../../agentsdk/tin-wrapper/typescript/dist/index.js");
 const skillCatalogCache = { loadedAt: 0, data: null };
 const sdkImportCache = { promise: null };
@@ -251,6 +272,9 @@ function terminateChildProcess(child, { forceAfterMs = childTerminationGraceMs, 
 async function loadAgentSdk() {
   if (!sdkImportCache.promise) {
     sdkImportCache.promise = (async () => {
+      if (localAgentSdkDir && existsSync(localAgentSdkEntry)) {
+        return import(pathToFileURL(localAgentSdkEntry).href);
+      }
       try {
         return await import("@autohandai/agent-sdk");
       } catch (packageError) {
@@ -266,13 +290,23 @@ async function loadAgentSdk() {
 
 const cliHelpCache = { text: null };
 
+const bundledAutohandCliNames = new Map([
+  ["darwin/arm64", "autohand-macos-arm64"],
+  ["darwin/x64", "autohand-macos-x64"],
+  ["linux/x64", "autohand-linux-x64"],
+  ["linux/arm64", "autohand-linux-arm64"],
+  ["win32/x64", "autohand-windows-x64.exe"],
+]);
+
 function bundledAutohandCliName() {
-  return new Map([
-    ["darwin/arm64", "autohand-macos-arm64"],
-    ["darwin/x64", "autohand-macos-x64"],
-    ["linux/x64", "autohand-linux-x64"],
-    ["win32/x64", "autohand-windows-x64.exe"],
-  ]).get(`${osPlatform()}/${arch()}`) || "";
+  return bundledAutohandCliNames.get(`${osPlatform()}/${arch()}`) || "";
+}
+
+function agentSdkPackageDirs() {
+  const dirs = [];
+  if (localAgentSdkDir) dirs.push(localAgentSdkDir);
+  dirs.push(join(rootDir, "node_modules", "@autohandai", "agent-sdk"));
+  return dirs;
 }
 
 function resolveAutohandBinary() {
@@ -281,15 +315,10 @@ function resolveAutohandBinary() {
 
   const bundledName = bundledAutohandCliName();
   if (bundledName) {
-    const bundled = join(
-      rootDir,
-      "node_modules",
-      "@autohandai",
-      "agent-sdk",
-      "cli",
-      bundledName,
-    );
-    if (existsSync(bundled)) return bundled;
+    for (const packageDir of agentSdkPackageDirs()) {
+      const bundled = join(packageDir, "cli", bundledName);
+      if (existsSync(bundled)) return bundled;
+    }
   }
 
   const finder = osPlatform() === "win32" ? "where" : "which";
@@ -302,7 +331,11 @@ function resolveAutohandBinary() {
 function autohandHelpText() {
   if (cliHelpCache.text === null) {
     const autohandPath = resolveAutohandBinary();
-    cliHelpCache.text = autohandPath ? commandOutput(autohandPath, ["--help"]) : "";
+    if (!autohandPath) return "";
+    const text = commandOutput(autohandPath, ["--help"]);
+    // A CLI that is installed later must be re-probed; only cache real output.
+    if (text.trim()) cliHelpCache.text = text;
+    return text;
   }
   return cliHelpCache.text;
 }
@@ -334,8 +367,26 @@ function getRuntime() {
       retryMode: handoffRetryMode,
     },
     account: readRuntimeAccount(),
+    harnesses: {
+      default: DEFAULT_HARNESS_ID,
+      ids: ["autohand", "codex", "claude"],
+      sdkSource: localAgentSdkDir ? "local-dir" : "package",
+    },
     serverStartedAt,
   };
+}
+
+function autohandReadinessContext() {
+  const bundledPath = resolveAutohandBinary();
+  return {
+    bundledPath,
+    version: bundledPath ? commandOutput(bundledPath, ["--version"]).trim() : "",
+    authReady: autohandAuthUsable(readAutohandAuth(userConfigPath)),
+  };
+}
+
+function harnessContextFor(id) {
+  return id === DEFAULT_HARNESS_ID ? autohandReadinessContext() : {};
 }
 
 const serverStartedAt = new Date().toISOString();
@@ -404,6 +455,30 @@ function requestSquadBrowserLogin() {
   };
 }
 
+// Provider keys and copied Autohand auth tokens must never be world-readable.
+async function writeSecretFile(path, content) {
+  await writeFile(path, content, { encoding: "utf8", mode: 0o600 });
+  if (process.platform !== "win32") {
+    await chmod(path, 0o600).catch(() => {});
+  }
+}
+
+// Same-origin guard for the local bridge: browsers attach an Origin header to
+// cross-site requests (including no-preflight text/plain POSTs), so a request
+// carrying an Origin that is not this bridge is rejected. Requests without an
+// Origin (curl, the Rust launcher, same-origin GETs) are unaffected.
+function requestOriginAllowed(req, url) {
+  const origin = String(req.headers.origin || "").trim();
+  if (!origin) return true;
+  try {
+    const parsed = new URL(origin);
+    const sameHost = ["127.0.0.1", "localhost", "[::1]", "::1", host].includes(parsed.hostname);
+    return sameHost && (parsed.port === String(port) || parsed.port === url.port);
+  } catch {
+    return false;
+  }
+}
+
 function json(res, status, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -437,17 +512,37 @@ function startEventStream(res) {
   };
 }
 
+class RequestTooLargeError extends Error {
+  constructor(maxBytes) {
+    super(`request body too large (limit ${maxBytes} bytes)`);
+    this.name = "RequestTooLargeError";
+    this.status = 413;
+  }
+}
+
 function readBody(req, maxBytes = 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let body = "";
+    let bytes = 0;
+    // Decode through the stream's StringDecoder so multi-byte characters that
+    // straddle chunk boundaries are not corrupted.
+    let overflow = false;
+    req.setEncoding("utf8");
     req.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > maxBytes) {
-        reject(new Error("request body too large"));
-        req.destroy();
+      if (overflow) return;
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > maxBytes) {
+        // Stop buffering but keep draining so the 413 response is delivered
+        // instead of the socket being torn down mid-request.
+        overflow = true;
+        body = "";
+        reject(new RequestTooLargeError(maxBytes));
+        return;
       }
+      body += chunk;
     });
     req.on("end", () => {
+      if (overflow) return;
       if (!body) {
         resolve({});
         return;
@@ -1217,7 +1312,7 @@ async function readProviderSettings({ includeSecrets = false } = {}) {
 async function writeProviderSettings(settings) {
   const normalized = normalizeProviderSettings({ ...settings, updatedAt: new Date().toISOString() });
   await mkdir(appStateDir, { recursive: true });
-  await writeFile(providerSettingsPath, JSON.stringify(normalized, null, 2), "utf8");
+  await writeSecretFile(providerSettingsPath, JSON.stringify(normalized, null, 2));
   return normalized;
 }
 
@@ -1912,7 +2007,7 @@ async function ensureAgentRuntime(input, workspace) {
       },
     };
     if (!syncedAuth) delete nextConfig.auth;
-    await writeFile(configPath, JSON.stringify(nextConfig, null, 2), "utf8");
+    await writeSecretFile(configPath, JSON.stringify(nextConfig, null, 2));
   } catch {
     // If the copied config is not JSON, leave it untouched; Autohand will report the parse error.
   }
@@ -1936,6 +2031,7 @@ async function ensureAgentRuntime(input, workspace) {
         permissions: normalizeAgentPermissions(agent),
         modelAssignment: modelAssignmentFromAgent(agent),
         effectiveModel: publicResolvedProvider(resolvedProvider),
+        harness: harnessAssignmentFromAgent(agent),
         projects,
         limits: {
           maxProjectsPerMember,
@@ -1970,6 +2066,7 @@ async function ensureAgentRuntime(input, workspace) {
     effectiveModel: publicResolvedProvider(resolvedProvider),
     resolvedProvider,
     authReady,
+    harness: harnessAssignmentFromAgent(agent),
   };
 }
 
@@ -2904,6 +3001,8 @@ function runSummary(run) {
     profileDocs: run.profileDocs,
     brainCard: run.brainCard,
     transport: run.transport || "cli",
+    harness: run.harness || DEFAULT_HARNESS_ID,
+    harnessVersion: run.harnessVersion || "",
     command: run.command,
     logPath: run.logPath,
     status: run.status,
@@ -2947,6 +3046,10 @@ async function stopManagedRuns(reason = "service stopped") {
       } finally {
         run.sdk = null;
       }
+    }
+    if (run.abortController && !run.abortController.signal.aborted) {
+      run.abortController.abort();
+      stoppedRuns += 1;
     }
     run.status = "stopped";
     run.finishedAt = new Date().toISOString();
@@ -3502,7 +3605,8 @@ async function submitSquadFeedback(input = {}) {
     kind,
     rating: input.rating ? Number(input.rating) : null,
     description: sanitizeFeedbackText(input.description, 10000),
-    userEmail: String(input.userEmail || "").trim().slice(0, 320),
+    // The address is transmitted only when the user opted into contact.
+    userEmail: input.allowContact ? String(input.userEmail || "").trim().slice(0, 320) : "",
     allowContact: Boolean(input.allowContact && input.userEmail),
     timestamp: new Date().toISOString(),
     deviceId,
@@ -4962,6 +5066,8 @@ function startCliRun(run, args, workspace, agentRuntime) {
     windowsHide: true,
   });
   run.process = child;
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
   appendLog(run, "system", `started ${run.command}`);
 
   child.stdout.on("data", (chunk) => appendLog(run, "stdout", chunk));
@@ -5144,7 +5250,281 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
   }
 }
 
+// ---------------------------------------------------------------------------
+// External harness execution (Codex, Claude Code). The Autohand path above is
+// unchanged; these functions reuse the same event, trace, and reply helpers so
+// the UI renders every harness identically.
+// ---------------------------------------------------------------------------
+
+async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
+  const assignment = harnessAssignmentFromAgent(payload.agent);
+  const adapter = getAdapter(assignment);
+  const workspace = await cleanWorkspace(payload.workspace);
+  const prompt = String(payload.prompt || "").trim();
+  const profile = String(payload.profile || "").trim().slice(0, 12000);
+  const agentRuntime = await ensureAgentRuntime(payload, workspace);
+  const readiness = await assertHarnessReady(assignment, { context: harnessContextFor(assignment.id) });
+  const permissions = normalizeAgentPermissions(payload.agent);
+  const addDirs = [];
+  if (agentRuntime.profileDocs?.path) addDirs.push(agentRuntime.profileDocs.path);
+  for (const project of normalizeAgentProjects(payload.agent)) {
+    if (project.path !== workspace) addDirs.push(project.path);
+  }
+  const model = String(payload.model || assignment.model || "").trim();
+  const resumeId = payload.resumeSession === false ? "" : await readResumeId(agentRuntime.agentHome, adapter.id, workspace);
+  const build = (resume) =>
+    adapter.buildArgs({
+      prompt: mode === "auto" ? `${prompt}\n\nWork autonomously until the task is complete, then summarise what changed.` : prompt,
+      workspace,
+      model,
+      permissions,
+      policy: payload.policy || "",
+      appendSystemPrompt: profile,
+      addDirs,
+      resumeId: resume,
+    });
+  return {
+    assignment,
+    adapter,
+    readiness,
+    workspace,
+    prompt,
+    profile,
+    agentRuntime,
+    permissions,
+    model,
+    resumeId,
+    build,
+    executable: readiness.executablePath,
+    envVars: {
+      AUTOHAND_SQUAD_MEMBER: agentRuntime.agentId,
+      AUTOHAND_SQUAD_HARNESS: adapter.id,
+    },
+  };
+}
+
+function externalCommandLabel(adapter, displayArgs) {
+  return `${adapter.executableName} ${displayArgs.map(shellQuote).join(" ")}`;
+}
+
+async function executeExternalHarness(prepared, { timeoutMs, signal, onEvent }) {
+  const { adapter, executable, workspace, envVars, agentRuntime } = prepared;
+  let attempt = prepared.build(prepared.resumeId);
+  let output = await runExternalHarness({
+    adapter,
+    executable,
+    args: attempt.args,
+    cwd: workspace,
+    env: envVars,
+    timeoutMs,
+    signal,
+    onEvent,
+    terminate: terminateChildProcess,
+  });
+  // A stale resume id (deleted session, new vendor version) must not strand
+  // the member: retry once with a fresh session, then persist the new id.
+  if (output.error && prepared.resumeId && !output.stopped && !output.timedOut && output.events.filter((event) => event.type !== "tool_update").length <= 1) {
+    await writeResumeId(agentRuntime.agentHome, adapter.id, workspace, "");
+    attempt = prepared.build("");
+    output = await runExternalHarness({
+      adapter,
+      executable,
+      args: attempt.args,
+      cwd: workspace,
+      env: envVars,
+      timeoutMs,
+      signal,
+      onEvent,
+      terminate: terminateChildProcess,
+    });
+  }
+  if (output.resumeId && !output.stopped) {
+    await writeResumeId(agentRuntime.agentHome, adapter.id, workspace, output.resumeId).catch(() => {});
+  }
+  return { ...output, command: externalCommandLabel(adapter, attempt.displayArgs) };
+}
+
+function externalHarnessResult(prepared, output, { startedAt, payload }) {
+  const { adapter, workspace, agentRuntime } = prepared;
+  const reply = sdkReplyFromEvents(output.events, "");
+  const trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
+  const completedAt = Date.now();
+  const usageEvent = [...output.events].reverse().find((event) => event.type === "usage");
+  if (usageEvent?.usage) trace.usage = usageEvent.usage;
+  trace.command = output.command;
+  trace.exitCode = output.exitCode;
+  trace.transport = adapter.id;
+  trace.harness = adapter.id;
+  trace.sessionId = output.resumeId || "";
+  trace.startedAt = new Date(startedAt).toISOString();
+  trace.completedAt = new Date(completedAt).toISOString();
+  trace.durationMs = completedAt - startedAt;
+  return {
+    reply: reply || `${adapter.label} returned no chat text.`,
+    trace,
+    workspace,
+    command: output.command,
+    transport: adapter.id,
+    harness: adapter.id,
+    harnessVersion: prepared.readiness.version || "",
+    sessionId: output.resumeId || "",
+    startedAt: trace.startedAt,
+    completedAt: trace.completedAt,
+    durationMs: trace.durationMs,
+    configPath: agentRuntime.configPath,
+    displayConfigPath: agentRuntime.displayConfigPath,
+    agentHome: agentRuntime.agentHome,
+    effectiveModel: prepared.model ? { provider: adapter.vendor.toLowerCase(), model: prepared.model } : { provider: adapter.vendor.toLowerCase(), model: "" },
+    skillInstall: agentRuntime.skillInstall,
+    profileDocs: agentRuntime.profileDocs,
+    brainCard: agentRuntime.brainCard,
+    channel: channelContextFromPayload(payload),
+    contextLayers: chatContextLayers(payload, agentRuntime, trace),
+  };
+}
+
+async function chatOnceWithExternalHarness(payload) {
+  const prepared = await prepareExternalHarness(payload);
+  if (!prepared.prompt) throw new Error("prompt is required");
+  const channelContext = channelContextFromPayload(payload);
+  if (channelContext) {
+    await recordChannelDispatch(channelContext, { prompt: prepared.prompt, agentId: payload.agentId || prepared.agentRuntime.agentId });
+  }
+  const requestedTimeout = Number(payload.timeoutMs);
+  const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, 15000), 600000) : 300000;
+  const startedAt = Date.now();
+  const output = await executeExternalHarness(prepared, { timeoutMs, onEvent: () => {} });
+  const result = externalHarnessResult(prepared, output, { startedAt, payload });
+  const status = output.error ? "failed" : "completed";
+  recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime: { ...prepared.agentRuntime, effectiveModel: result.effectiveModel }, transport: prepared.adapter.id, status, trace: result.trace, command: output.command }));
+  if (output.error) throw new ChatRuntimeError(output.error, result);
+  return result;
+}
+
+async function streamChatWithExternalHarness(payload, { stream, signal, startedAt }) {
+  const prepared = await prepareExternalHarness(payload);
+  if (!prepared.prompt) throw new Error("prompt is required");
+  if (signal?.aborted) throw new Error("chat stopped by the user");
+  const channelContext = channelContextFromPayload(payload);
+  if (channelContext) {
+    await recordChannelDispatch(channelContext, { prompt: prepared.prompt, agentId: payload.agentId || prepared.agentRuntime.agentId });
+  }
+  const requestedTimeout = Number(payload.timeoutMs);
+  const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, 15000), 600000) : 300000;
+  stream.send("start", {
+    startedAt: new Date(startedAt).toISOString(),
+    workspace: prepared.workspace,
+    effectiveModel: { provider: prepared.adapter.vendor.toLowerCase(), model: prepared.model },
+    harness: prepared.adapter.id,
+    harnessVersion: prepared.readiness.version || "",
+    channel: channelContext,
+  });
+  stream.send("sdk", {
+    type: "status",
+    status: "harness_start",
+    label: `Starting ${prepared.adapter.label}${prepared.resumeId ? " (resuming session)" : ""}...`,
+    timestamp: new Date().toISOString(),
+  });
+  const output = await executeExternalHarness(prepared, {
+    timeoutMs,
+    signal,
+    onEvent: (event) => stream.send("sdk", chatStreamEventFromSdkEvent(event)),
+  });
+  const result = externalHarnessResult(prepared, output, { startedAt, payload });
+  const status = output.error ? "failed" : "completed";
+  recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime: { ...prepared.agentRuntime, effectiveModel: result.effectiveModel }, transport: prepared.adapter.id, status, trace: result.trace, command: output.command }));
+  if (output.error) throw new ChatRuntimeError(output.error, result);
+  stream.send("done", result);
+}
+
+async function startExternalHarnessRun(payload) {
+  const mode = payload.mode || "prompt";
+  if (mode === "permissions") {
+    throw new Error("Permission inspection is only available for Autohand members.");
+  }
+  const prepared = await prepareExternalHarness(payload, { mode });
+  if (!prepared.prompt) throw new Error("prompt is required");
+  const { adapter, workspace, agentRuntime } = prepared;
+  const contextPack = generateContextPack(mode, payload, agentRuntime, workspace);
+  const layerPayload = contextPack
+    ? { ...payload, contextPack: { id: contextPack.id, taskId: contextPack.taskId, summary: contextPack.summary } }
+    : payload;
+  const id = randomUUID();
+  const channelContext = channelContextFromPayload(payload);
+  const initialArgs = prepared.build(prepared.resumeId);
+  const run = {
+    id,
+    agentId: payload.agentId || agentRuntime.agentId,
+    title: payload.title || prepared.prompt,
+    mode,
+    channel: channelContext,
+    recipeId: typeof payload.recipeId === "string" && payload.recipeId ? payload.recipeId : null,
+    workspace,
+    configPath: agentRuntime.configPath,
+    displayConfigPath: agentRuntime.displayConfigPath,
+    agentHome: agentRuntime.agentHome,
+    effectiveModel: { provider: adapter.vendor.toLowerCase(), model: prepared.model },
+    skillInstall: agentRuntime.skillInstall,
+    profileDocs: agentRuntime.profileDocs,
+    brainCard: agentRuntime.brainCard,
+    transport: adapter.id,
+    harness: adapter.id,
+    harnessVersion: prepared.readiness.version || "",
+    command: externalCommandLabel(adapter, initialArgs.displayArgs),
+    logPath: join(runLogsDir, `${id}.log`),
+    status: "running",
+    exitCode: null,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    contextPack,
+    contextLayers: assembleContextLayers(mode, layerPayload, agentRuntime),
+    logs: [],
+    abortController: new AbortController(),
+  };
+  runs.set(id, run);
+  appendLog(run, "system", `started ${adapter.label} ${prepared.readiness.version || ""} transport ${run.command}`.replace("  ", " "));
+  if (channelContext) {
+    appendLog(run, "channel", `Channel dispatch ${channelContext.channelName || channelContext.channelId}${channelContext.threadId ? ` thread ${channelContext.threadId}` : ""}.`);
+    await recordChannelDispatch(channelContext, { prompt: prepared.prompt, agentId: run.agentId });
+  }
+  const maxRuntimeMs = mode === "auto" ? Math.min(Math.max(Number(payload.maxRuntime || 120), 1), 240) * 60_000 : 600000;
+  void (async () => {
+    try {
+      const output = await executeExternalHarness(prepared, {
+        timeoutMs: maxRuntimeMs,
+        signal: run.abortController.signal,
+        onEvent: (event) => appendSdkEventLog(run, event),
+      });
+      run.command = output.command;
+      if (run.status !== "stopped") {
+        run.exitCode = output.exitCode;
+        run.status = output.error ? "failed" : "completed";
+        run.finishedAt = new Date().toISOString();
+        run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
+        run.trace.harness = adapter.id;
+        run.trace.sessionId = output.resumeId || "";
+        if (output.error) appendLog(run, "stderr", output.error);
+        appendLog(run, "system", `${adapter.label} run ${run.status}`);
+        recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime: { ...agentRuntime, effectiveModel: run.effectiveModel }, transport: adapter.id, status: run.status, trace: run.trace, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
+      }
+    } catch (error) {
+      if (run.status !== "stopped") {
+        run.exitCode = 1;
+        run.status = "failed";
+        run.finishedAt = new Date().toISOString();
+        appendLog(run, "stderr", error.message || String(error));
+      }
+    } finally {
+      run.abortController = null;
+    }
+  })();
+  return runSummary(run);
+}
+
 async function startRun(payload) {
+  if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {
+    return startExternalHarnessRun(payload);
+  }
   const { args, displayArgs, workspace, prompt, mode, agentRuntime } = await autohandArgs(payload);
   if (!prompt && mode !== "permissions") {
     throw new Error("prompt is required");
@@ -5233,6 +5613,9 @@ async function startRun(payload) {
 }
 
 async function chatOnce(payload) {
+  if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {
+    return chatOnceWithExternalHarness(payload);
+  }
   const { args, displayArgs, workspace, prompt, agentRuntime } = await autohandArgs({
     ...payload,
     mode: "prompt",
@@ -5283,6 +5666,8 @@ async function chatOnce(payload) {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
 
     function finish(error, result) {
       if (settled) return;
@@ -5389,6 +5774,8 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
 
     function finish(error, result) {
       if (settled) return;
@@ -5507,6 +5894,10 @@ async function streamChat(payload, res) {
   res.on("close", abortStream);
 
   try {
+    if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {
+      await streamChatWithExternalHarness(payload, { stream, signal: abortController.signal, startedAt });
+      return;
+    }
     const { args, displayArgs, workspace, prompt, agentRuntime } = await autohandArgs({
       ...payload,
       mode: "prompt",
@@ -5585,7 +5976,8 @@ async function openTerminal(payload) {
   const profileDirArgs = agentRuntime.profileDocs?.path ? ` --add-dir ${shellQuote(agentRuntime.profileDocs.path)}` : "";
   const noIdleLogoutArg = autohandSupportsFlag("--no-idle-logout") ? " --no-idle-logout" : "";
   const envPrefix = `AUTOHAND_HOME=${shellQuote(agentRuntime.agentHome)} AUTOHAND_CONFIG=${shellQuote(agentRuntime.configPath)} AUTOHAND_CLIENT_NAME=${shellQuote(`autohand-squad-${agentRuntime.agentId}`)} AUTOHAND_NO_IDLE_LOGOUT=1`;
-  const baseCommand = `${envPrefix} autohand --path ${shellQuote(workspace)} --config ${shellQuote(agentRuntime.configPath)}${noIdleLogoutArg}${profileDirArgs}${profileArgs}`;
+  const autohandBinary = resolveAutohandBinary() || "autohand";
+  const baseCommand = `${envPrefix} ${shellQuote(autohandBinary)} --path ${shellQuote(workspace)} --config ${shellQuote(agentRuntime.configPath)}${noIdleLogoutArg}${profileDirArgs}${profileArgs}`;
   const command = prompt
     ? `cd ${shellQuote(workspace)} && ${baseCommand} --prompt ${shellQuote(prompt)}`
     : `cd ${shellQuote(workspace)} && ${baseCommand}`;
@@ -5595,13 +5987,19 @@ async function openTerminal(payload) {
     "activate",
     "end tell",
   ];
+  if (process.platform !== "darwin") {
+    throw new Error(`Open in Terminal is only available on macOS. Run this in your shell instead:\n${command}`);
+  }
   const result = spawnSync("osascript", script.flatMap((line) => ["-e", line]), {
     cwd: workspace,
     encoding: "utf8",
     timeout: 10000,
   });
+  if (result.error) {
+    throw new Error(`could not open Terminal: ${result.error.message}`);
+  }
   if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || "could not open Terminal");
+    throw new Error(String(result.stderr || "").trim() || "could not open Terminal");
   }
   return {
     command,
@@ -5618,6 +6016,33 @@ async function openTerminal(payload) {
 async function handleApi(req, res, url) {
   if (url.pathname === "/api/runtime" && req.method === "GET") {
     json(res, 200, { success: true, data: getRuntime() });
+    return true;
+  }
+
+  if (url.pathname === "/api/harnesses" && req.method === "GET") {
+    try {
+      const refresh = url.searchParams.get("refresh") === "1";
+      const harnesses = await listHarnesses({ refresh, contextFor: harnessContextFor });
+      json(res, 200, { success: true, data: { default: DEFAULT_HARNESS_ID, harnesses: harnesses.map(publicReadiness) } });
+    } catch (error) {
+      json(res, 500, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/harnesses/test" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const assignment = normalizeHarnessAssignment(payload);
+      const readiness = await detectHarness(assignment.id, {
+        explicitPath: assignment.executablePath,
+        refresh: true,
+        context: harnessContextFor(assignment.id),
+      });
+      json(res, 200, { success: true, data: publicReadiness(readiness) });
+    } catch (error) {
+      json(res, 400, { success: false, error: error.message });
+    }
     return true;
   }
 
@@ -5704,7 +6129,7 @@ async function handleApi(req, res, url) {
       const payload = await readBody(req);
       json(res, 200, { success: true, data: await writeMemoryInboxState(payload) });
     } catch (error) {
-      json(res, 400, { success: false, error: error.message });
+      json(res, error.status || 400, { success: false, error: error.message });
     }
     return true;
   }
@@ -5837,6 +6262,7 @@ async function handleApi(req, res, url) {
           profileDocs: agentRuntime.profileDocs,
           effectiveModel: agentRuntime.effectiveModel,
           skillInstall: agentRuntime.skillInstall,
+          harness: agentRuntime.harness,
         },
       });
     } catch (error) {
@@ -5858,7 +6284,15 @@ async function handleApi(req, res, url) {
       const payload = await readBody(req);
       json(res, 200, { success: true, data: await chatOnce(payload) });
     } catch (error) {
-      json(res, 400, { success: false, error: error.message });
+      // Runtime failures carry the partial reply and trace exactly like the
+      // streaming route's error event; a 502 marks the harness, not the caller.
+      const status = error instanceof ChatRuntimeError ? 502 : error instanceof HarnessNotReadyError ? 409 : error.status || 400;
+      json(res, status, {
+        success: false,
+        error: error.message,
+        ...(error instanceof ChatRuntimeError && error.details ? { data: error.details } : {}),
+        ...(error instanceof HarnessNotReadyError ? { harness: publicReadiness(error.readiness) } : {}),
+      });
     }
     return true;
   }
@@ -5934,21 +6368,43 @@ const mimeTypes = new Map([
 ]);
 
 async function serveStatic(req, res, url) {
-  const requestedPath = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.(\/|\\|$))+/, "");
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(url.pathname);
+  } catch {
+    json(res, 400, { success: false, error: "malformed path" });
+    return;
+  }
+  const requestedPath = normalize(decodedPath).replace(/^(\.\.(\/|\\|$))+/, "");
   const relativePath = requestedPath.replace(/^[/\\]+/, "");
   let filePath = join(distDir, relativePath === "" ? "index.html" : relativePath);
   if (!filePath.startsWith(distDir)) {
     json(res, 403, { success: false, error: "forbidden" });
     return;
   }
-  if (!existsSync(filePath)) filePath = join(distDir, "index.html");
   try {
-    const fileStat = await stat(filePath);
+    let fileStat = existsSync(filePath) ? await stat(filePath) : null;
+    if (!fileStat || !fileStat.isFile()) {
+      // Directories and unknown paths fall back to the SPA shell; a missing
+      // built asset must not masquerade as HTML.
+      if (relativePath.startsWith("assets/")) {
+        res.writeHead(404);
+        res.end("not found");
+        return;
+      }
+      filePath = join(distDir, "index.html");
+      fileStat = await stat(filePath);
+    }
     res.writeHead(200, {
       "content-type": mimeTypes.get(extname(filePath)) || "application/octet-stream",
       "content-length": fileStat.size,
     });
-    createReadStream(filePath).pipe(res);
+    const stream = createReadStream(filePath);
+    stream.on("error", () => {
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    });
+    stream.pipe(res);
   } catch {
     res.writeHead(404);
     res.end("not found");
@@ -5972,8 +6428,27 @@ if (isPackagedRuntime) {
 }
 
 server = createServer(async (req, res) => {
-  const url = new URL(req.url || "/", `http://${host}:${port}`);
-  if (await handleApi(req, res, url)) return;
+  let url;
+  try {
+    url = new URL(req.url || "/", `http://${host}:${port}`);
+  } catch {
+    json(res, 400, { success: false, error: "invalid request url" });
+    return;
+  }
+  if (url.pathname.startsWith("/api/")) {
+    if (!requestOriginAllowed(req, url)) {
+      json(res, 403, { success: false, error: "cross-origin requests to the local bridge are not allowed" });
+      return;
+    }
+    try {
+      if (await handleApi(req, res, url)) return;
+    } catch (error) {
+      if (!res.headersSent) json(res, error?.status || 500, { success: false, error: error?.message || "internal error" });
+      return;
+    }
+    json(res, 404, { success: false, error: `no route for ${req.method} ${url.pathname}` });
+    return;
+  }
   if (vite) {
     vite.middlewares(req, res, () => {
       readFile(join(rootDir, "index.html"), "utf8")

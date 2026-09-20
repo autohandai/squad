@@ -63,6 +63,7 @@ try {
   await runPackager(configPath);
   const installerPaths = await moveGeneratedInstallers();
   await recordChecksums(installerPaths);
+  await writeTrustRecord();
 } finally {
   await rm(scratchDir, { recursive: true, force: true });
 }
@@ -90,6 +91,9 @@ async function stageWebRuntime() {
 
   await copyRequiredDirectory(join(webRuntimeDir, 'dist'), join(resourcesDir, 'dist'));
   await assertFile(join(resourcesDir, 'dist', 'index.html'));
+  // Bridge runtime modules (harness adapters) live next to server.mjs.
+  await copyRequiredDirectory(join(webRuntimeDir, 'server'), join(resourcesDir, 'server'));
+  await assertFile(join(resourcesDir, 'server', 'harness', 'index.mjs'));
 }
 
 async function stageProductionModules() {
@@ -113,7 +117,10 @@ async function stageProductionModules() {
 
 async function stageNodeLicense() {
   const licensePath = await findNodeLicense(nodeRuntimePath);
-  if (!licensePath) return null;
+  if (!licensePath) {
+    // Node is always bundled; shipping it without its MIT notice is a release defect.
+    throw new Error(`Unable to locate the Node.js LICENSE next to ${nodeRuntimePath}`);
+  }
 
   const licenseName = 'NODE-LICENSE';
   await copyRequiredFile(licensePath, join(resourcesDir, licenseName));
@@ -126,6 +133,7 @@ async function writePackagerConfig(nodeLicenseName) {
 
   const resources = [
     'server.mjs',
+    'server',
     'package.json',
     'bun.lock',
     'README.md',
@@ -133,6 +141,8 @@ async function writePackagerConfig(nodeLicenseName) {
     'node_modules',
   ];
   if (nodeLicenseName) resources.push(nodeLicenseName);
+  const signing = signingConfig(releaseOs);
+  if (signing.summary) console.log(`Code signing: ${signing.summary}`);
 
   const packagerConfig = {
     name: 'autohand-squad',
@@ -162,6 +172,8 @@ async function writePackagerConfig(nodeLicenseName) {
       ? {
           macos: {
             infoPlistPath: await writeMacInfoPlist(),
+            entitlements: await writeMacEntitlements(),
+            ...signing.macos,
           },
         }
       : releaseOs === 'win32'
@@ -170,6 +182,7 @@ async function writePackagerConfig(nodeLicenseName) {
             installMode: 'currentUser',
             installerIcon: resolve('public', 'favicon.ico'),
           },
+          ...(signing.windows ? { windows: signing.windows } : {}),
         }
         : {
           deb: {
@@ -201,6 +214,88 @@ async function writeMacInfoPlist() {
 `;
   await writeFile(infoPlistPath, contents);
   return infoPlistPath;
+}
+
+// Signing inputs are optional. With APPLE_SIGNING_IDENTITY the packager signs
+// with Developer ID and, when APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID are also
+// present, notarizes the bundle. Without an identity the bundle is ad-hoc
+// signed ("-") so it is internally consistent and can be opened after the
+// quarantine flag is removed. Windows uses an Authenticode thumbprint from the
+// runner certificate store or a custom sign command (Azure Trusted Signing).
+function signingConfig(osName) {
+  if (osName === 'darwin') {
+    const identity = env('APPLE_SIGNING_IDENTITY', '');
+    const teamId = env('APPLE_TEAM_ID', '');
+    const notarize = Boolean(identity && env('APPLE_ID', '') && env('APPLE_PASSWORD', '') && teamId);
+    return {
+      macos: {
+        signingIdentity: identity || '-',
+        ...(identity && teamId ? { providerShortName: teamId } : {}),
+      },
+      summary: identity
+        ? `Developer ID (${identity})${notarize ? ' with notarization' : ' without notarization (APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID not set)'}`
+        : 'ad-hoc (set APPLE_SIGNING_IDENTITY to sign with Developer ID)',
+      trust: identity ? (notarize ? 'signed-notarized' : 'signed') : 'ad-hoc',
+    };
+  }
+  if (osName === 'win32') {
+    const thumbprint = env('WINDOWS_CERTIFICATE_THUMBPRINT', '');
+    const signCommand = env('WINDOWS_SIGN_COMMAND', '');
+    if (thumbprint) {
+      return {
+        windows: {
+          certificateThumbprint: thumbprint,
+          digestAlgorithm: 'sha256',
+          timestampUrl: env('WINDOWS_TIMESTAMP_URL', 'http://timestamp.digicert.com'),
+        },
+        summary: `Authenticode thumbprint ${thumbprint.slice(0, 8)}…`,
+        trust: 'signed',
+      };
+    }
+    if (signCommand) {
+      return { windows: { signCommand }, summary: 'custom sign command', trust: 'signed' };
+    }
+    return { windows: null, summary: 'unsigned (set WINDOWS_CERTIFICATE_THUMBPRINT or WINDOWS_SIGN_COMMAND)', trust: 'unsigned' };
+  }
+  return { summary: '', trust: 'unsigned' };
+}
+
+async function writeMacEntitlements() {
+  // Hardened runtime entitlements required by the bundled Node/Bun-based
+  // executables (JIT, unsigned executable memory, dyld env) under notarization.
+  const entitlementsPath = join(scratchDir, 'entitlements.plist');
+  const contents = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.network.server</key>
+  <true/>
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+</dict>
+</plist>
+`;
+  await writeFile(entitlementsPath, contents);
+  return entitlementsPath;
+}
+
+async function writeTrustRecord() {
+  const signing = signingConfig(releaseOs);
+  await mkdir(outDir, { recursive: true });
+  await writeFile(
+    join(outDir, `trust-${releaseOs}-${releaseArch}.json`),
+    `${JSON.stringify({ os: releaseOs, arch: releaseArch, trust: signing.trust, summary: signing.summary }, null, 2)}\n`,
+  );
 }
 
 async function runPackager(configPath) {
@@ -362,7 +457,7 @@ function installerSpecsForTarget(version, osName, archName) {
     return [{ extension: '.dmg', name: `autohand-squad-${version}-macos-${archName}.dmg` }];
   }
   if (osName === 'win32') {
-    return [{ extension: '.exe', name: `autohand-squad-${version}-windows-x64-setup.exe` }];
+    return [{ extension: '.exe', name: `autohand-squad-${version}-windows-${archName}-setup.exe` }];
   }
   return [
     { extension: '.deb', name: `autohand-squad-${version}-linux-${archName}.deb` },
@@ -424,6 +519,7 @@ async function validateNodeRuntime(executablePath) {
 function sdkCliName(osName, archName) {
   const names = {
     'linux/x64': 'autohand-linux-x64',
+    'linux/arm64': 'autohand-linux-arm64',
     'darwin/arm64': 'autohand-macos-arm64',
     'darwin/x64': 'autohand-macos-x64',
     'win32/x64': 'autohand-windows-x64.exe',
@@ -436,6 +532,7 @@ function sdkCliName(osName, archName) {
 function targetTriple(osName, archName) {
   const triples = {
     'linux/x64': 'x86_64-unknown-linux-gnu',
+    'linux/arm64': 'aarch64-unknown-linux-gnu',
     'darwin/arm64': 'aarch64-apple-darwin',
     'darwin/x64': 'x86_64-apple-darwin',
     'win32/x64': 'x86_64-pc-windows-msvc',

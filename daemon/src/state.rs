@@ -349,9 +349,18 @@ where
         return Ok(None);
     }
     let content = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let value =
-        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
-    Ok(Some(value))
+    match serde_json::from_str(&content) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) => {
+            // A record torn by a crash mid-write must not block the launch;
+            // treat it as absent and let the owner rewrite it.
+            eprintln!(
+                "ignoring unreadable state record {}: {error}",
+                path.display()
+            );
+            Ok(None)
+        }
+    }
 }
 
 fn write_json_file<T>(path: &Path, value: &T) -> Result<()>
@@ -359,7 +368,11 @@ where
     T: Serialize,
 {
     let content = serde_json::to_string_pretty(value)?;
-    fs::write(path, format!("{content}\n")).with_context(|| format!("write {}", path.display()))?;
+    // Write-then-rename so readers never observe a half-written record.
+    let temp = path.with_extension("json.tmp");
+    fs::write(&temp, format!("{content}\n"))
+        .with_context(|| format!("write {}", temp.display()))?;
+    fs::rename(&temp, path).with_context(|| format!("replace {}", path.display()))?;
     Ok(())
 }
 

@@ -1,7 +1,8 @@
 # Autohand Squad Setup Guide
 
-This guide is for internal Autohand engineers working on the local-first
-Autohand Squad prototype and standalone runtime.
+This guide is for contributors working on the local-first Autohand Squad web
+app and standalone runtime. Read [CONTRIBUTING.md](CONTRIBUTING.md) before
+submitting a change.
 
 ## Repository Shape
 
@@ -20,11 +21,13 @@ Release and installer logic lives in `.github/`, `scripts/`, and
 
 Install these before working in the repo:
 
-- Bun for the web app and local bridge.
-- Rust stable with Cargo for the standalone runtime.
+- Node.js 18.17 or newer and Bun 1.3.13 for the web app, scripts, and local
+  bridge.
+- Rust stable with Cargo and `rustfmt` for the standalone runtime.
 - The Autohand CLI on your `PATH` when testing real chat, run, terminal, or
   squad-member execution flows.
-- GitHub access to the internal Autohand repository and Actions logs.
+- A GitHub account and a fork of `autohandai/squad` when contributing through a
+  pull request.
 - Optional: a local `autohandai/community-skills` checkout if you need to test
   skill installation before remote registry fetches.
 
@@ -32,12 +35,20 @@ On macOS, the desktop tray binary appears as a menu bar controller. Windows and
 Linux runtime builds are covered by CI, but local tray behavior depends on the
 host desktop environment.
 
+On Debian or Ubuntu, install the native tray build dependencies with:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev pkg-config
+```
+
 ## First-Time Setup
 
 From the repository root:
 
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run build
 cd daemon
 cargo build --bins -j1
@@ -131,7 +142,7 @@ AUTOHAND_SQUAD_HANDOFF_RETRY_MODE=manual \
 
 ## Local State
 
-The prototype intentionally keeps most state local:
+The app intentionally keeps most state local:
 
 - Browser local storage stores roster, messages, theme, language, automations,
   tasks, and handoff preferences.
@@ -140,7 +151,7 @@ The prototype intentionally keeps most state local:
 - `~/.autohand/squad/` stores runtime daemon state, install records, logs,
   queue records, run records, config, telemetry, sync, update, analytics, web
   server, and tray state.
-- `~/.autohandsquad/` stores local worker/workspace data used by the prototype.
+- `~/.autohandsquad/` stores local worker/workspace data used by the app.
 
 For a clean UI-only test, clear the browser's local storage for
 `127.0.0.1:19821`. For a clean squad-member profile, remove only the matching
@@ -165,6 +176,33 @@ profile, verifies `/` routes into `/welcome`, skips into `/squad`, resumes setup
 from the app shell, opens the Settings LLM provider controls, and writes
 screenshots to `.codex-artifacts/`.
 
+## Agent Harnesses
+
+Members run on one of three engines, chosen per member in **Runs with** and
+changeable later from the member's Harness page:
+
+| Harness | Interface | Readiness check |
+| --- | --- | --- |
+| Autohand Code (default) | bundled `@autohandai/agent-sdk` CLI over JSON-RPC | bundled CLI present and `autohand login` completed |
+| Codex | `codex exec --json` (resume by thread id) | `codex` on a GUI-safe PATH, `~/.codex/auth.json` or `OPENAI_API_KEY` |
+| Claude Code | `claude -p --output-format stream-json --verbose` (resume by session id) | `claude` on a GUI-safe PATH and a completed first run |
+
+Readiness is served by `GET /api/harnesses` (add `?refresh=1` to bypass the
+five-minute cache) and tested with `POST /api/harnesses/test`. The bridge maps
+the permission ladder to each vendor: restricted → Codex `read-only` / Claude
+`plan`; interactive → `workspace-write` / `acceptEdits`; unrestricted →
+`danger-full-access` / `bypassPermissions`.
+
+To develop against a local SDK checkout instead of the published package:
+
+```bash
+AUTOHAND_AGENT_SDK_DIR=/path/to/tin-wrapper/typescript bun run dev
+AUTOHAND_AGENT_SDK_DIR=/path/to/tin-wrapper/typescript bun run check:sdk
+```
+
+Run `bun run check:harness` for the deterministic adapter checks (no vendor
+calls) and `./daemon/target/debug/squad doctor` for the launcher preflight.
+
 ## Verification
 
 Use the smallest check that proves your change, then run broader checks before
@@ -173,7 +211,7 @@ opening a PR.
 For docs-only changes:
 
 ```bash
-bun run check:server
+git diff --check
 ```
 
 For web UI, bridge API, copy, routes, or frontend state:
@@ -189,7 +227,7 @@ For runtime, daemon, analytics, tray, state, or launcher behavior:
 ```bash
 cd daemon
 cargo fmt -- --check
-cargo test -j1
+cargo test -j1 -- --test-threads=1
 cargo build --bins -j1
 ```
 
@@ -235,10 +273,12 @@ If runtime behavior looks wrong after repeated tests, start with
 `./target/debug/squad status`, then stop the stack and use an isolated
 `AUTOHAND_SQUAD_HOME` for the next run.
 
-## Internal Contribution Checklist
+## Contribution Checklist
 
 Before opening a PR:
 
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md) and the
+  [Code of Conduct](CODE_OF_CONDUCT.md).
 - Keep visible product language consistent: use `Autohand Squad` and
   `squad member`.
 - Preserve legacy compatibility unless the PR explicitly removes it.

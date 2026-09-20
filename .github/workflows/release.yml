@@ -137,6 +137,7 @@ jobs:
       - name: Run web release checks
         run: |
           bun run check:sdk
+          bun run check:harness
           bun run check:server
           bun run check:release
           bun run build
@@ -146,7 +147,7 @@ jobs:
         run: |
           mkdir -p release/web/runtime release/web-staging
           web_asset="autohand-squad-web-${{ needs.setup.outputs.version }}.tar.gz"
-          cp -R dist server.mjs package.json bun.lock README.md release/web-staging/
+          cp -R dist server server.mjs package.json bun.lock README.md release/web-staging/
           node -e "const fs = require('fs'); const file = process.argv[1]; const metadata = JSON.parse(fs.readFileSync(file, 'utf8')); metadata.version = process.argv[2]; fs.writeFileSync(file, JSON.stringify(metadata, null, 2) + '\n');" \
             release/web-staging/package.json \
             '${{ needs.setup.outputs.version }}'
@@ -278,6 +279,57 @@ jobs:
           bun run release:package
           bun run release:portable
 
+      - name: Import Apple signing certificate
+        if: matrix.os == 'darwin'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${APPLE_CERTIFICATE:-}" ]]; then
+            echo "APPLE_CERTIFICATE secret is not set; the macOS bundle will be ad-hoc signed."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/squad-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "${APPLE_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*"' | head -n1 | tr -d '"')"
+          if [[ -z "$identity" ]]; then
+            echo "::error::No Developer ID Application identity was found in the imported certificate."
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          rm -f "$certificate"
+          echo "Imported signing identity: $identity"
+
+      - name: Import Windows signing certificate
+        if: matrix.os == 'win32'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:WINDOWS_CERTIFICATE) {
+            Write-Host 'WINDOWS_CERTIFICATE secret is not set; the Windows installer will be unsigned.'
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'authenticode.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString -String ($env:WINDOWS_CERTIFICATE_PASSWORD ?? '') -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $pfx -Force
+          "WINDOWS_CERTIFICATE_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Imported Authenticode certificate $($cert.Thumbprint)"
+
       - name: Package native installer
         shell: bash
         env:
@@ -285,6 +337,10 @@ jobs:
           RELEASE_OS: ${{ matrix.os }}
           RELEASE_ARCH: ${{ matrix.arch }}
           WEB_RUNTIME_DIR: ${{ runner.temp }}/squad-web-bundle/runtime
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
         run: |
           NODE_RUNTIME_PATH="$(node -p 'process.execPath')" bun run release:installers
 
@@ -347,8 +403,14 @@ jobs:
           test -x "$node"
           test -f "$server"
           test -f "$app/Contents/Resources/dist/index.html"
+          test -f "$app/Contents/Resources/server/harness/index.mjs"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+            spctl --assess --type execute --verbose=2 "$app" || echo "::warning::Gatekeeper assessment failed; notarization may be incomplete."
+          fi
           "$node" --version
           "$squad" --help
+          AUTOHAND_SQUAD_HOME="$state_root" "$squad" doctor || echo "::warning::squad doctor reported failures inside the mounted DMG (expected when ports are busy)."
 
           AUTOHAND_HOME="$state_root/autohand-home" AUTOHAND_SQUAD_HOME="$state_root" "$squad" serve --server-path "$server" --web-port "$web_port"
           ready=false
@@ -401,16 +463,13 @@ jobs:
             throw 'Autohand Squad was not registered as an installed application.'
           }
 
-          $installRoot = $entry.InstallLocation.Trim('"')
-          if (-not $installRoot) {
-            $uninstaller = $entry.UninstallString.Trim('"')
-            $installRoot = Split-Path $uninstaller -Parent
-          }
+          $installRoot = if ($entry.InstallLocation) { $entry.InstallLocation.Trim('"') } else { Split-Path ($entry.UninstallString.Trim('"')) -Parent }
           $squad = Join-Path $installRoot 'squad.exe'
           $node = Join-Path $installRoot 'node.exe'
           $server = Join-Path $installRoot 'server.mjs'
+          $harness = Join-Path $installRoot 'server\harness\index.mjs'
           $ui = Join-Path $installRoot 'autohand-squad-ui.exe'
-          foreach ($path in @($squad, $node, $server, $ui)) {
+          foreach ($path in @($squad, $node, $server, $harness, $ui)) {
             if (-not (Test-Path $path)) { throw "Missing installed runtime file: $path" }
           }
 
@@ -418,6 +477,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Bundled Node.js did not start.' }
           & $squad --help
           if ($LASTEXITCODE -ne 0) { throw 'Installed Squad CLI did not start.' }
+          $env:AUTOHAND_SQUAD_HOME = $stateRoot
+          & $squad doctor
+          if ($LASTEXITCODE -ne 0) { Write-Warning 'squad doctor reported failures on the installed runtime.' }
 
           try {
             $env:AUTOHAND_HOME = Join-Path $stateRoot 'autohand-home'
@@ -487,6 +549,7 @@ jobs:
           test -x "$extract_root/usr/bin/autohand-squad-ui"
           test -x "$extract_root/usr/bin/node"
           test -f "$extract_root/usr/lib/autohand-squad-ui/server.mjs"
+          test -f "$extract_root/usr/lib/autohand-squad-ui/server/harness/index.mjs"
           test -f "$extract_root/usr/lib/autohand-squad-ui/node_modules/@autohandai/agent-sdk/package.json"
 
           mkdir -p "$appimage_root"
@@ -557,7 +620,9 @@ jobs:
           node scripts/merge-release-manifests.mjs release-downloads
 
           mkdir -p release/publish
-          find release-downloads -type f \( -name 'squad-*' -o -name 'autohand-squad-*' -o -name 'checksums-*.txt' \) -exec cp {} release/publish/ \;
+          # Assets sit exactly at release-downloads/<target>/<asset>; bounding the depth keeps
+          # web-bundle dist/ files (brand images named autohand-squad-*) out of the release.
+          find release-downloads -mindepth 2 -maxdepth 2 -type f \( -name 'squad-*' -o -name 'autohand-squad-*' -o -name 'checksums-*.txt' -o -name 'trust-*.json' \) -exec cp {} release/publish/ \;
           cp "release/manifest-${{ needs.setup.outputs.channel }}.json" release/publish/
           cp release/checksums.txt release/publish/
           cp release/release-summary.md release/publish/

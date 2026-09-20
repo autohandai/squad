@@ -84,6 +84,11 @@ async function stageWebRuntime() {
     preserveTimestamps: true,
   });
   await assertFile(join(bundleRoot, 'dist', 'index.html'));
+
+  const serverModules = join(webRuntimeDir, 'server');
+  await assertDirectory(serverModules);
+  await cp(serverModules, join(bundleRoot, 'server'), { recursive: true, dereference: true, preserveTimestamps: true });
+  await assertFile(join(bundleRoot, 'server', 'harness', 'index.mjs'));
 }
 
 async function stageProductionModules() {
@@ -186,6 +191,7 @@ async function hashFile(filePath) {
 function sdkCliName(osName, archName) {
   const names = {
     'linux/x64': 'autohand-linux-x64',
+    'linux/arm64': 'autohand-linux-arm64',
     'darwin/arm64': 'autohand-macos-arm64',
     'darwin/x64': 'autohand-macos-x64',
     'win32/x64': 'autohand-windows-x64.exe',

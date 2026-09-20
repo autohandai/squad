@@ -5,7 +5,7 @@
     "": {
       "name": "autohandswe",
       "dependencies": {
-        "@autohandai/agent-sdk": "1.0.4",
+        "@autohandai/agent-sdk": "1.0.5",
         "@radix-ui/react-avatar": "^1.1.11",
         "@radix-ui/react-dialog": "^1.1.15",
         "@radix-ui/react-label": "^2.1.8",
@@ -44,7 +44,7 @@
   "packages": {
     "@alloc/quick-lru": ["@alloc/quick-lru@5.2.0", "", {}, "sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw=="],
 
-    "@autohandai/agent-sdk": ["@autohandai/agent-sdk@1.0.4", "", { "dependencies": { "toml": "^4.1.1", "yaml": "^2.8.4" } }, "sha512-I0im1h+2eBM+/LU9AxRvjeytOCdtBa1Y43r108qiSSjp2JST8Twm1v8LOzI78owOFbhrhas/TUSHsETmuXdXjQ=="],
+    "@autohandai/agent-sdk": ["@autohandai/agent-sdk@1.0.5", "", { "dependencies": { "toml": "^4.1.1", "yaml": "^2.8.4" } }, "sha512-P/9ey/qqtXfjVUxZ8owuB1IfWtl+suo2LbCBHK5f378HnsQhMvR9fLSY150UURtaZWaAYPOL+VpnLcnUiyWNQQ=="],
 
     "@babel/code-frame": ["@babel/code-frame@7.29.0", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.28.5", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw=="],
 

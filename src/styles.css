@@ -5,6 +5,9 @@
 @source "./App.jsx";
 @source "./data.js";
 @source "./components/channels/**/*.jsx";
+@source "./components/shell/**/*.jsx";
+@source "./components/members/**/*.jsx";
+@source "./components/inbox/**/*.jsx";
 @source "./components/ui/**/*.jsx";
 @source "./lib/**/*.js";
 
