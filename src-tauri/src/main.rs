@@ -12,23 +12,48 @@
     windows_subsystem = "windows"
 )]
 
+use autohand_squad_runtime::account_usage::AccountUsage;
 use autohand_squad_runtime::cli::DESKTOP_SHELL_ENV;
-use autohand_squad_runtime::config::PartialSquadConfig;
+use autohand_squad_runtime::config::{resolve_config, PartialSquadConfig};
+use autohand_squad_runtime::desktop_tray::{
+    load_desktop_tray_model, refresh_account_usage, DesktopTrayModel,
+};
 use autohand_squad_runtime::gui_bootstrap::{run_desktop_bootstrap_with, BootstrapOutcome};
-use autohand_squad_runtime::ui::{default_paths, run_tray_action, TrayAction};
+use autohand_squad_runtime::ui::{
+    about_route_for_paths, default_paths, feedback_route_for_paths, run_tray_action, TrayAction,
+};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use std::time::Duration;
+use tauri::menu::{
+    AboutMetadata, CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu,
+};
+use tauri::tray::{TrayIcon, TrayIconBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
 use tokio::runtime::Runtime;
 
 const MAIN_WINDOW: &str = "main";
+/// Squad status (members, daemon) is re-read on this cadence; account usage
+/// every `USAGE_REFRESH_TICKS` of them, or on demand from the tray.
+const TRAY_REFRESH: Duration = Duration::from_secs(60);
+const USAGE_REFRESH_TICKS: u32 = 5;
+
+#[derive(Default)]
+struct UsageCache {
+    snapshot: Option<AccountUsage>,
+    error: Option<String>,
+}
 
 struct Shell {
     /// URL of the local bridge once the bootstrap succeeded.
     app_url: Mutex<Option<String>>,
     runtime: Runtime,
+    tray: Mutex<Option<TrayIcon<Wry>>>,
+    usage: Mutex<UsageCache>,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
 fn main() {
@@ -42,6 +67,8 @@ fn main() {
             let shell = Arc::new(Shell {
                 app_url: Mutex::new(None),
                 runtime: Runtime::new()?,
+                tray: Mutex::new(None),
+                usage: Mutex::new(UsageCache::default()),
             });
             app.manage(shell.clone());
 
@@ -100,10 +127,7 @@ fn main() {
                 let overrides = PartialSquadConfig::default();
                 match run_desktop_bootstrap_with(&shell.runtime, &paths, &overrides, false) {
                     Ok(BootstrapOutcome::Ready { url }) => {
-                        *shell
-                            .app_url
-                            .lock()
-                            .unwrap_or_else(|poison| poison.into_inner()) = Some(url.clone());
+                        *lock(&shell.app_url) = Some(url.clone());
                         if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
                             if let Ok(target) = url.parse() {
                                 let _ = window.navigate(target);
@@ -111,6 +135,7 @@ fn main() {
                             let _ = window.show();
                             let _ = window.set_focus();
                         }
+                        start_tray_refresh(handle, shell);
                     }
                     Ok(BootstrapOutcome::Quit) => handle.exit(0),
                     Err(error) => {
@@ -126,16 +151,7 @@ fn main() {
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
             if let Some(action) = id.strip_prefix("menu:") {
-                let action = action.to_string();
-                if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    let script = format!(
-                        "window.dispatchEvent(new CustomEvent('autohand-squad:menu', {{ detail: {{ action: {} }} }}))",
-                        serde_json::to_string(&action).unwrap_or_else(|_| "\"\"".to_string())
-                    );
-                    let _ = window.eval(&script);
-                }
+                dispatch_menu_action(app, action);
             }
         })
         .on_window_event(|window, event| {
@@ -206,7 +222,7 @@ fn sidecar_name(base: &str) -> String {
 /// to its own navigation (src/lib/desktop-menu.js), so the menu never needs to
 /// know routes. Edit and Window are the predefined items the webview needs for
 /// clipboard, undo, and window shortcuts to work.
-fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let item = |id: &str, label: &str, accelerator: Option<&str>| {
         MenuItem::with_id(app, format!("menu:{id}"), label, true, accelerator)
     };
@@ -273,7 +289,7 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         ],
     )?;
 
-    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::new();
+    let mut items: Vec<&dyn IsMenuItem<Wry>> = Vec::new();
     #[cfg(target_os = "macos")]
     let app_menu = {
         let settings = item("settings", "Settings…", Some("CmdOrCtrl+,"))?;
@@ -313,23 +329,29 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Menu::with_items(app, &items)
 }
 
+/// Menu selections reach the page as one DOM event; the web app routes them.
+fn dispatch_menu_action(app: &AppHandle, action: &str) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let script = format!(
+            "window.dispatchEvent(new CustomEvent('autohand-squad:menu', {{ detail: {{ action: {} }} }}))",
+            serde_json::to_string(action).unwrap_or_else(|_| "\"\"".to_string())
+        );
+        let _ = window.eval(&script);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tray
+// ---------------------------------------------------------------------------
+
 fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open Autohand Squad", true, None::<&str>)?;
-    let login = MenuItem::with_id(app, "login", "Sign in…", true, None::<&str>)?;
-    let logs = MenuItem::with_id(app, "logs", "Open logs folder", true, None::<&str>)?;
-    let stop = MenuItem::with_id(app, "stop", "Stop services", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &open,
-            &login,
-            &logs,
-            &PredefinedMenuItem::separator(app)?,
-            &stop,
-            &quit,
-        ],
-    )?;
+    let starting = DesktopTrayModel {
+        account_label: "Starting…".to_string(),
+        ..Default::default()
+    };
+    let menu = tray_menu(app, &starting)?;
     let icon = app.default_window_icon().cloned();
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
@@ -338,64 +360,240 @@ fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
     if let Some(icon) = icon {
         builder = builder.icon(icon);
     }
-    builder
+    let events_shell = shell.clone();
+    let tray = builder
         .on_menu_event(move |handle, event| {
-            let id = event.id().as_ref().to_string();
-            match id.as_str() {
-                "open" => focus_main_window(handle),
-                "logs" => {
-                    let paths = default_paths();
-                    let _ = tauri_plugin_opener::open_path(
-                        paths.root.to_string_lossy().to_string(),
-                        None::<&str>,
-                    );
-                }
-                "login" | "stop" => {
-                    let shell = shell.clone();
-                    let handle = handle.clone();
-                    std::thread::spawn(move || {
-                        let action = if id == "login" {
-                            TrayAction::Login
-                        } else {
-                            TrayAction::StopService
-                        };
-                        let paths = default_paths();
-                        let overrides = PartialSquadConfig::default();
-                        match shell
-                            .runtime
-                            .block_on(run_tray_action(paths, overrides, action))
-                        {
-                            Ok(output) => println!("{output}"),
-                            Err(error) => eprintln!("{id} failed: {error:#}"),
-                        }
-                        if id == "login" {
-                            // The bridge picks the new account up on its next poll;
-                            // reload so the sign-in gate re-checks immediately.
-                            if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
-                                let _ = window.eval("window.location.reload()");
-                            }
-                        }
-                    });
-                }
-                "quit" => {
-                    let shell = shell.clone();
-                    let handle = handle.clone();
-                    std::thread::spawn(move || {
-                        let paths = default_paths();
-                        let overrides = PartialSquadConfig::default();
-                        let _ = shell.runtime.block_on(run_tray_action(
-                            paths,
-                            overrides,
-                            TrayAction::StopService,
-                        ));
-                        handle.exit(0);
-                    });
-                }
-                _ => {}
-            }
+            handle_tray_event(handle, events_shell.clone(), event.id().as_ref());
         })
         .build(app)?;
+    *lock(&shell.tray) = Some(tray);
     Ok(())
+}
+
+/// The tray menu: account and plan usage at a glance (quiet, disabled lines),
+/// then the actions. Rebuilt from a fresh model on every refresh.
+fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wry>> {
+    let info = |id: &str, label: &str| MenuItem::with_id(app, id, label, false, None::<&str>);
+    let action = |id: &str, label: &str, enabled: bool| {
+        MenuItem::with_id(app, id, label, enabled, None::<&str>)
+    };
+    let mut owned: Vec<Box<dyn IsMenuItem<Wry>>> = Vec::new();
+
+    owned.push(Box::new(info("account", &model.account_label)?));
+    if let Some(plan) = &model.plan_label {
+        owned.push(Box::new(info("plan", plan)?));
+    }
+    for (index, line) in model.usage_lines.iter().enumerate() {
+        owned.push(Box::new(info(&format!("usage-{index}"), line)?));
+    }
+    if let Some(note) = &model.usage_note {
+        owned.push(Box::new(info("usage-note", note)?));
+    }
+    if let Some(squad) = &model.squad_line {
+        owned.push(Box::new(info("squad", squad)?));
+    }
+    owned.push(Box::new(PredefinedMenuItem::separator(app)?));
+
+    owned.push(Box::new(action("open", "Open Autohand Squad", true)?));
+    owned.push(Box::new(action("mission-control", "Mission Control", true)?));
+    if !model.members.is_empty() {
+        let members = model
+            .members
+            .iter()
+            .map(|member| action(&format!("member:{}", member.id), &member.label, true))
+            .collect::<tauri::Result<Vec<_>>>()?;
+        let refs: Vec<&dyn IsMenuItem<Wry>> = members
+            .iter()
+            .map(|item| item as &dyn IsMenuItem<Wry>)
+            .collect();
+        owned.push(Box::new(Submenu::with_items(app, "Members", true, &refs)?));
+    }
+    owned.push(Box::new(action("refresh", "Refresh usage", model.signed_in)?));
+    owned.push(Box::new(PredefinedMenuItem::separator(app)?));
+
+    if model.signed_in {
+        owned.push(Box::new(action("logout", "Sign out", true)?));
+    } else {
+        owned.push(Box::new(action("login", "Sign in…", true)?));
+    }
+    owned.push(Box::new(action("update", "Check for updates…", true)?));
+    owned.push(Box::new(CheckMenuItem::with_id(
+        app,
+        "launch-at-login",
+        "Launch at Login",
+        model.daemon_running,
+        model.launch_at_login,
+        None::<&str>,
+    )?));
+    owned.push(Box::new(PredefinedMenuItem::separator(app)?));
+
+    owned.push(Box::new(action("start", "Start services", !model.daemon_running)?));
+    owned.push(Box::new(action("stop", "Stop services", model.daemon_running)?));
+    owned.push(Box::new(action("restart", "Restart services", model.daemon_running)?));
+    owned.push(Box::new(action("logs", "Open logs folder", true)?));
+    owned.push(Box::new(action("settings", "Settings…", true)?));
+    owned.push(Box::new(action("report-bug", "Report a bug", true)?));
+    owned.push(Box::new(action("give-feedback", "Give feedback", true)?));
+    owned.push(Box::new(action("about", "About Autohand Squad", true)?));
+    owned.push(Box::new(PredefinedMenuItem::separator(app)?));
+    owned.push(Box::new(action("quit", "Quit", true)?));
+
+    let refs: Vec<&dyn IsMenuItem<Wry>> = owned.iter().map(|item| item.as_ref()).collect();
+    Menu::with_items(app, &refs)
+}
+
+fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
+    let paths = default_paths();
+    match id {
+        "open" => focus_main_window(handle),
+        "mission-control" => navigate_app(handle, &shell, "/mission-control"),
+        "settings" => navigate_app(handle, &shell, "/settings"),
+        "report-bug" => navigate_app(handle, &shell, &feedback_route_for_paths(&paths, "bug")),
+        "give-feedback" => {
+            navigate_app(handle, &shell, &feedback_route_for_paths(&paths, "feedback"))
+        }
+        "about" => navigate_app(handle, &shell, &about_route_for_paths(&paths)),
+        "logs" => {
+            let _ = tauri_plugin_opener::open_path(
+                paths.root.to_string_lossy().to_string(),
+                None::<&str>,
+            );
+        }
+        "refresh" => refresh_tray(handle.clone(), shell, true),
+        "login" | "logout" | "update" | "start" | "stop" | "restart" | "launch-at-login" => {
+            let action = match id {
+                "login" => TrayAction::Login,
+                "logout" => TrayAction::Logout,
+                "update" => TrayAction::UpdateSquad,
+                "start" => TrayAction::StartService,
+                "stop" => TrayAction::StopService,
+                "restart" => TrayAction::RestartService,
+                _ => TrayAction::LaunchAtLogin,
+            };
+            let id = id.to_string();
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                let overrides = PartialSquadConfig::default();
+                match shell
+                    .runtime
+                    .block_on(run_tray_action(paths, overrides, action))
+                {
+                    Ok(output) => println!("{output}"),
+                    Err(error) => eprintln!("{id} failed: {error:#}"),
+                }
+                match id.as_str() {
+                    // The sign-in gate and account footer re-check on reload.
+                    "login" | "logout" => {
+                        if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
+                            let _ = window.eval("window.location.reload()");
+                        }
+                    }
+                    "update" => navigate_app(&handle, &shell, "/settings?section=updates"),
+                    _ => {}
+                }
+                refresh_tray(handle, shell, matches!(id.as_str(), "login" | "logout"));
+            });
+        }
+        "quit" => {
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                let overrides = PartialSquadConfig::default();
+                let _ = shell.runtime.block_on(run_tray_action(
+                    paths,
+                    overrides,
+                    TrayAction::StopService,
+                ));
+                handle.exit(0);
+            });
+        }
+        other => {
+            if let Some(member_id) = other.strip_prefix("member:") {
+                let encoded: String = member_id
+                    .bytes()
+                    .map(|byte| match byte {
+                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                            (byte as char).to_string()
+                        }
+                        _ => format!("%{byte:02X}"),
+                    })
+                    .collect();
+                navigate_app(handle, &shell, &format!("/conversations/new?member={encoded}"));
+            }
+        }
+    }
+}
+
+/// Route the single-page app to `path` (client-side, no reload) and focus it.
+fn navigate_app(handle: &AppHandle, shell: &Shell, path: &str) {
+    let Some(window) = handle.get_webview_window(MAIN_WINDOW) else {
+        return;
+    };
+    if lock(&shell.app_url).is_some() {
+        let script = format!(
+            "history.pushState({{}}, '', {}); window.dispatchEvent(new PopStateEvent('popstate'));",
+            serde_json::to_string(path).unwrap_or_else(|_| "\"/\"".to_string())
+        );
+        let _ = window.eval(&script);
+    }
+    focus_main_window(handle);
+}
+
+fn start_tray_refresh(handle: AppHandle, shell: Arc<Shell>) {
+    refresh_tray(handle.clone(), shell.clone(), true);
+    std::thread::spawn(move || {
+        let mut tick: u32 = 0;
+        loop {
+            std::thread::sleep(TRAY_REFRESH);
+            tick = tick.wrapping_add(1);
+            refresh_tray(
+                handle.clone(),
+                shell.clone(),
+                tick % USAGE_REFRESH_TICKS == 0,
+            );
+        }
+    });
+}
+
+/// Rebuild the tray menu from fresh squad status and (optionally) fresh
+/// account usage. Runs off the main thread; the menu swap is dispatched.
+fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
+    std::thread::spawn(move || {
+        let paths = default_paths();
+        let overrides = PartialSquadConfig::default();
+        if refresh_usage {
+            let result = resolve_config(&paths, overrides.clone())
+                .map(|config| refresh_account_usage(&config));
+            let mut cache = lock(&shell.usage);
+            match result {
+                Ok(Ok(Some(snapshot))) => {
+                    cache.snapshot = Some(snapshot);
+                    cache.error = None;
+                }
+                Ok(Ok(None)) => {
+                    cache.snapshot = None;
+                    cache.error = None;
+                }
+                Ok(Err(error)) | Err(error) => {
+                    cache.error = Some(format!("{error:#}"));
+                }
+            }
+        }
+        let (usage, error) = {
+            let cache = lock(&shell.usage);
+            (cache.snapshot.clone(), cache.error.clone())
+        };
+        let model = load_desktop_tray_model(&paths, &overrides, usage.as_ref(), error.as_deref());
+        match tray_menu(&handle, &model) {
+            Ok(menu) => {
+                if let Some(tray) = lock(&shell.tray).as_ref() {
+                    if let Err(error) = tray.set_menu(Some(menu)) {
+                        eprintln!("tray menu update failed: {error}");
+                    }
+                }
+            }
+            Err(error) => eprintln!("tray menu build failed: {error}"),
+        }
+    });
 }
 
 fn focus_main_window(app: &AppHandle) {

@@ -173,6 +173,17 @@ OpenAI, Ollama, Bedrock, and the other providers stay available as workspace
 or per-member overrides. **Test connection** in Settings makes a real request
 to the inference gateway with the credential the CLI will use.
 
+## Tray
+
+The desktop app's tray shows the signed-in account, the plan, and the plan's
+metered usage windows (5-hour and weekly, with a gauge and the time until they
+reset) from the Autohand console API, refreshed every five minutes or with
+**Refresh usage**. Below that: Open, Mission Control, online **Members**
+(click one to chat), Sign in / Sign out, Check for updates, Launch at Login,
+Start / Stop / Restart services, Open logs folder, Settings, Report a bug,
+Give feedback, About, and Quit. `cargo run --release --example tray_model`
+(in `daemon/`) prints the same model from the terminal.
+
 ## Accounts and sign-in
 
 First-run users are routed to `/welcome` after sign-in until setup is

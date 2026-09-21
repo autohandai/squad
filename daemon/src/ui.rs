@@ -615,11 +615,11 @@ fn action_label(action: TrayAction) -> &'static str {
     }
 }
 
-fn feedback_route_for_paths(paths: &StatePaths, kind: &str) -> String {
+pub fn feedback_route_for_paths(paths: &StatePaths, kind: &str) -> String {
     route_with_modal_query(paths, &[("feedback", kind)])
 }
 
-fn about_route_for_paths(paths: &StatePaths) -> String {
+pub fn about_route_for_paths(paths: &StatePaths) -> String {
     route_with_modal_query(paths, &[("about", "squad")])
 }
 

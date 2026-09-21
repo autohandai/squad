@@ -1,9 +1,11 @@
+pub mod account_usage;
 pub mod analytics;
 pub mod api;
 pub mod auth;
 pub mod cli;
 pub mod config;
 pub mod daemon;
+pub mod desktop_tray;
 pub mod gui_bootstrap;
 pub mod install;
 pub mod live_status;

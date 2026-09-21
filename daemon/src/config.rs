@@ -229,6 +229,53 @@ pub fn write_autohand_auth_config(
     )
 }
 
+/// The Autohand CLI account session (`~/.autohand/config.json`), which Squad
+/// shares. It is the source of truth when the user signed in through the CLI
+/// rather than through Squad, so anything that needs the account (tray usage,
+/// sign-in state) must consult it after the Squad config.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AutohandUserAuth {
+    pub token: Option<String>,
+    pub email: Option<String>,
+    pub name: Option<String>,
+}
+
+impl AutohandUserAuth {
+    pub fn signed_in(&self) -> bool {
+        self.token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty())
+    }
+}
+
+pub fn read_autohand_user_auth() -> AutohandUserAuth {
+    read_autohand_user_auth_at(&autohand_user_config_path())
+}
+
+fn read_autohand_user_auth_at(path: &Path) -> AutohandUserAuth {
+    let Ok(content) = fs::read_to_string(path) else {
+        return AutohandUserAuth::default();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&content) else {
+        return AutohandUserAuth::default();
+    };
+    let auth = value.get("auth");
+    let text = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    let user = auth.and_then(|auth| auth.get("user"));
+    AutohandUserAuth {
+        token: text(auth.and_then(|auth| auth.get("token"))),
+        email: text(user.and_then(|user| user.get("email")))
+            .or_else(|| text(auth.and_then(|auth| auth.get("email")))),
+        name: text(user.and_then(|user| user.get("name"))),
+    }
+}
+
 fn autohand_user_config_path() -> PathBuf {
     if let Some(path) = non_empty_env("AUTOHAND_USER_CONFIG_PATH") {
         return PathBuf::from(path);
@@ -417,6 +464,34 @@ fn non_empty_env(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_cli_account_session() {
+        let dir = std::env::temp_dir().join(format!(
+            "squad-cli-auth-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        fs::write(
+            &path,
+            r#"{"auth":{"token":" tok ","user":{"email":"me@example.com","name":"Me"}},"providers":{}}"#,
+        )
+        .unwrap();
+        let auth = read_autohand_user_auth_at(&path);
+        assert!(auth.signed_in());
+        assert_eq!(auth.email.as_deref(), Some("me@example.com"));
+        assert_eq!(auth.name.as_deref(), Some("Me"));
+        assert_eq!(
+            read_autohand_user_auth_at(&dir.join("missing.json")),
+            AutohandUserAuth::default()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
     use crate::state::StatePaths;
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
