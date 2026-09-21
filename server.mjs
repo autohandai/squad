@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 import { hostname } from "node:os";
 import { OtelLogger, SEVERITY, parseLogEnvelope, resourceFromEnv, traceIdFor, spanIdFor } from "./server/otel-logs.mjs";
+import { SdkSessionPool } from "./server/sdk-sessions.mjs";
+import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -49,6 +51,39 @@ const otel = new OtelLogger({
   }),
   scope: { name: "autohand.squad.web", version: packageMetadata.version || "" },
 });
+
+// Warm SDK sessions: one started CLI per member + launch options, reused
+// across chat messages (see server/sdk-sessions.mjs).
+let sdkSessions = null;
+async function sdkSessionPool() {
+  if (!sdkSessions) {
+    const { AutohandSDK } = await loadAgentSdk();
+    if (!AutohandSDK) throw new SdkBridgeStartupError("SDK unavailable: AutohandSDK export was not found");
+    sdkSessions = new SdkSessionPool({
+      createSdk: (options) => new AutohandSDK(options),
+      maxSessions: Number(process.env.AUTOHAND_SQUAD_MAX_SESSIONS) > 0 ? Number(process.env.AUTOHAND_SQUAD_MAX_SESSIONS) : 8,
+      idleTtlMs: Number(process.env.AUTOHAND_SQUAD_SESSION_IDLE_MS) > 0 ? Number(process.env.AUTOHAND_SQUAD_SESSION_IDLE_MS) : 15 * 60_000,
+      onEvent: (name, session, reason) =>
+        logEvent(SEVERITY.INFO, `sdk ${name.replace("session_", "session ")}${reason ? ` (${reason})` : ""}`, {
+          "event.name": `sdk.${name}`,
+          "autohand.member.id": session.agentId,
+          "autohand.workspace": session.workspace,
+          "autohand.session.prompts": session.prompts,
+        }),
+    });
+  }
+  return sdkSessions;
+}
+
+const harnessLogins = new HarnessLoginManager({ openUrl: (target) => openUrlInBrowser(target) });
+
+function openUrlInBrowser(target) {
+  const url = String(target || "");
+  if (!/^https?:\/\//.test(url)) return;
+  const opener = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/C", "start", "", url]] : ["xdg-open", [url]];
+  const child = spawn(opener[0], opener[1], { stdio: "ignore", detached: true, windowsHide: true });
+  child.unref();
+}
 
 // One structured record for the bridge's own events (startup, requests that
 // fail, run lifecycle, telemetry mirrors). Never throws.
@@ -445,6 +480,7 @@ function getRuntime() {
       exportFailures: otel.exportFailures,
       lastExportError: otel.lastExportError,
     },
+    sessions: sdkSessions ? sdkSessions.stats() : { active: 0, busy: 0, sessions: [] },
     harnesses: {
       default: DEFAULT_HARNESS_ID,
       ids: ["autohand", "codex", "claude"],
@@ -465,8 +501,10 @@ function maskEndpoint(endpoint) {
 
 function autohandReadinessContext() {
   const bundledPath = resolveAutohandBinary();
+  const account = readRuntimeAccount();
   return {
     bundledPath,
+    accountEmail: account.email || "",
     version: bundledPath ? commandOutput(bundledPath, ["--version"]).trim() : "",
     authReady: autohandAuthUsable(readAutohandAuth(userConfigPath)),
   };
@@ -3227,6 +3265,10 @@ function isLiveRun(run) {
 
 async function stopManagedRuns(reason = "service stopped") {
   let stoppedRuns = 0;
+  harnessLogins.cancelAll();
+  if (sdkSessions) {
+    stoppedRuns += await sdkSessions.closeAll(reason).catch(() => 0);
+  }
   for (const run of runs.values()) {
     if (!isLiveRun(run)) continue;
     const child = run.process;
@@ -5353,16 +5395,19 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
 
   const profile = String(payload.profile || "").trim().slice(0, 12000);
   const context = sdkRuntimeContext(payload, workspace, profile, agentRuntime);
-  const sdk = new AutohandSDK(context.options);
   let started = false;
   let eventCount = 0;
+  let lease = null;
+  let healthy = false;
 
   try {
-    await sdk.start();
+    lease = await acquireSdkLease(payload, workspace, context);
+    const sdk = lease.sdk;
     started = true;
     const output = await collectSdkPrompt(sdk, prompt, timeoutMs, () => {
       eventCount += 1;
     });
+    healthy = true;
     const reply = sdkReplyFromEvents(output.events, output.rawStdout);
     const trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
     const completedAt = Date.now();
@@ -5395,15 +5440,41 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     return result;
   } catch (error) {
     if (error instanceof AutohandStallError) {
-      throw error;
+      throw decorateStallError(error, agentRuntime);
     }
     if (!started || eventCount === 0) {
       throw new SdkBridgeStartupError(`SDK prompt failed before producing events: ${error.message}`, error);
     }
     throw error;
   } finally {
-    await sdk.close?.().catch(() => {});
+    await lease?.release(healthy);
   }
+}
+
+// Acquire a warm session for this member; the launch options (config, flags,
+// profile, model) are part of the key, so a changed profile starts fresh.
+async function acquireSdkLease(payload, workspace, context) {
+  const pool = await sdkSessionPool();
+  const agentId = sanitizeAgentId(payload.agent?.id || payload.agentId || "member");
+  return pool.acquire({ agentId, workspace, options: context.options, command: context.command });
+}
+
+// A stall means the CLI produced no event at all. Attach what it wrote to its
+// own error log so the user sees the cause instead of a generic timeout.
+function decorateStallError(error, agentRuntime) {
+  try {
+    const errorLog = join(agentRuntime.agentHome, "error.log");
+    if (existsSync(errorLog)) {
+      const tail = readFileSync(errorLog, "utf8").trim().split(/\r?\n/).slice(-6).join("\n").slice(-900);
+      if (tail) {
+        error.details = { ...(error.details || {}), cliErrorLog: tail };
+        error.message = `${error.message} Last CLI error: ${tail.split("\n").at(-1).slice(0, 240)}`;
+      }
+    }
+  } catch {
+    // Diagnostics are optional.
+  }
+  return error;
 }
 
 async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal }) {
@@ -5426,9 +5497,10 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
 
   const profile = String(payload.profile || "").trim().slice(0, 12000);
   const context = sdkRuntimeContext(payload, workspace, profile, agentRuntime);
-  const sdk = new AutohandSDK(context.options);
   let started = false;
   let eventCount = 0;
+  let lease = null;
+  let healthy = false;
 
   try {
     stream.send("sdk", {
@@ -5437,18 +5509,20 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
       label: "Starting the local agent bridge...",
       timestamp: new Date().toISOString(),
     });
-    await sdk.start();
+    lease = await acquireSdkLease(payload, workspace, context);
+    const sdk = lease.sdk;
     started = true;
     stream.send("sdk", {
       type: "status",
       status: "prompt_start",
-      label: "Sending the request to the model...",
+      label: lease.created ? "Sending the request to the model..." : "Reusing the warm session; sending the request...",
       timestamp: new Date().toISOString(),
     });
     const output = await collectSdkPrompt(sdk, prompt, timeoutMs, (event) => {
       eventCount += 1;
       stream.send("sdk", chatStreamEventFromSdkEvent(event));
     }, signal);
+    healthy = true;
     const reply = sdkReplyFromEvents(output.events, output.rawStdout);
     const trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
     const completedAt = Date.now();
@@ -5481,7 +5555,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     stream.send("done", result);
   } catch (error) {
     if (error instanceof AutohandStallError) {
-      throw error;
+      throw decorateStallError(error, agentRuntime);
     }
     if (!started || eventCount === 0) {
       stream.send("sdk", {
@@ -5494,7 +5568,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     }
     throw error;
   } finally {
-    await sdk.close?.().catch(() => {});
+    await lease?.release(healthy);
   }
 }
 
@@ -6275,6 +6349,81 @@ async function handleApi(req, res, url) {
     } catch (error) {
       json(res, 500, { success: false, error: error.message });
     }
+    return true;
+  }
+
+  if (url.pathname === "/api/chat/reset" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const agentId = sanitizeAgentId(payload.agentId || payload.agent?.id || "");
+      const closed = sdkSessions && agentId ? await sdkSessions.reset(agentId, "new conversation") : 0;
+      json(res, 200, { success: true, data: { agentId, closed } });
+    } catch (error) {
+      json(res, 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/sessions" && req.method === "GET") {
+    json(res, 200, { success: true, data: sdkSessions ? sdkSessions.stats() : { active: 0, busy: 0, sessions: [] } });
+    return true;
+  }
+
+  if (url.pathname === "/api/sessions" && req.method === "DELETE") {
+    const closed = sdkSessions ? await sdkSessions.closeAll("closed by user") : 0;
+    sdkSessions = null;
+    json(res, 200, { success: true, data: { closed } });
+    return true;
+  }
+
+  // Browser sign-in for a harness account. The vendor CLI runs its own flow;
+  // the bridge only relays the URL / device code and the outcome.
+  if (url.pathname === "/api/harnesses/login" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const id = normalizeHarnessAssignment({ id: payload.id }).id;
+      let executable = "";
+      let args;
+      let env = {};
+      let opensBrowser;
+      if (id === "autohand") {
+        // `autohand login` needs a terminal (it asks for the code). The Squad
+        // launcher's login action runs the same device flow headlessly, opens
+        // the browser, and stores the account for both Squad and the CLI.
+        executable = locateSquadTrayBinary();
+        if (!executable) {
+          throw new Error("The Autohand Squad launcher binary was not found, so browser sign-in cannot start. Run `autohand login` in a terminal instead.");
+        }
+        args = ["--action", "login"];
+        env = { AUTOHAND_SQUAD_HOME: squadStateDir };
+        opensBrowser = true;
+      } else {
+        const readiness = await detectHarness(id, { refresh: false, context: harnessContextFor(id) });
+        executable = readiness.executablePath || "";
+      }
+      const flow = harnessLogins.start(id, { executable, args, env, cwd: rootDir, opensBrowser });
+      logEvent(SEVERITY.INFO, `harness sign-in started: ${id}`, { "event.name": "harness.login.started", "autohand.harness": id });
+      json(res, 200, { success: true, data: flow });
+    } catch (error) {
+      json(res, 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/harnesses/login" && req.method === "GET") {
+    const id = normalizeHarnessAssignment({ id: url.searchParams.get("id") }).id;
+    const flow = harnessLogins.status(id);
+    let readiness = null;
+    if (flow.state === "done") {
+      readiness = publicReadiness(await detectHarness(id, { refresh: true, context: harnessContextFor(id) }));
+    }
+    json(res, 200, { success: true, data: { ...flow, readiness, account: id === "autohand" ? readRuntimeAccount() : undefined } });
+    return true;
+  }
+
+  if (url.pathname === "/api/harnesses/login" && req.method === "DELETE") {
+    const id = normalizeHarnessAssignment({ id: url.searchParams.get("id") }).id;
+    json(res, 200, { success: true, data: { cancelled: harnessLogins.cancel(id) } });
     return true;
   }
 

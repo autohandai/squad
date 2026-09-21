@@ -59,6 +59,9 @@ jobs:
       - name: Check OpenTelemetry log format
         run: bun run check:otel
 
+      - name: Check SDK session pool
+        run: bun run check:sessions
+
       - name: Check release metadata logic
         run: bun run check:release
 

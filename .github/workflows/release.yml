@@ -144,6 +144,7 @@ jobs:
           bun run check:sdk
           bun run check:harness
           bun run check:otel
+          bun run check:sessions
           bun run check:server
           bun run check:release
           bun run build

@@ -100,3 +100,44 @@ export async function testHarness(api, assignment) {
   const normalized = normalizeHarnessAssignment(assignment);
   return api("/api/harnesses/test", { method: "POST", body: JSON.stringify(normalized) });
 }
+
+/** Sign-in copy per harness; the bridge reports the same labels in readiness.signIn. */
+export function signInLabel(id) {
+  switch (normalizeHarnessId(id)) {
+    case "codex":
+      return "Sign in with ChatGPT";
+    case "claude":
+      return "Sign in with your Claude account";
+    default:
+      return "Sign in with your Autohand account";
+  }
+}
+
+export function signInAlternative(id) {
+  switch (normalizeHarnessId(id)) {
+    case "codex":
+      return "or set OPENAI_API_KEY";
+    case "claude":
+      return "or set ANTHROPIC_API_KEY";
+    default:
+      return "or add an Autohand AI API key in Settings";
+  }
+}
+
+/** True when the harness is installed but its account is missing. */
+export function harnessNeedsSignIn(readiness) {
+  return Boolean(readiness) && readiness.status === "setup-required";
+}
+
+/** Start the vendor's browser sign-in flow through the bridge. */
+export async function startHarnessLogin(api, id) {
+  return api("/api/harnesses/login", { method: "POST", body: JSON.stringify({ id: normalizeHarnessId(id) }) });
+}
+
+export async function harnessLoginStatus(api, id) {
+  return api(`/api/harnesses/login?id=${encodeURIComponent(normalizeHarnessId(id))}`);
+}
+
+export async function cancelHarnessLogin(api, id) {
+  return api(`/api/harnesses/login?id=${encodeURIComponent(normalizeHarnessId(id))}`, { method: "DELETE" });
+}

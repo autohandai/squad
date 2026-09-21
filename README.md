@@ -131,6 +131,37 @@ OpenAI, Ollama, Bedrock, and the other providers stay available as workspace
 or per-member overrides. **Test connection** in Settings makes a real request
 to the inference gateway with the credential the CLI will use.
 
+## Accounts and sign-in
+
+First-run users are routed to `/welcome` after sign-in until setup is
+completed or skipped; a signed-out install never reaches the workspace.
+
+The workspace opens only for a signed-in Autohand account: a signed-out
+install shows a sign-in page that starts the CLI's own login flow through the
+local bridge (`autohand login`), shows the URL and device code it prints, and
+continues once the account is ready. Members that run on Codex or Claude Code
+need those vendors' accounts too. The member's Harness page (and the
+**Runs with** chip in the chat header) shows the signed-in account per engine
+and offers **Sign in with ChatGPT** or **Sign in with your Claude account**,
+which run `codex login` / `claude auth login` and re-check readiness when the
+browser flow completes. An API key remains an alternative for each engine.
+
+## Chat sessions
+
+The bridge keeps one warm CLI session per member and launch configuration
+(`GET /api/sessions`). The first message starts the CLI; follow-ups reuse the
+process, so they answer in model time and keep the CLI's own conversation
+context. **New chat** resets the member's session (`POST /api/chat/reset`),
+and sessions close after 15 minutes idle, on stop, stall, or error, and on
+shutdown. A stalled CLI now reports its last error-log line in the message.
+
+## Agents talking to each other
+
+In channels, a member's reply that @mentions a teammate is relayed to that
+teammate in the same thread with the reply as context, up to three hops per
+thread and never back to the member who just spoke. Members are told they may
+mention teammates by name when they need their work.
+
 ## Agent harnesses
 
 Every member has a **Runs with** engine. Autohand Code is bundled and the

@@ -218,6 +218,7 @@ import { MessageComposer } from "@/components/channels/MessageComposer";
 import { AgentStatusBar } from "@/components/channels/AgentStatusBar";
 import { InboxPage } from "@/components/inbox/InboxPage";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
+import { SignInGate } from "@/components/account/SignInGate";
 import {
   fetchHarnesses,
   harnessForAgent,
@@ -4343,22 +4344,15 @@ function App() {
       // The runtime fetch decides where "/" lands; redirecting before it
       // resolves sent every signed-in user to onboarding.
       if (!runtime) return;
-      const accountReady = onboardingAccountReady(runtime);
-      const setupRequired = !accountReady || onboardingIsIncomplete(onboardingState);
-      const baseTarget = setupRequired ? ONBOARDING_ROUTE : SQUAD_DIRECTORY_ROUTE;
+      // Signed-out users never get here (the SignInGate renders instead), so
+      // "/" only decides between first-run setup and the workspace.
+      const baseTarget = onboardingIsIncomplete(onboardingState) ? ONBOARDING_ROUTE : SQUAD_DIRECTORY_ROUTE;
       const target = baseTarget + (route.includes("?") ? `?${route.split("?")[1]}` : "");
       window.history.replaceState({}, "", target);
       setRoute(target);
     }
   }, [onboardingState, route, runtime]);
 
-  useEffect(() => {
-    if (!runtime) return;
-    const path = route.split("?")[0];
-    if (path === ONBOARDING_ROUTE || onboardingAccountReady(runtime)) return;
-    window.history.replaceState({}, "", ONBOARDING_ROUTE);
-    setRoute(ONBOARDING_ROUTE);
-  }, [route, runtime]);
 
   useEffect(() => {
     const onLanguageChange = () => setSystemLanguages(getNavigatorLanguages());
@@ -5221,6 +5215,8 @@ function App() {
     const agent = agents.find((item) => item.id === agentId) || activeAgent;
     if (!agent) return;
     const timestamp = new Date().toISOString();
+    // Drop the warm CLI session so the next message starts a clean context.
+    api("/api/chat/reset", { method: "POST", body: JSON.stringify({ agentId: agent.id }) }).catch(() => {});
     setMessagesByAgent((current) => ({
       ...current,
       [agent.id]: initialMessages(agent.name),
@@ -5481,7 +5477,7 @@ function App() {
   async function dispatchChannelMemberReply(
     channel,
     agent,
-    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "" }
+    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null }
   ) {
     const now = new Date();
     const startedAt = now.toISOString();
@@ -5504,12 +5500,14 @@ function App() {
       workspace: selectedWorkspace,
       startedAt,
       updatedAt: startedAt,
-      activityLabel: `Replying in #${channel.name}`,
+      activityLabel: relayFrom ? `Replying to ${relayFrom.name} in #${channel.name}` : `Replying in #${channel.name}`,
+      hop,
+      relayFromAgentId: relayFrom?.id || "",
     });
 
     const profile = [
       buildAgentProfile(agent, selectedWorkspace),
-      buildChannelProfileContext(channel, agent, agents, { autoMode, selfJudge, threadId, targetMemberIds, targetLabel }),
+      buildChannelProfileContext(channel, agent, agents, { autoMode, selfJudge, threadId, targetMemberIds, targetLabel, hop, relayFrom }),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -5553,6 +5551,7 @@ function App() {
     let streamedAnswer = "";
     let streamError = null;
     let completed = false;
+    let finalReplyText = "";
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 305000);
     try {
@@ -5591,6 +5590,7 @@ function App() {
             completed = true;
             const completedAt = new Date().toISOString();
             const replyText = humanReadableReplyText(data.reply || streamedAnswer, data.trace, `${agent.name} returned no chat text.`);
+            finalReplyText = replyText;
             updateChannelMessage(channel.id, messageId, {
               body: replyText || `${agent.name} returned no chat text.`,
               status: "complete",
@@ -5661,6 +5661,34 @@ function App() {
       });
     } finally {
       window.clearTimeout(timeout);
+    }
+
+    // Agents talk to each other: when a reply @mentions other channel members,
+    // they answer in the same thread with the reply as context. Hops are
+    // capped so two members cannot ping-pong forever, and a member never
+    // relays to itself.
+    if (finalReplyText && hop < CHANNEL_RELAY_MAX_HOPS) {
+      const mentioned = resolveChannelMentionTargets(finalReplyText, channel, agents);
+      const recipients = mentioned.hasMentions
+        ? mentioned.targetAgents.filter((member) => member.id !== agent.id && member.id !== relayFrom?.id)
+        : [];
+      if (recipients.length) {
+        await Promise.allSettled(
+          recipients.map((member) =>
+            dispatchChannelMemberReply(channel, member, {
+              prompt: buildRelayPrompt(agent, member, finalReplyText, channel),
+              threadId,
+              parentMessageId,
+              autoMode,
+              selfJudge,
+              targetMemberIds: [member.id],
+              targetLabel: "",
+              hop: hop + 1,
+              relayFrom: agent,
+            })
+          )
+        );
+      }
     }
   }
 
@@ -6576,6 +6604,22 @@ function App() {
   const feedbackKind = feedbackKindFromRoute(route);
   const aboutOpen = aboutOpenFromRoute(route);
 
+  // Account gate: the squad runs on the user's Autohand account, so the
+  // workspace opens only for a signed-in account. Until the runtime has
+  // answered once nothing is decided; a bridge that is down keeps the last
+  // known account (see refreshRuntime).
+  if (runtime && !runtime.account?.signedIn) {
+    return (
+      <SignInGate
+        account={runtime.account}
+        bridgeUnavailable={runtime.bridgeUnavailable === true}
+        startLogin={() => api("/api/harnesses/login", { method: "POST", body: JSON.stringify({ id: "autohand" }) })}
+        loginStatus={() => api("/api/harnesses/login?id=autohand")}
+        refreshAccount={refreshRuntime}
+      />
+    );
+  }
+
   return (
     <TooltipProvider>
       <div className="relative min-h-screen overflow-x-clip bg-background text-foreground">
@@ -6795,6 +6839,9 @@ function App() {
                 onStart={startAutohand}
                 onChat={sendChat}
                 onNewConversation={startNewConversation}
+                harnesses={harnesses}
+                harnessesLoading={harnessesLoading}
+                onRefreshHarnesses={() => refreshHarnesses(true)}
                 openTerminal={openTerminal}
                 navigate={navigate}
                 taskPanelOpen={taskPanelOpen}
@@ -8536,7 +8583,20 @@ function buildCollaborationProfileContext(collaboration, agents = [], workspaces
 // Squad channels: profile context appended when a channel prompt is dispatched
 // to a member. Explains the one-prompt fan-out contract and states the channel
 // auto-mode/self-judge runtime default (OFF unless the channel enables it).
-function buildChannelProfileContext(channel, agent, agents = [], { autoMode, selfJudge, threadId, targetMemberIds = [], targetLabel = "" } = {}) {
+// Maximum number of agent-to-agent relay hops within one channel thread.
+const CHANNEL_RELAY_MAX_HOPS = 3;
+
+function buildRelayPrompt(fromAgent, toAgent, replyText, channel) {
+  return [
+    `${fromAgent.name}${fromAgent.role ? ` (${fromAgent.role})` : ""} wrote in #${channel.name} and mentioned you, ${toAgent.name}:`,
+    "",
+    replyText.trim(),
+    "",
+    `Reply to ${fromAgent.name} in the thread. Answer what was asked of you, add only what your role contributes, and do not restate their message. If you need another teammate, @mention them by name once.`,
+  ].join("\n");
+}
+
+function buildChannelProfileContext(channel, agent, agents = [], { autoMode, selfJudge, threadId, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null } = {}) {
   if (!channel || !agent) return "";
   const roster = (channel.memberIds || [])
     .map((memberId) => agents.find((item) => item.id === memberId))
@@ -8553,9 +8613,14 @@ function buildChannelProfileContext(channel, agent, agents = [], { autoMode, sel
     threadId ? `Thread: ${threadId}` : "",
     roster.length ? `Channel members:\n${roster.join("\n")}` : "",
     targetRoster.length ? `Selected recipients${targetLabel ? ` (${targetLabel})` : ""}:\n${targetRoster.join("\n")}` : "",
-    targeted
-      ? `You are ${agent.name}. The user mentioned you for this channel thread. Reply in a natural, human way to the user and keep the answer scoped to your role.`
-      : `You are ${agent.name}. This prompt was sent once to the channel recipients; choose your own execution plan and post your reply in the thread. Other selected members reply in the same thread, so keep your answer scoped to your role.`,
+    relayFrom
+      ? `You are ${agent.name}. Your teammate ${relayFrom.name} mentioned you in this thread (relay hop ${hop} of ${CHANNEL_RELAY_MAX_HOPS}). Reply to ${relayFrom.name} directly and briefly.`
+      : targeted
+        ? `You are ${agent.name}. The user mentioned you for this channel thread. Reply in a natural, human way to the user and keep the answer scoped to your role.`
+        : `You are ${agent.name}. This prompt was sent once to the channel recipients; choose your own execution plan and post your reply in the thread. Other selected members reply in the same thread, so keep your answer scoped to your role.`,
+    roster.length > 1
+      ? `Teammates reply when you @mention them by name (for example @${(channel.memberIds || []).map((memberId) => agents.find((item) => item.id === memberId)).filter((member) => member && member.id !== agent.id)[0]?.name || "Teammate"}). Mention a teammate only when you need their work or answer; they will respond in this thread.`
+      : "",
     "Return a conversational answer only. Do not expose SDK event objects, JSON envelopes, raw tool traces, or transport metadata in the user-facing reply.",
     autoMode || selfJudge
       ? "Auto mode (self-judge): ON for this thread. Judge your own result and continue without waiting for approval."
@@ -9670,27 +9735,29 @@ function ConversationWelcome({ agent, copy, onPrompt }) {
   ];
   const roleLabel = localizedRole(agent, copy);
 
+  const description = String(agent?.description || agent?.instructions || "").trim();
   return (
-    <div className="mx-auto flex w-full max-w-[min(48rem,100%)] flex-col items-center justify-center gap-4 overflow-hidden px-2 py-4 text-center sm:gap-6 sm:py-8 lg:py-10">
-      <AgentAvatar agent={agent} large className="size-16 sm:size-20" />
-      <div className="space-y-2">
-        <h1 className="max-w-full text-balance text-xl font-semibold tracking-normal text-foreground sm:text-3xl">Hello, how can I help you today?</h1>
-        <p className="max-w-full text-balance text-sm text-muted-foreground">I am your {roleLabel}, ready to complete any task you assign.</p>
+    <div className="mx-auto flex w-full max-w-xl flex-col items-start gap-6 px-1 py-6 sm:py-10">
+      <AgentAvatar agent={agent} large className="size-14" />
+      <div className="space-y-1.5">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Hi, I&apos;m {agent.name}.</h1>
+        <p className="text-base text-muted-foreground">{roleLabel}. {description ? description : "Tell me what you need and I will take it from there."}</p>
       </div>
-      <div className="grid w-full max-w-full gap-2">
-        {suggestions.map((suggestion) => (
-          <button
-            key={suggestion}
-            type="button"
-            className="group flex min-h-12 w-full max-w-full items-center gap-3 overflow-hidden rounded-md bg-muted/50 px-3 py-2.5 text-left text-sm font-medium text-foreground/90 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
-            onClick={() => onPrompt(suggestion)}
-          >
-            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-background text-muted-foreground transition-colors group-hover:text-foreground">
-              <Sparkles className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1 break-words leading-5">{suggestion}</span>
-          </button>
-        ))}
+      <div className="w-full">
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Try asking</p>
+        <div className="divide-y divide-border/70 border-y border-border/70">
+          {suggestions.map((suggestion) => (
+            <button
+              key={suggestion}
+              type="button"
+              className="group flex w-full items-center gap-3 py-3 text-left text-sm text-foreground/90 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+              onClick={() => onPrompt(suggestion)}
+            >
+              <span className="min-w-0 flex-1 leading-5">{suggestion}</span>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -9727,8 +9794,17 @@ function Conversation({
   onCancelHandoff,
   onFailHandoff,
   onRetryHandoff,
+  harnesses = [],
+  harnessesLoading = false,
+  onRefreshHarnesses,
 }) {
   const defaultLaunch = agent.launch || { mode: "prompt", policy: "restricted", model: "", dryRun: false };
+  const [harnessDraft, setHarnessDraft] = useState(() => harnessForAgent(agent));
+  const [harnessPopoverOpen, setHarnessPopoverOpen] = useState(false);
+  useEffect(() => {
+    setHarnessDraft(harnessForAgent(agent));
+  }, [agent.id, agent.harness]);
+  const harnessDirty = JSON.stringify(harnessDraft) !== JSON.stringify(harnessForAgent(agent));
   const defaultWorkspace =
     requestedWorkspace && !isBlockedWorkspace(requestedWorkspace, runtime)
       ? requestedWorkspace
@@ -10175,6 +10251,15 @@ function Conversation({
     activeChatControllerRef.current[agent.id]?.abort();
   }
 
+  // Re-send the user message that produced a failed answer.
+  function retryMessage(message) {
+    if (chatSendingRef.current[agent.id]) return;
+    const index = visibleMessages.findIndex((item) => item.id === message.id);
+    const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
+    if (!previousUser?.body) return;
+    sendPromptNow({ prompt: previousUser.body, workspace, policy, model }, { agentId: agent.id });
+  }
+
   function submit(event) {
     event.preventDefault();
     if (!prompt.trim() || blockedWorkspace) return;
@@ -10305,48 +10390,107 @@ function Conversation({
 
   return (
     <div className="flex h-[calc(100svh-4rem)] min-h-[560px] w-full max-w-full flex-col overflow-x-hidden bg-background/75 lg:h-screen lg:min-h-screen">
-      <header className="flex min-h-16 max-w-full flex-col gap-3 overflow-hidden border-b bg-background/92 px-4 py-3 backdrop-blur-xl sm:px-6 xl:flex-row xl:items-center xl:justify-between xl:gap-5">
+      <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
-          <AgentAvatar agent={agent} />
+          <AgentAvatar agent={agent} className="size-9" />
           <div className="min-w-0">
-            <button
-              type="button"
-              className="flex min-w-0 items-center gap-2 rounded-md text-left outline-none transition-colors hover:text-primary focus-visible:ring-[3px] focus-visible:ring-ring/40"
-              onClick={() => setProfilePreviewOpen(true)}
-            >
-              <span className="truncate text-base font-semibold">{agent.name}</span>
-              <ChevronRight className="size-4 text-muted-foreground" />
-            </button>
-            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px]">
-                {localizedRole(agent, copy)}
-              </Badge>
-              <span className="min-w-0 max-w-32 truncate sm:max-w-[20rem] md:max-w-[32rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                className="flex min-w-0 items-center gap-1 rounded-md text-left outline-none transition-colors hover:text-primary focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                onClick={() => setProfilePreviewOpen(true)}
+              >
+                <span className="truncate text-[15px] font-semibold leading-5">{agent.name}</span>
+                <ChevronRight className="size-3.5 text-muted-foreground" />
+              </button>
+              <span className="hidden text-xs text-muted-foreground sm:inline">{localizedRole(agent, copy)}</span>
+            </div>
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className={cn("size-1.5 shrink-0 rounded-full", chatSending ? "bg-primary animate-pulse" : runtime?.available ? "bg-emerald-500" : "bg-destructive")} aria-hidden="true" />
+              <span className="min-w-0 truncate">{chatSending ? "Working" : runtime?.available ? "Online" : copy.autohandMissing}</span>
+              <span className="text-border">·</span>
+              <span className="min-w-0 max-w-40 truncate sm:max-w-[18rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
+              <span className="hidden text-border sm:inline">·</span>
               <span className="hidden min-w-0 max-w-48 truncate sm:inline">{providerSummaryLabel(effectiveModel)}</span>
-              <span className={cn("size-1.5 rounded-full", runtime?.available ? "bg-primary" : "bg-destructive")} />
-              <span className="hidden sm:inline">{runtime?.available ? copy.localCliReady : copy.autohandMissing}</span>
+              <span className="hidden text-border sm:inline">·</span>
+              <Popover open={harnessPopoverOpen} onOpenChange={setHarnessPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="hidden items-center gap-1 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
+                    aria-label="Change the engine this member runs with"
+                  >
+                    <Cpu className="size-3.5" aria-hidden="true" />
+                    <span>{harnessLabel(harnessForAgent(agent).id)}</span>
+                    <ChevronDown className="size-3 opacity-70" aria-hidden="true" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" sideOffset={8} className="w-[min(24rem,calc(100vw-2rem))] p-3">
+                  <HarnessSelect
+                    api={api}
+                    id="chat-harness"
+                    label="Runs with"
+                    compact
+                    showAdvanced={false}
+                    value={harnessDraft}
+                    onChange={setHarnessDraft}
+                    harnesses={harnesses}
+                    loading={harnessesLoading}
+                    onRefresh={onRefreshHarnesses}
+                    description="Changes apply to the next message. Personality, model, and permissions stay the same."
+                  />
+                  <div className="mt-3 flex items-center justify-end gap-2">
+                    <Button type="button" variant="ghost" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "harness"))}>
+                      Details
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!harnessDirty || !updateAgent}
+                      onClick={() => {
+                        updateAgent?.(agent.id, { harness: normalizeHarnessAssignmentCopy(harnessDraft), updatedAt: new Date().toISOString() });
+                        setHarnessPopoverOpen(false);
+                      }}
+                    >
+                      {copy.save || "Save"}
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
         </div>
 
-        <div className="flex w-full max-w-full flex-wrap items-center gap-2 overflow-hidden sm:w-auto">
-          <Button variant="outline" size="sm" onClick={startFreshChat}>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button variant="outline" size="sm" className="h-8" onClick={startFreshChat}>
             <Plus data-icon="inline-start" />
-            {copy.task}
+            <span className="hidden sm:inline">New chat</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setAutomationFormOpen(true)}>
-            <Plus data-icon="inline-start" />
-            {copy.automation}
-          </Button>
-          <span className="mx-1 hidden h-7 w-px bg-border sm:block" />
-          <Button variant="ghost" size="sm" onClick={() => openPanel("tasks")}>
-            <History data-icon="inline-start" />
-            {copy.taskList}
-          </Button>
-          <Button variant={runningCount ? "secondary" : "ghost"} size="sm" className="hidden sm:inline-flex" onClick={() => openPanel("runs")}>
-            <CircleDot data-icon="inline-start" className={cn(runningCount && "text-primary")} />
-            {copy.current}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="hidden sm:inline-flex" aria-label={copy.automation} onClick={() => setAutomationFormOpen(true)}>
+                <CalendarClock />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{copy.automation}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={copy.taskList} onClick={() => openPanel("tasks")}>
+                <History />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{copy.taskList}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="relative" aria-label={copy.current} onClick={() => openPanel("runs")}>
+                <CircleDot className={cn(runningCount && "text-primary")} />
+                {runningCount ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary" aria-hidden="true" /> : null}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{copy.current}</TooltipContent>
+          </Tooltip>
         </div>
       </header>
 
@@ -10354,23 +10498,20 @@ function Conversation({
         <ScrollArea className="min-h-0 flex-1">
           <div
             className={cn(
-              "mx-auto flex w-full max-w-5xl flex-col px-4 py-5 pb-40 sm:px-6 lg:py-8",
-              hasConversationMessages ? "gap-5" : "justify-start lg:min-h-[calc(100svh-18rem)] lg:justify-center"
+              "mx-auto flex w-full max-w-3xl flex-col px-4 py-6 pb-36 sm:px-6",
+              hasConversationMessages ? "gap-6" : "justify-start lg:min-h-[calc(100svh-18rem)] lg:justify-center"
             )}
           >
             {hasConversationMessages ? (
               <>
-                <SquadStatusRow
-                  agent={agent}
-                  activeMode={activeMode}
-                  latestRun={latestRun}
-                  runtime={runtime}
-                  workspace={workspace}
-                  workspaces={workspaces}
-                  copy={copy}
-                />
-
-                <div className="flex flex-col gap-4">
+                {!runtime?.available ? (
+                  <Alert variant="destructive">
+                    <AlertTriangle />
+                    <AlertTitle>{copy.autohandCliMissing}</AlertTitle>
+                    <AlertDescription>{copy.autohandCliMissingDescription}</AlertDescription>
+                  </Alert>
+                ) : null}
+                <div className="flex flex-col gap-6">
                   {visibleMessages.map((message) => (
                     <SquadMessage
                       key={message.id}
@@ -10378,6 +10519,7 @@ function Conversation({
                       message={localizedMessage(message, agent, copy)}
                       copy={copy}
                       chatSettings={chatSettings}
+                      onRetry={retryMessage}
                     />
                   ))}
                   <div ref={messagesEndRef} aria-hidden="true" />
@@ -10389,7 +10531,7 @@ function Conversation({
           </div>
         </ScrollArea>
 
-        <form className="border-t bg-background px-3 py-3 sm:px-5" onSubmit={submit}>
+        <form className="bg-gradient-to-t from-background via-background to-transparent px-3 pb-4 pt-6 sm:px-5" onSubmit={submit}>
           {recommendedRecipeMatches.length && !chatSending ? (
             <RecipeRecommendationPanel
               recipes={recommendedRecipeMatches}
@@ -10397,7 +10539,7 @@ function Conversation({
               onSelect={(recipe) => setRecipeLaunchTarget(recipe)}
             />
           ) : null}
-          <div className="mx-auto flex w-full max-w-3xl flex-col rounded-xl border bg-background transition-colors focus-within:border-ring/70">
+          <div className="mx-auto flex w-full max-w-3xl flex-col rounded-2xl border border-border bg-card shadow-xs transition-[border-color,box-shadow] focus-within:border-ring/60 focus-within:shadow-sm">
             {queuedFollowups.length ? (
               <QueuedFollowups
                 items={queuedFollowups}
@@ -10430,7 +10572,7 @@ function Conversation({
                   }}
                   onSelect={(event) => syncMentionFromTarget(event.currentTarget)}
                   placeholder={formatCopy(copy.talkToPlaceholder, { name: agent.name })}
-                  className="max-h-56 min-h-24 resize-none border-0 bg-transparent px-3 py-3 text-base shadow-none focus-visible:ring-0 md:text-sm"
+                  className="max-h-64 min-h-[3.25rem] resize-none border-0 bg-transparent px-3.5 py-3 text-base leading-6 shadow-none focus-visible:ring-0 md:text-[15px]"
                 />
               </div>
               <div className="flex min-w-0 items-center gap-1.5 px-1 pb-1 sm:gap-2">
@@ -10641,7 +10783,7 @@ function Conversation({
                       size="icon-lg"
                       variant={chatSending ? "secondary" : "default"}
                       className={cn(
-                        "ml-auto rounded-full",
+                        "ml-auto size-9 rounded-full",
                         chatSending && "bg-foreground text-background hover:bg-foreground/90 hover:text-background"
                       )}
                       disabled={chatSending ? false : !prompt.trim() || blockedWorkspace}
@@ -11093,19 +11235,16 @@ function SquadStatusRow({ agent, activeMode, latestRun, runtime, workspace, work
   );
 }
 
-function SquadMessage({ agent, message, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS }) {
+function SquadMessage({ agent, message, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
   const isUser = message.role === "user";
-  if (!isUser) return <AgentResponseMessage agent={agent} message={message} chatSettings={chatSettings} />;
+  if (!isUser) return <AgentResponseMessage agent={agent} message={message} chatSettings={chatSettings} onRetry={onRetry} />;
 
   return (
-    <article className="flex justify-end gap-3">
-      <div className="max-w-3xl rounded-lg border border-primary/35 bg-primary/10 px-4 py-3 text-foreground">
-        <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-semibold text-foreground">{copy.you}</span>
-          <time>{message.time}</time>
-        </div>
+    <article className="group flex flex-col items-end gap-1" aria-label={`${copy.you}, ${message.time}`}>
+      <div className="max-w-[min(40rem,88%)] rounded-2xl rounded-br-md bg-muted px-4 py-2.5 text-[15px] leading-6 text-foreground">
         <MarkdownBlocks text={message.body} />
       </div>
+      <time className="pr-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">{message.time}</time>
     </article>
   );
 }
@@ -11126,46 +11265,63 @@ function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETT
   const statusLabel = isLoading ? "Answering" : message.status === "error" ? "Could not answer" : message.status === "stopped" ? "Stopped" : "Answer";
   const progressLabel = chatProgressLabel(message, durationMs);
 
+  const isError = message.status === "error";
+  const errorText = isError ? String(view.answer || message.body || "").replace(new RegExp(`^${agent.name} could not answer:\\s*`), "") : "";
+  const needsSignIn = isError && /sign-in|autohand login|not signed in|rejected the account token/i.test(errorText);
+
   return (
-    <article className="grid grid-cols-[auto,minmax(0,1fr)] gap-3">
-      <AgentAvatar agent={agent} />
+    <article className="group grid grid-cols-[auto,minmax(0,1fr)] gap-3" aria-live={isLoading ? "polite" : undefined}>
+      <AgentAvatar agent={agent} className="mt-0.5" />
       <div className="min-w-0">
-        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-semibold text-foreground">{agent.name}</span>
+        <div className="mb-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+          <span className="text-sm font-semibold text-foreground">{agent.name}</span>
           <time>{message.time}</time>
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/45" />
-          <span>{statusLabel}</span>
-          {durationLabel ? (
-            <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px]">
-              {isLoading ? `${durationLabel} elapsed` : durationLabel}
-            </Badge>
+          {isLoading ? (
+            <span className="inline-flex items-center gap-1 text-primary">
+              <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
+              {durationLabel ? `${durationLabel}` : "Working"}
+            </span>
+          ) : durationLabel ? (
+            <span>{durationLabel}</span>
           ) : null}
-          {message.effectiveModel ? (
-            <Badge variant="outline" className="h-5 max-w-72 rounded-md px-1.5 text-[10px]">
-              <span className="truncate">{providerSummaryLabel(message.effectiveModel)}</span>
-            </Badge>
-          ) : null}
-          {view.toolCalls.length ? (
-            <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px]">
-              {view.toolCalls.length} tools
-            </Badge>
-          ) : null}
+          {message.effectiveModel ? <span className="hidden truncate sm:inline">· {providerSummaryLabel(message.effectiveModel)}</span> : null}
+          {message.status === "stopped" ? <span>· Stopped</span> : null}
         </div>
 
         {showProgressPlaceholder ? (
-          <div className="flex max-w-xl items-center gap-3 py-2 text-sm text-muted-foreground">
-            <Spinner />
-            <span>{progressLabel}</span>
+          <div className="flex max-w-xl items-center gap-2.5 py-1 text-sm text-muted-foreground">
+            <Spinner className="size-3.5" />
+            <span className="min-w-0 truncate">{progressLabel}</span>
           </div>
         ) : null}
 
-        {hasVisibleAnswer ? (
-          <div className="max-w-4xl">
+        {hasVisibleAnswer && !isError ? (
+          <div className="max-w-none text-[15px] leading-7 text-foreground/95">
             <MarkdownBlocks text={view.answer} />
           </div>
         ) : null}
 
-        {hasTrace ? <AgentWorkTrace view={view} open={isLoading} /> : null}
+        {isError ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3.5 py-3 text-sm">
+            <p className="font-medium text-destructive">Could not answer</p>
+            <p className="mt-1 leading-6 text-foreground/85">{errorText}</p>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              {onRetry ? (
+                <Button type="button" size="sm" variant="outline" onClick={() => onRetry(message)}>
+                  <RefreshCw data-icon="inline-start" />
+                  Retry
+                </Button>
+              ) : null}
+              {needsSignIn ? (
+                <span className="text-xs text-muted-foreground">
+                  Run <code className="rounded bg-muted px-1 py-0.5">autohand login</code> in a terminal, or sign in from the member&apos;s Harness page.
+                </span>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {hasTrace ? <AgentWorkTrace view={view} open={isLoading} durationLabel={isLoading ? "" : durationLabel} /> : null}
 
         {!isLoading && showRawOutput ? <RawTraceBlock raw={view.raw} /> : null}
       </div>
@@ -11184,17 +11340,30 @@ function chatProgressLabel(message, durationMs) {
   return activity || "Waiting for the first response...";
 }
 
-function AgentWorkTrace({ view, open = false }) {
+function AgentWorkTrace({ view, open = false, durationLabel = "" }) {
+  const steps = view.orderedEvents.length;
+  const tools = view.toolCalls.length;
+  const summary = [
+    `${steps} ${steps === 1 ? "step" : "steps"}`,
+    tools ? `${tools} ${tools === 1 ? "tool" : "tools"}` : "",
+    durationLabel,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <details open={open || undefined} className="mt-4 max-w-4xl border-l border-border/70 pl-4">
-      <summary className="cursor-pointer text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-        Work details
+    <details open={open || undefined} className="group/trace mt-3 max-w-none">
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md py-1 text-xs text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-3.5 transition-transform group-open/trace:rotate-90" aria-hidden="true" />
+        <span className="font-medium">Work details</span>
+        <span className="text-muted-foreground/80">{summary}</span>
       </summary>
-      <div className="mt-3 flex flex-col gap-3">
+      <ol className="ml-1.5 mt-2 flex flex-col border-l border-border/70 pl-4">
         {view.orderedEvents.map((event, index) => (
-          <WorkTraceEvent key={`${event.type}-${index}-${event.title || event.content || event.call?.name || ""}`} event={event} index={index} />
+          <li key={`${event.type}-${index}-${event.title || event.content || event.call?.name || ""}`} className="relative py-1 before:absolute before:-left-[1.3rem] before:top-[0.85rem] before:size-1.5 before:rounded-full before:bg-border">
+            <WorkTraceEvent event={event} index={index} />
+          </li>
         ))}
-      </div>
+      </ol>
     </details>
   );
 }
@@ -11229,10 +11398,9 @@ function WorkTraceEvent({ event, index }) {
 
 function StatusTrace({ event, tone = "neutral" }) {
   return (
-    <div className={cn("flex items-center gap-2 py-1.5 text-xs", tone === "error" ? "text-destructive" : "text-muted-foreground")}>
-      <Activity className="size-3.5 shrink-0" />
+    <div className={cn("flex items-center gap-2 py-0.5 text-xs", tone === "error" ? "text-destructive" : "text-muted-foreground")}>
       <span className="min-w-0 truncate">{event.title || statusEventTitle(event.status)}</span>
-      {event.timestamp ? <time className="ml-auto shrink-0 text-[11px]">{formatShortTime(event.timestamp)}</time> : null}
+      {event.timestamp ? <time className="ml-auto shrink-0 pl-3 text-[11px] tabular-nums text-muted-foreground/70">{formatShortTime(event.timestamp)}</time> : null}
     </div>
   );
 }
@@ -16290,6 +16458,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
 
             <Field>
               <HarnessSelect
+                api={api}
                 value={draft.harness}
                 onChange={(harness) => setDraft((current) => ({ ...current, harness }))}
                 harnesses={harnesses}
@@ -19864,6 +20033,7 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
           </p>
         </div>
         <HarnessSelect
+          api={api}
           id="profile-harness"
           label="Engine"
           value={assignment}

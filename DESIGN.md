@@ -59,6 +59,16 @@
 - Providers in Settings are a divider-separated list, expanded one at a time. An account-backed provider (Autohand AI) shows its status as one sentence ("Signed in as …; an API key is optional"), a model select fed by the catalog, and a managed base URL placeholder; it never asks for a key it does not need.
 - The **Runs with** control is one select plus one readiness sentence; advanced fields (model override, executable path, Test harness) sit behind a text disclosure. The profile shows Harness as a text summary row beside Model, never as vendor cards.
 
+## Agent Chat
+
+- The header is one row: avatar, name (opens the profile preview), role, and a meta line with a live status dot (Online / Working), workspace, model, and a **Runs with** chip that opens the engine switcher. Actions on the right are **New chat** plus icon buttons for automation, tasks, and runs.
+- Messages sit in a 48rem column. User messages are quiet right-aligned bubbles (muted background, no border) with the time on hover. Member messages are avatar + name + time + a small live indicator while working; the answer is prose at 15px/1.75. No badges, no cards.
+- While working, one line shows the current stage with a small spinner. Work details are a text disclosure with a summary (steps · tools · duration) that opens a left-rail timeline; raw output stays behind the chat setting.
+- A failed answer is an inline destructive note with the cause, a **Retry** button, and a sign-in hint when the cause is authentication.
+- The composer is one rounded bordered field over a soft gradient; workspace, add, settings, and terminal sit left, queue and the round send/stop button right. Enter sends, Shift+Enter breaks a line, `@` mentions members.
+- The empty state introduces the member ("Hi, I'm Eva.") with role and description, then a divider list of suggested asks.
+- Sign-in surfaces are single-column, left-aligned, and calm: one primary action, the sign-in link and device code when the CLI prints them, a terminal alternative, and a **Check again** action.
+
 ## Maintenance
 
 - When a durable user UI preference emerges, update this file in the same change so future UI work reflects it.

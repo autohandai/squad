@@ -23,7 +23,7 @@ export const capabilities = {
 
 export const setup = {
   install: "npm install -g @anthropic-ai/claude-code  (or: brew install --cask claude-code)",
-  login: "claude  (then run /login)",
+  login: "claude auth login",
   docs: "https://docs.anthropic.com/en/docs/claude-code/cli-reference",
 };
 
@@ -81,6 +81,19 @@ export async function detect({ explicitPath = "" } = {}) {
       executablePath: executable,
       detail: "Claude Code is installed but has not completed sign-in.",
       setup: setup.login,
+      signIn: { label: "Sign in with your Claude account", alternative: "or set ANTHROPIC_API_KEY" },
+    };
+  }
+  const account = claudeAccount(executable);
+  if (account.checked && !account.signedIn) {
+    return {
+      status: "setup-required",
+      version,
+      executable: redactHome(executable),
+      executablePath: executable,
+      detail: "Claude Code is installed but not signed in.",
+      setup: "claude auth login",
+      signIn: { label: "Sign in with your Claude account", alternative: "or set ANTHROPIC_API_KEY" },
     };
   }
   return {
@@ -88,9 +101,32 @@ export async function detect({ explicitPath = "" } = {}) {
     version,
     executable: redactHome(executable),
     executablePath: executable,
-    detail: `Claude Code ${version} is available.`,
+    detail: account.email
+      ? `Claude Code ${version} is signed in as ${account.email}${account.subscription ? ` (${account.subscription})` : ""}.`
+      : `Claude Code ${version} is available.`,
     setup: "",
+    account,
   };
+}
+
+// `claude auth status` prints JSON (loggedIn, authMethod, email, subscriptionType)
+// without the credential. Older builds lack the command; then we keep the
+// file-based detection above.
+function claudeAccount(executable) {
+  const result = probe(executable, ["auth", "status"], { timeoutMs: 10000 });
+  try {
+    const parsed = JSON.parse(String(result.stdout || "").trim());
+    return {
+      checked: true,
+      signedIn: parsed.loggedIn === true,
+      method: parsed.authMethod || "",
+      email: parsed.email || "",
+      subscription: parsed.subscriptionType || "",
+      label: parsed.email || parsed.authMethod || "",
+    };
+  } catch {
+    return { checked: false, signedIn: looksSignedIn(), method: "", email: "", subscription: "", label: "" };
+  }
 }
 
 function permissionArgs(permissions = {}, policy = "") {

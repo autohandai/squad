@@ -73,6 +73,7 @@ export async function detect({ explicitPath = "", context = {} } = {}) {
       executablePath: executable,
       detail: "Autohand is installed but not signed in.",
       setup: setup.login,
+      signIn: { label: "Sign in with your Autohand account", alternative: "or add an Autohand AI API key in Settings" },
     };
   }
   return {
@@ -81,7 +82,10 @@ export async function detect({ explicitPath = "", context = {} } = {}) {
     executable: redactHome(executable),
     executablePath: executable,
     source: executable === context.bundledPath ? "bundled" : explicitPath ? "explicit" : "system",
-    detail: `Autohand ${version || ""} is ready.`.replace("  ", " "),
+    detail: context.accountEmail
+      ? `Autohand ${version || ""} is signed in as ${context.accountEmail}.`.replace("  ", " ")
+      : `Autohand ${version || ""} is ready.`.replace("  ", " "),
     setup: "",
+    account: { signedIn: context.authReady !== false, email: context.accountEmail || "", label: context.accountEmail || "" },
   };
 }

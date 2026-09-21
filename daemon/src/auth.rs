@@ -20,27 +20,47 @@ pub struct BrowserLogin {
 #[serde(rename_all = "camelCase")]
 struct DeviceAuthInitRequest<'a> {
     client_id: &'a str,
-    source: &'a str,
+    client_type: &'a str,
+    schema_version: u8,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceAuthInitResponse {
     success: Option<bool>,
+    schema_version: Option<u8>,
     device_code: Option<String>,
     user_code: Option<String>,
     verification_uri: Option<String>,
     verification_uri_complete: Option<String>,
     expires_in: Option<u64>,
     interval: Option<u64>,
-    error: Option<String>,
+    /// The API returns either a string or `{ code, message }`.
+    error: Option<serde_json::Value>,
     message: Option<String>,
+}
+
+fn error_text(value: Option<serde_json::Value>) -> Option<String> {
+    match value? {
+        serde_json::Value::String(text) => non_empty(text),
+        serde_json::Value::Object(map) => map
+            .get("message")
+            .and_then(|item| item.as_str())
+            .map(ToString::to_string)
+            .or_else(|| {
+                map.get("code")
+                    .and_then(|item| item.as_str())
+                    .map(ToString::to_string)
+            }),
+        other => Some(other.to_string()),
+    }
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceAuthPollRequest<'a> {
     device_code: &'a str,
+    schema_version: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,7 +70,7 @@ struct DeviceAuthPollResponse {
     status: Option<String>,
     token: Option<String>,
     user: Option<AuthUser>,
-    error: Option<String>,
+    error: Option<serde_json::Value>,
     message: Option<String>,
 }
 
@@ -64,33 +84,39 @@ pub async fn run_browser_device_login(config: &SquadConfig, source: &str) -> Res
     let client = reqwest::Client::new();
     let base_url = auth_base_url(config);
     let init_url = format!("{}/cli/initiate", base_url.trim_end_matches('/'));
-    let init = client
-        .post(&init_url)
-        .json(&DeviceAuthInitRequest {
-            client_id: "autohand-squad",
-            source,
-        })
-        .send()
-        .await
-        .with_context(|| format!("start browser login at {init_url}"))?;
-    let init_status = init.status();
-    let init_body = init
-        .json::<DeviceAuthInitResponse>()
-        .await
-        .context("parse browser login response")?;
-
-    if !init_status.is_success() || init_body.success == Some(false) {
-        bail!(
-            "{}",
-            init_body
-                .error
-                .or(init_body.message)
-                .unwrap_or_else(|| format!(
-                    "browser login failed with HTTP {}",
-                    init_status.as_u16()
-                ))
-        );
+    // The device flow is the CLI's: the API accepts client id `autohand-cli`
+    // with schema version 2 (falling back to 1 for older deployments).
+    let mut schema_version: u8 = 2;
+    let mut init_body: Option<DeviceAuthInitResponse> = None;
+    let mut last_error = String::new();
+    for candidate in [2_u8, 1_u8] {
+        let init = client
+            .post(&init_url)
+            .json(&DeviceAuthInitRequest {
+                client_id: "autohand-cli",
+                client_type: "cli",
+                schema_version: candidate,
+            })
+            .send()
+            .await
+            .with_context(|| format!("start browser login at {init_url}"))?;
+        let init_status = init.status();
+        let body = init
+            .json::<DeviceAuthInitResponse>()
+            .await
+            .context("parse browser login response")?;
+        if init_status.is_success() && body.success != Some(false) {
+            schema_version = body.schema_version.unwrap_or(candidate);
+            init_body = Some(body);
+            break;
+        }
+        last_error = error_text(body.error)
+            .or(body.message)
+            .unwrap_or_else(|| format!("browser login failed with HTTP {}", init_status.as_u16()));
     }
+    let Some(init_body) = init_body else {
+        bail!("{last_error}");
+    };
 
     let device_code = required_field(init_body.device_code, "device code")?;
     let user_code = required_field(init_body.user_code, "user code")?;
@@ -108,6 +134,10 @@ pub async fn run_browser_device_login(config: &SquadConfig, source: &str) -> Res
             .max(1),
     );
 
+    // Print before opening so a supervising process (the web bridge) can show
+    // the link and code even when the browser does not open on this machine.
+    println!("Sign-in URL: {authorization_url}");
+    println!("Enter code {user_code} if the page asks for it.");
     open_url(&authorization_url)?;
 
     let deadline = Instant::now() + timeout;
@@ -119,6 +149,7 @@ pub async fn run_browser_device_login(config: &SquadConfig, source: &str) -> Res
             .post(&poll_url)
             .json(&DeviceAuthPollRequest {
                 device_code: &device_code,
+                schema_version,
             })
             .send()
             .await
@@ -132,8 +163,7 @@ pub async fn run_browser_device_login(config: &SquadConfig, source: &str) -> Res
         if !poll_status.is_success() || poll_body.success == Some(false) {
             bail!(
                 "{}",
-                poll_body
-                    .error
+                error_text(poll_body.error)
                     .or(poll_body.message)
                     .unwrap_or_else(|| format!(
                         "browser login poll failed with HTTP {}",

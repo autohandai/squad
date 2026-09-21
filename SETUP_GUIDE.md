@@ -200,6 +200,15 @@ Structured logs use the OpenTelemetry Logs Data Model (OTLP/JSON lines). Run
 `bun run check:otel` for the format checks and read `docs/observability.md`
 for file locations, attributes, and the `OTEL_EXPORTER_OTLP_*` export settings.
 
+## Sign-in
+
+Development uses your own `~/.autohand/config.json`; a signed-out config shows
+the sign-in gate at `/`. To exercise the gate without signing out, run a
+second bridge with `AUTOHAND_USER_CONFIG_PATH` pointing at an empty file.
+Harness sign-in flows are `POST /api/harnesses/login {id}` and
+`GET /api/harnesses/login?id=`; they run the vendor CLI login and never touch
+credentials.
+
 ## Agent Harnesses
 
 Members run on one of three engines, chosen per member in **Runs with** and

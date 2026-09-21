@@ -74,15 +74,31 @@ export async function detect({ explicitPath = "" } = {}) {
       executablePath: executable,
       detail: "Codex is installed but not signed in.",
       setup: setup.login,
+      signIn: { label: "Sign in with ChatGPT", alternative: "or set OPENAI_API_KEY" },
     };
   }
+  const account = codexAccount(executable);
   return {
     status: "ready",
     version,
     executable: redactHome(executable),
     executablePath: executable,
-    detail: `Codex ${version} is signed in.`,
+    detail: account.method ? `Codex ${version} is signed in (${account.method}).` : `Codex ${version} is signed in.`,
     setup: "",
+    account,
+  };
+}
+
+// `codex login status` prints one line such as "Logged in using ChatGPT" or
+// "Logged in using API key"; it never prints the credential.
+function codexAccount(executable) {
+  const result = probe(executable, ["login", "status"], { timeoutMs: 8000 });
+  const text = `${result.stdout || ""}${result.stderr || ""}`.trim();
+  const match = text.match(/logged in using (.+)/i);
+  return {
+    signedIn: /logged in/i.test(text) && !/not logged in/i.test(text),
+    method: match ? match[1].trim() : process.env.OPENAI_API_KEY ? "API key" : "",
+    label: match ? match[1].trim() : "",
   };
 }
 
