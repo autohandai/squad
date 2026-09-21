@@ -4,7 +4,7 @@ import { OtelLogger, SEVERITY, parseLogEnvelope, resourceFromEnv, traceIdFor, sp
 import { SdkSessionPool } from "./server/sdk-sessions.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { spawn, spawnSync } from "node:child_process";
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -536,11 +536,62 @@ function readRuntimeAccount() {
   const userEmail = authEmail(userAuth);
   const squadSignedIn = Boolean(String(squadConfig?.apiAuthToken || "").trim());
   const userSignedIn = autohandAuthUsable(userAuth);
+  const profile = userAuth?.user && typeof userAuth.user === "object" ? userAuth.user : {};
   return {
     signedIn: squadSignedIn || userSignedIn,
     email: squadEmail || userEmail,
+    name: String(profile.name || "").trim(),
+    avatar: String(profile.avatar || "").trim(),
     source: squadSignedIn ? "squad-runtime" : userSignedIn ? "autohand-cli" : "none",
   };
+}
+
+// Sign out of the Autohand account. The session is shared with the Autohand
+// CLI (~/.autohand/config.json), so signing out here signs the CLI out too;
+// provider, permission, and profile settings are kept. The Squad CLI's
+// `squad logout` is preferred (one code path with the desktop app); without
+// it the bridge clears the same files itself.
+async function signOutAccount() {
+  const before = readRuntimeAccount();
+  let via = "bridge";
+  const squadCli = locateSquadCliBinary();
+  if (squadCli) {
+    const result = spawnSync(squadCli, ["logout"], {
+      encoding: "utf8",
+      env: { ...process.env, AUTOHAND_SQUAD_HOME: squadStateDir },
+      timeout: 15000,
+    });
+    if (result.status === 0) via = "squad-cli";
+    else logEvent(SEVERITY.WARN, `squad logout failed: ${String(result.stderr || result.stdout || result.error?.message || "").trim()}`, { "event.name": "account.logout.cli_failed" });
+  }
+  if (via === "bridge") {
+    clearAutohandAuthToken(userConfigPath);
+    clearSquadSession(squadConfigPath);
+    const daemonRecord = await readOptionalJsonFile(join(squadStateDir, "daemon.json"));
+    if (daemonRecord?.url) {
+      await fetchWithTimeout(`${String(daemonRecord.url).replace(/\/+$/, "")}/auth/logout`, { method: "POST" }, 3000).catch(() => null);
+    }
+  }
+  if (sdkSessions) await sdkSessions.closeAll("signed out").catch(() => 0);
+  harnessLogins.cancel("autohand");
+  logEvent(SEVERITY.INFO, "account signed out", { "event.name": "account.logout", "autohand.logout.via": via });
+  return { via, previousEmail: before.email, account: readRuntimeAccount() };
+}
+
+function clearAutohandAuthToken(configPath) {
+  const config = readJsonFileSync(configPath);
+  if (!config || typeof config !== "object" || !config.auth || typeof config.auth !== "object") return;
+  const { token, expiresAt, refreshToken, ...rest } = config.auth;
+  void token;
+  void expiresAt;
+  void refreshToken;
+  writeFileSync(configPath, `${JSON.stringify({ ...config, auth: rest }, null, 2)}\n`, { mode: 0o600 });
+}
+
+function clearSquadSession(configPath) {
+  const config = readJsonFileSync(configPath);
+  if (!config || typeof config !== "object") return;
+  writeFileSync(configPath, `${JSON.stringify({ ...config, apiAuthToken: "", accountEmail: "" }, null, 2)}\n`, { mode: 0o600 });
 }
 
 function executableName(binaryName) {
@@ -6394,6 +6445,15 @@ async function handleApi(req, res, url) {
 
   // Browser sign-in for a harness account. The vendor CLI runs its own flow;
   // the bridge only relays the URL / device code and the outcome.
+  if (url.pathname === "/api/account/logout" && req.method === "POST") {
+    try {
+      json(res, 200, { success: true, data: await signOutAccount() });
+    } catch (error) {
+      json(res, 500, { success: false, error: error.message });
+    }
+    return true;
+  }
+
   if (url.pathname === "/api/harnesses/login" && req.method === "POST") {
     try {
       const payload = await readBody(req);

@@ -1,4 +1,6 @@
-import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+
+import { onDesktopMenu } from "@/lib/desktop-menu";
 import { createRoot } from "react-dom/client";
 import {
   Bar,
@@ -291,12 +293,29 @@ const STORAGE_KEYS = {
   onboarding: "autohandSquad.v1.onboarding",
   tasks: "autohandSquad.v1.tasks",
   theme: "autohandSquad.v1.theme",
+  inboxReadAt: "autohandSquad.v1.inboxReadAt",
 };
 
-const ACCOUNT_PROFILE = {
-  initials: "I",
-  name: "Igor Costa",
-};
+// Fallback identity before the bridge reports the signed-in account.
+const ACCOUNT_PROFILE = { initials: "", name: "You", email: "", avatar: "", signedIn: false };
+
+/** The account the bridge reports (shared with the Autohand CLI), shaped for the UI. */
+function accountProfileFor(account) {
+  const email = String(account?.email || "").trim();
+  const name = String(account?.name || "").trim() || (email ? email.split("@")[0] : "") || ACCOUNT_PROFILE.name;
+  const initials =
+    name
+      .split(/[\s._-]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0].toUpperCase())
+      .join("") || "?";
+  return { name, email, initials, avatar: String(account?.avatar || ""), signedIn: account?.signedIn === true };
+}
+
+// Account identity and account-level actions for the sidebar footer and menu,
+// so they do not travel through six layers of sidebar props.
+const AccountContext = createContext({ profile: ACCOUNT_PROFILE, signOut: null, signingOut: false, openFeedback: null });
 
 const SKILL_ALIASES = {
   "a11y-check": "web-design-guidelines",
@@ -4350,6 +4369,12 @@ function App() {
   const [channelReads, setChannelReads] = useState(() => readStored(storageKeysFor("channelReads"), {}));
   const [agentReads, setAgentReads] = useState(() => readStored(storageKeysFor("agentReads"), {}));
   const [channelReactions, setChannelReactions] = useState(() => readStored(storageKeysFor("channelReactions"), {}));
+  // "Mark all read" acknowledges handoffs and memory proposals up to this
+  // moment; they stay listed in the inbox (they still need a decision) but
+  // stop counting in the badge.
+  const [inboxReadAt, setInboxReadAt] = useState(() => readStored(storageKeysFor("inboxReadAt"), ""));
+  const [createChannelRequest, setCreateChannelRequest] = useState(0);
+  const [signingOut, setSigningOut] = useState(false);
   const channelViewMarkerRef = useRef({ channelId: "", lastReadAt: 0 });
   const localeResolution = useMemo(
     () => resolveLocalePreference(localePreference, systemLanguages),
@@ -4512,10 +4537,11 @@ function App() {
       window.localStorage.setItem(STORAGE_KEYS.channelReads, JSON.stringify(channelReads));
       window.localStorage.setItem(STORAGE_KEYS.agentReads, JSON.stringify(agentReads));
       window.localStorage.setItem(STORAGE_KEYS.channelReactions, JSON.stringify(channelReactions));
+      window.localStorage.setItem(STORAGE_KEYS.inboxReadAt, JSON.stringify(inboxReadAt));
     } catch {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
-  }, [channelReads, agentReads, channelReactions]);
+  }, [channelReads, agentReads, channelReactions, inboxReadAt]);
 
   async function refreshHarnesses(refresh = false) {
     setHarnessesLoading(true);
@@ -5026,7 +5052,67 @@ function App() {
         }),
     [channels, unreadChannelIds, messagesByChannel]
   );
-  const inboxCount = inboxUnreadChannels.length + inboxHandoffs.length + inboxMemory.length;
+  const inboxReadMs = Date.parse(inboxReadAt || "") || 0;
+  const inboxNewItems = (items) => items.filter((item) => (Date.parse(item.at || "") || 0) >= inboxReadMs).length;
+  const inboxCount = inboxUnreadChannels.length + inboxNewItems(inboxHandoffs) + inboxNewItems(inboxMemory);
+
+  const accountProfile = useMemo(() => accountProfileFor(runtime?.account), [runtime?.account]);
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await api("/api/account/logout", { method: "POST" });
+    } catch (error) {
+      console.error("sign out failed", error);
+    } finally {
+      await refreshRuntime();
+      setSigningOut(false);
+    }
+  }
+  const accountContextValue = useMemo(
+    () => ({ profile: accountProfile, signOut, signingOut, openFeedback }),
+    // signOut / openFeedback are stable closures over state setters and route.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [accountProfile, signingOut, route]
+  );
+
+  // Native menu bar (desktop shell): File › New › Agent / Channel, View › ….
+  const desktopMenuRef = useRef(null);
+  desktopMenuRef.current = (action) => {
+    switch (action) {
+      case "new-agent":
+        navigate(`${MEMBER_ROUTE_PREFIX}/new`);
+        break;
+      case "new-channel":
+        navigate(CHANNELS_ROUTE);
+        setCreateChannelRequest((count) => count + 1);
+        break;
+      case "inbox":
+        navigate(INBOX_ROUTE);
+        break;
+      case "agents":
+        navigate(SQUAD_DIRECTORY_ROUTE);
+        break;
+      case "channels":
+        navigate(CHANNELS_ROUTE);
+        break;
+      case "mission-control":
+        navigate(missionControlPath());
+        break;
+      case "settings":
+        openSettings();
+        break;
+      case "search":
+        setSearchOpen(true);
+        break;
+      case "toggle-sidebar":
+        setDesktopSidebarCollapsed((current) => !current);
+        break;
+      default:
+        break;
+    }
+  };
+  useEffect(() => onDesktopMenu((action) => desktopMenuRef.current?.(action)), []);
 
   function navigate(path) {
     window.history.pushState({}, "", path);
@@ -6761,6 +6847,7 @@ function App() {
   }
 
   return (
+    <AccountContext.Provider value={accountContextValue}>
     <TooltipProvider>
       <div className="app-shell-root relative min-h-screen overflow-x-clip bg-background text-foreground">
         <div className={cn("app-shell-decor dark-grid pointer-events-none fixed inset-0 opacity-35", isCreate && "hidden")} />
@@ -6795,6 +6882,7 @@ function App() {
             onOnboarding={openOnboarding}
             onAnalytics={openAnalytics}
             onCreateChannel={createChannel}
+            createChannelRequest={createChannelRequest}
             unreadChannelIds={unreadChannelIds}
             unreadCountByAgent={unreadCountByAgent}
             inboxCount={inboxCount}
@@ -6848,6 +6936,7 @@ function App() {
                 onMarkAllRead={() => {
                   const now = new Date().toISOString();
                   setChannelReads((current) => ({ ...current, ...Object.fromEntries(channels.map((channel) => [channel.id, now])) }));
+                  setInboxReadAt(now);
                 }}
               />
             ) : isSquadDirectory ? (
@@ -7011,13 +7100,6 @@ function App() {
           </main>
         </div>
 
-        {!feedbackKind && !aboutOpen ? (
-          <FloatingFeedbackButton
-            onReportBug={() => openFeedback("bug")}
-            onGiveFeedback={() => openFeedback("feedback")}
-          />
-        ) : null}
-
         <AboutDialog
           open={aboutOpen}
           runtime={runtime}
@@ -7097,6 +7179,7 @@ function App() {
         </Sheet>
       </div>
     </TooltipProvider>
+    </AccountContext.Provider>
   );
 }
 
@@ -7313,10 +7396,12 @@ function messageCreatedTime(message, locale = DEFAULT_LOCALE) {
 }
 
 function ChannelUserAvatar({ className }) {
+  const { profile } = useContext(AccountContext);
   return (
     <Avatar className={cn("size-8 rounded-md border border-border/70 bg-primary/12", className)}>
+      {profile.avatar ? <AvatarImage src={profile.avatar} alt="" /> : null}
       <AvatarFallback className="rounded-md bg-primary/12 text-primary">
-        <span className="text-xs font-semibold">{ACCOUNT_PROFILE.initials || "IC"}</span>
+        <span className="text-xs font-semibold">{profile.initials || "?"}</span>
       </AvatarFallback>
     </Avatar>
   );
@@ -7520,6 +7605,7 @@ function ChannelsPage({
   onReact,
   lastReadAt = 0,
 }) {
+  const { profile: accountProfile } = useContext(AccountContext);
   const [manageMembersOpen, setManageMembersOpen] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -7589,7 +7675,7 @@ function ChannelsPage({
       threads,
       messages: channelMessages,
       agents,
-      userName: ACCOUNT_PROFILE.name,
+      userName: accountProfile.name,
       locale,
     });
     downloadMarkdownLog(`${sanitizeMarkdownFilename(channel.name)}-chat-log.md`, markdown);
@@ -7607,7 +7693,7 @@ function ChannelsPage({
   void projectDraft;
 
   const replyThread = replyTo ? threads.find((thread) => thread.id === replyTo.threadId) : null;
-  const replyName = replyTo ? channelMessageAuthorName(replyTo, agents, ACCOUNT_PROFILE.name) : "";
+  const replyName = replyTo ? channelMessageAuthorName(replyTo, agents, accountProfile.name) : "";
 
   return (
     <div className="flex h-[calc(100vh-56px)] min-h-0 w-full flex-col lg:h-screen">
@@ -7773,13 +7859,13 @@ function ChannelsPage({
                 channel={channel}
                 messages={channelMessages}
                 agents={agents}
-                userName={ACCOUNT_PROFILE.name}
+                userName={accountProfile.name}
                 locale={locale}
                 lastReadAt={lastReadAt}
                 reactionsByMessage={reactionsByMessage}
                 renderBody={(message) => <MarkdownBlocks text={message.body || ""} />}
                 renderAvatar={(message) => <ChannelMessageAvatar message={message} agents={agents} />}
-                authorName={(message) => channelMessageAuthorName(message, agents, ACCOUNT_PROFILE.name)}
+                authorName={(message) => channelMessageAuthorName(message, agents, accountProfile.name)}
                 onReact={onReact}
                 onReply={(message) => setReplyTo(message)}
                 emptyLabel={members.length ? copy.channelNoThreads : copy.channelNoMembers}
@@ -9601,6 +9687,7 @@ function SidebarContent({
   onAnalytics,
   onCollapse,
   onCreateChannel,
+  createChannelRequest = 0,
   unreadChannelIds = new Set(),
   unreadCountByAgent = new Map(),
   inboxCount = 0,
@@ -9608,6 +9695,9 @@ function SidebarContent({
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  useEffect(() => {
+    if (createChannelRequest) setCreateChannelOpen(true);
+  }, [createChannelRequest]);
   const memberId = activeAgent?.id || visibleAgents[0]?.id;
   const chatPath = memberChatPath(memberId);
   const isCreatingMember = isCreateMemberRoute(route);
@@ -9823,6 +9913,7 @@ function SettingsUpdatesPanel({ updates, checking = false, onCheck }) {
 }
 
 function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onMissionControl, onOnboarding, onAnalytics, updateAvailable = false }) {
+  const { profile } = useContext(AccountContext);
   return (
     <div className="border-t p-4">
       {updateAvailable ? (
@@ -9832,10 +9923,10 @@ function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings
         </Button>
       ) : null}
       <div className="mt-3 flex items-center gap-3 rounded-md px-1 py-2">
-        <span className="grid size-9 place-items-center rounded-md bg-muted text-sm font-semibold">{ACCOUNT_PROFILE.initials}</span>
+        <span className="grid size-9 place-items-center rounded-md bg-muted text-sm font-semibold">{profile.initials}</span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold">{ACCOUNT_PROFILE.name}</span>
-          <span className="block truncate text-xs text-muted-foreground">{copy.proTrial}</span>
+          <span className="block truncate text-sm font-semibold">{profile.name}</span>
+          <span className="block truncate text-xs text-muted-foreground">{profile.email || copy.loggedIn}</span>
         </span>
         <AccountMenuButton copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
       </div>
@@ -9852,6 +9943,7 @@ function AccountMenuButton({
   placement = "top-end",
   triggerClassName,
 }) {
+  const { profile, signOut, signingOut, openFeedback } = useContext(AccountContext);
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
   const menuPosition =
@@ -9916,11 +10008,11 @@ function AccountMenuButton({
             </div>
             <div className="flex min-w-0 items-center gap-3">
               <span className="grid size-9 place-items-center rounded-md bg-muted text-sm font-semibold">
-                {ACCOUNT_PROFILE.initials}
+                {profile.initials}
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold">{ACCOUNT_PROFILE.name}</span>
-                <span className="block truncate text-xs text-muted-foreground">{copy.proTrial}</span>
+                <span className="block truncate text-sm font-semibold">{profile.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">{profile.email || copy.loggedIn}</span>
               </span>
             </div>
           </div>
@@ -9929,20 +10021,28 @@ function AccountMenuButton({
           <AccountMenuItem icon={Monitor} label="Mission Control" onClick={() => choose(onMissionControl)} hasChevron />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} hasChevron />
           <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} hasChevron />
+          {openFeedback ? (
+            <>
+              <div className="my-1 border-t border-border/70" />
+              <AccountMenuItem icon={Bug} label={copy.reportBug || "Report a bug"} onClick={() => choose(() => openFeedback("bug"))} />
+              <AccountMenuItem icon={MessageSquareText} label={copy.giveFeedback || "Give feedback"} onClick={() => choose(() => openFeedback("feedback"))} />
+            </>
+          ) : null}
           <div className="my-1 border-t border-border/70" />
-          <AccountMenuItem icon={LogOut} label={copy.signOut} onClick={() => choose()} />
+          <AccountMenuItem icon={LogOut} label={signingOut ? copy.signingOut || "Signing out…" : copy.signOut} onClick={() => choose(signOut)} disabled={!signOut || signingOut} />
         </div>
       ) : null}
     </div>
   );
 }
 
-function AccountMenuItem({ icon: Icon, label, onClick, hasChevron = false }) {
+function AccountMenuItem({ icon: Icon, label, onClick, hasChevron = false, disabled = false }) {
   return (
     <button
       type="button"
       role="menuitem"
-      className="flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+      disabled={disabled}
+      className="flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-60"
       onClick={onClick}
     >
       <Icon className="size-4" />
@@ -21131,65 +21231,6 @@ function AboutDialog({ open, runtime, onOpenChange, onGiveFeedback }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function FloatingFeedbackButton({ onReportBug, onGiveFeedback }) {
-  const [open, setOpen] = useState(false);
-
-  function choose(action) {
-    setOpen(false);
-    action?.();
-  }
-
-  return (
-    <div className="fixed bottom-4 right-4 z-40 sm:bottom-5 sm:right-5">
-      <Popover open={open} onOpenChange={setOpen}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                size="icon-lg"
-                className="border border-border/80 bg-background text-foreground shadow-lg hover:bg-accent hover:text-accent-foreground"
-                aria-label="Report bug or give feedback"
-              >
-                <MessageSquareText className="size-5" aria-hidden="true" />
-              </Button>
-            </PopoverTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="left">Report bug or give feedback</TooltipContent>
-        </Tooltip>
-        <PopoverContent side="top" align="end" className="w-64 p-2">
-          <div className="grid gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
-              onClick={() => choose(onReportBug)}
-            >
-              <Bug className="size-4" aria-hidden="true" />
-              <span className="grid gap-0.5">
-                <span>Report Bug</span>
-                <span className="text-xs font-normal text-muted-foreground">Capture this view with diagnostics.</span>
-              </span>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
-              onClick={() => choose(onGiveFeedback)}
-            >
-              <MessageSquareText className="size-4" aria-hidden="true" />
-              <span className="grid gap-0.5">
-                <span>Give Feedback</span>
-                <span className="text-xs font-normal text-muted-foreground">Share what worked or what felt rough.</span>
-              </span>
-            </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-    </div>
   );
 }
 

@@ -101,7 +101,7 @@ On macOS the window uses a transparent title bar with the traffic lights over
 the sidebar, and the sidebar is a native vibrancy surface; on Windows it uses
 Mica. The web app detects the shell through its user agent
 (`AutohandSquadDesktop/…`) and switches to transparent chrome and drag regions.
-Sign-in from the app runs `squad login` (bundled) for the Autohand account
+Sign-in from the app runs `squad login` / `squad logout` (bundled) for the Autohand account
 device flow; Codex and Claude Code sign-in run their own CLIs.
 
 The bundle carries the bridge under `Resources/runtime` and the sidecars next

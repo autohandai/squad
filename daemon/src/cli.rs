@@ -65,6 +65,8 @@ pub enum SquadCommand {
     Start,
     /// Sign in to the Autohand account with the browser device flow.
     Login,
+    /// Sign out of the Autohand account (shared with the Autohand CLI).
+    Logout,
     Doctor,
     Status,
     Restart,
@@ -190,6 +192,10 @@ async fn run_squad_command_with_paths_inner(
             let output = crate::ui::run_cli_login(paths.clone(), overrides).await?;
             Ok(CommandOutput::ok(output))
         }
+        SquadCommand::Logout => {
+            let output = crate::ui::run_cli_logout(paths.clone(), overrides).await?;
+            Ok(CommandOutput::ok(output))
+        }
         SquadCommand::Doctor => doctor(&paths, &config),
         SquadCommand::Status => stack_status(&paths, &config).await,
         SquadCommand::Restart => restart_stack(&paths, &config, tray_requested).await,
@@ -240,6 +246,7 @@ fn command_name(command: &SquadCommand) -> &'static str {
     match command {
         SquadCommand::Start => "start",
         SquadCommand::Login => "login",
+        SquadCommand::Logout => "logout",
         SquadCommand::Doctor => "doctor",
         SquadCommand::Status => "status",
         SquadCommand::Restart => "restart",

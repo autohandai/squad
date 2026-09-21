@@ -219,8 +219,14 @@ pub fn write_user_auth_config(
 pub fn write_autohand_auth_config(
     api_auth_token: Option<&str>,
     account_email: Option<&str>,
+    account_name: Option<&str>,
 ) -> Result<()> {
-    merge_autohand_auth_config_at(&autohand_user_config_path(), api_auth_token, account_email)
+    merge_autohand_auth_config_at(
+        &autohand_user_config_path(),
+        api_auth_token,
+        account_email,
+        account_name,
+    )
 }
 
 fn autohand_user_config_path() -> PathBuf {
@@ -248,6 +254,7 @@ fn merge_autohand_auth_config_at(
     path: &Path,
     api_auth_token: Option<&str>,
     account_email: Option<&str>,
+    account_name: Option<&str>,
 ) -> Result<()> {
     let mut config = if path.exists() {
         let content = fs::read_to_string(path)
@@ -295,10 +302,13 @@ fn merge_autohand_auth_config_at(
             bail!("Autohand account email must not be empty");
         }
         // Do not retain identity fields from a different account when the tray
-        // is used to re-login. The device flow supplies only a trusted email,
-        // so persist that minimal user shape.
+        // is used to re-login. The device flow supplies a trusted email and,
+        // when the account has one, a display name; persist only those.
         let mut user = Map::new();
         user.insert("email".to_string(), Value::String(email.to_string()));
+        if let Some(name) = account_name.map(str::trim).filter(|name| !name.is_empty()) {
+            user.insert("name".to_string(), Value::String(name.to_string()));
+        }
         auth_object.insert("user".to_string(), Value::Object(user));
     }
 
@@ -563,6 +573,7 @@ mod tests {
             &config_path,
             Some("fresh-session-token"),
             Some("ops@example.com"),
+            None,
         )
         .unwrap();
         let value: Value =
@@ -599,6 +610,7 @@ mod tests {
             &config_path,
             Some("fresh-session-token"),
             Some("first-login@example.com"),
+            None,
         )
         .unwrap();
         let value: Value =
@@ -640,7 +652,7 @@ mod tests {
         )
         .unwrap();
 
-        merge_autohand_auth_config_at(&config_path, None, None).unwrap();
+        merge_autohand_auth_config_at(&config_path, None, None, None).unwrap();
         let value: Value =
             serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
 
@@ -669,6 +681,7 @@ mod tests {
             &config_path,
             Some("fresh-session-token"),
             Some("ops@example.com"),
+            None,
         )
         .unwrap_err();
 

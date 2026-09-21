@@ -16,6 +16,10 @@ pub struct BrowserLogin {
     pub authorization_url: String,
 }
 
+/// Presentation class for the account confirmation page. The API accepts
+/// `desktop`, `cli`, `blueprint`, `assembly`, or `mobile`.
+pub const DEVICE_CLIENT_TYPE: &str = "desktop";
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceAuthInitRequest<'a> {
@@ -84,8 +88,10 @@ pub async fn run_browser_device_login(config: &SquadConfig, source: &str) -> Res
     let client = reqwest::Client::new();
     let base_url = auth_base_url(config);
     let init_url = format!("{}/cli/initiate", base_url.trim_end_matches('/'));
-    // The device flow is the CLI's: the API accepts client id `autohand-cli`
-    // with schema version 2 (falling back to 1 for older deployments).
+    // The device flow is the CLI's (`clientId` names the wire protocol and
+    // stays `autohand-cli`), with schema version 2 falling back to 1 for
+    // older deployments. `clientType` drives the confirmation page: Squad is
+    // a desktop client, so the page says "Autohand Desktop", not "CLI".
     let mut schema_version: u8 = 2;
     let mut init_body: Option<DeviceAuthInitResponse> = None;
     let mut last_error = String::new();
@@ -94,7 +100,7 @@ pub async fn run_browser_device_login(config: &SquadConfig, source: &str) -> Res
             .post(&init_url)
             .json(&DeviceAuthInitRequest {
                 client_id: "autohand-cli",
-                client_type: "cli",
+                client_type: DEVICE_CLIENT_TYPE,
                 schema_version: candidate,
             })
             .send()
