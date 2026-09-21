@@ -81,6 +81,29 @@ access-controlled service in the current build.
 | Repeatable work | Recipes and saved automation definitions with explicit **Run now** controls. A background scheduler and inbound webhook worker are not included yet. |
 | Distribution | Tag-bound DMG installers for macOS Apple Silicon and Intel, an NSIS setup EXE for Windows x64, portable archives for every supported target, SHA-256 checksums, and updater assets. Native installers bundle Node; portable archives require Node 18.17+ on `PATH`. |
 
+## Desktop app (Tauri 2)
+
+`src-tauri/` is the native shell: a system-webview window that loads the local
+bridge, a tray with Open / Sign in / Open logs / Stop / Quit, single-instance
+relaunch, and the same boot sequence as the launcher (preflight, daemon,
+bridge, health handshake, native recovery dialog). Closing the window keeps
+the squad running in the tray; Quit stops the services.
+
+```bash
+bun run build            # web assets
+bun run cli:fetch        # vendored Autohand Code release
+bun run desktop:stage    # stages runtime/ and the sidecars (Node, daemon, analytics, squad)
+bun run desktop:build    # .app + .dmg (macOS), NSIS (Windows), deb/AppImage (Linux)
+bun run desktop:dev      # window against a staged runtime, debug build
+```
+
+The bundle carries the bridge under `Resources/runtime` and the sidecars next
+to the executable; the shell points the runtime crate at them through
+`AUTOHAND_SQUAD_WEB_SERVER`, `AUTOHAND_SQUAD_NODE`, `AUTOHAND_SQUAD_DAEMON`,
+and `AUTOHAND_SQUAD_ANALYTICS`, so a source checkout and the installed app run
+one code path. Signing and notarization use the same secrets as the existing
+release workflow (`docs/release.md`).
+
 ## Install a release
 
 After a `v`-prefixed version tag completes the Release workflow, download the

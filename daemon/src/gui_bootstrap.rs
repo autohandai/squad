@@ -43,11 +43,23 @@ pub fn run_desktop_bootstrap(
     paths: &StatePaths,
     overrides: &ConfigOverrides,
 ) -> Result<BootstrapOutcome> {
+    run_desktop_bootstrap_with(runtime, paths, overrides, true)
+}
+
+/// Same as [`run_desktop_bootstrap`], but a host that owns its own window
+/// (the Tauri shell) passes `open_browser = false` and navigates to the
+/// returned URL itself.
+pub fn run_desktop_bootstrap_with(
+    runtime: &Runtime,
+    paths: &StatePaths,
+    overrides: &ConfigOverrides,
+    open_browser: bool,
+) -> Result<BootstrapOutcome> {
     let config = resolve_config(paths, overrides.clone())?;
     let mut attempt = 0usize;
     loop {
         attempt += 1;
-        match bootstrap_once(runtime, paths, &config) {
+        match bootstrap_once(runtime, paths, &config, open_browser) {
             Ok(url) => {
                 record(
                     paths,
@@ -87,6 +99,7 @@ fn bootstrap_once(
     runtime: &Runtime,
     paths: &StatePaths,
     config: &SquadConfig,
+    open_browser: bool,
 ) -> std::result::Result<String, BootstrapFailure> {
     let report = run_preflight(paths, config);
     if !report.ok {
@@ -139,10 +152,12 @@ fn bootstrap_once(
     }
 
     let url = config.open_url.clone();
-    open_url(&url).map_err(|error| BootstrapFailure {
-        title: "Autohand Squad could not open the app".to_string(),
-        body: format!("{error:#}\n\nOpen {url} in your browser manually."),
-    })?;
+    if open_browser {
+        open_url(&url).map_err(|error| BootstrapFailure {
+            title: "Autohand Squad could not open the app".to_string(),
+            body: format!("{error:#}\n\nOpen {url} in your browser manually."),
+        })?;
+    }
     Ok(url)
 }
 

@@ -200,6 +200,16 @@ Structured logs use the OpenTelemetry Logs Data Model (OTLP/JSON lines). Run
 `bun run check:otel` for the format checks and read `docs/observability.md`
 for file locations, attributes, and the `OTEL_EXPORTER_OTLP_*` export settings.
 
+## Desktop Shell
+
+`bun run desktop:stage` copies `server.mjs`, `dist/`, `server/`, the Agent SDK,
+and the vendored CLI into `src-tauri/runtime/`, and builds the sidecars
+(`autohand-squad-daemon`, `autohand-squad-analytics`, `squad`, plus the
+current Node) into `src-tauri/binaries/<name>-<triple>`. `bun run desktop:build`
+then produces the installers under `src-tauri/target/release/bundle/`.
+`bun run desktop:check` type-checks the shell without bundling. Stop the dev
+bridge before launching the app: both use port 19821.
+
 ## Bridge Only (no tray, no daemon)
 
 `bun run dev` starts only the Node bridge on http://127.0.0.1:19821; it does

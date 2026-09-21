@@ -39,7 +39,11 @@
     "release:package": "node scripts/package-squad-release.mjs",
     "release:portable": "node scripts/package-squad-portable.mjs",
     "release:installers": "node scripts/package-squad-installers.mjs",
-    "release:merge-manifests": "node scripts/merge-release-manifests.mjs"
+    "release:merge-manifests": "node scripts/merge-release-manifests.mjs",
+    "desktop:stage": "node scripts/stage-desktop.mjs",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:check": "cargo check --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@autohandai/agent-sdk": "1.0.5",
@@ -74,6 +78,7 @@
     "vite": "^6.0.3"
   },
   "devDependencies": {
-    "@crabnebula/packager": "0.8.1"
+    "@crabnebula/packager": "0.8.1",
+    "@tauri-apps/cli": "^2"
   }
 }
