@@ -4569,6 +4569,16 @@ function App() {
     });
   }, [memoryInbox, memoryInboxBridgeReady]);
 
+  useEffect(() => {
+    registerMentionNames([
+      ...agents.flatMap((agent) => [
+        { name: agent.name, kind: "member", detail: agent.role || "" },
+        { name: mentionTokenForAgent(agent), kind: "member", detail: agent.role || "" },
+      ]),
+      ...channels.flatMap((channel) => normalizeChannelProjects(channel.projects).map((project) => ({ name: project.name, kind: "project", detail: project.path }))),
+    ]);
+  }, [agents, channels]);
+
   const liveStatusRef = useRef({ agents, tasks, runs, automations, messagesByChannel, route });
   liveStatusRef.current = { agents, tasks, runs, automations, messagesByChannel, route };
 
@@ -8563,23 +8573,38 @@ function parseMarkdownBlocks(text) {
   return blocks;
 }
 
+// Names that render as mention chips inside message bodies (squad members,
+// channel projects). Kept module-level so the markdown renderer stays a pure
+// function of its text; the app refreshes it whenever members change.
+const KNOWN_MENTION_NAMES = new Map();
+function registerMentionNames(entries = []) {
+  KNOWN_MENTION_NAMES.clear();
+  for (const entry of entries) {
+    if (entry?.name) KNOWN_MENTION_NAMES.set(String(entry.name).toLowerCase(), entry);
+  }
+}
+
 function InlineMarkdown({ text }) {
   const value = String(text || "");
   const parts = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)]+\))/g;
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((?:https?:\/\/|\/)[^)]+\)|(?:^|(?<=\s|\())@[A-Za-z0-9][A-Za-z0-9._-]*)/g;
   let lastIndex = 0;
   let match;
 
   while ((match = pattern.exec(value))) {
     if (match.index > lastIndex) parts.push({ type: "text", value: value.slice(lastIndex, match.index) });
     const token = match[0];
-    const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+    const link = token.match(/^\[([^\]]+)\]\(((?:https?:\/\/|\/)[^)]+)\)$/);
     if (token.startsWith("`")) {
       parts.push({ type: "code", value: token.slice(1, -1) });
     } else if (token.startsWith("**")) {
       parts.push({ type: "strong", value: token.slice(2, -2) });
     } else if (link) {
       parts.push({ type: "link", value: link[1], href: link[2] });
+    } else if (token.startsWith("@")) {
+      const known = KNOWN_MENTION_NAMES.get(token.slice(1).toLowerCase().replace(/[.,;:!?]+$/, ""));
+      if (known) parts.push({ type: "mention", value: token, entry: known });
+      else parts.push({ type: "text", value: token });
     }
     lastIndex = pattern.lastIndex;
   }
@@ -8596,10 +8621,26 @@ function InlineMarkdown({ text }) {
     }
     if (part.type === "strong") return <strong key={index}>{part.value}</strong>;
     if (part.type === "link") {
+      const internal = part.href.startsWith("/");
       return (
-        <a key={index} href={part.href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-4">
+        <a key={index} href={part.href} target={internal ? undefined : "_blank"} rel={internal ? undefined : "noreferrer"} className="text-primary underline underline-offset-4">
           {part.value}
         </a>
+      );
+    }
+    if (part.type === "mention") {
+      return (
+        <span
+          key={index}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 align-baseline text-[0.92em] font-medium",
+            part.entry.kind === "project" ? "bg-muted text-foreground/90" : "bg-primary/10 text-primary"
+          )}
+          title={part.entry.detail || ""}
+        >
+          {part.entry.kind === "project" ? <FolderGit2 className="size-3" aria-hidden="true" /> : <Bot className="size-3" aria-hidden="true" />}
+          {part.entry.name}
+        </span>
       );
     }
     return <React.Fragment key={index}>{part.value}</React.Fragment>;
