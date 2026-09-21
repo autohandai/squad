@@ -146,6 +146,13 @@ and offers **Sign in with ChatGPT** or **Sign in with your Claude account**,
 which run `codex login` / `claude auth login` and re-check readiness when the
 browser flow completes. An API key remains an alternative for each engine.
 
+## Steering a running reply
+
+While a member is replying, Enter queues your message. **Send now** on a
+queued item, or ⌘↩ / Ctrl+Enter in the composer, interrupts the current reply
+and sends immediately; the warm session keeps the member's context, so it
+continues from where it was with your new instruction.
+
 ## Composer syntax
 
 The chat composer understands the same prefixes on every engine:

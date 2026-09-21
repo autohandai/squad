@@ -200,6 +200,22 @@ Structured logs use the OpenTelemetry Logs Data Model (OTLP/JSON lines). Run
 `bun run check:otel` for the format checks and read `docs/observability.md`
 for file locations, attributes, and the `OTEL_EXPORTER_OTLP_*` export settings.
 
+## Bridge Only (no tray, no daemon)
+
+`bun run dev` starts only the Node bridge on http://127.0.0.1:19821; it does
+not start the launcher, the daemon, or analytics, and it does not need them.
+If a tray icon or daemon is running, it comes from the installed desktop app
+(usually launch-at-login), whose bundled web server also claims port 19821.
+Stop it with the tray's **Quit** or:
+
+```bash
+./daemon/target/debug/squad stop      # or the installed `squad stop`
+./daemon/target/debug/squad status    # everything should report running: false
+```
+
+The sidebar's **Restart to update** button appears only when a running daemon
+reports an available update.
+
 ## Sign-in
 
 Development uses your own `~/.autohand/config.json`; a signed-out config shows

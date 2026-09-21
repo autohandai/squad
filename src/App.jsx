@@ -9450,13 +9450,15 @@ function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCop
   );
 }
 
-function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onMissionControl, onOnboarding, onAnalytics }) {
+function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onMissionControl, onOnboarding, onAnalytics, updateAvailable = false }) {
   return (
     <div className="border-t p-4">
-      <Button variant="outline" className="h-9 w-full justify-center rounded-full border-border/70 bg-transparent" onClick={onSettings}>
-        <CircleDot className="text-chart-3" data-icon="inline-start" />
-        {copy.restartToUpdate}
-      </Button>
+      {updateAvailable ? (
+        <Button variant="outline" className="h-9 w-full justify-center rounded-full border-border/70 bg-transparent" onClick={onSettings}>
+          <CircleDot className="text-chart-3" data-icon="inline-start" />
+          {copy.restartToUpdate}
+        </Button>
+      ) : null}
       <div className="mt-3 flex items-center gap-3 rounded-md px-1 py-2">
         <span className="grid size-9 place-items-center rounded-md bg-muted text-sm font-semibold">{ACCOUNT_PROFILE.initials}</span>
         <span className="min-w-0 flex-1">
@@ -10108,6 +10110,17 @@ function Conversation({
       !event.metaKey &&
       !event.ctrlKey &&
       !event.nativeEvent?.isComposing;
+    const wantsSteer = event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent?.isComposing;
+
+    if (wantsSteer && !mentionOpen) {
+      event.preventDefault();
+      const text = prompt.trim();
+      if (!text || blockedWorkspace) return;
+      setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
+      setMentionState(null);
+      steerNow({ prompt: expandSkillMentions(text, installedSkillNames), workspace, policy, model });
+      return;
+    }
 
     if (!mentionOpen) {
       if (wantsPlainEnter) {
@@ -10224,8 +10237,36 @@ function Conversation({
     window.requestAnimationFrame(() => promptRef.current?.focus());
   }
 
+  // Steer: interrupt the running reply and send this message immediately.
+  // The warm session keeps the CLI's context, so the member sees what it was
+  // doing when the new instruction arrives.
+  const pendingSteerRef = useRef({});
+  function steerNow(nextItem, agentId = agent.id) {
+    const text = String(nextItem?.prompt || "").trim();
+    if (!text) return;
+    if (!chatSendingRef.current[agentId]) {
+      sendPromptNow({ ...nextItem, prompt: text }, { agentId, restorePromptOnError: true });
+      return;
+    }
+    pendingSteerRef.current = { ...pendingSteerRef.current, [agentId]: { ...nextItem, prompt: text } };
+    activeChatControllerRef.current[agentId]?.abort();
+  }
+
+  function steerQueuedFollowup(itemId) {
+    const item = (queuedFollowupsRef.current[agent.id] || []).find((entry) => entry.id === itemId);
+    if (!item) return;
+    updateQueuedFollowups((items) => items.filter((entry) => entry.id !== itemId));
+    steerNow(item);
+  }
+
   function sendNextQueuedFollowup(agentId = agent.id) {
     if (chatSendingRef.current[agentId]) return;
+    const steer = pendingSteerRef.current[agentId];
+    if (steer) {
+      pendingSteerRef.current = { ...pendingSteerRef.current, [agentId]: null };
+      sendPromptNow(steer, { agentId, restorePromptOnError: true });
+      return;
+    }
     const [nextItem, ...remainingItems] = queuedFollowupsRef.current[agentId] || [];
     if (!nextItem) return;
     setQueuedFollowupItems(agentId, remainingItems);
@@ -10307,7 +10348,9 @@ function Conversation({
             activeChatControllerRef.current = { ...activeChatControllerRef.current, [targetAgentId]: null };
           }
           setActiveChatSending(targetAgentId, false);
-          if (!controller.signal.aborted) {
+          // Stop only cancels the queue; a steer (Send now / Cmd+Enter) still
+          // sends its message after the interrupted turn settles.
+          if (!controller.signal.aborted || pendingSteerRef.current[targetAgentId]) {
             window.setTimeout(() => sendNextQueuedFollowup(targetAgentId), 0);
           }
         });
@@ -10719,6 +10762,7 @@ function Conversation({
                 copy={copy}
                 onChange={updateQueuedFollowupPrompt}
                 onRemove={removeQueuedFollowup}
+                onSendNow={steerQueuedFollowup}
               />
             ) : null}
             {launchWarnings.length ? <LaunchPermissionWarnings warnings={launchWarnings} /> : null}
@@ -10939,7 +10983,7 @@ function Conversation({
                         <Send />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>{copy.queueFollowup}</TooltipContent>
+                    <TooltipContent>{copy.queueFollowup} · ⌘↩ sends now and interrupts</TooltipContent>
                   </Tooltip>
                 ) : null}
 
@@ -11131,7 +11175,7 @@ function ContextPackPreviewDialog({ pack, loading, error, open, onOpenChange, lo
   );
 }
 
-function QueuedFollowups({ items = [], copy = getLocaleCopy(DEFAULT_LOCALE), onChange, onRemove }) {
+function QueuedFollowups({ items = [], copy = getLocaleCopy(DEFAULT_LOCALE), onChange, onRemove, onSendNow }) {
   const [editingId, setEditingId] = useState("");
   const [draft, setDraft] = useState("");
   const editingItem = items.find((item) => item.id === editingId);
@@ -11235,6 +11279,16 @@ function QueuedFollowups({ items = [], copy = getLocaleCopy(DEFAULT_LOCALE), onC
                   </>
                 ) : (
                   <>
+                    {onSendNow ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button type="button" variant="ghost" size="icon-xs" aria-label="Send now (interrupts the current reply)" onClick={() => onSendNow(item.id)}>
+                            <Send />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Send now · interrupts the current reply</TooltipContent>
+                      </Tooltip>
+                    ) : null}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button type="button" variant="ghost" size="icon-xs" aria-label={copy.editQueuedFollowup} onClick={() => startEdit(item)}>
