@@ -330,3 +330,270 @@ mod tests {
         assert!(validate_release_manifest(&missing_ui).is_err());
     }
 }
+
+// ---------------------------------------------------------------------------
+// GitHub Releases as the update source. The app's releases live at
+// github.com/<repo>/releases; each release carries the installers and a
+// checksums.txt. Channels map to release kinds: stable = latest non-prerelease,
+// beta = latest prerelease tagged beta/rc, canary = latest prerelease.
+// ---------------------------------------------------------------------------
+
+pub const DEFAULT_UPDATE_REPOSITORY: &str = "autohandai/squad";
+
+pub fn update_repository() -> String {
+    std::env::var("AUTOHAND_SQUAD_UPDATE_REPO")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_UPDATE_REPOSITORY.to_string())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    html_url: String,
+    draft: bool,
+    prerelease: bool,
+    published_at: Option<String>,
+    body: Option<String>,
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+    size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubReleaseSummary {
+    pub version: String,
+    pub tag: String,
+    pub release_url: String,
+    pub published_at: String,
+    pub notes: String,
+    pub manifest: ReleaseManifest,
+}
+
+/// Version string without a leading `v`.
+pub fn version_from_tag(tag: &str) -> String {
+    tag.trim().trim_start_matches('v').to_string()
+}
+
+/// Semver-aware comparison (numeric core, prerelease sorts below release).
+pub fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    fn split(version: &str) -> (Vec<u64>, String) {
+        let version = version.trim().trim_start_matches('v');
+        let (core, pre) = match version.split_once('-') {
+            Some((core, pre)) => (core, pre.to_string()),
+            None => (version, String::new()),
+        };
+        let numbers = core
+            .split('.')
+            .map(|part| {
+                part.chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse::<u64>()
+                    .unwrap_or(0)
+            })
+            .collect::<Vec<_>>();
+        (numbers, pre)
+    }
+    let (left_core, left_pre) = split(left);
+    let (right_core, right_pre) = split(right);
+    for index in 0..left_core.len().max(right_core.len()) {
+        let l = left_core.get(index).copied().unwrap_or(0);
+        let r = right_core.get(index).copied().unwrap_or(0);
+        if l != r {
+            return l.cmp(&r);
+        }
+    }
+    match (left_pre.is_empty(), right_pre.is_empty()) {
+        (true, true) => std::cmp::Ordering::Equal,
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        (false, false) => left_pre.cmp(&right_pre),
+    }
+}
+
+fn release_matches_channel(release: &GithubRelease, channel: &str) -> bool {
+    if release.draft {
+        return false;
+    }
+    let tag = release.tag_name.to_ascii_lowercase();
+    match channel {
+        "canary" => release.prerelease,
+        "beta" => release.prerelease && !tag.contains("canary"),
+        _ => !release.prerelease,
+    }
+}
+
+/// Map a release asset name to (os, arch, component) for this daemon's targets.
+fn classify_asset(name: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    let lower = name.to_ascii_lowercase();
+    let os = if lower.contains("macos") || lower.ends_with(".dmg") || lower.contains("darwin") {
+        "macos"
+    } else if lower.contains("windows") || lower.ends_with(".exe") || lower.ends_with(".msi") {
+        "windows"
+    } else if lower.contains("linux") || lower.ends_with(".deb") || lower.ends_with(".appimage") {
+        "linux"
+    } else {
+        return None;
+    };
+    let arch = if lower.contains("arm64") || lower.contains("aarch64") {
+        "aarch64"
+    } else if lower.contains("x64") || lower.contains("x86_64") || lower.contains("amd64") {
+        "x86_64"
+    } else {
+        return None;
+    };
+    let component = if lower.ends_with(".dmg") {
+        "dmg"
+    } else if lower.ends_with(".exe") {
+        "installer"
+    } else if lower.ends_with(".deb") {
+        "deb"
+    } else if lower.ends_with(".appimage") {
+        "appimage"
+    } else if lower.ends_with(".tar.gz") || lower.ends_with(".zip") {
+        "portable"
+    } else {
+        return None;
+    };
+    Some((os, arch, component))
+}
+
+fn parse_checksums(text: &str) -> std::collections::HashMap<String, String> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let digest = parts.next()?;
+            let name = parts.next()?.trim_start_matches('*');
+            (digest.len() == 64).then(|| (name.to_string(), digest.to_ascii_lowercase()))
+        })
+        .collect()
+}
+
+/// Fetch the latest release for a channel from GitHub and express it as the
+/// same manifest the installer already understands.
+pub async fn fetch_github_release(repository: &str, channel: &str) -> Result<GithubReleaseSummary> {
+    let client = reqwest::Client::builder()
+        .user_agent(format!("autohand-squad/{}", crate::VERSION))
+        .build()?;
+    let url = format!("https://api.github.com/repos/{repository}/releases?per_page=30");
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("fetch {url}"))?;
+    if !response.status().is_success() {
+        bail!(
+            "GitHub releases returned HTTP {} for {repository}",
+            response.status().as_u16()
+        );
+    }
+    let releases: Vec<GithubRelease> = response.json().await.context("parse GitHub releases")?;
+    let release = releases
+        .into_iter()
+        .find(|release| release_matches_channel(release, channel))
+        .ok_or_else(|| anyhow!("no {channel} release published for {repository}"))?;
+
+    let checksums = match release
+        .assets
+        .iter()
+        .find(|asset| asset.name.eq_ignore_ascii_case("checksums.txt"))
+    {
+        Some(asset) => client
+            .get(&asset.browser_download_url)
+            .send()
+            .await
+            .ok()
+            .and_then(|response| response.error_for_status().ok())
+            .map(|response| async move { response.text().await.unwrap_or_default() }),
+        None => None,
+    };
+    let checksums = match checksums {
+        Some(future) => parse_checksums(&future.await),
+        None => std::collections::HashMap::new(),
+    };
+
+    let artifacts = release
+        .assets
+        .iter()
+        .filter(|asset| asset.size > 0)
+        .filter_map(|asset| {
+            let (os, arch, component) = classify_asset(&asset.name)?;
+            Some(ReleaseArtifact {
+                os: os.to_string(),
+                arch: arch.to_string(),
+                url: asset.browser_download_url.clone(),
+                sha256: checksums.get(&asset.name).cloned().unwrap_or_default(),
+                component: Some(component.to_string()),
+                binary_name: Some(asset.name.clone()),
+                signature: None,
+                public_key: None,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(GithubReleaseSummary {
+        version: version_from_tag(&release.tag_name),
+        tag: release.tag_name.clone(),
+        release_url: release.html_url.clone(),
+        published_at: release.published_at.clone().unwrap_or_default(),
+        notes: release
+            .body
+            .clone()
+            .unwrap_or_default()
+            .chars()
+            .take(4000)
+            .collect(),
+        manifest: ReleaseManifest {
+            latest_allowed_version: version_from_tag(&release.tag_name),
+            channel: channel.to_string(),
+            artifacts,
+        },
+    })
+}
+
+#[cfg(test)]
+mod github_tests {
+    use super::*;
+
+    #[test]
+    fn versions_compare_semver_aware() {
+        use std::cmp::Ordering::*;
+        assert_eq!(compare_versions("0.1.4", "0.1.10"), Less);
+        assert_eq!(compare_versions("v1.0.0", "1.0.0"), Equal);
+        assert_eq!(compare_versions("1.0.0-beta.1", "1.0.0"), Less);
+        assert_eq!(compare_versions("1.2.0", "1.1.9"), Greater);
+    }
+
+    #[test]
+    fn assets_classify_by_platform_and_kind() {
+        assert_eq!(
+            classify_asset("autohand-squad-0.1.4-macos-arm64.dmg"),
+            Some(("macos", "aarch64", "dmg"))
+        );
+        assert_eq!(
+            classify_asset("Autohand Squad_0.1.0_x64-setup.exe"),
+            Some(("windows", "x86_64", "installer"))
+        );
+        assert_eq!(
+            classify_asset("autohand-squad-0.1.4-linux-x64.AppImage"),
+            Some(("linux", "x86_64", "appimage"))
+        );
+        assert_eq!(classify_asset("checksums.txt"), None);
+    }
+
+    #[test]
+    fn checksums_parse_sha256_lines() {
+        let parsed = parse_checksums("abc  file.dmg
+0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  autohand-squad-0.1.4-macos-arm64.dmg
+");
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed.contains_key("autohand-squad-0.1.4-macos-arm64.dmg"));
+    }
+}

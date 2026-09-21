@@ -128,6 +128,34 @@ body {
   font-family: var(--font-ui);
 }
 
+/* Desktop shell (Tauri): the window is vibrant behind the sidebar. Everything
+   except the sidebar keeps an opaque background; the top strips are native
+   drag regions, and macOS gets an inset for the traffic lights. */
+html[data-shell="desktop"],
+html[data-shell="desktop"] body,
+html[data-shell="desktop"] #root,
+html[data-shell="desktop"] .app-shell-root {
+  background: transparent !important;
+}
+html[data-shell="desktop"] .app-sidebar {
+  background: transparent !important;
+  border-right: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+html[data-shell="desktop"] .app-main {
+  background: var(--background);
+}
+html[data-shell="desktop"] .app-shell-decor {
+  display: none;
+}
+html[data-shell="desktop"][data-platform="mac"] .app-sidebar {
+  padding-top: 26px;
+}
+html[data-shell="desktop"] [data-tauri-drag-region] {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
 button,
 input,
 textarea,

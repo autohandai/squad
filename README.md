@@ -97,12 +97,31 @@ bun run desktop:build    # .app + .dmg (macOS), NSIS (Windows), deb/AppImage (Li
 bun run desktop:dev      # window against a staged runtime, debug build
 ```
 
+On macOS the window uses a transparent title bar with the traffic lights over
+the sidebar, and the sidebar is a native vibrancy surface; on Windows it uses
+Mica. The web app detects the shell through its user agent
+(`AutohandSquadDesktop/…`) and switches to transparent chrome and drag regions.
+Sign-in from the app runs `squad login` (bundled) for the Autohand account
+device flow; Codex and Claude Code sign-in run their own CLIs.
+
 The bundle carries the bridge under `Resources/runtime` and the sidecars next
 to the executable; the shell points the runtime crate at them through
 `AUTOHAND_SQUAD_WEB_SERVER`, `AUTOHAND_SQUAD_NODE`, `AUTOHAND_SQUAD_DAEMON`,
 and `AUTOHAND_SQUAD_ANALYTICS`, so a source checkout and the installed app run
 one code path. Signing and notarization use the same secrets as the existing
 release workflow (`docs/release.md`).
+
+## Updates
+
+The daemon checks GitHub Releases (`autohandai/squad`) for the configured
+channel: stable takes the latest release, beta the latest pre-release tagged
+beta or rc, canary the latest pre-release. Settings → Updates shows the
+installed and latest versions, the release notes, and a download link for
+this platform; the sidebar's **Restart to update** button appears only when a
+newer release exists. `GET /api/updates` returns the last check and
+`?refresh=1` asks the running daemon to check again.
+`AUTOHAND_SQUAD_UPDATE_REPO` points at a fork; `AUTOHAND_SQUAD_UPDATE_SOURCE=api`
+restores the Autohand API manifest.
 
 ## Install a release
 

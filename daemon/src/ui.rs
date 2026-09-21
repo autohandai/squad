@@ -289,6 +289,21 @@ pub async fn run_tray_login(paths: StatePaths, overrides: ConfigOverrides) -> Re
     Ok(format!("{local_message}. Opened {app_url}\n"))
 }
 
+/// `squad login`: the same device flow as the tray, printing the sign-in URL
+/// and code (so a supervising process can relay them) and not opening the app
+/// afterwards. Used by the web bridge when no tray binary is bundled.
+pub async fn run_cli_login(paths: StatePaths, overrides: ConfigOverrides) -> Result<String> {
+    let config = resolve_config(&paths, overrides)?;
+    let login = run_browser_device_login(&config, "squad").await?;
+    write_autohand_auth_config(Some(&login.token), Some(&login.email))?;
+    write_user_auth_config(&paths, Some(&login.token), Some(&login.email))?;
+    let body = serde_json::to_string(&LoginRequest {
+        email: login.email.clone(),
+    })?;
+    let _ = local_json_request::<LifecycleResponse>(&config, "POST", "/auth/login", Some(&body));
+    Ok(format!("Signed in as {}\n", login.email))
+}
+
 pub async fn run_tray_open_path(
     paths: StatePaths,
     overrides: ConfigOverrides,

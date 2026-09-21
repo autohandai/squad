@@ -559,6 +559,22 @@ function locateSquadTrayBinary() {
   return candidates.find((candidate) => existsSync(candidate)) || "";
 }
 
+// The `squad` CLI (bundled as a desktop sidecar) can run the account device
+// flow without a tray binary; the bridge prefers it when present.
+function locateSquadCliBinary() {
+  const explicit = process.env.AUTOHAND_SQUAD_CLI;
+  if (explicit && existsSync(explicit)) return explicit;
+  const name = executableName("squad");
+  const candidates = [
+    join(dirname(process.execPath), name),
+    join(rootDir, "..", name),
+    join(squadStateDir, "bin", name),
+    join(rootDir, "daemon", "target", "release", name),
+    join(rootDir, "daemon", "target", "debug", name),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) || "";
+}
+
 function requestSquadBrowserLogin() {
   const trayBinary = locateSquadTrayBinary();
   if (!trayBinary) {
@@ -6388,13 +6404,20 @@ async function handleApi(req, res, url) {
       let opensBrowser;
       if (id === "autohand") {
         // `autohand login` needs a terminal (it asks for the code). The Squad
-        // launcher's login action runs the same device flow headlessly, opens
-        // the browser, and stores the account for both Squad and the CLI.
-        executable = locateSquadTrayBinary();
-        if (!executable) {
-          throw new Error("The Autohand Squad launcher binary was not found, so browser sign-in cannot start. Run `autohand login` in a terminal instead.");
+        // CLI (`squad login`, bundled with the desktop app) or the launcher's
+        // login action run the same device flow headlessly, open the browser,
+        // and store the account for both Squad and the CLI.
+        const squadCli = locateSquadCliBinary();
+        if (squadCli) {
+          executable = squadCli;
+          args = ["login"];
+        } else {
+          executable = locateSquadTrayBinary();
+          args = ["--action", "login"];
         }
-        args = ["--action", "login"];
+        if (!executable) {
+          throw new Error("Neither the Squad CLI nor the launcher binary was found, so browser sign-in cannot start. Run `autohand login` in a terminal instead.");
+        }
         env = { AUTOHAND_SQUAD_HOME: squadStateDir };
         opensBrowser = true;
       } else {
@@ -6819,6 +6842,49 @@ async function handleApi(req, res, url) {
       json(res, 200, { success: true, data: { path: workspace, name: basename(workspace) } });
     } catch (error) {
       json(res, error.status || 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  // Update status from the daemon's GitHub Releases check. `?refresh=1` asks
+  // the running daemon to check now; otherwise the last snapshot is returned.
+  if (url.pathname === "/api/updates" && req.method === "GET") {
+    try {
+      const daemonRecord = await readOptionalJsonFile(join(squadStateDir, "daemon.json"));
+      let snapshot = await readOptionalJsonFile(join(squadStateDir, "update.json"));
+      let daemonReachable = false;
+      if (daemonRecord?.url) {
+        const base = String(daemonRecord.url).replace(/\/+$/, "");
+        try {
+          const health = await fetchWithTimeout(`${base}/health`, {}, 3000);
+          daemonReachable = health.ok;
+        } catch {
+          daemonReachable = false;
+        }
+        if (daemonReachable && (url.searchParams.get("refresh") === "1" || !snapshot)) {
+          try {
+            const response = await fetchWithTimeout(`${base}/updates/check`, { method: "POST" }, 30000);
+            if (response.ok) {
+              const body = await response.json();
+              if (body && typeof body === "object") snapshot = body.data || body;
+            }
+          } catch {
+            // Keep the last written snapshot.
+          }
+        }
+      }
+      json(res, 200, {
+        success: true,
+        data: {
+          daemonReachable,
+          appVersion: packageMetadata.version || "",
+          repository: "autohandai/squad",
+          releasesUrl: "https://github.com/autohandai/squad/releases",
+          snapshot: snapshot || null,
+        },
+      });
+    } catch (error) {
+      json(res, 500, { success: false, error: error.message });
     }
     return true;
   }

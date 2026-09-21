@@ -4326,6 +4326,26 @@ function App() {
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [harnesses, setHarnesses] = useState([]);
   const [harnessesLoading, setHarnessesLoading] = useState(false);
+  // Update status from the daemon's GitHub Releases check.
+  const [updates, setUpdates] = useState(null);
+  const [updatesChecking, setUpdatesChecking] = useState(false);
+  async function refreshUpdates(refresh = false) {
+    setUpdatesChecking(true);
+    try {
+      const data = await api(`/api/updates${refresh ? "?refresh=1" : ""}`);
+      setUpdates(data);
+      return data;
+    } catch {
+      return null;
+    } finally {
+      setUpdatesChecking(false);
+    }
+  }
+  useEffect(() => {
+    void refreshUpdates(false);
+    const timer = window.setInterval(() => void refreshUpdates(false), 30 * 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [searchOpen, setSearchOpen] = useState(false);
   const [channelReads, setChannelReads] = useState(() => readStored(storageKeysFor("channelReads"), {}));
   const [agentReads, setAgentReads] = useState(() => readStored(storageKeysFor("agentReads"), {}));
@@ -6742,9 +6762,9 @@ function App() {
 
   return (
     <TooltipProvider>
-      <div className="relative min-h-screen overflow-x-clip bg-background text-foreground">
-        <div className={cn("dark-grid pointer-events-none fixed inset-0 opacity-35", isCreate && "hidden")} />
-        <div className="pointer-events-none fixed inset-x-0 top-0 h-px signal-line" />
+      <div className="app-shell-root relative min-h-screen overflow-x-clip bg-background text-foreground">
+        <div className={cn("app-shell-decor dark-grid pointer-events-none fixed inset-0 opacity-35", isCreate && "hidden")} />
+        <div className="app-shell-decor pointer-events-none fixed inset-x-0 top-0 h-px signal-line" />
         <div
           className={cn(
             "relative grid min-h-screen transition-[grid-template-columns] duration-200 ease-out",
@@ -6752,6 +6772,7 @@ function App() {
           )}
         >
           <DesktopSidebar
+            updateAvailable={updates?.snapshot?.updateAvailable === true}
             agents={agents}
             activeAgent={activeAgent}
             collapsed={desktopSidebarCollapsed}
@@ -6780,7 +6801,7 @@ function App() {
             onSearch={() => setSearchOpen(true)}
             onCollapsedChange={setDesktopSidebarCollapsed}
           />
-          <main className="min-w-0">
+          <main className="app-main min-w-0">
             <MobileTopbar
               activeAgent={activeAgent}
               theme={theme}
@@ -6884,6 +6905,9 @@ function App() {
               />
             ) : isSettings ? (
               <SettingsPage
+                updates={updates}
+                updatesChecking={updatesChecking}
+                onCheckUpdates={() => refreshUpdates(true)}
                 themePreference={themePreference}
                 setThemePreference={setThemePreference}
                 handoffSettings={handoffSettings}
@@ -7037,6 +7061,7 @@ function App() {
               <SheetDescription>Autohand Squad navigation</SheetDescription>
             </SheetHeader>
             <SidebarContent
+              updateAvailable={updates?.snapshot?.updateAvailable === true}
               agents={agents}
               activeAgent={activeAgent}
               navigate={navigate}
@@ -9555,6 +9580,7 @@ function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLoc
 }
 
 function SidebarContent({
+  updateAvailable = false,
   agents,
   activeAgent,
   navigate,
@@ -9607,6 +9633,7 @@ function SidebarContent({
   if (isMemberProfile && activeAgent) {
     return (
       <MemberProfileSidebar
+        updateAvailable={updateAvailable}
         agent={activeAgent}
         activeSection={memberSectionFromRoute(route)}
         copy={copy}
@@ -9662,7 +9689,7 @@ function SidebarContent({
             copy={copy}
             onCreateChannel={onCreateChannel}
           />
-          <SidebarAccountFooter copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
+          <SidebarAccountFooter updateAvailable={updateAvailable} copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
         </>
       }
       onCollapse={onCollapse}
@@ -9671,7 +9698,7 @@ function SidebarContent({
   );
 }
 
-function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onCollapse }) {
+function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onCollapse, updateAvailable = false }) {
   return (
     <div className="flex h-full min-h-screen flex-col bg-background">
       <div className="flex h-14 items-center gap-2 px-4">
@@ -9741,7 +9768,56 @@ function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCop
         </nav>
       </div>
 
-      <SidebarAccountFooter copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
+      <SidebarAccountFooter updateAvailable={updateAvailable} copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
+    </div>
+  );
+}
+
+function SettingsUpdatesPanel({ updates, checking = false, onCheck }) {
+  const snapshot = updates?.snapshot || null;
+  const current = updates?.appVersion || snapshot?.currentVersion || "";
+  const latest = snapshot?.latestAllowedVersion || "";
+  const available = snapshot?.updateAvailable === true;
+  const checkedAt = snapshot?.checkedAt ? String(snapshot.checkedAt).replace(/^unix-ms:/, "") : "";
+  const checkedLabel = checkedAt && /^\d+$/.test(checkedAt) ? new Date(Number(checkedAt)).toLocaleString() : checkedAt;
+  return (
+    <div className="divide-y divide-border/65">
+      <div className="grid gap-3 px-2 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+        <div className="min-w-0">
+          <div className="font-medium">{available ? `Update to ${latest}` : "You're up to date"}</div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Installed {current || "unknown"}
+            {latest ? ` · latest ${snapshot.channel || "stable"} release ${latest}` : ""}
+            {checkedLabel ? ` · checked ${checkedLabel}` : ""}
+            {updates && !updates.daemonReachable ? " · the local daemon is not running, so this is the last saved check" : ""}
+          </p>
+          {snapshot?.error ? <p className="mt-1 text-sm text-destructive">{snapshot.error}</p> : null}
+        </div>
+        <div className="flex items-center gap-2">
+          {available && (snapshot.downloadUrl || snapshot.releaseUrl) ? (
+            <Button asChild size="sm">
+              <a href={snapshot.downloadUrl || snapshot.releaseUrl} target="_blank" rel="noreferrer">
+                Download {latest}
+              </a>
+            </Button>
+          ) : null}
+          <Button type="button" variant="outline" size="sm" onClick={onCheck} disabled={checking}>
+            {checking ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
+            Check for updates
+          </Button>
+        </div>
+      </div>
+      {available && snapshot.notes ? (
+        <div className="px-2 py-4">
+          <div className="text-sm font-medium">What changed</div>
+          <div className="mt-2 max-h-56 overflow-auto text-sm text-muted-foreground">
+            <MarkdownBlocks text={snapshot.notes} muted />
+          </div>
+        </div>
+      ) : null}
+      <div className="px-2 py-4 text-sm text-muted-foreground">
+        Releases: <a className="text-primary underline underline-offset-4" href={updates?.releasesUrl || "https://github.com/autohandai/squad/releases"} target="_blank" rel="noreferrer">github.com/autohandai/squad/releases</a>
+      </div>
     </div>
   );
 }
@@ -10910,7 +10986,7 @@ function Conversation({
 
   return (
     <div className="flex h-[calc(100svh-4rem)] min-h-[560px] w-full max-w-full flex-col overflow-x-hidden bg-background/75 lg:h-screen lg:min-h-screen">
-      <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6">
+      <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6" data-tauri-drag-region>
         <div className="flex min-w-0 items-center gap-3">
           <AgentAvatar agent={agent} className="size-9" />
           <div className="min-w-0">
@@ -21398,6 +21474,9 @@ function SettingsAnalyticsPage({ locale = DEFAULT_LOCALE, copy = getLocaleCopy(D
 }
 
 function SettingsPage({
+  updates = null,
+  updatesChecking = false,
+  onCheckUpdates,
   themePreference,
   setThemePreference,
   handoffSettings,
@@ -21480,6 +21559,7 @@ function SettingsPage({
     { id: "handoff", icon: Workflow, label: copy.handoffRetryPolicy, detail: handoffRetryModeLabel(effectiveHandoffRetryMode, copy) },
     { id: "mission-control", icon: Monitor, label: "Mission Control", detail: missionControlDetail },
     { id: "runtime", icon: Server, label: copy.runtimeBridge, detail: runtime?.version || copy.checkingRuntime },
+    { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
   ];
   const requestedInitialSection = settingsSections.some((section) => section.id === initialSection) ? initialSection : "";
 
@@ -21762,6 +21842,15 @@ function SettingsPage({
                   {formatLocalizedNumber(counts.tasks || 0, activeLocale)}
                 </Badge>
               </a>
+            </section>
+
+            <section id="settings-updates" className="scroll-mt-8 py-10">
+              <SettingsSectionHeader
+                icon={RefreshCw}
+                title="Updates"
+                description={updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} is available on GitHub.` : "Releases are checked on GitHub (autohandai/squad)."}
+              />
+              <SettingsUpdatesPanel updates={updates} checking={updatesChecking} onCheck={onCheckUpdates} />
             </section>
 
             <section id="settings-runtime" className="scroll-mt-8 py-10">
@@ -23211,6 +23300,17 @@ function ThemeSwatches({ preset, className }) {
 }
 
 const rootElement = document.getElementById("root");
+// Desktop shell detection: the Tauri window identifies itself in the user
+// agent. The document then opts into the native treatment (transparent chrome
+// behind the sidebar, drag regions, a traffic-light inset on macOS).
+(() => {
+  const agent = typeof navigator === "undefined" ? "" : navigator.userAgent || "";
+  if (!/AutohandSquadDesktop\//.test(agent)) return;
+  const html = document.documentElement;
+  html.dataset.shell = "desktop";
+  html.dataset.platform = /macos|darwin|Macintosh/i.test(agent) ? "mac" : /windows/i.test(agent) ? "windows" : "linux";
+})();
+
 const root = globalThis.__autohandSquadRoot || createRoot(rootElement);
 globalThis.__autohandSquadRoot = root;
 

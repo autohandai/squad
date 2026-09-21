@@ -63,6 +63,8 @@ pub struct SquadCli {
 #[derive(Debug, Clone, Subcommand)]
 pub enum SquadCommand {
     Start,
+    /// Sign in to the Autohand account with the browser device flow.
+    Login,
     Doctor,
     Status,
     Restart,
@@ -178,11 +180,16 @@ async fn run_squad_command_with_paths_inner(
     tray_requested: bool,
 ) -> Result<CommandOutput> {
     paths.ensure()?;
-    let config = resolve_config(&paths, overrides_from_args(&args))?;
+    let overrides = overrides_from_args(&args);
+    let config = resolve_config(&paths, overrides.clone())?;
     let command = args.command.unwrap_or(SquadCommand::Open);
     record_launcher_command(&paths, &config, command_name(&command));
     match command {
         SquadCommand::Start => start_stack(&paths, &config, false, tray_requested).await,
+        SquadCommand::Login => {
+            let output = crate::ui::run_cli_login(paths.clone(), overrides).await?;
+            Ok(CommandOutput::ok(output))
+        }
         SquadCommand::Doctor => doctor(&paths, &config),
         SquadCommand::Status => stack_status(&paths, &config).await,
         SquadCommand::Restart => restart_stack(&paths, &config, tray_requested).await,
@@ -232,6 +239,7 @@ fn overrides_from_args(args: &SquadCli) -> ConfigOverrides {
 fn command_name(command: &SquadCommand) -> &'static str {
     match command {
         SquadCommand::Start => "start",
+        SquadCommand::Login => "login",
         SquadCommand::Doctor => "doctor",
         SquadCommand::Status => "status",
         SquadCommand::Restart => "restart",
@@ -1144,14 +1152,22 @@ fn is_squad_web_process(command: &str) -> bool {
     // working directory set to the resources folder, so the command line
     // usually carries no path at all; the listener-port filter that calls
     // this function already scopes it to the Squad web port.
-    let launcher_shape =
-        (lower.contains("/node ") || lower.starts_with("node ") || lower.contains("node.exe "))
-            && lower.contains("server.mjs --host");
-    launcher_shape
-        || lower.contains("autohandswe")
-        || lower.contains("autohand squad.app/contents/resources/server.mjs")
-        || lower.contains("autohand squad/server.mjs")
-        || lower.contains("autohand-squad-ui/server.mjs")
+    // Only a Node process running server.mjs counts. A bare path substring
+    // (the checkout name, the app bundle) is not enough: shells, editors, and
+    // scripts mention those paths too and must never be stopped.
+    let node_process = lower.contains("/node ")
+        || lower.starts_with("node ")
+        || lower.contains("node.exe ")
+        || lower.contains("bun ");
+    node_process
+        && (lower.contains("server.mjs --host")
+            || lower.contains("server.mjs --dev")
+            || lower.contains("server.mjs --port")
+            || lower.contains("autohandswe/server.mjs")
+            || lower.contains("contents/resources/runtime/server.mjs")
+            || lower.contains("contents/resources/server.mjs")
+            || lower.contains("autohand-squad-ui/server.mjs")
+            || lower.contains("autohand squad/server.mjs"))
 }
 
 fn daemon_config_from_record(paths: &StatePaths, config: &SquadConfig) -> SquadConfig {
@@ -2131,6 +2147,17 @@ mod tests {
         ));
         assert!(is_squad_web_process(
             r#"node.exe C:\Users\me\AppData\Local\Autohand Squad\server.mjs --port 19821"#
+        ));
+        assert!(is_squad_web_process(
+            "node server.mjs --dev --host 127.0.0.1 --port 19821"
+        ));
+        // A shell or editor that merely mentions the checkout and the file is
+        // not the web server and must never be stopped.
+        assert!(!is_squad_web_process(
+            "/bin/zsh -c cd /Users/me/Documents/autohand/web/prototypes/autohandSWE && grep server.mjs"
+        ));
+        assert!(!is_squad_web_process(
+            "code /Users/me/Documents/autohand/web/prototypes/autohandSWE/server.mjs"
         ));
     }
 

@@ -108,8 +108,8 @@ export function WorkspaceSidebar({
   }
 
   return (
-    <div className="flex h-full min-h-screen flex-col bg-card/70">
-      <div className="flex h-14 items-center gap-2 px-3">
+    <div className="app-sidebar flex h-full min-h-screen flex-col bg-card/70">
+      <div className="flex h-14 items-center gap-2 px-3" data-tauri-drag-region>
         <div className="flex min-w-0 flex-1 items-center gap-2">{brand}</div>
         {onCollapse ? (
           <Tooltip>

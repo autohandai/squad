@@ -13,7 +13,7 @@
     "security": {
       "csp": null
     },
-    "macOSPrivateApi": false
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
@@ -29,28 +29,56 @@
     "category": "DeveloperTool",
     "shortDescription": "Autohand Squad desktop",
     "longDescription": "Run a squad of coding agents on your own machine with Autohand Code, Codex, and Claude Code.",
-    "resources": ["runtime/**/*"],
-    "externalBin": ["binaries/node", "binaries/autohand-squad-daemon", "binaries/autohand-squad-analytics", "binaries/squad"],
+    "resources": [
+      "runtime/**/*"
+    ],
+    "externalBin": [
+      "binaries/node",
+      "binaries/autohand-squad-daemon",
+      "binaries/autohand-squad-analytics",
+      "binaries/squad"
+    ],
     "macOS": {
       "minimumSystemVersion": "12.0",
       "entitlements": "entitlements.plist",
       "hardenedRuntime": true,
       "dmg": {
-        "appPosition": { "x": 180, "y": 170 },
-        "applicationFolderPosition": { "x": 480, "y": 170 },
-        "windowSize": { "width": 660, "height": 400 }
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        },
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
       }
     },
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["English"]
+        "languages": [
+          "English"
+        ]
       },
-      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true }
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
     },
     "linux": {
-      "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"] },
-      "appimage": { "bundleMediaFramework": false }
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
     }
   }
 }

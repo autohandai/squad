@@ -44,13 +44,44 @@ fn main() {
             });
             app.manage(shell.clone());
 
-            let window =
+            // The web app detects this user agent and switches to the desktop
+            // treatment: transparent chrome behind the sidebar, drag regions,
+            // and a top inset for the traffic lights on macOS.
+            let user_agent = format!(
+                "AutohandSquadDesktop/{} ({}; {})",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            );
+            let mut builder =
                 WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
                     .title("Autohand Squad")
                     .inner_size(1280.0, 840.0)
                     .min_inner_size(960.0, 640.0)
-                    .center()
-                    .build()?;
+                    .user_agent(&user_agent)
+                    .center();
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder
+                    .title_bar_style(tauri::TitleBarStyle::Transparent)
+                    .hidden_title(true)
+                    .transparent(true);
+            }
+            let window = builder.build()?;
+            #[cfg(target_os = "macos")]
+            {
+                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+                let _ = apply_vibrancy(
+                    &window,
+                    NSVisualEffectMaterial::Sidebar,
+                    Some(NSVisualEffectState::FollowsWindowActiveState),
+                    None,
+                );
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = window_vibrancy::apply_mica(&window, None);
+            }
 
             build_tray(app.handle(), shell.clone())?;
 

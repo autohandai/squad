@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "bridge-window",
+  "description": "The main window loads the local bridge over HTTP. Only window-chrome commands are exposed so the web app can drag the window from its title areas.",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:19821/*",
+      "http://localhost:19821/*",
+      "http://127.0.0.1:19821"
+    ]
+  },
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-is-maximized"
+  ]
+}

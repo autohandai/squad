@@ -215,6 +215,16 @@ pub struct UpdateSnapshot {
     pub update_available: bool,
     pub manifest_url: String,
     pub error: Option<String>,
+    /// Where the release lives (GitHub release page) and the installer for this
+    /// platform, when the GitHub source produced them.
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub release_url: Option<String>,
+    #[serde(default)]
+    pub download_url: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 #[derive(Clone)]
@@ -959,6 +969,82 @@ async fn run_observability_cycle(state: &AppState) {
 
 async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
     let checked_at = now_string();
+    // GitHub Releases is the update source unless the Autohand API is opted
+    // into explicitly (AUTOHAND_SQUAD_UPDATE_SOURCE=api).
+    if std::env::var("AUTOHAND_SQUAD_UPDATE_SOURCE")
+        .map(|value| value != "api")
+        .unwrap_or(true)
+    {
+        let repository = crate::install::update_repository();
+        let manifest_url = format!("https://api.github.com/repos/{repository}/releases");
+        let result =
+            match crate::install::fetch_github_release(&repository, &state.config.update_channel)
+                .await
+            {
+                Ok(release) => {
+                    let update_available =
+                        crate::install::compare_versions(&release.version, VERSION)
+                            == std::cmp::Ordering::Greater;
+                    let download_url = crate::install::select_artifacts(&release.manifest)
+                        .into_iter()
+                        .find(|artifact| {
+                            matches!(
+                                artifact.component.as_deref(),
+                                Some("dmg" | "installer" | "deb" | "appimage")
+                            )
+                        })
+                        .map(|artifact| artifact.url);
+                    UpdateSnapshot {
+                        success: true,
+                        checked_at,
+                        channel: state.config.update_channel.clone(),
+                        client_type: "squad".to_string(),
+                        surface: "squad-daemon".to_string(),
+                        device_id: state.device_id.clone(),
+                        current_version: VERSION.to_string(),
+                        latest_allowed_version: Some(release.version.clone()),
+                        update_available,
+                        manifest_url,
+                        error: None,
+                        source: format!("github:{repository}"),
+                        release_url: Some(release.release_url),
+                        download_url,
+                        notes: Some(release.notes),
+                    }
+                }
+                Err(error) => UpdateSnapshot {
+                    success: false,
+                    checked_at,
+                    channel: state.config.update_channel.clone(),
+                    client_type: "squad".to_string(),
+                    surface: "squad-daemon".to_string(),
+                    device_id: state.device_id.clone(),
+                    current_version: VERSION.to_string(),
+                    latest_allowed_version: None,
+                    update_available: false,
+                    manifest_url,
+                    error: Some(error.to_string()),
+                    source: format!("github:{repository}"),
+                    release_url: None,
+                    download_url: None,
+                    notes: None,
+                },
+            };
+        let _ = write_json(&state.paths.update_json, &result);
+        record_daemon_event(
+            state,
+            "update.checked",
+            json!({
+                "channel": result.channel,
+                "currentVersion": result.current_version,
+                "latestAllowedVersion": result.latest_allowed_version,
+                "updateAvailable": result.update_available,
+                "source": result.source,
+                "error": result.error,
+            }),
+        );
+        return result;
+    }
     let manifest_url = format!(
         "{}/v1/squad/releases/{}/manifest?clientType=squad&surface=squad-daemon&deviceId={}&version={}",
         state.config.api_base_url.trim_end_matches('/'),
@@ -987,6 +1073,10 @@ async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
                 latest_allowed_version: latest,
                 manifest_url: url,
                 error: None,
+                source: "autohand-api".to_string(),
+                release_url: None,
+                download_url: None,
+                notes: None,
             }
         }
         Err(error) => UpdateSnapshot {
@@ -1001,6 +1091,10 @@ async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
             update_available: false,
             manifest_url,
             error: Some(error.to_string()),
+            source: "autohand-api".to_string(),
+            release_url: None,
+            download_url: None,
+            notes: None,
         },
     };
     let _ = write_json(&state.paths.update_json, &result);
