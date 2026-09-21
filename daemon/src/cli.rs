@@ -1288,6 +1288,16 @@ pub(crate) fn locate_analytics_binary(paths: &StatePaths) -> Result<PathBuf> {
     })
 }
 
+/// Set by the Tauri desktop shell to its own executable. That process owns
+/// the window and the tray, so the legacy `autohand-squad-tray` binary is not
+/// required and must not be spawned next to it.
+pub const DESKTOP_SHELL_ENV: &str = "AUTOHAND_SQUAD_DESKTOP_SHELL";
+
+pub fn desktop_shell_binary() -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var_os(DESKTOP_SHELL_ENV)?);
+    path.is_file().then_some(path)
+}
+
 pub(crate) fn locate_tray_binary(paths: &StatePaths) -> Result<PathBuf> {
     if let Ok(value) = std::env::var("AUTOHAND_SQUAD_TRAY") {
         let candidate = PathBuf::from(value);
@@ -1681,6 +1691,9 @@ fn spawn_tray(
     daemon_config: &SquadConfig,
     open_url: &str,
 ) -> Result<Option<String>> {
+    if desktop_shell_binary().is_some() {
+        return Ok(None);
+    }
     if let Ok(Some(record)) = read_tray_record(paths) {
         if process_is_running(record.pid) {
             return Ok(None);

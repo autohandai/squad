@@ -119,12 +119,21 @@ pub fn run_preflight(paths: &StatePaths, config: &SquadConfig) -> PreflightRepor
         locate_analytics_binary(paths),
         "Reinstall Autohand Squad so autohand-squad-analytics sits next to the app binary.",
     ));
-    checks.push(check_binary(
-        "tray-binary",
-        "Desktop controller",
-        locate_tray_binary(paths),
-        "Reinstall Autohand Squad so autohand-squad-tray sits next to the app binary.",
-    ));
+    checks.push(match crate::cli::desktop_shell_binary() {
+        Some(shell) => check(
+            "tray-binary",
+            "Desktop controller",
+            CheckStatus::Ok,
+            format!("desktop app {}", shell.display()),
+            "",
+        ),
+        None => check_binary(
+            "tray-binary",
+            "Desktop controller",
+            locate_tray_binary(paths),
+            "Reinstall Autohand Squad so autohand-squad-tray sits next to the app binary.",
+        ),
+    });
 
     let (node_check, node_path) = check_node_runtime();
     checks.push(node_check);

@@ -3,12 +3,12 @@
 //! native dialog because a GUI process has no visible stdout.
 
 use crate::cli::{
-    is_local_open_url, open_url, readiness_timeout, start_services, wait_for_web_runtime,
-    web_port_for,
+    desktop_shell_binary, is_local_open_url, open_url, readiness_timeout, stack_daemon_config,
+    start_services, wait_for_web_runtime, web_port_for,
 };
 use crate::config::{resolve_config, ConfigOverrides, SquadConfig};
 use crate::preflight::{run_preflight, PreflightReport};
-use crate::state::StatePaths;
+use crate::state::{now_string, write_tray_record, StatePaths, TrayRecord};
 use crate::telemetry::{append_telemetry_event, launcher_event};
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -61,6 +61,7 @@ pub fn run_desktop_bootstrap_with(
         attempt += 1;
         match bootstrap_once(runtime, paths, &config, open_browser) {
             Ok(url) => {
+                register_desktop_shell_as_controller(paths, &config, &url);
                 record(
                     paths,
                     &config,
@@ -92,6 +93,25 @@ pub fn run_desktop_bootstrap_with(
                 }
             }
         }
+    }
+}
+
+/// The Tauri shell owns the tray, so `squad start` / `squad status` must see
+/// it as the running controller instead of launching the legacy tray binary.
+fn register_desktop_shell_as_controller(paths: &StatePaths, config: &SquadConfig, url: &str) {
+    if desktop_shell_binary().is_none() {
+        return;
+    }
+    let daemon_config = stack_daemon_config(config, Some(web_port_for(config)));
+    let record = TrayRecord {
+        pid: std::process::id(),
+        host: daemon_config.host.clone(),
+        daemon_port: daemon_config.port,
+        open_url: url.to_string(),
+        started_at: now_string(),
+    };
+    if let Err(error) = write_tray_record(paths, &record) {
+        eprintln!("could not record the desktop shell as controller: {error:#}");
     }
 }
 

@@ -210,6 +210,14 @@ then produces the installers under `src-tauri/target/release/bundle/`.
 `bun run desktop:check` type-checks the shell without bundling. Stop the dev
 bridge before launching the app: both use port 19821.
 
+The desktop app is its own tray and window, so it does not ship or need the
+legacy `autohand-squad-tray` binary: it sets `AUTOHAND_SQUAD_DESKTOP_SHELL`
+to its executable, preflight then reports the desktop app as the controller,
+and the runtime records the app's pid in `~/.autohand/squad/tray.json` so
+`squad start` and `squad status` reuse it instead of launching a tray. To
+replace a legacy install, remove `~/.autohand/squad/bin` (state files stay),
+copy the `.app` into `/Applications`, and launch it.
+
 ## Bridge Only (no tray, no daemon)
 
 `bun run dev` starts only the Node bridge on http://127.0.0.1:19821; it does

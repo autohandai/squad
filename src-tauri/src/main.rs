@@ -12,6 +12,7 @@
     windows_subsystem = "windows"
 )]
 
+use autohand_squad_runtime::cli::DESKTOP_SHELL_ENV;
 use autohand_squad_runtime::config::PartialSquadConfig;
 use autohand_squad_runtime::gui_bootstrap::{run_desktop_bootstrap_with, BootstrapOutcome};
 use autohand_squad_runtime::ui::{default_paths, run_tray_action, TrayAction};
@@ -141,6 +142,13 @@ fn point_runtime_at_bundle(app: &AppHandle) {
         let server = resource_dir.join("runtime").join("server.mjs");
         if server.exists() && std::env::var_os("AUTOHAND_SQUAD_WEB_SERVER").is_none() {
             std::env::set_var("AUTOHAND_SQUAD_WEB_SERVER", &server);
+        }
+    }
+    // This process is the desktop controller: the runtime skips the legacy
+    // tray binary and records this pid as the running controller.
+    if let Ok(exe) = std::env::current_exe() {
+        if std::env::var_os(DESKTOP_SHELL_ENV).is_none() {
+            std::env::set_var(DESKTOP_SHELL_ENV, &exe);
         }
     }
     if let Some(exe_dir) = std::env::current_exe()
