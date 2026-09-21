@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Bar,
@@ -8420,7 +8420,7 @@ function InlineMarkdown({ text }) {
 }
 
 function MarkdownBlocks({ text, muted = false }) {
-  const blocks = parseMarkdownBlocks(text);
+  const blocks = useMemo(() => parseMarkdownBlocks(text), [text]);
   if (!blocks.length) return null;
 
   return (
@@ -9845,9 +9845,12 @@ function Conversation({
   const chatSending = chatSendingByAgent[agent.id] === true;
   const queuedFollowups = queuedFollowupsByAgent[agent.id] || [];
   // Goal 09: recommend recipes from the current request, scoped to this member's role.
+  // Typing must stay responsive: recipe matching and permission warnings run
+  // against a deferred copy of the prompt, so keystrokes never wait on them.
+  const deferredPrompt = useDeferredValue(prompt);
   const recommendedRecipeMatches = useMemo(
-    () => recommendRecipesForPrompt(prompt, RECIPE_CATALOG, agentRoleId(agent)),
-    [prompt, agent]
+    () => recommendRecipesForPrompt(deferredPrompt, RECIPE_CATALOG, agentRoleId(agent)),
+    [deferredPrompt, agent]
   );
   const latestRun = runs[0];
   const workspaceChoices = workspaceOptions(workspaces, workspace, runtime);
@@ -9875,7 +9878,10 @@ function Conversation({
   const canAddWorkspace = Boolean(normalizedWorkspaceDraft) && !atProjectLimit && !duplicateWorkspace && !blockedWorkspaceDraft;
   const blockedWorkspace = isBlockedWorkspace(workspace, runtime);
   const launchPermissions = resolveAgentPermissionsForWorkspace(agent, workspace);
-  const launchWarnings = launchPermissionWarnings({ permissions: launchPermissions, prompt, mode, policy });
+  const launchWarnings = useMemo(
+    () => launchPermissionWarnings({ permissions: launchPermissions, prompt: deferredPrompt, mode, policy }),
+    [launchPermissions, deferredPrompt, mode, policy]
+  );
   const effectiveModel = effectiveModelForAgent(agent, providerSettings);
   const runningCount = runs.filter((run) => run.status === "running").length;
   const mentionQuery = mentionState?.query || "";
@@ -9925,6 +9931,8 @@ function Conversation({
   );
   const hasConversationMessages = visibleMessages.length > 0;
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
+  // Stable message objects so memoized rows skip re-rendering while typing.
+  const localizedMessages = useMemo(() => visibleMessages.map((message) => localizedMessage(message, agent, copy)), [visibleMessages, agent, copy]);
   useEffect(() => {
     const normalizedWorkspace = normalizeSquadWorkspacePath(workspace, runtime);
     if (normalizedWorkspace && normalizedWorkspace !== workspace) {
@@ -9998,8 +10006,13 @@ function Conversation({
   ]);
 
   function updatePrompt(value, caret = value.length) {
-    setPromptByAgent((current) => ({ ...current, [agent.id]: value }));
-    setMentionState(currentMentionQuery(value, caret));
+    setPromptByAgent((current) => (current[agent.id] === value ? current : { ...current, [agent.id]: value }));
+    const nextMention = currentMentionQuery(value, caret);
+    // Same mention query → same state object, so caret moves and key-ups do
+    // not re-render the conversation.
+    setMentionState((current) =>
+      (current?.query ?? null) === (nextMention?.query ?? null) && (current?.start ?? null) === (nextMention?.start ?? null) ? current : nextMention
+    );
   }
 
   function syncMentionFromTarget(target) {
@@ -10251,14 +10264,17 @@ function Conversation({
     activeChatControllerRef.current[agent.id]?.abort();
   }
 
-  // Re-send the user message that produced a failed answer.
-  function retryMessage(message) {
+  // Re-send the user message that produced a failed answer. The handler is
+  // handed to memoized message rows, so it stays referentially stable.
+  const retryMessageRef = useRef(null);
+  const retryMessage = useCallback((message) => retryMessageRef.current?.(message), []);
+  retryMessageRef.current = function retryMessageNow(message) {
     if (chatSendingRef.current[agent.id]) return;
     const index = visibleMessages.findIndex((item) => item.id === message.id);
     const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
     if (!previousUser?.body) return;
     sendPromptNow({ prompt: previousUser.body, workspace, policy, model }, { agentId: agent.id });
-  }
+  };
 
   function submit(event) {
     event.preventDefault();
@@ -10512,11 +10528,11 @@ function Conversation({
                   </Alert>
                 ) : null}
                 <div className="flex flex-col gap-6">
-                  {visibleMessages.map((message) => (
+                  {localizedMessages.map((message) => (
                     <SquadMessage
                       key={message.id}
                       agent={agent}
-                      message={localizedMessage(message, agent, copy)}
+                      message={message}
                       copy={copy}
                       chatSettings={chatSettings}
                       onRetry={retryMessage}
@@ -11235,7 +11251,7 @@ function SquadStatusRow({ agent, activeMode, latestRun, runtime, workspace, work
   );
 }
 
-function SquadMessage({ agent, message, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
+const SquadMessage = memo(function SquadMessage({ agent, message, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
   const isUser = message.role === "user";
   if (!isUser) return <AgentResponseMessage agent={agent} message={message} chatSettings={chatSettings} onRetry={onRetry} />;
 
@@ -11247,11 +11263,12 @@ function SquadMessage({ agent, message, copy = getLocaleCopy(DEFAULT_LOCALE), ch
       <time className="pr-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">{message.time}</time>
     </article>
   );
-}
+});
 
-function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETTINGS }) {
+function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
-  const view = buildAgentResponseView(message);
+  // Trace normalisation and body parsing are the expensive part of a row.
+  const view = useMemo(() => buildAgentResponseView(message), [message]);
   const isThinkingPlaceholder = String(message.body || "").trim() === `${agent.name} is thinking...`;
   const isLoading = message.status === "loading" || isThinkingPlaceholder;
   const hasTrace = view.orderedEvents.length;
