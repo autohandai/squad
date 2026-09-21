@@ -146,6 +146,17 @@ and offers **Sign in with ChatGPT** or **Sign in with your Claude account**,
 which run `codex login` / `claude auth login` and re-check readiness when the
 browser flow completes. An API key remains an alternative for each engine.
 
+## Members working together
+
+- **Delegation from a reply.** A member that @mentions a teammate in its own reply hands that part of the job to them (security review, QA, tests, design, deployment). The teammate starts immediately, works in the same folder, and reports back; both sides are visible. Depth is capped at two hops.
+- **Members open channels.** A member can include one `SQUAD_ACTION: {"type":"create_channel", …}` line in a reply to open a project channel with the named teammates; you are always a member, the folder becomes a channel project, and the purpose is posted as the first prompt.
+- **Channel projects.** Channel settings list folders the channel works in (add a known folder or **Choose…** for the native dialog). Mention one as `@project-name` to scope a message to that folder; every channel project is passed to members as an extra directory.
+- **Native folder choice.** In a member's workspace popover, **Choose folder…** opens the OS folder dialog (macOS, Windows, Linux with zenity); the chosen folder still has to be inside your home directory.
+
+## Avatars
+
+Members use a set of New Zealand bird portraits by default (kiwi, kea, tūī, pīwakawaka, kākāpō, pūkeko, ruru, takahē, kererū, kōtare), each with a small role hint. Existing members with the old role portraits are moved to the bird that matches their role on next load; custom avatars are untouched.
+
 ## Steering a running reply
 
 While a member is replying, Enter queues your message. **Send now** on a

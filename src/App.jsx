@@ -105,6 +105,7 @@ import {
   CHANNEL_VISIBILITY_PRIVATE,
   CHANNEL_VISIBILITY_PUBLIC,
   brainCardFields,
+  birdAvatarForRole,
   builtInAvatarOptions,
   roleTemplates,
 } from "./data.js";
@@ -3060,6 +3061,9 @@ function normalizeAgentCopy(agent) {
     description: String(agent.description || ""),
     instructions: String(agent.instructions || ""),
     skills: normalizeSkillList(agent.skills),
+    avatar: /^\/avatars\/[a-z0-9-]+\.(jpg|jpeg|webp)$/i.test(String(agent.avatar || ""))
+      ? birdAvatarForRole(agent.employeeType, agent.role, agent.id)
+      : agent.avatar,
     skillSource: agent.skillSource || AUTOHAND_SKILLS_REGISTRY_URL,
     stats: agent.stats
       ? {
@@ -3302,6 +3306,7 @@ function normalizeChannelCopy(channel) {
     name: name.slice(0, 80),
     visibility: channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? CHANNEL_VISIBILITY_PRIVATE : CHANNEL_VISIBILITY_PUBLIC,
     memberIds,
+    projects: normalizeChannelProjects(channel.projects),
     creatorId: String(channel.creatorId || "").trim(),
     autoModeDefault: channel.autoModeDefault === true,
     createdAt,
@@ -5236,6 +5241,85 @@ function App() {
     navigate(memberChatPath(agent.id));
   }
 
+  // A member's reply can delegate to teammates by @mentioning them; each
+  // mention becomes a handoff whose receiver starts immediately, bounded by
+  // hop count so two members cannot ping-pong.
+  function delegateFromReply(agent, replyText, { workspace, hop = 0, launch = {} } = {}) {
+    if (hop >= DM_DELEGATION_MAX_HOPS) return;
+    const targets = mentionedSquadMembers(replyText, agents, agent.id).filter(
+      (target) => target.id !== launch?.collaboration?.sourceAgentId && target.status !== "offline"
+    );
+    for (const target of targets.slice(0, 3)) {
+      const handoffResult = createHandoff(
+        { type: "chat-mention", sourceAgentId: agent.id, workspace, autoAccept: true },
+        {
+          targetAgentId: target.id,
+          title: `Delegated by ${agent.name}`,
+          reason: `${agent.name} asked for ${target.role || "help"}`,
+          requiredContext: replyText.slice(0, 4000),
+          expectedOutput: "Do the part that belongs to your role and report the result back so it can be brought to the user.",
+          sourceEvidence: workspace ? workspaceLabel(workspace, workspaces) : "",
+        }
+      );
+      if (!handoffResult?.targetAgentId) continue;
+      const receiverPrompt = buildCollaborationRecipientPrompt(handoffResult, replyText, workspaces);
+      void Promise.resolve(
+        sendChat(target.id, {
+          prompt: receiverPrompt,
+          workspace: handoffResult.workspace || workspace,
+          hop: hop + 1,
+          collaboration: {
+            role: "receiver",
+            sourceAgentId: agent.id,
+            targetAgentId: target.id,
+            task: handoffResult.task || null,
+            handoff: handoffResult.handoff || null,
+            workspace: handoffResult.workspace || workspace,
+            originalPrompt: replyText,
+          },
+        })
+      )
+        .then((result) => recordCollaborationResult(handoffResult, result || {}))
+        .catch((error) => recordCollaborationResult(handoffResult, { error: error?.message || "Receiving member could not complete the delegation." }));
+    }
+  }
+
+  // `SQUAD_ACTION` lines: today only create_channel. The user is always a
+  // member; the purpose is posted as the channel's first prompt.
+  function applySquadActions(agent, actions = [], { workspace } = {}) {
+    for (const action of actions) {
+      if (action?.type !== "create_channel") continue;
+      const name = String(action.name || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+      if (!name) continue;
+      const wanted = Array.isArray(action.members) ? action.members.map((item) => String(item || "").replace(/^@/, "").toLowerCase()) : [];
+      const memberIds = Array.from(
+        new Set([
+          agent.id,
+          ...agents.filter((item) => wanted.includes(String(item.name || "").toLowerCase()) || wanted.includes(mentionTokenForAgent(item).toLowerCase())).map((item) => item.id),
+        ])
+      );
+      const existing = channels.find((item) => item.name === name);
+      const channel = existing || createChannel({ name, visibility: CHANNEL_VISIBILITY_PUBLIC, memberIds, projects: workspace ? [{ name: basenameOf(workspace), path: workspace }] : [] }, { navigateTo: false, creatorId: agent.id });
+      if (!channel) continue;
+      const others = memberIds.filter((id) => id !== agent.id).map((id) => agents.find((item) => item.id === id)?.name).filter(Boolean);
+      appendMessage(agent.id, {
+        id: `channel-note-${Date.now().toString(36)}`,
+        role: "agent",
+        authorName: "Squad",
+        body: `${agent.name} ${existing ? "is using" : "created"} #${channel.name}${others.length ? ` with ${others.join(", ")}` : ""} and invited you. [Open #${channel.name}](${channelsPath(channel.id)})`,
+        time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
+        status: "complete",
+        local: true,
+      });
+      const purpose = String(action.purpose || "").trim();
+      if (purpose && !existing) {
+        window.setTimeout(() => {
+          void sendChannelPrompt(channel.id, { prompt: `${agent.name} opened this channel: ${purpose}` });
+        }, 50);
+      }
+    }
+  }
+
   async function sendChat(agentId, launch) {
     const agent = agents.find((item) => item.id === agentId) || activeAgent;
     const now = new Date();
@@ -5248,7 +5332,8 @@ function App() {
 
     const id = `chat-${Date.now().toString(36)}`;
     const collaborationContext = buildCollaborationProfileContext(launch.collaboration, agents, workspaces);
-    const profile = [buildAgentProfile(agent, selectedWorkspace), collaborationContext].filter(Boolean).join("\n\n");
+    const teamContext = buildTeammateContext(agent, agents, { tasks, runs, messagesByChannel, hop: Number(launch.hop) || 0 });
+    const profile = [buildAgentProfile(agent, selectedWorkspace), teamContext, collaborationContext].filter(Boolean).join("\n\n");
     touchAgent(agentId, startedAt);
     appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time });
     appendMessage(agentId, {
@@ -5329,6 +5414,8 @@ function App() {
               transport: data.transport || "",
               effectiveModel: data.effectiveModel,
             };
+            const parsedActions = parseSquadActions(finalResult.reply);
+            if (parsedActions.actions.length) finalResult.reply = parsedActions.text || finalResult.reply;
             updateMessage(agentId, `${id}-a`, {
               body: finalResult.reply,
               trace: finalResult.trace,
@@ -5343,6 +5430,10 @@ function App() {
               effectiveModel: finalResult.effectiveModel,
               activityLabel: "",
             });
+            window.setTimeout(() => {
+              applySquadActions(agent, parsedActions.actions, { workspace: finalResult.workspace || selectedWorkspace });
+              delegateFromReply(agent, finalResult.reply, { workspace: finalResult.workspace || selectedWorkspace, hop: Number(launch.hop) || 0, launch });
+            }, 0);
             return;
           }
 
@@ -5420,21 +5511,23 @@ function App() {
     }));
   }
 
-  function createChannel(draft) {
+  function createChannel(draft, { navigateTo = true, creatorId = "user" } = {}) {
     const timestamp = new Date().toISOString();
     const channel = normalizeChannelCopy({
       id: `channel_${Date.now().toString(36)}`,
       name: draft.name,
       visibility: draft.visibility,
       memberIds: draft.memberIds,
-      creatorId: "user",
+      projects: draft.projects,
+      creatorId,
       autoModeDefault: draft.autoModeDefault === true,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    if (!channel) return;
+    if (!channel) return null;
     setChannels((current) => [...current, channel]);
-    navigate(channelsPath(channel.id));
+    if (navigateTo) navigate(channelsPath(channel.id));
+    return channel;
   }
 
   function updateChannel(channelId, patch) {
@@ -5493,7 +5586,14 @@ function App() {
     const now = new Date();
     const startedAt = now.toISOString();
     const time = now.toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" });
-    const selectedWorkspace = normalizeSquadWorkspacePath(agent.workspace || fallbackWorkspace, runtime);
+    const channelProjects = normalizeChannelProjects(channel.projects);
+    const mentionedProjects = mentionedChannelProjects(prompt, channel);
+    // A single mentioned project becomes the working folder for this reply;
+    // every channel project is available as an extra directory.
+    const selectedWorkspace = normalizeSquadWorkspacePath(
+      mentionedProjects.length === 1 ? mentionedProjects[0].path : agent.workspace || channelProjects[0]?.path || fallbackWorkspace,
+      runtime
+    );
     const messageId = `${threadId}-${agent.id}-${Date.now().toString(36)}`;
     appendChannelMessage(channel.id, {
       id: messageId,
@@ -5531,7 +5631,7 @@ function App() {
       transport: "cli",
       timeoutMs: 300000,
       profile,
-      agent: agentLaunchPayload(agent, selectedWorkspace),
+      agent: withChannelProjects(agentLaunchPayload(agent, selectedWorkspace), channelProjects),
       channelId: channel.id,
       threadId,
       parentMessageId,
@@ -6739,6 +6839,8 @@ function App() {
                 channelThreads={channelThreads}
                 messagesByChannel={messagesByChannel}
                 agents={agents}
+                runtime={runtime}
+                workspaces={workspaces}
                 activeChannelId={channelIdFromRoute(route)}
                 locale={localeResolution.locale}
                 copy={localeCopy}
@@ -7367,6 +7469,8 @@ function ChannelsPage({
   channelThreads = {},
   messagesByChannel = {},
   agents = [],
+  runtime = null,
+  workspaces = [],
   activeChannelId = "",
   locale = DEFAULT_LOCALE,
   copy = getLocaleCopy(DEFAULT_LOCALE),
@@ -7410,14 +7514,38 @@ function ChannelsPage({
     return Array.from(seen.values());
   }, [channelMessages, agents, copy]);
 
+  const channelProjects = useMemo(() => normalizeChannelProjects(channel?.projects), [channel?.projects]);
+  const [projectDraft, setProjectDraft] = useState("");
+  const [projectPickBusy, setProjectPickBusy] = useState(false);
   const mentionItems = useMemo(
-    () =>
-      members.map((member) => {
+    () => [
+      ...members.map((member) => {
         const handle = channelMentionAliases(member)[0] || member.name;
         return { id: member.id, handle, label: `@${handle}`, detail: member.role || "" };
       }),
-    [members]
+      ...channelProjects.map((project) => ({ id: `project:${project.path}`, handle: project.name, label: `@${project.name}`, detail: project.path, project })),
+    ],
+    [channelProjects, members]
   );
+
+  function addChannelProject(path) {
+    const normalized = normalizeSquadWorkspacePath(path, runtime);
+    if (!channel || !normalized || channelProjects.some((project) => project.path === normalized)) return;
+    onUpdateChannel?.(channel.id, { projects: [...channelProjects, { name: workspaceName(normalized) || basenameOf(normalized), path: normalized }] });
+    setProjectDraft("");
+  }
+
+  async function pickChannelProject() {
+    setProjectPickBusy(true);
+    try {
+      const picked = await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: `Add a project folder to #${channel?.name || "channel"}` }) });
+      if (picked?.path) addChannelProject(picked.path);
+    } catch {
+      // Cancelled or unavailable: the text field still works.
+    } finally {
+      setProjectPickBusy(false);
+    }
+  }
 
   function exportChannelLog() {
     if (!channel) return;
@@ -7441,6 +7569,7 @@ function ChannelsPage({
     }
     onDispatch?.(channel.id, { prompt: text, autoMode: channel.autoModeDefault === true, selfJudge: channel.autoModeDefault === true });
   }
+  void projectDraft;
 
   const replyThread = replyTo ? threads.find((thread) => thread.id === replyTo.threadId) : null;
   const replyName = replyTo ? channelMessageAuthorName(replyTo, agents, ACCOUNT_PROFILE.name) : "";
@@ -7504,6 +7633,53 @@ function ChannelsPage({
                       onCheckedChange={(checked) => onUpdateChannel?.(channel.id, { autoModeDefault: checked === true })}
                     />
                   </label>
+                  <Separator />
+                  <div className="flex flex-col gap-2">
+                    <div>
+                      <span className="block text-sm font-medium">Projects</span>
+                      <span className="block text-xs text-muted-foreground">Folders members can work in from this channel. Mention one as @name to scope a message to it.</span>
+                    </div>
+                    {channelProjects.length ? (
+                      <ul className="divide-y divide-border/60 text-sm">
+                        {channelProjects.map((project) => (
+                          <li key={project.path} className="flex items-center justify-between gap-2 py-1.5">
+                            <span className="min-w-0">
+                              <span className="block truncate font-medium">@{project.name}</span>
+                              <span className="block truncate text-xs text-muted-foreground">{project.path}</span>
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={`Remove ${project.name}`}
+                              onClick={() => onUpdateChannel?.(channel.id, { projects: channelProjects.filter((item) => item.path !== project.path) })}
+                            >
+                              <X />
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <div className="flex items-center gap-1.5">
+                      <Select value="" onValueChange={addChannelProject}>
+                        <SelectTrigger className="h-8 min-w-0 flex-1 text-xs">
+                          <SelectValue placeholder="Add a known folder" />
+                        </SelectTrigger>
+                        <SelectContent position="popper" className="max-h-72">
+                          {workspaceOptions(workspaces, "", runtime)
+                            .filter((item) => !channelProjects.some((project) => project.path === item.path))
+                            .map((item) => (
+                              <SelectItem key={item.path} value={item.path}>
+                                {item.label}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <Button variant="outline" size="sm" className="h-8 shrink-0 text-xs" onClick={pickChannelProject} disabled={projectPickBusy}>
+                        {projectPickBusy ? <Spinner /> : <FolderGit2 data-icon="inline-start" />}
+                        Choose…
+                      </Button>
+                    </div>
+                  </div>
                   <Separator />
                   <Button variant="ghost" size="sm" className="justify-start" onClick={exportChannelLog}>
                     <FileCode2 data-icon="inline-start" />
@@ -8597,6 +8773,82 @@ function buildCollaborationProfileContext(collaboration, agents = [], workspaces
 // Maximum number of agent-to-agent relay hops within one channel thread.
 const CHANNEL_RELAY_MAX_HOPS = 3;
 
+function basenameOf(path) {
+  const parts = String(path || "").split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || String(path || "");
+}
+
+function normalizeChannelProjects(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  return list
+    .map((item) => (typeof item === "string" ? { name: basenameOf(item), path: item } : item))
+    .filter((item) => item && typeof item.path === "string" && item.path.trim())
+    .map((item) => ({ name: String(item.name || basenameOf(item.path)).trim().replace(/\s+/g, "-"), path: item.path.trim() }))
+    .filter((item) => (seen.has(item.path) ? false : seen.add(item.path)));
+}
+
+/** Projects mentioned as @name in a channel message. */
+function mentionedChannelProjects(text, channel) {
+  const projects = normalizeChannelProjects(channel?.projects);
+  if (!projects.length) return [];
+  const tokens = new Set(Array.from(String(text || "").matchAll(CHANNEL_MENTION_PATTERN), (match) => String(match[1] || "").toLowerCase()));
+  return projects.filter((project) => tokens.has(project.name.toLowerCase()));
+}
+
+// Maximum member-to-member delegation depth from a direct chat.
+const DM_DELEGATION_MAX_HOPS = 2;
+
+function buildTeammateContext(agent, agents = [], { tasks = [], runs = [], messagesByChannel = {}, hop = 0 } = {}) {
+  const teammates = agents.filter((item) => item.id !== agent.id && item.status !== "offline");
+  if (!teammates.length) return "";
+  const roster = teammates.map((item) => {
+    const presence = memberPresenceForAgent(item, { tasks, runs, messagesByChannel });
+    return `- @${mentionTokenForAgent(item)} — ${item.role || "Squad member"} (${presence?.label || "Online"})`;
+  });
+  const canDelegate = hop < DM_DELEGATION_MAX_HOPS;
+  return [
+    "Squad teammates available right now:",
+    roster.join("\n"),
+    canDelegate
+      ? "Delegate parts of the job that belong to a teammate's role (security review, QA, tests, design, deployment) by @mentioning them by name in your reply with a clear ask. They receive your message as a handoff, do the work, and report back to you; the user sees both sides. Mention a teammate only when their role is needed."
+      : "You are already working on a delegated task; finish it yourself and do not delegate further.",
+    'To open a shared channel for a project, include one line exactly like: SQUAD_ACTION: {"type":"create_channel","name":"project-name","members":["Noah","Eva"],"purpose":"one sentence"} — the user is always invited and the members get the purpose as their first prompt.',
+  ].join("\n");
+}
+
+/** `SQUAD_ACTION: {...}` lines a member may include in a reply. */
+function parseSquadActions(text) {
+  const actions = [];
+  const cleaned = [];
+  for (const line of String(text || "").split("\n")) {
+    const match = line.match(/^\s*SQUAD_ACTION:\s*(\{.*\})\s*$/);
+    if (!match) {
+      cleaned.push(line);
+      continue;
+    }
+    try {
+      actions.push(JSON.parse(match[1]));
+    } catch {
+      cleaned.push(line);
+    }
+  }
+  return { actions, text: cleaned.join("\n").trim() };
+}
+
+function withChannelProjects(launchPayload, channelProjects = []) {
+  if (!channelProjects.length) return launchPayload;
+  const existing = Array.isArray(launchPayload.projects) ? launchPayload.projects : [];
+  const known = new Set(existing.map((project) => project.path));
+  return {
+    ...launchPayload,
+    projects: [
+      ...existing,
+      ...channelProjects.filter((project) => !known.has(project.path)).map((project) => ({ id: `channel_${project.name}`, name: project.name, label: project.name, path: project.path, kind: "folder" })),
+    ],
+  };
+}
+
 function buildRelayPrompt(fromAgent, toAgent, replyText, channel) {
   return [
     `${fromAgent.name}${fromAgent.role ? ` (${fromAgent.role})` : ""} wrote in #${channel.name} and mentioned you, ${toAgent.name}:`,
@@ -8623,6 +8875,9 @@ function buildChannelProfileContext(channel, agent, agents = [], { autoMode, sel
     `Channel: #${channel.name} (${channel.visibility})`,
     threadId ? `Thread: ${threadId}` : "",
     roster.length ? `Channel members:\n${roster.join("\n")}` : "",
+    normalizeChannelProjects(channel.projects).length
+      ? `Channel projects (mention as @name; all are available as extra directories):\n${normalizeChannelProjects(channel.projects).map((project) => `- @${project.name}: ${project.path}`).join("\n")}`
+      : "",
     targetRoster.length ? `Selected recipients${targetLabel ? ` (${targetLabel})` : ""}:\n${targetRoster.join("\n")}` : "",
     relayFrom
       ? `You are ${agent.name}. Your teammate ${relayFrom.name} mentioned you in this thread (relay hop ${hop} of ${CHANNEL_RELAY_MAX_HOPS}). Reply to ${relayFrom.name} directly and briefly.`
@@ -10114,7 +10369,7 @@ function Conversation({
 
     if (wantsSteer && !mentionOpen) {
       event.preventDefault();
-      const text = prompt.trim();
+      const text = livePrompt();
       if (!text || blockedWorkspace) return;
       setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
       setMentionState(null);
@@ -10469,10 +10724,18 @@ function Conversation({
     return true;
   }
 
+  // The field reports drafts in a transition, so read the live value from the
+  // element: a fast Enter must never see a stale (empty) prompt.
+  function livePrompt() {
+    const fieldValue = promptRef.current?.value;
+    return String(fieldValue ?? prompt ?? "").trim();
+  }
+
   function submit(event) {
     event.preventDefault();
-    if (!prompt.trim() || blockedWorkspace) return;
-    const submittedPrompt = prompt.trim();
+    if (blockedWorkspace) return;
+    const submittedPrompt = livePrompt();
+    if (!submittedPrompt) return;
     setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
     setMentionState(null);
     if (isShellPrompt(submittedPrompt)) {
@@ -10866,10 +11129,32 @@ function Conversation({
 
                     {workspaceError ? <FieldDescription className="text-destructive">{workspaceError}</FieldDescription> : null}
 
-                    <Button type="button" size="sm" className="w-full" disabled={!canAddWorkspace || !updateAgent} onClick={addWorkspaceFromComposer}>
-                      <Plus data-icon="inline-start" />
-                      {copy.addWorkspace}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={async () => {
+                          try {
+                            const picked = await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: `Choose a folder for ${agent.name}`, start: workspace }) });
+                            if (picked?.path) {
+                              setWorkspaceDraft(picked.path);
+                              setWorkspaceError("");
+                            }
+                          } catch (error) {
+                            if (!/cancelled/i.test(error?.message || "")) setWorkspaceError(error?.message || "Could not open the folder dialog.");
+                          }
+                        }}
+                      >
+                        <FolderGit2 data-icon="inline-start" />
+                        Choose folder…
+                      </Button>
+                      <Button type="button" size="sm" className="flex-1" disabled={!canAddWorkspace || !updateAgent} onClick={addWorkspaceFromComposer}>
+                        <Plus data-icon="inline-start" />
+                        {copy.addWorkspace}
+                      </Button>
+                    </div>
                   </FieldGroup>
                 </PopoverContent>
               </Popover>

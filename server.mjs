@@ -6788,6 +6788,41 @@ async function handleApi(req, res, url) {
     return true;
   }
 
+  // Native OS folder chooser for "which folder should this member work in".
+  // The dialog runs on the machine that hosts the bridge; the chosen folder
+  // still has to pass the same rules as every other workspace.
+  if (url.pathname === "/api/workspaces/pick" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const title = String(payload.title || "Choose a folder for this member").slice(0, 120).replace(/["\\]/g, "");
+      const start = String(payload.start || homeDir);
+      let picked = "";
+      if (process.platform === "darwin") {
+        const script = `POSIX path of (choose folder with prompt "${title}" default location POSIX file "${start.replace(/"/g, "")}")`;
+        const result = spawnSync("osascript", ["-e", script], { encoding: "utf8", timeout: 300000 });
+        if (result.status !== 0) {
+          if (/User cancel(l)?ed/i.test(result.stderr || "")) throw Object.assign(new Error("cancelled"), { status: 409 });
+          throw new Error((result.stderr || "folder dialog failed").trim());
+        }
+        picked = String(result.stdout || "").trim();
+      } else if (process.platform === "win32") {
+        const script = `Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = "${title}"; $d.SelectedPath = "${start.replace(/"/g, "")}"; if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }`;
+        const result = spawnSync("powershell", ["-NoProfile", "-STA", "-Command", script], { encoding: "utf8", timeout: 300000, windowsHide: true });
+        picked = String(result.stdout || "").trim();
+        if (!picked) throw Object.assign(new Error("cancelled"), { status: 409 });
+      } else {
+        const result = spawnSync("zenity", ["--file-selection", "--directory", `--title=${title}`, `--filename=${start.replace(/\/?$/, "/")}`], { encoding: "utf8", timeout: 300000 });
+        picked = String(result.stdout || "").trim();
+        if (!picked) throw Object.assign(new Error(result.status === 1 ? "cancelled" : "zenity is required for the folder dialog on Linux"), { status: result.status === 1 ? 409 : 400 });
+      }
+      const workspace = await cleanWorkspace(picked.replace(/\/+$/, ""));
+      json(res, 200, { success: true, data: { path: workspace, name: basename(workspace) } });
+    } catch (error) {
+      json(res, error.status || 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
   if (url.pathname === "/api/skills/catalog" && req.method === "GET") {
     try {
       const catalog = await loadSkillCatalog();

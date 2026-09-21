@@ -498,7 +498,7 @@ const handoffDemoAgents = [
     createdAt: "2026-05-25T08:30:00.000Z",
     updatedAt: "2026-05-25T08:45:00.000Z",
     lastConversationAt: "2026-05-25T09:18:00.000Z",
-    avatar: "/avatars/frontend-developer.jpg",
+    avatar: "/avatars/birds/kea.webp",
     employeeType: "frontend-developer",
     workspace: "/Users/igorcosta/Documents/autohand/web/prototypes/dark-web-cli",
     description:
@@ -553,7 +553,7 @@ const handoffDemoAgents = [
     createdAt: "2026-05-25T08:35:00.000Z",
     updatedAt: "2026-05-25T09:25:00.000Z",
     lastConversationAt: "2026-05-25T09:25:00.000Z",
-    avatar: "/avatars/solution-architect.jpg",
+    avatar: "/avatars/birds/tui.webp",
     employeeType: "solution-architect",
     workspace: "/Users/igorcosta/Documents/autohand/web/prototypes/dark-web-cli",
     description:
@@ -608,7 +608,7 @@ const handoffDemoAgents = [
     createdAt: "2026-05-25T08:40:00.000Z",
     updatedAt: "2026-05-25T08:40:00.000Z",
     lastConversationAt: "2026-05-25T08:40:00.000Z",
-    avatar: "/avatars/devops-engineer.jpg",
+    avatar: "/avatars/birds/fantail.webp",
     employeeType: "devops-engineer",
     workspace: "/Users/igorcosta/Documents/autohand/web/prototypes/dark-web-cli",
     description:
@@ -696,7 +696,33 @@ const generatedAvatarOptions = [
   { id: "nz-riso-set-2-16", label: "Riso 27", src: "/avatars/nz-riso-set-2-16.webp" },
 ];
 
+// New Zealand bird portraits: the default avatar set. Each bird carries a
+// subtle role hint, so members read as a team at a glance.
+export const birdAvatarOptions = [
+  { id: "bird-kiwi", label: "Kiwi", src: "/avatars/birds/kiwi.webp", roles: ["common-qa-engineer", "qa"] },
+  { id: "bird-kea", label: "Kea", src: "/avatars/birds/kea.webp", roles: ["frontend-developer", "full-stack-developer", "frontend"] },
+  { id: "bird-tui", label: "Tūī", src: "/avatars/birds/tui.webp", roles: ["code-reviewer", "reviewer", "review"] },
+  { id: "bird-fantail", label: "Pīwakawaka", src: "/avatars/birds/fantail.webp", roles: ["devops-engineer", "devops", "sre"] },
+  { id: "bird-kakapo", label: "Kākāpō", src: "/avatars/birds/kakapo.webp", roles: ["solution-architect", "ai-engineer", "architect"] },
+  { id: "bird-pukeko", label: "Pūkeko", src: "/avatars/birds/pukeko.webp", roles: ["data-analyst", "analyst", "data"] },
+  { id: "bird-ruru", label: "Ruru", src: "/avatars/birds/ruru.webp", roles: ["security-engineer", "security"] },
+  { id: "bird-takahe", label: "Takahē", src: "/avatars/birds/takahe.webp", roles: ["platform-engineer", "backend-engineer", "backend", "platform"] },
+  { id: "bird-kereru", label: "Kererū", src: "/avatars/birds/kereru.webp", roles: ["ux-ui-designer", "content-operations-specialist", "designer", "design", "content"] },
+  { id: "bird-kotare", label: "Kōtare", src: "/avatars/birds/kotare.webp", roles: ["mobile-developer", "mobile", "ios", "android"] },
+];
+
+/** Pick the bird for a role id or free-text role; unknown roles rotate through the set. */
+export function birdAvatarForRole(employeeType = "", roleText = "", seed = "") {
+  const haystack = `${employeeType} ${roleText}`.toLowerCase();
+  const match = birdAvatarOptions.find((bird) => bird.roles.some((role) => haystack.includes(role)));
+  if (match) return match.src;
+  let hash = 0;
+  for (const char of String(seed || haystack)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return birdAvatarOptions[hash % birdAvatarOptions.length].src;
+}
+
 export const builtInAvatarOptions = [
+  ...birdAvatarOptions.map(({ id, label, src }) => ({ id, label, src })),
   ...roleTemplates.map((role) => ({
     id: role.id,
     label: role.title,
@@ -716,7 +742,7 @@ export const initialAgents = [
     createdAt: "2026-05-22T01:38:05.622Z",
     updatedAt: "2026-05-22T01:38:05.879Z",
     lastConversationAt: "2026-05-25T02:00:00.343Z",
-    avatar: "/avatars/common-qa-engineer.jpg",
+    avatar: "/avatars/birds/kiwi.webp",
     employeeType: "common-qa-engineer",
     workspace: "/Users/igorcosta/Documents/autohand/web/prototypes/dark-web-cli",
     description:
