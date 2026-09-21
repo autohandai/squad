@@ -6740,6 +6740,69 @@ async function handleApi(req, res, url) {
     return true;
   }
 
+  // `!command` from the composer: run one shell command in the member's
+  // workspace and return its output. Bounded by time and size; the workspace
+  // must pass the same folder rules as every launch.
+  if (url.pathname === "/api/shell" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const workspace = await cleanWorkspace(payload.workspace);
+      const command = String(payload.command || "").trim().slice(0, 2000);
+      if (!command) throw new Error("command is required");
+      const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs) || 60000, 1000), 300000);
+      const startedAt = Date.now();
+      const shell = process.platform === "win32" ? ["cmd.exe", ["/d", "/s", "/c", command]] : ["/bin/bash", ["-lc", command]];
+      const result = spawnSync(shell[0], shell[1], {
+        cwd: workspace,
+        env: { ...process.env, AUTOHAND_SQUAD_SHELL: "1" },
+        encoding: "utf8",
+        timeout: timeoutMs,
+        maxBuffer: 4 * 1024 * 1024,
+        windowsHide: true,
+      });
+      const cap = (text) => {
+        const value = stripAnsi(text || "");
+        return value.length > 64 * 1024 ? `${value.slice(0, 64 * 1024)}\n… (truncated)` : value;
+      };
+      logEvent(result.status === 0 ? SEVERITY.INFO : SEVERITY.WARN, `shell: ${command.slice(0, 120)}`, {
+        "event.name": "composer.shell",
+        "autohand.workspace": workspace,
+        "process.exit_code": result.status ?? -1,
+      });
+      json(res, 200, {
+        success: true,
+        data: {
+          command,
+          workspace,
+          exitCode: result.status,
+          signal: result.signal || "",
+          timedOut: Boolean(result.error && result.error.code === "ETIMEDOUT"),
+          stdout: cap(result.stdout),
+          stderr: cap(result.stderr),
+          durationMs: Date.now() - startedAt,
+        },
+      });
+    } catch (error) {
+      json(res, 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/skills/catalog" && req.method === "GET") {
+    try {
+      const catalog = await loadSkillCatalog();
+      const query = String(url.searchParams.get("q") || "").trim().toLowerCase();
+      const skills = (catalog?.skills || [])
+        .filter((skill) => !query || `${skill.id} ${skill.name || ""} ${skill.category || ""}`.toLowerCase().includes(query))
+        .slice(0, 40)
+        .map((skill) => ({ id: skill.id, name: skill.name || skill.id, category: skill.category || "", author: skill.author || "" }));
+      json(res, 200, { success: true, data: { skills } });
+    } catch (error) {
+      json(res, 500, { success: false, error: error.message });
+    }
+    return true;
+  }
+
   if (url.pathname === "/api/terminal" && req.method === "POST") {
     try {
       const payload = await readBody(req);

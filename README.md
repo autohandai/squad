@@ -146,6 +146,18 @@ and offers **Sign in with ChatGPT** or **Sign in with your Claude account**,
 which run `codex login` / `claude auth login` and re-check readiness when the
 browser flow completes. An API key remains an alternative for each engine.
 
+## Composer syntax
+
+The chat composer understands the same prefixes on every engine:
+
+| Prefix | Meaning |
+| --- | --- |
+| `@name` | Mention a squad member (they receive a handoff and start immediately); the picker shows who is online, working, or idle |
+| `@path` | Mention a workspace file |
+| `$skill` | Ask the member to use an installed skill; the picker lists installed skills first, then the registry |
+| `!command` | Run a shell command in the workspace through the bridge and show the output in the chat |
+| `/command` | App commands: `/new`, `/model`, `/harness`, `/workspace`, `/skills`, `/run`, `/help`. Autohand Code members also accept the CLI's `/plan`, `/review`, `/init`, `/compact`, `/clear`. Codex and Claude Code run non-interactively and reply that CLI-only commands are unavailable instead of failing silently |
+
 ## Chat sessions
 
 The bridge keeps one warm CLI session per member and launch configuration

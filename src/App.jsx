@@ -219,6 +219,17 @@ import { AgentStatusBar } from "@/components/channels/AgentStatusBar";
 import { InboxPage } from "@/components/inbox/InboxPage";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { SignInGate } from "@/components/account/SignInGate";
+import { PromptTextarea } from "@/components/chat/PromptTextarea";
+import {
+  commandsForHarness,
+  composerTrigger,
+  expandSkillMentions,
+  helpText as composerHelpText,
+  insertTriggerText,
+  isShellPrompt,
+  shellCommandFrom,
+  slashCommandFrom,
+} from "@/lib/composer-syntax";
 import {
   fetchHarnesses,
   harnessForAgent,
@@ -6306,7 +6317,7 @@ function App() {
       id: `${handoffId}-received`,
       role: "agent",
       body: autoAccept
-        ? `Got it. I picked this up from ${sourceAgent?.name || "the source member"}.\n\n${handoffContextText(handoff, nextTask, sourceAgent, targetAgent)}`
+        ? `Picked up from ${sourceAgent?.name || "the source member"}: ${String(handoff.requiredContext || nextTask.title || "").trim().slice(0, 240)}${nextTask?.title ? `\n\nParent task: ${nextTask.title}` : ""}`
         : handoffContextText(handoff, nextTask, sourceAgent, targetAgent),
       time,
       status: "handoff",
@@ -6315,14 +6326,13 @@ function App() {
       id: `${handoffId}-sent`,
       role: "agent",
       body: autoAccept
-        ? `Got it. I’m talking to ${targetAgent.name} now and keeping this in parent task ${compactRecordId(nextTask.id)}.`
+        ? `Asked ${targetAgent.name} to pick this up. Their answer will appear here when it is ready.`
         : `Handoff queued for ${targetAgent.name}. Parent task stays as ${compactRecordId(nextTask.id)}; ${targetAgent.name} is now the current owner.`,
       time,
       status: "handoff",
     });
     touchAgent(targetAgentId, timestamp);
     touchAgent(sourceAgentId, timestamp);
-    setTaskPanelOpen(true);
     return {
       task: nextTask,
       handoff,
@@ -6838,6 +6848,7 @@ function App() {
                 copy={localeCopy}
                 onStart={startAutohand}
                 onChat={sendChat}
+                onLocalMessage={appendMessage}
                 onNewConversation={startNewConversation}
                 harnesses={harnesses}
                 harnessesLoading={harnessesLoading}
@@ -9797,6 +9808,7 @@ function Conversation({
   harnesses = [],
   harnessesLoading = false,
   onRefreshHarnesses,
+  onLocalMessage,
 }) {
   const defaultLaunch = agent.launch || { mode: "prompt", policy: "restricted", model: "", dryRun: false };
   const [harnessDraft, setHarnessDraft] = useState(() => harnessForAgent(agent));
@@ -9885,12 +9897,14 @@ function Conversation({
   const effectiveModel = effectiveModelForAgent(agent, providerSettings);
   const runningCount = runs.filter((run) => run.status === "running").length;
   const mentionQuery = mentionState?.query || "";
+  const mentionKind = mentionState?.kind || "mention";
   const normalizedMentionQuery = mentionQuery.toLowerCase();
   const isFileMentionQuery =
-    ["file", "files"].includes(normalizedMentionQuery) ||
-    mentionQuery.includes("/") ||
-    mentionQuery.includes(".") ||
-    mentionQuery.length >= 3;
+    mentionKind === "mention" &&
+    (["file", "files"].includes(normalizedMentionQuery) ||
+      mentionQuery.includes("/") ||
+      mentionQuery.includes(".") ||
+      mentionQuery.length >= 3);
   const fileMentionQuery = ["file", "files"].includes(normalizedMentionQuery) ? "" : mentionQuery;
   const workspaceFileMentionsAvailable = runtime?.features?.workspaceFileMentions === true;
   const memberMentionItems = useMemo(() => {
@@ -9903,27 +9917,80 @@ function Conversation({
       })
       .map((item) => ({
         type: "agent",
+        prefix: "@",
         value: mentionTokenForAgent(item),
         title: item.name,
         detail: localizedRole(item, copy),
         agent: item,
-        presence: memberPresenceForAgent(item, { tasks, runs, messagesByChannel }),
+        presence: chatSendingByAgent[item.id]
+          ? { id: "working", label: "Working", className: "bg-primary", pulse: true }
+          : memberPresenceForAgent(item, { tasks, runs, messagesByChannel }),
       }));
-  }, [agent.id, agents, copy, mentionQuery, messagesByChannel, runs, tasks]);
+  }, [agent.id, agents, chatSendingByAgent, copy, mentionQuery, messagesByChannel, runs, tasks]);
   const fileMentionItems = useMemo(
     () =>
       mentionFiles.map((file) => ({
         type: "file",
+        prefix: "@",
         value: file.path,
         title: file.path,
         detail: file.detail || "Workspace file",
       })),
     [mentionFiles]
   );
-  const mentionItems = useMemo(
-    () => [...memberMentionItems, ...fileMentionItems].slice(0, 6),
-    [fileMentionItems, memberMentionItems]
-  );
+  const memberHarnessId = harnessForAgent(agent).id;
+  const commandItems = useMemo(() => {
+    if (mentionKind !== "command") return [];
+    const query = mentionQuery.toLowerCase();
+    return commandsForHarness(memberHarnessId)
+      .filter((command) => !query || command.name.startsWith(query))
+      .map((command) => ({
+        type: "command",
+        prefix: "/",
+        value: command.name,
+        title: `/${command.name}${command.args ? ` ${command.args}` : ""}`,
+        detail: command.description,
+      }));
+  }, [memberHarnessId, mentionKind, mentionQuery]);
+  const [catalogSkills, setCatalogSkills] = useState([]);
+  useEffect(() => {
+    if (mentionKind !== "skill") return undefined;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const data = await api(`/api/skills/catalog?q=${encodeURIComponent(mentionQuery)}`, { signal: controller.signal });
+        if (!controller.signal.aborted) setCatalogSkills(Array.isArray(data?.skills) ? data.skills : []);
+      } catch {
+        if (!controller.signal.aborted) setCatalogSkills([]);
+      }
+    }, 80);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [mentionKind, mentionQuery]);
+  const installedSkillNames = useMemo(() => {
+    const names = new Set(normalizeSkillList(agent.skills));
+    for (const skill of agent.skillInstall?.installed || []) if (skill?.id) names.add(skill.id);
+    return Array.from(names);
+  }, [agent.skills, agent.skillInstall]);
+  const skillItems = useMemo(() => {
+    if (mentionKind !== "skill") return [];
+    const query = mentionQuery.toLowerCase();
+    const installed = installedSkillNames
+      .filter((name) => !query || name.toLowerCase().includes(query))
+      .map((name) => ({ type: "skill", prefix: "$", value: name, title: name, detail: "Installed for this member" }));
+    const seen = new Set(installed.map((item) => item.value));
+    const catalog = catalogSkills
+      .filter((skill) => !seen.has(skill.id))
+      .map((skill) => ({ type: "skill", prefix: "$", value: skill.id, title: skill.name || skill.id, detail: `Registry${skill.category ? ` · ${skill.category}` : ""}` }));
+    return [...installed, ...catalog].slice(0, 12);
+  }, [catalogSkills, installedSkillNames, mentionKind, mentionQuery]);
+  const mentionItems = useMemo(() => {
+    if (mentionKind === "command") return commandItems.slice(0, 10);
+    if (mentionKind === "skill") return skillItems;
+    return [...memberMentionItems, ...fileMentionItems].slice(0, 6);
+  }, [commandItems, fileMentionItems, memberMentionItems, mentionKind, skillItems]);
   const mentionOpen = Boolean(mentionState);
   const visibleMessages = useMemo(
     () => messages.filter((message) => !(message?.id === "m1" && message?.role === "agent" && message?.time === "Ready")),
@@ -10007,11 +10074,15 @@ function Conversation({
 
   function updatePrompt(value, caret = value.length) {
     setPromptByAgent((current) => (current[agent.id] === value ? current : { ...current, [agent.id]: value }));
-    const nextMention = currentMentionQuery(value, caret);
+    const nextMention = composerTrigger(value, caret);
     // Same mention query → same state object, so caret moves and key-ups do
     // not re-render the conversation.
     setMentionState((current) =>
-      (current?.query ?? null) === (nextMention?.query ?? null) && (current?.start ?? null) === (nextMention?.start ?? null) ? current : nextMention
+      (current?.query ?? null) === (nextMention?.query ?? null) &&
+      (current?.start ?? null) === (nextMention?.start ?? null) &&
+      (current?.kind ?? null) === (nextMention?.kind ?? null)
+        ? current
+        : nextMention
     );
   }
 
@@ -10020,7 +10091,7 @@ function Conversation({
   }
 
   function selectMentionItem(item) {
-    const nextPrompt = insertMentionText(prompt, item, mentionState);
+    const nextPrompt = insertTriggerText(prompt, item.prefix || "@", item.value, mentionState);
     setPromptByAgent((current) => ({ ...current, [agent.id]: nextPrompt.text }));
     setMentionState(null);
     window.requestAnimationFrame(() => {
@@ -10188,10 +10259,11 @@ function Conversation({
           signal: controller.signal,
         })
       );
-      void chatPromise
-        .then(() => {
-          if (controller.signal.aborted) return;
-          if (!handoffResult?.targetAgentId) return;
+      // The receiving member starts right away: its brief comes from the
+      // user's message and the handoff, not from the source's answer, and a
+      // failing or slow source must not leave the receiver idle.
+      if (handoffResult?.targetAgentId) {
+        void Promise.resolve().then(() => {
           const receiverController = new AbortController();
           activeChatControllerRef.current = {
             ...activeChatControllerRef.current,
@@ -10226,7 +10298,9 @@ function Conversation({
               }
               setActiveChatSending(handoffResult.targetAgentId, false);
             });
-        })
+        });
+      }
+      void chatPromise
         .catch(() => {})
         .finally(() => {
           if (activeChatControllerRef.current[targetAgentId] === controller) {
@@ -10276,17 +10350,100 @@ function Conversation({
     sendPromptNow({ prompt: previousUser.body, workspace, policy, model }, { agentId: agent.id });
   };
 
+  function postLocalNote(body, status = "note") {
+    onLocalMessage?.(agent.id, {
+      id: `note-${Date.now().toString(36)}`,
+      role: "agent",
+      authorName: status === "shell" ? "Terminal" : "Squad",
+      body,
+      time: new Date().toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }),
+      status: "complete",
+      local: true,
+    });
+  }
+
+  async function runShellCommand(command) {
+    onLocalMessage?.(agent.id, { id: `shell-u-${Date.now().toString(36)}`, role: "user", body: `!${command}`, time: new Date().toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) });
+    try {
+      const result = await api("/api/shell", { method: "POST", body: JSON.stringify({ workspace, command }) });
+      const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trimEnd();
+      const status = result.timedOut ? "timed out" : `exit ${result.exitCode ?? "?"}`;
+      postLocalNote(`\`\`\`\n$ ${command}\n${output || "(no output)"}\n\`\`\`\n${status} · ${Math.round((result.durationMs || 0) / 100) / 10}s · ${workspaceName(workspace) || workspace}`, "shell");
+    } catch (error) {
+      postLocalNote(`\`${command}\` failed to run: ${error.message}`, "shell");
+    }
+  }
+
+  // Slash commands the app owns work on every engine; Autohand Code commands
+  // pass through to the CLI; other engines get a plain answer instead of a
+  // silent no-op.
+  function handleSlashCommand(command) {
+    const harnessId = harnessForAgent(agent).id;
+    switch (command.name) {
+      case "new":
+        startFreshChat();
+        return true;
+      case "help":
+        postLocalNote(composerHelpText(harnessId));
+        return true;
+      case "skills":
+        postLocalNote(installedSkillNames.length ? `Installed skills for ${agent.name}:\n${installedSkillNames.map((name) => `- \`$${name}\``).join("\n")}` : `${agent.name} has no installed skills yet. Type \`$\` to browse the registry.`);
+        return true;
+      case "model":
+        if (!command.args) {
+          postLocalNote(`Current model: ${model || providerSummaryLabel(effectiveModel)}. Use \`/model <id>\` to change it for the next messages.`);
+          return true;
+        }
+        setModel(command.args);
+        postLocalNote(`Model set to \`${command.args}\` for the next messages.`);
+        return true;
+      case "harness": {
+        const next = normalizeHarnessAssignmentCopy({ ...harnessForAgent(agent), id: command.args });
+        if (!command.args || next.id === harnessId) {
+          postLocalNote(`${agent.name} runs with ${harnessLabel(harnessId)}. Use \`/harness autohand|codex|claude\` to switch.`);
+          return true;
+        }
+        updateAgent?.(agent.id, { harness: next, updatedAt: new Date().toISOString() });
+        postLocalNote(`${agent.name} now runs with ${harnessLabel(next.id)}.`);
+        return true;
+      }
+      case "workspace":
+        if (!command.args) {
+          postLocalNote(`Current workspace: ${workspace}.`);
+          return true;
+        }
+        setWorkspace(command.args);
+        postLocalNote(`Workspace set to ${command.args}.`);
+        return true;
+      case "run":
+        void runShellCommand(command.args);
+        return true;
+      default:
+        break;
+    }
+    if (harnessId === "autohand") return false;
+    postLocalNote(`\`/${command.name}\` is a CLI-only command; ${harnessLabel(harnessId)} runs non-interactively here and does not accept it. Type \`/help\` for the commands that work.`);
+    return true;
+  }
+
   function submit(event) {
     event.preventDefault();
     if (!prompt.trim() || blockedWorkspace) return;
     const submittedPrompt = prompt.trim();
     setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
     setMentionState(null);
-    if (chatSendingRef.current[agent.id]) {
-      queuePrompt(submittedPrompt);
+    if (isShellPrompt(submittedPrompt)) {
+      void runShellCommand(shellCommandFrom(submittedPrompt));
       return;
     }
-    sendPromptNow({ prompt: submittedPrompt, workspace, policy, model }, { agentId: agent.id, restorePromptOnError: true });
+    const slash = slashCommandFrom(submittedPrompt);
+    if (slash && handleSlashCommand(slash)) return;
+    const expandedPrompt = expandSkillMentions(submittedPrompt, installedSkillNames);
+    if (chatSendingRef.current[agent.id]) {
+      queuePrompt(expandedPrompt);
+      return;
+    }
+    sendPromptNow({ prompt: expandedPrompt, workspace, policy, model }, { agentId: agent.id, restorePromptOnError: true });
   }
 
   // Goal 08: preview the context pack before launching a run. Calls the server
@@ -10576,17 +10733,11 @@ function Conversation({
                     onSelect={selectMentionItem}
                   />
                 ) : null}
-                <Textarea
+                <PromptTextarea
                   ref={promptRef}
                   value={prompt}
-                  onChange={(event) => syncMentionFromTarget(event.target)}
-                  onClick={(event) => syncMentionFromTarget(event.currentTarget)}
+                  onDraft={updatePrompt}
                   onKeyDown={handlePromptKeyDown}
-                  onKeyUp={(event) => {
-                    if (mentionOpen && ["Enter", "Tab", "Escape", "ArrowDown", "ArrowUp"].includes(event.key)) return;
-                    syncMentionFromTarget(event.currentTarget);
-                  }}
-                  onSelect={(event) => syncMentionFromTarget(event.currentTarget)}
                   placeholder={formatCopy(copy.talkToPlaceholder, { name: agent.name })}
                   className="max-h-64 min-h-[3.25rem] resize-none border-0 bg-transparent px-3.5 py-3 text-base leading-6 shadow-none focus-visible:ring-0 md:text-[15px]"
                 />
@@ -11116,7 +11267,9 @@ function MentionPicker({ items = [], loading = false, error = "", selectedIndex 
     <div className="absolute bottom-full left-0 z-40 mb-1 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-md border bg-popover shadow-xl shadow-black/25">
       <div className="flex max-h-52 flex-col overflow-y-auto p-1">
         {items.map((item, index) => {
-          const Icon = item.type === "agent" ? UserRound : item.type === "channel" ? Hash : FileCode2;
+          const Icon =
+            item.type === "agent" ? UserRound : item.type === "channel" ? Hash : item.type === "command" ? Command : item.type === "skill" ? Sparkles : FileCode2;
+          const label = item.type === "command" ? item.title : `${item.prefix || "@"}${item.title}`;
           return (
             <button
               key={`${item.type}-${item.value}`}
@@ -11132,7 +11285,7 @@ function MentionPicker({ items = [], loading = false, error = "", selectedIndex 
             >
               <Icon className="size-3 shrink-0 text-muted-foreground" />
               <span className="flex min-w-0 flex-1 items-baseline gap-2 leading-none">
-                <span className="truncate text-[13px] font-medium leading-none">@{item.title}</span>
+                <span className="truncate text-[13px] font-medium leading-none">{label}</span>
                 <span className="hidden min-w-0 truncate text-[11px] leading-none text-muted-foreground sm:block">
                   {item.detail}
                 </span>
@@ -11152,7 +11305,7 @@ function MentionPicker({ items = [], loading = false, error = "", selectedIndex 
         })}
         {loading ? <div className="flex h-8 items-center px-2 text-[11px] text-muted-foreground">Loading files...</div> : null}
         {!loading && !items.length ? (
-          <div className="flex h-8 items-center px-2 text-[11px] text-muted-foreground">{error || "No matching squad members or files."}</div>
+          <div className="flex h-8 items-center px-2 text-[11px] text-muted-foreground">{error || "No matches. Type / for commands, $ for skills, @ for members and files, ! to run a command."}</div>
         ) : null}
       </div>
     </div>
@@ -11291,7 +11444,7 @@ function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETT
       <AgentAvatar agent={agent} className="mt-0.5" />
       <div className="min-w-0">
         <div className="mb-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-          <span className="text-sm font-semibold text-foreground">{agent.name}</span>
+          <span className="text-sm font-semibold text-foreground">{message.authorName || agent.name}</span>
           <time>{message.time}</time>
           {isLoading ? (
             <span className="inline-flex items-center gap-1 text-primary">
@@ -15200,22 +15353,32 @@ function TaskPanel({
 
   return (
     <div className="flex h-full min-h-screen flex-col">
-      <SheetHeader className="border-b p-5">
-        <SheetTitle>{copy.execution}</SheetTitle>
-        <SheetDescription>{copy.executionDescription}</SheetDescription>
+      <SheetHeader className="border-b border-border/70 px-5 pb-3 pt-5">
+        <SheetTitle className="text-base">{copy.execution}</SheetTitle>
+        <SheetDescription className="sr-only">{copy.executionDescription}</SheetDescription>
+        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span><span className="font-medium text-foreground">{tasks.length}</span> parent {tasks.length === 1 ? "task" : "tasks"}</span>
+          <span><span className="font-medium text-foreground">{handoffCount}</span> {handoffCount === 1 ? "handoff" : "handoffs"}</span>
+          <span className={cn(blockedCount && "text-destructive")}><span className="font-medium">{blockedCount}</span> blocked</span>
+        </p>
       </SheetHeader>
-      <div className="grid grid-cols-3 gap-2 border-b px-5 py-3">
-        <Metric label="Parent tasks" value={tasks.length} />
-        <Metric label="Handoffs" value={handoffCount} />
-        <Metric label="Blocked" value={blockedCount} />
-      </div>
       <MissionControlStrip tasks={tasks} agents={agents} />
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
-        <div className="border-b px-5 py-3">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="runs">{copy.runs}</TabsTrigger>
-            <TabsTrigger value="tasks">{copy.tasks}</TabsTrigger>
-            <TabsTrigger value="automations">{copy.automations}</TabsTrigger>
+        <div className="border-b border-border/70 px-5">
+          <TabsList className="h-10 w-full justify-start gap-4 rounded-none bg-transparent p-0">
+            {[
+              ["runs", copy.runs],
+              ["tasks", copy.tasks],
+              ["automations", copy.automations],
+            ].map(([value, label]) => (
+              <TabsTrigger
+                key={value}
+                value={value}
+                className="h-10 rounded-none border-b-2 border-transparent px-0 text-sm text-muted-foreground shadow-none data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              >
+                {label}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </div>
         <ScrollArea className="min-h-0 flex-1">
@@ -15257,41 +15420,33 @@ function MissionControlStrip({ tasks = [], agents = [] }) {
   const blockedTasks = tasks.filter((task) => task.status === "blocked" || latestFailedHandoff(task));
   const visibleTasks = [...activeTasks, ...tasks].filter((task, index, list) => list.findIndex((item) => item.id === task.id) === index).slice(0, 3);
 
+  if (!visibleTasks.length) return null;
   return (
-    <section className="border-b bg-muted/20 px-5 py-4" aria-label="Mission Control">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold">Mission Control</h3>
-          <p className="mt-1 text-xs text-muted-foreground">Current owners, handoff state, and blocked checkpoints.</p>
-        </div>
-        <Badge variant={blockedTasks.length ? "destructive" : "secondary"} className="rounded-md">
-          {blockedTasks.length} blocked
-        </Badge>
+    <section className="border-b border-border/70 px-5 py-3" aria-label="Mission Control">
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Now</h3>
+        {blockedTasks.length ? <span className="text-xs text-destructive">{blockedTasks.length} blocked</span> : null}
       </div>
-      <div className="grid gap-2">
+      <div className="divide-y divide-border/60">
         {visibleTasks.length ? (
           visibleTasks.map((task) => {
             const owner = taskOwner(task, agents);
             const handoff = latestHandoff(task);
             return (
-              <div key={task.id} className="rounded-md border bg-background/65 px-3 py-2">
+              <div key={task.id} className="py-2">
                 <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="min-w-0 truncate font-medium">{task.title}</span>
+                  <span className="min-w-0 truncate">{task.title}</span>
                   <StatusBadge status={task.status} />
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span>Owner: {owner?.name || task.currentOwnerId || "unassigned"}</span>
-                  {handoff ? <span>Latest handoff: {handoff.status}</span> : null}
-                  <span>{(task.assignments || []).length} assignments</span>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                  <span>{owner?.name || task.currentOwnerId || "unassigned"}</span>
+                  {handoff ? <span>· handoff {handoff.status}</span> : null}
+                  <span>· {(task.assignments || []).length} {(task.assignments || []).length === 1 ? "assignment" : "assignments"}</span>
                 </div>
               </div>
             );
           })
-        ) : (
-          <div className="rounded-md border bg-background/65 px-3 py-2 text-sm text-muted-foreground">
-            No active handoffs.
-          </div>
-        )}
+        ) : null}
       </div>
     </section>
   );
@@ -15302,48 +15457,39 @@ function RunList({ runs, tasks = [], agents = [], copy = getLocaleCopy(DEFAULT_L
     return <EmptyBlock icon={TerminalSquare} title={copy.noAutohandRuns} body={copy.runsAppearAfterLaunch} />;
   }
   return (
-    <div className="flex flex-col gap-3">
+    <div className="-mx-1 divide-y divide-border/60">
       {runs.map((run) => (
-        <Card key={run.id} className="gap-3 rounded-lg py-4 shadow-none">
-          <CardHeader className="px-4">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <StatusIcon status={run.status} />
-              {run.title}
-            </CardTitle>
-            <CardDescription>{run.workspace}</CardDescription>
-            <CardAction>
-              <div className="flex items-center gap-2">
-                <StatusBadge status={run.status} copy={copy} />
-                <Button type="button" variant="outline" size="sm" onClick={() => onHandoff?.(run)}>
-                  <Workflow data-icon="inline-start" />
-                  Handoff
-                </Button>
+        <article key={run.id} className="px-1 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm">
+                <StatusIcon status={run.status} />
+                <span className="min-w-0 truncate font-medium">{run.title}</span>
               </div>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="px-4">
-            {run.agentId ? (
-              <div className="mb-2 text-xs text-muted-foreground">
-                Owner: {agents.find((agent) => agent.id === run.agentId)?.name || run.agentId}
-                {tasks.some((task) => task.runtimeId === run.id) ? " / linked parent task" : " / standalone run"}
-              </div>
-            ) : null}
-            <code className="block truncate rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">{run.command}</code>
-            {run.displayConfigPath ? (
-              <div className="mt-2 truncate text-[11px] text-muted-foreground">Config: {run.displayConfigPath}</div>
-            ) : null}
-            {run.effectiveModel ? (
-              <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                Model: {providerSummaryLabel(run.effectiveModel)} ({run.effectiveModel.source || "workspace"})
-              </div>
-            ) : null}
-            <pre className="mt-3 max-h-44 overflow-auto rounded-md bg-background p-3 text-xs leading-5 text-muted-foreground">
-              {run.logs.length
-                ? run.logs.slice(-9).map((log) => `[${log.source}] ${log.line}`).join("\n")
-                : "waiting for output..."}
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                {run.agentId ? `${agents.find((agent) => agent.id === run.agentId)?.name || run.agentId} · ` : ""}
+                {workspaceName(run.workspace) || run.workspace}
+                {run.effectiveModel ? ` · ${providerSummaryLabel(run.effectiveModel)}` : ""}
+                {tasks.some((task) => task.runtimeId === run.id) ? " · linked task" : ""}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <StatusBadge status={run.status} copy={copy} />
+              <Button type="button" variant="ghost" size="icon-sm" aria-label="Handoff" onClick={() => onHandoff?.(run)}>
+                <Workflow />
+              </Button>
+            </div>
+          </div>
+          <details className="mt-1.5 text-xs">
+            <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+              {run.logs.length ? `Output · ${run.logs.length} lines` : "Waiting for output…"}
+            </summary>
+            <code className="mt-2 block truncate text-[11px] text-muted-foreground">{run.command}</code>
+            <pre className="mt-2 max-h-44 overflow-auto text-xs leading-5 text-muted-foreground">
+              {run.logs.slice(-12).map((log) => `[${log.source}] ${log.line}`).join("\n") || "waiting for output..."}
             </pre>
-          </CardContent>
-        </Card>
+          </details>
+        </article>
       ))}
     </div>
   );
@@ -15363,7 +15509,7 @@ function TaskList({
     return <EmptyBlock icon={LayoutList} title={copy.noTasksYet} body={copy.startAutohandFromLaunchSurface} />;
   }
   return (
-    <div className="flex flex-col gap-3">
+    <div className="-mx-1 divide-y divide-border/60">
       {tasks.map((task) => {
         const owner = taskOwner(task, agents);
         const handoff = latestHandoff(task);
@@ -15372,31 +15518,27 @@ function TaskList({
         const fromAgent = agents.find((agent) => agent.id === handoff?.fromAgentId);
         const toAgent = agents.find((agent) => agent.id === handoff?.toAgentId);
         return (
-        <div key={task.id} className="rounded-lg border bg-muted/25 p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <StatusIcon status={task.status} />
+        <div key={task.id} className="px-1 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm">
+                <StatusIcon status={task.status} />
+                <span className="min-w-0 truncate font-medium">{task.title}</span>
+              </div>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                <span>{owner?.name || task.currentOwnerId || task.agentId || "unassigned"}</span>
+                {task.project ? <span>· {task.project}</span> : null}
+                <span>· {(task.assignments || []).length} {(task.assignments || []).length === 1 ? "assignment" : "assignments"}</span>
+                {handoff ? <span className={cn(handoff.status === "failed" && "text-destructive")}>· handoff {handoff.status}</span> : null}
+                <span>· {formatRecordDate(task.updatedAt, DEFAULT_LOCALE, copy)}</span>
+              </p>
+            </div>
             <StatusBadge status={task.status} copy={copy} />
-            <Badge variant="outline" className="rounded-md bg-background/50">
-              Owner: {owner?.name || task.currentOwnerId || task.agentId || "unassigned"}
-            </Badge>
-            <time className="ml-auto text-xs text-muted-foreground">{formatRecordDate(task.updatedAt, DEFAULT_LOCALE, copy)}</time>
           </div>
-          <div className="font-semibold">{task.title}</div>
-          <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{task.summary}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{task.project}</Badge>
-            <Badge variant="secondary" className="rounded-md">
-              {(task.assignments || []).length} child assignment{(task.assignments || []).length === 1 ? "" : "s"}
-            </Badge>
-            {handoff ? (
-              <Badge variant={handoff.status === "failed" ? "destructive" : "outline"} className="rounded-md">
-                {handoff.status} handoff
-              </Badge>
-            ) : null}
-          </div>
+          {task.summary ? <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{task.summary}</p> : null}
 
           {handoff ? (
-            <div className="mt-4 rounded-md border bg-background/55 p-3">
+            <div className="mt-3 border-l-2 border-border/70 pl-3">
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <Workflow className="size-4 text-primary" />
                 <span className="font-semibold">{fromAgent?.name || "Source"}{" -> "}{toAgent?.name || "Target"}</span>
@@ -15442,8 +15584,8 @@ function TaskList({
           ) : null}
 
           <TaskTimelinePreview task={task} agents={agents} />
-          <div className="mt-4 flex justify-end">
-            <Button type="button" variant="outline" size="sm" onClick={() => onHandoff?.(task)}>
+          <div className="mt-2 flex justify-end">
+            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={() => onHandoff?.(task)}>
               <Workflow data-icon="inline-start" />
               Handoff
             </Button>
