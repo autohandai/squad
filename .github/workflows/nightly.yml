@@ -58,7 +58,6 @@ jobs:
           # One numeric identifier (UTC yyyymmddHHMM): SemVer-valid, sorts by time.
           stamp="$(date -u +%Y%m%d%H%M)"
           version="${base}-canary.${stamp}"
-          scripts/verify-release-ref.sh v "$version" 2>/dev/null || true
           echo "publish=true" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
