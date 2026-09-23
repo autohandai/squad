@@ -462,17 +462,60 @@ jobs:
           "TAURI_CONFIG_OVERRIDE=$override" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Signing with certificate $($cert.Thumbprint)"
 
-      - name: Build desktop bundles
+      - name: Prepare macOS code signing
+        if: matrix.os == 'darwin'
         shell: bash
         env:
-          # Tauri signs and notarizes the macOS app itself when these are set;
-          # without them the bundle is ad-hoc signed and the notes say so.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          # Import the Developer ID certificate ourselves so a missing or
+          # malformed secret degrades to an ad-hoc signed build instead of
+          # failing inside tauri build. Tauri only sees the resulting identity.
+          identity=""
+          if [[ -n "${APPLE_CERTIFICATE:-}" ]]; then
+            keychain="$RUNNER_TEMP/squad-signing.keychain-db"
+            keychain_password="$(openssl rand -hex 24)"
+            certificate="$RUNNER_TEMP/developer-id.p12"
+            if printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate" 2>/dev/null \
+              && security create-keychain -p "$keychain_password" "$keychain" \
+              && security set-keychain-settings -lut 21600 "$keychain" \
+              && security unlock-keychain -p "$keychain_password" "$keychain" \
+              && security import "$certificate" -k "$keychain" -P "${APPLE_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign -T /usr/bin/security \
+              && security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null; then
+              security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+              identity="$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*"' | head -n1 | tr -d '"' || true)"
+            fi
+            rm -f "$certificate"
+            if [[ -z "$identity" ]]; then
+              echo "::warning::APPLE_CERTIFICATE could not be imported as a Developer ID Application identity; the macOS bundle will be ad-hoc signed and not notarized."
+            fi
+          else
+            echo "APPLE_CERTIFICATE secret is not set; the macOS bundle will be ad-hoc signed."
+          fi
+          if [[ -n "$identity" ]]; then
+            echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+            if [[ -n "${APPLE_ID:-}" && -n "${APPLE_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
+              {
+                echo "APPLE_ID=$APPLE_ID"
+                echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+                echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+              } >> "$GITHUB_ENV"
+              echo "Signing as $identity with notarization."
+            else
+              echo "::warning::Notarization credentials are incomplete; the app will be signed but not notarized."
+            fi
+          else
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build desktop bundles
+        shell: bash
+        env:
           AUTOHAND_SQUAD_RELEASE_VERSION: ${{ needs.setup.outputs.version }}
         run: |
           set -euo pipefail

@@ -19,6 +19,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
@@ -178,7 +179,9 @@ function hostTarget() {
   return key;
 }
 
-const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === new URL(import.meta.url).pathname;
+// Compare file paths, not a URL pathname: on Windows the URL form is
+// /D:/... while argv[1] is D:\..., which made this script a silent no-op there.
+const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   const args = process.argv.slice(2);
   const targets = [];
