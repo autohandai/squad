@@ -162,6 +162,62 @@ jobs:
         run: cargo build --bins -j1
         working-directory: daemon
 
+  desktop:
+    name: Desktop shell check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    needs: web
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf pkg-config
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+
+      - name: Cache Cargo packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            daemon/target
+            src-tauri/target
+          key: cargo-desktop-check-${{ hashFiles('daemon/Cargo.lock', 'src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-desktop-check-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Fetch pinned Autohand Code CLI
+        run: bun run cli:fetch
+
+      - name: Download web build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web-dist-${{ github.sha }}
+          path: dist
+
+      - name: Stage runtime and sidecars
+        run: bun run desktop:stage
+
+      - name: Check the desktop shell compiles
+        run: bun run desktop:check
+
   dry-run-meta:
     name: Dry-run release metadata
     runs-on: ubuntu-latest
@@ -175,7 +231,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-        with:
           fetch-depth: 0
 
       - id: meta

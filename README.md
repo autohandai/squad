@@ -123,18 +123,33 @@ newer release exists. `GET /api/updates` returns the last check and
 `AUTOHAND_SQUAD_UPDATE_REPO` points at a fork; `AUTOHAND_SQUAD_UPDATE_SOURCE=api`
 restores the Autohand API manifest.
 
-## Install a release
+## Download and install
 
-After a `v`-prefixed version tag completes the Release workflow, download the
-matching asset from [GitHub Releases](https://github.com/autohandai/squad/releases):
+Every release on [GitHub Releases](https://github.com/autohandai/squad/releases)
+ships the desktop app for four targets, with a download table, the changelog
+section, and the categorised pull-request list in the release notes:
 
-- macOS Apple Silicon: `autohand-squad-<version>-macos-arm64.dmg`
-- macOS Intel: `autohand-squad-<version>-macos-x64.dmg`
-- Windows x64: `autohand-squad-<version>-windows-x64-setup.exe`
-- Linux x64: `autohand-squad-<version>-linux-x64.tar.gz`
+| Platform | Asset |
+| --- | --- |
+| macOS Apple Silicon | `autohand-squad-<version>-macos-arm64.dmg` |
+| macOS Intel | `autohand-squad-<version>-macos-x64.dmg` |
+| Windows x64 | `autohand-squad-<version>-windows-x64-setup.exe` |
+| Linux x64 | `autohand-squad-<version>-linux-x64.deb`, `autohand-squad-<version>-linux-x64.AppImage` |
+| Headless / servers | `autohand-squad-<version>-<os>-<arch>.tar.gz` (portable, needs Node 18.17+) |
 
-The DMG and setup EXE include the Node runtime needed by the app. A repository
-tag without a completed GitHub Release will not have downloadable assets.
+- **Stable:** the [latest release](https://github.com/autohandai/squad/releases/latest).
+- **Nightly:** pre-releases tagged `v<next>-canary.<timestamp>`, built from
+  `main` every night at 03:00 UTC when there are new commits
+  ([nightly list](https://github.com/autohandai/squad/releases?q=canary&expanded=true)).
+  Seven are kept.
+- **Beta:** pre-releases tagged `v<version>-beta.N` or `-rc.N`.
+
+Installed apps check the channel they are on (Settings → Updates and the tray):
+stable follows releases, beta follows non-nightly pre-releases, canary follows
+nightlies. Every asset appears in `checksums.txt` on the release
+(`shasum -a 256 -c checksums.txt`). [CHANGELOG.md](CHANGELOG.md) is the
+human-written history; its **Unreleased** section becomes each nightly's notes
+and moves under the version heading at a stable release.
 
 Each release states its trust level. When the release was built with signing
 credentials, the macOS app is Developer ID signed and notarized and the Windows

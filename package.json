@@ -1,6 +1,6 @@
 {
   "name": "autohandswe",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A native workspace for human and agent teams",
   "license": "MIT",
@@ -39,6 +39,8 @@
     "release:package": "node scripts/package-squad-release.mjs",
     "release:portable": "node scripts/package-squad-portable.mjs",
     "release:installers": "node scripts/package-squad-installers.mjs",
+    "release:desktop": "node scripts/package-desktop-release.mjs",
+    "release:notes": "node scripts/release-notes.mjs",
     "release:merge-manifests": "node scripts/merge-release-manifests.mjs",
     "desktop:stage": "node scripts/stage-desktop.mjs",
     "desktop:dev": "tauri dev",

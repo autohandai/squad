@@ -1,0 +1,107 @@
+name: Nightly
+
+# Publishes a canary pre-release from main every night when there is something
+# new, by tagging HEAD as v<version>-canary.<timestamp> and running the Release
+# workflow on that tag. The Release workflow does the building, signing,
+# smoke-testing, and publishing; this workflow only decides whether a nightly
+# is due, creates the tag, and prunes old nightlies.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Publish even if this commit already has a nightly"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  KEEP_NIGHTLIES: "7"
+
+jobs:
+  nightly:
+    name: Tag and dispatch nightly
+    if: github.repository == 'autohandai/squad'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: version
+        name: Decide whether a nightly is due
+        shell: bash
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          base="$(node -p "require('./package.json').version")"
+          base="${base%%-*}"
+          existing="$(git tag --points-at HEAD | grep -E '^v[0-9].*-canary\.' || true)"
+          if [[ -n "$existing" && "${FORCE:-false}" != "true" ]]; then
+            echo "HEAD already has nightly tag(s): $existing"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # One numeric identifier (UTC yyyymmddHHMM): SemVer-valid, sorts by time.
+          stamp="$(date -u +%Y%m%d%H%M)"
+          version="${base}-canary.${stamp}"
+          scripts/verify-release-ref.sh v "$version" 2>/dev/null || true
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Nightly version: $version"
+
+      - name: Create and push the nightly tag
+        if: steps.version.outputs.publish == 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "autohand-release-bot"
+          git config user.email "release-bot@autohand.ai"
+          git tag -a "$TAG" -m "Nightly $VERSION"
+          git push origin "refs/tags/$TAG"
+
+      - name: Run the Release workflow on the tag
+        if: steps.version.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # A tag pushed with GITHUB_TOKEN never triggers workflows on its own;
+          # workflow_dispatch is the documented exception.
+          gh workflow run release.yml --ref "$TAG" -f "version=$VERSION"
+          echo "Dispatched Release for $TAG"
+
+      - name: Prune old nightlies
+        if: steps.version.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release list --limit 200 --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease and (.tagName | test("-canary\\.")))] | sort_by(.createdAt) | reverse | .[env.KEEP_NIGHTLIES | tonumber:] | .[].tagName' \
+            | while read -r tag; do
+                [[ -n "$tag" ]] || continue
+                echo "Removing old nightly $tag"
+                gh release delete "$tag" --cleanup-tag --yes
+              done

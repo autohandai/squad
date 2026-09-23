@@ -31,79 +31,86 @@ The release dry run protects the contract used by the Autohand CLI launcher:
 platform. The merged manifest must include `linux/x64`, `darwin/arm64`,
 `darwin/x64`, and `win32/x64` entries before release assets can publish.
 
+## Channels
+
+| Channel | How it is made | Tag | GitHub release |
+| --- | --- | --- | --- |
+| stable | a maintainer tags a reviewed `main` commit | `v1.2.3` | release, marked latest |
+| beta | a maintainer tags a candidate | `v1.2.3-beta.1`, `v1.2.3-rc.1` | pre-release |
+| canary (nightly) | `nightly.yml` at 03:00 UTC, or on demand | `v<next>-canary.<yyyymmddHHMM>` | pre-release, seven kept |
+
+The app and the daemon pick releases by channel (`daemon/src/install.rs`):
+stable takes the newest non-prerelease, beta the newest pre-release without
+`canary` in the tag, canary the newest pre-release.
+
 ## Release Flow
 
-1. Open a release checklist issue with the target version and channel.
-2. Merge only when CI is green and release-impacting PRs have review.
-3. Tag the exact reviewed commit with a `v`-prefixed SemVer and push the tag:
+1. Keep `CHANGELOG.md` current as work lands: add entries under
+   **Unreleased**. Nightlies publish that section verbatim.
+2. For a stable release, move the Unreleased entries under `## [x.y.z] - date`,
+   set `version` in `package.json`, `daemon/Cargo.toml`, and
+   `src-tauri/Cargo.toml`, merge, then tag the exact reviewed commit:
 
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.2.0
+   git push origin v0.2.0
    ```
 
-   Tags such as `v1.0.0-beta.1` and `v1.0.0-canary.1` create prereleases.
-   Ordinary pushes to `main` never publish a release.
+   Ordinary pushes to `main` never publish a release. To rerun a failed
+   pre-publication build, dispatch the Release workflow on the existing tag
+   with the same version; dispatch never creates or moves a tag.
 
-   To rerun a failed pre-publication build through `workflow_dispatch`, select
-   the existing `v0.1.0` tag as the workflow ref and enter `0.1.0` as the
-   required version. Manual dispatch does not create or move a tag; the selected
-   tag and input must match exactly.
+3. The Release workflow builds, per target (Linux x64, macOS Apple Silicon,
+   macOS Intel, Windows x64):
 
-4. The workflow builds:
+   - the web bundle (`dist/`, `server.mjs`, package metadata stamped with the
+     version);
+   - the runtime binaries (`squad`, daemon, analytics, tray, ui) with
+     checksums and the installer manifest used by the Autohand CLI launcher,
+     plus one portable `.tar.gz` per target;
+   - the desktop app (Tauri): DMG, NSIS setup EXE, Debian package, and
+     AppImage, renamed to `autohand-squad-<version>-<platform>` and listed in
+     `manifest-desktop-<os>-<arch>.json`.
 
-   - macOS Apple Silicon, macOS Intel, Windows x64, and Linux x64 runtime binaries
-   - checksums for every runtime asset
-   - a web bundle containing `dist/`, `server.mjs`, and package metadata stamped
-     with the resolved release version
-   - one extract-and-run portable archive per platform, combining the five
-     native binaries, web runtime, and minimal production Node modules
-   - DMG installers for macOS Apple Silicon and Intel, each containing the
-     desktop app, web runtime, production modules, Autohand CLI, and Node
-   - a current-user NSIS setup EXE for Windows x64 with the same bundled runtime
-   - Debian (`.deb`) and AppImage (`.AppImage`) packages for Linux x64 with the same bundled runtime
-   - `manifest-<channel>.json` for the installer/update path
+4. Every desktop bundle is smoke tested before publication: macOS mounts the
+   DMG, verifies the signature, and boots the bundled bridge; Windows installs
+   silently, checks the installed files, and uninstalls; Linux extracts the
+   deb and the AppImage and runs the bundled CLI.
 
-5. Every platform job extracts its portable archive, imports the bundled Agent
-   SDK, and starts the packaged `squad --help` command before publication. The
-   macOS jobs also mount each DMG and start its bundled web runtime; the Windows
-   job silently installs, exercises, and uninstalls the NSIS package. Smoke test
-   the published artifacts from the new GitHub release as well. A stable tag
-   creates a normal release; a prerelease version creates a GitHub prerelease.
+5. The publish job merges the manifests, writes `checksums.txt`, composes the
+   release body with `scripts/release-notes.mjs` (channel banner, changelog
+   section, download table, install/verify/update instructions) and lets
+   GitHub append the categorised pull-request list (`.github/release.yml`).
+   A stable tag becomes the latest release; anything else is a pre-release.
 
-Portable archives are named
-`autohand-squad-<version>-<os>-<arch>.tar.gz`. After extraction, run
-`bin/squad` (`bin/squad.exe` on Windows). Node 18.17 or newer must be on `PATH`;
-the archive vendors the web runtime and its production modules but not Node
-itself. These archives are directly runnable distributions, not code-signed
-installers.
+## Nightly Builds
 
-Native installers are named
-`autohand-squad-<version>-macos-<arch>.dmg`,
+`nightly.yml` runs at 03:00 UTC and on demand. It skips when `HEAD` already
+carries a canary tag (unless dispatched with `force`), otherwise it tags HEAD
+as `v<package version>-canary.<yyyymmddHHMM>`, pushes the tag, dispatches the
+Release workflow on it (a tag pushed with the workflow token does not trigger
+workflows by itself), and deletes nightlies older than the newest seven,
+tags included.
+
+## Asset Names
+
+Portable archives: `autohand-squad-<version>-<os>-<arch>.tar.gz`; after
+extraction run `bin/squad` (`bin/squad.exe` on Windows) with Node 18.17+ on
+`PATH`. Desktop installers: `autohand-squad-<version>-macos-<arch>.dmg`,
 `autohand-squad-<version>-windows-x64-setup.exe`,
 `autohand-squad-<version>-linux-x64.deb`, and
-`autohand-squad-<version>-linux-x64.AppImage`. They bundle Node, so users do
-not need a system Node installation. The Debian package registers the desktop
-application; AppImage users make the downloaded file executable and open it.
-The current workflow does not code-sign the Windows installer or sign and
-notarize the macOS app; release notes must not claim a verified publisher until
-those credentials and steps are added.
+`autohand-squad-<version>-linux-x64.AppImage`; they bundle Node, so users do
+not need a system Node installation.
 
-The setup job rejects leading-zero or malformed versions, confirms that
-`GITHUB_REF` is exactly `refs/tags/v<VERSION>`, and resolves both the tag and
-`HEAD` to the same commit. Every build and publish job checks out that resolved
-commit SHA and repeats the verification before doing work. A tag cannot be used
-to release a different commit, including through manual dispatch. Immediately
-before creating the GitHub release, the publish job also resolves the remote tag
-through the GitHub API and requires it to match the verified source SHA.
+The setup job rejects malformed versions, confirms that `GITHUB_REF` is
+exactly `refs/tags/v<VERSION>`, and resolves both the tag and `HEAD` to the
+same commit. Every build and publish job checks out that resolved commit SHA
+and repeats the verification. Immediately before creating the GitHub release,
+the publish job resolves the remote tag through the GitHub API and requires it
+to match the verified source SHA.
 
 Pull requests do not publish releases. They use dry-run versions such as
-`0.0.0-pr.17.abc123def456` so installer-manifest generation is still exercised
-without creating customer-facing artifacts.
-
-Non-PR CI dry runs use versions such as `0.0.0-ci.42.abc123def456`. That keeps
-pull-request provenance clear while still exercising package metadata from
-manual or branch-triggered CI runs.
+`0.0.0-pr.17.abc123def456` so manifest generation is still exercised.
 
 ## Autohand Code CLI
 
