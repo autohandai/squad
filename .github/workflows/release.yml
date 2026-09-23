@@ -743,7 +743,9 @@ jobs:
 
       - name: Publish GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          # A RELEASE_TOKEN secret (fine-grained PAT allowed to write repository
+          # contents) takes over when policy keeps GITHUB_TOKEN read-only.
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ needs.setup.outputs.tag }}
           RELEASE_TITLE: ${{ needs.setup.outputs.title }}
           RELEASE_PRERELEASE: ${{ needs.setup.outputs.prerelease }}

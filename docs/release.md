@@ -83,6 +83,16 @@ stable takes the newest non-prerelease, beta the newest pre-release without
    GitHub append the categorised pull-request list (`.github/release.yml`).
    A stable tag becomes the latest release; anything else is a pre-release.
 
+## Publishing Credentials
+
+The publish job creates the GitHub release with the job-scoped
+`GITHUB_TOKEN` (`contents: write`). The repository's default workflow token
+permission must allow write (Settings → Actions → General → Workflow
+permissions), or organisation policy must permit the workflow to elevate it.
+If neither is possible, add a `RELEASE_TOKEN` repository secret holding a
+fine-grained personal access token with **Contents: read and write** on this
+repository; the workflow prefers it automatically.
+
 ## Nightly Builds
 
 `nightly.yml` runs at 03:00 UTC and on demand. It skips when `HEAD` already

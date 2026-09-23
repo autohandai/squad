@@ -206,7 +206,7 @@ assertIncludes(releaseWorkflow, "-name 'autohand-squad-*'", 'Release publishing 
 assertIncludes(releaseWorkflow, 'contents: read', 'Release workflow defaults to read-only token permissions');
 assertIncludes(releaseWorkflow, 'contents: write', 'Release publish job has scoped content write permission');
 assertCount(releaseWorkflow, 'contents: write', 1, 'Only the publish job receives content write permission');
-assertIncludes(releaseWorkflow, 'GH_TOKEN: ${{ github.token }}', 'Release publishing uses the short-lived job-scoped workflow token');
+assertIncludes(releaseWorkflow, 'GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}', 'Release publishing uses the job-scoped workflow token unless a RELEASE_TOKEN secret overrides it');
 assertNotIncludes(releaseWorkflow, '.permissions.push', 'Release publishing does not infer job-token permissions from repository metadata');
 assertNotIncludes(releaseWorkflow, 'token_can_publish', 'Release publishing does not reject valid granular job tokens with a repository permission probe');
 assertNotIncludes(releaseWorkflow, 'AUTOHAND_RELEASE_TOKEN', 'Release publishing does not expose a long-lived fallback token');
