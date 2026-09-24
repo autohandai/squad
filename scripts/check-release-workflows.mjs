@@ -7,6 +7,21 @@ import { join } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+const RESOLVER_ENV_BASELINE = {
+  GITHUB_EVENT_NAME: '',
+  GITHUB_REF: '',
+  GITHUB_REF_NAME: '',
+  GITHUB_REF_TYPE: '',
+  GITHUB_RUN_NUMBER: '',
+  GITHUB_SHA: '',
+  INPUT_CHANNEL: '',
+  INPUT_DRAFT: '',
+  INPUT_PRERELEASE: '',
+  INPUT_VERSION: '',
+  PR_NUMBER: '',
+  RELEASE_KNOWN_TAGS: '',
+};
+
 const resolver = fileURLToPath(new URL('./resolve-squad-version.mjs', import.meta.url));
 const manifestMerger = fileURLToPath(new URL('./merge-release-manifests.mjs', import.meta.url));
 const releaseRefVerifier = fileURLToPath(new URL('./verify-release-ref.sh', import.meta.url));
@@ -353,24 +368,11 @@ function assertManifestMergeThrows(input, env, label) {
   throw new Error(`${label}: expected manifest merge to fail`);
 }
 
+
 function resolve(env, args) {
   const output = execFileSync(process.execPath, [resolver, ...args], {
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      GITHUB_EVENT_NAME: '',
-      GITHUB_REF_NAME: '',
-      GITHUB_REF_TYPE: '',
-      GITHUB_RUN_NUMBER: '',
-      GITHUB_SHA: '',
-      INPUT_CHANNEL: '',
-      INPUT_DRAFT: '',
-      INPUT_PRERELEASE: '',
-      INPUT_VERSION: '',
-      PR_NUMBER: '',
-      RELEASE_KNOWN_TAGS: '',
-      ...env,
-    },
+    env: { ...process.env, ...RESOLVER_ENV_BASELINE, ...env },
   });
   return JSON.parse(output);
 }
@@ -443,7 +445,9 @@ function assertThrows(env, args, label) {
   try {
     execFileSync(process.execPath, [resolver, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, ...env },
+      // Same isolation as resolve(): on a tag build the runner's own
+      // GITHUB_REF_* would otherwise make an invalid input resolve to the tag.
+      env: { ...process.env, ...RESOLVER_ENV_BASELINE, ...env },
       stdio: ['ignore', 'pipe', 'ignore'],
     });
   } catch {
