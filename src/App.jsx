@@ -9292,13 +9292,13 @@ function CollapsedSidebarRail({
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
-              size="icon"
-              className="size-7 rounded-sm border border-transparent text-muted-foreground hover:border-border/70 hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4"
+              size="icon-sm"
+              className="text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               onClick={onExpand}
               aria-label="Expand sidebar"
               aria-keyshortcuts="Meta+B Control+B"
             >
-              <PanelLeftOpen className="size-4" />
+              <PanelLeftOpen />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Expand sidebar ({SIDEBAR_SHORTCUT_LABEL})</TooltipContent>
@@ -9457,13 +9457,13 @@ function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLoc
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon"
-            className="mt-2 size-7 rounded-sm border border-transparent text-muted-foreground hover:border-border/70 hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4"
+            size="icon-sm"
+            className="mt-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
             onClick={onExpand}
             aria-label="Expand sidebar"
             aria-keyshortcuts="Meta+B Control+B"
           >
-            <PanelLeftOpen className="size-4" />
+            <PanelLeftOpen />
           </Button>
         </TooltipTrigger>
         <TooltipContent>Expand sidebar ({SIDEBAR_SHORTCUT_LABEL})</TooltipContent>
