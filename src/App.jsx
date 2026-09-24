@@ -21498,7 +21498,9 @@ function SettingsPage({
       document.getElementById(`settings-${requestedInitialSection}`)?.scrollIntoView({ block: "start" });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [requestedInitialSection]);
+    // Re-run once the provider list has loaded: it sits above most sections
+    // and shifts them down when it appears.
+  }, [requestedInitialSection, Boolean(providerSettings)]);
 
   function updateLocale(value) {
     if (value === LOCALE_MODE_AUTO) {
