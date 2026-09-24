@@ -10,10 +10,6 @@ on:
         description: "Semver version matching the v-prefixed dispatch tag"
         required: true
         type: string
-      notes_start_tag:
-        description: "Optional prior tag for generated release notes"
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -33,8 +29,6 @@ jobs:
     if: github.repository == 'autohandai/squad'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -44,8 +38,14 @@ jobs:
       latest: ${{ steps.metadata.outputs.latest }}
       title: ${{ steps.metadata.outputs.title }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - id: version
-        name: Determine version
+        name: Determine and validate version
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -63,27 +63,9 @@ jobs:
             exit 1
           fi
 
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Invalid release version: $VERSION"
-            exit 1
-          fi
-
+          scripts/verify-release-ref.sh v "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Check out release tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.version.outputs.tag }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Verify tag-bound release source
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          EXPECTED_REF: refs/tags/${{ steps.version.outputs.tag }}
-        shell: bash
-        run: GITHUB_REF="$EXPECTED_REF" scripts/verify-release-ref.sh v "$VERSION"
 
       - id: source
         name: Record verified release source
@@ -117,81 +99,11 @@ jobs:
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "title=Autohand Squad $VERSION" >> "$GITHUB_OUTPUT"
 
-      # Create the immutable release first so completed platform jobs can make
-      # their installers available immediately, rather than waiting for every
-      # other platform to finish.
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-          RELEASE_TITLE: ${{ steps.metadata.outputs.title }}
-          RELEASE_PRERELEASE: ${{ steps.metadata.outputs.prerelease }}
-          RELEASE_LATEST: ${{ steps.metadata.outputs.latest }}
-          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
-          RELEASE_NOTES_START_TAG: ${{ inputs.notes_start_tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "::error::The job-scoped GITHUB_TOKEN is unavailable."
-            exit 1
-          fi
-
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "::error::Release $RELEASE_TAG already exists. Refusing to replace published assets."
-            exit 1
-          fi
-
-          remote_source_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
-          if [[ "$remote_source_sha" != "$SOURCE_SHA" ]]; then
-            echo "::error::Remote tag $RELEASE_TAG now resolves to $remote_source_sha, not verified source $SOURCE_SHA."
-            exit 1
-          fi
-
-          create_flags=()
-          if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
-            create_flags+=(--prerelease)
-          fi
-          if [[ "$RELEASE_LATEST" == "true" ]]; then
-            create_flags+=(--latest)
-          else
-            create_flags+=(--latest=false)
-          fi
-
-          notes_flags=()
-          if [[ -n "$RELEASE_NOTES_START_TAG" ]]; then
-            if ! [[ "$RELEASE_NOTES_START_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-              echo "::error::Invalid release-notes start tag: $RELEASE_NOTES_START_TAG"
-              exit 1
-            fi
-            if ! git rev-parse --verify --quiet "refs/tags/${RELEASE_NOTES_START_TAG}^{commit}" >/dev/null; then
-              echo "::error::Release-notes start tag does not exist: $RELEASE_NOTES_START_TAG"
-              exit 1
-            fi
-            if ! git merge-base --is-ancestor "${RELEASE_NOTES_START_TAG}^{commit}" "$SOURCE_SHA"; then
-              echo "::error::Release-notes start tag is not an ancestor of $RELEASE_TAG: $RELEASE_NOTES_START_TAG"
-              exit 1
-            fi
-            notes_flags+=(--notes-start-tag "$RELEASE_NOTES_START_TAG")
-          fi
-
-          gh release create "$RELEASE_TAG" \
-            --verify-tag \
-            --target "$SOURCE_SHA" \
-            --title "$RELEASE_TITLE" \
-            --generate-notes \
-            --notes "Installers and verified runtime assets upload as each platform build completes." \
-            "${notes_flags[@]}" \
-            "${create_flags[@]}"
-
   web-bundle:
     name: Web bundle
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: setup
-    permissions:
-      contents: write
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -222,9 +134,18 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Fetch pinned Autohand Code CLI
+        run: bun run cli:fetch
+
       - name: Run web release checks
+        env:
+          AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI: "1"
         run: |
           bun run check:sdk
+          bun run check:harness
+          bun run check:otel
+          bun run check:sessions
+          bun run check:recruiting
           bun run check:server
           bun run check:release
           bun run build
@@ -234,7 +155,7 @@ jobs:
         run: |
           mkdir -p release/web/runtime release/web-staging
           web_asset="autohand-squad-web-${{ needs.setup.outputs.version }}.tar.gz"
-          cp -R dist server.mjs package.json bun.lock README.md release/web-staging/
+          cp -R dist server server.mjs package.json bun.lock README.md release/web-staging/
           node -e "const fs = require('fs'); const file = process.argv[1]; const metadata = JSON.parse(fs.readFileSync(file, 'utf8')); metadata.version = process.argv[2]; fs.writeFileSync(file, JSON.stringify(metadata, null, 2) + '\n');" \
             release/web-staging/package.json \
             '${{ needs.setup.outputs.version }}'
@@ -250,23 +171,10 @@ jobs:
           path: release/web
           if-no-files-found: error
 
-      - name: Upload web bundle to GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}
-          RELEASE_TAG: ${{ needs.setup.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh release upload "$RELEASE_TAG" \
-            "release/web/autohand-squad-web-${{ needs.setup.outputs.version }}.tar.gz" \
-            release/web/checksums-web.txt
-
   runtime-artifacts:
     name: Runtime artifacts (${{ matrix.id }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
-    permissions:
-      contents: write
     needs:
       - setup
       - web-bundle
@@ -331,12 +239,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Verify native packager binding
-        if: matrix.os != 'linux'
-        run: node -e "import('@crabnebula/packager').then(({ packageApp }) => { if (typeof packageApp !== 'function') process.exit(1) })"
+      - name: Fetch pinned Autohand Code CLI
+        run: bun run cli:fetch
 
       - name: Check Autohand SDK on native target
         run: bun run check:sdk
+        env:
+          AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI: "1"
 
       - name: Download built web runtime
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -383,16 +292,6 @@ jobs:
           bun run release:package
           bun run release:portable
 
-      - name: Package native installer
-        shell: bash
-        env:
-          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
-          RELEASE_OS: ${{ matrix.os }}
-          RELEASE_ARCH: ${{ matrix.arch }}
-          WEB_RUNTIME_DIR: ${{ runner.temp }}/squad-web-bundle/runtime
-        run: |
-          NODE_RUNTIME_PATH="$(node -p 'process.execPath')" bun run release:installers
-
       - name: Smoke test portable application
         shell: bash
         env:
@@ -403,11 +302,10 @@ jobs:
           set -euo pipefail
           bundle_name="autohand-squad-${RELEASE_VERSION}-${RELEASE_OS}-${RELEASE_ARCH}"
           archive="release/${RELEASE_OS}-${RELEASE_ARCH}/${bundle_name}.tar.gz"
-          runner_temp="$RUNNER_TEMP"
+          smoke_root="${RUNNER_TEMP}/squad-portable-smoke-${{ matrix.id }}"
           if [[ "$RELEASE_OS" == "win32" ]]; then
-            runner_temp="$(cygpath -u "$RUNNER_TEMP")"
+            smoke_root="${smoke_root//\\//}"
           fi
-          smoke_root="${runner_temp}/squad-portable-smoke-${{ matrix.id }}"
           rm -rf "$smoke_root"
           mkdir -p "$smoke_root"
           tar -xzf "$archive" -C "$smoke_root"
@@ -422,227 +320,6 @@ jobs:
             "$bundle_root/bin/squad" --help
           fi
 
-      - name: Mount and smoke test macOS installer
-        if: matrix.os == 'darwin'
-        shell: bash
-        env:
-          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
-          RELEASE_ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          installer="release/darwin-${RELEASE_ARCH}/autohand-squad-${RELEASE_VERSION}-macos-${RELEASE_ARCH}.dmg"
-          mount_root="${RUNNER_TEMP}/autohand-squad-dmg-${RELEASE_ARCH}"
-          state_root="${RUNNER_TEMP}/autohand-squad-state-${RELEASE_ARCH}"
-          web_port=19931
-          mkdir -p "$mount_root" "$state_root"
-          hdiutil attach -nobrowse -readonly -mountpoint "$mount_root" "$installer"
-
-          app="$mount_root/Autohand Squad.app"
-          squad="$app/Contents/MacOS/squad"
-          node="$app/Contents/MacOS/node"
-          server="$app/Contents/Resources/server.mjs"
-
-          cleanup() {
-            AUTOHAND_SQUAD_HOME="$state_root" "$squad" serve-stop --web-port "$web_port" >/dev/null 2>&1 || true
-            hdiutil detach "$mount_root" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-
-          test -x "$app/Contents/MacOS/autohand-squad-ui"
-          test -x "$squad"
-          test -x "$node"
-          test -f "$server"
-          test -f "$app/Contents/Resources/dist/index.html"
-          "$node" --version
-          "$squad" --help
-
-          AUTOHAND_HOME="$state_root/autohand-home" AUTOHAND_SQUAD_HOME="$state_root" "$squad" serve --server-path "$server" --web-port "$web_port"
-          ready=false
-          runtime_json=""
-          for attempt in {1..30}; do
-            if runtime_json="$(curl -fsS "http://127.0.0.1:${web_port}/api/runtime")"; then
-              ready=true
-              break
-            fi
-            sleep 1
-          done
-          if [[ "$ready" != "true" ]]; then
-            echo "::error::The web runtime inside the mounted DMG did not start."
-            exit 1
-          fi
-          RUNTIME_JSON="$runtime_json" "$node" -e '
-            const response = JSON.parse(process.env.RUNTIME_JSON);
-            const runtime = response.data || {};
-            if (!response.success || !runtime.available) throw new Error("Bundled Autohand CLI is unavailable");
-            if (!String(runtime.autohandPath || "").includes("/Contents/Resources/node_modules/@autohandai/agent-sdk/cli/")) {
-              throw new Error(`Unexpected Autohand CLI path: ${runtime.autohandPath || "missing"}`);
-            }
-            if (String(runtime.defaultWorkspace || "").includes("/Contents/Resources")) {
-              throw new Error(`Packaged resources became the default workspace: ${runtime.defaultWorkspace}`);
-            }
-          '
-          curl -fsS "http://127.0.0.1:${web_port}/api/provider-settings" >/dev/null
-          test -f "$state_root/web-state/provider-settings.json"
-
-      - name: Install and smoke test Windows installer
-        if: matrix.os == 'win32'
-        shell: pwsh
-        env:
-          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $installer = (Resolve-Path "release/win32-x64/autohand-squad-$env:RELEASE_VERSION-windows-x64-setup.exe").Path
-          $stateRoot = Join-Path $env:RUNNER_TEMP 'autohand-squad-installer-state'
-          $webPort = 19931
-          New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
-
-          $install = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait
-          if ($install.ExitCode -ne 0) {
-            throw "NSIS installer exited with code $($install.ExitCode)"
-          }
-
-          $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
-            Where-Object DisplayName -eq 'Autohand Squad' |
-            Select-Object -First 1
-          if (-not $entry) {
-            throw 'Autohand Squad was not registered as an installed application.'
-          }
-
-          $installRoot = $entry.InstallLocation.Trim('"')
-          if (-not $installRoot) {
-            $uninstaller = $entry.UninstallString.Trim('"')
-            $installRoot = Split-Path $uninstaller -Parent
-          }
-          $squad = Join-Path $installRoot 'squad.exe'
-          $node = Join-Path $installRoot 'node.exe'
-          $server = Join-Path $installRoot 'server.mjs'
-          $ui = Join-Path $installRoot 'autohand-squad-ui.exe'
-          foreach ($path in @($squad, $node, $server, $ui)) {
-            if (-not (Test-Path $path)) { throw "Missing installed runtime file: $path" }
-          }
-
-          & $node --version
-          if ($LASTEXITCODE -ne 0) { throw 'Bundled Node.js did not start.' }
-          & $squad --help
-          if ($LASTEXITCODE -ne 0) { throw 'Installed Squad CLI did not start.' }
-
-          try {
-            $env:AUTOHAND_HOME = Join-Path $stateRoot 'autohand-home'
-            $env:AUTOHAND_SQUAD_HOME = $stateRoot
-            $launcherOutput = Join-Path $stateRoot 'serve-launcher.out.log'
-            $launcherError = Join-Path $stateRoot 'serve-launcher.err.log'
-            $launcher = Start-Process -FilePath $squad -ArgumentList @('serve', '--server-path', $server, '--web-port', "$webPort") -PassThru -RedirectStandardOutput $launcherOutput -RedirectStandardError $launcherError
-            $ready = $false
-            $runtime = $null
-            foreach ($attempt in 1..30) {
-              try {
-                $runtime = Invoke-RestMethod "http://127.0.0.1:$webPort/api/runtime"
-                $ready = $true
-                break
-              } catch {
-                Start-Sleep -Seconds 1
-              }
-            }
-            if (-not $ready) {
-              $webServerLog = Join-Path $stateRoot 'web-server.log'
-              if (Test-Path $webServerLog) { Get-Content $webServerLog }
-              if (Test-Path $launcherOutput) { Get-Content $launcherOutput }
-              if (Test-Path $launcherError) { Get-Content $launcherError }
-              if ($launcher.HasExited -and $launcher.ExitCode -ne 0) { throw "Installed web-runtime launcher exited with code $($launcher.ExitCode)." }
-              throw 'The web runtime installed by NSIS did not become ready.'
-            }
-            if (-not $runtime.success -or -not $runtime.data.available) {
-              throw 'The installed runtime could not start its bundled Autohand CLI.'
-            }
-            $expectedCliRoot = Join-Path $installRoot 'node_modules\@autohandai\agent-sdk\cli'
-            if (-not $runtime.data.autohandPath.StartsWith($expectedCliRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-              throw "Unexpected installed Autohand CLI path: $($runtime.data.autohandPath)"
-            }
-            if ($runtime.data.defaultWorkspace -and $runtime.data.defaultWorkspace.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-              throw "The install directory became the default workspace: $($runtime.data.defaultWorkspace)"
-            }
-            Invoke-RestMethod "http://127.0.0.1:$webPort/api/provider-settings" | Out-Null
-            if (-not (Test-Path (Join-Path $stateRoot 'web-state/provider-settings.json'))) {
-              throw 'The installed runtime did not redirect writable web state.'
-            }
-          } finally {
-            & $squad serve-stop --web-port $webPort | Out-Null
-            if ($launcher -and -not $launcher.HasExited) {
-              Stop-Process -Id $launcher.Id -Force
-            }
-            $uninstaller = $entry.UninstallString.Trim('"')
-            if (Test-Path $uninstaller) {
-              $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
-              if (-not $uninstall.WaitForExit(120000)) {
-                Stop-Process -Id $uninstall.Id -Force
-                throw 'NSIS uninstaller did not exit within two minutes.'
-              }
-              if ($uninstall.ExitCode -ne 0) {
-                throw "NSIS uninstaller exited with code $($uninstall.ExitCode)"
-              }
-            }
-          }
-
-      - name: Inspect Linux installers
-        if: matrix.os == 'linux'
-        shell: bash
-        env:
-          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
-          RELEASE_ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          set -x
-          package_dir="release/linux-${RELEASE_ARCH}"
-          deb="$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.deb"
-          appimage="$(realpath "$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.AppImage")"
-          extract_root="${RUNNER_TEMP}/autohand-squad-deb-${RELEASE_ARCH}"
-          appimage_root="${RUNNER_TEMP}/autohand-squad-appimage-${RELEASE_ARCH}"
-
-          test -s "$deb"
-          test -s "$appimage"
-          dpkg-deb --contents "$deb" | grep -F 'usr/bin/autohand-squad-ui' >/dev/null
-          dpkg-deb -x "$deb" "$extract_root"
-          test -x "$extract_root/usr/bin/squad"
-          test -x "$extract_root/usr/bin/autohand-squad-ui"
-          test -x "$extract_root/usr/bin/node"
-          test -f "$extract_root/usr/lib/autohand-squad-ui/server.mjs"
-          test -f "$extract_root/usr/lib/autohand-squad-ui/node_modules/@autohandai/agent-sdk/package.json"
-
-          mkdir -p "$appimage_root"
-          (
-            cd "$appimage_root"
-            "$appimage" --appimage-extract >/dev/null
-          )
-          test -x "$appimage_root/squashfs-root/usr/bin/squad"
-          test -x "$appimage_root/squashfs-root/usr/bin/autohand-squad-ui"
-          test -x "$appimage_root/squashfs-root/usr/bin/node"
-          test -f "$appimage_root/squashfs-root/usr/lib/autohand-squad-ui/server.mjs"
-          test -f "$appimage_root/squashfs-root/usr/lib/autohand-squad-ui/node_modules/@autohandai/agent-sdk/package.json"
-
-      - name: Upload platform assets to GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}
-          RELEASE_TAG: ${{ needs.setup.outputs.tag }}
-          RELEASE_OS: ${{ matrix.os }}
-          RELEASE_ARCH: ${{ matrix.arch }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          asset_dir="release/${RELEASE_OS}-${RELEASE_ARCH}"
-          assets=()
-          while IFS= read -r asset; do
-            assets+=("$asset")
-          done < <(find "$asset_dir" -maxdepth 1 -type f \( \
-            -name 'squad-*' -o \
-            -name 'autohand-squad-*' -o \
-            -name 'checksums-*.txt' \
-          \) -print | sort)
-          if [[ "${#assets[@]}" -eq 0 ]]; then
-            echo "::error::No platform assets found in $asset_dir."
-            exit 1
-          fi
-          gh release upload "$RELEASE_TAG" "${assets[@]}"
-
       - name: Upload runtime artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -650,19 +327,356 @@ jobs:
           path: release
           if-no-files-found: error
 
+  desktop:
+    name: Desktop app (${{ matrix.id }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    needs:
+      - setup
+      - web-bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x64
+            runner: ubuntu-24.04
+            os: linux
+            arch: x64
+          - id: macos-arm64
+            runner: macos-26
+            os: darwin
+            arch: arm64
+          - id: macos-x64
+            runner: macos-26-intel
+            os: darwin
+            arch: x64
+          - id: windows-x64
+            runner: windows-2025
+            os: win32
+            arch: x64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.setup.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag-bound release source
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+        shell: bash
+        run: scripts/verify-release-ref.sh v "$VERSION"
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf pkg-config
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Set up bundled Node.js runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache Bun packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-desktop-${{ matrix.id }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-desktop-${{ matrix.id }}-
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+
+      - name: Cache Cargo packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            daemon/target
+            src-tauri/target
+          key: cargo-desktop-${{ matrix.id }}-${{ hashFiles('daemon/Cargo.lock', 'src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-desktop-${{ matrix.id }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Fetch pinned Autohand Code CLI
+        run: bun run cli:fetch
+
+      - name: Download built web app
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web-bundle-${{ needs.setup.outputs.version }}
+          path: ${{ runner.temp }}/squad-web-bundle
+
+      - name: Stamp release version and adopt the built web app
+        shell: bash
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+          WEB_BUNDLE: ${{ runner.temp }}/squad-web-bundle
+        run: |
+          set -euo pipefail
+          # tauri.conf.json takes the app version from package.json.
+          node -e "const fs = require('fs'); const p = JSON.parse(fs.readFileSync('package.json', 'utf8')); p.version = process.argv[1]; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');" "$VERSION"
+          rm -rf dist
+          cp -R "${WEB_BUNDLE//\\//}/runtime/dist" dist
+          test -f dist/index.html
+
+      - name: Stage runtime and sidecars
+        shell: bash
+        env:
+          AUTOHAND_SQUAD_RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+        run: NODE_RUNTIME_PATH="$(node -p 'process.execPath')" bun run desktop:stage
+
+      - name: Prepare Windows code signing
+        if: matrix.os == 'win32'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:WINDOWS_CERTIFICATE) {
+            Write-Host 'WINDOWS_CERTIFICATE secret is not set; the Windows installer will be unsigned.'
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'authenticode.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString -String ($env:WINDOWS_CERTIFICATE_PASSWORD ?? '') -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $pfx -Force
+          $timestamp = if ($env:WINDOWS_TIMESTAMP_URL) { $env:WINDOWS_TIMESTAMP_URL } else { 'http://timestamp.digicert.com' }
+          $override = @{ bundle = @{ windows = @{ certificateThumbprint = $cert.Thumbprint; digestAlgorithm = 'sha256'; timestampUrl = $timestamp } } } | ConvertTo-Json -Compress -Depth 5
+          "TAURI_CONFIG_OVERRIDE=$override" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Signing with certificate $($cert.Thumbprint)"
+
+      - name: Prepare macOS code signing
+        if: matrix.os == 'darwin'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          # Import the Developer ID certificate ourselves so a missing or
+          # malformed secret degrades to an ad-hoc signed build instead of
+          # failing inside tauri build. Tauri only sees the resulting identity.
+          identity=""
+          if [[ -n "${APPLE_CERTIFICATE:-}" ]]; then
+            keychain="$RUNNER_TEMP/squad-signing.keychain-db"
+            keychain_password="$(openssl rand -hex 24)"
+            certificate="$RUNNER_TEMP/developer-id.p12"
+            if printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate" 2>/dev/null \
+              && security create-keychain -p "$keychain_password" "$keychain" \
+              && security set-keychain-settings -lut 21600 "$keychain" \
+              && security unlock-keychain -p "$keychain_password" "$keychain" \
+              && security import "$certificate" -k "$keychain" -P "${APPLE_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign -T /usr/bin/security \
+              && security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null; then
+              security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+              identity="$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*"' | head -n1 | tr -d '"' || true)"
+            fi
+            rm -f "$certificate"
+            if [[ -z "$identity" ]]; then
+              echo "::warning::APPLE_CERTIFICATE could not be imported as a Developer ID Application identity; the macOS bundle will be ad-hoc signed and not notarized."
+            fi
+          else
+            echo "APPLE_CERTIFICATE secret is not set; the macOS bundle will be ad-hoc signed."
+          fi
+          if [[ -n "$identity" ]]; then
+            echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+            if [[ -n "${APPLE_ID:-}" && -n "${APPLE_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
+              {
+                echo "APPLE_ID=$APPLE_ID"
+                echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+                echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+              } >> "$GITHUB_ENV"
+              echo "Signing as $identity with notarization."
+            else
+              echo "::warning::Notarization credentials are incomplete; the app will be signed but not notarized."
+            fi
+          else
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build desktop bundles
+        shell: bash
+        env:
+          AUTOHAND_SQUAD_RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "macOS" && -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+            # No Developer ID: ad-hoc sign the bundle (sealed resources, hardened
+            # runtime) so codesign --verify and the smoke test pass. Tauri leaves
+            # the bundle with only the linker signature otherwise.
+            export APPLE_SIGNING_IDENTITY="-"
+            echo "No APPLE_SIGNING_IDENTITY; ad-hoc signing the macOS bundle."
+          fi
+          args=(build)
+          if [[ -n "${TAURI_CONFIG_OVERRIDE:-}" ]]; then
+            args+=(--config "$TAURI_CONFIG_OVERRIDE")
+          fi
+          bunx tauri "${args[@]}"
+
+      - name: Package desktop release assets
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+          RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+          RELEASE_CHANNEL: ${{ needs.setup.outputs.channel }}
+          RELEASE_OS: ${{ matrix.os }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: bun run release:desktop
+
+      - name: Mount and smoke test the macOS app
+        if: matrix.os == 'darwin'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          installer="release/desktop-darwin-${RELEASE_ARCH}/autohand-squad-${RELEASE_VERSION}-macos-${RELEASE_ARCH}.dmg"
+          mount_root="${RUNNER_TEMP}/autohand-squad-dmg-${RELEASE_ARCH}"
+          state_root="${RUNNER_TEMP}/autohand-squad-state-${RELEASE_ARCH}"
+          web_port=19931
+          mkdir -p "$mount_root" "$state_root"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_root" "$installer"
+          app="$mount_root/Autohand Squad.app"
+          squad="$app/Contents/MacOS/squad"
+          node_bin="$app/Contents/MacOS/node"
+          server="$app/Contents/Resources/runtime/server.mjs"
+          cleanup() {
+            AUTOHAND_SQUAD_HOME="$state_root" "$squad" serve-stop --web-port "$web_port" >/dev/null 2>&1 || true
+            hdiutil detach "$mount_root" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          test -x "$app/Contents/MacOS/autohand-squad"
+          test -x "$app/Contents/MacOS/autohand-squad-daemon"
+          test -x "$app/Contents/MacOS/autohand-squad-analytics"
+          test -x "$squad"
+          test -x "$node_bin"
+          test -f "$server"
+          test -f "$app/Contents/Resources/runtime/dist/index.html"
+          test -f "$app/Contents/Resources/runtime/server/harness/index.mjs"
+          test -f "$app/Contents/Resources/runtime/vendor/autohand-cli/BUILD_INFO.json"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+            spctl --assess --type execute --verbose=2 "$app" || echo "::warning::Gatekeeper assessment failed; notarization may be incomplete."
+          fi
+          "$node_bin" --version
+          "$squad" --help
+          AUTOHAND_HOME="$state_root/autohand-home" AUTOHAND_SQUAD_HOME="$state_root" AUTOHAND_SQUAD_NODE="$node_bin" "$squad" serve --server-path "$server" --web-port "$web_port"
+          ready=false
+          for _ in {1..30}; do
+            if curl -fsS "http://127.0.0.1:${web_port}/api/runtime" >/dev/null; then ready=true; break; fi
+            sleep 1
+          done
+          if [[ "$ready" != "true" ]]; then
+            echo "::error::The web runtime inside the DMG did not start."
+            cat "$state_root/web-server.log" 2>/dev/null || true
+            exit 1
+          fi
+          curl -fsS "http://127.0.0.1:${web_port}/api/runtime" | "$node_bin" -e '
+            let raw = ""; process.stdin.on("data", (c) => raw += c).on("end", () => {
+              const runtime = JSON.parse(raw).data || {};
+              if (!runtime.available) throw new Error("Bundled Autohand CLI is unavailable");
+              if (!String(runtime.autohandPath || "").includes("/Contents/Resources/runtime/vendor/autohand-cli/")) throw new Error(`Unexpected Autohand CLI path: ${runtime.autohandPath}`);
+              if (String(runtime.defaultWorkspace || "").includes("/Contents/Resources")) throw new Error(`Packaged resources became the default workspace: ${runtime.defaultWorkspace}`);
+              console.log(`bridge ok: CLI ${runtime.version} at ${runtime.autohandPath}`);
+            });'
+
+      - name: Install and smoke test the Windows app
+        if: matrix.os == 'win32'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = (Resolve-Path "release/desktop-win32-x64/autohand-squad-$env:RELEASE_VERSION-windows-x64-setup.exe").Path
+          $install = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait
+          if ($install.ExitCode -ne 0) { throw "NSIS installer exited with code $($install.ExitCode)" }
+          $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+            Where-Object DisplayName -eq 'Autohand Squad' | Select-Object -First 1
+          if (-not $entry) { throw 'Autohand Squad was not registered as an installed application.' }
+          $installRoot = if ($entry.InstallLocation) { $entry.InstallLocation.Trim('"') } else { Split-Path ($entry.UninstallString.Trim('"')) -Parent }
+          Write-Host "Installed to $installRoot"
+          foreach ($name in @('autohand-squad.exe', 'squad.exe', 'node.exe', 'autohand-squad-daemon.exe', 'autohand-squad-analytics.exe')) {
+            $path = Join-Path $installRoot $name
+            if (-not (Test-Path $path)) { throw "Missing installed file: $path" }
+          }
+          $server = Get-ChildItem -Path $installRoot -Recurse -Filter server.mjs | Select-Object -First 1
+          if (-not $server) { throw 'The bundled web runtime (server.mjs) is missing from the install.' }
+          $harness = Join-Path $server.DirectoryName 'server\harness\index.mjs'
+          if (-not (Test-Path $harness)) { throw "Missing installed harness modules: $harness" }
+          $cli = Join-Path $server.DirectoryName 'vendor\autohand-cli\BUILD_INFO.json'
+          if (-not (Test-Path $cli)) { throw "Missing vendored Autohand CLI: $cli" }
+          & (Join-Path $installRoot 'node.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled Node.js did not start.' }
+          & (Join-Path $installRoot 'squad.exe') --help
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Squad CLI did not start.' }
+          $uninstaller = $entry.UninstallString.Trim('"')
+          if (Test-Path $uninstaller) { Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait }
+
+      - name: Inspect the Linux packages
+        if: matrix.os == 'linux'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          set -euo pipefail
+          dir="release/desktop-linux-x64"
+          deb="$dir/autohand-squad-${RELEASE_VERSION}-linux-x64.deb"
+          appimage="$(realpath "$dir/autohand-squad-${RELEASE_VERSION}-linux-x64.AppImage")"
+          test -s "$deb"
+          test -s "$appimage"
+          extract_root="${RUNNER_TEMP}/autohand-squad-deb"
+          dpkg-deb -x "$deb" "$extract_root"
+          test -x "$extract_root/usr/bin/autohand-squad"
+          test -x "$extract_root/usr/bin/squad"
+          test -x "$extract_root/usr/bin/node"
+          find "$extract_root" -name server.mjs | grep -q . || { echo "::error::server.mjs missing from the deb"; exit 1; }
+          "$extract_root/usr/bin/squad" --help
+          appimage_root="${RUNNER_TEMP}/autohand-squad-appimage"
+          mkdir -p "$appimage_root"
+          (cd "$appimage_root" && "$appimage" --appimage-extract >/dev/null)
+          test -x "$appimage_root/squashfs-root/usr/bin/autohand-squad"
+          test -x "$appimage_root/squashfs-root/usr/bin/squad"
+          find "$appimage_root/squashfs-root" -name server.mjs | grep -q . || { echo "::error::server.mjs missing from the AppImage"; exit 1; }
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-${{ matrix.id }}
+          path: release
+          if-no-files-found: error
+
   publish:
-    name: Finalize release
+    name: Publish release
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
-    environment:
-      name: ${{ needs.setup.outputs.channel }}
-      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.setup.outputs.tag }}
     needs:
       - setup
       - web-bundle
       - runtime-artifacts
+      - desktop
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -684,6 +698,13 @@ jobs:
           pattern: runtime-*
           merge-multiple: true
 
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: release-downloads
+          pattern: desktop-*
+          merge-multiple: true
+
       - name: Download web bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -700,17 +721,68 @@ jobs:
           node scripts/merge-release-manifests.mjs release-downloads
 
           mkdir -p release/publish
+          # Assets sit exactly at release-downloads/<target>/<asset>; bounding the depth keeps
+          # web-bundle dist/ files (brand images named autohand-squad-*) out of the release.
+          find release-downloads -mindepth 2 -maxdepth 2 -type f \( -name 'squad-*' -o -name 'autohand-squad-*' -o -name 'checksums-*.txt' -o -name 'trust-*.json' \) -exec cp {} release/publish/ \;
           cp "release/manifest-${{ needs.setup.outputs.channel }}.json" release/publish/
           cp release/checksums.txt release/publish/
           cp release/release-summary.md release/publish/
-          cp release-downloads/web/checksums-web.txt release/publish/
 
-      - name: Upload release manifest and checksums
+      - name: Compose release notes
         env:
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+          RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+          RELEASE_CHANNEL: ${{ needs.setup.outputs.channel }}
+          SOURCE_SHA: ${{ needs.setup.outputs.source_sha }}
+        run: |
+          node scripts/release-notes.mjs --version "$RELEASE_VERSION" --tag "$RELEASE_TAG" --channel "$RELEASE_CHANNEL" \
+            --assets release/publish --source-sha "$SOURCE_SHA" --out release/release-notes.md
+          cat release/release-notes.md
+
+      - name: Publish GitHub release
+        env:
+          # An AUTOHAND_RELEASE_TOKEN secret (fine-grained PAT allowed to write repository
+          # contents) takes over when policy keeps GITHUB_TOKEN read-only.
           GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}
           RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+          RELEASE_TITLE: ${{ needs.setup.outputs.title }}
+          RELEASE_PRERELEASE: ${{ needs.setup.outputs.prerelease }}
+          RELEASE_LATEST: ${{ needs.setup.outputs.latest }}
+          SOURCE_SHA: ${{ needs.setup.outputs.source_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release view "$RELEASE_TAG" >/dev/null
-          gh release upload "$RELEASE_TAG" release/publish/*
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::The job-scoped GITHUB_TOKEN is unavailable."
+            exit 1
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Release $RELEASE_TAG already exists. Refusing to replace published assets."
+            exit 1
+          fi
+
+          remote_source_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
+          if [[ "$remote_source_sha" != "$SOURCE_SHA" ]]; then
+            echo "::error::Remote tag $RELEASE_TAG now resolves to $remote_source_sha, not verified source $SOURCE_SHA."
+            exit 1
+          fi
+
+          create_flags=()
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then
+            create_flags+=(--prerelease)
+          fi
+          if [ "$RELEASE_LATEST" = "true" ]; then
+            create_flags+=(--latest)
+          else
+            create_flags+=(--latest=false)
+          fi
+
+          gh release create "$RELEASE_TAG" release/publish/* \
+            --verify-tag \
+            --target "$SOURCE_SHA" \
+            --title "$RELEASE_TITLE" \
+            --notes-file release/release-notes.md \
+            --generate-notes \
+            "${create_flags[@]}"

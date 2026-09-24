@@ -81,20 +81,208 @@ access-controlled service in the current build.
 | Repeatable work | Recipes and saved automation definitions with explicit **Run now** controls. A background scheduler and inbound webhook worker are not included yet. |
 | Distribution | Tag-bound DMG installers for macOS Apple Silicon and Intel, an NSIS setup EXE for Windows x64, portable archives for every supported target, SHA-256 checksums, and updater assets. Native installers bundle Node; portable archives require Node 18.17+ on `PATH`. |
 
-## Install a release
+## Desktop app (Tauri 2)
 
-After a `v`-prefixed version tag completes the Release workflow, download the
-matching asset from [GitHub Releases](https://github.com/autohandai/squad/releases):
+`src-tauri/` is the native shell: a system-webview window that loads the local
+bridge, a tray with Open / Sign in / Open logs / Stop / Quit, single-instance
+relaunch, and the same boot sequence as the launcher (preflight, daemon,
+bridge, health handshake, native recovery dialog). Closing the window keeps
+the squad running in the tray; Quit stops the services.
 
-- macOS Apple Silicon: `autohand-squad-<version>-macos-arm64.dmg`
-- macOS Intel: `autohand-squad-<version>-macos-x64.dmg`
-- Windows x64: `autohand-squad-<version>-windows-x64-setup.exe`
-- Linux x64: `autohand-squad-<version>-linux-x64.tar.gz`
+```bash
+bun run build            # web assets
+bun run cli:fetch        # vendored Autohand Code release
+bun run desktop:stage    # stages runtime/ and the sidecars (Node, daemon, analytics, squad)
+bun run desktop:build    # .app + .dmg (macOS), NSIS (Windows), deb/AppImage (Linux)
+bun run desktop:dev      # window against a staged runtime, debug build
+```
 
-The DMG and setup EXE include the Node runtime needed by the app. These first
-native installers are not code-signed or notarized yet, so macOS Gatekeeper or
-Windows SmartScreen may show an unverified-publisher warning. A repository tag
-without a completed GitHub Release will not have downloadable assets.
+On macOS the window uses a transparent title bar with the traffic lights over
+the sidebar, and the sidebar is a native vibrancy surface; on Windows it uses
+Mica. The web app detects the shell through its user agent
+(`AutohandSquadDesktop/…`) and switches to transparent chrome and drag regions.
+Sign-in from the app runs `squad login` / `squad logout` (bundled) for the Autohand account
+device flow; Codex and Claude Code sign-in run their own CLIs.
+
+The bundle carries the bridge under `Resources/runtime` and the sidecars next
+to the executable; the shell points the runtime crate at them through
+`AUTOHAND_SQUAD_WEB_SERVER`, `AUTOHAND_SQUAD_NODE`, `AUTOHAND_SQUAD_DAEMON`,
+and `AUTOHAND_SQUAD_ANALYTICS`, so a source checkout and the installed app run
+one code path. Signing and notarization use the same secrets as the existing
+release workflow (`docs/release.md`).
+
+## Updates
+
+The daemon checks GitHub Releases (`autohandai/squad`) for the configured
+channel: stable takes the latest release, beta the latest pre-release tagged
+beta or rc, canary the latest pre-release. Settings → Updates shows the
+installed and latest versions, the release notes, and a download link for
+this platform; the sidebar's **Restart to update** button appears only when a
+newer release exists. `GET /api/updates` returns the last check and
+`?refresh=1` asks the running daemon to check again.
+`AUTOHAND_SQUAD_UPDATE_REPO` points at a fork; `AUTOHAND_SQUAD_UPDATE_SOURCE=api`
+restores the Autohand API manifest.
+
+## Download and install
+
+Every release on [GitHub Releases](https://github.com/autohandai/squad/releases)
+ships the desktop app for four targets, with a download table, the changelog
+section, and the categorised pull-request list in the release notes:
+
+| Platform | Asset |
+| --- | --- |
+| macOS Apple Silicon | `autohand-squad-<version>-macos-arm64.dmg` |
+| macOS Intel | `autohand-squad-<version>-macos-x64.dmg` |
+| Windows x64 | `autohand-squad-<version>-windows-x64-setup.exe` |
+| Linux x64 | `autohand-squad-<version>-linux-x64.deb`, `autohand-squad-<version>-linux-x64.AppImage` |
+| Headless / servers | `autohand-squad-<version>-<os>-<arch>.tar.gz` (portable, needs Node 18.17+) |
+
+- **Stable:** the [latest release](https://github.com/autohandai/squad/releases/latest).
+- **Nightly:** pre-releases tagged `v<next>-canary.<timestamp>`, built from
+  `main` every night at 03:00 UTC when there are new commits
+  ([nightly list](https://github.com/autohandai/squad/releases?q=canary&expanded=true)).
+  Seven are kept.
+- **Beta:** pre-releases tagged `v<version>-beta.N` or `-rc.N`.
+
+Installed apps check the channel they are on (Settings → Updates and the tray):
+stable follows releases, beta follows non-nightly pre-releases, canary follows
+nightlies. Every asset appears in `checksums.txt` on the release
+(`shasum -a 256 -c checksums.txt`). [CHANGELOG.md](CHANGELOG.md) is the
+human-written history; its **Unreleased** section becomes each nightly's notes
+and moves under the version heading at a stable release.
+
+Each release states its trust level. When the release was built with signing
+credentials, the macOS app is Developer ID signed and notarized and the Windows
+installer is Authenticode signed, so both open without warnings. When it was
+built without credentials the macOS bundle is ad-hoc signed and the Windows
+installer is unsigned:
+
+- macOS shows "is damaged and can't be opened" or "cannot be opened because the
+  developer cannot be verified". Remove the quarantine flag once and open the
+  app normally:
+
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Autohand Squad.app"
+  ```
+
+- Windows SmartScreen shows "Windows protected your PC". Choose **More info**,
+  then **Run anyway**.
+
+On first launch the app runs a preflight (state directory, bundled Node,
+web bridge, bundled Autohand CLI, free ports). If anything fails it shows a
+native dialog with the cause and **Retry / Open Logs / Quit** instead of opening
+a blank page. The same checks are available from a terminal:
+
+```bash
+"/Applications/Autohand Squad.app/Contents/MacOS/squad" doctor   # macOS
+"%LOCALAPPDATA%\Autohand Squad\squad.exe" doctor                 # Windows
+```
+
+## Autohand AI provider
+
+Autohand AI is the default LLM provider. It runs on your Autohand account
+(`autohand login`), so a signed-in workspace needs no API key; an Autohand AI
+API key can be added in Settings instead. The default model is **Auto**, with
+Fantail and Moa (Thinking) available from the CLI model catalog. OpenRouter,
+OpenAI, Ollama, Bedrock, and the other providers stay available as workspace
+or per-member overrides. **Test connection** in Settings makes a real request
+to the inference gateway with the credential the CLI will use.
+
+## Tray
+
+The desktop app's tray shows the signed-in account, the plan, and the plan's
+metered usage windows (5-hour and weekly, with a gauge and the time until they
+reset) from the Autohand console API, refreshed every five minutes or with
+**Refresh usage**. Below that: Open, Mission Control, online **Members**
+(click one to chat), Sign in / Sign out, Check for updates, Launch at Login,
+Start / Stop / Restart services, Open logs folder, Settings, Report a bug,
+Give feedback, About, and Quit. `cargo run --release --example tray_model`
+(in `daemon/`) prints the same model from the terminal.
+
+## Accounts and sign-in
+
+First-run users are routed to `/welcome` after sign-in until setup is
+completed or skipped; a signed-out install never reaches the workspace.
+
+The workspace opens only for a signed-in Autohand account: a signed-out
+install shows a sign-in page that starts the CLI's own login flow through the
+local bridge (`autohand login`), shows the URL and device code it prints, and
+continues once the account is ready. Members that run on Codex or Claude Code
+need those vendors' accounts too. The member's Harness page (and the
+**Runs with** chip in the chat header) shows the signed-in account per engine
+and offers **Sign in with ChatGPT** or **Sign in with your Claude account**,
+which run `codex login` / `claude auth login` and re-check readiness when the
+browser flow completes. An API key remains an alternative for each engine.
+
+## Members working together
+
+- **Delegation from a reply.** A member that @mentions a teammate in its own reply hands that part of the job to them (security review, QA, tests, design, deployment). The teammate starts immediately, works in the same folder, and reports back; both sides are visible. Depth is capped at two hops.
+- **Members open channels.** A member can include one `SQUAD_ACTION: {"type":"create_channel", …}` line in a reply to open a project channel with the named teammates; you are always a member, the folder becomes a channel project, and the purpose is posted as the first prompt.
+- **Channel projects.** Channel settings list folders the channel works in (add a known folder or **Choose…** for the native dialog). Mention one as `@project-name` to scope a message to that folder; every channel project is passed to members as an extra directory.
+- **Native folder choice.** In a member's workspace popover, **Choose folder…** opens the OS folder dialog (macOS, Windows, Linux with zenity); the chosen folder still has to be inside your home directory.
+
+## Avatars
+
+Members use a set of New Zealand bird portraits by default (kiwi, kea, tūī, pīwakawaka, kākāpō, pūkeko, ruru, takahē, kererū, kōtare), each with a small role hint. Existing members with the old role portraits are moved to the bird that matches their role on next load; custom avatars are untouched.
+
+## Steering a running reply
+
+While a member is replying, Enter queues your message. **Send now** on a
+queued item, or ⌘↩ / Ctrl+Enter in the composer, interrupts the current reply
+and sends immediately; the warm session keeps the member's context, so it
+continues from where it was with your new instruction.
+
+## Composer syntax
+
+The chat composer understands the same prefixes on every engine:
+
+| Prefix | Meaning |
+| --- | --- |
+| `@name` | Mention a squad member (they receive a handoff and start immediately); the picker shows who is online, working, or idle |
+| `@path` | Mention a workspace file |
+| `$skill` | Ask the member to use an installed skill; the picker lists installed skills first, then the registry |
+| `!command` | Run a shell command in the workspace through the bridge and show the output in the chat |
+| `/command` | App commands: `/new`, `/model`, `/harness`, `/workspace`, `/skills`, `/run`, `/help`. Autohand Code members also accept the CLI's `/plan`, `/review`, `/init`, `/compact`, `/clear`. Codex and Claude Code run non-interactively and reply that CLI-only commands are unavailable instead of failing silently |
+
+## Chat sessions
+
+The bridge keeps one warm CLI session per member and launch configuration
+(`GET /api/sessions`). The first message starts the CLI; follow-ups reuse the
+process, so they answer in model time and keep the CLI's own conversation
+context. **New chat** resets the member's session (`POST /api/chat/reset`),
+and sessions close after 15 minutes idle, on stop, stall, or error, and on
+shutdown. A stalled CLI now reports its last error-log line in the message.
+
+## Agents talking to each other
+
+In channels, a member's reply that @mentions a teammate is relayed to that
+teammate in the same thread with the reply as context, up to three hops per
+thread and never back to the member who just spoke. Members are told they may
+mention teammates by name when they need their work.
+
+## Agent harnesses
+
+Every member has a **Runs with** engine. Autohand Code is bundled and the
+default; Codex and Claude Code are detected from your own installation and
+never installed, updated, or signed in by Squad.
+
+The bundled Autohand Code release is pinned in `package.json`
+(`autohand.cliVersion`, currently 0.9.7) and vendored by `bun run cli:fetch`
+from the GitHub release with checksum verification; releases fail if the
+vendored binary is missing or does not match the pin. `GET /api/runtime`
+reports the running CLI version and whether it came from the vendored release,
+the Agent SDK package, or `PATH`.
+
+## Logs and OpenTelemetry
+
+Structured logs are written in the OpenTelemetry Logs Data Model as OTLP/JSON
+lines (`~/.autohand/squad/logs/*.otlp.jsonl`, `<app state>/logs/web.otlp.jsonl`,
+and one `run-logs/<run id>.otlp.jsonl` per tracked run). Set
+`OTEL_EXPORTER_OTLP_ENDPOINT` (plus the usual `OTEL_*` headers and resource
+variables) to export them over OTLP/HTTP. See `docs/observability.md`. `GET /api/harnesses` and the
+member's Harness page report Ready, Setup required, Not detected, or
+Unsupported version. A member whose engine is not ready is blocked with the
+setup step; Squad never falls back to a different engine silently.
 
 ## Run locally
 

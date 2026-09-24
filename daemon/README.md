@@ -40,6 +40,31 @@ to inspect, restart, or stop the stack. Stop leaves the tray available as a
 separate controller so it can start services again; Quit exits the tray after
 stopping local Squad services and isolated member CLI processes.
 
+## Desktop Entry Point
+
+`autohand-squad-ui` is the installed application binary. On launch it runs the
+preflight (`squad doctor`), starts the daemon, analytics, and web server, waits
+up to `AUTOHAND_SQUAD_READY_TIMEOUT_MS` (default 30000) for the web runtime to
+answer `/api/runtime`, and only then opens the app URL. Any failure shows a
+native dialog (osascript on macOS, a Windows Forms message box on Windows,
+zenity/kdialog on Linux) with Retry / Open Logs / Quit. Spawned services get a
+GUI-safe `PATH` (Homebrew, `~/.local/bin`, npm, bun, cargo, fnm/nvm, Codex,
+Claude Code locations) because Finder and Explorer launches inherit a minimal
+one.
+
+```bash
+squad doctor   # JSON preflight report; exit 1 when a check fails
+```
+
+## Structured Logs
+
+The daemon and the launcher write OpenTelemetry log records (OTLP/JSON lines)
+to `logs/daemon.otlp.jsonl` and `logs/tray.otlp.jsonl` in the state root, in
+addition to the plain `server.log` / `tray.log` captures. Records at ERROR and
+above feed the analytics "recent errors" list. `OTEL_EXPORTER_OTLP_ENDPOINT`
+enables OTLP/HTTP export from a background thread; `OTEL_LOG_LEVEL` sets the
+minimum severity. See `docs/observability.md`.
+
 ## State
 
 The shared state directory is `~/.autohand/squad/` unless `AUTOHAND_SQUAD_HOME`

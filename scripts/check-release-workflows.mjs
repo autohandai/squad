@@ -14,6 +14,8 @@ const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.me
 const releaseWorkflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 const smokeWorkflow = readFileSync(new URL('../.github/workflows/actions-smoke.yml', import.meta.url), 'utf8');
 const releaseNotes = readFileSync(new URL('../.github/release.yml', import.meta.url), 'utf8');
+const nightlyWorkflow = readFileSync(new URL('../.github/workflows/nightly.yml', import.meta.url), 'utf8');
+const changelog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
 const bunLock = readFileSync(new URL('../bun.lock', import.meta.url), 'utf8');
 const packageMetadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const packager = readFileSync(new URL('./package-squad-release.mjs', import.meta.url), 'utf8');
@@ -124,15 +126,33 @@ assertIncludes(ciWorkflow, 'macos-26-intel', 'CI matrix includes macOS Intel');
 assertIncludes(ciWorkflow, 'windows-2025', 'CI matrix includes Windows x64');
 assertIncludes(ciWorkflow, 'libxdo-dev', 'CI installs the Linux xdo linker dependency');
 assertIncludes(ciWorkflow, 'bun run check:sdk', 'CI verifies the published Autohand SDK');
-assertIncludes(ciWorkflow, 'bun run release:portable', 'CI dry run exercises portable packaging on every target');
-assertIncludes(ciWorkflow, 'release-dry-run-manifest-${{ matrix.id }}', 'CI uploads small per-target manifests for validation');
-assertIncludes(ciWorkflow, 'pattern: release-dry-run-manifest-*', 'CI validates manifest-only artifacts without downloading native bundles');
+assertIncludes(ciWorkflow, 'bun run cli:fetch', 'CI vendors the pinned Autohand Code CLI before SDK checks');
+assertIncludes(ciWorkflow, 'bun run check:otel', 'CI verifies the OpenTelemetry log format');
+assertIncludes(releaseWorkflow, 'bun run check:otel', 'Release workflow verifies the OpenTelemetry log format');
+assertIncludes(releaseWorkflow, 'bun run cli:fetch', 'Release workflow vendors the pinned Autohand Code CLI');
+assertIncludes(releaseWorkflow, 'AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI', 'Release SDK checks require the vendored CLI');
+assertIncludes(installerPackager, 'stageVendoredAutohandCli', 'Installer packager ships the vendored Autohand CLI');
+assertIncludes(portablePackager, 'stageVendoredAutohandCli', 'Portable packager ships the vendored Autohand CLI');
 assertIncludes(ciWorkflow, 'name: Check release runtime packaging', 'CI exercises native tar and packaged state on every release target');
 assertIncludes(ciWorkflow, 'name: Check native release packager', 'CI loads the native packager on every release target');
 assertIncludes(ciWorkflow, "import('@crabnebula/packager')", 'CI verifies the platform-specific packager binding');
 assertIncludes(ciWorkflow, 'REQUIRED_RELEASE_OS=linux,darwin,win32', 'CI validates all release OS entries');
 assertIncludes(ciWorkflow, 'REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64,darwin/x64,win32/x64', 'CI validates every native release target');
 assertIncludes(releaseWorkflow, 'name: Release', 'Release workflow has the public Release name');
+assertIncludes(releaseWorkflow, 'name: Desktop app (${{ matrix.id }})', 'Release workflow builds the Tauri desktop app');
+assertIncludes(releaseWorkflow, 'bunx tauri "${args[@]}"', 'Release workflow runs tauri build');
+assertIncludes(releaseWorkflow, 'bun run release:desktop', 'Release workflow packages the desktop bundles');
+assertIncludes(releaseWorkflow, 'libwebkit2gtk-4.1-dev', 'Release workflow installs the Linux webview toolchain');
+assertIncludes(releaseWorkflow, 'scripts/release-notes.mjs', 'Release workflow composes changelog-driven notes');
+assertIncludes(releaseWorkflow, '--generate-notes', 'Release workflow appends the categorised pull-request list');
+assertIncludes(releaseWorkflow, 'pattern: desktop-*', 'Publish job collects the desktop artifacts');
+assertIncludes(nightlyWorkflow, 'cron: "0 3 * * *"', 'Nightly workflow is scheduled');
+assertIncludes(nightlyWorkflow, 'gh workflow run release.yml --ref "$TAG"', 'Nightly workflow dispatches the Release workflow on the tag');
+assertIncludes(nightlyWorkflow, '-canary.', 'Nightly builds publish on the canary channel');
+assertIncludes(nightlyWorkflow, '--cleanup-tag', 'Nightly workflow prunes old nightlies');
+assertIncludes(ciWorkflow, 'bun run desktop:check', 'CI compiles the desktop shell');
+assertIncludes(changelog, '## [Unreleased]', 'CHANGELOG keeps an Unreleased section for nightly notes');
+assertIncludes(releaseNotes, '- desktop', 'Release note categories cover desktop changes');
 assertIncludes(releaseWorkflow, '- "v[0-9]*"', 'Release workflow handles v-prefixed SemVer tags');
 assertNotIncludes(releaseWorkflow, 'branches:', 'Release workflow does not publish branch pushes');
 assertNotIncludes(releaseWorkflow, '"squad-v*"', 'Release workflow rejects legacy squad tag triggers');
@@ -141,13 +161,11 @@ assertIncludes(releaseWorkflow, 'version:\n        description:', 'Release workf
 assertIncludes(releaseWorkflow, 'required: true', 'Manual release version is required');
 assertIncludes(releaseWorkflow, 'name: Setup', 'Release workflow has a shared setup job');
 assertIncludes(releaseWorkflow, "if: github.repository == 'autohandai/squad'", 'Release setup cannot publish from a fork');
-assertIncludes(releaseWorkflow, 'ref: ${{ steps.version.outputs.tag }}', 'Setup checks out the requested immutable tag for push and manual releases');
-assertIncludes(releaseWorkflow, 'GITHUB_REF="$EXPECTED_REF" scripts/verify-release-ref.sh', 'Manual retries verify the checked-out tag instead of the dispatch branch');
 assertIncludes(releaseWorkflow, 'source_sha: ${{ steps.source.outputs.source_sha }}', 'Release setup exports the verified source SHA');
-assertCount(releaseWorkflow, 'scripts/verify-release-ref.sh v "$VERSION"', 4, 'Every release job verifies the tag-bound source');
-assertCount(releaseWorkflow, 'ref: ${{ needs.setup.outputs.source_sha }}', 3, 'Every build and publish job checks out the verified source SHA');
-assertCount(releaseWorkflow, 'fetch-depth: 0', 4, 'Every release checkout fetches tag history');
-assertCount(releaseWorkflow, 'persist-credentials: false', 4, 'Every release checkout drops persisted credentials');
+assertCount(releaseWorkflow, 'scripts/verify-release-ref.sh v "$VERSION"', 5, 'Every release job verifies the tag-bound source');
+assertCount(releaseWorkflow, 'ref: ${{ needs.setup.outputs.source_sha }}', 4, 'Every build and publish job checks out the verified source SHA');
+assertCount(releaseWorkflow, 'fetch-depth: 0', 5, 'Every release checkout fetches tag history');
+assertCount(releaseWorkflow, 'persist-credentials: false', 5, 'Every release checkout drops persisted credentials');
 assertIncludes(releaseWorkflow, 'macos-26-intel', 'Release workflow builds macOS Intel');
 assertNativeReleaseMatrix(releaseWorkflow, [
   ['linux-x64', 'ubuntu-24.04', 'linux', 'x64'],
@@ -157,81 +175,49 @@ assertNativeReleaseMatrix(releaseWorkflow, [
 ]);
 assertIncludes(releaseWorkflow, 'AUTOHAND_SQUAD_RELEASE_VERSION', 'Release binaries embed resolved release versions');
 assertIncludes(releaseWorkflow, 'bun run check:sdk', 'Release workflow verifies the published Autohand SDK');
-assertIncludes(releaseWorkflow, 'name: Verify native packager binding', 'Release workflow fails early when a native packager binding is unavailable');
 assertIncludes(releaseWorkflow, 'Download built web runtime', 'Native release jobs download the versioned web runtime');
 assertIncludes(releaseWorkflow, 'WEB_RUNTIME_DIR', 'Native packaging receives the bundled web runtime');
 assertIncludes(releaseWorkflow, 'bun run release:portable', 'Release workflow assembles portable application archives');
 assertIncludes(releaseWorkflow, 'name: Smoke test portable application', 'Release workflow smoke-tests portable application archives');
-assertIncludes(releaseWorkflow, 'cygpath -u "$RUNNER_TEMP"', 'Windows portable smoke tests use a Git Bash-compatible temp path');
+assertIncludes(releaseWorkflow, 'smoke_root="${smoke_root//\\\\//}"', 'Windows portable smoke test normalizes the runner temp path for GNU tar');
 assertIncludes(releaseWorkflow, "import('@autohandai/agent-sdk')", 'Portable smoke test imports the bundled Agent SDK');
 assertIncludes(releaseWorkflow, 'NODE_VERSION: "22.23.1"', 'Release workflow pins the bundled Node.js runtime');
-assertIncludes(
-  releaseWorkflow,
-  'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1',
-  'Release workflow uses current checkout action',
-);
+assertIncludes(releaseWorkflow, 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1', 'Release workflow uses current checkout action');
 assertIncludes(releaseWorkflow, 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0', 'Release workflow uses current setup-node action');
 assertIncludes(releaseWorkflow, 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0', 'Release workflow uses current cache action');
 assertIncludes(releaseWorkflow, 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1', 'Release workflow uses current download-artifact action');
 assertIncludes(releaseWorkflow, 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1', 'Release workflow uses current upload-artifact action');
 assertIncludes(releaseWorkflow, 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0', 'Release workflow uses current setup-bun action');
-assertNotIncludes(releaseWorkflow, 'package-manager-cache:', 'Release workflow avoids unsupported setup-node inputs');
-assertIncludes(releaseWorkflow, 'bun run release:installers', 'Release workflow builds native installers');
-assertNotIncludes(releaseWorkflow, "name: Package native installer\n        if: matrix.os != 'linux'", 'Release workflow packages Linux installables');
+assertNotIncludes(releaseWorkflow, 'package-manager-cache:', 'Release workflow avoids unsupported setup-node cache inputs');
+assertIncludes(releaseWorkflow, 'bun run release:desktop', 'Release workflow packages the desktop installers');
+assertNotIncludes(releaseWorkflow, "if: matrix.os != 'linux'", 'Release workflow packages Linux installables');
 assertIncludes(releaseWorkflow, 'NODE_RUNTIME_PATH="$(node -p', 'Native installer packaging receives an explicit Node.js binary');
-assertIncludes(releaseWorkflow, 'name: Mount and smoke test macOS installer', 'Release workflow mounts and tests each DMG');
-assertIncludes(releaseWorkflow, 'name: Install and smoke test Windows installer', 'Release workflow installs and tests the NSIS executable');
-assertIncludes(releaseWorkflow, '$installRoot = $entry.InstallLocation.Trim(\'"\')', 'Windows installer smoke test normalizes quoted NSIS install locations');
-assertIncludes(releaseWorkflow, "Start-Process -FilePath $squad -ArgumentList @('serve', '--server-path', $server, '--web-port', \"$webPort\")", 'Windows installer smoke test starts the installer launcher without blocking on its child process');
-assertIncludes(releaseWorkflow, 'Stop-Process -Id $launcher.Id -Force', 'Windows installer smoke test terminates a lingering launcher process');
-assertIncludes(releaseWorkflow, 'WaitForExit(120000)', 'Windows installer smoke test fails clearly if the uninstaller hangs');
-assertIncludes(releaseWorkflow, 'Get-Content $webServerLog', 'Windows installer smoke test prints the web-server log on failure');
-assertIncludes(releaseWorkflow, 'name: Inspect Linux installers', 'Release workflow verifies Linux Debian and AppImage packages');
-assertIncludes(releaseWorkflow, 'appimage="$(realpath "$package_dir/autohand-squad-${RELEASE_VERSION}-linux-${RELEASE_ARCH}.AppImage")"', 'Linux AppImage inspection uses an absolute path after changing directories');
-assertIncludes(releaseWorkflow, 'set -x', 'Linux installer inspection traces the failing payload assertion');
-assertCount(releaseWorkflow, '--server-path', 2, 'Native installer smoke tests force the installed web server payload');
-assertCount(releaseWorkflow, '/api/provider-settings', 2, 'Native installer smoke tests exercise writable app state');
-assertCount(releaseWorkflow, 'web-state/provider-settings.json', 2, 'Native installer smoke tests verify redirected state files');
+assertIncludes(releaseWorkflow, 'name: Mount and smoke test the macOS app', 'Release workflow mounts and tests each DMG');
+assertIncludes(releaseWorkflow, 'name: Install and smoke test the Windows app', 'Release workflow installs and tests the NSIS executable');
+assertIncludes(releaseWorkflow, "$installRoot = if ($entry.InstallLocation) { $entry.InstallLocation.Trim('\"') } else { Split-Path ($entry.UninstallString.Trim('\"')) -Parent }", 'Windows installer smoke test tolerates a missing NSIS InstallLocation and normalizes quoted paths');
+assertIncludes(releaseWorkflow, '-mindepth 2 -maxdepth 2', 'Release publishing copies only top-level target assets, never web bundle contents');
+assertIncludes(ciWorkflow, 'bun run release:portable', 'CI dry run exercises portable packaging on every target');
+assertIncludes(releaseWorkflow, 'name: Inspect the Linux packages', 'Release workflow verifies Linux Debian and AppImage packages');
+assertCount(releaseWorkflow, '--server-path', 1, 'Native installer smoke tests force the installed web server payload');
 assertIncludes(releaseWorkflow, 'autohand-squad-${RELEASE_VERSION}-macos-${RELEASE_ARCH}.dmg', 'macOS smoke test uses the public DMG name');
 assertIncludes(releaseWorkflow, 'autohand-squad-$env:RELEASE_VERSION-windows-x64-setup.exe', 'Windows smoke test uses the public installer name');
 assertIncludes(releaseWorkflow, 'REQUIRED_RELEASE_TARGETS=linux/x64,darwin/arm64,darwin/x64,win32/x64', 'Release publishing requires every native target');
 assertIncludes(releaseWorkflow, "-name 'autohand-squad-*'", 'Release publishing includes native installer assets');
 assertIncludes(releaseWorkflow, 'contents: read', 'Release workflow defaults to read-only token permissions');
-assertCount(releaseWorkflow, 'contents: write', 4, 'Only release setup, web, platform, and finalization jobs receive write permission');
-assertIncludes(releaseWorkflow, 'name: Create GitHub release', 'Release setup creates the versioned GitHub release before builds start');
-assertIncludes(releaseWorkflow, 'name: Upload web bundle to GitHub release', 'Web bundle uploads directly to the early GitHub release');
-assertIncludes(releaseWorkflow, 'name: Upload platform assets to GitHub release', 'Each successful platform job uploads its own assets');
-assertIncludes(releaseWorkflow, 'gh release upload "$RELEASE_TAG" "${assets[@]}"', 'Platform jobs attach their verified assets without waiting for other targets');
-assertIncludes(releaseWorkflow, 'while IFS= read -r asset; do', 'Platform asset upload works with the Bash version bundled by macOS runners');
-assertNotIncludes(releaseWorkflow, 'mapfile -t assets', 'Platform asset upload avoids Bash 4-only mapfile on macOS runners');
-assertIncludes(releaseWorkflow, 'name: Upload release manifest and checksums', 'Finalization adds the merged installer manifest after platform uploads');
-assertIncludes(releaseWorkflow, 'gh release upload "$RELEASE_TAG" release/publish/*', 'Finalization uploads the manifest and checksums to the existing release');
-assertIncludes(
-  releaseWorkflow,
-  'GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}',
-  'Release jobs use the workflow token or an explicit enterprise-policy fallback',
-);
+assertIncludes(releaseWorkflow, 'contents: write', 'Release publish job has scoped content write permission');
+assertCount(releaseWorkflow, 'contents: write', 1, 'Only the publish job receives content write permission');
+assertIncludes(releaseWorkflow, 'GH_TOKEN: ${{ secrets.AUTOHAND_RELEASE_TOKEN || github.token }}', 'Release publishing uses the job-scoped workflow token unless an AUTOHAND_RELEASE_TOKEN secret overrides it');
 assertNotIncludes(releaseWorkflow, '.permissions.push', 'Release publishing does not infer job-token permissions from repository metadata');
 assertNotIncludes(releaseWorkflow, 'token_can_publish', 'Release publishing does not reject valid granular job tokens with a repository permission probe');
 assertNotIncludes(releaseWorkflow, 'attestations: write', 'Release workflow does not require org-blocked attestation permissions');
-assertIncludes(releaseWorkflow, 'gh release view "$RELEASE_TAG"', 'Release setup detects an existing release');
-assertIncludes(releaseWorkflow, 'Refusing to replace published assets', 'Release setup refuses to mutate an existing release');
-assertIncludes(releaseWorkflow, 'commits/$RELEASE_TAG', 'Release setup rechecks the remote tag immediately before creation');
-assertIncludes(releaseWorkflow, 'remote_source_sha" != "$SOURCE_SHA', 'Release setup rejects a remotely moved tag');
+assertIncludes(releaseWorkflow, 'gh release view "$RELEASE_TAG"', 'Release publishing detects an existing release');
+assertIncludes(releaseWorkflow, 'Refusing to replace published assets', 'Release publishing refuses to mutate an existing release');
+assertIncludes(releaseWorkflow, 'commits/$RELEASE_TAG', 'Release publishing rechecks the remote tag immediately before publication');
+assertIncludes(releaseWorkflow, 'remote_source_sha" != "$SOURCE_SHA', 'Release publishing rejects a remotely moved tag');
 assertNotIncludes(releaseWorkflow, '--clobber', 'Release publishing never overwrites an asset');
 assertNotIncludes(releaseWorkflow, 'gh release edit', 'Release publishing never edits an existing release');
-assertIncludes(releaseWorkflow, '--verify-tag', 'Release setup requires the remote tag');
-assertIncludes(releaseWorkflow, '--target "$SOURCE_SHA"', 'Release setup targets the verified source SHA');
-assertIncludes(releaseWorkflow, '--generate-notes', 'Release setup generates notes from merged changes');
-assertIncludes(releaseWorkflow, 'notes_start_tag:', 'Manual releases can override the generated-notes comparison tag');
-assertIncludes(releaseWorkflow, '--notes-start-tag "$RELEASE_NOTES_START_TAG"', 'Generated notes use the validated comparison override');
-assertIncludes(releaseWorkflow, 'git merge-base --is-ancestor', 'Release-note comparison tags must belong to the release history');
-assertIncludes(
-  releaseWorkflow,
-  '--notes "Installers and verified runtime assets upload as each platform build completes."',
-  'Release notes explain that assets arrive as verified platform jobs finish',
-);
-assertNotIncludes(releaseWorkflow, '--notes-file', 'Release setup does not replace generated notes with a static summary');
+assertIncludes(releaseWorkflow, '--verify-tag', 'Release publishing requires the remote tag');
+assertIncludes(releaseWorkflow, '--target "$SOURCE_SHA"', 'Release publishing targets the verified source SHA');
 assertPinnedActionUses(releaseWorkflow, 'Release workflow');
 assertPinnedActionUses(ciWorkflow, 'CI workflow');
 assertIncludes(smokeWorkflow, 'Runner startup', 'Actions smoke workflow checks runner startup separately');
@@ -242,12 +228,24 @@ assertIncludes(portablePackager, "'autohand-squad-ui'", 'Portable bundle include
 assertIncludes(portablePackager, "'autohand-windows-x64.exe'", 'Portable bundle includes the Windows Agent SDK CLI');
 assertIncludes(portablePackager, "for (const dependency of ['toml', 'yaml'])", 'Portable bundle vendors production SDK dependencies');
 assertIncludes(portablePackager, "spawnSync('tar'", 'Portable bundle creates one extractable archive');
-assertIncludes(portablePackager, 'tarCreateArgs(archiveName, scratchDir, bundleName, releaseOs)', 'Portable archive uses cross-platform tar arguments');
-assertNotIncludes(portablePackager, "['-czf', archivePath", 'Portable archive avoids GNU tar remote-path parsing on Windows');
 assertIncludes(installerPackager, "requiredEnv('NODE_RUNTIME_PATH')", 'Native installer requires an explicit Node.js runtime');
 assertIncludes(installerPackager, "binary === 'autohand-squad-ui'", 'Native installer launches the desktop UI binary');
 assertIncludes(installerPackager, "['deb', 'appimage']", 'Native installer emits Debian and AppImage formats on Linux');
 assertIncludes(installerPackager, "'linux/x64': 'autohand-linux-x64'", 'Linux installer vendors the Linux Agent SDK CLI');
+assertIncludes(installerPackager, "'linux/arm64': 'autohand-linux-arm64'", 'Linux arm64 installer vendors the arm64 Agent SDK CLI');
+assertIncludes(installerPackager, "signingIdentity: identity || '-'", 'macOS bundle is Developer ID signed when configured and ad-hoc signed otherwise');
+assertIncludes(installerPackager, 'com.apple.security.cs.allow-jit', 'macOS bundle carries hardened-runtime entitlements for the bundled Node runtime');
+assertIncludes(installerPackager, 'certificateThumbprint: thumbprint', 'Windows installer is Authenticode signed when a thumbprint is configured');
+assertIncludes(installerPackager, "'server'", 'Native installer stages the bridge runtime modules');
+assertIncludes(portablePackager, "'linux/arm64': 'autohand-linux-arm64'", 'Portable bundle knows the arm64 Agent SDK CLI');
+assertIncludes(portablePackager, "join(bundleRoot, 'server')", 'Portable bundle stages the bridge runtime modules');
+assertIncludes(releaseWorkflow, 'APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}', 'Release workflow hands the Apple signing certificate to tauri build when configured');
+assertIncludes(releaseWorkflow, 'export APPLE_SIGNING_IDENTITY="-"', 'Release workflow ad-hoc signs the macOS bundle without a Developer ID');
+assertIncludes(releaseWorkflow, 'name: Prepare Windows code signing', 'Release workflow imports the Windows signing certificate when configured');
+assertIncludes(releaseWorkflow, 'codesign --verify --deep --strict', 'macOS smoke test verifies the bundle signature');
+assertIncludes(releaseWorkflow, 'cp -R dist server server.mjs', 'Web bundle stages the bridge runtime modules');
+assertIncludes(releaseWorkflow, 'bun run check:harness', 'Release workflow verifies harness adapters');
+assertIncludes(releaseWorkflow, "'server\\harness\\index.mjs'", 'Windows smoke test checks the installed harness modules');
 assertNotIncludes(installerPackager, 'Native Linux installers are not supported yet', 'Native installer supports Linux packages');
 assertIncludes(installerPackager, "installMode: 'currentUser'", 'Windows installer does not require administrator access');
 assertIncludes(installerPackager, "'autohand-windows-x64.exe'", 'Native installer vendors the Windows Agent SDK CLI');
@@ -358,7 +356,21 @@ function assertManifestMergeThrows(input, env, label) {
 function resolve(env, args) {
   const output = execFileSync(process.execPath, [resolver, ...args], {
     encoding: 'utf8',
-    env: resolverEnv(env),
+    env: {
+      ...process.env,
+      GITHUB_EVENT_NAME: '',
+      GITHUB_REF_NAME: '',
+      GITHUB_REF_TYPE: '',
+      GITHUB_RUN_NUMBER: '',
+      GITHUB_SHA: '',
+      INPUT_CHANNEL: '',
+      INPUT_DRAFT: '',
+      INPUT_PRERELEASE: '',
+      INPUT_VERSION: '',
+      PR_NUMBER: '',
+      RELEASE_KNOWN_TAGS: '',
+      ...env,
+    },
   });
   return JSON.parse(output);
 }
@@ -431,31 +443,11 @@ function assertThrows(env, args, label) {
   try {
     execFileSync(process.execPath, [resolver, ...args], {
       encoding: 'utf8',
-      env: resolverEnv(env),
+      env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'ignore'],
     });
   } catch {
     return;
   }
   throw new Error(`${label}: expected resolver to fail`);
-}
-
-function resolverEnv(overrides) {
-  return {
-    ...process.env,
-    GITHUB_EVENT_NAME: '',
-    GITHUB_OUTPUT: '',
-    GITHUB_REF_NAME: '',
-    GITHUB_REF_TYPE: '',
-    GITHUB_RUN_NUMBER: '',
-    GITHUB_SHA: '',
-    INPUT_CHANNEL: '',
-    INPUT_DRAFT: '',
-    INPUT_PRERELEASE: '',
-    INPUT_VERSION: '',
-    PR_NUMBER: '',
-    RELEASE_KNOWN_TAGS: '',
-    RELEASE_MODE: '',
-    ...overrides,
-  };
 }

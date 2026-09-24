@@ -1,4 +1,5 @@
 use autohand_squad_runtime::config::PartialSquadConfig;
+use autohand_squad_runtime::gui_bootstrap::{run_desktop_bootstrap, BootstrapOutcome};
 use autohand_squad_runtime::native_tray::run_native_tray;
 use autohand_squad_runtime::ui::{default_paths, describe_tray, run_tray_action, TrayAction};
 use clap::Parser;
@@ -91,19 +92,14 @@ fn run() -> anyhow::Result<()> {
             .as_deref()
             .is_some_and(is_desktop_ui_executable)
         {
+            // Installed desktop entry point: preflight, start services, wait
+            // for the web runtime handshake, then open the app. Failures are
+            // shown in a native dialog; the URL is never opened blind.
             let runtime = Runtime::new()?;
-            let output = runtime.block_on(run_tray_action(
-                paths.clone(),
-                overrides.clone(),
-                TrayAction::StartService,
-            ))?;
-            print!("{output}");
-            let output = runtime.block_on(run_tray_action(
-                paths.clone(),
-                overrides.clone(),
-                TrayAction::OpenSquad,
-            ))?;
-            print!("{output}");
+            match run_desktop_bootstrap(&runtime, &paths, &overrides)? {
+                BootstrapOutcome::Ready { url } => println!("Opened {url}"),
+                BootstrapOutcome::Quit => return Ok(()),
+            }
         }
         return run_native_tray(paths, overrides);
     }

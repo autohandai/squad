@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+
+import { onDesktopMenu } from "@/lib/desktop-menu";
+import { FirstRun } from "@/components/onboarding/FirstRun";
+import { JoinProposal } from "@/components/channels/JoinProposal";
+import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
+import { proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
 import { createRoot } from "react-dom/client";
 import {
   Bar,
@@ -17,6 +23,7 @@ import {
   Ban,
   BookOpen,
   Bot,
+  Cpu,
   Boxes,
   Brain,
   BrainCog,
@@ -104,6 +111,7 @@ import {
   CHANNEL_VISIBILITY_PRIVATE,
   CHANNEL_VISIBILITY_PUBLIC,
   brainCardFields,
+  birdAvatarForRole,
   builtInAvatarOptions,
   roleTemplates,
 } from "./data.js";
@@ -210,6 +218,34 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import "./styles.css";
+import { WorkspaceSidebar } from "@/components/shell/WorkspaceSidebar";
+import { SearchCommand } from "@/components/shell/SearchCommand";
+import { ChannelStream } from "@/components/channels/ChannelStream";
+import { MessageComposer } from "@/components/channels/MessageComposer";
+import { InboxPage } from "@/components/inbox/InboxPage";
+import { HarnessSelect } from "@/components/members/HarnessSelect";
+import { SignInGate } from "@/components/account/SignInGate";
+import { PromptTextarea } from "@/components/chat/PromptTextarea";
+import {
+  commandsForHarness,
+  composerTrigger,
+  expandSkillMentions,
+  helpText as composerHelpText,
+  insertTriggerText,
+  isShellPrompt,
+  shellCommandFrom,
+  slashCommandFrom,
+} from "@/lib/composer-syntax";
+import {
+  fetchHarnesses,
+  harnessForAgent,
+  harnessLabel,
+  normalizeHarnessAssignment as normalizeHarnessAssignmentCopy,
+  readinessFor,
+  readinessLabel,
+  readinessTone,
+  testHarness,
+} from "@/lib/harness";
 
 class RenderErrorBoundary extends React.Component {
   constructor(props) {
@@ -248,6 +284,9 @@ const STORAGE_KEYS = {
   channels: "autohandSquad.v1.channels",
   channelThreads: "autohandSquad.v1.channelThreads",
   channelMessages: "autohandSquad.v1.channelMessages",
+  channelReads: "autohandSquad.v1.channelReads",
+  agentReads: "autohandSquad.v1.agentReads",
+  channelReactions: "autohandSquad.v1.channelReactions",
   chatSettings: "autohandSquad.v1.chatSettings",
   locale: "autohandSquad.v1.locale",
   handoffSettings: "autohandSquad.v1.handoffSettings",
@@ -257,12 +296,30 @@ const STORAGE_KEYS = {
   onboarding: "autohandSquad.v1.onboarding",
   tasks: "autohandSquad.v1.tasks",
   theme: "autohandSquad.v1.theme",
+  inboxReadAt: "autohandSquad.v1.inboxReadAt",
+  channelProposals: "autohandSquad.v1.channelProposals",
 };
 
-const ACCOUNT_PROFILE = {
-  initials: "I",
-  name: "Igor Costa",
-};
+// Fallback identity before the bridge reports the signed-in account.
+const ACCOUNT_PROFILE = { initials: "", name: "You", email: "", avatar: "", signedIn: false };
+
+/** The account the bridge reports (shared with the Autohand CLI), shaped for the UI. */
+function accountProfileFor(account) {
+  const email = String(account?.email || "").trim();
+  const name = String(account?.name || "").trim() || (email ? email.split("@")[0] : "") || ACCOUNT_PROFILE.name;
+  const initials =
+    name
+      .split(/[\s._-]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0].toUpperCase())
+      .join("") || "?";
+  return { name, email, initials, avatar: String(account?.avatar || ""), signedIn: account?.signedIn === true };
+}
+
+// Account identity and account-level actions for the sidebar footer and menu,
+// so they do not travel through six layers of sidebar props.
+const AccountContext = createContext({ profile: ACCOUNT_PROFILE, signOut: null, signingOut: false, openFeedback: null });
 
 const SKILL_ALIASES = {
   "a11y-check": "web-design-guidelines",
@@ -997,6 +1054,73 @@ const THEME_PRESET_MAP = THEME_SURFACES.reduce((map, surface) => {
 const MISSION_CONTROL_ROUTE = "/mission-control";
 const SQUAD_DIRECTORY_ROUTE = "/squad";
 const CHANNELS_ROUTE = "/channels";
+const INBOX_ROUTE = "/inbox";
+const AGENTS_ROUTE = "/agents";
+const SEARCH_SHORTCUT_LABEL =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘K" : "Ctrl K";
+
+function inboxPath() {
+  return INBOX_ROUTE;
+}
+
+function sidebarActiveTarget(route, activeAgent) {
+  const [path, query = ""] = String(route || "").split("?");
+  if (path === INBOX_ROUTE) return { kind: "inbox", id: "" };
+  if (path === SQUAD_DIRECTORY_ROUTE || path === AGENTS_ROUTE) return { kind: "agents", id: "" };
+  if (path.startsWith(CHANNELS_ROUTE)) return { kind: "channel", id: channelIdFromRoute(route) };
+  if (path === "/conversations/new") {
+    const member = new URLSearchParams(query).get("member") || activeAgent?.id || "";
+    return member ? { kind: "member", id: member } : { kind: "", id: "" };
+  }
+  return { kind: "", id: "" };
+}
+
+// Attachments become prompt context: text-like files are inlined as fenced
+// blocks (bounded), anything else is referenced by name so the member knows
+// the user tried to share it.
+const ATTACHMENT_TEXT_LIMIT = 200 * 1024;
+const ATTACHMENT_TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-yaml|yaml|toml|x-sh))/;
+
+async function attachFilesToDraft(files, setDraft) {
+  const blocks = [];
+  for (const file of files.slice(0, 5)) {
+    const textLike = ATTACHMENT_TEXT_TYPES.test(file.type || "") || /\.(md|txt|json|ya?ml|toml|js|jsx|ts|tsx|mjs|cjs|css|html|py|rs|go|sh|log|csv)$/i.test(file.name);
+    if (textLike && file.size <= ATTACHMENT_TEXT_LIMIT) {
+      try {
+        const content = await file.text();
+        blocks.push(`\n\n<attachment name="${file.name}">\n${content}\n</attachment>`);
+        continue;
+      } catch {
+        // fall through to a reference-only attachment
+      }
+    }
+    blocks.push(`\n\n[attachment: ${file.name} (${Math.round(file.size / 1024)} KB, not inlined)]`);
+  }
+  if (blocks.length) setDraft((current) => `${current}${blocks.join("")}`.replace(/^\n+/, ""));
+}
+
+// localStorage can throw (quota, private mode, locked-down webviews). A failed
+// write must never unmount the app; the in-memory state stays authoritative.
+function persistLocal(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    if (!persistLocal.warned) {
+      persistLocal.warned = true;
+      console.warn(`Local storage write failed for ${key}: ${error?.message || error}`);
+    }
+  }
+}
+
+function activeAgentForReads(route, agents = []) {
+  const member = new URLSearchParams(String(route || "").split("?")[1] || "").get("member") || "";
+  return agents.find((agent) => agent.id === member) || agents[0] || null;
+}
+
+function messageTimestampMs(message) {
+  const value = Date.parse(message?.createdAt || message?.completedAt || message?.updatedAt || message?.startedAt || "");
+  return Number.isFinite(value) ? value : 0;
+}
 const CHANNEL_VISIBILITY_OPTIONS = [
   { id: CHANNEL_VISIBILITY_PUBLIC, icon: Globe2, labelKey: "channelPublic", detailKey: "channelPublicDetail" },
   { id: CHANNEL_VISIBILITY_PRIVATE, icon: Lock, labelKey: "channelPrivate", detailKey: "channelPrivateDetail" },
@@ -1783,6 +1907,7 @@ const MERGE_BLOCKED_TOOLS = new Set([
 ]);
 
 const MODEL_PROVIDER_OPTIONS = [
+  "autohandai",
   "openrouter",
   "openai",
   "llmgateway",
@@ -1795,6 +1920,7 @@ const MODEL_PROVIDER_OPTIONS = [
 ];
 
 const DEFAULT_PROVIDER_DEFINITIONS = [
+  { id: "autohandai", label: "Autohand AI", kind: "cloud", baseUrl: "", model: "auto", requiresApiKey: false, auth: "account" },
   { id: "openrouter", label: "OpenRouter", kind: "cloud", baseUrl: "https://openrouter.ai/api/v1", model: "openrouter/auto", requiresApiKey: true },
   { id: "openai", label: "OpenAI", kind: "cloud", baseUrl: "https://api.openai.com/v1", model: "gpt-5", requiresApiKey: true },
   { id: "ollama", label: "Ollama", kind: "local", baseUrl: "http://127.0.0.1:11434", model: "llama3.1", requiresApiKey: false },
@@ -1816,7 +1942,7 @@ function providerDefinition(settings, providerId) {
 
 function normalizeModelAssignment(assignment) {
   if (!assignment || typeof assignment !== "object" || assignment.mode !== "override") return { mode: "inherit" };
-  const provider = MODEL_PROVIDER_OPTIONS.includes(assignment.provider) ? assignment.provider : "openrouter";
+  const provider = MODEL_PROVIDER_OPTIONS.includes(assignment.provider) ? assignment.provider : "autohandai";
   return {
     mode: "override",
     provider,
@@ -1842,13 +1968,19 @@ function providerIsConfigured(settings, providerId) {
   const provider = settings?.providers?.[providerId];
   if (!provider?.enabled) return false;
   const definition = providerDefinition(settings, providerId);
-  if (definition?.requiresApiKey && !provider.apiKeyConfigured) return false;
+  // Account-backed providers (Autohand AI) are ready with a signed-in account
+  // or an API key; key-backed providers need the key.
+  if (definition?.auth === "account") {
+    if (!provider.apiKeyConfigured && !provider.accountReady) return false;
+  } else if (definition?.requiresApiKey && !provider.apiKeyConfigured) {
+    return false;
+  }
   return Boolean(provider.model);
 }
 
 function effectiveModelForAgent(agent, settings) {
   const assignment = modelAssignmentForAgent(agent);
-  const providerId = assignment.mode === "override" ? assignment.provider : settings?.defaultProvider || "openrouter";
+  const providerId = assignment.mode === "override" ? assignment.provider : settings?.defaultProvider || "autohandai";
   const provider = settings?.providers?.[providerId];
   const definition = providerDefinition(settings, providerId);
   return {
@@ -1872,10 +2004,11 @@ function defaultProviderSettings(reason = "") {
       definition.id,
       {
         id: definition.id,
-        enabled: definition.id === "openrouter",
+        enabled: definition.id === "autohandai",
         apiKey: "",
         apiKeyConfigured: false,
         requiresApiKey: definition.requiresApiKey,
+        auth: definition.auth || "api-key",
         label: definition.label,
         kind: definition.kind,
         baseUrl: definition.baseUrl || "",
@@ -1886,8 +2019,8 @@ function defaultProviderSettings(reason = "") {
     ])
   );
   return {
-    version: 1,
-    defaultProvider: "openrouter",
+    version: 2,
+    defaultProvider: "autohandai",
     definitions: DEFAULT_PROVIDER_DEFINITIONS,
     providers,
     updatedAt: "",
@@ -1918,6 +2051,7 @@ const MEMBER_SECTIONS = [
   { id: "task", label: "Tasks", icon: CalendarCheck2 },
   { id: "memory", label: "Memory", icon: BrainCog },
   { id: "model", label: "Model", icon: Brain },
+  { id: "harness", label: "Harness", icon: Cpu },
   { id: "skill", label: "Skill", icon: Sparkles },
   { id: "connector", label: "Connector", icon: Unplug },
   { id: "im", label: "IM", icon: MessageSquareText },
@@ -2300,8 +2434,8 @@ function createDefaultPermissionState() {
     sensitivePaths: [...DEFAULT_SENSITIVE_PATHS],
     workspaceOverrides: {},
     modelSecurity: {
-      provider: "openrouter",
-      model: "openrouter/auto",
+      provider: "autohandai",
+      model: "auto",
       thinkingLevel: "normal",
       toolChoice: "auto",
       requireNativeToolCalling: true,
@@ -2642,12 +2776,15 @@ function readHandoffSettings() {
 
 const DEFAULT_CHAT_SETTINGS = {
   displayCliOutput: false,
+  squadSuggestions: true,
 };
 
 function normalizeChatSettings(settings) {
   const source = settings && typeof settings === "object" ? settings : {};
   return {
     displayCliOutput: source.displayCliOutput === true,
+    // Squad recruiting (ADR-0015) is on unless explicitly switched off.
+    squadSuggestions: source.squadSuggestions !== false,
   };
 }
 
@@ -2950,6 +3087,9 @@ function normalizeAgentCopy(agent) {
     description: String(agent.description || ""),
     instructions: String(agent.instructions || ""),
     skills: normalizeSkillList(agent.skills),
+    avatar: /^\/avatars\/[a-z0-9-]+\.(jpg|jpeg|webp)$/i.test(String(agent.avatar || ""))
+      ? birdAvatarForRole(agent.employeeType, agent.role, agent.id)
+      : agent.avatar,
     skillSource: agent.skillSource || AUTOHAND_SKILLS_REGISTRY_URL,
     stats: agent.stats
       ? {
@@ -2962,6 +3102,7 @@ function normalizeAgentCopy(agent) {
       : { activeDays: 0, automations: 0, tasks: 0, projects: projects.length },
     permissions: normalizePermissionState(agent.permissions),
     modelAssignment: normalizeModelAssignment(agent.modelAssignment),
+    harness: normalizeHarnessAssignmentCopy(agent.harness),
     projects,
     brainCard,
     memory: Array.isArray(agent.memory) ? agent.memory.map((item) => String(item || "")) : agent.memory,
@@ -3191,6 +3332,7 @@ function normalizeChannelCopy(channel) {
     name: name.slice(0, 80),
     visibility: channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? CHANNEL_VISIBILITY_PRIVATE : CHANNEL_VISIBILITY_PUBLIC,
     memberIds,
+    projects: normalizeChannelProjects(channel.projects),
     creatorId: String(channel.creatorId || "").trim(),
     autoModeDefault: channel.autoModeDefault === true,
     createdAt,
@@ -4202,12 +4344,51 @@ function App() {
   const [loginRequestStatus, setLoginRequestStatus] = useState("");
   const [systemTheme, setSystemTheme] = useState(getSystemColorMode);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(
-    () => readLocalStorage(storageKeysFor("sidebarCollapsed")) !== "false"
+    () => readLocalStorage(storageKeysFor("sidebarCollapsed")) === "true"
   );
   const [localePreference, setLocalePreference] = useState(readLocalePreference);
   const [systemLanguages, setSystemLanguages] = useState(getNavigatorLanguages);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
+  const [harnesses, setHarnesses] = useState([]);
+  const [harnessesLoading, setHarnessesLoading] = useState(false);
+  // Update status from the daemon's GitHub Releases check.
+  const [updates, setUpdates] = useState(null);
+  const [updatesChecking, setUpdatesChecking] = useState(false);
+  async function refreshUpdates(refresh = false) {
+    setUpdatesChecking(true);
+    try {
+      const data = await api(`/api/updates${refresh ? "?refresh=1" : ""}`);
+      setUpdates(data);
+      return data;
+    } catch {
+      return null;
+    } finally {
+      setUpdatesChecking(false);
+    }
+  }
+  useEffect(() => {
+    void refreshUpdates(false);
+    const timer = window.setInterval(() => void refreshUpdates(false), 30 * 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [channelReads, setChannelReads] = useState(() => readStored(storageKeysFor("channelReads"), {}));
+  const [agentReads, setAgentReads] = useState(() => readStored(storageKeysFor("agentReads"), {}));
+  const [channelReactions, setChannelReactions] = useState(() => readStored(storageKeysFor("channelReactions"), {}));
+  // "Mark all read" acknowledges handoffs and memory proposals up to this
+  // moment; they stay listed in the inbox (they still need a decision) but
+  // stop counting in the badge.
+  const [inboxReadAt, setInboxReadAt] = useState(() => readStored(storageKeysFor("inboxReadAt"), ""));
+  const [createChannelRequest, setCreateChannelRequest] = useState(0);
+  // Squad recruiting (ADR-0015): folder profiles by path for this session and
+  // the user's decisions on proposals (accepted / dismissed), keyed by
+  // channel + member + project signature.
+  const [workspaceProfiles, setWorkspaceProfiles] = useState({});
+  const [channelProposals, setChannelProposals] = useState(() => readStored(storageKeysFor("channelProposals"), {}));
+  const workspaceProfileRequests = useRef(new Set());
+  const [signingOut, setSigningOut] = useState(false);
+  const channelViewMarkerRef = useRef({ channelId: "", lastReadAt: 0 });
   const localeResolution = useMemo(
     () => resolveLocalePreference(localePreference, systemLanguages),
     [localePreference, systemLanguages]
@@ -4234,22 +4415,18 @@ function App() {
   useEffect(() => {
     const path = route.split("?")[0];
     if (path === "/" || path === "") {
-      const accountReady = onboardingAccountReady(runtime);
-      const setupRequired = !accountReady || onboardingIsIncomplete(onboardingState);
-      const baseTarget = setupRequired ? ONBOARDING_ROUTE : SQUAD_DIRECTORY_ROUTE;
+      // The runtime fetch decides where "/" lands; redirecting before it
+      // resolves sent every signed-in user to onboarding.
+      if (!runtime) return;
+      // Signed-out users never get here (the SignInGate renders instead), so
+      // "/" only decides between first-run setup and the workspace.
+      const baseTarget = onboardingIsIncomplete(onboardingState) ? ONBOARDING_ROUTE : SQUAD_DIRECTORY_ROUTE;
       const target = baseTarget + (route.includes("?") ? `?${route.split("?")[1]}` : "");
       window.history.replaceState({}, "", target);
       setRoute(target);
     }
   }, [onboardingState, route, runtime]);
 
-  useEffect(() => {
-    if (!runtime) return;
-    const path = route.split("?")[0];
-    if (path === ONBOARDING_ROUTE || onboardingAccountReady(runtime)) return;
-    window.history.replaceState({}, "", ONBOARDING_ROUTE);
-    setRoute(ONBOARDING_ROUTE);
-  }, [route, runtime]);
 
   useEffect(() => {
     const onLanguageChange = () => setSystemLanguages(getNavigatorLanguages());
@@ -4341,32 +4518,89 @@ function App() {
   }, [localePreference, localeResolution.locale]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.agents, JSON.stringify(agents));
+    persistLocal(STORAGE_KEYS.agents, agents);
   }, [agents]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.automations, JSON.stringify(automations));
+    persistLocal(STORAGE_KEYS.automations, automations);
   }, [automations]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.tasks, JSON.stringify(tasks));
+    persistLocal(STORAGE_KEYS.tasks, tasks);
   }, [tasks]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.messages, JSON.stringify(messagesByAgent));
+    persistLocal(STORAGE_KEYS.messages, messagesByAgent);
   }, [messagesByAgent]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.channels, JSON.stringify(channels));
+    persistLocal(STORAGE_KEYS.channels, channels);
   }, [channels]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.channelThreads, JSON.stringify(channelThreads));
+    persistLocal(STORAGE_KEYS.channelThreads, channelThreads);
   }, [channelThreads]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.channelMessages, JSON.stringify(messagesByChannel));
+    persistLocal(STORAGE_KEYS.channelMessages, messagesByChannel);
   }, [messagesByChannel]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.channelReads, JSON.stringify(channelReads));
+      window.localStorage.setItem(STORAGE_KEYS.agentReads, JSON.stringify(agentReads));
+      window.localStorage.setItem(STORAGE_KEYS.channelReactions, JSON.stringify(channelReactions));
+      window.localStorage.setItem(STORAGE_KEYS.inboxReadAt, JSON.stringify(inboxReadAt));
+      window.localStorage.setItem(STORAGE_KEYS.channelProposals, JSON.stringify(channelProposals));
+    } catch {
+      // Ignore storage failures in private browsing or locked-down webviews.
+    }
+  }, [channelReads, agentReads, channelReactions, inboxReadAt, channelProposals]);
+
+  async function refreshHarnesses(refresh = false) {
+    setHarnessesLoading(true);
+    try {
+      setHarnesses(await fetchHarnesses(api, { refresh }));
+    } finally {
+      setHarnessesLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refreshHarnesses(false);
+  }, []);
+
+  // Unread bookkeeping: the channel you are looking at is always read; the
+  // NEW divider uses the read marker captured when the channel was opened.
+  useEffect(() => {
+    const path = route.split("?")[0];
+    const channelId = channelIdFromRoute(route);
+    if (!(path.startsWith(CHANNELS_ROUTE) && channelId)) return;
+    if (channelViewMarkerRef.current.channelId !== channelId) {
+      channelViewMarkerRef.current = { channelId, lastReadAt: Date.parse(channelReads[channelId] || "") || 0 };
+    }
+    const now = new Date().toISOString();
+    setChannelReads((current) => (current[channelId] === now ? current : { ...current, [channelId]: now }));
+  }, [route, messagesByChannel]);
+
+  useEffect(() => {
+    const target = sidebarActiveTarget(route, activeAgentForReads(route, agents));
+    if (target.kind !== "member" || !target.id) return;
+    const now = new Date().toISOString();
+    setAgentReads((current) => (current[target.id] === now ? current : { ...current, [target.id]: now }));
+  }, [route, messagesByAgent, agents]);
+
+  function toggleReaction(messageId, emoji) {
+    setChannelReactions((current) => {
+      const list = Array.isArray(current[messageId]) ? current[messageId] : [];
+      const existing = list.find((item) => item.emoji === emoji);
+      let next;
+      if (!existing) next = [...list, { emoji, count: 1, mine: true }];
+      else if (existing.mine) next = list.map((item) => (item.emoji === emoji ? { ...item, count: item.count - 1, mine: false } : item)).filter((item) => item.count > 0);
+      else next = list.map((item) => (item.emoji === emoji ? { ...item, count: item.count + 1, mine: true } : item));
+      return { ...current, [messageId]: next };
+    });
+  }
 
   // Mirror channel/thread state to the local bridge so the daemon can surface
   // the same channels.json in queue/run telemetry across reloads and restarts.
@@ -4396,11 +4630,27 @@ function App() {
   }, [memoryInbox, memoryInboxBridgeReady]);
 
   useEffect(() => {
+    registerMentionNames([
+      ...agents.flatMap((agent) => [
+        { name: agent.name, kind: "member", detail: agent.role || "" },
+        { name: mentionTokenForAgent(agent), kind: "member", detail: agent.role || "" },
+      ]),
+      ...channels.flatMap((channel) => normalizeChannelProjects(channel.projects).map((project) => ({ name: project.name, kind: "project", detail: project.path }))),
+    ]);
+  }, [agents, channels]);
+
+  const liveStatusRef = useRef({ agents, tasks, runs, automations, messagesByChannel, route });
+  liveStatusRef.current = { agents, tasks, runs, automations, messagesByChannel, route };
+
+  useEffect(() => {
+    // The payload is read from a ref so the 15 s cadence survives the run
+    // poller replacing `runs` every 1.8 s.
     const controller = new AbortController();
     const postStatusSnapshot = () => {
+      const snapshot = liveStatusRef.current;
       api("/api/status/snapshot", {
         method: "POST",
-        body: JSON.stringify(buildLiveStatusSnapshot({ agents, tasks, runs, automations, messagesByChannel, currentRoute: route })),
+        body: JSON.stringify(buildLiveStatusSnapshot({ ...snapshot, currentRoute: snapshot.route })),
         signal: controller.signal,
       }).catch(() => {
         // The tray can still fall back to daemon-owned queue and run records.
@@ -4414,7 +4664,7 @@ function App() {
       window.clearTimeout(timer);
       window.clearInterval(interval);
     };
-  }, [agents, automations, messagesByChannel, route, runs, tasks]);
+  }, []);
 
   useEffect(() => {
     if (!runtime?.workspaceRoot) return;
@@ -4450,8 +4700,13 @@ function App() {
       setRuntime(data);
       return data;
     } catch {
-      const fallback = { available: false, autohandPath: "", version: "" };
-      setRuntime(fallback);
+      // Keep the last known account so a bridge restart does not eject the
+      // user to onboarding; only runtime availability is reset.
+      let fallback = { available: false, autohandPath: "", version: "" };
+      setRuntime((current) => {
+        fallback = { ...(current || {}), ...fallback, bridgeUnavailable: true };
+        return fallback;
+      });
       return fallback;
     }
   }
@@ -4754,11 +5009,130 @@ function App() {
     const params = new URLSearchParams(route.split("?")[1] || "");
     return normalizeSquadWorkspacePath(params.get("workspace") || "", runtime);
   }, [route, runtime]);
+  // A drafted first message (onboarding) travels as ?prompt= and is adopted
+  // into the conversation's draft once.
+  const requestedPrompt = useMemo(() => {
+    const params = new URLSearchParams(route.split("?")[1] || "");
+    return String(params.get("prompt") || "");
+  }, [route]);
   const settingsSection = useMemo(() => {
     const params = new URLSearchParams(route.split("?")[1] || "");
     const section = params.get("section") || "";
     return ["appearance", "language", "providers", "chat", "handoff", "runtime"].includes(section) ? section : "";
   }, [route]);
+
+  const unreadChannelIds = useMemo(() => {
+    const set = new Set();
+    for (const channel of channels) {
+      const last = Date.parse(channelReads[channel.id] || "") || 0;
+      const list = Array.isArray(messagesByChannel[channel.id]) ? messagesByChannel[channel.id] : [];
+      if (list.some((message) => message.role !== "user" && message.status !== "loading" && messageTimestampMs(message) > last)) {
+        set.add(channel.id);
+      }
+    }
+    return set;
+  }, [channels, channelReads, messagesByChannel]);
+
+  const unreadCountByAgent = useMemo(() => {
+    const map = new Map();
+    for (const agent of agents) {
+      const last = Date.parse(agentReads[agent.id] || "") || 0;
+      const list = Array.isArray(messagesByAgent[agent.id]) ? messagesByAgent[agent.id] : [];
+      const count = list.filter((message) => message.role === "agent" && message.status !== "loading" && messageTimestampMs(message) > last).length;
+      if (count) map.set(agent.id, count);
+    }
+    return map;
+  }, [agents, agentReads, messagesByAgent]);
+
+  const inboxHandoffs = useMemo(
+    () =>
+      tasks.flatMap((task) => {
+        const handoff = latestPendingHandoff(task);
+        return handoff
+          ? [{ id: `${task.id}-${handoff.id}`, task, title: task.title || "Handoff", detail: handoff.reason || handoff.expectedOutput || "", at: handoff.createdAt || task.updatedAt || "" }]
+          : [];
+      }),
+    [tasks]
+  );
+  const inboxMemory = useMemo(
+    () =>
+      memoryInbox
+        .filter((item) => item?.status === "pending")
+        .map((item) => ({ id: item.id, item, title: item.projectLabel || item.scope || "Memory proposal", detail: item.content || "", at: item.updatedAt || item.createdAt || "" })),
+    [memoryInbox]
+  );
+  const inboxUnreadChannels = useMemo(
+    () =>
+      channels
+        .filter((channel) => unreadChannelIds.has(channel.id))
+        .map((channel) => {
+          const list = Array.isArray(messagesByChannel[channel.id]) ? messagesByChannel[channel.id] : [];
+          const latest = [...list].reverse().find((message) => message.role !== "user" && message.body);
+          return { channel, preview: String(latest?.body || "").slice(0, 160), latestAt: latest?.createdAt || latest?.updatedAt || "" };
+        }),
+    [channels, unreadChannelIds, messagesByChannel]
+  );
+  const inboxReadMs = Date.parse(inboxReadAt || "") || 0;
+  const inboxNewItems = (items) => items.filter((item) => (Date.parse(item.at || "") || 0) >= inboxReadMs).length;
+  const inboxCount = inboxUnreadChannels.length + inboxNewItems(inboxHandoffs) + inboxNewItems(inboxMemory);
+
+  const accountProfile = useMemo(() => accountProfileFor(runtime?.account), [runtime?.account]);
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await api("/api/account/logout", { method: "POST" });
+    } catch (error) {
+      console.error("sign out failed", error);
+    } finally {
+      await refreshRuntime();
+      setSigningOut(false);
+    }
+  }
+  const accountContextValue = useMemo(
+    () => ({ profile: accountProfile, signOut, signingOut, openFeedback }),
+    // signOut / openFeedback are stable closures over state setters and route.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [accountProfile, signingOut, route]
+  );
+
+  // Native menu bar (desktop shell): File › New › Agent / Channel, View › ….
+  const desktopMenuRef = useRef(null);
+  desktopMenuRef.current = (action) => {
+    switch (action) {
+      case "new-agent":
+        navigate(`${MEMBER_ROUTE_PREFIX}/new`);
+        break;
+      case "new-channel":
+        navigate(CHANNELS_ROUTE);
+        setCreateChannelRequest((count) => count + 1);
+        break;
+      case "inbox":
+        navigate(INBOX_ROUTE);
+        break;
+      case "agents":
+        navigate(SQUAD_DIRECTORY_ROUTE);
+        break;
+      case "channels":
+        navigate(CHANNELS_ROUTE);
+        break;
+      case "mission-control":
+        navigate(missionControlPath());
+        break;
+      case "settings":
+        openSettings();
+        break;
+      case "search":
+        setSearchOpen(true);
+        break;
+      case "toggle-sidebar":
+        setDesktopSidebarCollapsed((current) => !current);
+        break;
+      default:
+        break;
+    }
+  };
+  useEffect(() => onDesktopMenu((action) => desktopMenuRef.current?.(action)), []);
 
   function navigate(path) {
     window.history.pushState({}, "", path);
@@ -4803,6 +5177,51 @@ function App() {
     setLoginRequestStatus("Status refreshed.");
   }
 
+  const loadWorkspaceProfile = useCallback(async (path) => {
+    if (!path || workspaceProfileRequests.current.has(path)) return null;
+    workspaceProfileRequests.current.add(path);
+    try {
+      const profile = await api("/api/workspaces/profile", { method: "POST", body: JSON.stringify({ path }) });
+      setWorkspaceProfiles((current) => ({ ...current, [path]: profile || { error: true, needs: [] } }));
+      return profile;
+    } catch {
+      // Unreadable folder: remember that so the channel does not retry every render.
+      setWorkspaceProfiles((current) => ({ ...current, [path]: { error: true, needs: [] } }));
+      return null;
+    } finally {
+      workspaceProfileRequests.current.delete(path);
+    }
+  }, []);
+
+  function resolveChannelProposal(key, status) {
+    setChannelProposals((current) => ({ ...current, [key]: { status, at: new Date().toISOString() } }));
+  }
+
+  // First run ends in a conversation (ADR-0013): create the teammate from the
+  // chosen template on the chosen folder and open the chat with the drafted
+  // first message.
+  async function startFirstConversation({ template, name, folder, prompt }) {
+    const workspace = normalizeSquadWorkspacePath(folder || fallbackWorkspace, runtime);
+    updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete", selectedWorkspace: workspace, memberReady: true });
+    await createAgent(
+      {
+        employeeType: template.id,
+        name,
+        role: template.title,
+        workspace,
+        description: template.description || "",
+        instructions: template.starter || "",
+        skills: normalizeSkillList(template.skills),
+        skillSource: template.skillSource || AUTOHAND_SKILLS_REGISTRY_URL,
+        avatar: birdAvatarForRole(template.id, template.title, name),
+        profileFiles: normalizeProfileFiles(template.profileFiles),
+        brainCard: normalizeBrainCard(template.brainCard, template),
+        harness: normalizeHarnessAssignmentCopy(null),
+      },
+      { prompt }
+    );
+  }
+
   function finishOnboarding() {
     updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete" });
     const target = routeWithParams(memberChatPath(activeAgent?.id), {
@@ -4843,6 +5262,13 @@ function App() {
     const normalized = normalizeSquadMemberId(agentId);
     if (!normalized) return;
     setAgents((current) => current.filter((agent) => normalizeSquadMemberId(agent.id) !== normalized));
+    setChannels((current) =>
+      current.map((channel) =>
+        Array.isArray(channel.memberIds) && channel.memberIds.includes(agentId)
+          ? { ...channel, memberIds: channel.memberIds.filter((id) => id !== agentId), updatedAt: new Date().toISOString() }
+          : channel
+      )
+    );
     setMessagesByAgent((current) => {
       const next = { ...current };
       delete next[agentId];
@@ -4986,12 +5412,93 @@ function App() {
     const agent = agents.find((item) => item.id === agentId) || activeAgent;
     if (!agent) return;
     const timestamp = new Date().toISOString();
+    // Drop the warm CLI session so the next message starts a clean context.
+    api("/api/chat/reset", { method: "POST", body: JSON.stringify({ agentId: agent.id }) }).catch(() => {});
     setMessagesByAgent((current) => ({
       ...current,
       [agent.id]: initialMessages(agent.name),
     }));
     updateAgent(agent.id, { lastConversationAt: timestamp, updatedAt: timestamp });
     navigate(memberChatPath(agent.id));
+  }
+
+  // A member's reply can delegate to teammates by @mentioning them; each
+  // mention becomes a handoff whose receiver starts immediately, bounded by
+  // hop count so two members cannot ping-pong.
+  function delegateFromReply(agent, replyText, { workspace, hop = 0, launch = {} } = {}) {
+    if (hop >= DM_DELEGATION_MAX_HOPS) return;
+    const targets = mentionedSquadMembers(replyText, agents, agent.id).filter(
+      (target) => target.id !== launch?.collaboration?.sourceAgentId && target.status !== "offline"
+    );
+    for (const target of targets.slice(0, 3)) {
+      const handoffResult = createHandoff(
+        { type: "chat-mention", sourceAgentId: agent.id, workspace, autoAccept: true },
+        {
+          targetAgentId: target.id,
+          title: `Delegated by ${agent.name}`,
+          reason: `${agent.name} asked for ${target.role || "help"}`,
+          requiredContext: replyText.slice(0, 4000),
+          expectedOutput: "Do the part that belongs to your role and report the result back so it can be brought to the user.",
+          sourceEvidence: workspace ? workspaceLabel(workspace, workspaces) : "",
+        }
+      );
+      if (!handoffResult?.targetAgentId) continue;
+      const receiverPrompt = buildCollaborationRecipientPrompt(handoffResult, replyText, workspaces);
+      void Promise.resolve(
+        sendChat(target.id, {
+          prompt: receiverPrompt,
+          workspace: handoffResult.workspace || workspace,
+          hop: hop + 1,
+          collaboration: {
+            role: "receiver",
+            sourceAgentId: agent.id,
+            targetAgentId: target.id,
+            task: handoffResult.task || null,
+            handoff: handoffResult.handoff || null,
+            workspace: handoffResult.workspace || workspace,
+            originalPrompt: replyText,
+          },
+        })
+      )
+        .then((result) => recordCollaborationResult(handoffResult, result || {}))
+        .catch((error) => recordCollaborationResult(handoffResult, { error: error?.message || "Receiving member could not complete the delegation." }));
+    }
+  }
+
+  // `SQUAD_ACTION` lines: today only create_channel. The user is always a
+  // member; the purpose is posted as the channel's first prompt.
+  function applySquadActions(agent, actions = [], { workspace } = {}) {
+    for (const action of actions) {
+      if (action?.type !== "create_channel") continue;
+      const name = String(action.name || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+      if (!name) continue;
+      const wanted = Array.isArray(action.members) ? action.members.map((item) => String(item || "").replace(/^@/, "").toLowerCase()) : [];
+      const memberIds = Array.from(
+        new Set([
+          agent.id,
+          ...agents.filter((item) => wanted.includes(String(item.name || "").toLowerCase()) || wanted.includes(mentionTokenForAgent(item).toLowerCase())).map((item) => item.id),
+        ])
+      );
+      const existing = channels.find((item) => item.name === name);
+      const channel = existing || createChannel({ name, visibility: CHANNEL_VISIBILITY_PUBLIC, memberIds, projects: workspace ? [{ name: basenameOf(workspace), path: workspace }] : [] }, { navigateTo: false, creatorId: agent.id });
+      if (!channel) continue;
+      const others = memberIds.filter((id) => id !== agent.id).map((id) => agents.find((item) => item.id === id)?.name).filter(Boolean);
+      appendMessage(agent.id, {
+        id: `channel-note-${Date.now().toString(36)}`,
+        role: "agent",
+        authorName: "Squad",
+        body: `${agent.name} ${existing ? "is using" : "created"} #${channel.name}${others.length ? ` with ${others.join(", ")}` : ""} and invited you. [Open #${channel.name}](${channelsPath(channel.id)})`,
+        time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
+        status: "complete",
+        local: true,
+      });
+      const purpose = String(action.purpose || "").trim();
+      if (purpose && !existing) {
+        window.setTimeout(() => {
+          void sendChannelPrompt(channel.id, { prompt: `${agent.name} opened this channel: ${purpose}` });
+        }, 50);
+      }
+    }
   }
 
   async function sendChat(agentId, launch) {
@@ -5006,7 +5513,8 @@ function App() {
 
     const id = `chat-${Date.now().toString(36)}`;
     const collaborationContext = buildCollaborationProfileContext(launch.collaboration, agents, workspaces);
-    const profile = [buildAgentProfile(agent, selectedWorkspace), collaborationContext].filter(Boolean).join("\n\n");
+    const teamContext = buildTeammateContext(agent, agents, { tasks, runs, messagesByChannel, hop: Number(launch.hop) || 0 });
+    const profile = [buildAgentProfile(agent, selectedWorkspace), teamContext, collaborationContext].filter(Boolean).join("\n\n");
     touchAgent(agentId, startedAt);
     appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time });
     appendMessage(agentId, {
@@ -5087,6 +5595,8 @@ function App() {
               transport: data.transport || "",
               effectiveModel: data.effectiveModel,
             };
+            const parsedActions = parseSquadActions(finalResult.reply);
+            if (parsedActions.actions.length) finalResult.reply = parsedActions.text || finalResult.reply;
             updateMessage(agentId, `${id}-a`, {
               body: finalResult.reply,
               trace: finalResult.trace,
@@ -5101,6 +5611,10 @@ function App() {
               effectiveModel: finalResult.effectiveModel,
               activityLabel: "",
             });
+            window.setTimeout(() => {
+              applySquadActions(agent, parsedActions.actions, { workspace: finalResult.workspace || selectedWorkspace });
+              delegateFromReply(agent, finalResult.reply, { workspace: finalResult.workspace || selectedWorkspace, hop: Number(launch.hop) || 0, launch });
+            }, 0);
             return;
           }
 
@@ -5178,21 +5692,23 @@ function App() {
     }));
   }
 
-  function createChannel(draft) {
+  function createChannel(draft, { navigateTo = true, creatorId = "user" } = {}) {
     const timestamp = new Date().toISOString();
     const channel = normalizeChannelCopy({
       id: `channel_${Date.now().toString(36)}`,
       name: draft.name,
       visibility: draft.visibility,
       memberIds: draft.memberIds,
-      creatorId: "user",
+      projects: draft.projects,
+      creatorId,
       autoModeDefault: draft.autoModeDefault === true,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    if (!channel) return;
+    if (!channel) return null;
     setChannels((current) => [...current, channel]);
-    navigate(channelsPath(channel.id));
+    if (navigateTo) navigate(channelsPath(channel.id));
+    return channel;
   }
 
   function updateChannel(channelId, patch) {
@@ -5246,12 +5762,19 @@ function App() {
   async function dispatchChannelMemberReply(
     channel,
     agent,
-    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "" }
+    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null }
   ) {
     const now = new Date();
     const startedAt = now.toISOString();
     const time = now.toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" });
-    const selectedWorkspace = normalizeSquadWorkspacePath(agent.workspace || fallbackWorkspace, runtime);
+    const channelProjects = normalizeChannelProjects(channel.projects);
+    const mentionedProjects = mentionedChannelProjects(prompt, channel);
+    // A single mentioned project becomes the working folder for this reply;
+    // every channel project is available as an extra directory.
+    const selectedWorkspace = normalizeSquadWorkspacePath(
+      mentionedProjects.length === 1 ? mentionedProjects[0].path : agent.workspace || channelProjects[0]?.path || fallbackWorkspace,
+      runtime
+    );
     const messageId = `${threadId}-${agent.id}-${Date.now().toString(36)}`;
     appendChannelMessage(channel.id, {
       id: messageId,
@@ -5269,12 +5792,14 @@ function App() {
       workspace: selectedWorkspace,
       startedAt,
       updatedAt: startedAt,
-      activityLabel: `Replying in #${channel.name}`,
+      activityLabel: relayFrom ? `Replying to ${relayFrom.name} in #${channel.name}` : `Replying in #${channel.name}`,
+      hop,
+      relayFromAgentId: relayFrom?.id || "",
     });
 
     const profile = [
       buildAgentProfile(agent, selectedWorkspace),
-      buildChannelProfileContext(channel, agent, agents, { autoMode, selfJudge, threadId, targetMemberIds, targetLabel }),
+      buildChannelProfileContext(channel, agent, agents, { autoMode, selfJudge, threadId, targetMemberIds, targetLabel, hop, relayFrom }),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -5287,7 +5812,7 @@ function App() {
       transport: "cli",
       timeoutMs: 300000,
       profile,
-      agent: agentLaunchPayload(agent, selectedWorkspace),
+      agent: withChannelProjects(agentLaunchPayload(agent, selectedWorkspace), channelProjects),
       channelId: channel.id,
       threadId,
       parentMessageId,
@@ -5318,6 +5843,7 @@ function App() {
     let streamedAnswer = "";
     let streamError = null;
     let completed = false;
+    let finalReplyText = "";
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 305000);
     try {
@@ -5356,6 +5882,7 @@ function App() {
             completed = true;
             const completedAt = new Date().toISOString();
             const replyText = humanReadableReplyText(data.reply || streamedAnswer, data.trace, `${agent.name} returned no chat text.`);
+            finalReplyText = replyText;
             updateChannelMessage(channel.id, messageId, {
               body: replyText || `${agent.name} returned no chat text.`,
               status: "complete",
@@ -5426,6 +5953,34 @@ function App() {
       });
     } finally {
       window.clearTimeout(timeout);
+    }
+
+    // Agents talk to each other: when a reply @mentions other channel members,
+    // they answer in the same thread with the reply as context. Hops are
+    // capped so two members cannot ping-pong forever, and a member never
+    // relays to itself.
+    if (finalReplyText && hop < CHANNEL_RELAY_MAX_HOPS) {
+      const mentioned = resolveChannelMentionTargets(finalReplyText, channel, agents);
+      const recipients = mentioned.hasMentions
+        ? mentioned.targetAgents.filter((member) => member.id !== agent.id && member.id !== relayFrom?.id)
+        : [];
+      if (recipients.length) {
+        await Promise.allSettled(
+          recipients.map((member) =>
+            dispatchChannelMemberReply(channel, member, {
+              prompt: buildRelayPrompt(agent, member, finalReplyText, channel),
+              threadId,
+              parentMessageId,
+              autoMode,
+              selfJudge,
+              targetMemberIds: [member.id],
+              targetLabel: "",
+              hop: hop + 1,
+              relayFrom: agent,
+            })
+          )
+        );
+      }
     }
   }
 
@@ -5549,7 +6104,7 @@ function App() {
     );
   }
 
-  async function createAgent(draft) {
+  async function createAgent(draft, options = {}) {
     const id = createSquadMemberId();
     const timestamp = new Date().toISOString();
     const skills = normalizeSkillList(draft.skills);
@@ -5557,6 +6112,7 @@ function App() {
     const projects = normalizeAgentProjects([{ path: workspace, addedAt: timestamp }], "", workspaces, configuredProjectLimit(runtime));
     const baseAgent = {
       id,
+      harness: normalizeHarnessAssignmentCopy(draft.harness),
       staffId: `member-${String(agents.length + 1).padStart(3, "0")}`,
       name: draft.name.trim(),
       role: draft.role,
@@ -5591,7 +6147,7 @@ function App() {
     };
     setAgents((current) => [...current, agent]);
     setMessagesByAgent((current) => ({ ...current, [id]: initialMessages(agent.name) }));
-    navigate(memberChatPath(id));
+    navigate(routeWithParams(memberChatPath(id), { prompt: options.prompt || null }));
 
     try {
       const provision = await api("/api/agents/provision", {
@@ -6042,7 +6598,7 @@ function App() {
       id: `${handoffId}-received`,
       role: "agent",
       body: autoAccept
-        ? `Got it. I picked this up from ${sourceAgent?.name || "the source member"}.\n\n${handoffContextText(handoff, nextTask, sourceAgent, targetAgent)}`
+        ? `Picked up from ${sourceAgent?.name || "the source member"}: ${String(handoff.requiredContext || nextTask.title || "").trim().slice(0, 240)}${nextTask?.title ? `\n\nParent task: ${nextTask.title}` : ""}`
         : handoffContextText(handoff, nextTask, sourceAgent, targetAgent),
       time,
       status: "handoff",
@@ -6051,14 +6607,13 @@ function App() {
       id: `${handoffId}-sent`,
       role: "agent",
       body: autoAccept
-        ? `Got it. I’m talking to ${targetAgent.name} now and keeping this in parent task ${compactRecordId(nextTask.id)}.`
+        ? `Asked ${targetAgent.name} to pick this up. Their answer will appear here when it is ready.`
         : `Handoff queued for ${targetAgent.name}. Parent task stays as ${compactRecordId(nextTask.id)}; ${targetAgent.name} is now the current owner.`,
       time,
       status: "handoff",
     });
     touchAgent(targetAgentId, timestamp);
     touchAgent(sourceAgentId, timestamp);
-    setTaskPanelOpen(true);
     return {
       task: nextTask,
       handoff,
@@ -6331,7 +6886,8 @@ function App() {
   const isCreate = isCreateMemberRoute(route);
   const isExtensions = routePath.startsWith("/extensions");
   const isMissionControl = routePath === MISSION_CONTROL_ROUTE;
-  const isSquadDirectory = routePath === SQUAD_DIRECTORY_ROUTE;
+  const isSquadDirectory = routePath === SQUAD_DIRECTORY_ROUTE || routePath === AGENTS_ROUTE;
+  const isInbox = routePath === INBOX_ROUTE;
   const isChannels = routePath === CHANNELS_ROUTE || routePath.startsWith(`${CHANNELS_ROUTE}/`);
   const isOnboarding = routePath === ONBOARDING_ROUTE;
   const isAnalytics = routePath === "/usage" || routePath.startsWith("/settings/analytics");
@@ -6339,11 +6895,28 @@ function App() {
   const feedbackKind = feedbackKindFromRoute(route);
   const aboutOpen = aboutOpenFromRoute(route);
 
+  // Account gate: the squad runs on the user's Autohand account, so the
+  // workspace opens only for a signed-in account. Until the runtime has
+  // answered once nothing is decided; a bridge that is down keeps the last
+  // known account (see refreshRuntime).
+  if (runtime && !runtime.account?.signedIn) {
+    return (
+      <SignInGate
+        account={runtime.account}
+        bridgeUnavailable={runtime.bridgeUnavailable === true}
+        startLogin={() => api("/api/harnesses/login", { method: "POST", body: JSON.stringify({ id: "autohand" }) })}
+        loginStatus={() => api("/api/harnesses/login?id=autohand")}
+        refreshAccount={refreshRuntime}
+      />
+    );
+  }
+
   return (
+    <AccountContext.Provider value={accountContextValue}>
     <TooltipProvider>
-      <div className="relative min-h-screen overflow-x-clip bg-background text-foreground">
-        <div className={cn("dark-grid pointer-events-none fixed inset-0 opacity-35", isCreate && "hidden")} />
-        <div className="pointer-events-none fixed inset-x-0 top-0 h-px signal-line" />
+      <div className="app-shell-root relative min-h-screen overflow-x-clip bg-background text-foreground">
+        <div className={cn("app-shell-decor dark-grid pointer-events-none fixed inset-0 opacity-35", isCreate && "hidden")} />
+        <div className="app-shell-decor pointer-events-none fixed inset-x-0 top-0 h-px signal-line" />
         <div
           className={cn(
             "relative grid min-h-screen transition-[grid-template-columns] duration-200 ease-out",
@@ -6351,6 +6924,7 @@ function App() {
           )}
         >
           <DesktopSidebar
+            updateAvailable={updates?.snapshot?.updateAvailable === true}
             agents={agents}
             activeAgent={activeAgent}
             collapsed={desktopSidebarCollapsed}
@@ -6373,9 +6947,14 @@ function App() {
             onOnboarding={openOnboarding}
             onAnalytics={openAnalytics}
             onCreateChannel={createChannel}
+            createChannelRequest={createChannelRequest}
+            unreadChannelIds={unreadChannelIds}
+            unreadCountByAgent={unreadCountByAgent}
+            inboxCount={inboxCount}
+            onSearch={() => setSearchOpen(true)}
             onCollapsedChange={setDesktopSidebarCollapsed}
           />
-          <main className="min-w-0">
+          <main className="app-main min-w-0">
             <MobileTopbar
               activeAgent={activeAgent}
               theme={theme}
@@ -6387,26 +6966,58 @@ function App() {
               onAnalytics={openAnalytics}
             />
             {isOnboarding ? (
-              <OnboardingPage
+              <FirstRun
                 runtime={runtime}
-                providerSettings={providerSettings}
-                providerSettingsError={providerSettingsError}
                 workspaces={workspaces}
-                agents={agents}
-                activeAgent={activeAgent}
+                roleTemplates={roleTemplates}
                 fallbackWorkspace={fallbackWorkspace}
-                requestedWorkspace={requestedWorkspace}
                 onboardingState={onboardingState}
-                loginRequestStatus={loginRequestStatus}
-                navigate={navigate}
                 updateOnboardingState={updateOnboardingState}
+                api={api}
+                loginRequestStatus={loginRequestStatus}
                 onRequestLogin={requestAccountLogin}
                 onRefreshAccount={refreshAccountStatus}
-                onFinish={finishOnboarding}
+                providerReady={onboardingProviderReady(providerSettings)}
+                onOpenProviders={() => navigate("/settings?section=providers")}
+                avatarFor={(template, name, className) => (
+                  <AgentAvatar agent={{ name, role: template.title, employeeType: template.id, avatar: birdAvatarForRole(template.id, template.title, name) }} className={className} />
+                )}
+                renderTemplateAvatar={(template, className) => (
+                  <AgentAvatar agent={{ name: template.title, role: template.title, employeeType: template.id, avatar: birdAvatarForRole(template.id, template.title, template.id) }} className={className} />
+                )}
+                onCreateSomeoneElse={(folder) => {
+                  updateOnboardingState({ lastStep: "member", selectedWorkspace: folder });
+                  navigate(routeWithParams(`${MEMBER_ROUTE_PREFIX}/new`, { workspace: folder || null }));
+                }}
+                onStart={startFirstConversation}
                 onSkip={skipOnboarding}
+                brand={
+                  <>
+                    <BrandMark theme="dark" className="size-9 dark:hidden" />
+                    <BrandMark theme="light" className="hidden size-9 dark:block" />
+                  </>
+                }
               />
             ) : isAnalytics ? (
               <SettingsAnalyticsPage locale={localeResolution.locale} copy={localeCopy} />
+            ) : isInbox ? (
+              <InboxPage
+                unreadChannels={inboxUnreadChannels}
+                handoffs={inboxHandoffs}
+                memoryProposals={inboxMemory}
+                copy={localeCopy}
+                timeLabel={(value) => (value ? formatRelativeTime(value, localeResolution.locale) : "")}
+                navigate={{
+                  channel: (channelId) => navigate(channelsPath(channelId)),
+                  task: (item) => navigate(missionControlPath()),
+                  memory: (item) => navigate(memberProfilePath(item.item?.ownerAgentId || item.item?.agentId || agents[0]?.id, "memory")),
+                }}
+                onMarkAllRead={() => {
+                  const now = new Date().toISOString();
+                  setChannelReads((current) => ({ ...current, ...Object.fromEntries(channels.map((channel) => [channel.id, now])) }));
+                  setInboxReadAt(now);
+                }}
+              />
             ) : isSquadDirectory ? (
               <SquadDirectoryPage
                 agents={agents}
@@ -6427,6 +7038,8 @@ function App() {
                 channelThreads={channelThreads}
                 messagesByChannel={messagesByChannel}
                 agents={agents}
+                runtime={runtime}
+                workspaces={workspaces}
                 activeChannelId={channelIdFromRoute(route)}
                 locale={localeResolution.locale}
                 copy={localeCopy}
@@ -6435,8 +7048,16 @@ function App() {
                 onUpdateChannel={updateChannel}
                 onDeleteChannel={deleteChannel}
                 onToggleMember={toggleChannelMember}
+                chatSettings={chatSettings}
+                workspaceProfiles={workspaceProfiles}
+                onLoadWorkspaceProfile={loadWorkspaceProfile}
+                channelProposals={channelProposals}
+                onResolveProposal={resolveChannelProposal}
                 onDispatch={sendChannelPrompt}
                 onFollowUp={sendThreadFollowUp}
+                reactionsByMessage={channelReactions}
+                onReact={toggleReaction}
+                lastReadAt={channelViewMarkerRef.current.channelId === channelIdFromRoute(route) ? channelViewMarkerRef.current.lastReadAt : 0}
               />
             ) : isMissionControl ? (
               <MissionControlPage
@@ -6457,6 +7078,9 @@ function App() {
               />
             ) : isSettings ? (
               <SettingsPage
+                updates={updates}
+                updatesChecking={updatesChecking}
+                onCheckUpdates={() => refreshUpdates(true)}
                 themePreference={themePreference}
                 setThemePreference={setThemePreference}
                 handoffSettings={handoffSettings}
@@ -6483,6 +7107,9 @@ function App() {
                 onCancel={() => navigate("/conversations/new")}
                 defaultWorkspace={requestedWorkspace || fallbackWorkspace}
                 workspaceRoot={runtime?.workspaceRoot}
+                harnesses={harnesses}
+                harnessesLoading={harnessesLoading}
+                onRefreshHarnesses={() => refreshHarnesses(true)}
               />
             ) : isProfile ? (
               <SquadMemberPage
@@ -6510,6 +7137,9 @@ function App() {
                 updateAgent={updateAgent}
                 startAutohand={startAutohand}
                 runAutomation={runAutomation}
+                harnesses={harnesses}
+                harnessesLoading={harnessesLoading}
+                onRefreshHarnesses={() => refreshHarnesses(true)}
               />
             ) : isExtensions ? (
               <Extensions runtime={runtime} runs={runs} />
@@ -6527,7 +7157,11 @@ function App() {
                 copy={localeCopy}
                 onStart={startAutohand}
                 onChat={sendChat}
+                onLocalMessage={appendMessage}
                 onNewConversation={startNewConversation}
+                harnesses={harnesses}
+                harnessesLoading={harnessesLoading}
+                onRefreshHarnesses={() => refreshHarnesses(true)}
                 openTerminal={openTerminal}
                 navigate={navigate}
                 taskPanelOpen={taskPanelOpen}
@@ -6538,6 +7172,12 @@ function App() {
                 runAutomation={runAutomation}
                 updateAgent={updateAgent}
                 requestedWorkspace={requestedWorkspace}
+                initialPrompt={requestedPrompt}
+                onInitialPromptConsumed={() => {
+                  const next = routeWithParams(route, { prompt: null });
+                  window.history.replaceState({}, "", next);
+                  setRoute(next);
+                }}
                 chatSettings={chatSettings}
                 handoffRetryMode={resolveHandoffRetryMode(handoffSettings, runtime)}
                 onCreateHandoff={createHandoff}
@@ -6549,13 +7189,6 @@ function App() {
             )}
           </main>
         </div>
-
-        {!feedbackKind && !aboutOpen ? (
-          <FloatingFeedbackButton
-            onReportBug={() => openFeedback("bug")}
-            onGiveFeedback={() => openFeedback("feedback")}
-          />
-        ) : null}
 
         <AboutDialog
           open={aboutOpen}
@@ -6575,6 +7208,24 @@ function App() {
           }}
         />
 
+        <SearchCommand
+          open={searchOpen}
+          onOpenChange={setSearchOpen}
+          agents={agents}
+          channels={channels}
+          messagesByChannel={messagesByChannel}
+          messagesByAgent={messagesByAgent}
+          copy={localeCopy}
+          onNavigate={{
+            inbox: () => navigate(inboxPath()),
+            agents: () => navigate(squadDirectoryPath()),
+            missionControl: () => navigate(missionControlPath()),
+            settings: () => openSettings(),
+            channel: (channelId) => navigate(channelsPath(channelId)),
+            member: (memberId) => navigate(memberChatPath(memberId)),
+          }}
+        />
+
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
           <SheetContent side="left" className="w-[310px] border-border/80 p-0 sm:max-w-[310px]">
             <SheetHeader className="sr-only">
@@ -6582,6 +7233,7 @@ function App() {
               <SheetDescription>Autohand Squad navigation</SheetDescription>
             </SheetHeader>
             <SidebarContent
+              updateAvailable={updates?.snapshot?.updateAvailable === true}
               agents={agents}
               activeAgent={activeAgent}
               navigate={navigate}
@@ -6605,11 +7257,19 @@ function App() {
               onOnboarding={openOnboarding}
               onAnalytics={openAnalytics}
               onCreateChannel={createChannel}
-              />
+              unreadChannelIds={unreadChannelIds}
+              unreadCountByAgent={unreadCountByAgent}
+              inboxCount={inboxCount}
+              onSearch={() => {
+                setMobileSidebarOpen(false);
+                setSearchOpen(true);
+              }}
+            />
           </SheetContent>
         </Sheet>
       </div>
     </TooltipProvider>
+    </AccountContext.Provider>
   );
 }
 
@@ -6826,10 +7486,12 @@ function messageCreatedTime(message, locale = DEFAULT_LOCALE) {
 }
 
 function ChannelUserAvatar({ className }) {
+  const { profile } = useContext(AccountContext);
   return (
     <Avatar className={cn("size-8 rounded-md border border-border/70 bg-primary/12", className)}>
+      {profile.avatar ? <AvatarImage src={profile.avatar} alt="" /> : null}
       <AvatarFallback className="rounded-md bg-primary/12 text-primary">
-        <span className="text-xs font-semibold">{ACCOUNT_PROFILE.initials || "IC"}</span>
+        <span className="text-xs font-semibold">{profile.initials || "?"}</span>
       </AvatarFallback>
     </Avatar>
   );
@@ -7017,6 +7679,8 @@ function ChannelsPage({
   channelThreads = {},
   messagesByChannel = {},
   agents = [],
+  runtime = null,
+  workspaces = [],
   activeChannelId = "",
   locale = DEFAULT_LOCALE,
   copy = getLocaleCopy(DEFAULT_LOCALE),
@@ -7027,10 +7691,21 @@ function ChannelsPage({
   onToggleMember,
   onDispatch,
   onFollowUp,
+  reactionsByMessage = {},
+  onReact,
+  lastReadAt = 0,
+  chatSettings = DEFAULT_CHAT_SETTINGS,
+  workspaceProfiles = {},
+  onLoadWorkspaceProfile,
+  channelProposals = {},
+  onResolveProposal,
 }) {
+  const { profile: accountProfile } = useContext(AccountContext);
   const [manageMembersOpen, setManageMembersOpen] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [replyTo, setReplyTo] = useState(null);
+  const [draft, setDraft] = useState("");
   const channel = channels.find((item) => item.id === activeChannelId) || null;
   const threads = channel ? channelThreads[channel.id] || [] : [];
   const channelMessages = channel ? messagesByChannel[channel.id] || [] : [];
@@ -7041,7 +7716,69 @@ function ChannelsPage({
   useEffect(() => {
     setManageMembersOpen(false);
     setDeleteArmed(false);
+    setReplyTo(null);
+    setDraft("");
   }, [activeChannelId]);
+
+  // Presence (ADR-0014): who is thinking, typing, or running tools right now.
+  const presenceItems = useMemo(() => presenceFromMessages(channelMessages, agents), [channelMessages, agents]);
+
+  const channelProjects = useMemo(() => normalizeChannelProjects(channel?.projects), [channel?.projects]);
+
+  // Squad recruiting (ADR-0015): profile the channel's projects, then ask who
+  // is missing. Proposals are keyed by project signature, so a dismissed one
+  // stays dismissed until the folder itself changes.
+  const squadSuggestions = chatSettings.squadSuggestions !== false;
+  useEffect(() => {
+    if (!squadSuggestions || !channel) return;
+    for (const project of channelProjects) {
+      if (project.path && !workspaceProfiles[project.path]) onLoadWorkspaceProfile?.(project.path);
+    }
+  }, [squadSuggestions, channel, channelProjects, workspaceProfiles, onLoadWorkspaceProfile]);
+  const memberIdsKey = channel ? channel.memberIds.join(",") : "";
+  const openProposals = useMemo(() => {
+    if (!squadSuggestions || !channel) return [];
+    const projects = channelProjects
+      .map((project) => ({ name: project.name, path: project.path, profile: workspaceProfiles[project.path] }))
+      .filter((project) => project.profile && !project.profile.error);
+    if (!projects.length) return [];
+    const current = channel.memberIds.map((memberId) => agents.find((agent) => agent.id === memberId)).filter(Boolean);
+    return proposeMembers({ projects, members: current, candidates: agents })
+      .map((proposal) => ({ ...proposal, key: proposalKey(channel.id, proposal.agent.id, proposal.signature), ...proposalCopy(proposal, channel.name) }))
+      .filter((proposal) => !channelProposals[proposal.key]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [squadSuggestions, channel, channelProjects, workspaceProfiles, memberIdsKey, agents, channelProposals]);
+  const [projectDraft, setProjectDraft] = useState("");
+  const [projectPickBusy, setProjectPickBusy] = useState(false);
+  const mentionItems = useMemo(
+    () => [
+      ...members.map((member) => {
+        const handle = channelMentionAliases(member)[0] || member.name;
+        return { id: member.id, handle, label: `@${handle}`, detail: member.role || "" };
+      }),
+      ...channelProjects.map((project) => ({ id: `project:${project.path}`, handle: project.name, label: `@${project.name}`, detail: project.path, project })),
+    ],
+    [channelProjects, members]
+  );
+
+  function addChannelProject(path) {
+    const normalized = normalizeSquadWorkspacePath(path, runtime);
+    if (!channel || !normalized || channelProjects.some((project) => project.path === normalized)) return;
+    onUpdateChannel?.(channel.id, { projects: [...channelProjects, { name: workspaceName(normalized) || basenameOf(normalized), path: normalized }] });
+    setProjectDraft("");
+  }
+
+  async function pickChannelProject() {
+    setProjectPickBusy(true);
+    try {
+      const picked = await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: `Add a project folder to #${channel?.name || "channel"}` }) });
+      if (picked?.path) addChannelProject(picked.path);
+    } catch {
+      // Cancelled or unavailable: the text field still works.
+    } finally {
+      setProjectPickBusy(false);
+    }
+  }
 
   function exportChannelLog() {
     if (!channel) return;
@@ -7050,14 +7787,28 @@ function ChannelsPage({
       threads,
       messages: channelMessages,
       agents,
-      userName: ACCOUNT_PROFILE.name,
+      userName: accountProfile.name,
       locale,
     });
     downloadMarkdownLog(`${sanitizeMarkdownFilename(channel.name)}-chat-log.md`, markdown);
   }
 
+  function submitDraft(text) {
+    if (!channel) return;
+    if (replyTo?.threadId) {
+      onFollowUp?.(channel.id, replyTo.threadId, text);
+      setReplyTo(null);
+      return;
+    }
+    onDispatch?.(channel.id, { prompt: text, autoMode: channel.autoModeDefault === true, selfJudge: channel.autoModeDefault === true });
+  }
+  void projectDraft;
+
+  const replyThread = replyTo ? threads.find((thread) => thread.id === replyTo.threadId) : null;
+  const replyName = replyTo ? channelMessageAuthorName(replyTo, agents, accountProfile.name) : "";
+
   return (
-    <div className="mx-auto flex min-h-[calc(100vh-56px)] w-full max-w-5xl flex-col px-4 py-4 lg:min-h-screen lg:px-10 lg:py-7">
+    <div className="flex h-[calc(100vh-56px)] min-h-0 w-full flex-col lg:h-screen">
       <ChannelCreateDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -7066,431 +7817,233 @@ function ChannelsPage({
         onCreateChannel={onCreateChannel}
       />
 
-        {!channel ? (
-          <div className="flex flex-1 flex-col items-start justify-center gap-2">
-            <p className="text-sm text-muted-foreground">
-              {channels.length ? copy.channelSelectPrompt : copy.channelNoChannels}
-            </p>
-            <p className="max-w-md text-sm text-muted-foreground">{copy.channelsDescription}</p>
-            <Button variant="outline" className="mt-3" onClick={() => setCreateOpen(true)}>
-              <Plus data-icon="inline-start" />
-              {copy.createChannel}
-            </Button>
-          </div>
-        ) : (
-          <>
-            <header className="flex flex-wrap items-start justify-between gap-3 pb-3">
-              <div className="min-w-0">
-                <h1 className="flex items-center gap-2 text-lg font-semibold">
-                  {channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? (
-                    <Lock className="size-4 text-muted-foreground" aria-hidden="true" />
-                  ) : (
-                    <Hash className="size-4 text-muted-foreground" aria-hidden="true" />
-                  )}
-                  <span className="min-w-0 truncate">{channel.name}</span>
-                </h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? copy.channelPrivate : copy.channelPublic}
-                  {" · "}
-                  {formatCopy(copy.channelMemberCount, { count: formatLocalizedNumber(channel.memberIds.length, locale) })}
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-2 text-sm text-muted-foreground" htmlFor={`auto-mode-${channel.id}`}>
-                  {copy.channelAutoMode}
-                  <Switch
-                    id={`auto-mode-${channel.id}`}
-                    checked={channel.autoModeDefault === true}
-                    onCheckedChange={(checked) => onUpdateChannel?.(channel.id, { autoModeDefault: checked === true })}
-                  />
-                </label>
-                <Button variant="ghost" size="sm" onClick={exportChannelLog}>
-                  <FileCode2 data-icon="inline-start" />
-                  Export markdown
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setManageMembersOpen((open) => !open)}>
-                  {copy.manageChannelMembers}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => {
-                    if (!deleteArmed) {
-                      setDeleteArmed(true);
-                      return;
-                    }
-                    onDeleteChannel?.(channel.id);
-                  }}
-                  onBlur={() => setDeleteArmed(false)}
-                >
-                  {deleteArmed ? `${copy.deleteChannel}?` : copy.deleteChannel}
-                </Button>
-              </div>
-            </header>
-
-            {manageMembersOpen ? (
-              <div className="flex flex-col gap-2 pb-3">
-                <p className="text-xs text-muted-foreground">{copy.channelMembersDetail}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {agents.map((agent) => {
-                    const isMember = channel.memberIds.includes(agent.id);
-                    return (
-                      <button
-                        key={agent.id}
-                        type="button"
-                        aria-pressed={isMember}
-                        className={cn(
-                          "rounded-md border px-2.5 py-1 text-sm transition-colors",
-                          isMember
-                            ? "border-primary/50 bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-                        )}
-                        onClick={() => onToggleMember?.(channel.id, agent.id)}
-                      >
-                        {agent.name} · {isMember ? copy.leaveChannel : copy.joinChannel}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <p className="pb-3 text-sm text-muted-foreground">
-                {members.length ? members.map((member) => member.name).join(", ") : copy.channelNoMembers}
-              </p>
-            )}
-
-            <Separator />
-
-            <ScrollArea className="min-h-0 flex-1 py-4">
-              {threads.length === 0 ? (
-                <p className="text-sm text-muted-foreground">{copy.channelNoThreads}</p>
+      {!channel ? (
+        <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-start justify-center gap-2 px-4 lg:px-10">
+          <p className="text-sm text-muted-foreground">{channels.length ? copy.channelSelectPrompt : copy.channelNoChannels}</p>
+          <p className="max-w-md text-sm text-muted-foreground">{copy.channelsDescription}</p>
+          <Button variant="outline" className="mt-3" onClick={() => setCreateOpen(true)}>
+            <Plus data-icon="inline-start" />
+            {copy.createChannel}
+          </Button>
+        </div>
+      ) : (
+        <>
+          <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border/70 px-4 lg:px-6">
+            <h1 className="flex min-w-0 items-center gap-1.5 text-base font-semibold">
+              {channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? (
+                <Lock className="size-4 text-muted-foreground" aria-hidden="true" />
               ) : (
-                <div className="flex flex-col gap-5 pr-3">
-                  {threads.map((thread) => {
-                    const threadMessages = channelMessages.filter((message) => message.threadId === thread.id);
-                    const rootMessage =
-                      threadMessages.find((message) => message.id === `${thread.id}-root`) ||
-                      threadMessages.find((message) => message.role === "user");
-                    const recordedReplyCount =
-                      Number.isFinite(Number(thread.replyCount)) && Number(thread.replyCount) > 0
-                        ? Math.floor(Number(thread.replyCount))
-                        : 0;
-                    const fallbackRootMessage =
-                      !rootMessage && (thread.title || recordedReplyCount > 0)
-                        ? {
-                            id: `${thread.id}-summary`,
-                            role: "user",
-                            body: [
-                              thread.title || copy.channelThreads,
-                              recordedReplyCount > 0
-                                ? `${formatLocalizedNumber(recordedReplyCount, locale)} replies were recorded in this thread, but their message bodies are not loaded in this browser session.`
-                                : "",
-                            ]
-                              .filter(Boolean)
-                              .join("\n\n"),
-                            status: "complete",
-                            time: "",
-                            threadId: thread.id,
-                            parentMessageId: "",
-                          }
-                        : rootMessage;
-                    const replies = threadMessages.filter((message) => message.id !== rootMessage?.id);
-                    const busy = replies.some((message) => message.status === "loading");
-                    return (
-                      <ChannelThreadItem
-                        key={thread.id}
-                        thread={thread}
-                        rootMessage={fallbackRootMessage}
-                        replies={replies}
-                        agents={agents}
-                        userName={ACCOUNT_PROFILE.name}
-                        copy={copy}
-                        locale={locale}
-                        busy={busy}
-                        onFollowUp={({ prompt }) => onFollowUp?.(channel.id, thread.id, prompt)}
-                      />
-                    );
-                  })}
-                </div>
+                <Hash className="size-4 text-muted-foreground" aria-hidden="true" />
               )}
-            </ScrollArea>
-
-            <div className="pt-2">
-              <ChannelMentionComposer
-                channel={channel}
-                members={members}
-                copy={copy}
-                busy={false}
-                onDispatch={({ prompt, autoMode, selfJudge, targetMemberIds, targetLabel }) =>
-                  onDispatch?.(channel.id, { prompt, autoMode, selfJudge, targetMemberIds, targetLabel })
-                }
-              />
-            </div>
-          </>
-        )}
-    </div>
-  );
-}
-
-function OnboardingPage({
-  runtime,
-  providerSettings,
-  providerSettingsError = "",
-  workspaces = [],
-  agents = [],
-  activeAgent,
-  fallbackWorkspace = "",
-  requestedWorkspace = "",
-  onboardingState,
-  loginRequestStatus = "",
-  navigate,
-  updateOnboardingState,
-  onRequestLogin,
-  onRefreshAccount,
-  onFinish,
-  onSkip,
-}) {
-  const selectedWorkspace = onboardingState.selectedWorkspace || requestedWorkspace || fallbackWorkspace || "";
-  const workspaceChoices = workspaceOptions(workspaces, selectedWorkspace, runtime);
-  const runtimeReady = runtime?.available === true;
-  const accountReady = onboardingAccountReady(runtime);
-  const providerReady = onboardingProviderReady(providerSettings);
-  const workspaceReady = Boolean(selectedWorkspace);
-  const customMemberExists = agents.length > initialAgents.length;
-  const memberReady = onboardingState.memberReady || customMemberExists;
-  const finishReady = runtimeReady && accountReady && providerReady && workspaceReady && memberReady;
-  const skipReady = accountReady;
-  const completedSteps = [runtimeReady, accountReady, providerReady, workspaceReady, memberReady].filter(Boolean).length;
-  const progress = Math.round((completedSteps / 5) * 100);
-  const defaultModel = providerSettings
-    ? providerSummaryLabel(effectiveModelForAgent({ modelAssignment: { mode: "inherit" } }, providerSettings))
-    : "Loading providers";
-  const accountLabel = runtime?.account?.email || (accountReady ? "Signed in" : "Not signed in");
-  const starterMember = activeAgent || agents[0];
-
-  useEffect(() => {
-    if (!onboardingState.selectedWorkspace && selectedWorkspace) {
-      updateOnboardingState({ selectedWorkspace, lastStep: "workspace" });
-    }
-  }, [onboardingState.selectedWorkspace, selectedWorkspace, updateOnboardingState]);
-
-  function selectWorkspace(value) {
-    updateOnboardingState({ selectedWorkspace: value, lastStep: "workspace" });
-  }
-
-  function openProviderSettings() {
-    updateOnboardingState({ lastStep: "providers" });
-    navigate("/settings?section=providers");
-  }
-
-  function createFirstMember() {
-    updateOnboardingState({ lastStep: "member" });
-    navigate(routeWithParams(`${MEMBER_ROUTE_PREFIX}/new`, { workspace: selectedWorkspace || null }));
-  }
-
-  function useStarterMember() {
-    updateOnboardingState({ memberReady: true, lastStep: "member" });
-  }
-
-  return (
-    <div className="min-h-screen bg-background">
-      <PageTitle title="Welcome to Autohand Squad" />
-      <div className="mx-auto grid w-full max-w-6xl gap-10 px-4 py-8 sm:px-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-10 lg:py-10">
-        <aside className="lg:sticky lg:top-8 lg:self-start">
-          <div className="flex items-center gap-3">
-            <BrandMark theme="dark" className="size-9 dark:hidden" />
-            <BrandMark theme="light" className="hidden size-9 dark:block" />
-            <div className="min-w-0">
-              <div className="text-sm font-semibold">Autohand Squad</div>
-              <div className="text-xs text-muted-foreground">First-run setup</div>
-            </div>
-          </div>
-
-          <div className="mt-7">
-            <Progress value={progress} />
-            <div className="mt-2 text-xs text-muted-foreground">{completedSteps} of 5 setup checks ready</div>
-          </div>
-
-          <div className="mt-7 divide-y divide-border/70 text-sm">
-            <OnboardingStepLine ready={runtimeReady} label="Runtime" detail={runtime?.version || "Checking local bridge"} />
-            <OnboardingStepLine ready={accountReady} label="Account" detail={accountLabel} />
-            <OnboardingStepLine ready={providerReady} label="LLM provider" detail={defaultModel} />
-            <OnboardingStepLine ready={workspaceReady} label="Workspace" detail={workspaceLabel(selectedWorkspace, workspaces)} />
-            <OnboardingStepLine ready={memberReady} label="Squad member" detail={memberReady ? "Ready for first work" : "Choose starter or create one"} />
-          </div>
-        </aside>
-
-        <main className="min-w-0">
-          <header className="border-b border-border/70 pb-8">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <Badge variant="outline" className="rounded-md">Welcome</Badge>
-              <span>Setup stays local and can be resumed from the account menu.</span>
-            </div>
-            <h1 className="mt-4 text-balance text-4xl font-semibold tracking-normal sm:text-5xl">Set up the squad before the first run.</h1>
-            <p className="mt-4 max-w-2xl text-base leading-7 text-muted-foreground">
-              Autohand Squad gives each digital teammate an isolated CLI profile, project scope, provider settings, and work history. This setup connects those pieces once so the main product opens ready for real work.
-            </p>
+              <span className="min-w-0 truncate">{channel.name}</span>
+            </h1>
+            <span className="flex-1" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-pressed={manageMembersOpen} onClick={() => setManageMembersOpen((open) => !open)}>
+                  <Users className="size-4" />
+                  {formatLocalizedNumber(channel.memberIds.length, locale)}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{copy.manageChannelMembers}</TooltipContent>
+            </Tooltip>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label={copy.settings || "Channel settings"}>
+                  <Settings className="size-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72 p-3">
+                <div className="flex flex-col gap-3">
+                  <label className="flex items-center justify-between gap-3 text-sm" htmlFor={`auto-mode-${channel.id}`}>
+                    <span>
+                      <span className="block font-medium">{copy.channelAutoMode}</span>
+                      <span className="block text-xs text-muted-foreground">{copy.channelAutoModeDetail}</span>
+                    </span>
+                    <Switch
+                      id={`auto-mode-${channel.id}`}
+                      checked={channel.autoModeDefault === true}
+                      onCheckedChange={(checked) => onUpdateChannel?.(channel.id, { autoModeDefault: checked === true })}
+                    />
+                  </label>
+                  <Separator />
+                  <div className="flex flex-col gap-2">
+                    <div>
+                      <span className="block text-sm font-medium">Projects</span>
+                      <span className="block text-xs text-muted-foreground">Folders members can work in from this channel. Mention one as @name to scope a message to it.</span>
+                    </div>
+                    {channelProjects.length ? (
+                      <ul className="divide-y divide-border/60 text-sm">
+                        {channelProjects.map((project) => (
+                          <li key={project.path} className="flex items-center justify-between gap-2 py-1.5">
+                            <span className="min-w-0">
+                              <span className="block truncate font-medium">@{project.name}</span>
+                              <span className="block truncate text-xs text-muted-foreground">{project.path}</span>
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={`Remove ${project.name}`}
+                              onClick={() => onUpdateChannel?.(channel.id, { projects: channelProjects.filter((item) => item.path !== project.path) })}
+                            >
+                              <X />
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <div className="flex items-center gap-1.5">
+                      <Select value="" onValueChange={addChannelProject}>
+                        <SelectTrigger className="h-8 min-w-0 flex-1 text-xs">
+                          <SelectValue placeholder="Add a known folder" />
+                        </SelectTrigger>
+                        <SelectContent position="popper" className="max-h-72">
+                          {workspaceOptions(workspaces, "", runtime)
+                            .filter((item) => !channelProjects.some((project) => project.path === item.path))
+                            .map((item) => (
+                              <SelectItem key={item.path} value={item.path}>
+                                {item.label}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <Button variant="outline" size="sm" className="h-8 shrink-0 text-xs" onClick={pickChannelProject} disabled={projectPickBusy}>
+                        {projectPickBusy ? <Spinner /> : <FolderGit2 data-icon="inline-start" />}
+                        Choose…
+                      </Button>
+                    </div>
+                  </div>
+                  <Separator />
+                  <Button variant="ghost" size="sm" className="justify-start" onClick={exportChannelLog}>
+                    <FileCode2 data-icon="inline-start" />
+                    Export markdown
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="justify-start text-destructive hover:text-destructive"
+                    onClick={() => {
+                      if (!deleteArmed) {
+                        setDeleteArmed(true);
+                        return;
+                      }
+                      onDeleteChannel?.(channel.id);
+                    }}
+                    onBlur={() => setDeleteArmed(false)}
+                  >
+                    {deleteArmed ? `${copy.deleteChannel}?` : copy.deleteChannel}
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
           </header>
 
-          <div className="divide-y divide-border/70">
-            <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={Server} title="Runtime" description="Confirm the local Autohand bridge and CLI are visible." />
-              <div className="grid gap-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <StatusBadge status={runtimeReady ? "ready" : "offline"} copy={getLocaleCopy(DEFAULT_LOCALE)} />
-                  <span className="min-w-0 truncate text-sm text-muted-foreground">{runtime?.autohandPath || "Autohand CLI path not found yet"}</span>
-                </div>
-                {!runtimeReady ? (
-                  <Alert>
-                    <AlertTriangle />
-                    <AlertTitle>Runtime is not ready</AlertTitle>
-                    <AlertDescription>Install the Autohand CLI or restart Autohand Squad, then refresh this page.</AlertDescription>
-                  </Alert>
-                ) : null}
+          {manageMembersOpen ? (
+            <div className="flex flex-col gap-2 border-b border-border/70 px-4 py-3 lg:px-6">
+              <p className="text-xs text-muted-foreground">{copy.channelMembersDetail}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {agents.map((agent) => {
+                  const isMember = channel.memberIds.includes(agent.id);
+                  return (
+                    <button
+                      key={agent.id}
+                      type="button"
+                      aria-pressed={isMember}
+                      className={cn(
+                        "rounded-md border px-2.5 py-1 text-sm transition-colors",
+                        isMember
+                          ? "border-primary/50 bg-primary/10 text-foreground"
+                          : "border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                      )}
+                      onClick={() => onToggleMember?.(channel.id, agent.id)}
+                    >
+                      {agent.name} · {isMember ? copy.leaveChannel : copy.joinChannel}
+                    </button>
+                  );
+                })}
               </div>
-            </section>
+            </div>
+          ) : null}
 
-            <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={KeyRound} title="Account" description="Use the existing Squad browser login flow." />
-              <div className="grid gap-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <StatusBadge status={accountReady ? "ready" : "offline"} copy={getLocaleCopy(DEFAULT_LOCALE)} />
-                  <span className="text-sm text-muted-foreground">{accountLabel}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" onClick={onRequestLogin} disabled={accountReady}>
-                    <KeyRound data-icon="inline-start" />
-                    {accountReady ? "Signed in" : "Open browser login"}
-                  </Button>
-                  <Button type="button" variant="outline" onClick={onRefreshAccount}>
-                    <RefreshCw data-icon="inline-start" />
-                    Refresh status
-                  </Button>
-                </div>
-                <p className="text-sm leading-6 text-muted-foreground">
-                  This calls the installed `autohand-squad-tray --action login` path, so browser/device auth and local runtime account state stay owned by the existing desktop controller.
-                </p>
-                {loginRequestStatus ? <p className="text-sm text-muted-foreground">{loginRequestStatus}</p> : null}
-              </div>
-            </section>
+          <ScrollArea className="min-h-0 flex-1 px-2 lg:px-4">
+            <div className="mx-auto w-full max-w-5xl py-3">
+              <ChannelStream
+                channel={channel}
+                messages={channelMessages}
+                agents={agents}
+                userName={accountProfile.name}
+                locale={locale}
+                lastReadAt={lastReadAt}
+                reactionsByMessage={reactionsByMessage}
+                renderBody={(message) => <MarkdownBlocks text={message.body || ""} />}
+                renderAvatar={(message) => <ChannelMessageAvatar message={message} agents={agents} />}
+                authorName={(message) => channelMessageAuthorName(message, agents, accountProfile.name)}
+                onReact={onReact}
+                onReply={(message) => setReplyTo(message)}
+                emptyLabel={members.length ? copy.channelNoThreads : copy.channelNoMembers}
+                newLabel={copy.newMessages || "New"}
+                typingLabel={copy.isTyping || "is typing…"}
+              />
+            </div>
+          </ScrollArea>
 
-            <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={Brain} title="LLM provider" description="Reuse the workspace provider registry." />
-              <div className="grid gap-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <StatusBadge status={providerReady ? "ready" : "offline"} copy={getLocaleCopy(DEFAULT_LOCALE)} />
-                  <span className="text-sm text-muted-foreground">{defaultModel}</span>
-                </div>
-                {providerSettingsError ? (
-                  <Alert>
-                    <AlertTriangle />
-                    <AlertTitle>Provider settings need attention</AlertTitle>
-                    <AlertDescription>{providerSettingsError}</AlertDescription>
-                  </Alert>
-                ) : null}
-                <div>
-                  <Button type="button" variant={providerReady ? "outline" : "default"} onClick={openProviderSettings}>
-                    <Settings data-icon="inline-start" />
-                    {providerReady ? "Review provider settings" : "Configure provider"}
+          <div className="shrink-0 px-4 pb-3 pt-2 lg:px-6">
+            <div className="mx-auto w-full max-w-5xl">
+              {openProposals.map((proposal) => (
+                <JoinProposal
+                  key={proposal.key}
+                  proposal={proposal}
+                  copy={copy}
+                  className="mb-3"
+                  renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
+                  onAccept={() => {
+                    onToggleMember?.(channel.id, proposal.agent.id);
+                    onResolveProposal?.(proposal.key, "accepted");
+                  }}
+                  onDismiss={() => onResolveProposal?.(proposal.key, "dismissed")}
+                />
+              ))}
+              {replyTo ? (
+                <div className="mb-1.5 flex items-center gap-2 px-1 text-xs text-muted-foreground">
+                  <CornerDownRight className="size-3.5" aria-hidden="true" />
+                  <span className="min-w-0 truncate">
+                    {formatCopy(copy.replyingTo || "Replying to {name}", { name: replyName })}
+                    {replyThread?.title ? ` · ${replyThread.title.slice(0, 60)}` : ""}
+                  </span>
+                  <Button variant="ghost" size="sm" className="h-6 px-1.5" onClick={() => setReplyTo(null)}>
+                    {copy.cancel || "Cancel"}
                   </Button>
                 </div>
-              </div>
-            </section>
-
-            <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={FolderGit2} title="Workspace" description="Choose the repository or project for first work." />
-              <FieldGroup>
-                <Field>
-                  <FieldLabel>First workspace</FieldLabel>
-                  <Select value={selectedWorkspace} onValueChange={selectWorkspace}>
-                    <SelectTrigger className="h-10 w-full min-w-0 justify-between">
-                      <SelectValue placeholder="Select a workspace" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectLabel>Folders under {runtime?.workspaceRoot || "your user directory"}</SelectLabel>
-                        {workspaceChoices.map((workspace) => (
-                          <SelectItem key={workspace.path} value={workspace.path}>
-                            {workspace.label || workspace.name || workspaceName(workspace.path)}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <FieldDescription>{selectedWorkspace || "This workspace is passed into first conversations, runs, and new squad members."}</FieldDescription>
-                </Field>
-              </FieldGroup>
-            </section>
-
-            <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={Users} title="First squad member" description="Start from a template or use the existing starter member." />
-              <div className="grid gap-4">
-                <div className="flex min-w-0 flex-wrap items-center gap-3">
-                  <AgentAvatar agent={starterMember} className="size-10" />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{starterMember?.name || "Starter member"}</div>
-                    <div className="truncate text-sm text-muted-foreground">{starterMember?.role || "Ready to adapt to first work"}</div>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" onClick={createFirstMember}>
-                    <Plus data-icon="inline-start" />
-                    Create first member
-                  </Button>
-                  <Button type="button" variant="outline" onClick={useStarterMember} disabled={memberReady}>
-                    <CheckCircle2 data-icon="inline-start" />
-                    {memberReady ? "Member ready" : "Use starter member"}
-                  </Button>
-                </div>
-              </div>
-            </section>
+              ) : null}
+              <MessageComposer
+                placeholder={formatCopy(copy.messageChannel || "Message #{name}", { name: channel.name })}
+                mentionItems={mentionItems}
+                value={draft}
+                onValueChange={setDraft}
+                busy={false}
+                disabled={!members.length && !replyTo}
+                onSubmit={submitDraft}
+                onAttach={(files) => attachFilesToDraft(files, setDraft)}
+                hint={!members.length ? copy.channelNoMembers : ""}
+              />
+              <PresenceLine items={presenceItems} copy={copy} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} />
+            </div>
           </div>
-
-          <footer className="sticky bottom-0 z-10 -mx-4 flex flex-col gap-3 border-t bg-background/95 px-4 py-4 backdrop-blur sm:flex-row sm:items-center sm:justify-between lg:mx-0 lg:px-0">
-            <div className="text-sm text-muted-foreground">
-              {!accountReady
-                ? "Sign in to continue. Public beta access requires an Autohand account."
-                : finishReady
-                  ? "Setup is ready. Start the first conversation from the real product surface."
-                  : "You can skip optional setup now and return from the account menu."}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" onClick={onSkip} disabled={!skipReady}>Skip for now</Button>
-              <Button type="button" disabled={!finishReady} onClick={onFinish}>
-                <Play data-icon="inline-start" />
-                Finish and start
-              </Button>
-            </div>
-          </footer>
-        </main>
-      </div>
+        </>
+      )}
     </div>
   );
 }
 
-function OnboardingSectionTitle({ icon: Icon, title, description }) {
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <Icon className="size-4 text-primary" />
-        <span>{title}</span>
-      </div>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-    </div>
+function workspaceOptions(workspaces, selected, runtime) {
+  const normalizedSelected = normalizeSquadWorkspacePath(selected, runtime);
+  const list = (Array.isArray(workspaces) ? workspaces : []).filter(
+    (workspace) => workspace.launchable !== false && !isBlockedWorkspace(workspace.path, runtime)
   );
-}
-
-function OnboardingStepLine({ ready, label, detail }) {
-  return (
-    <div className="flex gap-3 py-3">
-      <span className={cn("mt-1 size-2 rounded-full", ready ? "bg-primary" : "bg-muted-foreground/40")} />
-      <span className="min-w-0">
-        <span className="block font-medium">{label}</span>
-        <span className="block truncate text-xs text-muted-foreground">{detail}</span>
-      </span>
-    </div>
-  );
+  if (!normalizedSelected || list.some((workspace) => workspace.path === normalizedSelected)) return list;
+  if (isBlockedWorkspace(normalizedSelected, runtime)) return list;
+  const name = workspaceName(normalizedSelected) || normalizedSelected;
+  return [{ label: name, name, path: normalizedSelected, depth: 0, kind: "folder", launchable: true }, ...list];
 }
 
 function workspaceName(path) {
@@ -7542,17 +8095,6 @@ function getAgentWorkspace(agent, runtime, workspaces) {
     (item) => !isBlockedWorkspace(item.path, runtime)
   );
   return project?.path || getFallbackWorkspace(runtime, workspaces);
-}
-
-function workspaceOptions(workspaces, selected, runtime) {
-  const normalizedSelected = normalizeSquadWorkspacePath(selected, runtime);
-  const list = (Array.isArray(workspaces) ? workspaces : []).filter(
-    (workspace) => workspace.launchable !== false && !isBlockedWorkspace(workspace.path, runtime)
-  );
-  if (!normalizedSelected || list.some((workspace) => workspace.path === normalizedSelected)) return list;
-  if (isBlockedWorkspace(normalizedSelected, runtime)) return list;
-  const name = workspaceName(normalizedSelected) || normalizedSelected;
-  return [{ label: name, name, path: normalizedSelected, depth: 0, kind: "folder", launchable: true }, ...list];
 }
 
 function workspaceLabel(path, workspaces = []) {
@@ -8004,23 +8546,38 @@ function parseMarkdownBlocks(text) {
   return blocks;
 }
 
+// Names that render as mention chips inside message bodies (squad members,
+// channel projects). Kept module-level so the markdown renderer stays a pure
+// function of its text; the app refreshes it whenever members change.
+const KNOWN_MENTION_NAMES = new Map();
+function registerMentionNames(entries = []) {
+  KNOWN_MENTION_NAMES.clear();
+  for (const entry of entries) {
+    if (entry?.name) KNOWN_MENTION_NAMES.set(String(entry.name).toLowerCase(), entry);
+  }
+}
+
 function InlineMarkdown({ text }) {
   const value = String(text || "");
   const parts = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)]+\))/g;
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((?:https?:\/\/|\/)[^)]+\)|(?:^|(?<=\s|\())@[A-Za-z0-9][A-Za-z0-9._-]*)/g;
   let lastIndex = 0;
   let match;
 
   while ((match = pattern.exec(value))) {
     if (match.index > lastIndex) parts.push({ type: "text", value: value.slice(lastIndex, match.index) });
     const token = match[0];
-    const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/);
+    const link = token.match(/^\[([^\]]+)\]\(((?:https?:\/\/|\/)[^)]+)\)$/);
     if (token.startsWith("`")) {
       parts.push({ type: "code", value: token.slice(1, -1) });
     } else if (token.startsWith("**")) {
       parts.push({ type: "strong", value: token.slice(2, -2) });
     } else if (link) {
       parts.push({ type: "link", value: link[1], href: link[2] });
+    } else if (token.startsWith("@")) {
+      const known = KNOWN_MENTION_NAMES.get(token.slice(1).toLowerCase().replace(/[.,;:!?]+$/, ""));
+      if (known) parts.push({ type: "mention", value: token, entry: known });
+      else parts.push({ type: "text", value: token });
     }
     lastIndex = pattern.lastIndex;
   }
@@ -8037,10 +8594,26 @@ function InlineMarkdown({ text }) {
     }
     if (part.type === "strong") return <strong key={index}>{part.value}</strong>;
     if (part.type === "link") {
+      const internal = part.href.startsWith("/");
       return (
-        <a key={index} href={part.href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-4">
+        <a key={index} href={part.href} target={internal ? undefined : "_blank"} rel={internal ? undefined : "noreferrer"} className="text-primary underline underline-offset-4">
           {part.value}
         </a>
+      );
+    }
+    if (part.type === "mention") {
+      return (
+        <span
+          key={index}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 align-baseline text-[0.92em] font-medium",
+            part.entry.kind === "project" ? "bg-muted text-foreground/90" : "bg-primary/10 text-primary"
+          )}
+          title={part.entry.detail || ""}
+        >
+          {part.entry.kind === "project" ? <FolderGit2 className="size-3" aria-hidden="true" /> : <Bot className="size-3" aria-hidden="true" />}
+          {part.entry.name}
+        </span>
       );
     }
     return <React.Fragment key={index}>{part.value}</React.Fragment>;
@@ -8048,7 +8621,7 @@ function InlineMarkdown({ text }) {
 }
 
 function MarkdownBlocks({ text, muted = false }) {
-  const blocks = parseMarkdownBlocks(text);
+  const blocks = useMemo(() => parseMarkdownBlocks(text), [text]);
   if (!blocks.length) return null;
 
   return (
@@ -8211,7 +8784,96 @@ function buildCollaborationProfileContext(collaboration, agents = [], workspaces
 // Squad channels: profile context appended when a channel prompt is dispatched
 // to a member. Explains the one-prompt fan-out contract and states the channel
 // auto-mode/self-judge runtime default (OFF unless the channel enables it).
-function buildChannelProfileContext(channel, agent, agents = [], { autoMode, selfJudge, threadId, targetMemberIds = [], targetLabel = "" } = {}) {
+// Maximum number of agent-to-agent relay hops within one channel thread.
+const CHANNEL_RELAY_MAX_HOPS = 3;
+
+function basenameOf(path) {
+  const parts = String(path || "").split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || String(path || "");
+}
+
+function normalizeChannelProjects(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  return list
+    .map((item) => (typeof item === "string" ? { name: basenameOf(item), path: item } : item))
+    .filter((item) => item && typeof item.path === "string" && item.path.trim())
+    .map((item) => ({ name: String(item.name || basenameOf(item.path)).trim().replace(/\s+/g, "-"), path: item.path.trim() }))
+    .filter((item) => (seen.has(item.path) ? false : seen.add(item.path)));
+}
+
+/** Projects mentioned as @name in a channel message. */
+function mentionedChannelProjects(text, channel) {
+  const projects = normalizeChannelProjects(channel?.projects);
+  if (!projects.length) return [];
+  const tokens = new Set(Array.from(String(text || "").matchAll(CHANNEL_MENTION_PATTERN), (match) => String(match[1] || "").toLowerCase()));
+  return projects.filter((project) => tokens.has(project.name.toLowerCase()));
+}
+
+// Maximum member-to-member delegation depth from a direct chat.
+const DM_DELEGATION_MAX_HOPS = 2;
+
+function buildTeammateContext(agent, agents = [], { tasks = [], runs = [], messagesByChannel = {}, hop = 0 } = {}) {
+  const teammates = agents.filter((item) => item.id !== agent.id && item.status !== "offline");
+  if (!teammates.length) return "";
+  const roster = teammates.map((item) => {
+    const presence = memberPresenceForAgent(item, { tasks, runs, messagesByChannel });
+    return `- @${mentionTokenForAgent(item)} — ${item.role || "Squad member"} (${presence?.label || "Online"})`;
+  });
+  const canDelegate = hop < DM_DELEGATION_MAX_HOPS;
+  return [
+    "Squad teammates available right now:",
+    roster.join("\n"),
+    canDelegate
+      ? "Delegate parts of the job that belong to a teammate's role (security review, QA, tests, design, deployment) by @mentioning them by name in your reply with a clear ask. They receive your message as a handoff, do the work, and report back to you; the user sees both sides. Mention a teammate only when their role is needed."
+      : "You are already working on a delegated task; finish it yourself and do not delegate further.",
+    'To open a shared channel for a project, include one line exactly like: SQUAD_ACTION: {"type":"create_channel","name":"project-name","members":["Noah","Eva"],"purpose":"one sentence"} — the user is always invited and the members get the purpose as their first prompt.',
+  ].join("\n");
+}
+
+/** `SQUAD_ACTION: {...}` lines a member may include in a reply. */
+function parseSquadActions(text) {
+  const actions = [];
+  const cleaned = [];
+  for (const line of String(text || "").split("\n")) {
+    const match = line.match(/^\s*SQUAD_ACTION:\s*(\{.*\})\s*$/);
+    if (!match) {
+      cleaned.push(line);
+      continue;
+    }
+    try {
+      actions.push(JSON.parse(match[1]));
+    } catch {
+      cleaned.push(line);
+    }
+  }
+  return { actions, text: cleaned.join("\n").trim() };
+}
+
+function withChannelProjects(launchPayload, channelProjects = []) {
+  if (!channelProjects.length) return launchPayload;
+  const existing = Array.isArray(launchPayload.projects) ? launchPayload.projects : [];
+  const known = new Set(existing.map((project) => project.path));
+  return {
+    ...launchPayload,
+    projects: [
+      ...existing,
+      ...channelProjects.filter((project) => !known.has(project.path)).map((project) => ({ id: `channel_${project.name}`, name: project.name, label: project.name, path: project.path, kind: "folder" })),
+    ],
+  };
+}
+
+function buildRelayPrompt(fromAgent, toAgent, replyText, channel) {
+  return [
+    `${fromAgent.name}${fromAgent.role ? ` (${fromAgent.role})` : ""} wrote in #${channel.name} and mentioned you, ${toAgent.name}:`,
+    "",
+    replyText.trim(),
+    "",
+    `Reply to ${fromAgent.name} in the thread. Answer what was asked of you, add only what your role contributes, and do not restate their message. If you need another teammate, @mention them by name once.`,
+  ].join("\n");
+}
+
+function buildChannelProfileContext(channel, agent, agents = [], { autoMode, selfJudge, threadId, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null } = {}) {
   if (!channel || !agent) return "";
   const roster = (channel.memberIds || [])
     .map((memberId) => agents.find((item) => item.id === memberId))
@@ -8227,10 +8889,18 @@ function buildChannelProfileContext(channel, agent, agents = [], { autoMode, sel
     `Channel: #${channel.name} (${channel.visibility})`,
     threadId ? `Thread: ${threadId}` : "",
     roster.length ? `Channel members:\n${roster.join("\n")}` : "",
+    normalizeChannelProjects(channel.projects).length
+      ? `Channel projects (mention as @name; all are available as extra directories):\n${normalizeChannelProjects(channel.projects).map((project) => `- @${project.name}: ${project.path}`).join("\n")}`
+      : "",
     targetRoster.length ? `Selected recipients${targetLabel ? ` (${targetLabel})` : ""}:\n${targetRoster.join("\n")}` : "",
-    targeted
-      ? `You are ${agent.name}. The user mentioned you for this channel thread. Reply in a natural, human way to the user and keep the answer scoped to your role.`
-      : `You are ${agent.name}. This prompt was sent once to the channel recipients; choose your own execution plan and post your reply in the thread. Other selected members reply in the same thread, so keep your answer scoped to your role.`,
+    relayFrom
+      ? `You are ${agent.name}. Your teammate ${relayFrom.name} mentioned you in this thread (relay hop ${hop} of ${CHANNEL_RELAY_MAX_HOPS}). Reply to ${relayFrom.name} directly and briefly.`
+      : targeted
+        ? `You are ${agent.name}. The user mentioned you for this channel thread. Reply in a natural, human way to the user and keep the answer scoped to your role.`
+        : `You are ${agent.name}. This prompt was sent once to the channel recipients; choose your own execution plan and post your reply in the thread. Other selected members reply in the same thread, so keep your answer scoped to your role.`,
+    roster.length > 1
+      ? `Teammates reply when you @mention them by name (for example @${(channel.memberIds || []).map((memberId) => agents.find((item) => item.id === memberId)).filter((member) => member && member.id !== agent.id)[0]?.name || "Teammate"}). Mention a teammate only when you need their work or answer; they will respond in this thread.`
+      : "",
     "Return a conversational answer only. Do not expose SDK event objects, JSON envelopes, raw tool traces, or transport metadata in the user-facing reply.",
     autoMode || selfJudge
       ? "Auto mode (self-judge): ON for this thread. Judge your own result and continue without waiting for approval."
@@ -8277,6 +8947,7 @@ function agentLaunchPayload(agent, workspace) {
     profileFiles: buildAgentProfileFiles(agent),
     profileDocs: agent?.profileDocs,
     modelAssignment: modelAssignmentForAgent(agent),
+    harness: harnessForAgent(agent),
     permissions,
   };
 }
@@ -8525,9 +9196,9 @@ function SidebarChannelsSection({
                   onClick={() => onSelectChannel?.(channel.id)}
                 >
                   {channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? (
-                    <Lock className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPrivate} />
+                    <Lock role="img" className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPrivate} />
                   ) : (
-                    <Hash className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPublic} />
+                    <Hash role="img" className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPublic} />
                   )}
                   <span className="min-w-0 flex-1 truncate">{channel.name}</span>
                   {threadCount > 0 ? (
@@ -8857,6 +9528,7 @@ function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLoc
 }
 
 function SidebarContent({
+  updateAvailable = false,
   agents,
   activeAgent,
   navigate,
@@ -8877,8 +9549,17 @@ function SidebarContent({
   onAnalytics,
   onCollapse,
   onCreateChannel,
+  createChannelRequest = 0,
+  unreadChannelIds = new Set(),
+  unreadCountByAgent = new Map(),
+  inboxCount = 0,
+  onSearch,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  useEffect(() => {
+    if (createChannelRequest) setCreateChannelOpen(true);
+  }, [createChannelRequest]);
   const memberId = activeAgent?.id || visibleAgents[0]?.id;
   const chatPath = memberChatPath(memberId);
   const isCreatingMember = isCreateMemberRoute(route);
@@ -8904,6 +9585,7 @@ function SidebarContent({
   if (isMemberProfile && activeAgent) {
     return (
       <MemberProfileSidebar
+        updateAvailable={updateAvailable}
         agent={activeAgent}
         activeSection={memberSectionFromRoute(route)}
         copy={copy}
@@ -8920,126 +9602,55 @@ function SidebarContent({
   }
 
   return (
-    <div className="flex h-full min-h-screen flex-col bg-card/70">
-      <div className="flex h-14 items-center gap-2 px-4">
-        <Button variant="ghost" className="h-10 justify-start gap-2 px-1 hover:bg-transparent" onClick={() => navigate(squadDirectoryPath())}>
-          <BrandMark theme={theme} className="size-9" />
-          <span className="text-base font-bold">Autohand Squad</span>
-        </Button>
-        <Badge variant="secondary" className="ml-1 rounded-sm bg-primary/15 px-1.5 text-[10px] text-primary">Beta</Badge>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col gap-3 px-2 pb-4 pt-2">
-        <div className="flex items-center gap-2 px-2 text-sm text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate">
-            {copy.mySquadMembers} ({formatLocalizedNumber(visibleAgents.length, locale)})
-          </span>
-          {onCollapse ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onCollapse}
-                  aria-label="Collapse sidebar"
-                  aria-keyshortcuts="Meta+B Control+B"
-                >
-                  <PanelLeftClose />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Collapse sidebar ({SIDEBAR_SHORTCUT_LABEL})</TooltipContent>
-            </Tooltip>
-          ) : null}
-        </div>
-
+    <WorkspaceSidebar
+      brand={
         <Button
           variant="ghost"
-          className={cn(
-            "h-11 w-full justify-start rounded-md px-3 text-muted-foreground hover:bg-muted/55 hover:text-foreground",
-            isSquadDirectory && "bg-muted/80 text-foreground"
-          )}
+          className="h-10 min-w-0 justify-start gap-2 px-1 hover:bg-transparent"
           onClick={() => navigate(squadDirectoryPath())}
-          aria-current={isSquadDirectory ? "page" : undefined}
+          aria-label="Open Autohand Squad"
         >
-          <Users data-icon="inline-start" />
-          <span className="min-w-0 flex-1 truncate">Squad</span>
-          <Badge variant="secondary" className="rounded-md px-1.5">
-            {formatLocalizedNumber(visibleAgents.length, locale)}
-          </Badge>
+          <BrandMark theme={theme} className="size-8" />
+          <span className="truncate text-base font-bold">Autohand Squad</span>
         </Button>
-
-        <SidebarChannelsSection
-          channels={channels}
-          agents={visibleAgents}
-          activeChannelId={activeChannelId}
-          active={isChannelsRoute}
-          expanded={channelsExpanded}
-          threadCounts={channelThreadCounts}
-          copy={copy}
-          onExpandedChange={setChannelsExpanded}
-          onOpenChannels={() => navigate(channelsPath())}
-          onSelectChannel={(channelId) => navigate(channelsPath(channelId))}
-          onCreateChannel={onCreateChannel}
-        />
-
-        <Button
-          variant="outline"
-          className={cn(
-            "h-11 w-full justify-center rounded-md border-dashed bg-transparent text-muted-foreground hover:bg-muted/45 hover:text-foreground",
-            isCreatingMember && "border-primary/70 bg-primary/10 text-foreground"
-          )}
-          onClick={() => navigate(`${MEMBER_ROUTE_PREFIX}/new`)}
-        >
-          <Plus data-icon="inline-start" />
-          {copy.createSquadMember}
-        </Button>
-
-        <ScrollArea className="min-h-0 flex-1 pr-1">
-          <div className="flex flex-col gap-1.5">
-            {visibleAgents.map((agent) => {
-              const isActive =
-                activeAgent?.id === agent.id && !isCreatingMember && !isMissionControl && !isSquadDirectory && !isChannelsRoute;
-              const presence = memberPresenceForAgent(agent, { tasks, runs, messagesByAgent, messagesByChannel });
-              return (
-                <button
-                  key={agent.id}
-                  type="button"
-                  aria-current={isActive ? "page" : undefined}
-                  aria-label={`${agent.name}, ${presence.label}, ${agentSidebarPreview(agent)}`}
-                  className={cn(
-                    "grid min-h-[66px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-2 text-left transition-colors",
-                    isActive ? "bg-muted/80 text-foreground" : "text-foreground/88 hover:bg-muted/55"
-                  )}
-                  onClick={() => navigate(memberChatPath(agent.id))}
-                >
-                  <span className="relative size-8">
-                    <AgentAvatar agent={agent} />
-                    <MemberPresenceBadge presence={presence} className="absolute -bottom-0.5 -right-0.5" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold">{agent.name}</span>
-                    <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs">
-                      <span className={cn("shrink-0 font-medium", presence.textClassName)}>{presence.label}</span>
-                      <span className="text-muted-foreground/60" aria-hidden="true">·</span>
-                      <span className="min-w-0 truncate text-muted-foreground">{agentSidebarPreview(agent)}</span>
-                    </span>
-                  </span>
-                  <time className="self-start pt-1 text-[11px] font-semibold text-muted-foreground/75">
-                    {agentSidebarTime(agent, locale)}
-                  </time>
-                </button>
-              );
-            })}
-          </div>
-        </ScrollArea>
-      </div>
-
-      <SidebarAccountFooter copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
-    </div>
+      }
+      copy={copy}
+      agents={visibleAgents}
+      channels={channels}
+      active={sidebarActiveTarget(route, activeAgent)}
+      unreadChannelIds={unreadChannelIds}
+      unreadCountByAgent={unreadCountByAgent}
+      inboxCount={inboxCount}
+      presenceFor={(agent) => memberPresenceForAgent(agent, { tasks, runs, messagesByAgent, messagesByChannel })}
+      renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
+      onNavigate={{
+        search: onSearch,
+        inbox: () => navigate(inboxPath()),
+        agents: () => navigate(squadDirectoryPath()),
+        channel: (channelId) => navigate(channelsPath(channelId)),
+        member: (targetId) => navigate(memberChatPath(targetId)),
+        createChannel: () => setCreateChannelOpen(true),
+        createMember: () => navigate(`${MEMBER_ROUTE_PREFIX}/new`),
+      }}
+      footer={
+        <>
+          <ChannelCreateDialog
+            open={createChannelOpen}
+            onOpenChange={setCreateChannelOpen}
+            agents={visibleAgents}
+            copy={copy}
+            onCreateChannel={onCreateChannel}
+          />
+          <SidebarAccountFooter updateAvailable={updateAvailable} copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
+        </>
+      }
+      onCollapse={onCollapse}
+      searchShortcutLabel={SEARCH_SHORTCUT_LABEL}
+    />
   );
 }
 
-function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onCollapse }) {
+function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onCollapse, updateAvailable = false }) {
   return (
     <div className="flex h-full min-h-screen flex-col bg-background">
       <div className="flex h-14 items-center gap-2 px-4">
@@ -9109,23 +9720,75 @@ function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCop
         </nav>
       </div>
 
-      <SidebarAccountFooter copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
+      <SidebarAccountFooter updateAvailable={updateAvailable} copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
     </div>
   );
 }
 
-function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onMissionControl, onOnboarding, onAnalytics }) {
+function SettingsUpdatesPanel({ updates, checking = false, onCheck }) {
+  const snapshot = updates?.snapshot || null;
+  const current = updates?.appVersion || snapshot?.currentVersion || "";
+  const latest = snapshot?.latestAllowedVersion || "";
+  const available = snapshot?.updateAvailable === true;
+  const checkedAt = snapshot?.checkedAt ? String(snapshot.checkedAt).replace(/^unix-ms:/, "") : "";
+  const checkedLabel = checkedAt && /^\d+$/.test(checkedAt) ? new Date(Number(checkedAt)).toLocaleString() : checkedAt;
+  return (
+    <div className="divide-y divide-border/65">
+      <div className="grid gap-3 px-2 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+        <div className="min-w-0">
+          <div className="font-medium">{available ? `Update to ${latest}` : "You're up to date"}</div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Installed {current || "unknown"}
+            {latest ? ` · latest ${snapshot.channel || "stable"} release ${latest}` : ""}
+            {checkedLabel ? ` · checked ${checkedLabel}` : ""}
+            {updates && !updates.daemonReachable ? " · the local daemon is not running, so this is the last saved check" : ""}
+          </p>
+          {snapshot?.error ? <p className="mt-1 text-sm text-destructive">{snapshot.error}</p> : null}
+        </div>
+        <div className="flex items-center gap-2">
+          {available && (snapshot.downloadUrl || snapshot.releaseUrl) ? (
+            <Button asChild size="sm">
+              <a href={snapshot.downloadUrl || snapshot.releaseUrl} target="_blank" rel="noreferrer">
+                Download {latest}
+              </a>
+            </Button>
+          ) : null}
+          <Button type="button" variant="outline" size="sm" onClick={onCheck} disabled={checking}>
+            {checking ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
+            Check for updates
+          </Button>
+        </div>
+      </div>
+      {available && snapshot.notes ? (
+        <div className="px-2 py-4">
+          <div className="text-sm font-medium">What changed</div>
+          <div className="mt-2 max-h-56 overflow-auto text-sm text-muted-foreground">
+            <MarkdownBlocks text={snapshot.notes} muted />
+          </div>
+        </div>
+      ) : null}
+      <div className="px-2 py-4 text-sm text-muted-foreground">
+        Releases: <a className="text-primary underline underline-offset-4" href={updates?.releasesUrl || "https://github.com/autohandai/squad/releases"} target="_blank" rel="noreferrer">github.com/autohandai/squad/releases</a>
+      </div>
+    </div>
+  );
+}
+
+function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onMissionControl, onOnboarding, onAnalytics, updateAvailable = false }) {
+  const { profile } = useContext(AccountContext);
   return (
     <div className="border-t p-4">
-      <Button variant="outline" className="h-9 w-full justify-center rounded-full border-border/70 bg-transparent" onClick={onSettings}>
-        <CircleDot className="text-chart-3" data-icon="inline-start" />
-        {copy.restartToUpdate}
-      </Button>
+      {updateAvailable ? (
+        <Button variant="outline" className="h-9 w-full justify-center rounded-full border-border/70 bg-transparent" onClick={onSettings}>
+          <CircleDot className="text-chart-3" data-icon="inline-start" />
+          {copy.restartToUpdate}
+        </Button>
+      ) : null}
       <div className="mt-3 flex items-center gap-3 rounded-md px-1 py-2">
-        <span className="grid size-9 place-items-center rounded-md bg-muted text-sm font-semibold">{ACCOUNT_PROFILE.initials}</span>
+        <span className="grid size-9 place-items-center rounded-md bg-muted text-sm font-semibold">{profile.initials}</span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold">{ACCOUNT_PROFILE.name}</span>
-          <span className="block truncate text-xs text-muted-foreground">{copy.proTrial}</span>
+          <span className="block truncate text-sm font-semibold">{profile.name}</span>
+          <span className="block truncate text-xs text-muted-foreground">{profile.email || copy.loggedIn}</span>
         </span>
         <AccountMenuButton copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
       </div>
@@ -9142,6 +9805,7 @@ function AccountMenuButton({
   placement = "top-end",
   triggerClassName,
 }) {
+  const { profile, signOut, signingOut, openFeedback } = useContext(AccountContext);
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
   const menuPosition =
@@ -9206,11 +9870,11 @@ function AccountMenuButton({
             </div>
             <div className="flex min-w-0 items-center gap-3">
               <span className="grid size-9 place-items-center rounded-md bg-muted text-sm font-semibold">
-                {ACCOUNT_PROFILE.initials}
+                {profile.initials}
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold">{ACCOUNT_PROFILE.name}</span>
-                <span className="block truncate text-xs text-muted-foreground">{copy.proTrial}</span>
+                <span className="block truncate text-sm font-semibold">{profile.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">{profile.email || copy.loggedIn}</span>
               </span>
             </div>
           </div>
@@ -9219,20 +9883,28 @@ function AccountMenuButton({
           <AccountMenuItem icon={Monitor} label="Mission Control" onClick={() => choose(onMissionControl)} hasChevron />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} hasChevron />
           <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} hasChevron />
+          {openFeedback ? (
+            <>
+              <div className="my-1 border-t border-border/70" />
+              <AccountMenuItem icon={Bug} label={copy.reportBug || "Report a bug"} onClick={() => choose(() => openFeedback("bug"))} />
+              <AccountMenuItem icon={MessageSquareText} label={copy.giveFeedback || "Give feedback"} onClick={() => choose(() => openFeedback("feedback"))} />
+            </>
+          ) : null}
           <div className="my-1 border-t border-border/70" />
-          <AccountMenuItem icon={LogOut} label={copy.signOut} onClick={() => choose()} />
+          <AccountMenuItem icon={LogOut} label={signingOut ? copy.signingOut || "Signing out…" : copy.signOut} onClick={() => choose(signOut)} disabled={!signOut || signingOut} />
         </div>
       ) : null}
     </div>
   );
 }
 
-function AccountMenuItem({ icon: Icon, label, onClick, hasChevron = false }) {
+function AccountMenuItem({ icon: Icon, label, onClick, hasChevron = false, disabled = false }) {
   return (
     <button
       type="button"
       role="menuitem"
-      className="flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+      disabled={disabled}
+      className="flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-60"
       onClick={onClick}
     >
       <Icon className="size-4" />
@@ -9410,27 +10082,29 @@ function ConversationWelcome({ agent, copy, onPrompt }) {
   ];
   const roleLabel = localizedRole(agent, copy);
 
+  const description = String(agent?.description || agent?.instructions || "").trim();
   return (
-    <div className="mx-auto flex w-full max-w-[min(48rem,100%)] flex-col items-center justify-center gap-4 overflow-hidden px-2 py-4 text-center sm:gap-6 sm:py-8 lg:py-10">
-      <AgentAvatar agent={agent} large className="size-16 sm:size-20" />
-      <div className="space-y-2">
-        <h1 className="max-w-full text-balance text-xl font-semibold tracking-normal text-foreground sm:text-3xl">Hello, how can I help you today?</h1>
-        <p className="max-w-full text-balance text-sm text-muted-foreground">I am your {roleLabel}, ready to complete any task you assign.</p>
+    <div className="mx-auto flex w-full max-w-xl flex-col items-start gap-6 px-1 py-6 sm:py-10">
+      <AgentAvatar agent={agent} large className="size-14" />
+      <div className="space-y-1.5">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Hi, I&apos;m {agent.name}.</h1>
+        <p className="text-base text-muted-foreground">{roleLabel}. {description ? description : "Tell me what you need and I will take it from there."}</p>
       </div>
-      <div className="grid w-full max-w-full gap-2">
-        {suggestions.map((suggestion) => (
-          <button
-            key={suggestion}
-            type="button"
-            className="group flex min-h-12 w-full max-w-full items-center gap-3 overflow-hidden rounded-md bg-muted/50 px-3 py-2.5 text-left text-sm font-medium text-foreground/90 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
-            onClick={() => onPrompt(suggestion)}
-          >
-            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-background text-muted-foreground transition-colors group-hover:text-foreground">
-              <Sparkles className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1 break-words leading-5">{suggestion}</span>
-          </button>
-        ))}
+      <div className="w-full">
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Try asking</p>
+        <div className="divide-y divide-border/70 border-y border-border/70">
+          {suggestions.map((suggestion) => (
+            <button
+              key={suggestion}
+              type="button"
+              className="group flex w-full items-center gap-3 py-3 text-left text-sm text-foreground/90 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+              onClick={() => onPrompt(suggestion)}
+            >
+              <span className="min-w-0 flex-1 leading-5">{suggestion}</span>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -9460,6 +10134,8 @@ function Conversation({
   runAutomation,
   updateAgent,
   requestedWorkspace,
+  initialPrompt = "",
+  onInitialPromptConsumed,
   chatSettings = DEFAULT_CHAT_SETTINGS,
   handoffRetryMode = DEFAULT_HANDOFF_RETRY_MODE,
   onCreateHandoff,
@@ -9467,8 +10143,18 @@ function Conversation({
   onCancelHandoff,
   onFailHandoff,
   onRetryHandoff,
+  harnesses = [],
+  harnessesLoading = false,
+  onRefreshHarnesses,
+  onLocalMessage,
 }) {
   const defaultLaunch = agent.launch || { mode: "prompt", policy: "restricted", model: "", dryRun: false };
+  const [harnessDraft, setHarnessDraft] = useState(() => harnessForAgent(agent));
+  const [harnessPopoverOpen, setHarnessPopoverOpen] = useState(false);
+  useEffect(() => {
+    setHarnessDraft(harnessForAgent(agent));
+  }, [agent.id, agent.harness]);
+  const harnessDirty = JSON.stringify(harnessDraft) !== JSON.stringify(harnessForAgent(agent));
   const defaultWorkspace =
     requestedWorkspace && !isBlockedWorkspace(requestedWorkspace, runtime)
       ? requestedWorkspace
@@ -9506,12 +10192,21 @@ function Conversation({
   const [mentionIndex, setMentionIndex] = useState(0);
   const activeMode = RUN_MODES.find((item) => item.id === mode) || RUN_MODES[0];
   const prompt = promptByAgent[agent.id] || "";
+  useEffect(() => {
+    if (!initialPrompt || !agent?.id) return;
+    setPromptByAgent((current) => (current[agent.id] ? current : { ...current, [agent.id]: initialPrompt }));
+    onInitialPromptConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPrompt, agent?.id]);
   const chatSending = chatSendingByAgent[agent.id] === true;
   const queuedFollowups = queuedFollowupsByAgent[agent.id] || [];
   // Goal 09: recommend recipes from the current request, scoped to this member's role.
+  // Typing must stay responsive: recipe matching and permission warnings run
+  // against a deferred copy of the prompt, so keystrokes never wait on them.
+  const deferredPrompt = useDeferredValue(prompt);
   const recommendedRecipeMatches = useMemo(
-    () => recommendRecipesForPrompt(prompt, RECIPE_CATALOG, agentRoleId(agent)),
-    [prompt, agent]
+    () => recommendRecipesForPrompt(deferredPrompt, RECIPE_CATALOG, agentRoleId(agent)),
+    [deferredPrompt, agent]
   );
   const latestRun = runs[0];
   const workspaceChoices = workspaceOptions(workspaces, workspace, runtime);
@@ -9539,16 +10234,21 @@ function Conversation({
   const canAddWorkspace = Boolean(normalizedWorkspaceDraft) && !atProjectLimit && !duplicateWorkspace && !blockedWorkspaceDraft;
   const blockedWorkspace = isBlockedWorkspace(workspace, runtime);
   const launchPermissions = resolveAgentPermissionsForWorkspace(agent, workspace);
-  const launchWarnings = launchPermissionWarnings({ permissions: launchPermissions, prompt, mode, policy });
+  const launchWarnings = useMemo(
+    () => launchPermissionWarnings({ permissions: launchPermissions, prompt: deferredPrompt, mode, policy }),
+    [launchPermissions, deferredPrompt, mode, policy]
+  );
   const effectiveModel = effectiveModelForAgent(agent, providerSettings);
   const runningCount = runs.filter((run) => run.status === "running").length;
   const mentionQuery = mentionState?.query || "";
+  const mentionKind = mentionState?.kind || "mention";
   const normalizedMentionQuery = mentionQuery.toLowerCase();
   const isFileMentionQuery =
-    ["file", "files"].includes(normalizedMentionQuery) ||
-    mentionQuery.includes("/") ||
-    mentionQuery.includes(".") ||
-    mentionQuery.length >= 3;
+    mentionKind === "mention" &&
+    (["file", "files"].includes(normalizedMentionQuery) ||
+      mentionQuery.includes("/") ||
+      mentionQuery.includes(".") ||
+      mentionQuery.length >= 3);
   const fileMentionQuery = ["file", "files"].includes(normalizedMentionQuery) ? "" : mentionQuery;
   const workspaceFileMentionsAvailable = runtime?.features?.workspaceFileMentions === true;
   const memberMentionItems = useMemo(() => {
@@ -9561,27 +10261,80 @@ function Conversation({
       })
       .map((item) => ({
         type: "agent",
+        prefix: "@",
         value: mentionTokenForAgent(item),
         title: item.name,
         detail: localizedRole(item, copy),
         agent: item,
-        presence: memberPresenceForAgent(item, { tasks, runs, messagesByChannel }),
+        presence: chatSendingByAgent[item.id]
+          ? { id: "working", label: "Working", className: "bg-primary", pulse: true }
+          : memberPresenceForAgent(item, { tasks, runs, messagesByChannel }),
       }));
-  }, [agent.id, agents, copy, mentionQuery, messagesByChannel, runs, tasks]);
+  }, [agent.id, agents, chatSendingByAgent, copy, mentionQuery, messagesByChannel, runs, tasks]);
   const fileMentionItems = useMemo(
     () =>
       mentionFiles.map((file) => ({
         type: "file",
+        prefix: "@",
         value: file.path,
         title: file.path,
         detail: file.detail || "Workspace file",
       })),
     [mentionFiles]
   );
-  const mentionItems = useMemo(
-    () => [...memberMentionItems, ...fileMentionItems].slice(0, 6),
-    [fileMentionItems, memberMentionItems]
-  );
+  const memberHarnessId = harnessForAgent(agent).id;
+  const commandItems = useMemo(() => {
+    if (mentionKind !== "command") return [];
+    const query = mentionQuery.toLowerCase();
+    return commandsForHarness(memberHarnessId)
+      .filter((command) => !query || command.name.startsWith(query))
+      .map((command) => ({
+        type: "command",
+        prefix: "/",
+        value: command.name,
+        title: `/${command.name}${command.args ? ` ${command.args}` : ""}`,
+        detail: command.description,
+      }));
+  }, [memberHarnessId, mentionKind, mentionQuery]);
+  const [catalogSkills, setCatalogSkills] = useState([]);
+  useEffect(() => {
+    if (mentionKind !== "skill") return undefined;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const data = await api(`/api/skills/catalog?q=${encodeURIComponent(mentionQuery)}`, { signal: controller.signal });
+        if (!controller.signal.aborted) setCatalogSkills(Array.isArray(data?.skills) ? data.skills : []);
+      } catch {
+        if (!controller.signal.aborted) setCatalogSkills([]);
+      }
+    }, 80);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [mentionKind, mentionQuery]);
+  const installedSkillNames = useMemo(() => {
+    const names = new Set(normalizeSkillList(agent.skills));
+    for (const skill of agent.skillInstall?.installed || []) if (skill?.id) names.add(skill.id);
+    return Array.from(names);
+  }, [agent.skills, agent.skillInstall]);
+  const skillItems = useMemo(() => {
+    if (mentionKind !== "skill") return [];
+    const query = mentionQuery.toLowerCase();
+    const installed = installedSkillNames
+      .filter((name) => !query || name.toLowerCase().includes(query))
+      .map((name) => ({ type: "skill", prefix: "$", value: name, title: name, detail: "Installed for this member" }));
+    const seen = new Set(installed.map((item) => item.value));
+    const catalog = catalogSkills
+      .filter((skill) => !seen.has(skill.id))
+      .map((skill) => ({ type: "skill", prefix: "$", value: skill.id, title: skill.name || skill.id, detail: `Registry${skill.category ? ` · ${skill.category}` : ""}` }));
+    return [...installed, ...catalog].slice(0, 12);
+  }, [catalogSkills, installedSkillNames, mentionKind, mentionQuery]);
+  const mentionItems = useMemo(() => {
+    if (mentionKind === "command") return commandItems.slice(0, 10);
+    if (mentionKind === "skill") return skillItems;
+    return [...memberMentionItems, ...fileMentionItems].slice(0, 6);
+  }, [commandItems, fileMentionItems, memberMentionItems, mentionKind, skillItems]);
   const mentionOpen = Boolean(mentionState);
   const visibleMessages = useMemo(
     () => messages.filter((message) => !(message?.id === "m1" && message?.role === "agent" && message?.time === "Ready")),
@@ -9589,6 +10342,8 @@ function Conversation({
   );
   const hasConversationMessages = visibleMessages.length > 0;
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
+  // Stable message objects so memoized rows skip re-rendering while typing.
+  const localizedMessages = useMemo(() => visibleMessages.map((message) => localizedMessage(message, agent, copy)), [visibleMessages, agent, copy]);
   useEffect(() => {
     const normalizedWorkspace = normalizeSquadWorkspacePath(workspace, runtime);
     if (normalizedWorkspace && normalizedWorkspace !== workspace) {
@@ -9662,8 +10417,17 @@ function Conversation({
   ]);
 
   function updatePrompt(value, caret = value.length) {
-    setPromptByAgent((current) => ({ ...current, [agent.id]: value }));
-    setMentionState(currentMentionQuery(value, caret));
+    setPromptByAgent((current) => (current[agent.id] === value ? current : { ...current, [agent.id]: value }));
+    const nextMention = composerTrigger(value, caret);
+    // Same mention query → same state object, so caret moves and key-ups do
+    // not re-render the conversation.
+    setMentionState((current) =>
+      (current?.query ?? null) === (nextMention?.query ?? null) &&
+      (current?.start ?? null) === (nextMention?.start ?? null) &&
+      (current?.kind ?? null) === (nextMention?.kind ?? null)
+        ? current
+        : nextMention
+    );
   }
 
   function syncMentionFromTarget(target) {
@@ -9671,7 +10435,7 @@ function Conversation({
   }
 
   function selectMentionItem(item) {
-    const nextPrompt = insertMentionText(prompt, item, mentionState);
+    const nextPrompt = insertTriggerText(prompt, item.prefix || "@", item.value, mentionState);
     setPromptByAgent((current) => ({ ...current, [agent.id]: nextPrompt.text }));
     setMentionState(null);
     window.requestAnimationFrame(() => {
@@ -9688,6 +10452,17 @@ function Conversation({
       !event.metaKey &&
       !event.ctrlKey &&
       !event.nativeEvent?.isComposing;
+    const wantsSteer = event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent?.isComposing;
+
+    if (wantsSteer && !mentionOpen) {
+      event.preventDefault();
+      const text = livePrompt();
+      if (!text || blockedWorkspace) return;
+      setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
+      setMentionState(null);
+      steerNow({ prompt: expandSkillMentions(text, installedSkillNames), workspace, policy, model });
+      return;
+    }
 
     if (!mentionOpen) {
       if (wantsPlainEnter) {
@@ -9804,8 +10579,36 @@ function Conversation({
     window.requestAnimationFrame(() => promptRef.current?.focus());
   }
 
+  // Steer: interrupt the running reply and send this message immediately.
+  // The warm session keeps the CLI's context, so the member sees what it was
+  // doing when the new instruction arrives.
+  const pendingSteerRef = useRef({});
+  function steerNow(nextItem, agentId = agent.id) {
+    const text = String(nextItem?.prompt || "").trim();
+    if (!text) return;
+    if (!chatSendingRef.current[agentId]) {
+      sendPromptNow({ ...nextItem, prompt: text }, { agentId, restorePromptOnError: true });
+      return;
+    }
+    pendingSteerRef.current = { ...pendingSteerRef.current, [agentId]: { ...nextItem, prompt: text } };
+    activeChatControllerRef.current[agentId]?.abort();
+  }
+
+  function steerQueuedFollowup(itemId) {
+    const item = (queuedFollowupsRef.current[agent.id] || []).find((entry) => entry.id === itemId);
+    if (!item) return;
+    updateQueuedFollowups((items) => items.filter((entry) => entry.id !== itemId));
+    steerNow(item);
+  }
+
   function sendNextQueuedFollowup(agentId = agent.id) {
     if (chatSendingRef.current[agentId]) return;
+    const steer = pendingSteerRef.current[agentId];
+    if (steer) {
+      pendingSteerRef.current = { ...pendingSteerRef.current, [agentId]: null };
+      sendPromptNow(steer, { agentId, restorePromptOnError: true });
+      return;
+    }
     const [nextItem, ...remainingItems] = queuedFollowupsRef.current[agentId] || [];
     if (!nextItem) return;
     setQueuedFollowupItems(agentId, remainingItems);
@@ -9839,10 +10642,11 @@ function Conversation({
           signal: controller.signal,
         })
       );
-      void chatPromise
-        .then(() => {
-          if (controller.signal.aborted) return;
-          if (!handoffResult?.targetAgentId) return;
+      // The receiving member starts right away: its brief comes from the
+      // user's message and the handoff, not from the source's answer, and a
+      // failing or slow source must not leave the receiver idle.
+      if (handoffResult?.targetAgentId) {
+        void Promise.resolve().then(() => {
           const receiverController = new AbortController();
           activeChatControllerRef.current = {
             ...activeChatControllerRef.current,
@@ -9877,14 +10681,20 @@ function Conversation({
               }
               setActiveChatSending(handoffResult.targetAgentId, false);
             });
-        })
+        });
+      }
+      void chatPromise
         .catch(() => {})
         .finally(() => {
           if (activeChatControllerRef.current[targetAgentId] === controller) {
             activeChatControllerRef.current = { ...activeChatControllerRef.current, [targetAgentId]: null };
           }
           setActiveChatSending(targetAgentId, false);
-          window.setTimeout(() => sendNextQueuedFollowup(targetAgentId), 0);
+          // Stop only cancels the queue; a steer (Send now / Cmd+Enter) still
+          // sends its message after the interrupted turn settles.
+          if (!controller.signal.aborted || pendingSteerRef.current[targetAgentId]) {
+            window.setTimeout(() => sendNextQueuedFollowup(targetAgentId), 0);
+          }
         });
     } catch {
       if (activeChatControllerRef.current[targetAgentId] === controller) {
@@ -9913,17 +10723,120 @@ function Conversation({
     activeChatControllerRef.current[agent.id]?.abort();
   }
 
+  // Re-send the user message that produced a failed answer. The handler is
+  // handed to memoized message rows, so it stays referentially stable.
+  const retryMessageRef = useRef(null);
+  const retryMessage = useCallback((message) => retryMessageRef.current?.(message), []);
+  retryMessageRef.current = function retryMessageNow(message) {
+    if (chatSendingRef.current[agent.id]) return;
+    const index = visibleMessages.findIndex((item) => item.id === message.id);
+    const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
+    if (!previousUser?.body) return;
+    sendPromptNow({ prompt: previousUser.body, workspace, policy, model }, { agentId: agent.id });
+  };
+
+  function postLocalNote(body, status = "note") {
+    onLocalMessage?.(agent.id, {
+      id: `note-${Date.now().toString(36)}`,
+      role: "agent",
+      authorName: status === "shell" ? "Terminal" : "Squad",
+      body,
+      time: new Date().toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }),
+      status: "complete",
+      local: true,
+    });
+  }
+
+  async function runShellCommand(command) {
+    onLocalMessage?.(agent.id, { id: `shell-u-${Date.now().toString(36)}`, role: "user", body: `!${command}`, time: new Date().toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) });
+    try {
+      const result = await api("/api/shell", { method: "POST", body: JSON.stringify({ workspace, command }) });
+      const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trimEnd();
+      const status = result.timedOut ? "timed out" : `exit ${result.exitCode ?? "?"}`;
+      postLocalNote(`\`\`\`\n$ ${command}\n${output || "(no output)"}\n\`\`\`\n${status} · ${Math.round((result.durationMs || 0) / 100) / 10}s · ${workspaceName(workspace) || workspace}`, "shell");
+    } catch (error) {
+      postLocalNote(`\`${command}\` failed to run: ${error.message}`, "shell");
+    }
+  }
+
+  // Slash commands the app owns work on every engine; Autohand Code commands
+  // pass through to the CLI; other engines get a plain answer instead of a
+  // silent no-op.
+  function handleSlashCommand(command) {
+    const harnessId = harnessForAgent(agent).id;
+    switch (command.name) {
+      case "new":
+        startFreshChat();
+        return true;
+      case "help":
+        postLocalNote(composerHelpText(harnessId));
+        return true;
+      case "skills":
+        postLocalNote(installedSkillNames.length ? `Installed skills for ${agent.name}:\n${installedSkillNames.map((name) => `- \`$${name}\``).join("\n")}` : `${agent.name} has no installed skills yet. Type \`$\` to browse the registry.`);
+        return true;
+      case "model":
+        if (!command.args) {
+          postLocalNote(`Current model: ${model || providerSummaryLabel(effectiveModel)}. Use \`/model <id>\` to change it for the next messages.`);
+          return true;
+        }
+        setModel(command.args);
+        postLocalNote(`Model set to \`${command.args}\` for the next messages.`);
+        return true;
+      case "harness": {
+        const next = normalizeHarnessAssignmentCopy({ ...harnessForAgent(agent), id: command.args });
+        if (!command.args || next.id === harnessId) {
+          postLocalNote(`${agent.name} runs with ${harnessLabel(harnessId)}. Use \`/harness autohand|codex|claude\` to switch.`);
+          return true;
+        }
+        updateAgent?.(agent.id, { harness: next, updatedAt: new Date().toISOString() });
+        postLocalNote(`${agent.name} now runs with ${harnessLabel(next.id)}.`);
+        return true;
+      }
+      case "workspace":
+        if (!command.args) {
+          postLocalNote(`Current workspace: ${workspace}.`);
+          return true;
+        }
+        setWorkspace(command.args);
+        postLocalNote(`Workspace set to ${command.args}.`);
+        return true;
+      case "run":
+        void runShellCommand(command.args);
+        return true;
+      default:
+        break;
+    }
+    if (harnessId === "autohand") return false;
+    postLocalNote(`\`/${command.name}\` is a CLI-only command; ${harnessLabel(harnessId)} runs non-interactively here and does not accept it. Type \`/help\` for the commands that work.`);
+    return true;
+  }
+
+  // The field reports drafts in a transition, so read the live value from the
+  // element: a fast Enter must never see a stale (empty) prompt.
+  function livePrompt() {
+    const fieldValue = promptRef.current?.value;
+    return String(fieldValue ?? prompt ?? "").trim();
+  }
+
   function submit(event) {
     event.preventDefault();
-    if (!prompt.trim() || blockedWorkspace) return;
-    const submittedPrompt = prompt.trim();
+    if (blockedWorkspace) return;
+    const submittedPrompt = livePrompt();
+    if (!submittedPrompt) return;
     setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
     setMentionState(null);
-    if (chatSendingRef.current[agent.id]) {
-      queuePrompt(submittedPrompt);
+    if (isShellPrompt(submittedPrompt)) {
+      void runShellCommand(shellCommandFrom(submittedPrompt));
       return;
     }
-    sendPromptNow({ prompt: submittedPrompt, workspace, policy, model }, { agentId: agent.id, restorePromptOnError: true });
+    const slash = slashCommandFrom(submittedPrompt);
+    if (slash && handleSlashCommand(slash)) return;
+    const expandedPrompt = expandSkillMentions(submittedPrompt, installedSkillNames);
+    if (chatSendingRef.current[agent.id]) {
+      queuePrompt(expandedPrompt);
+      return;
+    }
+    sendPromptNow({ prompt: expandedPrompt, workspace, policy, model }, { agentId: agent.id, restorePromptOnError: true });
   }
 
   // Goal 08: preview the context pack before launching a run. Calls the server
@@ -10043,48 +10956,107 @@ function Conversation({
 
   return (
     <div className="flex h-[calc(100svh-4rem)] min-h-[560px] w-full max-w-full flex-col overflow-x-hidden bg-background/75 lg:h-screen lg:min-h-screen">
-      <header className="flex min-h-16 max-w-full flex-col gap-3 overflow-hidden border-b bg-background/92 px-4 py-3 backdrop-blur-xl sm:px-6 xl:flex-row xl:items-center xl:justify-between xl:gap-5">
+      <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6" data-tauri-drag-region>
         <div className="flex min-w-0 items-center gap-3">
-          <AgentAvatar agent={agent} />
+          <AgentAvatar agent={agent} className="size-9" />
           <div className="min-w-0">
-            <button
-              type="button"
-              className="flex min-w-0 items-center gap-2 rounded-md text-left outline-none transition-colors hover:text-primary focus-visible:ring-[3px] focus-visible:ring-ring/40"
-              onClick={() => setProfilePreviewOpen(true)}
-            >
-              <span className="truncate text-base font-semibold">{agent.name}</span>
-              <ChevronRight className="size-4 text-muted-foreground" />
-            </button>
-            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px]">
-                {localizedRole(agent, copy)}
-              </Badge>
-              <span className="min-w-0 max-w-32 truncate sm:max-w-[20rem] md:max-w-[32rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                className="flex min-w-0 items-center gap-1 rounded-md text-left outline-none transition-colors hover:text-primary focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                onClick={() => setProfilePreviewOpen(true)}
+              >
+                <span className="truncate text-[15px] font-semibold leading-5">{agent.name}</span>
+                <ChevronRight className="size-3.5 text-muted-foreground" />
+              </button>
+              <span className="hidden text-xs text-muted-foreground sm:inline">{localizedRole(agent, copy)}</span>
+            </div>
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className={cn("size-1.5 shrink-0 rounded-full", chatSending ? "bg-primary animate-pulse" : runtime?.available ? "bg-emerald-500" : "bg-destructive")} aria-hidden="true" />
+              <span className="min-w-0 truncate">{chatSending ? "Working" : runtime?.available ? "Online" : copy.autohandMissing}</span>
+              <span className="text-border">·</span>
+              <span className="min-w-0 max-w-40 truncate sm:max-w-[18rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
+              <span className="hidden text-border sm:inline">·</span>
               <span className="hidden min-w-0 max-w-48 truncate sm:inline">{providerSummaryLabel(effectiveModel)}</span>
-              <span className={cn("size-1.5 rounded-full", runtime?.available ? "bg-primary" : "bg-destructive")} />
-              <span className="hidden sm:inline">{runtime?.available ? copy.localCliReady : copy.autohandMissing}</span>
+              <span className="hidden text-border sm:inline">·</span>
+              <Popover open={harnessPopoverOpen} onOpenChange={setHarnessPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="hidden items-center gap-1 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
+                    aria-label="Change the engine this member runs with"
+                  >
+                    <Cpu className="size-3.5" aria-hidden="true" />
+                    <span>{harnessLabel(harnessForAgent(agent).id)}</span>
+                    <ChevronDown className="size-3 opacity-70" aria-hidden="true" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" sideOffset={8} className="w-[min(24rem,calc(100vw-2rem))] p-3">
+                  <HarnessSelect
+                    api={api}
+                    id="chat-harness"
+                    label="Runs with"
+                    compact
+                    showAdvanced={false}
+                    value={harnessDraft}
+                    onChange={setHarnessDraft}
+                    harnesses={harnesses}
+                    loading={harnessesLoading}
+                    onRefresh={onRefreshHarnesses}
+                    description="Changes apply to the next message. Personality, model, and permissions stay the same."
+                  />
+                  <div className="mt-3 flex items-center justify-end gap-2">
+                    <Button type="button" variant="ghost" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "harness"))}>
+                      Details
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!harnessDirty || !updateAgent}
+                      onClick={() => {
+                        updateAgent?.(agent.id, { harness: normalizeHarnessAssignmentCopy(harnessDraft), updatedAt: new Date().toISOString() });
+                        setHarnessPopoverOpen(false);
+                      }}
+                    >
+                      {copy.save || "Save"}
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
         </div>
 
-        <div className="flex w-full max-w-full flex-wrap items-center gap-2 overflow-hidden sm:w-auto">
-          <Button variant="outline" size="sm" onClick={startFreshChat}>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button variant="outline" size="sm" className="h-8" onClick={startFreshChat}>
             <Plus data-icon="inline-start" />
-            {copy.task}
+            <span className="hidden sm:inline">New chat</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setAutomationFormOpen(true)}>
-            <Plus data-icon="inline-start" />
-            {copy.automation}
-          </Button>
-          <span className="mx-1 hidden h-7 w-px bg-border sm:block" />
-          <Button variant="ghost" size="sm" onClick={() => openPanel("tasks")}>
-            <History data-icon="inline-start" />
-            {copy.taskList}
-          </Button>
-          <Button variant={runningCount ? "secondary" : "ghost"} size="sm" className="hidden sm:inline-flex" onClick={() => openPanel("runs")}>
-            <CircleDot data-icon="inline-start" className={cn(runningCount && "text-primary")} />
-            {copy.current}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="hidden sm:inline-flex" aria-label={copy.automation} onClick={() => setAutomationFormOpen(true)}>
+                <CalendarClock />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{copy.automation}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={copy.taskList} onClick={() => openPanel("tasks")}>
+                <History />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{copy.taskList}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="relative" aria-label={copy.current} onClick={() => openPanel("runs")}>
+                <CircleDot className={cn(runningCount && "text-primary")} />
+                {runningCount ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary" aria-hidden="true" /> : null}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{copy.current}</TooltipContent>
+          </Tooltip>
         </div>
       </header>
 
@@ -10092,30 +11064,28 @@ function Conversation({
         <ScrollArea className="min-h-0 flex-1">
           <div
             className={cn(
-              "mx-auto flex w-full max-w-5xl flex-col px-4 py-5 pb-40 sm:px-6 lg:py-8",
-              hasConversationMessages ? "gap-5" : "justify-start lg:min-h-[calc(100svh-18rem)] lg:justify-center"
+              "mx-auto flex w-full max-w-3xl flex-col px-4 py-6 pb-36 sm:px-6",
+              hasConversationMessages ? "gap-6" : "justify-start lg:min-h-[calc(100svh-18rem)] lg:justify-center"
             )}
           >
             {hasConversationMessages ? (
               <>
-                <SquadStatusRow
-                  agent={agent}
-                  activeMode={activeMode}
-                  latestRun={latestRun}
-                  runtime={runtime}
-                  workspace={workspace}
-                  workspaces={workspaces}
-                  copy={copy}
-                />
-
-                <div className="flex flex-col gap-4">
-                  {visibleMessages.map((message) => (
+                {!runtime?.available ? (
+                  <Alert variant="destructive">
+                    <AlertTriangle />
+                    <AlertTitle>{copy.autohandCliMissing}</AlertTitle>
+                    <AlertDescription>{copy.autohandCliMissingDescription}</AlertDescription>
+                  </Alert>
+                ) : null}
+                <div className="flex flex-col gap-6">
+                  {localizedMessages.map((message) => (
                     <SquadMessage
                       key={message.id}
                       agent={agent}
-                      message={localizedMessage(message, agent, copy)}
+                      message={message}
                       copy={copy}
                       chatSettings={chatSettings}
+                      onRetry={retryMessage}
                     />
                   ))}
                   <div ref={messagesEndRef} aria-hidden="true" />
@@ -10127,7 +11097,7 @@ function Conversation({
           </div>
         </ScrollArea>
 
-        <form className="border-t bg-background px-3 py-3 sm:px-5" onSubmit={submit}>
+        <form className="bg-gradient-to-t from-background via-background to-transparent px-3 pb-4 pt-6 sm:px-5" onSubmit={submit}>
           {recommendedRecipeMatches.length && !chatSending ? (
             <RecipeRecommendationPanel
               recipes={recommendedRecipeMatches}
@@ -10135,13 +11105,14 @@ function Conversation({
               onSelect={(recipe) => setRecipeLaunchTarget(recipe)}
             />
           ) : null}
-          <div className="mx-auto flex w-full max-w-3xl flex-col rounded-xl border bg-background transition-colors focus-within:border-ring/70">
+          <div className="mx-auto flex w-full max-w-3xl flex-col rounded-2xl border border-border bg-card shadow-xs transition-[border-color,box-shadow] focus-within:border-ring/60 focus-within:shadow-sm">
             {queuedFollowups.length ? (
               <QueuedFollowups
                 items={queuedFollowups}
                 copy={copy}
                 onChange={updateQueuedFollowupPrompt}
                 onRemove={removeQueuedFollowup}
+                onSendNow={steerQueuedFollowup}
               />
             ) : null}
             {launchWarnings.length ? <LaunchPermissionWarnings warnings={launchWarnings} /> : null}
@@ -10156,19 +11127,13 @@ function Conversation({
                     onSelect={selectMentionItem}
                   />
                 ) : null}
-                <Textarea
+                <PromptTextarea
                   ref={promptRef}
                   value={prompt}
-                  onChange={(event) => syncMentionFromTarget(event.target)}
-                  onClick={(event) => syncMentionFromTarget(event.currentTarget)}
+                  onDraft={updatePrompt}
                   onKeyDown={handlePromptKeyDown}
-                  onKeyUp={(event) => {
-                    if (mentionOpen && ["Enter", "Tab", "Escape", "ArrowDown", "ArrowUp"].includes(event.key)) return;
-                    syncMentionFromTarget(event.currentTarget);
-                  }}
-                  onSelect={(event) => syncMentionFromTarget(event.currentTarget)}
                   placeholder={formatCopy(copy.talkToPlaceholder, { name: agent.name })}
-                  className="max-h-56 min-h-24 resize-none border-0 bg-transparent px-3 py-3 text-base shadow-none focus-visible:ring-0 md:text-sm"
+                  className="max-h-64 min-h-[3.25rem] resize-none border-0 bg-transparent px-3.5 py-3 text-base leading-6 shadow-none focus-visible:ring-0 md:text-[15px]"
                 />
               </div>
               <div className="flex min-w-0 items-center gap-1.5 px-1 pb-1 sm:gap-2">
@@ -10251,10 +11216,32 @@ function Conversation({
 
                     {workspaceError ? <FieldDescription className="text-destructive">{workspaceError}</FieldDescription> : null}
 
-                    <Button type="button" size="sm" className="w-full" disabled={!canAddWorkspace || !updateAgent} onClick={addWorkspaceFromComposer}>
-                      <Plus data-icon="inline-start" />
-                      {copy.addWorkspace}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={async () => {
+                          try {
+                            const picked = await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: `Choose a folder for ${agent.name}`, start: workspace }) });
+                            if (picked?.path) {
+                              setWorkspaceDraft(picked.path);
+                              setWorkspaceError("");
+                            }
+                          } catch (error) {
+                            if (!/cancelled/i.test(error?.message || "")) setWorkspaceError(error?.message || "Could not open the folder dialog.");
+                          }
+                        }}
+                      >
+                        <FolderGit2 data-icon="inline-start" />
+                        Choose folder…
+                      </Button>
+                      <Button type="button" size="sm" className="flex-1" disabled={!canAddWorkspace || !updateAgent} onClick={addWorkspaceFromComposer}>
+                        <Plus data-icon="inline-start" />
+                        {copy.addWorkspace}
+                      </Button>
+                    </div>
                   </FieldGroup>
                 </PopoverContent>
               </Popover>
@@ -10368,7 +11355,7 @@ function Conversation({
                         <Send />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>{copy.queueFollowup}</TooltipContent>
+                    <TooltipContent>{copy.queueFollowup} · ⌘↩ sends now and interrupts</TooltipContent>
                   </Tooltip>
                 ) : null}
 
@@ -10379,7 +11366,7 @@ function Conversation({
                       size="icon-lg"
                       variant={chatSending ? "secondary" : "default"}
                       className={cn(
-                        "ml-auto rounded-full",
+                        "ml-auto size-9 rounded-full",
                         chatSending && "bg-foreground text-background hover:bg-foreground/90 hover:text-background"
                       )}
                       disabled={chatSending ? false : !prompt.trim() || blockedWorkspace}
@@ -10560,7 +11547,7 @@ function ContextPackPreviewDialog({ pack, loading, error, open, onOpenChange, lo
   );
 }
 
-function QueuedFollowups({ items = [], copy = getLocaleCopy(DEFAULT_LOCALE), onChange, onRemove }) {
+function QueuedFollowups({ items = [], copy = getLocaleCopy(DEFAULT_LOCALE), onChange, onRemove, onSendNow }) {
   const [editingId, setEditingId] = useState("");
   const [draft, setDraft] = useState("");
   const editingItem = items.find((item) => item.id === editingId);
@@ -10664,6 +11651,16 @@ function QueuedFollowups({ items = [], copy = getLocaleCopy(DEFAULT_LOCALE), onC
                   </>
                 ) : (
                   <>
+                    {onSendNow ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button type="button" variant="ghost" size="icon-xs" aria-label="Send now (interrupts the current reply)" onClick={() => onSendNow(item.id)}>
+                            <Send />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Send now · interrupts the current reply</TooltipContent>
+                      </Tooltip>
+                    ) : null}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button type="button" variant="ghost" size="icon-xs" aria-label={copy.editQueuedFollowup} onClick={() => startEdit(item)}>
@@ -10696,7 +11693,9 @@ function MentionPicker({ items = [], loading = false, error = "", selectedIndex 
     <div className="absolute bottom-full left-0 z-40 mb-1 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-md border bg-popover shadow-xl shadow-black/25">
       <div className="flex max-h-52 flex-col overflow-y-auto p-1">
         {items.map((item, index) => {
-          const Icon = item.type === "agent" ? UserRound : item.type === "channel" ? Hash : FileCode2;
+          const Icon =
+            item.type === "agent" ? UserRound : item.type === "channel" ? Hash : item.type === "command" ? Command : item.type === "skill" ? Sparkles : FileCode2;
+          const label = item.type === "command" ? item.title : `${item.prefix || "@"}${item.title}`;
           return (
             <button
               key={`${item.type}-${item.value}`}
@@ -10712,7 +11711,7 @@ function MentionPicker({ items = [], loading = false, error = "", selectedIndex 
             >
               <Icon className="size-3 shrink-0 text-muted-foreground" />
               <span className="flex min-w-0 flex-1 items-baseline gap-2 leading-none">
-                <span className="truncate text-[13px] font-medium leading-none">@{item.title}</span>
+                <span className="truncate text-[13px] font-medium leading-none">{label}</span>
                 <span className="hidden min-w-0 truncate text-[11px] leading-none text-muted-foreground sm:block">
                   {item.detail}
                 </span>
@@ -10732,7 +11731,7 @@ function MentionPicker({ items = [], loading = false, error = "", selectedIndex 
         })}
         {loading ? <div className="flex h-8 items-center px-2 text-[11px] text-muted-foreground">Loading files...</div> : null}
         {!loading && !items.length ? (
-          <div className="flex h-8 items-center px-2 text-[11px] text-muted-foreground">{error || "No matching squad members or files."}</div>
+          <div className="flex h-8 items-center px-2 text-[11px] text-muted-foreground">{error || "No matches. Type / for commands, $ for skills, @ for members and files, ! to run a command."}</div>
         ) : null}
       </div>
     </div>
@@ -10817,6 +11816,8 @@ function SquadStatusRow({ agent, activeMode, latestRun, runtime, workspace, work
         <span>{statusLabel(latestStatus, copy)}</span>
         <span className="h-1 w-1 rounded-full bg-muted-foreground/45" />
         <span className="min-w-0 truncate">{workspaceLabel(workspace, workspaces)}</span>
+        <span className="h-1 w-1 rounded-full bg-muted-foreground/45" />
+        <span>{formatCopy(copy.runsWithLabel || "Runs with {name}", { name: harnessLabel(harnessForAgent(agent).id) })}</span>
       </div>
       {!runtime?.available ? (
         <Alert variant="destructive">
@@ -10829,26 +11830,24 @@ function SquadStatusRow({ agent, activeMode, latestRun, runtime, workspace, work
   );
 }
 
-function SquadMessage({ agent, message, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS }) {
+const SquadMessage = memo(function SquadMessage({ agent, message, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
   const isUser = message.role === "user";
-  if (!isUser) return <AgentResponseMessage agent={agent} message={message} chatSettings={chatSettings} />;
+  if (!isUser) return <AgentResponseMessage agent={agent} message={message} chatSettings={chatSettings} onRetry={onRetry} />;
 
   return (
-    <article className="flex justify-end gap-3">
-      <div className="max-w-3xl rounded-lg border border-primary/35 bg-primary/10 px-4 py-3 text-foreground">
-        <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-semibold text-foreground">{copy.you}</span>
-          <time>{message.time}</time>
-        </div>
+    <article className="group flex flex-col items-end gap-1" aria-label={`${copy.you}, ${message.time}`}>
+      <div className="max-w-[min(40rem,88%)] rounded-2xl rounded-br-md bg-muted px-4 py-2.5 text-[15px] leading-6 text-foreground">
         <MarkdownBlocks text={message.body} />
       </div>
+      <time className="pr-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">{message.time}</time>
     </article>
   );
-}
+});
 
-function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETTINGS }) {
+function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
-  const view = buildAgentResponseView(message);
+  // Trace normalisation and body parsing are the expensive part of a row.
+  const view = useMemo(() => buildAgentResponseView(message), [message]);
   const isThinkingPlaceholder = String(message.body || "").trim() === `${agent.name} is thinking...`;
   const isLoading = message.status === "loading" || isThinkingPlaceholder;
   const hasTrace = view.orderedEvents.length;
@@ -10862,46 +11861,63 @@ function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETT
   const statusLabel = isLoading ? "Answering" : message.status === "error" ? "Could not answer" : message.status === "stopped" ? "Stopped" : "Answer";
   const progressLabel = chatProgressLabel(message, durationMs);
 
+  const isError = message.status === "error";
+  const errorText = isError ? String(view.answer || message.body || "").replace(new RegExp(`^${agent.name} could not answer:\\s*`), "") : "";
+  const needsSignIn = isError && /sign-in|autohand login|not signed in|rejected the account token/i.test(errorText);
+
   return (
-    <article className="grid grid-cols-[auto,minmax(0,1fr)] gap-3">
-      <AgentAvatar agent={agent} />
+    <article className="group grid grid-cols-[auto,minmax(0,1fr)] gap-3" aria-live={isLoading ? "polite" : undefined}>
+      <AgentAvatar agent={agent} className="mt-0.5" />
       <div className="min-w-0">
-        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-semibold text-foreground">{agent.name}</span>
+        <div className="mb-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+          <span className="text-sm font-semibold text-foreground">{message.authorName || agent.name}</span>
           <time>{message.time}</time>
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/45" />
-          <span>{statusLabel}</span>
-          {durationLabel ? (
-            <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px]">
-              {isLoading ? `${durationLabel} elapsed` : durationLabel}
-            </Badge>
+          {isLoading ? (
+            <span className="inline-flex items-center gap-1 text-primary">
+              <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
+              {durationLabel ? `${durationLabel}` : "Working"}
+            </span>
+          ) : durationLabel ? (
+            <span>{durationLabel}</span>
           ) : null}
-          {message.effectiveModel ? (
-            <Badge variant="outline" className="h-5 max-w-72 rounded-md px-1.5 text-[10px]">
-              <span className="truncate">{providerSummaryLabel(message.effectiveModel)}</span>
-            </Badge>
-          ) : null}
-          {view.toolCalls.length ? (
-            <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px]">
-              {view.toolCalls.length} tools
-            </Badge>
-          ) : null}
+          {message.effectiveModel ? <span className="hidden truncate sm:inline">· {providerSummaryLabel(message.effectiveModel)}</span> : null}
+          {message.status === "stopped" ? <span>· Stopped</span> : null}
         </div>
 
         {showProgressPlaceholder ? (
-          <div className="flex max-w-xl items-center gap-3 py-2 text-sm text-muted-foreground">
-            <Spinner />
-            <span>{progressLabel}</span>
+          <div className="flex max-w-xl items-center gap-2.5 py-1 text-sm text-muted-foreground">
+            <Spinner className="size-3.5" />
+            <span className="min-w-0 truncate">{progressLabel}</span>
           </div>
         ) : null}
 
-        {hasVisibleAnswer ? (
-          <div className="max-w-4xl">
+        {hasVisibleAnswer && !isError ? (
+          <div className="max-w-none text-[15px] leading-7 text-foreground/95">
             <MarkdownBlocks text={view.answer} />
           </div>
         ) : null}
 
-        {hasTrace ? <AgentWorkTrace view={view} open={isLoading} /> : null}
+        {isError ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3.5 py-3 text-sm">
+            <p className="font-medium text-destructive">Could not answer</p>
+            <p className="mt-1 leading-6 text-foreground/85">{errorText}</p>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              {onRetry ? (
+                <Button type="button" size="sm" variant="outline" onClick={() => onRetry(message)}>
+                  <RefreshCw data-icon="inline-start" />
+                  Retry
+                </Button>
+              ) : null}
+              {needsSignIn ? (
+                <span className="text-xs text-muted-foreground">
+                  Run <code className="rounded bg-muted px-1 py-0.5">autohand login</code> in a terminal, or sign in from the member&apos;s Harness page.
+                </span>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {hasTrace ? <AgentWorkTrace view={view} open={isLoading} durationLabel={isLoading ? "" : durationLabel} /> : null}
 
         {!isLoading && showRawOutput ? <RawTraceBlock raw={view.raw} /> : null}
       </div>
@@ -10920,17 +11936,30 @@ function chatProgressLabel(message, durationMs) {
   return activity || "Waiting for the first response...";
 }
 
-function AgentWorkTrace({ view, open = false }) {
+function AgentWorkTrace({ view, open = false, durationLabel = "" }) {
+  const steps = view.orderedEvents.length;
+  const tools = view.toolCalls.length;
+  const summary = [
+    `${steps} ${steps === 1 ? "step" : "steps"}`,
+    tools ? `${tools} ${tools === 1 ? "tool" : "tools"}` : "",
+    durationLabel,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <details open={open || undefined} className="mt-4 max-w-4xl border-l border-border/70 pl-4">
-      <summary className="cursor-pointer text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-        Work details
+    <details open={open || undefined} className="group/trace mt-3 max-w-none">
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md py-1 text-xs text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-3.5 transition-transform group-open/trace:rotate-90" aria-hidden="true" />
+        <span className="font-medium">Work details</span>
+        <span className="text-muted-foreground/80">{summary}</span>
       </summary>
-      <div className="mt-3 flex flex-col gap-3">
+      <ol className="ml-1.5 mt-2 flex flex-col border-l border-border/70 pl-4">
         {view.orderedEvents.map((event, index) => (
-          <WorkTraceEvent key={`${event.type}-${index}-${event.title || event.content || event.call?.name || ""}`} event={event} index={index} />
+          <li key={`${event.type}-${index}-${event.title || event.content || event.call?.name || ""}`} className="relative py-1 before:absolute before:-left-[1.3rem] before:top-[0.85rem] before:size-1.5 before:rounded-full before:bg-border">
+            <WorkTraceEvent event={event} index={index} />
+          </li>
         ))}
-      </div>
+      </ol>
     </details>
   );
 }
@@ -10965,10 +11994,9 @@ function WorkTraceEvent({ event, index }) {
 
 function StatusTrace({ event, tone = "neutral" }) {
   return (
-    <div className={cn("flex items-center gap-2 py-1.5 text-xs", tone === "error" ? "text-destructive" : "text-muted-foreground")}>
-      <Activity className="size-3.5 shrink-0" />
+    <div className={cn("flex items-center gap-2 py-0.5 text-xs", tone === "error" ? "text-destructive" : "text-muted-foreground")}>
       <span className="min-w-0 truncate">{event.title || statusEventTitle(event.status)}</span>
-      {event.timestamp ? <time className="ml-auto shrink-0 text-[11px]">{formatShortTime(event.timestamp)}</time> : null}
+      {event.timestamp ? <time className="ml-auto shrink-0 pl-3 text-[11px] tabular-nums text-muted-foreground/70">{formatShortTime(event.timestamp)}</time> : null}
     </div>
   );
 }
@@ -14751,22 +15779,32 @@ function TaskPanel({
 
   return (
     <div className="flex h-full min-h-screen flex-col">
-      <SheetHeader className="border-b p-5">
-        <SheetTitle>{copy.execution}</SheetTitle>
-        <SheetDescription>{copy.executionDescription}</SheetDescription>
+      <SheetHeader className="border-b border-border/70 px-5 pb-3 pt-5">
+        <SheetTitle className="text-base">{copy.execution}</SheetTitle>
+        <SheetDescription className="sr-only">{copy.executionDescription}</SheetDescription>
+        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span><span className="font-medium text-foreground">{tasks.length}</span> parent {tasks.length === 1 ? "task" : "tasks"}</span>
+          <span><span className="font-medium text-foreground">{handoffCount}</span> {handoffCount === 1 ? "handoff" : "handoffs"}</span>
+          <span className={cn(blockedCount && "text-destructive")}><span className="font-medium">{blockedCount}</span> blocked</span>
+        </p>
       </SheetHeader>
-      <div className="grid grid-cols-3 gap-2 border-b px-5 py-3">
-        <Metric label="Parent tasks" value={tasks.length} />
-        <Metric label="Handoffs" value={handoffCount} />
-        <Metric label="Blocked" value={blockedCount} />
-      </div>
       <MissionControlStrip tasks={tasks} agents={agents} />
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
-        <div className="border-b px-5 py-3">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="runs">{copy.runs}</TabsTrigger>
-            <TabsTrigger value="tasks">{copy.tasks}</TabsTrigger>
-            <TabsTrigger value="automations">{copy.automations}</TabsTrigger>
+        <div className="border-b border-border/70 px-5">
+          <TabsList className="h-10 w-full justify-start gap-4 rounded-none bg-transparent p-0">
+            {[
+              ["runs", copy.runs],
+              ["tasks", copy.tasks],
+              ["automations", copy.automations],
+            ].map(([value, label]) => (
+              <TabsTrigger
+                key={value}
+                value={value}
+                className="h-10 rounded-none border-b-2 border-transparent px-0 text-sm text-muted-foreground shadow-none data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              >
+                {label}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </div>
         <ScrollArea className="min-h-0 flex-1">
@@ -14808,41 +15846,33 @@ function MissionControlStrip({ tasks = [], agents = [] }) {
   const blockedTasks = tasks.filter((task) => task.status === "blocked" || latestFailedHandoff(task));
   const visibleTasks = [...activeTasks, ...tasks].filter((task, index, list) => list.findIndex((item) => item.id === task.id) === index).slice(0, 3);
 
+  if (!visibleTasks.length) return null;
   return (
-    <section className="border-b bg-muted/20 px-5 py-4" aria-label="Mission Control">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold">Mission Control</h3>
-          <p className="mt-1 text-xs text-muted-foreground">Current owners, handoff state, and blocked checkpoints.</p>
-        </div>
-        <Badge variant={blockedTasks.length ? "destructive" : "secondary"} className="rounded-md">
-          {blockedTasks.length} blocked
-        </Badge>
+    <section className="border-b border-border/70 px-5 py-3" aria-label="Mission Control">
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Now</h3>
+        {blockedTasks.length ? <span className="text-xs text-destructive">{blockedTasks.length} blocked</span> : null}
       </div>
-      <div className="grid gap-2">
+      <div className="divide-y divide-border/60">
         {visibleTasks.length ? (
           visibleTasks.map((task) => {
             const owner = taskOwner(task, agents);
             const handoff = latestHandoff(task);
             return (
-              <div key={task.id} className="rounded-md border bg-background/65 px-3 py-2">
+              <div key={task.id} className="py-2">
                 <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="min-w-0 truncate font-medium">{task.title}</span>
+                  <span className="min-w-0 truncate">{task.title}</span>
                   <StatusBadge status={task.status} />
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span>Owner: {owner?.name || task.currentOwnerId || "unassigned"}</span>
-                  {handoff ? <span>Latest handoff: {handoff.status}</span> : null}
-                  <span>{(task.assignments || []).length} assignments</span>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                  <span>{owner?.name || task.currentOwnerId || "unassigned"}</span>
+                  {handoff ? <span>· handoff {handoff.status}</span> : null}
+                  <span>· {(task.assignments || []).length} {(task.assignments || []).length === 1 ? "assignment" : "assignments"}</span>
                 </div>
               </div>
             );
           })
-        ) : (
-          <div className="rounded-md border bg-background/65 px-3 py-2 text-sm text-muted-foreground">
-            No active handoffs.
-          </div>
-        )}
+        ) : null}
       </div>
     </section>
   );
@@ -14853,48 +15883,39 @@ function RunList({ runs, tasks = [], agents = [], copy = getLocaleCopy(DEFAULT_L
     return <EmptyBlock icon={TerminalSquare} title={copy.noAutohandRuns} body={copy.runsAppearAfterLaunch} />;
   }
   return (
-    <div className="flex flex-col gap-3">
+    <div className="-mx-1 divide-y divide-border/60">
       {runs.map((run) => (
-        <Card key={run.id} className="gap-3 rounded-lg py-4 shadow-none">
-          <CardHeader className="px-4">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <StatusIcon status={run.status} />
-              {run.title}
-            </CardTitle>
-            <CardDescription>{run.workspace}</CardDescription>
-            <CardAction>
-              <div className="flex items-center gap-2">
-                <StatusBadge status={run.status} copy={copy} />
-                <Button type="button" variant="outline" size="sm" onClick={() => onHandoff?.(run)}>
-                  <Workflow data-icon="inline-start" />
-                  Handoff
-                </Button>
+        <article key={run.id} className="px-1 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm">
+                <StatusIcon status={run.status} />
+                <span className="min-w-0 truncate font-medium">{run.title}</span>
               </div>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="px-4">
-            {run.agentId ? (
-              <div className="mb-2 text-xs text-muted-foreground">
-                Owner: {agents.find((agent) => agent.id === run.agentId)?.name || run.agentId}
-                {tasks.some((task) => task.runtimeId === run.id) ? " / linked parent task" : " / standalone run"}
-              </div>
-            ) : null}
-            <code className="block truncate rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">{run.command}</code>
-            {run.displayConfigPath ? (
-              <div className="mt-2 truncate text-[11px] text-muted-foreground">Config: {run.displayConfigPath}</div>
-            ) : null}
-            {run.effectiveModel ? (
-              <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                Model: {providerSummaryLabel(run.effectiveModel)} ({run.effectiveModel.source || "workspace"})
-              </div>
-            ) : null}
-            <pre className="mt-3 max-h-44 overflow-auto rounded-md bg-background p-3 text-xs leading-5 text-muted-foreground">
-              {run.logs.length
-                ? run.logs.slice(-9).map((log) => `[${log.source}] ${log.line}`).join("\n")
-                : "waiting for output..."}
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                {run.agentId ? `${agents.find((agent) => agent.id === run.agentId)?.name || run.agentId} · ` : ""}
+                {workspaceName(run.workspace) || run.workspace}
+                {run.effectiveModel ? ` · ${providerSummaryLabel(run.effectiveModel)}` : ""}
+                {tasks.some((task) => task.runtimeId === run.id) ? " · linked task" : ""}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <StatusBadge status={run.status} copy={copy} />
+              <Button type="button" variant="ghost" size="icon-sm" aria-label="Handoff" onClick={() => onHandoff?.(run)}>
+                <Workflow />
+              </Button>
+            </div>
+          </div>
+          <details className="mt-1.5 text-xs">
+            <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+              {run.logs.length ? `Output · ${run.logs.length} lines` : "Waiting for output…"}
+            </summary>
+            <code className="mt-2 block truncate text-[11px] text-muted-foreground">{run.command}</code>
+            <pre className="mt-2 max-h-44 overflow-auto text-xs leading-5 text-muted-foreground">
+              {run.logs.slice(-12).map((log) => `[${log.source}] ${log.line}`).join("\n") || "waiting for output..."}
             </pre>
-          </CardContent>
-        </Card>
+          </details>
+        </article>
       ))}
     </div>
   );
@@ -14914,7 +15935,7 @@ function TaskList({
     return <EmptyBlock icon={LayoutList} title={copy.noTasksYet} body={copy.startAutohandFromLaunchSurface} />;
   }
   return (
-    <div className="flex flex-col gap-3">
+    <div className="-mx-1 divide-y divide-border/60">
       {tasks.map((task) => {
         const owner = taskOwner(task, agents);
         const handoff = latestHandoff(task);
@@ -14923,31 +15944,27 @@ function TaskList({
         const fromAgent = agents.find((agent) => agent.id === handoff?.fromAgentId);
         const toAgent = agents.find((agent) => agent.id === handoff?.toAgentId);
         return (
-        <div key={task.id} className="rounded-lg border bg-muted/25 p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <StatusIcon status={task.status} />
+        <div key={task.id} className="px-1 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm">
+                <StatusIcon status={task.status} />
+                <span className="min-w-0 truncate font-medium">{task.title}</span>
+              </div>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                <span>{owner?.name || task.currentOwnerId || task.agentId || "unassigned"}</span>
+                {task.project ? <span>· {task.project}</span> : null}
+                <span>· {(task.assignments || []).length} {(task.assignments || []).length === 1 ? "assignment" : "assignments"}</span>
+                {handoff ? <span className={cn(handoff.status === "failed" && "text-destructive")}>· handoff {handoff.status}</span> : null}
+                <span>· {formatRecordDate(task.updatedAt, DEFAULT_LOCALE, copy)}</span>
+              </p>
+            </div>
             <StatusBadge status={task.status} copy={copy} />
-            <Badge variant="outline" className="rounded-md bg-background/50">
-              Owner: {owner?.name || task.currentOwnerId || task.agentId || "unassigned"}
-            </Badge>
-            <time className="ml-auto text-xs text-muted-foreground">{formatRecordDate(task.updatedAt, DEFAULT_LOCALE, copy)}</time>
           </div>
-          <div className="font-semibold">{task.title}</div>
-          <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">{task.summary}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{task.project}</Badge>
-            <Badge variant="secondary" className="rounded-md">
-              {(task.assignments || []).length} child assignment{(task.assignments || []).length === 1 ? "" : "s"}
-            </Badge>
-            {handoff ? (
-              <Badge variant={handoff.status === "failed" ? "destructive" : "outline"} className="rounded-md">
-                {handoff.status} handoff
-              </Badge>
-            ) : null}
-          </div>
+          {task.summary ? <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{task.summary}</p> : null}
 
           {handoff ? (
-            <div className="mt-4 rounded-md border bg-background/55 p-3">
+            <div className="mt-3 border-l-2 border-border/70 pl-3">
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <Workflow className="size-4 text-primary" />
                 <span className="font-semibold">{fromAgent?.name || "Source"}{" -> "}{toAgent?.name || "Target"}</span>
@@ -14993,8 +16010,8 @@ function TaskList({
           ) : null}
 
           <TaskTimelinePreview task={task} agents={agents} />
-          <div className="mt-4 flex justify-end">
-            <Button type="button" variant="outline" size="sm" onClick={() => onHandoff?.(task)}>
+          <div className="mt-2 flex justify-end">
+            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={() => onHandoff?.(task)}>
               <Workflow data-icon="inline-start" />
               Handoff
             </Button>
@@ -15774,7 +16791,7 @@ function buildCustomRoleInstructions(templateDraft) {
     .join("\n\n");
 }
 
-function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot }) {
+function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harnesses = [], harnessesLoading = false, onRefreshHarnesses }) {
   const [customTemplates, setCustomTemplates] = useState([]);
   const [customTemplateDialogOpen, setCustomTemplateDialogOpen] = useState(false);
   const [templateId, setTemplateId] = useState("");
@@ -15797,6 +16814,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot }) {
     avatar: "",
     profileFiles: normalizeProfileFiles(template.profileFiles),
     brainCard: normalizeBrainCard(template.brainCard, template),
+    harness: normalizeHarnessAssignmentCopy(null),
   }));
 
   useEffect(() => {
@@ -16020,6 +17038,17 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot }) {
                 onChange={(event) => setDraft({ ...draft, description: event.target.value })}
                 placeholder="Describe this squad member's responsibilities, strengths, and working style."
                 className="min-h-[148px] resize-y bg-card leading-6"
+              />
+            </Field>
+
+            <Field>
+              <HarnessSelect
+                api={api}
+                value={draft.harness}
+                onChange={(harness) => setDraft((current) => ({ ...current, harness }))}
+                harnesses={harnesses}
+                loading={harnessesLoading}
+                onRefresh={onRefreshHarnesses}
               />
             </Field>
 
@@ -17291,7 +18320,7 @@ function AgentModelPage({ agent, providerSettings, navigate, updateAgent }) {
   const [draft, setDraft] = useState(currentAssignment);
   const definitions = providerDefinitionsFromSettings(providerSettings);
   const effectiveModel = effectiveModelForAgent({ ...agent, modelAssignment: draft }, providerSettings);
-  const selectedProvider = draft.mode === "override" ? draft.provider : providerSettings?.defaultProvider || "openrouter";
+  const selectedProvider = draft.mode === "override" ? draft.provider : providerSettings?.defaultProvider || "autohandai";
   const configuredProviderIds = definitions.filter((definition) => providerIsConfigured(providerSettings, definition.id)).map((definition) => definition.id);
   const canSave = JSON.stringify(draft) !== JSON.stringify(currentAssignment);
   const overrideReady = draft.mode !== "override" || (providerIsConfigured(providerSettings, draft.provider) && Boolean(draft.model));
@@ -17480,8 +18509,25 @@ function SquadMemberSectionPage({
   purgeHiddenRejectedMemory,
   locale = DEFAULT_LOCALE,
   copy = getLocaleCopy(DEFAULT_LOCALE),
+  harnesses = [],
+  harnessesLoading = false,
+  onRefreshHarnesses,
 }) {
   const sectionMeta = MEMBER_SECTIONS.find((item) => item.id === section) || MEMBER_SECTIONS[0];
+
+  if (section === "harness") {
+    return (
+      <AgentHarnessPage
+        agent={agent}
+        harnesses={harnesses}
+        harnessesLoading={harnessesLoading}
+        onRefreshHarnesses={onRefreshHarnesses}
+        navigate={navigate}
+        updateAgent={updateAgent}
+        copy={copy}
+      />
+    );
+  }
   const Icon = sectionMeta.icon;
   const sectionLabel = localizedSectionLabel(sectionMeta.id, copy);
 
@@ -19510,6 +20556,123 @@ function BrainCardPanel({ agent, onEdit }) {
   );
 }
 
+function ProfileHarnessSummary({ agent, harnesses = [], navigate }) {
+  const assignment = harnessForAgent(agent);
+  const readiness = readinessFor(harnesses, assignment.id);
+  return (
+    <section className="border-b border-border/75 pb-5" aria-labelledby="profile-harness-summary">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 id="profile-harness-summary" className="text-base font-semibold">Harness</h3>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            {harnessLabel(assignment.id)}
+            {readiness?.version ? ` ${readiness.version}` : ""}
+            {" / "}
+            <span className={readinessTone(readiness?.status)}>{readinessLabel(readiness?.status)}</span>
+            {assignment.model ? ` / ${assignment.model}` : ""}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "harness"))}>
+          <Cpu data-icon="inline-start" />
+          Harness
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onRefreshHarnesses, navigate, updateAgent, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+  const [assignment, setAssignment] = useState(() => harnessForAgent(agent));
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [testError, setTestError] = useState("");
+  const dirty = JSON.stringify(assignment) !== JSON.stringify(harnessForAgent(agent));
+
+  useEffect(() => {
+    setAssignment(harnessForAgent(agent));
+    setTestResult(null);
+    setTestError("");
+  }, [agent.id]);
+
+  async function runTest(candidate) {
+    setTesting(true);
+    setTestError("");
+    try {
+      setTestResult(await testHarness(api, candidate));
+    } catch (error) {
+      setTestResult(null);
+      setTestError(error.message || "Harness test failed.");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <PageTitle title="Harness" />
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
+        <div>
+          <h2 className="text-lg font-semibold">Runs with</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {agent.name} keeps the same brain card, model assignment, and permission ladder whichever engine executes it. A harness that is not ready blocks launches for this member only; nothing falls back silently.
+          </p>
+        </div>
+        <HarnessSelect
+          api={api}
+          id="profile-harness"
+          label="Engine"
+          value={assignment}
+          onChange={setAssignment}
+          harnesses={harnesses}
+          loading={harnessesLoading}
+          onRefresh={onRefreshHarnesses}
+          onTest={runTest}
+          testing={testing}
+          testResult={testResult}
+          description=""
+        />
+        {testError ? <p className="text-sm text-destructive">{testError}</p> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            disabled={!dirty}
+            onClick={() => {
+              updateAgent?.(agent.id, { harness: normalizeHarnessAssignmentCopy(assignment) });
+              setTestResult(null);
+            }}
+          >
+            {copy.save || "Save"}
+          </Button>
+          <Button variant="ghost" onClick={() => navigate(memberProfilePath(agent.id, "home"))}>
+            {copy.close || "Close"}
+          </Button>
+        </div>
+        <Separator />
+        <dl className="grid gap-3 text-sm sm:grid-cols-[160px_minmax(0,1fr)]">
+          {(harnesses.length ? harnesses : []).map((item) => (
+            <React.Fragment key={item.id}>
+              <dt className="font-medium">{item.label}</dt>
+              <dd className="text-muted-foreground">
+                <span className={readinessTone(item.status)}>{readinessLabel(item.status)}</span>
+                {item.version ? ` · ${item.version}` : ""}
+                {item.executable ? ` · ${item.executable}` : ""}
+                {item.setup ? (
+                  <>
+                    {" · "}
+                    <code className="rounded bg-muted px-1 py-0.5 text-xs">{item.setup}</code>
+                  </>
+                ) : null}
+              </dd>
+            </React.Fragment>
+          ))}
+          {!harnesses.length && !harnessesLoading ? (
+            <dd className="text-muted-foreground sm:col-span-2">The local bridge has not reported harness readiness yet.</dd>
+          ) : null}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
 function ProfileModelSummary({ agent, providerSettings, navigate }) {
   const effectiveModel = effectiveModelForAgent(agent, providerSettings);
   return (
@@ -19531,7 +20694,7 @@ function ProfileModelSummary({ agent, providerSettings, navigate }) {
   );
 }
 
-function Profile({ agent, agents = [], tasks, automations, runtime, workspaces = [], runs, providerSettings, navigate, openTerminal, updateAgent, startAutohand, initialWorkRecordTab = "timeline", locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+function Profile({ agent, agents = [], tasks, automations, runtime, workspaces = [], runs, providerSettings, navigate, openTerminal, updateAgent, startAutohand, initialWorkRecordTab = "timeline", locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), harnesses = [] }) {
   const activity = useMemo(() => buildActivity(), []);
   const [workRecordTab, setWorkRecordTab] = useState(initialWorkRecordTab);
   const [profileEditOpen, setProfileEditOpen] = useState(false);
@@ -19602,6 +20765,8 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
         <ProfilePermissionLadder agent={agent} runtime={runtime} workspaces={workspaces} navigate={navigate} copy={copy} />
 
         <ProfileModelSummary agent={agent} providerSettings={providerSettings} navigate={navigate} />
+
+        <ProfileHarnessSummary agent={agent} harnesses={harnesses} navigate={navigate} />
 
         <BrainCardPanel agent={agent} onEdit={() => setProfileEditOpen(true)} />
 
@@ -19939,65 +21104,6 @@ function AboutDialog({ open, runtime, onOpenChange, onGiveFeedback }) {
   );
 }
 
-function FloatingFeedbackButton({ onReportBug, onGiveFeedback }) {
-  const [open, setOpen] = useState(false);
-
-  function choose(action) {
-    setOpen(false);
-    action?.();
-  }
-
-  return (
-    <div className="fixed bottom-4 right-4 z-40 sm:bottom-5 sm:right-5">
-      <Popover open={open} onOpenChange={setOpen}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                size="icon-lg"
-                className="border border-border/80 bg-background text-foreground shadow-lg hover:bg-accent hover:text-accent-foreground"
-                aria-label="Report bug or give feedback"
-              >
-                <MessageSquareText className="size-5" aria-hidden="true" />
-              </Button>
-            </PopoverTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="left">Report bug or give feedback</TooltipContent>
-        </Tooltip>
-        <PopoverContent side="top" align="end" className="w-64 p-2">
-          <div className="grid gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
-              onClick={() => choose(onReportBug)}
-            >
-              <Bug className="size-4" aria-hidden="true" />
-              <span className="grid gap-0.5">
-                <span>Report Bug</span>
-                <span className="text-xs font-normal text-muted-foreground">Capture this view with diagnostics.</span>
-              </span>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-auto justify-start whitespace-normal px-3 py-2 text-left"
-              onClick={() => choose(onGiveFeedback)}
-            >
-              <MessageSquareText className="size-4" aria-hidden="true" />
-              <span className="grid gap-0.5">
-                <span>Give Feedback</span>
-                <span className="text-xs font-normal text-muted-foreground">Share what worked or what felt rough.</span>
-              </span>
-            </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-    </div>
-  );
-}
-
 function AboutFact({ label, value }) {
   return (
     <div className="min-w-0 border-t border-border/70 pt-3">
@@ -20279,6 +21385,9 @@ function SettingsAnalyticsPage({ locale = DEFAULT_LOCALE, copy = getLocaleCopy(D
 }
 
 function SettingsPage({
+  updates = null,
+  updatesChecking = false,
+  onCheckUpdates,
   themePreference,
   setThemePreference,
   handoffSettings,
@@ -20361,6 +21470,7 @@ function SettingsPage({
     { id: "handoff", icon: Workflow, label: copy.handoffRetryPolicy, detail: handoffRetryModeLabel(effectiveHandoffRetryMode, copy) },
     { id: "mission-control", icon: Monitor, label: "Mission Control", detail: missionControlDetail },
     { id: "runtime", icon: Server, label: copy.runtimeBridge, detail: runtime?.version || copy.checkingRuntime },
+    { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
   ];
   const requestedInitialSection = settingsSections.some((section) => section.id === initialSection) ? initialSection : "";
 
@@ -20603,6 +21713,17 @@ function SettingsPage({
                     aria-label="Display diagnostic output"
                   />
                 </Field>
+                <Field orientation="horizontal" className="items-center justify-between gap-4 rounded-md border bg-background px-3 py-3">
+                  <FieldContent className="gap-1">
+                    <FieldTitle>{copy.squadSuggestions || "Squad suggestions"}</FieldTitle>
+                    <FieldDescription>{copy.squadSuggestionsDetail || "When a channel's project needs a role nobody in it covers, that member asks to join. Only you see the request."}</FieldDescription>
+                  </FieldContent>
+                  <Switch
+                    checked={normalizedChatSettings.squadSuggestions !== false}
+                    onCheckedChange={(checked) => updateChatSetting("squadSuggestions", checked)}
+                    aria-label={copy.squadSuggestions || "Squad suggestions"}
+                  />
+                </Field>
               </FieldGroup>
             </section>
 
@@ -20643,6 +21764,15 @@ function SettingsPage({
                   {formatLocalizedNumber(counts.tasks || 0, activeLocale)}
                 </Badge>
               </a>
+            </section>
+
+            <section id="settings-updates" className="scroll-mt-8 py-10">
+              <SettingsSectionHeader
+                icon={RefreshCw}
+                title="Updates"
+                description={updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} is available on GitHub.` : "Releases are checked on GitHub (autohandai/squad)."}
+              />
+              <SettingsUpdatesPanel updates={updates} checking={updatesChecking} onCheck={onCheckUpdates} />
             </section>
 
             <section id="settings-runtime" className="scroll-mt-8 py-10">
@@ -20704,7 +21834,7 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
 
   useEffect(() => {
     setDraft(providerSettings);
-    setExpandedProvider(String(providerSettings?.defaultProvider || "openrouter"));
+    setExpandedProvider(String(providerSettings?.defaultProvider || "autohandai"));
     setStatus("");
     setTestStatus({});
   }, [providerSettings]);
@@ -20842,7 +21972,13 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                       {definition.id === draft.defaultProvider ? <Badge variant="secondary" className="rounded-md text-[10px]">Default</Badge> : null}
                     </div>
                     <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                      {definition.kind === "local" ? "Local runtime provider." : "Provider connection used for new runs."}
+                      {definition.auth === "account"
+                        ? provider.accountReady
+                          ? `Autohand's hosted models. Signed in${provider.accountEmail ? ` as ${provider.accountEmail}` : ""}; an API key is optional.`
+                          : "Autohand's hosted models. Sign in with `autohand login`, or add an API key."
+                        : definition.kind === "local"
+                          ? "Local runtime provider."
+                          : "Provider connection used for new runs."}
                     </p>
                   </div>
                 </div>
@@ -20867,14 +22003,20 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                   <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
                     <div className="min-w-0" />
                     <div className="grid gap-3 md:grid-cols-2">
-                      {definition.requiresApiKey ? (
+                      {definition.requiresApiKey || definition.auth === "account" ? (
                         <Field className="gap-2">
-                          <FieldLabel>API key</FieldLabel>
+                          <FieldLabel>{definition.auth === "account" ? "API key (optional)" : "API key"}</FieldLabel>
                           <Input
                             type="password"
                             value={provider.apiKey || ""}
                             onChange={(event) => updateProvider(definition.id, { apiKey: event.target.value })}
-                            placeholder={provider.apiKeyConfigured ? "Configured; enter a new key to replace" : "Enter API key"}
+                            placeholder={
+                              provider.apiKeyConfigured
+                                ? "Configured; enter a new key to replace"
+                                : definition.auth === "account"
+                                  ? "Uses your Autohand account unless set"
+                                  : "Enter API key"
+                            }
                             className="h-10"
                           />
                         </Field>
@@ -20882,12 +22024,28 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
 
                       <Field className="gap-2">
                         <FieldLabel>Default model</FieldLabel>
-                        <Input
-                          value={provider.model || ""}
-                          onChange={(event) => updateProvider(definition.id, { model: event.target.value })}
-                          placeholder={definition.model || "Model ID"}
-                          className="h-10"
-                        />
+                        {Array.isArray(provider.models) && provider.models.length ? (
+                          <Select value={provider.model || definition.model || ""} onValueChange={(model) => updateProvider(definition.id, { model })}>
+                            <SelectTrigger className="h-10 w-full justify-between">
+                              <SelectValue placeholder="Choose a model" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {provider.models.map((model) => (
+                                <SelectItem key={model.id} value={model.id}>
+                                  {model.label}
+                                  {model.contextWindow ? ` · ${Math.round(model.contextWindow / 1000)}k` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            value={provider.model || ""}
+                            onChange={(event) => updateProvider(definition.id, { model: event.target.value })}
+                            placeholder={definition.model || "Model ID"}
+                            className="h-10"
+                          />
+                        )}
                       </Field>
 
                       <Field className="gap-2">
@@ -20895,7 +22053,7 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                         <Input
                           value={provider.baseUrl || ""}
                           onChange={(event) => updateProvider(definition.id, { baseUrl: event.target.value })}
-                          placeholder={definition.baseUrl || "Optional"}
+                          placeholder={definition.auth === "account" ? `Managed (${provider.managedBaseUrl || "inference.autohand.ai"})` : definition.baseUrl || "Optional"}
                           className="h-10"
                         />
                       </Field>
@@ -20932,9 +22090,13 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                         {providerStatus?.message ||
                           (bridgeUnavailable
                             ? "Restart Autohand Squad to test this provider."
-                            : definition.requiresApiKey && provider.apiKeyConfigured
-                              ? "Secret is stored server-side and masked here."
-                              : "Changes apply to new runs after Save.")}
+                            : definition.auth === "account" && !provider.apiKeyConfigured
+                              ? provider.accountReady
+                                ? "Runs use your Autohand account token."
+                                : "Not signed in. Run `autohand login` in a terminal, then reopen Settings."
+                              : definition.requiresApiKey && provider.apiKeyConfigured
+                                ? "Secret is stored server-side and masked here."
+                                : "Changes apply to new runs after Save.")}
                       </div>
                       <Button type="button" variant="outline" size="sm" onClick={() => testProvider(definition.id)} disabled={bridgeUnavailable || providerStatus?.state === "testing"}>
                         {providerStatus?.state === "testing" ? <Spinner /> : <CheckCircle2 data-icon="inline-start" />}
@@ -22060,6 +23222,17 @@ function ThemeSwatches({ preset, className }) {
 }
 
 const rootElement = document.getElementById("root");
+// Desktop shell detection: the Tauri window identifies itself in the user
+// agent. The document then opts into the native treatment (transparent chrome
+// behind the sidebar, drag regions, a traffic-light inset on macOS).
+(() => {
+  const agent = typeof navigator === "undefined" ? "" : navigator.userAgent || "";
+  if (!/AutohandSquadDesktop\//.test(agent)) return;
+  const html = document.documentElement;
+  html.dataset.shell = "desktop";
+  html.dataset.platform = /macos|darwin|Macintosh/i.test(agent) ? "mac" : /windows/i.test(agent) ? "windows" : "linux";
+})();
+
 const root = globalThis.__autohandSquadRoot || createRoot(rootElement);
 globalThis.__autohandSquadRoot = root;
 

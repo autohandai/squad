@@ -134,6 +134,9 @@ pub struct RunRequest {
     pub workspace: Option<String>,
     pub agent_id: Option<String>,
     pub extra_args: Option<Vec<String>>,
+    /// Execution harness: `autohand` (default), `codex`, or `claude`.
+    #[serde(default)]
+    pub harness: Option<String>,
     #[serde(default)]
     pub channel_id: Option<String>,
     #[serde(default)]
@@ -148,6 +151,8 @@ pub struct RunRecord {
     pub prompt: String,
     pub workspace: Option<String>,
     pub agent_id: Option<String>,
+    #[serde(default = "default_harness_id")]
+    pub harness: String,
     pub command: Vec<String>,
     pub log_path: String,
     pub created_at: String,
@@ -210,6 +215,16 @@ pub struct UpdateSnapshot {
     pub update_available: bool,
     pub manifest_url: String,
     pub error: Option<String>,
+    /// Where the release lives (GitHub release page) and the installer for this
+    /// platform, when the GitHub source produced them.
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub release_url: Option<String>,
+    #[serde(default)]
+    pub download_url: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 #[derive(Clone)]
@@ -305,11 +320,56 @@ struct HttpRequest {
     method: String,
     path: String,
     body: String,
+    /// Present when a browser sent the request cross-site; the loopback API
+    /// only serves same-machine callers without an Origin.
+    origin: Option<String>,
 }
 
 async fn handle_connection(mut stream: TcpStream, state: Arc<AppState>) -> Result<()> {
     let request = read_http_request(&mut stream).await?;
+    if let Some(origin) = request.origin.as_deref() {
+        if !origin_is_loopback(origin) {
+            return write_json_response(
+                &mut stream,
+                403,
+                &LifecycleResponse {
+                    success: false,
+                    message: "cross-origin requests to the local daemon are not allowed"
+                        .to_string(),
+                },
+            )
+            .await;
+        }
+    }
     route_request(&mut stream, &state, request).await
+}
+
+fn origin_is_loopback(origin: &str) -> bool {
+    let lower = origin.trim().to_ascii_lowercase();
+    let Some(rest) = lower
+        .strip_prefix("http://")
+        .or_else(|| lower.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let host = rest.split('/').next().unwrap_or(rest);
+    let host = if let Some(inner) = host.strip_prefix('[') {
+        inner.split(']').next().unwrap_or("")
+    } else {
+        host.split(':').next().unwrap_or("")
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
+fn parse_origin(headers: &str) -> Option<String> {
+    headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        if name.trim().eq_ignore_ascii_case("origin") {
+            Some(value.trim().to_string())
+        } else {
+            None
+        }
+    })
 }
 
 async fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest> {
@@ -359,7 +419,12 @@ async fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest> {
     let body_bytes = &buffer[end + 4..end + 4 + content_length.min(buffer.len() - end - 4)];
     let body = String::from_utf8_lossy(body_bytes).to_string();
 
-    Ok(HttpRequest { method, path, body })
+    Ok(HttpRequest {
+        method,
+        path,
+        body,
+        origin: parse_origin(&headers),
+    })
 }
 
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
@@ -904,6 +969,82 @@ async fn run_observability_cycle(state: &AppState) {
 
 async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
     let checked_at = now_string();
+    // GitHub Releases is the update source unless the Autohand API is opted
+    // into explicitly (AUTOHAND_SQUAD_UPDATE_SOURCE=api).
+    if std::env::var("AUTOHAND_SQUAD_UPDATE_SOURCE")
+        .map(|value| value != "api")
+        .unwrap_or(true)
+    {
+        let repository = crate::install::update_repository();
+        let manifest_url = format!("https://api.github.com/repos/{repository}/releases");
+        let result =
+            match crate::install::fetch_github_release(&repository, &state.config.update_channel)
+                .await
+            {
+                Ok(release) => {
+                    let update_available =
+                        crate::install::compare_versions(&release.version, VERSION)
+                            == std::cmp::Ordering::Greater;
+                    let download_url = crate::install::select_artifacts(&release.manifest)
+                        .into_iter()
+                        .find(|artifact| {
+                            matches!(
+                                artifact.component.as_deref(),
+                                Some("dmg" | "installer" | "deb" | "appimage")
+                            )
+                        })
+                        .map(|artifact| artifact.url);
+                    UpdateSnapshot {
+                        success: true,
+                        checked_at,
+                        channel: state.config.update_channel.clone(),
+                        client_type: "squad".to_string(),
+                        surface: "squad-daemon".to_string(),
+                        device_id: state.device_id.clone(),
+                        current_version: VERSION.to_string(),
+                        latest_allowed_version: Some(release.version.clone()),
+                        update_available,
+                        manifest_url,
+                        error: None,
+                        source: format!("github:{repository}"),
+                        release_url: Some(release.release_url),
+                        download_url,
+                        notes: Some(release.notes),
+                    }
+                }
+                Err(error) => UpdateSnapshot {
+                    success: false,
+                    checked_at,
+                    channel: state.config.update_channel.clone(),
+                    client_type: "squad".to_string(),
+                    surface: "squad-daemon".to_string(),
+                    device_id: state.device_id.clone(),
+                    current_version: VERSION.to_string(),
+                    latest_allowed_version: None,
+                    update_available: false,
+                    manifest_url,
+                    error: Some(error.to_string()),
+                    source: format!("github:{repository}"),
+                    release_url: None,
+                    download_url: None,
+                    notes: None,
+                },
+            };
+        let _ = write_json(&state.paths.update_json, &result);
+        record_daemon_event(
+            state,
+            "update.checked",
+            json!({
+                "channel": result.channel,
+                "currentVersion": result.current_version,
+                "latestAllowedVersion": result.latest_allowed_version,
+                "updateAvailable": result.update_available,
+                "source": result.source,
+                "error": result.error,
+            }),
+        );
+        return result;
+    }
     let manifest_url = format!(
         "{}/v1/squad/releases/{}/manifest?clientType=squad&surface=squad-daemon&deviceId={}&version={}",
         state.config.api_base_url.trim_end_matches('/'),
@@ -932,6 +1073,10 @@ async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
                 latest_allowed_version: latest,
                 manifest_url: url,
                 error: None,
+                source: "autohand-api".to_string(),
+                release_url: None,
+                download_url: None,
+                notes: None,
             }
         }
         Err(error) => UpdateSnapshot {
@@ -946,6 +1091,10 @@ async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
             update_available: false,
             manifest_url,
             error: Some(error.to_string()),
+            source: "autohand-api".to_string(),
+            release_url: None,
+            download_url: None,
+            notes: None,
         },
     };
     let _ = write_json(&state.paths.update_json, &result);
@@ -1284,24 +1433,112 @@ fn write_queue_item(paths: &StatePaths, item: &QueueItem) -> Result<()> {
     write_json(&path, item)
 }
 
+pub fn default_harness_id() -> String {
+    "autohand".to_string()
+}
+
+pub fn normalize_harness_id(value: Option<&str>) -> String {
+    match value.map(|item| item.trim().to_ascii_lowercase()) {
+        Some(id) if id == "codex" => "codex".to_string(),
+        Some(id) if id == "claude" || id == "claude-code" => "claude".to_string(),
+        _ => default_harness_id(),
+    }
+}
+
+fn harness_executable(harness: &str) -> String {
+    let env_name = match harness {
+        "codex" => "AUTOHAND_SQUAD_CODEX_BIN",
+        "claude" => "AUTOHAND_SQUAD_CLAUDE_BIN",
+        _ => "AUTOHAND_SQUAD_AUTOHAND_BIN",
+    };
+    std::env::var(env_name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            match harness {
+                "codex" => "codex",
+                "claude" => "claude",
+                _ => "autohand",
+            }
+            .to_string()
+        })
+}
+
+/// Build the non-interactive command for a queued run under the selected
+/// harness. Every harness receives the prompt as one argument (never through
+/// a shell) and the workspace as its working root.
+pub fn harness_command(
+    harness: &str,
+    prompt: &str,
+    workspace: Option<&str>,
+    extra_args: Option<&[String]>,
+) -> Vec<String> {
+    let executable = harness_executable(harness);
+    let mut command = match harness {
+        "codex" => {
+            let mut command = vec![
+                executable,
+                "exec".to_string(),
+                "--json".to_string(),
+                "--skip-git-repo-check".to_string(),
+                "--color".to_string(),
+                "never".to_string(),
+            ];
+            if let Some(workspace) = workspace {
+                command.push("-C".to_string());
+                command.push(workspace.to_string());
+            }
+            command
+        }
+        "claude" => {
+            let mut command = vec![
+                executable,
+                "-p".to_string(),
+                "--output-format".to_string(),
+                "json".to_string(),
+                "--verbose".to_string(),
+            ];
+            if let Some(workspace) = workspace {
+                command.push("--add-dir".to_string());
+                command.push(workspace.to_string());
+            }
+            command
+        }
+        _ => {
+            let mut command = vec![executable, "--prompt".to_string(), prompt.to_string()];
+            if let Some(workspace) = workspace {
+                command.push("--path".to_string());
+                command.push(workspace.to_string());
+            }
+            command
+        }
+    };
+    if let Some(extra_args) = extra_args {
+        command.extend(extra_args.iter().cloned());
+    }
+    if harness == "codex" || harness == "claude" {
+        // Prompt goes last so vendor flags parse before the free-form text.
+        command.push(prompt.to_string());
+    }
+    command
+}
+
 fn new_run_record(paths: &StatePaths, request: RunRequest, status: &str) -> RunRecord {
     let id = next_id();
-    let autohand_bin =
-        std::env::var("AUTOHAND_SQUAD_AUTOHAND_BIN").unwrap_or_else(|_| "autohand".to_string());
-    let mut command = vec![autohand_bin, "--prompt".to_string(), request.prompt.clone()];
-    if let Some(workspace) = &request.workspace {
-        command.push("--path".to_string());
-        command.push(workspace.clone());
-    }
-    if let Some(extra_args) = &request.extra_args {
-        command.extend(extra_args.clone());
-    }
+    let harness = normalize_harness_id(request.harness.as_deref());
+    let command = harness_command(
+        &harness,
+        &request.prompt,
+        request.workspace.as_deref(),
+        request.extra_args.as_deref(),
+    );
     RunRecord {
         id: id.clone(),
         status: status.to_string(),
         prompt: request.prompt,
         workspace: request.workspace,
         agent_id: request.agent_id,
+        harness,
         command,
         log_path: paths
             .runs_dir
@@ -1352,6 +1589,8 @@ fn spawn_run_worker(
         let log_path = PathBuf::from(&record.log_path);
         let mut command = Command::new(&record.command[0]);
         command.args(&record.command[1..]);
+        command.env("PATH", crate::cli::gui_path_env());
+        command.stdin(std::process::Stdio::null());
         if let Some(workspace) = &record.workspace {
             command.current_dir(workspace);
         }
@@ -1463,6 +1702,20 @@ fn append_server_log(paths: &StatePaths, message: &str) {
     {
         let _ = writeln!(file, "{} {}", now_string(), message);
     }
+    // The same message as an OpenTelemetry log record (logs/daemon.otlp.jsonl),
+    // classified by content so collectors can alert on ERROR without grep.
+    let lower = message.to_ascii_lowercase();
+    let severity = if lower.contains("failed") || lower.contains("error") {
+        crate::otel::Severity::Error
+    } else {
+        crate::otel::Severity::Info
+    };
+    let run_id = message
+        .strip_prefix("run ")
+        .and_then(|rest| rest.split_whitespace().next())
+        .map(|id| serde_json::Value::String(id.to_string()))
+        .unwrap_or(serde_json::Value::Null);
+    crate::otel::daemon_log(paths, severity, message, &[("autohand.run.id", run_id)]);
 }
 
 fn read_telemetry_events(paths: &StatePaths, limit: usize) -> Vec<TelemetryEvent> {
@@ -1563,6 +1816,7 @@ mod tests {
                 workspace: Some(paths.root.display().to_string()),
                 agent_id: Some("agent-1".to_string()),
                 extra_args: Some(vec!["--dry-run".to_string()]),
+                harness: None,
                 channel_id: None,
                 thread_id: None,
             },
@@ -1768,6 +2022,7 @@ mod tests {
                 workspace: Some(paths.root.display().to_string()),
                 agent_id: Some("agent-1".to_string()),
                 extra_args: None,
+                harness: None,
                 channel_id: None,
                 thread_id: None,
             },

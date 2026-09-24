@@ -219,8 +219,61 @@ pub fn write_user_auth_config(
 pub fn write_autohand_auth_config(
     api_auth_token: Option<&str>,
     account_email: Option<&str>,
+    account_name: Option<&str>,
 ) -> Result<()> {
-    merge_autohand_auth_config_at(&autohand_user_config_path(), api_auth_token, account_email)
+    merge_autohand_auth_config_at(
+        &autohand_user_config_path(),
+        api_auth_token,
+        account_email,
+        account_name,
+    )
+}
+
+/// The Autohand CLI account session (`~/.autohand/config.json`), which Squad
+/// shares. It is the source of truth when the user signed in through the CLI
+/// rather than through Squad, so anything that needs the account (tray usage,
+/// sign-in state) must consult it after the Squad config.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AutohandUserAuth {
+    pub token: Option<String>,
+    pub email: Option<String>,
+    pub name: Option<String>,
+}
+
+impl AutohandUserAuth {
+    pub fn signed_in(&self) -> bool {
+        self.token
+            .as_deref()
+            .is_some_and(|token| !token.trim().is_empty())
+    }
+}
+
+pub fn read_autohand_user_auth() -> AutohandUserAuth {
+    read_autohand_user_auth_at(&autohand_user_config_path())
+}
+
+fn read_autohand_user_auth_at(path: &Path) -> AutohandUserAuth {
+    let Ok(content) = fs::read_to_string(path) else {
+        return AutohandUserAuth::default();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&content) else {
+        return AutohandUserAuth::default();
+    };
+    let auth = value.get("auth");
+    let text = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    let user = auth.and_then(|auth| auth.get("user"));
+    AutohandUserAuth {
+        token: text(auth.and_then(|auth| auth.get("token"))),
+        email: text(user.and_then(|user| user.get("email")))
+            .or_else(|| text(auth.and_then(|auth| auth.get("email")))),
+        name: text(user.and_then(|user| user.get("name"))),
+    }
 }
 
 fn autohand_user_config_path() -> PathBuf {
@@ -248,6 +301,7 @@ fn merge_autohand_auth_config_at(
     path: &Path,
     api_auth_token: Option<&str>,
     account_email: Option<&str>,
+    account_name: Option<&str>,
 ) -> Result<()> {
     let mut config = if path.exists() {
         let content = fs::read_to_string(path)
@@ -295,10 +349,13 @@ fn merge_autohand_auth_config_at(
             bail!("Autohand account email must not be empty");
         }
         // Do not retain identity fields from a different account when the tray
-        // is used to re-login. The device flow supplies only a trusted email,
-        // so persist that minimal user shape.
+        // is used to re-login. The device flow supplies a trusted email and,
+        // when the account has one, a display name; persist only those.
         let mut user = Map::new();
         user.insert("email".to_string(), Value::String(email.to_string()));
+        if let Some(name) = account_name.map(str::trim).filter(|name| !name.is_empty()) {
+            user.insert("name".to_string(), Value::String(name.to_string()));
+        }
         auth_object.insert("user".to_string(), Value::Object(user));
     }
 
@@ -407,6 +464,34 @@ fn non_empty_env(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_cli_account_session() {
+        let dir = std::env::temp_dir().join(format!(
+            "squad-cli-auth-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        fs::write(
+            &path,
+            r#"{"auth":{"token":" tok ","user":{"email":"me@example.com","name":"Me"}},"providers":{}}"#,
+        )
+        .unwrap();
+        let auth = read_autohand_user_auth_at(&path);
+        assert!(auth.signed_in());
+        assert_eq!(auth.email.as_deref(), Some("me@example.com"));
+        assert_eq!(auth.name.as_deref(), Some("Me"));
+        assert_eq!(
+            read_autohand_user_auth_at(&dir.join("missing.json")),
+            AutohandUserAuth::default()
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
     use crate::state::StatePaths;
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -563,6 +648,7 @@ mod tests {
             &config_path,
             Some("fresh-session-token"),
             Some("ops@example.com"),
+            None,
         )
         .unwrap();
         let value: Value =
@@ -599,6 +685,7 @@ mod tests {
             &config_path,
             Some("fresh-session-token"),
             Some("first-login@example.com"),
+            None,
         )
         .unwrap();
         let value: Value =
@@ -640,7 +727,7 @@ mod tests {
         )
         .unwrap();
 
-        merge_autohand_auth_config_at(&config_path, None, None).unwrap();
+        merge_autohand_auth_config_at(&config_path, None, None, None).unwrap();
         let value: Value =
             serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
 
@@ -669,6 +756,7 @@ mod tests {
             &config_path,
             Some("fresh-session-token"),
             Some("ops@example.com"),
+            None,
         )
         .unwrap_err();
 

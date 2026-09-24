@@ -3,6 +3,7 @@
 node_modules/
 daemon/target/
 release/
+vendor/autohand-cli/
 
 .env
 .env.*
@@ -21,3 +22,12 @@ goals/
 
 *.log
 *.tmp
+
+# Local architecture decision records, PRD, SPEC and bug ledger (not published)
+/adrs/
+
+# Tauri desktop shell build outputs (staged runtime, sidecars, generated schemas)
+src-tauri/target/
+src-tauri/runtime/
+src-tauri/binaries/
+src-tauri/gen/

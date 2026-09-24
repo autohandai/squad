@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Autohand Squad main window. The window loads the local bridge; no IPC commands are exposed to web content.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

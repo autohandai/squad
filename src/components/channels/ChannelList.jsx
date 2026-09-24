@@ -30,7 +30,7 @@ export function ChannelList({
   agents = [],
   activeChannelId = "",
   threadCounts = {},
-  copy,
+  copy = {},
   onSelectChannel,
   onCreateChannel,
 }) {
@@ -100,9 +100,9 @@ export function ChannelList({
                 onClick={() => onSelectChannel?.(channel.id)}
               >
                 {channel.visibility === "private" ? (
-                  <Lock className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPrivate} />
+                  <Lock role="img" className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPrivate} />
                 ) : (
-                  <Hash className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPublic} />
+                  <Hash role="img" className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPublic} />
                 )}
                 <span className="min-w-0 flex-1 truncate">{channel.name}</span>
                 {threadCount > 0 ? (

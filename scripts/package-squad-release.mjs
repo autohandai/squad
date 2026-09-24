@@ -67,10 +67,27 @@ const manifest = {
 
 const manifestName = `manifest-${os}-${cpu}.json`;
 await writeFile(join(outDir, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
-await writeFile(join(outDir, `checksums-${os}-${cpu}.txt`), `${checksums.join('\n')}\n`);
+await mergeChecksums(join(outDir, `checksums-${os}-${cpu}.txt`), checksums);
 
 console.log(`Packaged ${artifacts.length} manifest entries in ${outDir}`);
 console.log(`Release manifest: ${join(outDir, manifestName)}`);
+
+// The portable and installer packagers append to the same checksum file, so a
+// re-run of this script must replace only its own lines instead of truncating.
+async function mergeChecksums(checksumPath, lines) {
+  const ownNames = new Set(lines.map((line) => line.split(/\s{2,}/)[1]).filter(Boolean));
+  let existing = [];
+  try {
+    existing = (await readFile(checksumPath, 'utf8'))
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !ownNames.has(line.split(/\s{2,}/)[1]));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  await writeFile(checksumPath, `${[...existing, ...lines].join('\n')}\n`);
+}
 
 function env(name, fallback) {
   const value = process.env[name];
@@ -91,15 +108,16 @@ function exeSuffix(osName) {
 }
 
 function manifestTargets(osName, archName) {
+  // Every launcher spelling of the same target: Node (darwin/x64, win32/x64)
+  // and Rust (macos/x86_64, windows/x86_64) OS and arch names, as a full
+  // cross-product so a client mixing spellings still finds its artifact.
   const normalized = new Map();
-  addTarget(normalized, osName, archName);
-
-  if (osName === 'darwin') addTarget(normalized, 'macos', rustArch(archName));
-  if (osName === 'macos') addTarget(normalized, 'darwin', nodeArch(archName));
-  if (osName === 'win32') addTarget(normalized, 'windows', rustArch(archName));
-  if (osName === 'windows') addTarget(normalized, 'win32', nodeArch(archName));
-  if (osName === 'linux') addTarget(normalized, 'linux', rustArch(archName));
-  if (osName === 'linux') addTarget(normalized, 'linux', nodeArch(archName));
+  const osAliases = { darwin: 'macos', macos: 'darwin', win32: 'windows', windows: 'win32', linux: 'linux' };
+  const osNames = new Set([osName, osAliases[osName] || osName]);
+  const archNames = new Set([archName, nodeArch(archName), rustArch(archName)]);
+  for (const targetOs of osNames) {
+    for (const targetArch of archNames) addTarget(normalized, targetOs, targetArch);
+  }
 
   return [...normalized.values()];
 }

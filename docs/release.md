@@ -31,88 +31,132 @@ The release dry run protects the contract used by the Autohand CLI launcher:
 platform. The merged manifest must include `linux/x64`, `darwin/arm64`,
 `darwin/x64`, and `win32/x64` entries before release assets can publish.
 
+## Channels
+
+| Channel | How it is made | Tag | GitHub release |
+| --- | --- | --- | --- |
+| stable | a maintainer tags a reviewed `main` commit | `v1.2.3` | release, marked latest |
+| beta | a maintainer tags a candidate | `v1.2.3-beta.1`, `v1.2.3-rc.1` | pre-release |
+| canary (nightly) | `nightly.yml` at 03:00 UTC, or on demand | `v<next>-canary.<yyyymmddHHMM>` | pre-release, seven kept |
+
+The app and the daemon pick releases by channel (`daemon/src/install.rs`):
+stable takes the newest non-prerelease, beta the newest pre-release without
+`canary` in the tag, canary the newest pre-release.
+
 ## Release Flow
 
-1. Open a release checklist issue with the target version and channel.
-2. Merge only when CI is green and release-impacting PRs have review.
-3. Tag the exact reviewed commit with a `v`-prefixed SemVer and push the tag:
+1. Keep `CHANGELOG.md` current as work lands: add entries under
+   **Unreleased**. Nightlies publish that section verbatim.
+2. For a stable release, move the Unreleased entries under `## [x.y.z] - date`,
+   set `version` in `package.json`, `daemon/Cargo.toml`, and
+   `src-tauri/Cargo.toml`, merge, then tag the exact reviewed commit:
 
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.2.0
+   git push origin v0.2.0
    ```
 
-   Tags such as `v1.0.0-beta.1` and `v1.0.0-canary.1` create prereleases.
-   Ordinary pushes to `main` never publish a release.
+   Ordinary pushes to `main` never publish a release. To rerun a failed
+   pre-publication build, dispatch the Release workflow on the existing tag
+   with the same version; dispatch never creates or moves a tag.
 
-   To retry a failed release through `workflow_dispatch`, select the default
-   branch as the workflow ref and enter the existing version, such as `0.1.0`.
-   Setup checks out and verifies `v0.1.0` itself, so the retry uses the immutable
-   tag source while still benefiting from workflow fixes on the default branch.
+3. The Release workflow builds, per target (Linux x64, macOS Apple Silicon,
+   macOS Intel, Windows x64):
 
-4. The workflow builds:
+   - the web bundle (`dist/`, `server.mjs`, package metadata stamped with the
+     version);
+   - the runtime binaries (`squad`, daemon, analytics, tray, ui) with
+     checksums and the installer manifest used by the Autohand CLI launcher,
+     plus one portable `.tar.gz` per target;
+   - the desktop app (Tauri): DMG, NSIS setup EXE, Debian package, and
+     AppImage, renamed to `autohand-squad-<version>-<platform>` and listed in
+     `manifest-desktop-<os>-<arch>.json`.
 
-   - macOS Apple Silicon, macOS Intel, Windows x64, and Linux x64 runtime binaries
-   - checksums for every runtime asset
-   - a web bundle containing `dist/`, `server.mjs`, and package metadata stamped
-     with the resolved release version
-   - one extract-and-run portable archive per platform, combining the five
-     native binaries, web runtime, and minimal production Node modules
-   - DMG installers for macOS Apple Silicon and Intel, each containing the
-     desktop app, web runtime, production modules, Autohand CLI, and Node
-   - a current-user NSIS setup EXE for Windows x64 with the same bundled runtime
-   - Debian (`.deb`) and AppImage (`.AppImage`) packages for Linux x64 with the same bundled runtime
-   - `manifest-<channel>.json` for the installer/update path
+4. Every desktop bundle is smoke tested before publication: macOS mounts the
+   DMG, verifies the signature, and boots the bundled bridge; Windows installs
+   silently, checks the installed files, and uninstalls; Linux extracts the
+   deb and the AppImage and runs the bundled CLI.
 
-5. Setup immediately creates the versioned GitHub release and generates notes
-   from merged changes using `.github/release.yml`. Every platform job extracts
-   its portable archive, imports the bundled Agent SDK, and starts the packaged
-   `squad --help` command before uploading. The macOS jobs also mount each DMG
-   and start its bundled web runtime; the Windows job silently installs,
-   exercises, and uninstalls the NSIS package. Each successful platform job
-   uploads its verified assets directly to the existing release; finalization
-   uploads the merged installer manifest and checksums. A stable tag creates a
-   normal release; a prerelease version creates a GitHub prerelease. A manual
-   retry may set `notes_start_tag` when the automatic comparison would otherwise
-   start from an unpublished tag.
+5. The publish job merges the manifests, writes `checksums.txt`, composes the
+   release body with `scripts/release-notes.mjs` (channel banner, changelog
+   section, download table, install/verify/update instructions) and lets
+   GitHub append the categorised pull-request list (`.github/release.yml`).
+   A stable tag becomes the latest release; anything else is a pre-release.
 
-Portable archives are named
-`autohand-squad-<version>-<os>-<arch>.tar.gz`. After extraction, run
-`bin/squad` (`bin/squad.exe` on Windows). Node 18.17 or newer must be on `PATH`;
-the archive vendors the web runtime and its production modules but not Node
-itself. These archives are directly runnable distributions, not code-signed
-installers.
+## Publishing Credentials
 
-Native installers are named
-`autohand-squad-<version>-macos-<arch>.dmg`,
+The publish job creates the GitHub release with the job-scoped
+`GITHUB_TOKEN` (`contents: write`). The repository's default workflow token
+permission must allow write (Settings → Actions → General → Workflow
+permissions), or organisation policy must permit the workflow to elevate it.
+If neither is possible, add an `AUTOHAND_RELEASE_TOKEN` repository secret holding a
+fine-grained personal access token with **Contents: read and write** on this
+repository; the workflow prefers it automatically.
+
+## Nightly Builds
+
+`nightly.yml` runs at 03:00 UTC and on demand. It skips when `HEAD` already
+carries a canary tag (unless dispatched with `force`), otherwise it tags HEAD
+as `v<package version>-canary.<yyyymmddHHMM>`, pushes the tag, dispatches the
+Release workflow on it (a tag pushed with the workflow token does not trigger
+workflows by itself), and deletes nightlies older than the newest seven,
+tags included.
+
+## Asset Names
+
+Portable archives: `autohand-squad-<version>-<os>-<arch>.tar.gz`; after
+extraction run `bin/squad` (`bin/squad.exe` on Windows) with Node 18.17+ on
+`PATH`. Desktop installers: `autohand-squad-<version>-macos-<arch>.dmg`,
 `autohand-squad-<version>-windows-x64-setup.exe`,
 `autohand-squad-<version>-linux-x64.deb`, and
-`autohand-squad-<version>-linux-x64.AppImage`. They bundle Node, so users do
-not need a system Node installation. The Debian package registers the desktop
-application; AppImage users make the downloaded file executable and open it.
-The current workflow does not code-sign the Windows installer or sign and
-notarize the macOS app; release notes must not claim a verified publisher until
-those credentials and steps are added.
+`autohand-squad-<version>-linux-x64.AppImage`; they bundle Node, so users do
+not need a system Node installation.
 
-The setup job rejects leading-zero or malformed versions, confirms that
-`GITHUB_REF` is exactly `refs/tags/v<VERSION>`, and resolves both the tag and
-`HEAD` to the same commit. Every build and finalization job checks out that
-resolved commit SHA and repeats the verification before doing work. A tag cannot
-be used to release a different commit, including through manual dispatch.
-Immediately before creating the GitHub release, setup resolves the remote tag
-through the GitHub API and requires it to match the verified source SHA.
-
-For a retry, dispatch the workflow from the default branch with the existing
-version. Setup checks out that exact tag before verification, so workflow fixes
-can be applied without moving or recreating the release tag.
+The setup job rejects malformed versions, confirms that `GITHUB_REF` is
+exactly `refs/tags/v<VERSION>`, and resolves both the tag and `HEAD` to the
+same commit. Every build and publish job checks out that resolved commit SHA
+and repeats the verification. Immediately before creating the GitHub release,
+the publish job resolves the remote tag through the GitHub API and requires it
+to match the verified source SHA.
 
 Pull requests do not publish releases. They use dry-run versions such as
-`0.0.0-pr.17.abc123def456` so installer-manifest generation is still exercised
-without creating customer-facing artifacts.
+`0.0.0-pr.17.abc123def456` so manifest generation is still exercised.
 
-Non-PR CI dry runs use versions such as `0.0.0-ci.42.abc123def456`. That keeps
-pull-request provenance clear while still exercising package metadata from
-manual or branch-triggered CI runs.
+## Autohand Code CLI
+
+Releases ship the Autohand Code CLI pinned in `package.json`
+(`autohand.cliVersion`). Every workflow job runs `bun run cli:fetch` before the
+SDK check, which downloads the matching GitHub release asset for the runner's
+platform, verifies it against the published `.sha256`, and writes
+`vendor/autohand-cli/BUILD_INFO.json`. `check:sdk` runs with
+`AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI=1` so a missing or mismatched binary fails
+early, and both packagers copy only the vendored binary (plus its build info)
+into the app; the Agent SDK's own bundled CLI is never shipped.
+
+## Code Signing And Notarization
+
+Signing is optional and driven entirely by repository secrets. Without them
+the release still builds; the release summary and installer trust records
+(`trust-<os>-<arch>.json`) say so honestly.
+
+| Secret | Purpose |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Base64 `.p12` containing a Developer ID Application certificate |
+| `APPLE_CERTIFICATE_PASSWORD` | Password of that `.p12` |
+| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | App-specific password and team for `notarytool`; all three enable notarization |
+| `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD` | Base64 `.pfx` Authenticode certificate imported into the runner store |
+| `WINDOWS_TIMESTAMP_URL` | Optional RFC 3161 timestamp server (default DigiCert) |
+
+The macOS job imports the certificate into a temporary keychain and exports
+`APPLE_SIGNING_IDENTITY`; the packager signs every binary and the bundle with
+the hardened runtime and the entitlements the bundled Node runtime needs, then
+notarizes when the Apple account secrets are present. Without an identity the
+bundle is ad-hoc signed (`-`) so it stays internally consistent; users must
+clear the quarantine flag once. The Windows job imports the PFX and exports
+`WINDOWS_CERTIFICATE_THUMBPRINT`; `WINDOWS_SIGN_COMMAND` can replace it for
+Azure Trusted Signing or another external signer. The macOS smoke test runs
+`codesign --verify --deep --strict` on every DMG and `spctl --assess` when an
+identity was used.
 
 ## Release Channels
 
@@ -172,16 +216,19 @@ permissions declared by each workflow. If GitHub refuses to start a job because
 of an Actions policy, fix the repository or organization policy first, then
 rerun `CI` or create a new immutable release tag as appropriate.
 
-The release workflow keeps its default `GITHUB_TOKEN` read-only. Setup creates
-the empty versioned release, and the web, platform, and finalization jobs each
-request only `contents: write` to append their verified assets. When an
-enterprise policy disables write-capable workflow tokens, add a fine-grained
-token with repository Contents read/write permission as the
-`AUTOHAND_RELEASE_TOKEN` Actions secret. The workflow uses that secret only when
-present; otherwise it uses the short-lived job-scoped token. Do not infer either
-token's access from the repository API's user-oriented `permissions.push` field:
-that field can be absent even when the job log confirms the `Contents: write`
-permission.
+The release publish job targets channel environments named `canary`, `beta`, and
+`stable`. Add approval rules to the `stable` environment when the repo moves
+from test releases to customer releases. Environment reviewers do not change
+the tag or source commit; they only approve the already-built release.
+
+The release workflow keeps its default `GITHUB_TOKEN` read-only. Only the final
+publish job requests `contents: write` and passes GitHub's short-lived,
+job-scoped workflow token directly to the GitHub CLI. Do not infer this granular
+token's access from the repository API's user-oriented `permissions.push`
+field: that field can be absent even when the job log confirms the
+`Contents: write` permission. A policy that blocks the requested job permission
+must be fixed in the repository or organization Actions settings before
+publishing.
 
 Release integrity is checked with SHA-256 checksum files, exact target coverage
 in the installer manifest, immutable commit pins for third-party GitHub
@@ -212,7 +259,7 @@ cd daemon
 cargo build --release --bins -j1
 cd ..
 RELEASE_VERSION=0.1.0 RELEASE_TAG=v0.1.0 bun run release:package
-WEB_RUNTIME_DIR=release/web/runtime RELEASE_VERSION=0.1.0 RELEASE_OS="$(node -p process.platform)" RELEASE_ARCH="$(node -p process.arch)" bun run release:portable
+WEB_RUNTIME_DIR="$PWD" RELEASE_VERSION=0.1.0 RELEASE_OS="$(node -p process.platform)" RELEASE_ARCH="$(node -p process.arch)" bun run release:portable
 NODE_RUNTIME_PATH="$(node -p process.execPath)" WEB_RUNTIME_DIR="$PWD" RELEASE_VERSION=0.1.0 RELEASE_OS="$(node -p process.platform)" RELEASE_ARCH="$(node -p process.arch)" bun run release:installers
 bun run release:merge-manifests release
 ```

@@ -173,7 +173,7 @@ pub async fn run_tray_action(
         }
         TrayAction::Login => run_tray_login(paths, overrides).await,
         TrayAction::Logout => {
-            write_autohand_auth_config(None, None)?;
+            write_autohand_auth_config(None, None, None)?;
             write_user_auth_config(&paths, None, None)?;
             let message = match local_json_request::<LifecycleResponse>(
                 &config,
@@ -269,7 +269,11 @@ pub async fn run_tray_login(paths: StatePaths, overrides: ConfigOverrides) -> Re
     let config = resolve_config(&paths, overrides)?;
 
     let login = run_browser_device_login(&config, "squad").await?;
-    write_autohand_auth_config(Some(&login.token), Some(&login.email))?;
+    write_autohand_auth_config(
+        Some(&login.token),
+        Some(&login.email),
+        login.name.as_deref(),
+    )?;
     write_user_auth_config(&paths, Some(&login.token), Some(&login.email))?;
 
     let body = serde_json::to_string(&LoginRequest {
@@ -287,6 +291,40 @@ pub async fn run_tray_login(paths: StatePaths, overrides: ConfigOverrides) -> Re
     let app_url = resolved_open_url(&paths, &config);
     open_url(&app_url)?;
     Ok(format!("{local_message}. Opened {app_url}\n"))
+}
+
+/// `squad login`: the same device flow as the tray, printing the sign-in URL
+/// and code (so a supervising process can relay them) and not opening the app
+/// afterwards. Used by the web bridge when no tray binary is bundled.
+pub async fn run_cli_login(paths: StatePaths, overrides: ConfigOverrides) -> Result<String> {
+    let config = resolve_config(&paths, overrides)?;
+    let login = run_browser_device_login(&config, "squad").await?;
+    write_autohand_auth_config(
+        Some(&login.token),
+        Some(&login.email),
+        login.name.as_deref(),
+    )?;
+    write_user_auth_config(&paths, Some(&login.token), Some(&login.email))?;
+    let body = serde_json::to_string(&LoginRequest {
+        email: login.email.clone(),
+    })?;
+    let _ = local_json_request::<LifecycleResponse>(&config, "POST", "/auth/login", Some(&body));
+    Ok(format!("Signed in as {}\n", login.email))
+}
+
+/// Clear the shared account session: the Autohand CLI config token, the Squad
+/// session, and the daemon's in-memory account. Provider, permission, and
+/// profile settings stay in place.
+pub async fn run_cli_logout(paths: StatePaths, overrides: ConfigOverrides) -> Result<String> {
+    let config = resolve_config(&paths, overrides)?;
+    let previous = config.account_email.clone();
+    write_autohand_auth_config(None, None, None)?;
+    write_user_auth_config(&paths, None, None)?;
+    let _ = local_json_request::<LifecycleResponse>(&config, "POST", "/auth/logout", None);
+    Ok(match previous {
+        Some(email) if !email.is_empty() => format!("Signed out {email}\n"),
+        _ => "Signed out\n".to_string(),
+    })
 }
 
 pub async fn run_tray_open_path(
@@ -577,11 +615,11 @@ fn action_label(action: TrayAction) -> &'static str {
     }
 }
 
-fn feedback_route_for_paths(paths: &StatePaths, kind: &str) -> String {
+pub fn feedback_route_for_paths(paths: &StatePaths, kind: &str) -> String {
     route_with_modal_query(paths, &[("feedback", kind)])
 }
 
-fn about_route_for_paths(paths: &StatePaths) -> String {
+pub fn about_route_for_paths(paths: &StatePaths) -> String {
     route_with_modal_query(paths, &[("about", "squad")])
 }
 

@@ -55,17 +55,24 @@ function ThreadMessage({ message, authorName, isRoot }) {
 
 // Renders one channel thread: the root prompt plus the grouped in-thread
 // member replies, and a follow-up composer so replies stay in the same thread.
+const FALLBACK_COPY = {
+  threadReplies: "{count} replies",
+  threadFollowUp: "Reply in thread",
+  threadFollowUpPlaceholder: "Follow up in this thread...",
+};
+
 export function ThreadView({
   thread,
   rootMessage,
   replies = [],
   agents = [],
   userName = "You",
-  copy,
+  copy = FALLBACK_COPY,
   busy = false,
   onFollowUp,
 }) {
   const [followUp, setFollowUp] = useState("");
+  if (!thread) return null;
 
   function authorFor(message) {
     if (message.role === "user") return userName;
@@ -73,15 +80,16 @@ export function ThreadView({
     return agent?.name || message.authorName || "Squad member";
   }
 
-  function submitFollowUp() {
+  async function submitFollowUp() {
     const text = followUp.trim();
     if (!text || busy) return;
-    onFollowUp?.({ prompt: text, threadId: thread.id });
-    setFollowUp("");
+    // Channel-first positional contract shared with App.jsx's sendThreadFollowUp.
+    const result = await onFollowUp?.(thread.channelId, thread.id, text);
+    if (result !== false) setFollowUp("");
   }
 
   return (
-    <section className="flex flex-col gap-3" aria-label={thread.title}>
+    <section className="flex flex-col gap-3" aria-label={thread.title || "Channel thread"}>
       {rootMessage ? <ThreadMessage message={rootMessage} authorName={authorFor(rootMessage)} isRoot /> : null}
 
       {replies.length > 0 ? (
@@ -107,7 +115,7 @@ export function ThreadView({
           aria-label={copy.threadFollowUp}
           onChange={(event) => setFollowUp(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent?.isComposing) {
               event.preventDefault();
               submitFollowUp();
             }

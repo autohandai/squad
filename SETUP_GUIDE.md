@@ -176,6 +176,100 @@ profile, verifies `/` routes into `/welcome`, skips into `/squad`, resumes setup
 from the app shell, opens the Settings LLM provider controls, and writes
 screenshots to `.codex-artifacts/`.
 
+## LLM Provider
+
+Autohand AI is the default provider and uses the account from `autohand login`;
+`bun run dev` then reports it as configured with no further setup. Settings →
+Providers lists the catalog models (Auto, Fantail, Moa) and accepts an optional
+Autohand AI API key or a private gateway base URL. Settings files written before
+this default (version 1) are moved to Autohand AI once when the account is
+signed in; an unauthenticated workspace keeps its previous default.
+
+## Autohand Code Version
+
+`package.json` pins the Autohand Code CLI release (`autohand.cliVersion`).
+`bun run cli:fetch` downloads and checksum-verifies that release into
+`vendor/autohand-cli/` (git-ignored); `bun run check:sdk` proves the Agent SDK
+drives it, and packaging refuses to ship anything else. Bump the pin, run the
+fetch, and run `check:sdk` to upgrade. `AUTOHAND_SQUAD_CLI_DIR` points the
+bridge, checks, and packagers at a different vendored directory.
+
+## Logs
+
+Structured logs use the OpenTelemetry Logs Data Model (OTLP/JSON lines). Run
+`bun run check:otel` for the format checks and read `docs/observability.md`
+for file locations, attributes, and the `OTEL_EXPORTER_OTLP_*` export settings.
+
+## Desktop Shell
+
+`bun run desktop:stage` copies `server.mjs`, `dist/`, `server/`, the Agent SDK,
+and the vendored CLI into `src-tauri/runtime/`, and builds the sidecars
+(`autohand-squad-daemon`, `autohand-squad-analytics`, `squad`, plus the
+current Node) into `src-tauri/binaries/<name>-<triple>`. `bun run desktop:build`
+then produces the installers under `src-tauri/target/release/bundle/`.
+`bun run desktop:check` type-checks the shell without bundling. Stop the dev
+bridge before launching the app: both use port 19821.
+
+The desktop app is its own tray and window, so it does not ship or need the
+legacy `autohand-squad-tray` binary: it sets `AUTOHAND_SQUAD_DESKTOP_SHELL`
+to its executable, preflight then reports the desktop app as the controller,
+and the runtime records the app's pid in `~/.autohand/squad/tray.json` so
+`squad start` and `squad status` reuse it instead of launching a tray. To
+replace a legacy install, remove `~/.autohand/squad/bin` (state files stay),
+copy the `.app` into `/Applications`, and launch it.
+
+## Bridge Only (no tray, no daemon)
+
+`bun run dev` starts only the Node bridge on http://127.0.0.1:19821; it does
+not start the launcher, the daemon, or analytics, and it does not need them.
+If a tray icon or daemon is running, it comes from the installed desktop app
+(usually launch-at-login), whose bundled web server also claims port 19821.
+Stop it with the tray's **Quit** or:
+
+```bash
+./daemon/target/debug/squad stop      # or the installed `squad stop`
+./daemon/target/debug/squad status    # everything should report running: false
+```
+
+The sidebar's **Restart to update** button appears only when a running daemon
+reports an available update.
+
+## Sign-in
+
+Development uses your own `~/.autohand/config.json`; a signed-out config shows
+the sign-in gate at `/`. To exercise the gate without signing out, run a
+second bridge with `AUTOHAND_USER_CONFIG_PATH` pointing at an empty file.
+Harness sign-in flows are `POST /api/harnesses/login {id}` and
+`GET /api/harnesses/login?id=`; they run the vendor CLI login and never touch
+credentials.
+
+## Agent Harnesses
+
+Members run on one of three engines, chosen per member in **Runs with** and
+changeable later from the member's Harness page:
+
+| Harness | Interface | Readiness check |
+| --- | --- | --- |
+| Autohand Code (default) | bundled `@autohandai/agent-sdk` CLI over JSON-RPC | bundled CLI present and `autohand login` completed |
+| Codex | `codex exec --json` (resume by thread id) | `codex` on a GUI-safe PATH, `~/.codex/auth.json` or `OPENAI_API_KEY` |
+| Claude Code | `claude -p --output-format stream-json --verbose` (resume by session id) | `claude` on a GUI-safe PATH and a completed first run |
+
+Readiness is served by `GET /api/harnesses` (add `?refresh=1` to bypass the
+five-minute cache) and tested with `POST /api/harnesses/test`. The bridge maps
+the permission ladder to each vendor: restricted → Codex `read-only` / Claude
+`plan`; interactive → `workspace-write` / `acceptEdits`; unrestricted →
+`danger-full-access` / `bypassPermissions`.
+
+To develop against a local SDK checkout instead of the published package:
+
+```bash
+AUTOHAND_AGENT_SDK_DIR=/path/to/tin-wrapper/typescript bun run dev
+AUTOHAND_AGENT_SDK_DIR=/path/to/tin-wrapper/typescript bun run check:sdk
+```
+
+Run `bun run check:harness` for the deterministic adapter checks (no vendor
+calls) and `./daemon/target/debug/squad doctor` for the launcher preflight.
+
 ## Verification
 
 Use the smallest check that proves your change, then run broader checks before
