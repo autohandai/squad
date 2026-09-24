@@ -26,12 +26,10 @@
 
 ## First-Run Onboarding
 
-- Opening `/` routes to `/welcome` until the user is signed in and completes or skips setup; completed or skipped users continue to land on `/squad` only while account state is ready.
-- Onboarding is a native app view, not a modal or marketing landing page. Keep it calm, document-like, and task-led: progress/status on one side, setup sections on the other, subtle dividers, and direct controls.
-- The flow guides runtime readiness, account sign-in, provider setup, workspace selection, and first squad member readiness. It should reuse the existing runtime, tray/browser auth, provider settings, workspace, and member-creation paths instead of introducing parallel setup systems.
-- Account sign-in must stay delegated to the existing Autohand Squad browser/device login path owned by the tray/runtime controller. The web UI can request that path and refresh status, but must not collect credentials itself.
-- Provider setup should deep-link or route to the existing Settings LLM Providers surface and `/api/provider-settings`; do not duplicate provider forms in onboarding.
-- Users must be able to skip optional setup and resume it from the normal app shell, but skip must not bypass required account sign-in. Persist only lightweight local setup state such as status, selected workspace, and member readiness.
+- Opening `/` routes to `/welcome` until the user is signed in and completes or skips setup; completed or skipped users land on their first member's chat (finish) or the directory (skip).
+- Onboarding is three moments in one calm column: **Point at a folder** (native picker plus recent workspaces), **Meet your first teammate** (three roles ranked from the folder profile, best fit preselected, name prefilled), **Start talking** (creates the member and opens the chat with the first message drafted). No checklist, no percentage bar; the current moment is the progress.
+- Readiness is silent while green. A blocked prerequisite (not signed in, runtime down, no provider) is one sentence with one action above the current moment. Sign-in stays delegated to the runtime's device flow; provider setup deep-links to Settings and is never duplicated here.
+- Skip is available once signed in; persisted state stays lightweight (status, selected workspace, member readiness, last step).
 
 ## Squad Channels
 
@@ -66,7 +64,9 @@
 
 - The primary sidebar is a Slack-like workspace rail: a **Search everything** control (⌘K / Ctrl K), Inbox, Agents, channel sections grouped by the channel's `section` (default "Channels"), then **Direct messages** listing members with presence dots and unread counts, and the account footer. No cards, no tinted panels; unread state is a bold row plus a small dot or count.
 - Channel pages are flat, chronological streams: a `# name` header with member count and a settings popover, day separators, a red **New** divider at the last-read boundary, author + time, mention chips for targeted members, emoji reactions with counts, and quick actions on hover. Thread replies render inline under their root with a subtle indent instead of a stacked thread block.
-- The composer is one calm bordered field with @ / attach / emoji / format on the left and a round send button on the right; Enter sends, Shift+Enter breaks a line, and `@` opens a keyboard-navigable mention picker. A quiet status line under it names working members ("Honey: Working"); it renders nothing when nobody is working.
+- The composer is one calm bordered field with @ / attach / emoji / format on the left and a round send button on the right; Enter sends, Shift+Enter breaks a line, and `@` opens a keyboard-navigable mention picker.
+- Presence is one living line under the composer, not placeholder rows: stacked avatars, then "Iris is thinking…", "Iris and Noah are typing…", "Iris, Noah and 2 others are running tools…", with three breathing dots. A reply enters the stream only once it has text. The line renders nothing when nobody is active and never shifts layout.
+- Squad recruiting notices ("Kai wants to join #client-abc — DevOps engineer. Kai can help with the Dockerfile and CI in api; nobody in the channel covers that yet.") sit above the composer as a divider-separated row with Add and Not now. They are visible to the user only, never sent to members, and never counted as unread.
 - Inbox is a single divider-separated list (unread channels, handoffs waiting, memory proposals) that links back to the surface owning each item.
 - Providers in Settings are a divider-separated list, expanded one at a time. An account-backed provider (Autohand AI) shows its status as one sentence ("Signed in as …; an API key is optional"), a model select fed by the catalog, and a managed base URL placeholder; it never asks for a key it does not need.
 - The **Runs with** control is one select plus one readiness sentence; advanced fields (model override, executable path, Test harness) sit behind a text disclosure. The profile shows Harness as a text summary row beside Model, never as vendor cards.

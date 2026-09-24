@@ -4,6 +4,7 @@ import { OtelLogger, SEVERITY, parseLogEnvelope, resourceFromEnv, traceIdFor, sp
 import { SdkSessionPool } from "./server/sdk-sessions.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { spawn, spawnSync } from "node:child_process";
+import { profileWorkspace } from "./server/workspace-profile.mjs";
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
@@ -847,6 +848,7 @@ const ignoredFileDirs = new Set([
 ]);
 
 const fileSuggestionLimit = 12;
+const workspaceProfileCache = new Map();
 
 const workspaceMarkers = [
   ".git",
@@ -5267,6 +5269,12 @@ function chatStreamEventFromSdkEvent(event) {
   };
 }
 
+// A member that keeps producing events (tool calls, thinking, text) is
+// working, however long it takes; only silence means trouble. The timeout is
+// therefore an inactivity window that every event resets, under a hard
+// ceiling so a runaway turn still ends.
+const CHAT_TURN_CEILING_MS = 45 * 60 * 1000;
+
 async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEventTimeoutMs = 45000) {
   const events = [];
   let rawStdout = "";
@@ -5276,15 +5284,27 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
   let stalled = false;
   let gotFirstEvent = false;
   let timeout = null;
+  let ceiling = null;
   let firstEventTimer = null;
   let abortHandler = null;
+  const inactivityMs = Math.max(Number(timeoutMs) || 0, 60000);
 
+  let rejectTimeout = () => {};
   const timeoutPromise = new Promise((_, reject) => {
+    rejectTimeout = reject;
+    ceiling = setTimeout(() => {
+      timedOut = true;
+      reject(new Error(`chat stopped after ${Math.round(CHAT_TURN_CEILING_MS / 60000)} minutes, the longest a single turn may run`));
+    }, CHAT_TURN_CEILING_MS);
+  });
+  const armInactivity = () => {
+    if (timeout) clearTimeout(timeout);
     timeout = setTimeout(() => {
       timedOut = true;
-      reject(new Error("chat timed out waiting for Autohand SDK"));
-    }, timeoutMs);
-  });
+      rejectTimeout(new Error(`no activity from Autohand Code for ${Math.round(inactivityMs / 60000)} minutes`));
+    }, inactivityMs);
+  };
+  armInactivity();
 
   // First-event watchdog: a healthy turn emits agent/turn/message events within
   // a second or two. A long initial silence means the CLI exited (e.g. it
@@ -5328,6 +5348,7 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
         throw new Error("chat stopped by the user");
       }
       events.push(event);
+      armInactivity();
       if (event?.type === "message_update" && event.delta) rawStdout += event.delta;
       if (event?.type === "message_end" && event.content && !rawStdout.includes(event.content)) {
         rawStdout += event.content;
@@ -5348,6 +5369,7 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
     return await Promise.race(racers);
   } finally {
     if (timeout) clearTimeout(timeout);
+    if (ceiling) clearTimeout(ceiling);
     if (firstEventTimer) clearTimeout(firstEventTimer);
     if (abortHandler) signal?.removeEventListener("abort", abortHandler);
     if (timedOut || stopped || stalled || signal?.aborted) {
@@ -6874,6 +6896,26 @@ async function handleApi(req, res, url) {
   // Native OS folder chooser for "which folder should this member work in".
   // The dialog runs on the machine that hosts the bridge; the chosen folder
   // still has to pass the same rules as every other workspace.
+  // Folder profile for onboarding and squad recruiting (ADR-0015). Cached
+  // per path for a minute; the signature lets clients dedupe proposals.
+  if (url.pathname === "/api/workspaces/profile" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const workspace = await cleanWorkspace(String(payload.path || "").replace(/\/+$/, ""));
+      const cached = workspaceProfileCache.get(workspace);
+      if (cached && Date.now() - cached.at < 60000) {
+        json(res, 200, { success: true, data: cached.profile });
+        return true;
+      }
+      const profile = await profileWorkspace(workspace);
+      workspaceProfileCache.set(workspace, { at: Date.now(), profile });
+      json(res, 200, { success: true, data: profile });
+    } catch (error) {
+      json(res, error.status || 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
   if (url.pathname === "/api/workspaces/pick" && req.method === "POST") {
     try {
       const payload = await readBody(req);

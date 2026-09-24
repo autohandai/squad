@@ -153,6 +153,9 @@ export function ChannelStream({
   return (
     <div className="flex flex-col" aria-label={channel?.name ? `#${channel.name} messages` : "messages"}>
       {ordered.map((message) => {
+        // A reply that has not produced text yet is presence, not a message:
+        // the PresenceLine under the composer shows it (ADR-0014).
+        if (message.status === "loading" && isPlaceholderBody(message.body)) return null;
         const ms = timestampOf(message);
         const day = dayKey(ms, locale);
         const showDay = day && day !== previousDay;
@@ -218,4 +221,9 @@ export function ChannelStream({
       <div ref={endRef} />
     </div>
   );
+}
+
+function isPlaceholderBody(body) {
+  const text = String(body || "").trim();
+  return !text || /\bis typing(\.{3}|…)$/.test(text);
 }

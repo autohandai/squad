@@ -10,7 +10,17 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-24
+
 ### Added
+- First run ends in a conversation: point at a folder, meet a teammate
+  suggested from what the folder contains, and open the chat with the first
+  message already drafted.
+- Squad recruiting: when a channel's project needs a role nobody in it covers,
+  that member asks to join. Only you see the request; Add or Not now. On by
+  default (Settings → Chat → Squad suggestions).
+- Folder profiles (`POST /api/workspaces/profile`): languages, frameworks,
+  and needs detected from marker files and dependencies.
 
 - Native desktop app (Tauri 2): system-webview window, menu bar (File › New ›
   Agent / Channel, View › Inbox / Agents / Channels / Mission Control), tray
@@ -31,6 +41,11 @@ list to the section for that version.
 
 ### Changed
 
+- Channel presence is one living line under the composer ("Iris, Noah and 2
+  others are thinking…"); replies appear when they start instead of as
+  placeholder rows.
+- A member that keeps producing events is never cut off: the chat timeout is
+  an inactivity window with a 45-minute ceiling.
 - Autohand Sans and Autohand Mono ship with the app; no font CDN.
 - Chat, channel, execution panel, and inbox surfaces redesigned; the inbox
   badge clears with "Mark all read".
@@ -56,7 +71,8 @@ list to the section for that version.
 - Installable desktop release pipeline with signed and notarised builds when
   credentials are present.
 
-[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/autohandai/squad/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/autohandai/squad/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/autohandai/squad/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/autohandai/squad/releases/tag/v0.1.2

@@ -62,6 +62,9 @@ jobs:
       - name: Check SDK session pool
         run: bun run check:sessions
 
+      - name: Check folder profiles and squad recruiting
+        run: bun run check:recruiting
+
       - name: Check release metadata logic
         run: bun run check:release
 

@@ -1,6 +1,10 @@
 import React, { createContext, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { onDesktopMenu } from "@/lib/desktop-menu";
+import { FirstRun } from "@/components/onboarding/FirstRun";
+import { JoinProposal } from "@/components/channels/JoinProposal";
+import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
+import { proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
 import { createRoot } from "react-dom/client";
 import {
   Bar,
@@ -218,7 +222,6 @@ import { WorkspaceSidebar } from "@/components/shell/WorkspaceSidebar";
 import { SearchCommand } from "@/components/shell/SearchCommand";
 import { ChannelStream } from "@/components/channels/ChannelStream";
 import { MessageComposer } from "@/components/channels/MessageComposer";
-import { AgentStatusBar } from "@/components/channels/AgentStatusBar";
 import { InboxPage } from "@/components/inbox/InboxPage";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { SignInGate } from "@/components/account/SignInGate";
@@ -294,6 +297,7 @@ const STORAGE_KEYS = {
   tasks: "autohandSquad.v1.tasks",
   theme: "autohandSquad.v1.theme",
   inboxReadAt: "autohandSquad.v1.inboxReadAt",
+  channelProposals: "autohandSquad.v1.channelProposals",
 };
 
 // Fallback identity before the bridge reports the signed-in account.
@@ -2772,12 +2776,15 @@ function readHandoffSettings() {
 
 const DEFAULT_CHAT_SETTINGS = {
   displayCliOutput: false,
+  squadSuggestions: true,
 };
 
 function normalizeChatSettings(settings) {
   const source = settings && typeof settings === "object" ? settings : {};
   return {
     displayCliOutput: source.displayCliOutput === true,
+    // Squad recruiting (ADR-0015) is on unless explicitly switched off.
+    squadSuggestions: source.squadSuggestions !== false,
   };
 }
 
@@ -4374,6 +4381,12 @@ function App() {
   // stop counting in the badge.
   const [inboxReadAt, setInboxReadAt] = useState(() => readStored(storageKeysFor("inboxReadAt"), ""));
   const [createChannelRequest, setCreateChannelRequest] = useState(0);
+  // Squad recruiting (ADR-0015): folder profiles by path for this session and
+  // the user's decisions on proposals (accepted / dismissed), keyed by
+  // channel + member + project signature.
+  const [workspaceProfiles, setWorkspaceProfiles] = useState({});
+  const [channelProposals, setChannelProposals] = useState(() => readStored(storageKeysFor("channelProposals"), {}));
+  const workspaceProfileRequests = useRef(new Set());
   const [signingOut, setSigningOut] = useState(false);
   const channelViewMarkerRef = useRef({ channelId: "", lastReadAt: 0 });
   const localeResolution = useMemo(
@@ -4538,10 +4551,11 @@ function App() {
       window.localStorage.setItem(STORAGE_KEYS.agentReads, JSON.stringify(agentReads));
       window.localStorage.setItem(STORAGE_KEYS.channelReactions, JSON.stringify(channelReactions));
       window.localStorage.setItem(STORAGE_KEYS.inboxReadAt, JSON.stringify(inboxReadAt));
+      window.localStorage.setItem(STORAGE_KEYS.channelProposals, JSON.stringify(channelProposals));
     } catch {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
-  }, [channelReads, agentReads, channelReactions, inboxReadAt]);
+  }, [channelReads, agentReads, channelReactions, inboxReadAt, channelProposals]);
 
   async function refreshHarnesses(refresh = false) {
     setHarnessesLoading(true);
@@ -4995,6 +5009,12 @@ function App() {
     const params = new URLSearchParams(route.split("?")[1] || "");
     return normalizeSquadWorkspacePath(params.get("workspace") || "", runtime);
   }, [route, runtime]);
+  // A drafted first message (onboarding) travels as ?prompt= and is adopted
+  // into the conversation's draft once.
+  const requestedPrompt = useMemo(() => {
+    const params = new URLSearchParams(route.split("?")[1] || "");
+    return String(params.get("prompt") || "");
+  }, [route]);
   const settingsSection = useMemo(() => {
     const params = new URLSearchParams(route.split("?")[1] || "");
     const section = params.get("section") || "";
@@ -5155,6 +5175,51 @@ function App() {
   async function refreshAccountStatus() {
     await refreshRuntime();
     setLoginRequestStatus("Status refreshed.");
+  }
+
+  const loadWorkspaceProfile = useCallback(async (path) => {
+    if (!path || workspaceProfileRequests.current.has(path)) return null;
+    workspaceProfileRequests.current.add(path);
+    try {
+      const profile = await api("/api/workspaces/profile", { method: "POST", body: JSON.stringify({ path }) });
+      setWorkspaceProfiles((current) => ({ ...current, [path]: profile || { error: true, needs: [] } }));
+      return profile;
+    } catch {
+      // Unreadable folder: remember that so the channel does not retry every render.
+      setWorkspaceProfiles((current) => ({ ...current, [path]: { error: true, needs: [] } }));
+      return null;
+    } finally {
+      workspaceProfileRequests.current.delete(path);
+    }
+  }, []);
+
+  function resolveChannelProposal(key, status) {
+    setChannelProposals((current) => ({ ...current, [key]: { status, at: new Date().toISOString() } }));
+  }
+
+  // First run ends in a conversation (ADR-0013): create the teammate from the
+  // chosen template on the chosen folder and open the chat with the drafted
+  // first message.
+  async function startFirstConversation({ template, name, folder, prompt }) {
+    const workspace = normalizeSquadWorkspacePath(folder || fallbackWorkspace, runtime);
+    updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete", selectedWorkspace: workspace, memberReady: true });
+    await createAgent(
+      {
+        employeeType: template.id,
+        name,
+        role: template.title,
+        workspace,
+        description: template.description || "",
+        instructions: template.starter || "",
+        skills: normalizeSkillList(template.skills),
+        skillSource: template.skillSource || AUTOHAND_SKILLS_REGISTRY_URL,
+        avatar: birdAvatarForRole(template.id, template.title, name),
+        profileFiles: normalizeProfileFiles(template.profileFiles),
+        brainCard: normalizeBrainCard(template.brainCard, template),
+        harness: normalizeHarnessAssignmentCopy(null),
+      },
+      { prompt }
+    );
   }
 
   function finishOnboarding() {
@@ -6039,7 +6104,7 @@ function App() {
     );
   }
 
-  async function createAgent(draft) {
+  async function createAgent(draft, options = {}) {
     const id = createSquadMemberId();
     const timestamp = new Date().toISOString();
     const skills = normalizeSkillList(draft.skills);
@@ -6082,7 +6147,7 @@ function App() {
     };
     setAgents((current) => [...current, agent]);
     setMessagesByAgent((current) => ({ ...current, [id]: initialMessages(agent.name) }));
-    navigate(memberChatPath(id));
+    navigate(routeWithParams(memberChatPath(id), { prompt: options.prompt || null }));
 
     try {
       const provision = await api("/api/agents/provision", {
@@ -6901,23 +6966,37 @@ function App() {
               onAnalytics={openAnalytics}
             />
             {isOnboarding ? (
-              <OnboardingPage
+              <FirstRun
                 runtime={runtime}
-                providerSettings={providerSettings}
-                providerSettingsError={providerSettingsError}
                 workspaces={workspaces}
-                agents={agents}
-                activeAgent={activeAgent}
+                roleTemplates={roleTemplates}
                 fallbackWorkspace={fallbackWorkspace}
-                requestedWorkspace={requestedWorkspace}
                 onboardingState={onboardingState}
-                loginRequestStatus={loginRequestStatus}
-                navigate={navigate}
                 updateOnboardingState={updateOnboardingState}
+                api={api}
+                loginRequestStatus={loginRequestStatus}
                 onRequestLogin={requestAccountLogin}
                 onRefreshAccount={refreshAccountStatus}
-                onFinish={finishOnboarding}
+                providerReady={onboardingProviderReady(providerSettings)}
+                onOpenProviders={() => navigate("/settings?section=providers")}
+                avatarFor={(template, name, className) => (
+                  <AgentAvatar agent={{ name, role: template.title, employeeType: template.id, avatar: birdAvatarForRole(template.id, template.title, name) }} className={className} />
+                )}
+                renderTemplateAvatar={(template, className) => (
+                  <AgentAvatar agent={{ name: template.title, role: template.title, employeeType: template.id, avatar: birdAvatarForRole(template.id, template.title, template.id) }} className={className} />
+                )}
+                onCreateSomeoneElse={(folder) => {
+                  updateOnboardingState({ lastStep: "member", selectedWorkspace: folder });
+                  navigate(routeWithParams(`${MEMBER_ROUTE_PREFIX}/new`, { workspace: folder || null }));
+                }}
+                onStart={startFirstConversation}
                 onSkip={skipOnboarding}
+                brand={
+                  <>
+                    <BrandMark theme="dark" className="size-9 dark:hidden" />
+                    <BrandMark theme="light" className="hidden size-9 dark:block" />
+                  </>
+                }
               />
             ) : isAnalytics ? (
               <SettingsAnalyticsPage locale={localeResolution.locale} copy={localeCopy} />
@@ -6969,6 +7048,11 @@ function App() {
                 onUpdateChannel={updateChannel}
                 onDeleteChannel={deleteChannel}
                 onToggleMember={toggleChannelMember}
+                chatSettings={chatSettings}
+                workspaceProfiles={workspaceProfiles}
+                onLoadWorkspaceProfile={loadWorkspaceProfile}
+                channelProposals={channelProposals}
+                onResolveProposal={resolveChannelProposal}
                 onDispatch={sendChannelPrompt}
                 onFollowUp={sendThreadFollowUp}
                 reactionsByMessage={channelReactions}
@@ -7088,6 +7172,12 @@ function App() {
                 runAutomation={runAutomation}
                 updateAgent={updateAgent}
                 requestedWorkspace={requestedWorkspace}
+                initialPrompt={requestedPrompt}
+                onInitialPromptConsumed={() => {
+                  const next = routeWithParams(route, { prompt: null });
+                  window.history.replaceState({}, "", next);
+                  setRoute(next);
+                }}
                 chatSettings={chatSettings}
                 handoffRetryMode={resolveHandoffRetryMode(handoffSettings, runtime)}
                 onCreateHandoff={createHandoff}
@@ -7604,6 +7694,11 @@ function ChannelsPage({
   reactionsByMessage = {},
   onReact,
   lastReadAt = 0,
+  chatSettings = DEFAULT_CHAT_SETTINGS,
+  workspaceProfiles = {},
+  onLoadWorkspaceProfile,
+  channelProposals = {},
+  onResolveProposal,
 }) {
   const { profile: accountProfile } = useContext(AccountContext);
   const [manageMembersOpen, setManageMembersOpen] = useState(false);
@@ -7625,17 +7720,34 @@ function ChannelsPage({
     setDraft("");
   }, [activeChannelId]);
 
-  const workingItems = useMemo(() => {
-    const seen = new Map();
-    for (const message of channelMessages) {
-      if (message.role !== "agent" || message.status !== "loading") continue;
-      const agent = agents.find((item) => item.id === message.agentId);
-      if (agent && !seen.has(agent.id)) seen.set(agent.id, { agent, label: copy.working || "Working" });
-    }
-    return Array.from(seen.values());
-  }, [channelMessages, agents, copy]);
+  // Presence (ADR-0014): who is thinking, typing, or running tools right now.
+  const presenceItems = useMemo(() => presenceFromMessages(channelMessages, agents), [channelMessages, agents]);
 
   const channelProjects = useMemo(() => normalizeChannelProjects(channel?.projects), [channel?.projects]);
+
+  // Squad recruiting (ADR-0015): profile the channel's projects, then ask who
+  // is missing. Proposals are keyed by project signature, so a dismissed one
+  // stays dismissed until the folder itself changes.
+  const squadSuggestions = chatSettings.squadSuggestions !== false;
+  useEffect(() => {
+    if (!squadSuggestions || !channel) return;
+    for (const project of channelProjects) {
+      if (project.path && !workspaceProfiles[project.path]) onLoadWorkspaceProfile?.(project.path);
+    }
+  }, [squadSuggestions, channel, channelProjects, workspaceProfiles, onLoadWorkspaceProfile]);
+  const memberIdsKey = channel ? channel.memberIds.join(",") : "";
+  const openProposals = useMemo(() => {
+    if (!squadSuggestions || !channel) return [];
+    const projects = channelProjects
+      .map((project) => ({ name: project.name, path: project.path, profile: workspaceProfiles[project.path] }))
+      .filter((project) => project.profile && !project.profile.error);
+    if (!projects.length) return [];
+    const current = channel.memberIds.map((memberId) => agents.find((agent) => agent.id === memberId)).filter(Boolean);
+    return proposeMembers({ projects, members: current, candidates: agents })
+      .map((proposal) => ({ ...proposal, key: proposalKey(channel.id, proposal.agent.id, proposal.signature), ...proposalCopy(proposal, channel.name) }))
+      .filter((proposal) => !channelProposals[proposal.key]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [squadSuggestions, channel, channelProjects, workspaceProfiles, memberIdsKey, agents, channelProposals]);
   const [projectDraft, setProjectDraft] = useState("");
   const [projectPickBusy, setProjectPickBusy] = useState(false);
   const mentionItems = useMemo(
@@ -7877,6 +7989,20 @@ function ChannelsPage({
 
           <div className="shrink-0 px-4 pb-3 pt-2 lg:px-6">
             <div className="mx-auto w-full max-w-5xl">
+              {openProposals.map((proposal) => (
+                <JoinProposal
+                  key={proposal.key}
+                  proposal={proposal}
+                  copy={copy}
+                  className="mb-3"
+                  renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
+                  onAccept={() => {
+                    onToggleMember?.(channel.id, proposal.agent.id);
+                    onResolveProposal?.(proposal.key, "accepted");
+                  }}
+                  onDismiss={() => onResolveProposal?.(proposal.key, "dismissed")}
+                />
+              ))}
               {replyTo ? (
                 <div className="mb-1.5 flex items-center gap-2 px-1 text-xs text-muted-foreground">
                   <CornerDownRight className="size-3.5" aria-hidden="true" />
@@ -7900,11 +8026,7 @@ function ChannelsPage({
                 onAttach={(files) => attachFilesToDraft(files, setDraft)}
                 hint={!members.length ? copy.channelNoMembers : ""}
               />
-              <AgentStatusBar
-                items={workingItems}
-                workingLabel={copy.working || "Working"}
-                renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
-              />
+              <PresenceLine items={presenceItems} copy={copy} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} />
             </div>
           </div>
         </>
@@ -7913,264 +8035,15 @@ function ChannelsPage({
   );
 }
 
-function OnboardingPage({
-  runtime,
-  providerSettings,
-  providerSettingsError = "",
-  workspaces = [],
-  agents = [],
-  activeAgent,
-  fallbackWorkspace = "",
-  requestedWorkspace = "",
-  onboardingState,
-  loginRequestStatus = "",
-  navigate,
-  updateOnboardingState,
-  onRequestLogin,
-  onRefreshAccount,
-  onFinish,
-  onSkip,
-}) {
-  const selectedWorkspace = onboardingState.selectedWorkspace || requestedWorkspace || fallbackWorkspace || "";
-  const workspaceChoices = workspaceOptions(workspaces, selectedWorkspace, runtime);
-  const runtimeReady = runtime?.available === true;
-  const accountReady = onboardingAccountReady(runtime);
-  const providerReady = onboardingProviderReady(providerSettings);
-  const workspaceReady = Boolean(selectedWorkspace);
-  const customMemberExists = agents.length > initialAgents.length;
-  const memberReady = onboardingState.memberReady || customMemberExists;
-  const finishReady = runtimeReady && accountReady && providerReady && workspaceReady && memberReady;
-  const skipReady = accountReady;
-  const completedSteps = [runtimeReady, accountReady, providerReady, workspaceReady, memberReady].filter(Boolean).length;
-  const progress = Math.round((completedSteps / 5) * 100);
-  const defaultModel = providerSettings
-    ? providerSummaryLabel(effectiveModelForAgent({ modelAssignment: { mode: "inherit" } }, providerSettings))
-    : "Loading providers";
-  const accountLabel = runtime?.account?.email || (accountReady ? "Signed in" : "Not signed in");
-  const starterMember = activeAgent || agents[0];
-
-  useEffect(() => {
-    if (!onboardingState.selectedWorkspace && selectedWorkspace) {
-      updateOnboardingState({ selectedWorkspace, lastStep: "workspace" });
-    }
-  }, [onboardingState.selectedWorkspace, selectedWorkspace, updateOnboardingState]);
-
-  function selectWorkspace(value) {
-    updateOnboardingState({ selectedWorkspace: value, lastStep: "workspace" });
-  }
-
-  function openProviderSettings() {
-    updateOnboardingState({ lastStep: "providers" });
-    navigate("/settings?section=providers");
-  }
-
-  function createFirstMember() {
-    updateOnboardingState({ lastStep: "member" });
-    navigate(routeWithParams(`${MEMBER_ROUTE_PREFIX}/new`, { workspace: selectedWorkspace || null }));
-  }
-
-  function useStarterMember() {
-    updateOnboardingState({ memberReady: true, lastStep: "member" });
-  }
-
-  return (
-    <div className="min-h-screen bg-background">
-      <PageTitle title="Welcome to Autohand Squad" />
-      <div className="mx-auto grid w-full max-w-6xl gap-10 px-4 py-8 sm:px-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-10 lg:py-10">
-        <aside className="lg:sticky lg:top-8 lg:self-start">
-          <div className="flex items-center gap-3">
-            <BrandMark theme="dark" className="size-9 dark:hidden" />
-            <BrandMark theme="light" className="hidden size-9 dark:block" />
-            <div className="min-w-0">
-              <div className="text-sm font-semibold">Autohand Squad</div>
-              <div className="text-xs text-muted-foreground">First-run setup</div>
-            </div>
-          </div>
-
-          <div className="mt-7">
-            <Progress value={progress} />
-            <div className="mt-2 text-xs text-muted-foreground">{completedSteps} of 5 setup checks ready</div>
-          </div>
-
-          <div className="mt-7 divide-y divide-border/70 text-sm">
-            <OnboardingStepLine ready={runtimeReady} label="Runtime" detail={runtime?.version || "Checking local bridge"} />
-            <OnboardingStepLine ready={accountReady} label="Account" detail={accountLabel} />
-            <OnboardingStepLine ready={providerReady} label="LLM provider" detail={defaultModel} />
-            <OnboardingStepLine ready={workspaceReady} label="Workspace" detail={workspaceLabel(selectedWorkspace, workspaces)} />
-            <OnboardingStepLine ready={memberReady} label="Squad member" detail={memberReady ? "Ready for first work" : "Choose starter or create one"} />
-          </div>
-        </aside>
-
-        <main className="min-w-0">
-          <header className="border-b border-border/70 pb-8">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <Badge variant="outline" className="rounded-md">Welcome</Badge>
-              <span>Setup stays local and can be resumed from the account menu.</span>
-            </div>
-            <h1 className="mt-4 text-balance text-4xl font-semibold tracking-normal sm:text-5xl">Set up the squad before the first run.</h1>
-            <p className="mt-4 max-w-2xl text-base leading-7 text-muted-foreground">
-              Autohand Squad gives each digital teammate an isolated CLI profile, project scope, provider settings, and work history. This setup connects those pieces once so the main product opens ready for real work.
-            </p>
-          </header>
-
-          <div className="divide-y divide-border/70">
-            <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={Server} title="Runtime" description="Confirm the local Autohand bridge and CLI are visible." />
-              <div className="grid gap-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <StatusBadge status={runtimeReady ? "ready" : "offline"} copy={getLocaleCopy(DEFAULT_LOCALE)} />
-                  <span className="min-w-0 truncate text-sm text-muted-foreground">{runtime?.autohandPath || "Autohand CLI path not found yet"}</span>
-                </div>
-                {!runtimeReady ? (
-                  <Alert>
-                    <AlertTriangle />
-                    <AlertTitle>Runtime is not ready</AlertTitle>
-                    <AlertDescription>Install the Autohand CLI or restart Autohand Squad, then refresh this page.</AlertDescription>
-                  </Alert>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={KeyRound} title="Account" description="Use the existing Squad browser login flow." />
-              <div className="grid gap-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <StatusBadge status={accountReady ? "ready" : "offline"} copy={getLocaleCopy(DEFAULT_LOCALE)} />
-                  <span className="text-sm text-muted-foreground">{accountLabel}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" onClick={onRequestLogin} disabled={accountReady}>
-                    <KeyRound data-icon="inline-start" />
-                    {accountReady ? "Signed in" : "Open browser login"}
-                  </Button>
-                  <Button type="button" variant="outline" onClick={onRefreshAccount}>
-                    <RefreshCw data-icon="inline-start" />
-                    Refresh status
-                  </Button>
-                </div>
-                <p className="text-sm leading-6 text-muted-foreground">
-                  This calls the installed `autohand-squad-tray --action login` path, so browser/device auth and local runtime account state stay owned by the existing desktop controller.
-                </p>
-                {loginRequestStatus ? <p className="text-sm text-muted-foreground">{loginRequestStatus}</p> : null}
-              </div>
-            </section>
-
-            <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={Brain} title="LLM provider" description="Autohand AI is the default and uses your account. Other providers are optional." />
-              <div className="grid gap-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <StatusBadge status={providerReady ? "ready" : "offline"} copy={getLocaleCopy(DEFAULT_LOCALE)} />
-                  <span className="text-sm text-muted-foreground">{defaultModel}</span>
-                </div>
-                {providerSettingsError ? (
-                  <Alert>
-                    <AlertTriangle />
-                    <AlertTitle>Provider settings need attention</AlertTitle>
-                    <AlertDescription>{providerSettingsError}</AlertDescription>
-                  </Alert>
-                ) : null}
-                <div>
-                  <Button type="button" variant={providerReady ? "outline" : "default"} onClick={openProviderSettings}>
-                    <Settings data-icon="inline-start" />
-                    {providerReady ? "Review provider settings" : "Configure provider"}
-                  </Button>
-                </div>
-              </div>
-            </section>
-
-            <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={FolderGit2} title="Workspace" description="Choose the repository or project for first work." />
-              <FieldGroup>
-                <Field>
-                  <FieldLabel>First workspace</FieldLabel>
-                  <Select value={selectedWorkspace} onValueChange={selectWorkspace}>
-                    <SelectTrigger className="h-10 w-full min-w-0 justify-between">
-                      <SelectValue placeholder="Select a workspace" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectLabel>Folders under {runtime?.workspaceRoot || "your user directory"}</SelectLabel>
-                        {workspaceChoices.map((workspace) => (
-                          <SelectItem key={workspace.path} value={workspace.path}>
-                            {workspace.label || workspace.name || workspaceName(workspace.path)}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <FieldDescription>{selectedWorkspace || "This workspace is passed into first conversations, runs, and new squad members."}</FieldDescription>
-                </Field>
-              </FieldGroup>
-            </section>
-
-            <section className="grid gap-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-              <OnboardingSectionTitle icon={Users} title="First squad member" description="Start from a template or use the existing starter member." />
-              <div className="grid gap-4">
-                <div className="flex min-w-0 flex-wrap items-center gap-3">
-                  <AgentAvatar agent={starterMember} className="size-10" />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{starterMember?.name || "Starter member"}</div>
-                    <div className="truncate text-sm text-muted-foreground">{starterMember?.role || "Ready to adapt to first work"}</div>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" onClick={createFirstMember}>
-                    <Plus data-icon="inline-start" />
-                    Create first member
-                  </Button>
-                  <Button type="button" variant="outline" onClick={useStarterMember} disabled={memberReady}>
-                    <CheckCircle2 data-icon="inline-start" />
-                    {memberReady ? "Member ready" : "Use starter member"}
-                  </Button>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          <footer className="sticky bottom-0 z-10 -mx-4 flex flex-col gap-3 border-t bg-background/95 px-4 py-4 backdrop-blur sm:flex-row sm:items-center sm:justify-between lg:mx-0 lg:px-0">
-            <div className="text-sm text-muted-foreground">
-              {!accountReady
-                ? "Sign in to continue. Public beta access requires an Autohand account."
-                : finishReady
-                  ? "Setup is ready. Start the first conversation from the real product surface."
-                  : "You can skip optional setup now and return from the account menu."}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" onClick={onSkip} disabled={!skipReady}>Skip for now</Button>
-              <Button type="button" disabled={!finishReady} onClick={onFinish}>
-                <Play data-icon="inline-start" />
-                Finish and start
-              </Button>
-            </div>
-          </footer>
-        </main>
-      </div>
-    </div>
+function workspaceOptions(workspaces, selected, runtime) {
+  const normalizedSelected = normalizeSquadWorkspacePath(selected, runtime);
+  const list = (Array.isArray(workspaces) ? workspaces : []).filter(
+    (workspace) => workspace.launchable !== false && !isBlockedWorkspace(workspace.path, runtime)
   );
-}
-
-function OnboardingSectionTitle({ icon: Icon, title, description }) {
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <Icon className="size-4 text-primary" />
-        <span>{title}</span>
-      </div>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-    </div>
-  );
-}
-
-function OnboardingStepLine({ ready, label, detail }) {
-  return (
-    <div className="flex gap-3 py-3">
-      <span className={cn("mt-1 size-2 rounded-full", ready ? "bg-primary" : "bg-muted-foreground/40")} />
-      <span className="min-w-0">
-        <span className="block font-medium">{label}</span>
-        <span className="block truncate text-xs text-muted-foreground">{detail}</span>
-      </span>
-    </div>
-  );
+  if (!normalizedSelected || list.some((workspace) => workspace.path === normalizedSelected)) return list;
+  if (isBlockedWorkspace(normalizedSelected, runtime)) return list;
+  const name = workspaceName(normalizedSelected) || normalizedSelected;
+  return [{ label: name, name, path: normalizedSelected, depth: 0, kind: "folder", launchable: true }, ...list];
 }
 
 function workspaceName(path) {
@@ -8222,17 +8095,6 @@ function getAgentWorkspace(agent, runtime, workspaces) {
     (item) => !isBlockedWorkspace(item.path, runtime)
   );
   return project?.path || getFallbackWorkspace(runtime, workspaces);
-}
-
-function workspaceOptions(workspaces, selected, runtime) {
-  const normalizedSelected = normalizeSquadWorkspacePath(selected, runtime);
-  const list = (Array.isArray(workspaces) ? workspaces : []).filter(
-    (workspace) => workspace.launchable !== false && !isBlockedWorkspace(workspace.path, runtime)
-  );
-  if (!normalizedSelected || list.some((workspace) => workspace.path === normalizedSelected)) return list;
-  if (isBlockedWorkspace(normalizedSelected, runtime)) return list;
-  const name = workspaceName(normalizedSelected) || normalizedSelected;
-  return [{ label: name, name, path: normalizedSelected, depth: 0, kind: "folder", launchable: true }, ...list];
 }
 
 function workspaceLabel(path, workspaces = []) {
@@ -10272,6 +10134,8 @@ function Conversation({
   runAutomation,
   updateAgent,
   requestedWorkspace,
+  initialPrompt = "",
+  onInitialPromptConsumed,
   chatSettings = DEFAULT_CHAT_SETTINGS,
   handoffRetryMode = DEFAULT_HANDOFF_RETRY_MODE,
   onCreateHandoff,
@@ -10328,6 +10192,12 @@ function Conversation({
   const [mentionIndex, setMentionIndex] = useState(0);
   const activeMode = RUN_MODES.find((item) => item.id === mode) || RUN_MODES[0];
   const prompt = promptByAgent[agent.id] || "";
+  useEffect(() => {
+    if (!initialPrompt || !agent?.id) return;
+    setPromptByAgent((current) => (current[agent.id] ? current : { ...current, [agent.id]: initialPrompt }));
+    onInitialPromptConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPrompt, agent?.id]);
   const chatSending = chatSendingByAgent[agent.id] === true;
   const queuedFollowups = queuedFollowupsByAgent[agent.id] || [];
   // Goal 09: recommend recipes from the current request, scoped to this member's role.
@@ -21841,6 +21711,17 @@ function SettingsPage({
                     checked={normalizedChatSettings.displayCliOutput}
                     onCheckedChange={(checked) => updateChatSetting("displayCliOutput", checked)}
                     aria-label="Display diagnostic output"
+                  />
+                </Field>
+                <Field orientation="horizontal" className="items-center justify-between gap-4 rounded-md border bg-background px-3 py-3">
+                  <FieldContent className="gap-1">
+                    <FieldTitle>{copy.squadSuggestions || "Squad suggestions"}</FieldTitle>
+                    <FieldDescription>{copy.squadSuggestionsDetail || "When a channel's project needs a role nobody in it covers, that member asks to join. Only you see the request."}</FieldDescription>
+                  </FieldContent>
+                  <Switch
+                    checked={normalizedChatSettings.squadSuggestions !== false}
+                    onCheckedChange={(checked) => updateChatSetting("squadSuggestions", checked)}
+                    aria-label={copy.squadSuggestions || "Squad suggestions"}
                   />
                 </Field>
               </FieldGroup>

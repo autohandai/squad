@@ -24,7 +24,7 @@ goals/
 *.tmp
 
 # Local architecture decision records, PRD, SPEC and bug ledger (not published)
-adrs/
+/adrs/
 
 # Tauri desktop shell build outputs (staged runtime, sidecars, generated schemas)
 src-tauri/target/
