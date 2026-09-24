@@ -671,9 +671,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
-    environment:
-      name: ${{ needs.setup.outputs.channel }}
-      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.setup.outputs.tag }}
     needs:
       - setup
       - web-bundle
