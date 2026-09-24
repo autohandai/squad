@@ -21463,7 +21463,7 @@ function SettingsPage({
     counts.tasks === 1 ? "task" : "tasks"
   }`;
   const settingsSections = [
-    { id: "appearance", icon: Palette, label: copy.theme, detail: `${activeThemeLabel} / ${visibleThemePreset.label}` },
+    { id: "appearance", icon: Palette, label: copy.appearance || "Appearance", detail: `${activeThemeLabel} / ${visibleThemePreset.label}` },
     { id: "language", icon: Languages, label: copy.language, detail: formatLocaleSummary(activeLocale, activeLocale) },
     { id: "providers", icon: Brain, label: "LLM Providers", detail: providerSettingsSummary },
     { id: "chat", icon: MessageSquareText, label: copy.chat, detail: chatSettingsDetail },
@@ -21473,6 +21473,24 @@ function SettingsPage({
     { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
   ];
   const requestedInitialSection = settingsSections.some((section) => section.id === initialSection) ? initialSection : "";
+  const [activeSectionId, setActiveSectionId] = useState(requestedInitialSection || "appearance");
+
+  // The section list follows the reader: whichever section crosses the upper
+  // third of the viewport is the current one.
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return undefined;
+    const sections = Array.from(document.querySelectorAll("section[id^='settings-']"));
+    if (!sections.length) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) setActiveSectionId(visible[0].target.id.replace(/^settings-/, ""));
+      },
+      { rootMargin: "-8% 0px -66% 0px", threshold: 0 }
+    );
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!requestedInitialSection) return undefined;
@@ -21537,72 +21555,44 @@ function SettingsPage({
   return (
     <div className="min-h-screen bg-background">
       <PageTitle title={copy.settings} />
-      <div className="w-full max-w-5xl px-4 py-7 sm:px-6 lg:px-10 lg:py-8">
-        <div className="min-w-0">
-          <header className="border-b border-border/70 pb-8">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0">
-                <div className="mb-4 flex items-center gap-2 text-sm font-medium text-primary">
-                  <Settings className="size-4" />
-                  <span>{copy.consolePreferences}</span>
-                </div>
-                <h2 className="text-balance text-3xl font-semibold tracking-normal sm:text-4xl">{copy.settings}</h2>
-                <p className="mt-3 max-w-2xl truncate text-sm text-muted-foreground">
-                  {runtime?.autohandPath || "Autohand path not found"}
-                </p>
-              </div>
-
-              <div className="min-w-0 text-sm lg:w-72 lg:text-right">
-                <div className="flex items-center gap-2 lg:justify-end">
-                  <span className="font-medium">{copy.runtimeBridge}</span>
-                  <StatusBadge status={runtime?.available ? "ready" : "offline"} copy={copy} />
-                </div>
-                <p className="mt-2 truncate text-xs text-muted-foreground">{runtime?.version || copy.checkingRuntime}</p>
-              </div>
-            </div>
-
-            <div className="mt-8 grid gap-x-10 gap-y-5 sm:grid-cols-2 lg:grid-cols-6">
-              <SettingsSummaryTile icon={Palette} label={copy.theme} value={`${activeThemeLabel} / ${visibleThemePreset.label}`} detail={themeModeDetail} />
-              <SettingsSummaryTile icon={Languages} label={copy.language} value={formatLocaleSummary(activeLocale, activeLocale)} detail={localeDetail} />
-              <SettingsSummaryTile icon={Brain} label="LLM Providers" value={providerSettingsSummary} detail="Applies to new runs." />
-              <SettingsSummaryTile icon={MessageSquareText} label={copy.chat} value={chatSettingsDetail} detail="Raw diagnostic output stays hidden unless enabled." />
-              <SettingsSummaryTile icon={Workflow} label={copy.handoffRetryPolicy} value={handoffRetryModeLabel(effectiveHandoffRetryMode, copy)} detail={handoffRetryDetail} />
-              <SettingsSummaryTile icon={Monitor} label="Mission Control" value={formatLocalizedNumber(counts.tasks || 0, activeLocale)} detail="Open from Settings." />
-            </div>
-
-            <div className="mt-6 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">
-                {runtime?.workspaceRoot || copy.yourUserDirectory}
-              </code>
-              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">
-                AUTOHAND_SQUAD_HANDOFF_RETRY_MODE={handoffRetryModeLabel(bridgeHandoffRetryMode, copy)}
-              </code>
-            </div>
-
-            <nav aria-label={`${copy.settings} sections`} className="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+      <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-6 lg:px-10 lg:py-10">
+        <div className="lg:grid lg:grid-cols-[192px_minmax(0,1fr)] lg:gap-14">
+          <aside className="min-w-0 lg:sticky lg:top-8 lg:self-start">
+            <nav
+              aria-label={`${copy.settings} sections`}
+              className="-mx-2 flex gap-1 overflow-x-auto pb-1 [scrollbar-width:none] lg:mx-0 lg:flex-col lg:overflow-visible lg:pb-0"
+            >
               {settingsSections.map((section) => {
-                const Icon = section.icon;
+                const active = section.id === activeSectionId;
                 return (
                   <a
                     key={section.id}
                     href={`#settings-${section.id}`}
-                    className="flex min-h-9 max-w-full items-center gap-2 rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
+                    aria-current={active ? "location" : undefined}
+                    onClick={() => setActiveSectionId(section.id)}
+                    className={cn(
+                      "shrink-0 whitespace-nowrap rounded-md px-2 py-1.5 text-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                      active ? "bg-muted/60 font-medium text-foreground" : "text-muted-foreground"
+                    )}
                   >
-                    <Icon className="size-4 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{section.label}</span>
+                    {section.label}
                   </a>
                 );
               })}
             </nav>
-          </header>
+            <p className="mt-6 hidden items-center gap-2 text-xs text-muted-foreground lg:flex">
+              <span className={cn("size-1.5 shrink-0 rounded-full", runtime?.available ? "bg-emerald-500" : "bg-destructive")} aria-hidden="true" />
+              <span className="truncate">{runtime?.available ? `Autohand Code ${String(runtime?.version || "").split(" ")[0]} · ${statusLabel("ready", copy).toLowerCase()}` : copy.checkingRuntime}</span>
+            </p>
+          </aside>
 
-          <div className="flex min-w-0 flex-col">
-            <section id="settings-appearance" className="scroll-mt-8 border-b border-border/70 py-10">
-              <SettingsSectionHeader icon={Palette} title={copy.theme} description={copy.themeDescription} />
+          <div className="mt-8 flex min-w-0 max-w-3xl flex-col lg:mt-0">
+            <section id="settings-appearance" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
+              <SettingsSectionHeader title={copy.appearance || "Appearance"} description={copy.appearanceDescription || "How the app looks."} />
               <div className="grid gap-8">
                 <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-center">
                   <div className="min-w-0">
-                    <div className="text-sm font-medium">{copy.theme}</div>
+                    <div className="text-sm font-medium">{copy.themeMode || "Mode"}</div>
                     <p className="mt-1 text-sm text-muted-foreground">{themeModeDetail}</p>
                   </div>
                   <ToggleGroup
@@ -21656,16 +21646,12 @@ function SettingsPage({
               </div>
             </section>
 
-            <section id="settings-language" className="scroll-mt-8 border-b border-border/70 py-10">
-              <SettingsSectionHeader icon={Languages} title={copy.language} description={localeDetail} />
+            <section id="settings-language" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
+              <SettingsSectionHeader title={copy.language} description={localeDetail} />
               <div className="grid gap-8">
-                <div className="grid gap-x-10 gap-y-5 sm:grid-cols-2">
-                  <SettingsSummaryTile icon={Globe2} label={copy.osLanguage} value={formatLocaleSummary(systemLocale, activeLocale)} detail={copy.useAutomaticLocale} />
-                  <SettingsSummaryTile icon={Languages} label={copy.manualLanguage} value={formatLocaleSummary(manualLocale, activeLocale)} detail={selectedLocaleValue === LOCALE_MODE_AUTO ? copy.automatic : copy.manualLanguage} />
-                </div>
 
                 <Field className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-center">
-                  <FieldLabel className="text-sm font-medium">{copy.language}</FieldLabel>
+                  <FieldLabel className="text-sm font-medium">{copy.displayLanguage || "Display language"}</FieldLabel>
                   <Select value={selectedLocaleValue} onValueChange={updateLocale}>
                     <SelectTrigger className="h-10 w-full min-w-0 justify-between sm:max-w-md" aria-label={copy.language}>
                       <SelectValue />
@@ -21690,8 +21676,8 @@ function SettingsPage({
               </div>
             </section>
 
-            <section id="settings-providers" className="scroll-mt-8 border-b border-border/70 py-10">
-              <SettingsSectionHeader icon={Brain} title="LLM Providers" description="Configure the provider registry and workspace default used by new agent runs." />
+            <section id="settings-providers" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
+              <SettingsSectionHeader title="LLM Providers" description="Configure the provider registry and workspace default used by new agent runs." />
               <ProviderSettingsPanel
                 providerSettings={providerSettings}
                 providerSettingsError={providerSettingsError}
@@ -21699,10 +21685,10 @@ function SettingsPage({
               />
             </section>
 
-            <section id="settings-chat" className="scroll-mt-8 border-b border-border/70 py-10">
-              <SettingsSectionHeader icon={MessageSquareText} title={copy.chat} description="Keep normal replies focused, with runtime diagnostics available when you need them." />
-              <FieldGroup>
-                <Field orientation="horizontal" className="items-center justify-between gap-4 rounded-md border bg-background px-3 py-3">
+            <section id="settings-chat" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
+              <SettingsSectionHeader title={copy.chat} description="Keep normal replies focused, with runtime diagnostics available when you need them." />
+              <div className="divide-y divide-border/65">
+                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
                   <FieldContent className="gap-1">
                     <FieldTitle>Display diagnostic output</FieldTitle>
                     <FieldDescription>Show raw stdout and stderr for troubleshooting. Leave this off for clean answers.</FieldDescription>
@@ -21713,7 +21699,7 @@ function SettingsPage({
                     aria-label="Display diagnostic output"
                   />
                 </Field>
-                <Field orientation="horizontal" className="items-center justify-between gap-4 rounded-md border bg-background px-3 py-3">
+                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
                   <FieldContent className="gap-1">
                     <FieldTitle>{copy.squadSuggestions || "Squad suggestions"}</FieldTitle>
                     <FieldDescription>{copy.squadSuggestionsDetail || "When a channel's project needs a role nobody in it covers, that member asks to join. Only you see the request."}</FieldDescription>
@@ -21724,11 +21710,11 @@ function SettingsPage({
                     aria-label={copy.squadSuggestions || "Squad suggestions"}
                   />
                 </Field>
-              </FieldGroup>
+              </div>
             </section>
 
-            <section id="settings-handoff" className="scroll-mt-8 border-b border-border/70 py-10">
-              <SettingsSectionHeader icon={Workflow} title={copy.handoffRetryPolicy} description={handoffRetryDetail} />
+            <section id="settings-handoff" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
+              <SettingsSectionHeader title={copy.handoffRetryPolicy} description={handoffRetryDetail} />
               <div className="divide-y divide-border/65">
                 {[HANDOFF_RETRY_BRIDGE_DEFAULT, ...HANDOFF_RETRY_MODES].map((mode) => (
                   <HandoffRetryChoice
@@ -21749,8 +21735,8 @@ function SettingsPage({
               </p>
             </section>
 
-            <section id="settings-mission-control" className="scroll-mt-8 border-b border-border/70 py-10">
-              <SettingsSectionHeader icon={Monitor} title="Mission Control" description={missionControlDetail} />
+            <section id="settings-mission-control" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
+              <SettingsSectionHeader title="Mission Control" description={missionControlDetail} />
               <a
                 href={missionControlPath()}
                 className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
@@ -21766,17 +21752,16 @@ function SettingsPage({
               </a>
             </section>
 
-            <section id="settings-updates" className="scroll-mt-8 py-10">
+            <section id="settings-updates" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
               <SettingsSectionHeader
-                icon={RefreshCw}
                 title="Updates"
                 description={updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} is available on GitHub.` : "Releases are checked on GitHub (autohandai/squad)."}
               />
               <SettingsUpdatesPanel updates={updates} checking={updatesChecking} onCheck={onCheckUpdates} />
             </section>
 
-            <section id="settings-runtime" className="scroll-mt-8 py-10">
-              <SettingsSectionHeader icon={Server} title={copy.runtimeBridge} description={runtime?.version || copy.checkingRuntime} />
+            <section id="settings-runtime" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
+              <SettingsSectionHeader title={copy.runtimeBridge} description={runtime?.version || copy.checkingRuntime} />
               <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
                 <div className="divide-y divide-border/65">
                   <a
@@ -22127,31 +22112,11 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
   );
 }
 
-function SettingsSectionHeader({ icon: Icon, title, description }) {
+function SettingsSectionHeader({ title, description }) {
   return (
-    <div className="mb-7 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div className="flex min-w-0 items-start gap-3">
-        <span className="mt-0.5 text-primary">
-          <Icon className="size-4" />
-        </span>
-        <div className="min-w-0">
-          <h3 className="text-balance text-xl font-semibold">{title}</h3>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SettingsSummaryTile({ icon: Icon, label, value, detail }) {
-  return (
-    <div className="min-w-0">
-      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-        <Icon className="size-4" />
-        <span className="truncate">{label}</span>
-      </div>
-      <div className="mt-2 truncate text-sm font-semibold">{value}</div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">{detail}</div>
+    <div className="mb-6 min-w-0">
+      <h3 className="text-base font-semibold">{title}</h3>
+      {description ? <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p> : null}
     </div>
   );
 }
@@ -22177,19 +22142,15 @@ function HandoffRetryChoice({ mode, selected, bridgeDefaultMode, copy = getLocal
     <button
       type="button"
       aria-pressed={selected}
-      className={cn(
-        "flex min-h-24 w-full items-start gap-4 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        selected && "bg-primary/10"
-      )}
+      className="flex w-full items-start gap-3 rounded-md px-2 py-3.5 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
       onClick={() => onSelect(mode)}
     >
-      <span className={cn("mt-0.5 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground", selected && "text-primary")}>
-        <Icon className="size-4" />
+      <Icon className={cn("mt-0.5 size-4 shrink-0", selected ? "text-foreground" : "text-muted-foreground")} aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        <span className={cn("block text-sm", selected ? "font-medium text-foreground" : "text-foreground/90")}>{label}</span>
+        <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>
       </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-semibold">{label}</span>
-        <span className="mt-2 block text-xs leading-5 text-muted-foreground">{description}</span>
-      </span>
+      {selected ? <Check className="mt-0.5 size-4 shrink-0 text-foreground" aria-hidden="true" /> : null}
     </button>
   );
 }

@@ -31,6 +31,13 @@
 - Readiness is silent while green. A blocked prerequisite (not signed in, runtime down, no provider) is one sentence with one action above the current moment. Sign-in stays delegated to the runtime's device flow; provider setup deep-links to Settings and is never duplicated here.
 - Skip is available once signed in; persisted state stays lightweight (status, selected workspace, member readiness, last step).
 
+## Settings
+
+- Settings is two columns: a slim sticky section list on the left (plain text rows, the current section highlighted by a soft fill, a one-line runtime status underneath) and one content column of at most `max-w-3xl` on the right. The window header already says "Settings"; the page adds no second title, no eyebrow, no summary grid, no path or environment echoes.
+- Each section is a heading (`text-base`), one sentence of description, then rows: label and detail on the left (`220px`), the control on the right. Sections are separated by a single divider; the first sits flush with the top of the column.
+- Toggles and choices are divider rows, never bordered or tinted boxes. A selected choice shows a check mark and a stronger label, not a filled background. No icons in section headers.
+- Copy avoids repeating a word three times in view: the section is "Appearance", its first row is "Mode"; the "Language" section's row is "Display language".
+
 ## Squad Channels
 
 - Channels live inside the primary Squad sidebar as a collapsible category under the main navigation, not as a second navigation sidebar.
