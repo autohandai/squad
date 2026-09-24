@@ -103,6 +103,17 @@ async function stageSidecars({ buildRust = true } = {}) {
   const nodeTarget = join(binariesDir, `${exe(`node-${triple}`)}`.replace(`-${triple}.exe`, `-${triple}.exe`));
   await copyFile(nodeSource, nodeTarget);
   if (!isWindows) await chmod(nodeTarget, 0o755);
+  // The sidecar must run on its own: a Node linked against a shared libnode
+  // (Homebrew's, for example) breaks as soon as it is copied out of its
+  // prefix, and the installed app then fails preflight with a dyld error.
+  const standalone = spawnSync(nodeTarget, ['-e', 'process.stdout.write(process.version)'], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin' } });
+  if (standalone.status !== 0 || !String(standalone.stdout || '').startsWith('v')) {
+    await rm(nodeTarget, { force: true });
+    throw new Error(
+      `${nodeSource} does not run as a standalone binary (${String(standalone.stderr || '').split('\n').find(Boolean) || 'no output'}). ` +
+        'Point NODE_RUNTIME_PATH at an official Node build (for example an fnm or nvm install), not a Homebrew one.'
+    );
+  }
 
   if (buildRust) {
     const result = spawnSync(
