@@ -353,12 +353,24 @@ fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
         ..Default::default()
     };
     let menu = tray_menu(app, &starting)?;
-    let icon = app.default_window_icon().cloned();
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
         .tooltip("Autohand Squad")
         .show_menu_on_left_click(true);
-    if let Some(icon) = icon {
+    // macOS menu bar extras are monochrome template images that the system
+    // recolours for light and dark menu bars and Retina scales; elsewhere the
+    // coloured app icon is the convention.
+    #[cfg(target_os = "macos")]
+    {
+        match tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png")) {
+            Ok(template) => {
+                builder = builder.icon(template).icon_as_template(true);
+            }
+            Err(error) => eprintln!("tray template icon unavailable: {error}"),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    if let Some(icon) = app.default_window_icon().cloned() {
         builder = builder.icon(icon);
     }
     let events_shell = shell.clone();
