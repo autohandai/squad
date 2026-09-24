@@ -65,6 +65,9 @@ jobs:
       - name: Check folder profiles and squad recruiting
         run: bun run check:recruiting
 
+      - name: Check JSX imports
+        run: bun run check:jsx
+
       - name: Check release metadata logic
         run: bun run check:release
 

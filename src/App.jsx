@@ -35,6 +35,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleDot,
+  CornerDownRight,
   CircleSlash,
   CircleUserRound,
   Layers,
