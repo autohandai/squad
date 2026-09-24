@@ -287,6 +287,15 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download built web app
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web-dist-${{ github.sha }}
+          path: dist
+
       - name: Install Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt
@@ -309,13 +318,16 @@ jobs:
 
       - name: Package release manifest
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.dry-run-meta.outputs.version }}
+          RELEASE_TAG: ${{ needs.dry-run-meta.outputs.tag }}
+          RELEASE_CHANNEL: ${{ needs.dry-run-meta.outputs.channel }}
+          RELEASE_OS: ${{ matrix.os }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+          WEB_RUNTIME_DIR: ${{ github.workspace }}
         run: |
-          RELEASE_VERSION='${{ needs.dry-run-meta.outputs.version }}' \
-          RELEASE_TAG='${{ needs.dry-run-meta.outputs.tag }}' \
-          RELEASE_CHANNEL='${{ needs.dry-run-meta.outputs.channel }}' \
-          RELEASE_OS='${{ matrix.os }}' \
-          RELEASE_ARCH='${{ matrix.arch }}' \
           bun run release:package
+          bun run release:portable
 
       - name: Package portable dry-run archive
         shell: bash
@@ -334,6 +346,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Upload dry-run platform manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dry-run-manifest-${{ matrix.id }}
+          path: release/${{ matrix.os }}-${{ matrix.arch }}/manifest-${{ matrix.os }}-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 7
+
   validate-release-manifest:
     name: Validate release manifest
     runs-on: ubuntu-latest
@@ -345,11 +365,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download dry-run release assets
+      - name: Download dry-run platform manifests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: release-downloads
-          pattern: release-dry-run-*
+          pattern: release-dry-run-manifest-*
           merge-multiple: true
 
       - name: Merge and validate platform manifests

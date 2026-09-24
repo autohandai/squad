@@ -5,8 +5,10 @@
 Do not report a suspected vulnerability in a public issue, pull request,
 discussion, screenshot, or chat transcript.
 
-Email [igor@autohand.ai](mailto:igor@autohand.ai) with the subject
-`Autohand Squad security report`. Include:
+[Open a private vulnerability report](https://github.com/autohandai/squad/security/advisories/new)
+through GitHub Security Advisories. If GitHub's private reporting form is not
+available to you, email [igor@autohand.ai](mailto:igor@autohand.ai) with the
+subject `Autohand Squad security report`. Include:
 
 - the affected version, commit, platform, and component;
 - clear reproduction steps or a minimal proof of concept;

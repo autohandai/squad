@@ -89,7 +89,7 @@ The publish job creates the GitHub release with the job-scoped
 `GITHUB_TOKEN` (`contents: write`). The repository's default workflow token
 permission must allow write (Settings → Actions → General → Workflow
 permissions), or organisation policy must permit the workflow to elevate it.
-If neither is possible, add a `RELEASE_TOKEN` repository secret holding a
+If neither is possible, add an `AUTOHAND_RELEASE_TOKEN` repository secret holding a
 fine-grained personal access token with **Contents: read and write** on this
 repository; the workflow prefers it automatically.
 
