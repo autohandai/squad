@@ -9211,7 +9211,7 @@ function ChannelsPage({
                     return (
                       <div data-message-id={message.id}>
                         {found ? (
-                          <WorkflowRunMessage run={found.run} workflow={found.workflow} members={agents} onApprove={onApproveWorkflowRun} onDecline={onDeclineWorkflowRun} copy={copy} />
+                          <WorkflowRunMessage run={found.run} workflow={found.workflow} members={agents} showName={message.role !== "system"} onApprove={onApproveWorkflowRun} onDecline={onDeclineWorkflowRun} copy={copy} />
                         ) : (
                           <span className="text-muted-foreground">{message.body}</span>
                         )}
@@ -9221,7 +9221,7 @@ function ChannelsPage({
                   return (
                     <div data-message-id={message.id}>
                       {message.workflowRunId ? (
-                        <WorkflowTag workflow={found?.workflow || { name: message.workflowName || "" }} run={found?.run} stepId={message.stepId} copy={copy} className="mb-1" />
+                        <WorkflowTag workflow={found?.workflow || { name: message.workflowName || "" }} run={found?.run} stepId={message.stepId} showName={message.role !== "system"} copy={copy} className="mb-1" />
                       ) : null}
                       <MarkdownBlocks text={message.body || ""} />
                       {message.role === "agent" || message.agentId ? (
