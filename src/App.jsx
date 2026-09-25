@@ -3749,6 +3749,181 @@ function isMemberProfileRoute(route) {
   return route.startsWith(`${MEMBER_ROUTE_PREFIX}/`) && !route.startsWith(`${MEMBER_ROUTE_PREFIX}/new`);
 }
 
+// Cross-surface search (ADR-0020, #33): the bridge indexes what it holds
+// (channels, channel messages, runs); the app pushes what only the browser
+// holds. These builders produce the `doc` shape POST /api/search/index takes.
+const SEARCH_PUSHED_KEY = "autohandSquad.v1.searchPushedAt";
+const SEARCH_PUSH_BATCH = 400;
+const SEARCH_FLUSH_MS = 250;
+const SEARCH_SEED_MESSAGE_ID = "m1";
+
+function searchMessageTime(message) {
+  return message?.createdAt || message?.completedAt || message?.startedAt || message?.updatedAt || undefined;
+}
+
+function searchDocsForDirectMessages(messagesByAgent = {}, agents = []) {
+  const docs = [];
+  for (const [agentId, list] of Object.entries(messagesByAgent)) {
+    const agent = agents.find((item) => item.id === agentId);
+    if (!agent) continue;
+    for (const message of Array.isArray(list) ? list : []) {
+      if (!message?.id || message.id === SEARCH_SEED_MESSAGE_ID || message.status === "loading") continue;
+      const body = String(message.body || "").trim();
+      if (!body) continue;
+      docs.push({
+        id: `message:${message.id}`,
+        type: "message",
+        title: agent.name,
+        body,
+        memberId: agent.id,
+        route: `${memberChatPath(agent.id)}&message=${encodeURIComponent(message.id)}`,
+        at: searchMessageTime(message),
+      });
+    }
+  }
+  return docs;
+}
+
+function searchDocsForChannelMessages(messagesByChannel = {}, channels = []) {
+  const docs = [];
+  for (const [channelId, list] of Object.entries(messagesByChannel)) {
+    const channel = channels.find((item) => item.id === channelId);
+    if (!channel) continue;
+    for (const message of Array.isArray(list) ? list : []) {
+      if (!message?.id || message.status === "loading") continue;
+      const body = String(message.body || "").trim();
+      if (!body) continue;
+      docs.push({
+        id: `message:${message.id}`,
+        type: "message",
+        title: `#${channel.name}`,
+        body,
+        memberId: message.agentId || "",
+        channelId: channel.id,
+        runId: message.runId || "",
+        route: `${channelsPath(channel.id)}?message=${encodeURIComponent(message.id)}`,
+        at: searchMessageTime(message),
+      });
+    }
+  }
+  return docs;
+}
+
+function searchDocsForTasks(tasks = [], agents = []) {
+  const docs = [];
+  for (const task of tasks) {
+    if (!task?.id) continue;
+    const ownerId = normalizeSquadMemberId(task.currentOwnerId || task.agentId);
+    docs.push({
+      id: `task:${task.id}`,
+      type: "task",
+      title: task.title || "Task",
+      body: [task.summary, task.project, task.status].filter(Boolean).join("\n"),
+      memberId: task.agentId || "",
+      runId: task.runtimeId || "",
+      route: ownerId ? `${memberProfilePath(ownerId, "task")}?task=${encodeURIComponent(task.id)}` : missionControlPath({ task: task.id }),
+      at: task.updatedAt || task.createdAt || undefined,
+    });
+    for (const handoff of Array.isArray(task.handoffs) ? task.handoffs : []) {
+      if (!handoff?.id) continue;
+      const toAgent = agents.find((agent) => agent.id === normalizeSquadMemberId(handoff.toAgentId || handoff.targetAgentId));
+      docs.push({
+        id: `handoff:${handoff.id}`,
+        type: "handoff",
+        title: `Handoff to ${toAgent?.name || "member"}: ${task.title || "Task"}`,
+        body: [handoff.reason, handoff.expectedOutput, handoff.status].filter(Boolean).join("\n"),
+        memberId: handoff.toAgentId || handoff.targetAgentId || "",
+        runId: task.runtimeId || "",
+        route: `${inboxPath()}?handoff=${encodeURIComponent(handoff.id)}`,
+        at: handoff.updatedAt || handoff.createdAt || task.updatedAt || undefined,
+      });
+    }
+  }
+  return docs;
+}
+
+function searchDocsForMembers(agents = []) {
+  return agents
+    .filter((agent) => agent?.id && agent.name)
+    .map((agent) => ({
+      id: `member:${agent.id}`,
+      type: "member",
+      title: agent.name,
+      body: [agent.role, agent.description].filter(Boolean).join("\n"),
+      memberId: agent.id,
+      route: memberChatPath(agent.id),
+      at: agent.updatedAt || agent.createdAt || undefined,
+    }));
+}
+
+function searchDocForCanvas(canvas) {
+  if (!canvas?.id) return null;
+  const owner = String(canvas.ownerId || "");
+  const isMember = canvas.ownerType === "member";
+  const base = isMember ? `${memberChatPath(owner)}&canvas=` : `${channelsPath(owner)}?canvas=`;
+  return {
+    id: `canvas:${canvas.id}`,
+    type: "canvas",
+    title: canvas.title || "Untitled canvas",
+    body: String(canvas.body || ""),
+    memberId: isMember ? owner : "",
+    channelId: isMember ? "" : owner,
+    route: `${base}${encodeURIComponent(canvas.id)}`,
+    at: canvas.updatedAt || canvas.createdAt || undefined,
+  };
+}
+
+/** Every browser-held record as search docs (boot push and Rebuild). */
+function collectSearchDocs({ agents = [], tasks = [], messagesByAgent = {}, messagesByChannel = {}, channels = [] }) {
+  return [
+    ...searchDocsForMembers(agents),
+    ...searchDocsForTasks(tasks, agents),
+    ...searchDocsForDirectMessages(messagesByAgent, agents),
+    ...searchDocsForChannelMessages(messagesByChannel, channels),
+  ];
+}
+
+function pushSearchDocs(docs = []) {
+  const list = docs.filter(Boolean);
+  const calls = [];
+  for (let index = 0; index < list.length; index += SEARCH_PUSH_BATCH) {
+    calls.push(api("/api/search/index", { method: "POST", body: JSON.stringify({ docs: list.slice(index, index + SEARCH_PUSH_BATCH) }) }));
+  }
+  return Promise.all(calls);
+}
+
+function removeSearchDocs(ids = []) {
+  const list = ids.filter(Boolean);
+  if (!list.length) return Promise.resolve();
+  return api("/api/search/remove", { method: "POST", body: JSON.stringify({ ids: list }) });
+}
+
+/**
+ * Scroll a search hit into view and give it a two-second highlight. The
+ * element renders after the route change, so this polls a few frames.
+ */
+function highlightSearchHit(find, { attempts = 40, delay = 350 } = {}) {
+  let cancelled = false;
+  let timer = 0;
+  function attempt(remaining) {
+    if (cancelled) return;
+    const element = find();
+    if (!element) {
+      if (remaining > 0) timer = window.setTimeout(() => attempt(remaining - 1), 50);
+      return;
+    }
+    element.scrollIntoView?.({ block: "center", behavior: "auto" });
+    element.classList.add("bg-muted/60", "rounded-md");
+    window.setTimeout(() => element.classList.remove("bg-muted/60", "rounded-md"), 2000);
+  }
+  // The page's own scroll-to-latest runs on mount; start after it settles.
+  timer = window.setTimeout(() => attempt(attempts), delay);
+  return () => {
+    cancelled = true;
+    window.clearTimeout(timer);
+  };
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { accept: "application/json", "content-type": "application/json" },
@@ -4653,6 +4828,141 @@ function App() {
     persistLocal(STORAGE_KEYS.channelMessages, messagesByChannel);
   }, [messagesByChannel]);
 
+  // Search (#33): the bridge index only learns about browser-held records
+  // (members, tasks, handoffs, DM messages, optimistic channel posts) from
+  // the app. Each state change is diffed against what was last pushed and
+  // sent as one batched call; ids that vanish are removed. The first boot
+  // pushes everything held in localStorage once.
+  const searchStateRef = useRef({ agents, tasks, messagesByAgent, messagesByChannel, channels });
+  searchStateRef.current = { agents, tasks, messagesByAgent, messagesByChannel, channels };
+  const searchSyncRef = useRef({ ready: false, signatures: new Map(), scopes: new Map(), docs: new Map(), removals: new Set(), timer: 0 });
+
+  const flushSearchQueue = useCallback(() => {
+    const sync = searchSyncRef.current;
+    sync.timer = 0;
+    const docs = [...sync.docs.values()];
+    const ids = [...sync.removals];
+    sync.docs.clear();
+    sync.removals.clear();
+    if (docs.length) pushSearchDocs(docs).catch(() => {});
+    if (ids.length) removeSearchDocs(ids).catch(() => {});
+  }, []);
+
+  const seedSearchScope = useCallback((scope, docs) => {
+    const sync = searchSyncRef.current;
+    const ids = new Set();
+    for (const doc of docs) {
+      ids.add(doc.id);
+      sync.signatures.set(doc.id, JSON.stringify(doc));
+    }
+    sync.scopes.set(scope, ids);
+  }, []);
+
+  const syncSearchScope = useCallback(
+    (scope, docs) => {
+      const sync = searchSyncRef.current;
+      if (!sync.ready) return;
+      const seen = new Set();
+      for (const doc of docs) {
+        seen.add(doc.id);
+        const signature = JSON.stringify(doc);
+        if (sync.signatures.get(doc.id) === signature) continue;
+        sync.signatures.set(doc.id, signature);
+        sync.docs.set(doc.id, doc);
+        sync.removals.delete(doc.id);
+      }
+      for (const id of sync.scopes.get(scope) || []) {
+        if (seen.has(id)) continue;
+        sync.signatures.delete(id);
+        sync.docs.delete(id);
+        sync.removals.add(id);
+      }
+      sync.scopes.set(scope, seen);
+      if (!sync.timer && (sync.docs.size || sync.removals.size)) sync.timer = window.setTimeout(flushSearchQueue, SEARCH_FLUSH_MS);
+    },
+    [flushSearchQueue]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let pushedAt = "";
+      try {
+        pushedAt = window.localStorage.getItem(SEARCH_PUSHED_KEY) || "";
+      } catch {
+        // storage unavailable: push every boot
+      }
+      let stats = null;
+      try {
+        stats = await api("/api/search/stats");
+      } catch {
+        // No search route on this bridge: keep syncing quietly and retry the boot push next start.
+      }
+      if (cancelled) return;
+      const state = searchStateRef.current;
+      const scopes = {
+        members: searchDocsForMembers(state.agents),
+        tasks: searchDocsForTasks(state.tasks, state.agents),
+        dm: searchDocsForDirectMessages(state.messagesByAgent, state.agents),
+        channel: searchDocsForChannelMessages(state.messagesByChannel, state.channels),
+      };
+      for (const [scope, docs] of Object.entries(scopes)) seedSearchScope(scope, docs);
+      searchSyncRef.current.ready = true;
+      if (!stats) return;
+      const indexWiped = state.agents.length > 0 && !(Number(stats?.byType?.member) > 0);
+      if (pushedAt && !indexWiped) return;
+      try {
+        await pushSearchDocs(Object.values(scopes).flat());
+        window.localStorage.setItem(SEARCH_PUSHED_KEY, new Date().toISOString());
+      } catch {
+        // Bridge unavailable: the flag stays unset so the next boot pushes again.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [seedSearchScope]);
+
+  useEffect(() => {
+    syncSearchScope("members", searchDocsForMembers(agents));
+  }, [agents, syncSearchScope]);
+  useEffect(() => {
+    syncSearchScope("tasks", searchDocsForTasks(tasks, agents));
+  }, [tasks, agents, syncSearchScope]);
+  useEffect(() => {
+    syncSearchScope("dm", searchDocsForDirectMessages(messagesByAgent, agents));
+  }, [messagesByAgent, agents, syncSearchScope]);
+  useEffect(() => {
+    syncSearchScope("channel", searchDocsForChannelMessages(messagesByChannel, channels));
+  }, [messagesByChannel, channels, syncSearchScope]);
+
+  // Settings → Runtime → Rebuild index: every browser-held doc plus every
+  // canvas the bridge lists; the route adds channels, channel messages, and runs.
+  async function rebuildSearchIndex() {
+    const state = searchStateRef.current;
+    const docs = collectSearchDocs(state);
+    try {
+      const data = await api("/api/canvases");
+      for (const canvas of Array.isArray(data?.canvases) ? data.canvases : []) {
+        const doc = searchDocForCanvas(canvas);
+        if (doc) docs.push(doc);
+      }
+    } catch {
+      // Canvases stay out of this rebuild; the next save re-indexes them.
+    }
+    const stats = await api("/api/search/rebuild", { method: "POST", body: JSON.stringify({ docs }) });
+    seedSearchScope("members", searchDocsForMembers(state.agents));
+    seedSearchScope("tasks", searchDocsForTasks(state.tasks, state.agents));
+    seedSearchScope("dm", searchDocsForDirectMessages(state.messagesByAgent, state.agents));
+    seedSearchScope("channel", searchDocsForChannelMessages(state.messagesByChannel, state.channels));
+    try {
+      window.localStorage.setItem(SEARCH_PUSHED_KEY, new Date().toISOString());
+    } catch {
+      // ignore
+    }
+    return stats;
+  }
+
   useEffect(() => {
     try {
       window.localStorage.setItem(STORAGE_KEYS.channelReads, JSON.stringify(channelReads));
@@ -4865,6 +5175,45 @@ function App() {
     window.history.replaceState({}, "", next);
     setRoute(next);
   }
+
+  // Search hits (#33) deep-link to one message (`?message=<id>` on a channel
+  // or member chat) or one handoff (`/inbox?handoff=<id>`): scroll the row
+  // into view with a two-second highlight, then strip the param once.
+  const requestedMessageId = useMemo(() => {
+    const params = new URLSearchParams(route.split("?")[1] || "");
+    return String(params.get("message") || "");
+  }, [route]);
+  useEffect(() => {
+    if (!requestedMessageId) return;
+    const path = route.split("?")[0];
+    if (path !== "/conversations/new" && !path.startsWith(`${CHANNELS_ROUTE}/`)) return;
+    const selector = `[data-message-id="${CSS.escape(requestedMessageId)}"]`;
+    highlightSearchHit(() => document.querySelector(selector)?.closest("article") || document.querySelector(selector));
+    const next = routeWithParams(route, { message: null });
+    window.history.replaceState({}, "", next);
+    setRoute(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedMessageId]);
+
+  const requestedHandoffId = useMemo(() => {
+    const params = new URLSearchParams(route.split("?")[1] || "");
+    return String(params.get("handoff") || "");
+  }, [route]);
+  useEffect(() => {
+    if (!requestedHandoffId || route.split("?")[0] !== INBOX_ROUTE) return;
+    const index = inboxHandoffs.findIndex((item) => (item.task?.handoffs || []).some((handoff) => handoff.id === requestedHandoffId));
+    if (index >= 0) {
+      const heading = localeCopy.inboxHandoffs || "Handoffs waiting";
+      highlightSearchHit(() => {
+        const section = [...document.querySelectorAll("main section")].find((node) => node.querySelector("h2")?.textContent === heading);
+        return section?.querySelectorAll("button")[index] || null;
+      });
+    }
+    const next = routeWithParams(route, { handoff: null });
+    window.history.replaceState({}, "", next);
+    setRoute(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedHandoffId]);
 
   // `@canvas:slug` mentions attach the canvas to the prompt. The first one is
   // materialized as a file the member may edit (and tagged on the payload so
@@ -6059,6 +6408,7 @@ function App() {
   }
 
   function deleteChannel(channelId) {
+    removeSearchDocs([`channel:${channelId}`]).catch(() => {});
     setChannels((current) => current.filter((channel) => channel.id !== channelId));
     setChannelThreads((current) => {
       const next = { ...current };
@@ -7460,6 +7810,7 @@ function App() {
                 notificationSettings={notificationSettings}
                 onNotificationSettingsChange={updateNotificationSettings}
                 onTestNotification={sendTestNotification}
+                onRebuildSearchIndex={rebuildSearchIndex}
               />
             ) : isCreate ? (
               <CreateAgent
@@ -7585,6 +7936,7 @@ function App() {
           messagesByChannel={messagesByChannel}
           messagesByAgent={messagesByAgent}
           copy={localeCopy}
+          api={api}
           onNavigate={{
             inbox: () => navigate(inboxPath()),
             agents: () => navigate(squadDirectoryPath()),
@@ -7592,6 +7944,7 @@ function App() {
             settings: () => openSettings(),
             channel: (channelId) => navigate(channelsPath(channelId)),
             member: (memberId) => navigate(memberChatPath(memberId)),
+            route: (path) => navigate(path),
           }}
         />
 
@@ -8388,12 +8741,12 @@ function ChannelsPage({
                 lastReadAt={lastReadAt}
                 reactionsByMessage={reactionsByMessage}
                 renderBody={(message) => (
-                  <>
+                  <div data-message-id={message.id}>
                     <MarkdownBlocks text={message.body || ""} />
                     {message.role === "agent" || message.agentId ? (
                       <AgentWorkDetails message={message} isLoading={message.status === "loading"} durationLabel={messageDurationLabel(message)} copy={copy} />
                     ) : null}
-                  </>
+                  </div>
                 )}
                 renderAvatar={(message) => <ChannelMessageAvatar message={message} agents={agents} />}
                 authorName={(message) => channelMessageAuthorName(message, agents, accountProfile.name)}
@@ -10436,6 +10789,30 @@ function formatMentionLookupError(error) {
   return "File search unavailable";
 }
 
+// Search (#33): canvases members create through the bridge only reach the
+// index once the app sees them; push each loaded canvas whose content changed.
+const canvasSearchSignatures = new Map();
+const canvasSearchIdsByOwner = new Map();
+function indexLoadedCanvases(ownerKey, list = []) {
+  const docs = [];
+  const ids = new Set();
+  for (const canvas of list) {
+    const doc = searchDocForCanvas(canvas);
+    if (!doc) continue;
+    ids.add(doc.id);
+    const signature = JSON.stringify(doc);
+    if (canvasSearchSignatures.get(doc.id) === signature) continue;
+    canvasSearchSignatures.set(doc.id, signature);
+    docs.push(doc);
+  }
+  // A canvas a member deleted through the bridge leaves the index once the app notices.
+  const gone = [...(canvasSearchIdsByOwner.get(ownerKey) || [])].filter((id) => !ids.has(id));
+  for (const id of gone) canvasSearchSignatures.delete(id);
+  canvasSearchIdsByOwner.set(ownerKey, ids);
+  if (docs.length) pushSearchDocs(docs).catch(() => {});
+  if (gone.length) removeSearchDocs(gone).catch(() => {});
+}
+
 // Canvases (ADR-0023): load the canvases one owner (a channel or a member)
 // holds. Reloads on `refreshKey`, and polls quietly while `live` (the Canvas
 // tab is open) so a member's PUT shows up without a manual refresh.
@@ -10451,7 +10828,9 @@ function useOwnerCanvases(ownerType, ownerId, { refreshKey = 0, live = false } =
     try {
       const data = await api(`/api/canvases?ownerType=${encodeURIComponent(ownerType)}&ownerId=${encodeURIComponent(ownerId)}`);
       if (ownerRef.current !== ownerId) return;
-      setCanvases(Array.isArray(data?.canvases) ? data.canvases : []);
+      const list = Array.isArray(data?.canvases) ? data.canvases : [];
+      setCanvases(list);
+      indexLoadedCanvases(`${ownerType}:${ownerId}`, list);
     } catch {
       // Keep what we have; the next refresh or poll retries.
     }
@@ -10479,6 +10858,8 @@ function CanvasWorkspace({ ownerType, ownerId, canvases = [], activeCanvasId = "
     setError("");
     try {
       const data = await request();
+      // Search (#33): a saved canvas is searchable at once; a deleted one leaves the index.
+      if (data?.canvas?.id) pushSearchDocs([searchDocForCanvas(data.canvas)]).catch(() => {});
       await onRefresh?.();
       return data;
     } catch (caught) {
@@ -10548,6 +10929,7 @@ function CanvasWorkspace({ ownerType, ownerId, canvases = [], activeCanvasId = "
                 setPendingDelete(null);
                 if (!target) return;
                 const data = await mutate(() => api(`/api/canvases/${encodeURIComponent(target.id)}`, { method: "DELETE" }));
+                if (data) removeSearchDocs([`canvas:${target.id}`]).catch(() => {});
                 if (data && target.id === activeCanvasId) onSelect?.("");
               }}
             >
@@ -12418,7 +12800,7 @@ const SquadMessage = memo(function SquadMessage({ agent, message, copy = getLoca
   if (!isUser) return <AgentResponseMessage agent={agent} message={message} chatSettings={chatSettings} copy={copy} onRetry={onRetry} />;
 
   return (
-    <article className="group flex flex-col items-end gap-1" aria-label={`${copy.you}, ${message.time}`}>
+    <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
       <div className="max-w-[min(40rem,88%)] rounded-2xl rounded-br-md bg-muted px-4 py-2.5 text-[15px] leading-6 text-foreground">
         <MarkdownBlocks text={message.body} />
       </div>
@@ -12448,7 +12830,7 @@ function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETT
   const needsSignIn = isError && /sign-in|autohand login|not signed in|rejected the account token/i.test(errorText);
 
   return (
-    <article className="group grid grid-cols-[auto,minmax(0,1fr)] gap-3" aria-live={isLoading ? "polite" : undefined}>
+    <article data-message-id={message.id} className="group grid grid-cols-[auto,minmax(0,1fr)] gap-3 transition-colors" aria-live={isLoading ? "polite" : undefined}>
       <AgentAvatar agent={agent} className="mt-0.5" />
       <div className="min-w-0">
         <div className="mb-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
@@ -22007,7 +22389,19 @@ function SettingsPage({
   notificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
   onNotificationSettingsChange,
   onTestNotification,
+  onRebuildSearchIndex,
 }) {
+  const [searchRebuild, setSearchRebuild] = useState({ state: "idle", total: 0, error: "" });
+  async function rebuildSearch() {
+    if (!onRebuildSearchIndex || searchRebuild.state === "running") return;
+    setSearchRebuild({ state: "running", total: 0, error: "" });
+    try {
+      const stats = await onRebuildSearchIndex();
+      setSearchRebuild({ state: "done", total: Number(stats?.total || 0), error: "" });
+    } catch (error) {
+      setSearchRebuild({ state: "error", total: 0, error: error?.message || "The search index could not be rebuilt." });
+    }
+  }
   const activeLocale = localeResolution?.locale || DEFAULT_LOCALE;
   const systemLocale = localeResolution?.systemLocale || detectSystemLocale();
   const manualLocale = localeResolution?.manualLocale || DEFAULT_LOCALE;
@@ -22410,6 +22804,21 @@ function SettingsPage({
                     </span>
                     <ArrowUpRight className="hidden size-4 text-muted-foreground sm:block" />
                   </a>
+                  <Field orientation="horizontal" className="items-center justify-between gap-6 px-2 py-4">
+                    <FieldContent className="gap-1">
+                      <FieldTitle>{copy.searchIndex || "Search index"}</FieldTitle>
+                      <FieldDescription>
+                        {searchRebuild.state === "error"
+                          ? searchRebuild.error
+                          : searchRebuild.state === "done"
+                            ? formatCopy(copy.searchIndexRebuilt || "Rebuilt with {count} records.", { count: formatLocalizedNumber(searchRebuild.total, activeLocale) })
+                            : copy.searchIndexDescription || "Rebuild the search index from this browser's messages, tasks, and members plus the bridge's channels and runs."}
+                      </FieldDescription>
+                    </FieldContent>
+                    <Button type="button" variant="outline" size="sm" disabled={searchRebuild.state === "running" || !onRebuildSearchIndex} onClick={rebuildSearch}>
+                      {searchRebuild.state === "running" ? copy.searchIndexRebuilding || "Rebuilding…" : copy.searchIndexRebuild || "Rebuild index"}
+                    </Button>
+                  </Field>
                 </div>
 
                 <div className="min-w-0">
