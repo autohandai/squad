@@ -178,6 +178,7 @@ export function createNotificationsPlugin({ postNative = postNativeNotification 
     } catch (error) {
       log(ctx?.SEVERITY?.WARN ?? 13, `notifications: could not read ${statePath}: ${error?.message || error}`);
     }
+    dispose();
     for (const eventName of NOTIFICATION_EVENTS) {
       const listener = (event) => {
         onEvent(event);

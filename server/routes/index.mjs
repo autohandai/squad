@@ -14,9 +14,22 @@ import { dirname, join } from "node:path";
 
 const routesDir = dirname(fileURLToPath(import.meta.url));
 let plugins = null;
+let loading = null;
 
-export async function loadRoutePlugins(ctx, { log = console.log } = {}) {
-  if (plugins) return plugins;
+// The boot-time call and the first /api request can overlap; both must share
+// one load, otherwise every plug-in's init() runs twice and each bridge
+// event is handled twice (duplicate notifications, audit rows, ...).
+export function loadRoutePlugins(ctx, options = {}) {
+  if (plugins) return Promise.resolve(plugins);
+  if (!loading) {
+    loading = loadRoutePluginsOnce(ctx, options).finally(() => {
+      loading = null;
+    });
+  }
+  return loading;
+}
+
+async function loadRoutePluginsOnce(ctx, { log = console.log } = {}) {
   const entries = (await readdir(routesDir)).filter((name) => name.endsWith(".route.mjs")).sort();
   const loaded = [];
   for (const entry of entries) {

@@ -3,7 +3,6 @@ import { Bell } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { groupNotifications, relativeTime } from "@/lib/notifications";
 import { cn } from "@/lib/utils";
@@ -72,7 +71,7 @@ export function NotificationBell({ items = [], unread = 0, onOpen, onMarkAllRead
         {items.length === 0 ? (
           <p className="px-3 py-6 text-center text-sm text-muted-foreground">{copy.notificationsEmpty || "Nothing yet. Finished runs, handoffs and mentions land here."}</p>
         ) : (
-          <ScrollArea className="max-h-96">
+          <div className="max-h-[min(28rem,60vh)] overflow-y-auto overscroll-contain">
             {groups.map((group) => (
               <div key={group.id}>
                 <div className="px-3 pb-1 pt-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -85,7 +84,7 @@ export function NotificationBell({ items = [], unread = 0, onOpen, onMarkAllRead
                 </div>
               </div>
             ))}
-          </ScrollArea>
+          </div>
         )}
       </PopoverContent>
     </Popover>

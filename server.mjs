@@ -30,6 +30,21 @@ import {
   writeResumeId,
 } from "./server/harness/index.mjs";
 
+// Emit run.finished exactly once per run: a CLI child can fire "error" and
+// then "close", and the SDK/harness paths have a completion and a catch
+// branch; each of them calls this after setting run.status.
+function emitRunFinished(run) {
+  if (!run || run.finishedEventAt) return null;
+  run.finishedEventAt = run.finishedAt || new Date().toISOString();
+  return emitBridgeEvent("run.finished", {
+    runId: run.id,
+    memberId: run.agentId || "",
+    status: run.status,
+    title: run.title || "",
+    workspace: run.workspace || "",
+  });
+}
+
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 1) {
   const item = process.argv[index];
@@ -3389,7 +3404,7 @@ async function stopManagedRuns(reason = "service stopped") {
     }
     run.status = "stopped";
     run.finishedAt = new Date().toISOString();
-    emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
+    emitRunFinished(run);
     appendLog(run, "system", reason);
   }
   return { stoppedRuns };
@@ -5434,7 +5449,7 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
         run.exitCode = 0;
         run.status = "completed";
         run.finishedAt = new Date().toISOString();
-        emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
+        emitRunFinished(run);
         run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
         appendLog(run, "system", "SDK run completed");
         recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "sdk", status: run.status, trace: run.trace, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
@@ -5444,7 +5459,7 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
         run.exitCode = 1;
         run.status = "failed";
         run.finishedAt = new Date().toISOString();
-        emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
+        emitRunFinished(run);
         appendLog(run, "stderr", error.message || String(error));
         recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "sdk", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
       }
@@ -5479,7 +5494,7 @@ function startCliRun(run, args, workspace, agentRuntime) {
     if (run.status === "stopped") return;
     run.status = "failed";
     run.finishedAt = new Date().toISOString();
-    emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
+    emitRunFinished(run);
     appendLog(run, "system", error.message);
   });
   child.on("close", (code) => {
@@ -5491,7 +5506,7 @@ function startCliRun(run, args, workspace, agentRuntime) {
     }
     run.status = code === 0 ? "completed" : "failed";
     run.finishedAt = new Date().toISOString();
-    emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
+    emitRunFinished(run);
     appendLog(run, "system", `exited with code ${code}`);
     recordUsageTelemetry("usage.recorded", usageMetadata({ payload: { agentId: run.agentId }, agentRuntime, transport: "cli", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
   });
@@ -5939,7 +5954,7 @@ async function startExternalHarnessRun(payload) {
         run.exitCode = output.exitCode;
         run.status = output.error ? "failed" : "completed";
         run.finishedAt = new Date().toISOString();
-        emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
+        emitRunFinished(run);
         run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
         run.trace.harness = adapter.id;
         run.trace.sessionId = output.resumeId || "";
@@ -5952,7 +5967,7 @@ async function startExternalHarnessRun(payload) {
         run.exitCode = 1;
         run.status = "failed";
         run.finishedAt = new Date().toISOString();
-        emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
+        emitRunFinished(run);
         appendLog(run, "stderr", error.message || String(error));
       }
     } finally {
