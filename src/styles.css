@@ -184,11 +184,14 @@ html[data-shell="desktop"] [data-tauri-drag-region] {
   cursor: default;
 }
 
-button,
-input,
-textarea,
-select {
-  font: inherit;
+@layer base {
+  /* Layered so utilities such as font-mono and text-sm still win on controls. */
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
 }
 
 ::selection {
