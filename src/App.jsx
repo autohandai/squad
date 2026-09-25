@@ -25,6 +25,7 @@ import {
   BadgeCheck,
   Ban,
   BookOpen,
+  Bell,
   Bot,
   Cpu,
   Boxes,
@@ -224,6 +225,19 @@ import { cn } from "@/lib/utils";
 import "./styles.css";
 import { WorkspaceSidebar } from "@/components/shell/WorkspaceSidebar";
 import { SearchCommand } from "@/components/shell/SearchCommand";
+import { NotificationBell } from "@/components/shell/NotificationBell";
+import { NotificationSettings } from "@/components/settings/NotificationSettings";
+import {
+  DEFAULT_NOTIFICATION_SETTINGS,
+  NOTIFICATION_KINDS,
+  NOTIFICATION_POLL_MS,
+  markAllRead as markAllNotificationsRead,
+  mergeNotifications,
+  newestAt as newestNotificationAt,
+  normalizeNotificationSettings,
+  routeForNotification,
+  unreadCount as unreadNotificationCount,
+} from "@/lib/notifications";
 import { ChannelStream } from "@/components/channels/ChannelStream";
 import { MessageComposer } from "@/components/channels/MessageComposer";
 import { InboxPage } from "@/components/inbox/InboxPage";
@@ -4374,6 +4388,8 @@ function App() {
   const [themePreference, setThemePreference] = useState(readThemePreference);
   const [handoffSettings, setHandoffSettings] = useState(readHandoffSettings);
   const [chatSettings, setChatSettings] = useState(readChatSettings);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationSettings, setNotificationSettings] = useState(DEFAULT_NOTIFICATION_SETTINGS);
   const [onboardingState, setOnboardingState] = useState(readOnboardingState);
   const [loginRequestStatus, setLoginRequestStatus] = useState("");
   const [systemTheme, setSystemTheme] = useState(getSystemColorMode);
@@ -4675,6 +4691,104 @@ function App() {
 
   const liveStatusRef = useRef({ agents, tasks, runs, automations, messagesByChannel, route });
   liveStatusRef.current = { agents, tasks, runs, automations, messagesByChannel, route };
+
+  // Focus reporting: the bridge suppresses a native notification while the
+  // conversation it concerns is on screen. An empty route means nothing is
+  // focused (window hidden or blurred), so the bridge still notifies then.
+  useEffect(() => {
+    const report = (value) =>
+      api("/api/notifications/focus", { method: "POST", body: JSON.stringify({ route: value }) }).catch(() => {});
+    const visibleRoute = () => (document.visibilityState === "visible" ? routeWithoutModalParams(route) : "");
+    report(visibleRoute());
+    const onVisibility = () => report(visibleRoute());
+    const onFocus = () => report(routeWithoutModalParams(route));
+    const onBlur = () => report("");
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [route]);
+
+  // Notification feed: one full load, then a 10 s poll for items newer than
+  // the newest we hold. The newest timestamp is read from a ref so the poll
+  // interval does not restart every time the feed changes.
+  const notificationsRef = useRef(notifications);
+  notificationsRef.current = notifications;
+  const loadNotifications = useCallback(
+    (since = "") =>
+      api(`/api/notifications${since ? `?since=${encodeURIComponent(since)}` : ""}`)
+        .then((data) => {
+          const items = Array.isArray(data?.items) ? data.items : [];
+          setNotifications((current) => (since ? mergeNotifications(current, items) : mergeNotifications([], items)));
+        })
+        .catch(() => {}),
+    []
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void loadNotifications();
+    const interval = window.setInterval(() => {
+      if (cancelled) return;
+      void loadNotifications(newestNotificationAt(notificationsRef.current));
+    }, NOTIFICATION_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [loadNotifications]);
+
+  useEffect(() => {
+    api("/api/notifications/settings")
+      .then((data) => setNotificationSettings(normalizeNotificationSettings(data?.settings)))
+      .catch(() => {});
+  }, []);
+
+  function openNotification(item) {
+    navigate(routeForNotification(item));
+    setNotifications((current) => current.map((entry) => (entry.id === item.id ? { ...entry, read: true } : entry)));
+    api("/api/notifications/read", { method: "POST", body: JSON.stringify({ ids: [item.id] }) })
+      .then(() => loadNotifications())
+      .catch(() => {});
+  }
+
+  function markNotificationsRead() {
+    setNotifications(markAllNotificationsRead);
+    api("/api/notifications/read", { method: "POST", body: "{}" })
+      .then(() => loadNotifications())
+      .catch(() => {});
+  }
+
+  function updateNotificationSettings(next) {
+    const normalized = normalizeNotificationSettings(next);
+    setNotificationSettings(normalized);
+    api("/api/notifications/settings", { method: "PUT", body: JSON.stringify(normalized) })
+      .then((data) => setNotificationSettings(normalizeNotificationSettings(data?.settings || normalized)))
+      .catch(() => {});
+  }
+
+  function sendTestNotification() {
+    return api("/api/notifications/test", { method: "POST", body: "{}" });
+  }
+
+  // Client-side happenings the bridge cannot observe on its own; the
+  // notifications plug-in turns them into feed items and native alerts.
+  function raiseBridgeEvent(name, payload = {}) {
+    api("/api/events", { method: "POST", body: JSON.stringify({ name, ...payload }) }).catch(() => {});
+  }
+
+  const notificationBell = (
+    <NotificationBell
+      items={notifications}
+      unread={unreadNotificationCount(notifications)}
+      copy={localeCopy}
+      onOpen={openNotification}
+      onMarkAllRead={markNotificationsRead}
+    />
+  );
 
   useEffect(() => {
     // The payload is read from a ref so the 15 s cadence survives the run
@@ -5961,6 +6075,15 @@ function App() {
             const completedAt = new Date().toISOString();
             const replyText = humanReadableReplyText(data.reply || streamedAnswer, data.trace, `${agent.name} returned no chat text.`);
             finalReplyText = replyText;
+            if (resolveChannelMentionTargets(replyText, channel, agents).hasMentions) {
+              raiseBridgeEvent("mention.received", {
+                channelId: channel.id,
+                memberId: agent.id,
+                messageId,
+                preview: String(replyText || "").slice(0, 240),
+                at: completedAt,
+              });
+            }
             updateChannelMessage(channel.id, messageId, {
               body: replyText || `${agent.name} returned no chat text.`,
               status: "complete",
@@ -6696,6 +6819,16 @@ function App() {
     });
     touchAgent(targetAgentId, timestamp);
     touchAgent(sourceAgentId, timestamp);
+    if (!autoAccept) {
+      raiseBridgeEvent("handoff.pending", {
+        taskId: nextTask.id,
+        handoffId,
+        fromMemberId: sourceAgentId,
+        toMemberId: targetAgentId,
+        title: nextTask.title || handoff.reason || "",
+        at: timestamp,
+      });
+    }
     return {
       task: nextTask,
       handoff,
@@ -7035,6 +7168,7 @@ function App() {
             unreadCountByAgent={unreadCountByAgent}
             inboxCount={inboxCount}
             onSearch={() => setSearchOpen(true)}
+            searchTrailing={notificationBell}
             onCollapsedChange={setDesktopSidebarCollapsed}
           />
           <main className="app-main min-w-0">
@@ -7183,6 +7317,9 @@ function App() {
                 initialSection={settingsSection}
                 counts={sidebarCounts}
                 onProviderSettingsChange={setProviderSettings}
+                notificationSettings={notificationSettings}
+                onNotificationSettingsChange={updateNotificationSettings}
+                onTestNotification={sendTestNotification}
               />
             ) : isCreate ? (
               <CreateAgent
@@ -7347,6 +7484,7 @@ function App() {
                 setMobileSidebarOpen(false);
                 setSearchOpen(true);
               }}
+              searchTrailing={notificationBell}
             />
           </SheetContent>
         </Sheet>
@@ -9594,6 +9732,7 @@ function SidebarContent({
   unreadCountByAgent = new Map(),
   inboxCount = 0,
   onSearch,
+  searchTrailing = null,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const { entryFor: entryForPresence } = usePresence();
@@ -9690,6 +9829,7 @@ function SidebarContent({
       }
       onCollapse={onCollapse}
       searchShortcutLabel={SEARCH_SHORTCUT_LABEL}
+      searchTrailing={searchTrailing}
     />
   );
 }
@@ -21370,6 +21510,9 @@ function SettingsPage({
   initialSection = "",
   counts = EMPTY_MISSION_COUNTS,
   onProviderSettingsChange,
+  notificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
+  onNotificationSettingsChange,
+  onTestNotification,
 }) {
   const activeLocale = localeResolution?.locale || DEFAULT_LOCALE;
   const systemLocale = localeResolution?.systemLocale || detectSystemLocale();
@@ -21425,11 +21568,20 @@ function SettingsPage({
   const missionControlDetail = `${formatLocalizedNumber(counts.tasks || 0, activeLocale)} tracked ${
     counts.tasks === 1 ? "task" : "tasks"
   }`;
+  const normalizedNotificationSettings = normalizeNotificationSettings(notificationSettings);
+  const notificationKindsOn = NOTIFICATION_KINDS.filter((kind) => normalizedNotificationSettings[kind.key]).length;
+  const notificationSettingsDetail =
+    notificationKindsOn === NOTIFICATION_KINDS.length
+      ? copy.notificationsAllOn || "All on"
+      : notificationKindsOn === 0
+        ? copy.notificationsOff || "Off"
+        : formatCopy(copy.notificationsSomeOn || "{on} of {total} on", { on: notificationKindsOn, total: NOTIFICATION_KINDS.length });
   const settingsSections = [
     { id: "appearance", icon: Palette, label: copy.appearance || "Appearance", detail: `${activeThemeLabel} / ${visibleThemePreset.label}` },
     { id: "language", icon: Languages, label: copy.language, detail: formatLocaleSummary(activeLocale, activeLocale) },
     { id: "providers", icon: Brain, label: "LLM Providers", detail: providerSettingsSummary },
     { id: "chat", icon: MessageSquareText, label: copy.chat, detail: chatSettingsDetail },
+    { id: "notifications", icon: Bell, label: copy.notifications || "Notifications", detail: notificationSettingsDetail },
     { id: "handoff", icon: Workflow, label: copy.handoffRetryPolicy, detail: handoffRetryModeLabel(effectiveHandoffRetryMode, copy) },
     { id: "mission-control", icon: Monitor, label: "Mission Control", detail: missionControlDetail },
     { id: "runtime", icon: Server, label: copy.runtimeBridge, detail: runtime?.version || copy.checkingRuntime },
@@ -21676,6 +21828,19 @@ function SettingsPage({
                   />
                 </Field>
               </div>
+            </section>
+
+            <section id="settings-notifications" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
+              <SettingsSectionHeader
+                title={copy.notifications || "Notifications"}
+                description={copy.notificationsDescription || "Native alerts when the squad needs you and the window is elsewhere."}
+              />
+              <NotificationSettings
+                settings={normalizedNotificationSettings}
+                copy={copy}
+                onChange={onNotificationSettingsChange}
+                onTest={onTestNotification}
+              />
             </section>
 
             <section id="settings-handoff" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">

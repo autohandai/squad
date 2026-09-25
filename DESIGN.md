@@ -37,6 +37,7 @@
 - Each section is a heading (`text-base`), one sentence of description, then rows: label and detail on the left (`220px`), the control on the right. Sections are separated by a single divider; the first sits flush with the top of the column.
 - Toggles and choices are divider rows, never bordered or tinted boxes. A selected choice shows a check mark and a stronger label, not a filled background. No icons in section headers.
 - Copy avoids repeating a word three times in view: the section is "Appearance", its first row is "Mode"; the "Language" section's row is "Display language".
+- Notifications is one switch row per event kind and a ghost Send test notification button.
 
 ## Squad Channels
 
@@ -76,6 +77,7 @@
 - Presence is one living line under the composer, not placeholder rows: stacked avatars, then "Iris is thinking…", "Iris and Noah are typing…", "Iris, Noah and 2 others are running tools…", with three breathing dots. A reply enters the stream only once it has text. The line renders nothing when nobody is active and never shifts layout.
 - Squad recruiting notices ("Kai wants to join #client-abc — DevOps engineer. Kai can help with the Dockerfile and CI in api; nobody in the channel covers that yet.") sit above the composer as a divider-separated row with Add and Not now. They are visible to the user only, never sent to members, and never counted as unread.
 - Inbox is a single divider-separated list (unread channels, handoffs waiting, memory proposals) that links back to the surface owning each item.
+- A bell beside the search control carries a small dot while notifications are unread; its popover is a divider list (title, one-line body, relative time) with Mark all read. Native notifications are posted by the bridge, never while the conversation is on screen.
 - Providers in Settings are a divider-separated list, expanded one at a time. An account-backed provider (Autohand AI) shows its status as one sentence ("Signed in as …; an API key is optional"), a model select fed by the catalog, and a managed base URL placeholder; it never asks for a key it does not need.
 - The **Runs with** control is one select plus one readiness sentence; advanced fields (model override, executable path, Test harness) sit behind a text disclosure. The profile shows Harness as a text summary row beside Model, never as vendor cards.
 

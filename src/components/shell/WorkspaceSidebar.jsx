@@ -89,6 +89,7 @@ export function WorkspaceSidebar({
   footer,
   onCollapse,
   searchShortcutLabel = "⌘K",
+  searchTrailing = null,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const sections = useMemo(() => {
@@ -123,16 +124,17 @@ export function WorkspaceSidebar({
         ) : null}
       </div>
 
-      <div className="px-3">
+      <div className="flex items-center gap-1 px-3">
         <button
           type="button"
-          className="flex h-9 w-full items-center gap-2 rounded-md border border-border/70 bg-background/60 px-2.5 text-sm text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+          className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-border/70 bg-background/60 px-2.5 text-sm text-muted-foreground transition-colors hover:border-border hover:text-foreground"
           onClick={onNavigate.search}
         >
           <Search className="size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate text-left">{copy.searchEverything || "Search everything"}</span>
           <kbd className="rounded border border-border/70 px-1 text-[10px] font-medium text-muted-foreground">{searchShortcutLabel}</kbd>
         </button>
+        {searchTrailing}
       </div>
 
       <ScrollArea className="min-h-0 flex-1 px-3 pb-3 pt-3">
