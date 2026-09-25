@@ -69,6 +69,7 @@
 
 ## Workspace Shell (Buzz-style)
 
+- Presence dots have five states: accent and breathing while working, green online, amber idle, grey offline, and a dotted ring when the bridge is unreachable. Only working animates. Stop sits with the chat header actions and on the profile, confirming in a small popover.
 - The primary sidebar is a Slack-like workspace rail: a **Search everything** control (⌘K / Ctrl K), Inbox, Agents, channel sections grouped by the channel's `section` (default "Channels"), then **Direct messages** listing members with presence dots and unread counts, and the account footer. No cards, no tinted panels; unread state is a bold row plus a small dot or count.
 - Channel pages are flat, chronological streams: a `# name` header with member count and a settings popover, day separators, a red **New** divider at the last-read boundary, author + time, mention chips for targeted members, emoji reactions with counts, and quick actions on hover. Thread replies render inline under their root with a subtle indent instead of a stacked thread block.
 - The composer is one calm bordered field with @ / attach / emoji / format on the left and a round send button on the right; Enter sends, Shift+Enter breaks a line, and `@` opens a keyboard-navigable mention picker.

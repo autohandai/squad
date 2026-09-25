@@ -5,6 +5,9 @@ import { FirstRun } from "@/components/onboarding/FirstRun";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
 import { proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
+import { presenceFor, presenceMeta } from "@/lib/presence-states";
+import { PresenceDot, PresenceLabel } from "@/components/members/PresenceDot";
+import { StopMemberButton } from "@/components/members/StopMemberButton";
 import { createRoot } from "react-dom/client";
 import {
   Bar,
@@ -321,6 +324,14 @@ function accountProfileFor(account) {
 // Account identity and account-level actions for the sidebar footer and menu,
 // so they do not travel through six layers of sidebar props.
 const AccountContext = createContext({ profile: ACCOUNT_PROFILE, signOut: null, signingOut: false, openFeedback: null });
+
+// Live member presence from the bridge (ADR-0016): who is working, idle,
+// online, offline, or unknown when the bridge is unreachable. Read with
+// `usePresence()` anywhere a dot or label is drawn.
+const PresenceContext = createContext({ presenceMap: {}, bridgeReachable: true, entryFor: (agent) => ({ state: agent?.status === "offline" ? "offline" : "online" }), stopMember: null });
+function usePresence() {
+  return useContext(PresenceContext);
+}
 
 const SKILL_ALIASES = {
   "a11y-check": "web-design-guidelines",
@@ -4881,6 +4892,39 @@ function App() {
     };
   }, []);
 
+  const [presenceMap, setPresenceMap] = useState({});
+  const [bridgeReachable, setBridgeReachable] = useState(true);
+  const loadPresence = useCallback(async () => {
+    try {
+      const data = await api("/api/members/presence");
+      setPresenceMap(data?.presence || {});
+      setBridgeReachable(true);
+    } catch {
+      // Keep the last map; every dot shows Unknown while the bridge is down.
+      setBridgeReachable(false);
+    }
+  }, []);
+  useEffect(() => {
+    loadPresence();
+    const timer = window.setInterval(loadPresence, 10_000);
+    return () => window.clearInterval(timer);
+  }, [loadPresence]);
+  const entryFor = useCallback(
+    (agent) => presenceFor(agent?.id, presenceMap, { bridgeReachable, memberStatus: agent?.status }),
+    [presenceMap, bridgeReachable]
+  );
+  async function stopMember(agentId) {
+    const result = await api(`/api/members/${encodeURIComponent(agentId)}/stop`, { method: "POST" });
+    await loadPresence();
+    return result;
+  }
+  const presenceContextValue = useMemo(
+    () => ({ presenceMap, bridgeReachable, entryFor, stopMember }),
+    // stopMember is a stable closure over api and loadPresence.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [presenceMap, bridgeReachable, entryFor]
+  );
+
   useEffect(() => {
     let cancelled = false;
     async function loadRuns() {
@@ -5262,6 +5306,8 @@ function App() {
   function deleteAgent(agentId) {
     const normalized = normalizeSquadMemberId(agentId);
     if (!normalized) return;
+    // Running work stops before the member disappears (ADR-0016).
+    stopMember(agentId).catch(() => {});
     setAgents((current) => current.filter((agent) => normalizeSquadMemberId(agent.id) !== normalized));
     setChannels((current) =>
       current.map((channel) =>
@@ -6914,6 +6960,7 @@ function App() {
 
   return (
     <AccountContext.Provider value={accountContextValue}>
+    <PresenceContext.Provider value={presenceContextValue}>
     <TooltipProvider>
       <div className="app-shell-root relative min-h-screen overflow-x-clip bg-background text-foreground">
         <div className={cn("app-shell-decor dark-grid pointer-events-none fixed inset-0 opacity-35", isCreate && "hidden")} />
@@ -7270,6 +7317,7 @@ function App() {
         </Sheet>
       </div>
     </TooltipProvider>
+    </PresenceContext.Provider>
     </AccountContext.Provider>
   );
 }
@@ -9245,6 +9293,7 @@ function CollapsedSidebarRail({
   onAnalytics,
   onExpand,
 }) {
+  const { entryFor: entryForPresence } = usePresence();
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const memberId = activeAgent?.id || visibleAgents[0]?.id;
   const isCreatingMember = isCreateMemberRoute(route);
@@ -9368,7 +9417,8 @@ function CollapsedSidebarRail({
           {visibleAgents.map((agent) => {
             const isActive =
               activeAgent?.id === agent.id && !isCreatingMember && !isMissionControl && !isSquadDirectory && !isChannelsRoute;
-            const presence = memberPresenceForAgent(agent, { tasks, runs, messagesByAgent, messagesByChannel });
+            const presenceEntry = entryForPresence(agent);
+            const presence = presenceMeta(presenceEntry.state, copy);
             return (
               <Tooltip key={agent.id}>
                 <TooltipTrigger asChild>
@@ -9389,7 +9439,7 @@ function CollapsedSidebarRail({
                         isActive && "border-card ring-2 ring-foreground/85 dark:border-background dark:ring-foreground/90"
                       )}
                     />
-                    <MemberPresenceBadge presence={presence} className="absolute bottom-0 right-0" />
+                    <PresenceDot entry={presenceEntry} copy={copy} className="absolute bottom-0 right-0" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -9557,6 +9607,7 @@ function SidebarContent({
   onSearch,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
+  const { entryFor: entryForPresence } = usePresence();
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   useEffect(() => {
     if (createChannelRequest) setCreateChannelOpen(true);
@@ -9622,7 +9673,10 @@ function SidebarContent({
       unreadChannelIds={unreadChannelIds}
       unreadCountByAgent={unreadCountByAgent}
       inboxCount={inboxCount}
-      presenceFor={(agent) => memberPresenceForAgent(agent, { tasks, runs, messagesByAgent, messagesByChannel })}
+      presenceFor={(agent) => {
+        const meta = presenceMeta(entryForPresence(agent).state, copy);
+        return { ...meta, className: meta.dotClassName };
+      }}
       renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
       onNavigate={{
         search: onSearch,
@@ -10193,6 +10247,7 @@ function Conversation({
   const [mentionIndex, setMentionIndex] = useState(0);
   const activeMode = RUN_MODES.find((item) => item.id === mode) || RUN_MODES[0];
   const prompt = promptByAgent[agent.id] || "";
+  const { entryFor: entryForPresence, stopMember } = usePresence();
   useEffect(() => {
     if (!initialPrompt || !agent?.id) return;
     setPromptByAgent((current) => (current[agent.id] ? current : { ...current, [agent.id]: initialPrompt }));
@@ -10255,23 +10310,24 @@ function Conversation({
   const memberMentionItems = useMemo(() => {
     const query = mentionQuery.toLowerCase();
     return agents
-      .filter((item) => item.id !== agent.id && item.status === "online")
+      .filter((item) => item.id !== agent.id && entryForPresence(item).state !== "offline")
       .filter((item) => {
         const haystack = `${item.name || ""} ${item.role || ""} ${item.employeeType || ""}`.toLowerCase();
         return !query || haystack.includes(query);
       })
-      .map((item) => ({
-        type: "agent",
-        prefix: "@",
-        value: mentionTokenForAgent(item),
-        title: item.name,
-        detail: localizedRole(item, copy),
-        agent: item,
-        presence: chatSendingByAgent[item.id]
-          ? { id: "working", label: "Working", className: "bg-primary", pulse: true }
-          : memberPresenceForAgent(item, { tasks, runs, messagesByChannel }),
-      }));
-  }, [agent.id, agents, chatSendingByAgent, copy, mentionQuery, messagesByChannel, runs, tasks]);
+      .map((item) => {
+        const meta = presenceMeta(chatSendingByAgent[item.id] ? "working" : entryForPresence(item).state, copy);
+        return {
+          type: "agent",
+          prefix: "@",
+          value: mentionTokenForAgent(item),
+          title: item.name,
+          detail: localizedRole(item, copy),
+          agent: item,
+          presence: { ...meta, className: meta.dotClassName },
+        };
+      });
+  }, [agent.id, agents, chatSendingByAgent, copy, mentionQuery, entryForPresence]);
   const fileMentionItems = useMemo(
     () =>
       mentionFiles.map((file) => ({
@@ -10973,8 +11029,14 @@ function Conversation({
               <span className="hidden text-xs text-muted-foreground sm:inline">{localizedRole(agent, copy)}</span>
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <span className={cn("size-1.5 shrink-0 rounded-full", chatSending ? "bg-primary animate-pulse" : runtime?.available ? "bg-emerald-500" : "bg-destructive")} aria-hidden="true" />
-              <span className="min-w-0 truncate">{chatSending ? "Working" : runtime?.available ? "Online" : copy.autohandMissing}</span>
+              {runtime?.available ? (
+                <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="min-w-0 truncate" />
+              ) : (
+                <>
+                  <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
+                  <span className="min-w-0 truncate">{copy.autohandMissing}</span>
+                </>
+              )}
               <span className="text-border">·</span>
               <span className="min-w-0 max-w-40 truncate sm:max-w-[18rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
               <span className="hidden text-border sm:inline">·</span>
@@ -11029,6 +11091,9 @@ function Conversation({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          {stopMember && !["offline", "unknown"].includes(entryForPresence(agent).state) ? (
+            <StopMemberButton member={agent} onStop={stopMember} iconOnly copy={copy} disabled={!runtime?.available} />
+          ) : null}
           <Button variant="outline" size="sm" className="h-8" onClick={startFreshChat}>
             <Plus data-icon="inline-start" />
             <span className="hidden sm:inline">New chat</span>
@@ -13279,7 +13344,7 @@ function SquadDirectoryPage({
             <DialogTitle>Remove {pendingDelete?.name || "member"}?</DialogTitle>
             <DialogDescription>
               This removes {pendingDelete?.name || "this member"} from your squad, along with their conversations and
-              automations in this view. Task records stay in Mission Control history.
+              automations in this view. {copy.removeMemberStopsWork || "Running work stops first."} Task records stay in Mission Control history.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -15478,6 +15543,7 @@ function CapabilityRow({ icon: Icon, title, detail }) {
 }
 
 function AgentProfilePreviewDialog({ agent, tasks, automations, open, onOpenChange, onViewDetails, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+  const { entryFor: entryForPresence } = usePresence();
   const strengths = getAgentStrengths(agent, copy);
   const brainCard = brainCardForAgent(agent);
   const taskCount = tasks.length || agent.stats?.tasks || 0;
@@ -15509,10 +15575,7 @@ function AgentProfilePreviewDialog({ agent, tasks, automations, open, onOpenChan
                   </Badge>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                  <span className="inline-flex items-center gap-2 text-primary">
-                    <span className="size-2 rounded-full bg-primary" />
-                    {copy.online}
-                  </span>
+                  <PresenceLabel entry={entryForPresence(agent)} copy={copy} />
                   <Separator orientation="vertical" className="h-4" />
                   <span>{copy.onboarding}: {formatShortDate(agent.createdAt, locale)}</span>
                 </div>
@@ -20696,6 +20759,7 @@ function ProfileModelSummary({ agent, providerSettings, navigate }) {
 }
 
 function Profile({ agent, agents = [], tasks, automations, runtime, workspaces = [], runs, providerSettings, navigate, openTerminal, updateAgent, startAutohand, initialWorkRecordTab = "timeline", locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), harnesses = [] }) {
+  const { entryFor: entryForPresence, stopMember } = usePresence();
   const activity = useMemo(() => buildActivity(), []);
   const [workRecordTab, setWorkRecordTab] = useState(initialWorkRecordTab);
   const [profileEditOpen, setProfileEditOpen] = useState(false);
@@ -20737,10 +20801,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                 </Badge>
               </div>
               <div className="mt-5 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                <span className="inline-flex items-center gap-2">
-                  <span className="size-2 rounded-full bg-primary" />
-                  {copy.online}
-                </span>
+                <PresenceLabel entry={entryForPresence(agent)} copy={copy} />
                 <Separator orientation="vertical" className="h-4" />
                 <span>{copy.onboarding}: {formatLongDate(agent.createdAt, locale)}</span>
               </div>
@@ -20750,6 +20811,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                   <Settings data-icon="inline-start" />
                   {copy.edit}
                 </Button>
+                {stopMember ? <StopMemberButton member={agent} onStop={stopMember} copy={copy} /> : null}
                 <Button variant="outline" size="sm" onClick={() => navigate(memberChatPath(agent.id))}>
                   <MessageSquareText data-icon="inline-start" />
                   {copy.chat}
