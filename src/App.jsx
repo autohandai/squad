@@ -230,6 +230,8 @@ import { InboxPage } from "@/components/inbox/InboxPage";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
+import { ActivityFeed } from "@/components/activity/ActivityFeed";
+import { activityFromTrace, activityStats, normalizeActivity } from "@/lib/activity";
 import {
   commandsForHarness,
   composerTrigger,
@@ -3886,6 +3888,26 @@ function appendRawTraceText(raw, stream, output) {
   };
 }
 
+// Raw SDK stream events kept on a message for the activity feed: the fold in
+// `normalizeActivity` reads them and the Raw toggle lists them. Capped so a
+// long reply cannot exhaust localStorage; the fold keys rows by event ids, so
+// dropping the oldest entries only trims history.
+const MAX_STREAM_EVENTS_PER_MESSAGE = 800;
+
+function appendStreamEvent(events, event) {
+  if (!event || typeof event !== "object") return events;
+  const last = events[events.length - 1];
+  // Consecutive text deltas of one message merge into a single entry: the
+  // fold coalesces them anyway and it keeps the list proportional to actions.
+  if (last && last.type === "message_delta" && event.type === "message_delta" && !event.thought && !last.thought && (last.messageId || "") === (event.messageId || "")) {
+    const merged = { ...last, delta: `${last.delta || ""}${event.delta || ""}`, timestamp: event.timestamp || last.timestamp };
+    return [...events.slice(0, -1), merged];
+  }
+  const next = events.length >= MAX_STREAM_EVENTS_PER_MESSAGE ? events.slice(events.length - MAX_STREAM_EVENTS_PER_MESSAGE + 1) : events.slice();
+  next.push(event);
+  return next;
+}
+
 function updateLiveTraceFromStreamEvent(trace, event) {
   const current = trace || createLiveChatTrace();
   if (event.type === "message_delta") {
@@ -5585,6 +5607,7 @@ function App() {
     };
     let streamedAnswer = "";
     let liveTrace = createLiveChatTrace();
+    let liveEvents = [];
     let streamError = null;
     let completed = false;
     let finalResult = null;
@@ -5617,9 +5640,11 @@ function App() {
             }
 
             liveTrace = updateLiveTraceFromStreamEvent(liveTrace, data);
+            liveEvents = appendStreamEvent(liveEvents, data);
             updateMessage(agentId, `${id}-a`, {
               body: streamedAnswer || `${agent.name} is thinking...`,
               trace: liveTrace,
+              streamEvents: liveEvents,
               status: "loading",
               activityLabel: streamActivityLabel(data),
             });
@@ -5647,6 +5672,7 @@ function App() {
             updateMessage(agentId, `${id}-a`, {
               body: finalResult.reply,
               trace: finalResult.trace,
+              streamEvents: liveEvents,
               command: finalResult.command,
               workspace: finalResult.workspace,
               status: "complete",
@@ -5686,6 +5712,7 @@ function App() {
         updateMessage(agentId, `${id}-a`, {
           body: finalResult.reply,
           trace: finalResult.trace,
+          streamEvents: liveEvents,
           completedAt,
           durationMs: finalResult.durationMs,
           activityLabel: "",
@@ -5704,6 +5731,7 @@ function App() {
       updateMessage(agentId, `${id}-a`, {
         body: errorReply,
         trace: details.trace || liveTrace,
+        streamEvents: liveEvents,
         command: details.command || "",
         workspace: details.workspace || selectedWorkspace,
         completedAt,
@@ -5891,6 +5919,7 @@ function App() {
     let streamError = null;
     let completed = false;
     let finalReplyText = "";
+    let liveEvents = [];
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 305000);
     try {
@@ -5917,8 +5946,10 @@ function App() {
             } else if (data.type === "error") {
               streamError = new Error(data.error || `${agent.name} could not answer.`);
             }
+            liveEvents = appendStreamEvent(liveEvents, data);
             updateChannelMessage(channel.id, messageId, {
               body: channelStreamingReplyText(agent.name, streamedAnswer),
+              streamEvents: liveEvents,
               status: "loading",
               activityLabel: streamActivityLabel(data) || `Replying in #${channel.name}`,
               updatedAt: new Date().toISOString(),
@@ -5935,6 +5966,7 @@ function App() {
               status: "complete",
               time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
               trace: data.trace,
+              streamEvents: liveEvents,
               command: data.command || "",
               workspace: data.workspace || selectedWorkspace,
               transport: data.transport || "",
@@ -5954,6 +5986,7 @@ function App() {
               body: `${agent.name} could not answer: ${streamError.message}`,
               status: "error",
               trace: data.trace,
+              streamEvents: liveEvents,
               command: data.command || "",
               workspace: data.workspace || selectedWorkspace,
               transport: data.transport || "",
@@ -5974,6 +6007,7 @@ function App() {
           body: replyText || `${agent.name} returned no chat text.`,
           status: "complete",
           time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
+          streamEvents: liveEvents,
           completedAt,
           activityLabel: "",
           updatedAt: completedAt,
@@ -5989,6 +6023,7 @@ function App() {
         body: message,
         status: "error",
         trace: details.trace,
+        streamEvents: liveEvents,
         command: details.command || "",
         workspace: details.workspace || selectedWorkspace,
         transport: details.transport || "",
@@ -8024,7 +8059,14 @@ function ChannelsPage({
                 locale={locale}
                 lastReadAt={lastReadAt}
                 reactionsByMessage={reactionsByMessage}
-                renderBody={(message) => <MarkdownBlocks text={message.body || ""} />}
+                renderBody={(message) => (
+                  <>
+                    <MarkdownBlocks text={message.body || ""} />
+                    {message.role === "agent" || message.agentId ? (
+                      <AgentWorkDetails message={message} isLoading={message.status === "loading"} durationLabel={messageDurationLabel(message)} copy={copy} />
+                    ) : null}
+                  </>
+                )}
                 renderAvatar={(message) => <ChannelMessageAvatar message={message} agents={agents} />}
                 authorName={(message) => channelMessageAuthorName(message, agents, accountProfile.name)}
                 onReact={onReact}
@@ -8403,66 +8445,8 @@ function buildAgentResponseView(message) {
     toolCalls,
     toolResults: trace.toolResults,
     assistantEvents,
-    orderedEvents: buildOrderedWorkEvents({ trace, parsedBody, answer }),
     raw: trace.raw,
   };
-}
-
-function buildOrderedWorkEvents({ trace, parsedBody, answer }) {
-  const resultById = new Map();
-  const resultByName = new Map();
-  for (const result of trace.toolResults) {
-    if (result.id) resultById.set(result.id, result);
-    resultByName.set(result.name, result);
-  }
-
-  const eventSource = trace.events.length
-    ? trace.events
-    : [
-        ...trace.steps.map((step) => ({ type: "step", index: step.index, title: step.title })),
-        ...parsedBody.steps.map((step) => ({ type: "step", index: step.index, title: step.title })),
-        ...trace.thoughts.map((item) => ({ type: "thought", ...item })),
-        ...parsedBody.thoughts.map((item) => ({ type: "thought", ...item })),
-        ...trace.toolCalls.map((call) => ({ type: "tool_call", call })),
-        ...parsedBody.toolCalls.map((call) => ({ type: "tool_call", call })),
-        ...trace.messages.map((event) => ({ type: "assistant_event", ...event })),
-      ];
-
-  return uniqueTraceItems(
-    eventSource
-      .map((event, index) => {
-        if (event.type === "tool_call") {
-          const call = event.call || event;
-          const result = call?.id ? resultById.get(call.id) : resultByName.get(call?.name);
-          return { ...event, call, result, order: index };
-        }
-        return { ...event, order: index };
-      })
-      .filter((event) => {
-        if (event.type === "step") return event.title;
-        if (event.type === "thought") return event.thought || event.reflection;
-        if (event.type === "tool_call") return event.call?.name;
-        if (event.type === "status") return event.title || event.status;
-        if (event.type === "error") return event.title || event.content;
-        return false;
-      })
-      .sort((first, second) => {
-        const firstTime = Date.parse(first.timestamp || first.call?.timestamp || "");
-        const secondTime = Date.parse(second.timestamp || second.call?.timestamp || "");
-        if (!Number.isNaN(firstTime) && !Number.isNaN(secondTime) && firstTime !== secondTime) {
-          return firstTime - secondTime;
-        }
-        return first.order - second.order;
-      }),
-    (event) => {
-      if (event.type === "tool_call") return `tool:${event.call?.id || ""}:${event.call?.name || ""}:${stringifyTraceValue(event.call?.args)}`;
-      if (event.type === "step") return `step:${event.index || ""}:${event.title}`;
-      if (event.type === "thought") return `thought:${event.thought}:${event.reflection}`;
-      if (event.type === "status") return `status:${event.status || ""}:${event.title || ""}:${event.timestamp || ""}`;
-      if (event.type === "error") return `error:${event.title || event.content || ""}:${event.timestamp || ""}`;
-      return `${event.type}:${event.content || event.title || event.timestamp || event.order}`;
-    }
-  );
 }
 
 function stringifyTraceValue(value) {
@@ -8479,6 +8463,11 @@ function formatShortTime(value, locale = DEFAULT_LOCALE) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value || "");
   return date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+}
+
+function messageDurationLabel(message) {
+  const ms = durationFromMessage(message);
+  return ms === null ? "" : formatDuration(ms);
 }
 
 function durationFromMessage(message) {
@@ -11898,7 +11887,7 @@ function SquadStatusRow({ agent, activeMode, latestRun, runtime, workspace, work
 
 const SquadMessage = memo(function SquadMessage({ agent, message, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
   const isUser = message.role === "user";
-  if (!isUser) return <AgentResponseMessage agent={agent} message={message} chatSettings={chatSettings} onRetry={onRetry} />;
+  if (!isUser) return <AgentResponseMessage agent={agent} message={message} chatSettings={chatSettings} copy={copy} onRetry={onRetry} />;
 
   return (
     <article className="group flex flex-col items-end gap-1" aria-label={`${copy.you}, ${message.time}`}>
@@ -11910,13 +11899,12 @@ const SquadMessage = memo(function SquadMessage({ agent, message, copy = getLoca
   );
 });
 
-function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
+function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
   // Trace normalisation and body parsing are the expensive part of a row.
   const view = useMemo(() => buildAgentResponseView(message), [message]);
   const isThinkingPlaceholder = String(message.body || "").trim() === `${agent.name} is thinking...`;
   const isLoading = message.status === "loading" || isThinkingPlaceholder;
-  const hasTrace = view.orderedEvents.length;
   const hasRawOutput = Boolean(view.raw.stdout || view.raw.stderr);
   const elapsedMs = useElapsedMs(message.startedAt, isLoading);
   const durationMs = isLoading ? elapsedMs : durationFromMessage(message);
@@ -11983,7 +11971,7 @@ function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETT
           </div>
         ) : null}
 
-        {hasTrace ? <AgentWorkTrace view={view} open={isLoading} durationLabel={isLoading ? "" : durationLabel} /> : null}
+        <AgentWorkDetails message={message} isLoading={isLoading} durationLabel={isLoading ? "" : durationLabel} copy={copy} />
 
         {!isLoading && showRawOutput ? <RawTraceBlock raw={view.raw} /> : null}
       </div>
@@ -12002,164 +11990,42 @@ function chatProgressLabel(message, durationMs) {
   return activity || "Waiting for the first response...";
 }
 
-function AgentWorkTrace({ view, open = false, durationLabel = "" }) {
-  const steps = view.orderedEvents.length;
-  const tools = view.toolCalls.length;
-  const summary = [
-    `${steps} ${steps === 1 ? "step" : "steps"}`,
-    tools ? `${tools} ${tools === 1 ? "tool" : "tools"}` : "",
-    durationLabel,
-  ]
+/**
+ * Activity rows for one member reply, folded from the raw SDK stream events
+ * kept on the message; finished messages without them fall back to the trace.
+ */
+function useMessageActivity(message, isLoading) {
+  const status = isLoading ? "running" : message.status === "error" ? "failed" : message.status === "stopped" ? "stopped" : "completed";
+  const activity = useMemo(
+    () =>
+      message.streamEvents?.length
+        ? normalizeActivity(message.streamEvents, { status, live: isLoading })
+        : activityFromTrace(message.trace, { status }),
+    [message.streamEvents, message.trace, status, isLoading]
+  );
+  const raw = message.streamEvents?.length ? message.streamEvents : message.trace?.events || [];
+  return { activity, raw };
+}
+
+/** "Work details · 12 steps · 4 tools · 1 failed · 32s": a text disclosure over the activity feed. */
+function AgentWorkDetails({ message, isLoading = false, durationLabel = "", copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+  const { activity, raw } = useMessageActivity(message, isLoading);
+  const [showRaw, setShowRaw] = useState(false);
+  if (!activity.length && !isLoading) return null;
+  const stats = activityStats(activity);
+  const summary = [`${stats.rows} ${stats.rows === 1 ? "step" : "steps"}`, stats.tools ? `${stats.tools} ${stats.tools === 1 ? "tool" : "tools"}` : "", durationLabel]
     .filter(Boolean)
     .join(" · ");
   return (
-    <details open={open || undefined} className="group/trace mt-3 max-w-none">
+    <details open={isLoading || undefined} className="group/trace mt-3 max-w-none">
       <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md py-1 text-xs text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
         <ChevronRight className="size-3.5 transition-transform group-open/trace:rotate-90" aria-hidden="true" />
         <span className="font-medium">Work details</span>
         <span className="text-muted-foreground/80">{summary}</span>
+        {stats.failed ? <span className="text-destructive/80">· {stats.failed} failed</span> : null}
       </summary>
-      <ol className="ml-1.5 mt-2 flex flex-col border-l border-border/70 pl-4">
-        {view.orderedEvents.map((event, index) => (
-          <li key={`${event.type}-${index}-${event.title || event.content || event.call?.name || ""}`} className="relative py-1 before:absolute before:-left-[1.3rem] before:top-[0.85rem] before:size-1.5 before:rounded-full before:bg-border">
-            <WorkTraceEvent event={event} index={index} />
-          </li>
-        ))}
-      </ol>
+      <ActivityFeed items={activity} raw={raw} showRaw={showRaw} onToggleRaw={() => setShowRaw((value) => !value)} copy={copy} className="mt-1" />
     </details>
-  );
-}
-
-function WorkTraceEvent({ event, index }) {
-  if (event.type === "step") {
-    return <StepTrace steps={[{ index: event.index || index + 1, title: event.title }]} compact />;
-  }
-
-  if (event.type === "thought") {
-    return <ThoughtTrace thoughts={[event]} compact />;
-  }
-
-  if (event.type === "tool_call") {
-    return <ToolCallTrace toolCalls={[event.call]} toolResults={event.result ? [event.result] : []} />;
-  }
-
-  if (event.type === "assistant_event") {
-    return <AssistantEventTrace events={[event]} compact />;
-  }
-
-  if (event.type === "status") {
-    return <StatusTrace event={event} />;
-  }
-
-  if (event.type === "error") {
-    return <StatusTrace event={event} tone="error" />;
-  }
-
-  return null;
-}
-
-function StatusTrace({ event, tone = "neutral" }) {
-  return (
-    <div className={cn("flex items-center gap-2 py-0.5 text-xs", tone === "error" ? "text-destructive" : "text-muted-foreground")}>
-      <span className="min-w-0 truncate">{event.title || statusEventTitle(event.status)}</span>
-      {event.timestamp ? <time className="ml-auto shrink-0 pl-3 text-[11px] tabular-nums text-muted-foreground/70">{formatShortTime(event.timestamp)}</time> : null}
-    </div>
-  );
-}
-
-function StepTrace({ steps, compact = false }) {
-  return (
-    <div className="space-y-2">
-      {steps.map((step, index) => (
-        <div key={`${step.index || index}-${step.title}`} className="grid grid-cols-[1.75rem,minmax(0,1fr)] gap-3">
-          <div className="flex size-7 items-center justify-center rounded-md border bg-background font-mono text-xs text-muted-foreground">
-            {step.index || index + 1}
-          </div>
-          <div className={cn("min-w-0 text-sm text-foreground/88", compact ? "py-1.5" : "rounded-md border bg-background/70 px-3 py-2")}>
-            {step.title}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ThoughtTrace({ thoughts, compact = false }) {
-  return (
-    <div className="space-y-2">
-      {thoughts.map((item, index) => (
-        <div key={`${index}-${item.thought.slice(0, 24)}`} className={cn(compact ? "py-1.5" : "rounded-md border bg-background/70 p-3")}>
-          {item.thought ? (
-            <div>
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">Thought</div>
-              <MarkdownBlocks text={item.thought} muted />
-            </div>
-          ) : null}
-          {item.reflection ? (
-            <div className={cn(item.thought && "mt-3 border-t pt-3")}>
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">Reflection</div>
-              <MarkdownBlocks text={item.reflection} muted />
-            </div>
-          ) : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ToolCallTrace({ toolCalls, toolResults }) {
-  return (
-    <div className="space-y-2">
-      {toolCalls.map((call, index) => {
-        const result = toolResults.find((item) => (call.id && item.id === call.id) || (!call.id && item.name === call.name));
-        const args = stringifyTraceValue(call.args);
-        return (
-          <div key={`${call.id || index}-${call.name}`} className="overflow-hidden rounded-md border bg-background/70">
-            <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
-              <Hammer className="size-4 text-primary" />
-              <code className="rounded bg-muted px-1.5 py-0.5 text-foreground">{call.name}</code>
-              {call.timestamp ? <time className="ml-auto">{formatShortTime(call.timestamp)}</time> : null}
-            </div>
-            {args ? (
-              <div className="border-b px-3 py-2">
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">Arguments</div>
-                <pre className="max-h-52 overflow-auto rounded-md bg-muted/35 p-3 font-mono text-xs leading-5 text-muted-foreground">
-                  <code>{args}</code>
-                </pre>
-              </div>
-            ) : null}
-            {result ? (
-              <div className="px-3 py-2">
-                <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">
-                  <CheckCircle2 className="size-3.5 text-primary" />
-                  Result
-                </div>
-                <pre className="max-h-64 overflow-auto rounded-md bg-muted/35 p-3 font-mono text-xs leading-5 text-muted-foreground">
-                  <code>{result.content}</code>
-                </pre>
-              </div>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function AssistantEventTrace({ events, compact = false }) {
-  return (
-    <div className="space-y-2">
-      {events.map((event, index) => (
-        <div key={`${index}-${event.content.slice(0, 24)}`} className={cn(compact ? "py-1.5" : "rounded-md border bg-background/70 p-3")}>
-          <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">
-            <Activity className="size-3.5" />
-            Assistant event
-            {event.timestamp ? <time className="ml-auto normal-case">{formatShortTime(event.timestamp)}</time> : null}
-          </div>
-          <MarkdownBlocks text={event.content} muted />
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -15970,18 +15836,52 @@ function RunList({ runs, tasks = [], agents = [], copy = getLocaleCopy(DEFAULT_L
               </Button>
             </div>
           </div>
-          <details className="mt-1.5 text-xs">
-            <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-              {run.logs.length ? `Output · ${run.logs.length} lines` : "Waiting for output…"}
-            </summary>
-            <code className="mt-2 block truncate text-[11px] text-muted-foreground">{run.command}</code>
-            <pre className="mt-2 max-h-44 overflow-auto text-xs leading-5 text-muted-foreground">
-              {run.logs.slice(-12).map((log) => `[${log.source}] ${log.line}`).join("\n") || "waiting for output..."}
-            </pre>
-          </details>
+          <RunActivity run={run} copy={copy} />
         </article>
       ))}
     </div>
+  );
+}
+
+/**
+ * Run output in the Execution panel: the activity feed folded from `run.logs`
+ * (the last 260 lines the runs list carries). Once a run has finished and the
+ * disclosure is open, the full history comes from `GET /api/runs/:id/activity`.
+ */
+function RunActivity({ run, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+  const [open, setOpen] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
+  const [history, setHistory] = useState(null);
+  const logs = Array.isArray(run.logs) ? run.logs : [];
+  const finished = !LIVE_RUN_STATUSES.has(run.status);
+  const localItems = useMemo(() => normalizeActivity(logs, { status: run.status }), [logs, run.status]);
+
+  useEffect(() => {
+    if (!open || !finished || history?.runId === run.id) return undefined;
+    let cancelled = false;
+    api(`/api/runs/${encodeURIComponent(run.id)}/activity`)
+      .then((data) => {
+        if (cancelled || !data || !Array.isArray(data.items)) return;
+        setHistory({ runId: run.id, items: data.items, raw: Array.isArray(data.raw) ? data.raw : logs });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, finished, run.id, history?.runId, logs]);
+
+  const useHistory = finished && history?.runId === run.id;
+  const items = useHistory ? history.items : localItems;
+  const raw = useHistory ? history.raw : logs;
+
+  return (
+    <details className="mt-1.5 text-xs" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+        {logs.length ? `Output · ${logs.length} lines` : "Waiting for output…"}
+      </summary>
+      <code className="mt-2 block truncate text-[11px] text-muted-foreground">{run.command}</code>
+      <ActivityFeed items={items} raw={raw} showRaw={showRaw} onToggleRaw={() => setShowRaw((value) => !value)} copy={copy} className="mt-2" />
+    </details>
   );
 }
 

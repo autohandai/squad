@@ -64,6 +64,10 @@ const UI_COPY_BY_LANGUAGE = {
   en: {
     account: "Account",
     agents: "Agents",
+    activityRaw: "Raw",
+    activityFeed: "Feed",
+    activityEmpty: "No activity yet.",
+    activityPending: "in progress",
     inbox: "Inbox",
     inboxDescription: "Replies, handoffs, and proposals that need you.",
     inboxUnreadChannels: "Unread channels",
