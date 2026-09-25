@@ -54,6 +54,8 @@ async function stageRuntime() {
   // Route plug-ins share pure logic with the web app (src/lib/*.js, no React,
   // no DOM); they import it relatively, so it ships beside server/.
   await cp(join(rootDir, 'src', 'lib'), join(runtimeDir, 'src', 'lib'), { recursive: true });
+  // The relay client (server/relay/sync.mjs) uses the relay's WebSocket framer.
+  await cp(join(rootDir, 'relay'), join(runtimeDir, 'relay'), { recursive: true });
 
   const modulesRoot = join(rootDir, 'node_modules');
   const sdkSource = join(modulesRoot, '@autohandai', 'agent-sdk');
