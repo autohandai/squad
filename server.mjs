@@ -5,6 +5,8 @@ import { SdkSessionPool } from "./server/sdk-sessions.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { profileWorkspace } from "./server/workspace-profile.mjs";
+import { bridgeEvents, emitBridgeEvent } from "./server/events.mjs";
+import { handlePluginRoute, loadRoutePlugins } from "./server/routes/index.mjs";
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
@@ -3368,6 +3370,7 @@ async function stopManagedRuns(reason = "service stopped") {
     }
     run.status = "stopped";
     run.finishedAt = new Date().toISOString();
+    emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
     appendLog(run, "system", reason);
   }
   return { stoppedRuns };
@@ -5412,6 +5415,7 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
         run.exitCode = 0;
         run.status = "completed";
         run.finishedAt = new Date().toISOString();
+        emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
         run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
         appendLog(run, "system", "SDK run completed");
         recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "sdk", status: run.status, trace: run.trace, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
@@ -5421,6 +5425,7 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
         run.exitCode = 1;
         run.status = "failed";
         run.finishedAt = new Date().toISOString();
+        emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
         appendLog(run, "stderr", error.message || String(error));
         recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "sdk", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
       }
@@ -5455,6 +5460,7 @@ function startCliRun(run, args, workspace, agentRuntime) {
     if (run.status === "stopped") return;
     run.status = "failed";
     run.finishedAt = new Date().toISOString();
+    emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
     appendLog(run, "system", error.message);
   });
   child.on("close", (code) => {
@@ -5466,6 +5472,7 @@ function startCliRun(run, args, workspace, agentRuntime) {
     }
     run.status = code === 0 ? "completed" : "failed";
     run.finishedAt = new Date().toISOString();
+    emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
     appendLog(run, "system", `exited with code ${code}`);
     recordUsageTelemetry("usage.recorded", usageMetadata({ payload: { agentId: run.agentId }, agentRuntime, transport: "cli", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
   });
@@ -5911,6 +5918,7 @@ async function startExternalHarnessRun(payload) {
         run.exitCode = output.exitCode;
         run.status = output.error ? "failed" : "completed";
         run.finishedAt = new Date().toISOString();
+        emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
         run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
         run.trace.harness = adapter.id;
         run.trace.sessionId = output.resumeId || "";
@@ -5923,6 +5931,7 @@ async function startExternalHarnessRun(payload) {
         run.exitCode = 1;
         run.status = "failed";
         run.finishedAt = new Date().toISOString();
+        emitBridgeEvent("run.finished", { runId: run.id, memberId: run.agentId || "", status: run.status, title: run.title || "", workspace: run.workspace || "" });
         appendLog(run, "stderr", error.message || String(error));
       }
     } finally {
@@ -6424,7 +6433,59 @@ async function openTerminal(payload) {
   };
 }
 
+// Bridge context handed to route plug-ins (docs/integration/CONTRACT.md).
+function routeContext() {
+  return {
+    rootDir,
+    squadStateDir,
+    squadWorkspaceRoot,
+    homeDir,
+    packageMetadata,
+    json,
+    readBody,
+    startEventStream,
+    logEvent,
+    SEVERITY,
+    readJsonFile,
+    readOptionalJsonFile,
+    writeJsonFile: async (path, data) => {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+    },
+    runs,
+    runSummary,
+    isLiveRun,
+    get sdkSessions() {
+      return sdkSessions;
+    },
+    readChannelsState,
+    writeChannelsState,
+    startRun,
+    events: bridgeEvents,
+    emit: emitBridgeEvent,
+    getRuntime,
+    cleanWorkspace,
+    spawnSync,
+  };
+}
+
 async function handleApi(req, res, url) {
+  if (await handlePluginRoute(req, res, url, routeContext())) return true;
+
+  // Client-side happenings (handoffs, approvals, mentions) reach the bridge
+  // event bus here so notifications and the audit trail can act on them.
+  if (url.pathname === "/api/events" && req.method === "POST") {
+    const payload = await readBody(req);
+    const name = String(payload.name || "").trim();
+    if (!/^[a-z]+(\.[a-z_]+)+$/.test(name)) {
+      json(res, 400, { success: false, error: "event name must look like handoff.pending" });
+      return true;
+    }
+    const { name: _ignored, ...rest } = payload;
+    json(res, 200, { success: true, data: emitBridgeEvent(name, rest) });
+    return true;
+  }
+
   if (url.pathname === "/api/runtime" && req.method === "GET") {
     json(res, 200, { success: true, data: getRuntime() });
     return true;
@@ -6784,8 +6845,11 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/chat" && req.method === "POST") {
     try {
       const payload = await readBody(req);
-      json(res, 200, { success: true, data: await chatOnce(payload) });
+      const reply = await chatOnce(payload);
+      emitBridgeEvent("chat.finished", { memberId: String(payload.agentId || ""), status: "completed", channelId: String(payload.channelId || payload.channel?.id || ""), preview: String(reply?.reply || reply?.output || "").slice(0, 140) });
+      json(res, 200, { success: true, data: reply });
     } catch (error) {
+      emitBridgeEvent("chat.finished", { memberId: "", status: "failed", preview: String(error?.message || "").slice(0, 140) });
       // Runtime failures carry the partial reply and trace exactly like the
       // streaming route's error event; a 502 marks the harness, not the caller.
       const status = error instanceof ChatRuntimeError ? 502 : error instanceof HarnessNotReadyError ? 409 : error.status || 400;
@@ -6803,7 +6867,9 @@ async function handleApi(req, res, url) {
     try {
       const payload = await readBody(req);
       await streamChat(payload, res);
+      emitBridgeEvent("chat.finished", { memberId: String(payload.agentId || ""), status: "completed", channelId: String(payload.channelId || payload.channel?.id || "") });
     } catch (error) {
+      emitBridgeEvent("chat.finished", { memberId: "", status: "failed", preview: String(error?.message || "").slice(0, 140) });
       json(res, 400, { success: false, error: error.message });
     }
     return true;
@@ -7139,6 +7205,7 @@ server = createServer(async (req, res) => {
 
 server.listen(port, host, () => {
   console.log(`autohandSWE listening on http://${host}:${port}`);
+  loadRoutePlugins(routeContext(), { log: console.log }).catch((error) => console.error(`route plug-ins failed: ${error?.message || error}`));
   logEvent(SEVERITY.INFO, `bridge listening on http://${host}:${port}`, {
     "server.address": host,
     "server.port": port,
