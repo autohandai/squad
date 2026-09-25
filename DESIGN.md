@@ -48,6 +48,7 @@
 - Channel composers should match the normal chat mention autocomplete behavior for `@here` and member handles, including keyboard selection. Channel loading placeholders should say the member is typing rather than thinking.
 - A Canvas tab sits beside the stream as an underlined text tab (Messages | Canvas in the channel header; the member chat reaches the same view from a header icon). The canvas is title, editor, and a 224px revision rail separated by one divider; member edits are a bold rail row with a dot, and the diff colours only the changed lines (soft green / soft rose), never the page. `@canvas:slug` in either composer attaches the canvas to the message.
 - Workflows live in the channel settings popover as a divider list (name, trigger summary, enabled switch) with a right-side drawer editor; a run appears in the stream as ordinary member messages carrying a small workflow tag, and an approval gate is one divider row with Approve, Decline and the emoji hint — no banners, no cards.
+- Media in a channel message is inline: images at most 320px tall, videos with native controls and a slim one-line scrubber underneath; anchors are small outlined text badges ("0:12 · region"), never pins or cards. Anchor mode is a thin accent ring on the media plus inline Cancel / Use anchor text buttons; a pending anchor or attachment is one outlined chip above the composer.
 
 ## Typography
 

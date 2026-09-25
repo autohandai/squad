@@ -76,6 +76,7 @@ import {
   PanelRightOpen,
   PanelLeftClose,
   PanelLeftOpen,
+  Paperclip,
   PencilLine,
   Play,
   Plus,
@@ -252,6 +253,9 @@ import {
   upsertRun as upsertWorkflowRun,
 } from "@/lib/workflows";
 import { MessageComposer } from "@/components/channels/MessageComposer";
+import { MediaAttachment } from "@/components/channels/MediaAttachment";
+import { AnchorChip } from "@/components/channels/AnchorChip";
+import { anchorsFromDraft, appendAnchorToken, frameKey, frameUrl, messageMediaContext, parseAnchorTokens, removeAnchorToken } from "@/lib/anchors";
 import { InboxPage } from "@/components/inbox/InboxPage";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
@@ -1127,10 +1131,14 @@ function sidebarActiveTarget(route, activeAgent) {
 const ATTACHMENT_TEXT_LIMIT = 200 * 1024;
 const ATTACHMENT_TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-yaml|yaml|toml|x-sh))/;
 
+function isTextLikeAttachment(file) {
+  return ATTACHMENT_TEXT_TYPES.test(file?.type || "") || /\.(md|txt|json|ya?ml|toml|js|jsx|ts|tsx|mjs|cjs|css|html|py|rs|go|sh|log|csv)$/i.test(file?.name || "");
+}
+
 async function attachFilesToDraft(files, setDraft) {
   const blocks = [];
   for (const file of files.slice(0, 5)) {
-    const textLike = ATTACHMENT_TEXT_TYPES.test(file.type || "") || /\.(md|txt|json|ya?ml|toml|js|jsx|ts|tsx|mjs|cjs|css|html|py|rs|go|sh|log|csv)$/i.test(file.name);
+    const textLike = isTextLikeAttachment(file);
     if (textLike && file.size <= ATTACHMENT_TEXT_LIMIT) {
       try {
         const content = await file.text();
@@ -1143,6 +1151,41 @@ async function attachFilesToDraft(files, setDraft) {
     blocks.push(`\n\n[attachment: ${file.name} (${Math.round(file.size / 1024)} KB, not inlined)]`);
   }
   if (blocks.length) setDraft((current) => `${current}${blocks.join("")}`.replace(/^\n+/, ""));
+}
+
+// Media attachments (#32, ADR-0024): images, videos and other binaries go to
+// the bridge as a raw body (`x-file-name` + `content-type`), which stores the
+// bytes under the squad state dir and returns the attachment record. `api`
+// spreads the caller's headers over its JSON defaults, so the File body is
+// sent untouched.
+async function uploadAttachment(file) {
+  return api("/api/attachments", {
+    method: "POST",
+    headers: { "x-file-name": encodeURIComponent(file.name), "content-type": file.type || "application/octet-stream" },
+    body: file,
+  });
+}
+
+// Split a composer drop: text-like files keep the inline `<attachment>` path,
+// everything else uploads and becomes a pending attachment on the message.
+async function attachChannelFiles(files, { setDraft, addAttachment, onError, copy = {} }) {
+  const list = Array.from(files || []);
+  const textLike = list.filter((file) => isTextLikeAttachment(file));
+  const binary = list.filter((file) => !isTextLikeAttachment(file));
+  if (textLike.length) await attachFilesToDraft(textLike, setDraft);
+  for (const file of binary) {
+    try {
+      const uploaded = await uploadAttachment(file);
+      if (uploaded?.id) addAttachment(uploaded);
+    } catch (error) {
+      const message = String(error?.message || "");
+      onError?.(
+        /larger than|413/i.test(message)
+          ? copy.attachmentTooLarge || message || "That file is larger than 25 MB."
+          : message || formatCopy(copy.attachmentUploadFailed || "Could not upload {name}.", { name: file.name })
+      );
+    }
+  }
 }
 
 // localStorage can throw (quota, private mode, locked-down webviews). A failed
@@ -6507,6 +6550,31 @@ function App() {
     }
   }
 
+  async function buildMessageMediaContext(channelId, attachments = [], anchors = []) {
+    const known = new Map((messagesByChannel[channelId] || []).flatMap((message) => message.attachments || []).map((item) => [item.id, item]));
+    for (const item of attachments) if (item?.id) known.set(item.id, item);
+    const files = [...attachments];
+    for (const anchor of anchors) {
+      const file = known.get(anchor.attachmentId);
+      if (file && !files.some((item) => item.id === file.id)) files.push(file);
+    }
+    if (!files.length) return "";
+    const framePaths = {};
+    await Promise.all(
+      anchors
+        .filter((anchor) => anchor.t !== null && anchor.t !== undefined && known.get(anchor.attachmentId)?.kind === "video")
+        .map(async (anchor) => {
+          try {
+            const frame = await api(frameUrl(anchor, { asJson: true }));
+            if (frame?.path) framePaths[frameKey(anchor)] = frame.path;
+          } catch {
+            // no ffmpeg on this machine: the member gets the timestamp only
+          }
+        })
+    );
+    return messageMediaContext(files, anchors, { framePaths });
+  }
+
   // Dispatch one channel prompt (or thread follow-up) to a single member.
   // Mirrors the member chat path so per-member chat semantics stay intact,
   // but records the reply in the channel thread and carries the channel
@@ -6514,7 +6582,7 @@ function App() {
   async function dispatchChannelMemberReply(
     channel,
     agent,
-    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null, canvases = [], marker = null }
+    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null, canvases = [], marker = null, attachments = [], anchors = [] }
   ) {
     // Workflow steps (#28) tag the reply and every update of it with the run
     // marker so the stream, search and bridge telemetry can group by run.
@@ -6553,9 +6621,14 @@ function App() {
       ...(workflowMarker || {}),
     });
 
+    // Media context (#32): anchors may point at media from earlier messages
+    // in the channel, so the lookup spans the whole channel. Frames are
+    // extracted best effort (no ffmpeg → timestamp only).
+    const mediaContext = await buildMessageMediaContext(channel.id, attachments, anchors);
     const profile = [
       buildAgentProfile(agent, selectedWorkspace),
       buildChannelProfileContext(channel, agent, agents, { autoMode, selfJudge, threadId, targetMemberIds, targetLabel, hop, relayFrom }),
+      mediaContext,
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -6778,7 +6851,7 @@ function App() {
   // One-prompt channel dispatch: a single user prompt opens a thread and fans
   // out to every squad member assigned to the channel; each member chooses its
   // own execution plan and posts an in-thread reply.
-  async function sendChannelPrompt(channelId, { prompt, autoMode, selfJudge, canvases = [] } = {}) {
+  async function sendChannelPrompt(channelId, { prompt, autoMode, selfJudge, canvases = [], attachments = [], anchors = [] } = {}) {
     const channel = channels.find((item) => item.id === channelId);
     const text = String(prompt || "").trim();
     if (!channel || !text) return;
@@ -6823,6 +6896,8 @@ function App() {
       targetLabel: target.targetLabel,
       createdAt: timestamp,
       updatedAt: timestamp,
+      ...(attachments.length ? { attachments } : {}),
+      ...(anchors.length ? { anchors } : {}),
     });
 
     await Promise.allSettled(
@@ -6836,6 +6911,8 @@ function App() {
           targetMemberIds: target.targetMemberIds,
           targetLabel: target.targetLabel,
           canvases,
+          attachments,
+          anchors,
         })
       )
     );
@@ -6843,7 +6920,7 @@ function App() {
 
   // Threaded follow-ups: replies stay grouped under the original thread and
   // reuse the thread's recorded auto-mode/self-judge defaults.
-  async function sendThreadFollowUp(channelId, threadId, prompt, { canvases = [] } = {}) {
+  async function sendThreadFollowUp(channelId, threadId, prompt, { canvases = [], attachments = [], anchors = [] } = {}) {
     const channel = channels.find((item) => item.id === channelId);
     const thread = (channelThreads[channelId] || []).find((item) => item.id === threadId);
     const text = String(prompt || "").trim();
@@ -6866,6 +6943,8 @@ function App() {
       targetLabel: target.targetLabel,
       createdAt: timestamp,
       updatedAt: timestamp,
+      ...(attachments.length ? { attachments } : {}),
+      ...(anchors.length ? { anchors } : {}),
     });
     setChannelThreads((current) => ({
       ...current,
@@ -6892,6 +6971,8 @@ function App() {
           targetMemberIds: target.targetMemberIds,
           targetLabel: target.targetLabel,
           canvases,
+          attachments,
+          anchors,
         })
       )
     );
@@ -8886,6 +8967,11 @@ function ChannelsPage({
   const [createOpen, setCreateOpen] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
   const [draft, setDraft] = useState("");
+  // Media (#32, ADR-0024): uploaded files waiting on the next send, plus the
+  // last upload problem shown as the composer hint. Pending anchors need no
+  // state: they live in the draft as `[[anchor:…]]` tokens.
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [attachHint, setAttachHint] = useState("");
   // Canvases (ADR-0023): the channel's shared documents live on the Canvas tab.
   const [view, setView] = useState("messages");
   const [activeCanvasId, setActiveCanvasId] = useState("");
@@ -8903,6 +8989,8 @@ function ChannelsPage({
     setDeleteArmed(false);
     setReplyTo(null);
     setDraft("");
+    setPendingAttachments([]);
+    setAttachHint("");
     setView("messages");
     setActiveCanvasId("");
   }, [activeChannelId]);
@@ -8918,6 +9006,26 @@ function ChannelsPage({
 
   // Presence (ADR-0014): who is thinking, typing, or running tools right now.
   const presenceItems = useMemo(() => presenceFromMessages(channelMessages, agents), [channelMessages, agents]);
+
+  // Media (#32): every anchor in the channel (a row keeps the ones with its
+  // id) and a lookup across all messages, since anchors may point at earlier
+  // media. Pending attachments join the lookup so the chip row can name them.
+  const channelAnchors = useMemo(() => channelMessages.flatMap((message) => message.anchors || []), [channelMessages]);
+  const attachmentsById = useMemo(
+    () => new Map([...channelMessages.flatMap((message) => message.attachments || []), ...pendingAttachments].map((item) => [item.id, item])),
+    [channelMessages, pendingAttachments]
+  );
+  const pendingAnchors = useMemo(() => parseAnchorTokens(draft), [draft]);
+  const addAnchorToDraft = (anchor) => setDraft((current) => appendAnchorToken(current, anchor));
+  function attachFiles(files) {
+    setAttachHint("");
+    return attachChannelFiles(files, {
+      setDraft,
+      copy,
+      addAttachment: (uploaded) => setPendingAttachments((current) => (current.some((item) => item.id === uploaded.id) ? current : [...current, uploaded])),
+      onError: setAttachHint,
+    });
+  }
 
   const channelProjects = useMemo(() => normalizeChannelProjects(channel?.projects), [channel?.projects]);
 
@@ -8994,12 +9102,19 @@ function ChannelsPage({
 
   function submitDraft(text) {
     if (!channel) return;
+    const { prompt: stripped, anchors } = anchorsFromDraft(text);
+    const attachments = pendingAttachments;
+    // A send with media but no words still needs a body: name the files.
+    const prompt = stripped || attachments.map((item) => item.name).join(", ");
+    if (!prompt) return;
+    setPendingAttachments([]);
+    setAttachHint("");
     if (replyTo?.threadId) {
-      onFollowUp?.(channel.id, replyTo.threadId, text, { canvases });
+      onFollowUp?.(channel.id, replyTo.threadId, prompt, { canvases, attachments, anchors });
       setReplyTo(null);
       return;
     }
-    onDispatch?.(channel.id, { prompt: text, autoMode: channel.autoModeDefault === true, selfJudge: channel.autoModeDefault === true, canvases });
+    onDispatch?.(channel.id, { prompt, autoMode: channel.autoModeDefault === true, selfJudge: channel.autoModeDefault === true, canvases, attachments, anchors });
   }
   void projectDraft;
 
@@ -9224,6 +9339,9 @@ function ChannelsPage({
                         <WorkflowTag workflow={found?.workflow || { name: message.workflowName || "" }} run={found?.run} stepId={message.stepId} showName={message.role !== "system"} copy={copy} className="mb-1" />
                       ) : null}
                       <MarkdownBlocks text={message.body || ""} />
+                      {(message.attachments || []).map((attachment) => (
+                        <MediaAttachment key={attachment.id} attachment={attachment} anchors={channelAnchors} onAnchor={addAnchorToDraft} copy={copy} />
+                      ))}
                       {message.role === "agent" || message.agentId ? (
                         <AgentWorkDetails message={message} isLoading={message.status === "loading"} durationLabel={messageDurationLabel(message)} copy={copy} />
                       ) : null}
@@ -9270,6 +9388,33 @@ function ChannelsPage({
                   </Button>
                 </div>
               ) : null}
+              {pendingAnchors.length || pendingAttachments.length ? (
+                <div className="mb-1.5 flex flex-wrap items-center gap-1.5 px-1" data-testid="pending-media">
+                  {pendingAnchors.map((anchor) => (
+                    <AnchorChip
+                      key={anchor.raw}
+                      anchor={anchor}
+                      attachment={attachmentsById.get(anchor.attachmentId)}
+                      onRemove={() => setDraft((current) => removeAnchorToken(current, anchor.raw))}
+                      copy={copy}
+                    />
+                  ))}
+                  {pendingAttachments.map((attachment) => (
+                    <span key={attachment.id} className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 py-0.5 pl-1.5 pr-1 text-xs text-foreground/90" data-attachment-id={attachment.id}>
+                      <Paperclip className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <span className="min-w-0 max-w-[12rem] truncate">{attachment.name}</span>
+                      <button
+                        type="button"
+                        aria-label={formatCopy(copy.attachmentRemove || "Remove {name}", { name: attachment.name })}
+                        className="grid size-4 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        onClick={() => setPendingAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                      >
+                        <X className="size-3" aria-hidden="true" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <MessageComposer
                 placeholder={formatCopy(copy.messageChannel || "Message #{name}", { name: channel.name })}
                 mentionItems={mentionItems}
@@ -9278,8 +9423,8 @@ function ChannelsPage({
                 busy={false}
                 disabled={!members.length && !replyTo}
                 onSubmit={submitDraft}
-                onAttach={(files) => attachFilesToDraft(files, setDraft)}
-                hint={!members.length ? copy.channelNoMembers : ""}
+                onAttach={attachFiles}
+                hint={attachHint || (!members.length ? copy.channelNoMembers : "")}
               />
               <PresenceLine items={presenceItems} copy={copy} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} />
             </div>
