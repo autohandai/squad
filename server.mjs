@@ -2376,6 +2376,17 @@ async function ensureAgentRuntime(input, workspace) {
   };
 }
 
+// Canvases (ADR-0023): a run or chat may carry `canvasDir`, the folder the
+// canvases plug-in materialised a canvas into. Only that folder is accepted.
+function canvasDirFor(input) {
+  const value = String(input?.canvasDir || "").trim();
+  if (!value) return "";
+  const allowed = join(squadStateDir, "canvas");
+  const resolved = resolve(value);
+  if (resolved !== allowed && !resolved.startsWith(`${allowed}/`)) return "";
+  return resolved;
+}
+
 async function autohandArgs(input) {
   const mode = input.mode || "prompt";
   const workspace = await cleanWorkspace(input.workspace);
@@ -2408,6 +2419,10 @@ async function autohandArgs(input) {
     if (project.path === workspace) continue;
     args.push("--add-dir", project.path);
     displayArgs.push("--add-dir", project.label || project.path);
+  }
+  if (canvasDirFor(input)) {
+    args.push("--add-dir", canvasDirFor(input));
+    displayArgs.push("--add-dir", "<canvas>");
   }
   if (profile) {
     args.push("--append-sys-prompt", profile);
@@ -2478,6 +2493,10 @@ function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
     if (project.path === workspace) continue;
     addDir.push(project.path);
     displayAddDir.push(project.label || project.path);
+  }
+  if (canvasDirFor(input)) {
+    addDir.push(canvasDirFor(input));
+    displayAddDir.push("<canvas>");
   }
 
   const extraArgs = ["--path", workspace, "--config", agentRuntime.configPath];
@@ -5685,6 +5704,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   const permissions = normalizeAgentPermissions(payload.agent);
   const addDirs = [];
   if (agentRuntime.profileDocs?.path) addDirs.push(agentRuntime.profileDocs.path);
+  if (canvasDirFor(payload)) addDirs.push(canvasDirFor(payload));
   for (const project of normalizeAgentProjects(payload.agent)) {
     if (project.path !== workspace) addDirs.push(project.path);
   }
@@ -5877,6 +5897,7 @@ async function startExternalHarnessRun(payload) {
     mode,
     channel: channelContext,
     recipeId: typeof payload.recipeId === "string" && payload.recipeId ? payload.recipeId : null,
+    canvasId: typeof payload.canvasId === "string" && payload.canvasId ? payload.canvasId : null,
     workspace,
     configPath: agentRuntime.configPath,
     displayConfigPath: agentRuntime.displayConfigPath,
@@ -5973,6 +5994,7 @@ async function startRun(payload) {
     // Goal 09: tag the run with the recipe it launched from so the evidence
     // timeline and done-criteria checks can reference the recipe by id.
     recipeId: typeof payload.recipeId === "string" && payload.recipeId ? payload.recipeId : null,
+    canvasId: typeof payload.canvasId === "string" && payload.canvasId ? payload.canvasId : null,
     workspace,
     configPath: agentRuntime.configPath,
     displayConfigPath: agentRuntime.displayConfigPath,
