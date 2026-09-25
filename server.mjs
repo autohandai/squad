@@ -5683,6 +5683,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     };
     recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "sdk", status: "completed", trace, command: context.command }));
     stream.send("done", result);
+    return result;
   } catch (error) {
     if (error instanceof AutohandStallError) {
       throw decorateStallError(error, agentRuntime);
@@ -5888,6 +5889,7 @@ async function streamChatWithExternalHarness(payload, { stream, signal, startedA
   recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime: { ...prepared.agentRuntime, effectiveModel: result.effectiveModel }, transport: prepared.adapter.id, status, trace: result.trace, command: output.command }));
   if (output.error) throw new ChatRuntimeError(output.error, result);
   stream.send("done", result);
+  return result;
 }
 
 async function startExternalHarnessRun(payload) {
@@ -6338,8 +6340,12 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
   }
   recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "cli", status: "completed", trace, command }));
   stream.send("done", result);
+  return result;
 }
 
+// Resolves with `{ status, preview }` once the stream has ended: "completed"
+// with the reply's first line, or "failed" with the error message, so the
+// route can emit chat.finished with an honest status.
 async function streamChat(payload, res) {
   const stream = startEventStream(res);
   const startedAt = Date.now();
@@ -6350,10 +6356,10 @@ async function streamChat(payload, res) {
   };
   res.on("close", abortStream);
 
+  const outcome = (result) => ({ status: "completed", preview: String(result?.reply || "").slice(0, 140) });
   try {
     if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {
-      await streamChatWithExternalHarness(payload, { stream, signal: abortController.signal, startedAt });
-      return;
+      return outcome(await streamChatWithExternalHarness(payload, { stream, signal: abortController.signal, startedAt }));
     }
     const { args, displayArgs, workspace, prompt, agentRuntime } = await autohandArgs({
       ...payload,
@@ -6387,8 +6393,7 @@ async function streamChat(payload, res) {
     const sdkPayload = { ...payload, mode: "prompt", dryRun: false };
     if (sdkTransportEnabled(sdkPayload, "prompt")) {
       try {
-        await streamChatWithSdk(sdkPayload, { workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal: abortController.signal });
-        return;
+        return outcome(await streamChatWithSdk(sdkPayload, { workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal: abortController.signal }));
       } catch (error) {
         if (!(error instanceof SdkBridgeStartupError)) {
           throw error;
@@ -6402,15 +6407,17 @@ async function streamChat(payload, res) {
       }
     }
 
-    await streamChatWithCli({ payload, args, displayArgs, workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal: abortController.signal });
+    return outcome(await streamChatWithCli({ payload, args, displayArgs, workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal: abortController.signal }));
   } catch (error) {
     const completedAt = Date.now();
+    const message = error instanceof Error ? error.message : String(error);
     stream.send("error", {
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
       completedAt: new Date(completedAt).toISOString(),
       durationMs: completedAt - startedAt,
       ...(error instanceof ChatRuntimeError && error.details ? error.details : {}),
     });
+    return { status: "failed", preview: message.slice(0, 140) };
   } finally {
     streamOpen = false;
     res.off("close", abortStream);
@@ -6903,8 +6910,14 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/chat/stream" && req.method === "POST") {
     try {
       const payload = await readBody(req);
-      await streamChat(payload, res);
-      emitBridgeEvent("chat.finished", { memberId: String(payload.agentId || ""), status: "completed", channelId: String(payload.channelId || payload.channel?.id || "") });
+      const outcome = await streamChat(payload, res);
+      emitBridgeEvent("chat.finished", {
+        memberId: String(payload.agentId || ""),
+        status: outcome?.status || "completed",
+        channelId: String(payload.channelId || payload.channel?.id || ""),
+        threadId: String(payload.threadId || payload.channel?.threadId || ""),
+        preview: String(outcome?.preview || ""),
+      });
     } catch (error) {
       emitBridgeEvent("chat.finished", { memberId: "", status: "failed", preview: String(error?.message || "").slice(0, 140) });
       json(res, 400, { success: false, error: error.message });
@@ -6976,6 +6989,14 @@ async function handleApi(req, res, url) {
         "event.name": "composer.shell",
         "autohand.workspace": workspace,
         "process.exit_code": result.status ?? -1,
+      });
+      // The composer sends memberId when it knows which member's chat ran the
+      // command; the audit trail records the shell.ran event under that member.
+      emitBridgeEvent("shell.ran", {
+        memberId: String(payload.memberId || payload.agentId || "").trim(),
+        command,
+        exitCode: result.status ?? -1,
+        workspace,
       });
       json(res, 200, {
         success: true,

@@ -242,10 +242,12 @@ import { ChannelStream } from "@/components/channels/ChannelStream";
 import { MessageComposer } from "@/components/channels/MessageComposer";
 import { InboxPage } from "@/components/inbox/InboxPage";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
+import { MemberHistory } from "@/components/members/MemberHistory";
+import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
-import { activityFromTrace, activityStats, normalizeActivity } from "@/lib/activity";
+import { activityFromTrace, activityStats, classifyTool, normalizeActivity } from "@/lib/activity";
 import {
   commandsForHarness,
   composerTrigger,
@@ -2078,6 +2080,7 @@ const MEMBER_SECTIONS = [
   { id: "triggers", label: "Automations", icon: Clock3 },
   { id: "task", label: "Tasks", icon: CalendarCheck2 },
   { id: "memory", label: "Memory", icon: BrainCog },
+  { id: "history", label: "History", icon: History },
   { id: "model", label: "Model", icon: Brain },
   { id: "harness", label: "Harness", icon: Cpu },
   { id: "skill", label: "Skill", icon: Sparkles },
@@ -3908,6 +3911,57 @@ function appendRawTraceText(raw, stream, output) {
 // dropping the oldest entries only trims history.
 const MAX_STREAM_EVENTS_PER_MESSAGE = 800;
 
+// Audit trail (#34): client-side actions the bridge cannot see are POSTed to
+// the member's activity log, fire-and-forget. Replies and shell commands are
+// recorded by the bridge itself (chat.finished, shell.ran), so only edits the
+// app observes in a reply's tool stream go through here.
+function recordMemberActivity(memberId, payload) {
+  const id = normalizeSquadMemberId(memberId);
+  if (!id || !payload) return;
+  api(`/api/members/${encodeURIComponent(id)}/activity`, { method: "POST", body: JSON.stringify(payload) }).catch(() => {});
+}
+
+const EDIT_PATH_KEYS = ["path", "file_path", "filePath", "file", "filename", "target_file", "notebook_path"];
+
+function editedPathsFrom(args) {
+  if (!args || typeof args !== "object") return [];
+  if (Array.isArray(args.changes) && args.changes.length) {
+    return args.changes.map((change) => String(change?.path || "").trim()).filter(Boolean);
+  }
+  for (const key of EDIT_PATH_KEYS) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) return [value.trim()];
+  }
+  return [];
+}
+
+function displayPathIn(path, workspace) {
+  const root = String(workspace || "").replace(/\/+$/, "");
+  return root && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
+}
+
+/** One `edit` record per file an edit/write tool touched during a reply. */
+function recordObservedEdits(memberId, events = [], refs = {}) {
+  if (!memberId || !Array.isArray(events) || !events.length) return;
+  const failedTools = new Set(events.filter((event) => event?.type === "tool_end" && event.error).map((event) => String(event.toolId || "")));
+  const seen = new Set();
+  for (const event of events) {
+    if (!event || event.type !== "tool_start" || classifyTool(event.toolName).kind !== "edit") continue;
+    if (event.toolId && failedTools.has(String(event.toolId))) continue;
+    for (const path of editedPathsFrom(event.args)) {
+      if (seen.has(path) || seen.size >= 40) continue;
+      seen.add(path);
+      recordMemberActivity(memberId, {
+        kind: "edit",
+        summary: `Edited ${displayPathIn(path, refs.workspace)}`,
+        eventName: "file.edited",
+        at: event.timestamp || undefined,
+        refs: { path, ...refs },
+      });
+    }
+  }
+}
+
 function appendStreamEvent(events, event) {
   if (!event || typeof event !== "object") return events;
   const last = events[events.length - 1];
@@ -5196,6 +5250,14 @@ function App() {
     const params = new URLSearchParams(route.split("?")[1] || "");
     return String(params.get("prompt") || "");
   }, [route]);
+  // `?panel=runs&run=<id>` (member history links) opens the Execution panel
+  // on that tab once and expands the run's output.
+  const requestedPanel = useMemo(() => {
+    const params = new URLSearchParams(route.split("?")[1] || "");
+    const panel = String(params.get("panel") || "");
+    if (!["runs", "tasks", "automations"].includes(panel)) return null;
+    return { tab: panel, runId: String(params.get("run") || "") };
+  }, [route]);
   const settingsSection = useMemo(() => {
     const params = new URLSearchParams(route.split("?")[1] || "");
     const section = params.get("section") || "";
@@ -5862,6 +5924,8 @@ function App() {
         completedAt,
         durationMs: Math.round(performance.now() - requestStartedAt),
       };
+    } finally {
+      recordObservedEdits(agentId, liveEvents, { messageId: `${id}-a`, workspace: selectedWorkspace });
     }
   }
 
@@ -6158,6 +6222,7 @@ function App() {
       });
     } finally {
       window.clearTimeout(timeout);
+      recordObservedEdits(agent.id, liveEvents, { channelId: channel.id, messageId, threadId, workspace: selectedWorkspace });
     }
 
     // Agents talk to each other: when a reply @mentions other channel members,
@@ -7395,6 +7460,12 @@ function App() {
                 initialPrompt={requestedPrompt}
                 onInitialPromptConsumed={() => {
                   const next = routeWithParams(route, { prompt: null });
+                  window.history.replaceState({}, "", next);
+                  setRoute(next);
+                }}
+                initialPanel={requestedPanel}
+                onInitialPanelConsumed={() => {
+                  const next = routeWithParams(route, { panel: null, run: null });
                   window.history.replaceState({}, "", next);
                   setRoute(next);
                 }}
@@ -10331,6 +10402,8 @@ function Conversation({
   harnessesLoading = false,
   onRefreshHarnesses,
   onLocalMessage,
+  initialPanel = null,
+  onInitialPanelConsumed,
 }) {
   const defaultLaunch = agent.launch || { mode: "prompt", policy: "restricted", model: "", dryRun: false };
   const [harnessDraft, setHarnessDraft] = useState(() => harnessForAgent(agent));
@@ -10352,6 +10425,13 @@ function Conversation({
   const [workspaceDraft, setWorkspaceDraft] = useState("");
   const [workspaceError, setWorkspaceError] = useState("");
   const [panelTab, setPanelTab] = useState("runs");
+  const [focusRunId, setFocusRunId] = useState("");
+  useEffect(() => {
+    if (!initialPanel) return;
+    openPanel(initialPanel.tab);
+    setFocusRunId(initialPanel.runId || "");
+    onInitialPanelConsumed?.();
+  }, [initialPanel]);
   const [profilePreviewOpen, setProfilePreviewOpen] = useState(false);
   const [automationFormOpen, setAutomationFormOpen] = useState(false);
   // Goal 09: recipe catalog + launch state for the composer.
@@ -10936,7 +11016,7 @@ function Conversation({
   async function runShellCommand(command) {
     onLocalMessage?.(agent.id, { id: `shell-u-${Date.now().toString(36)}`, role: "user", body: `!${command}`, time: new Date().toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) });
     try {
-      const result = await api("/api/shell", { method: "POST", body: JSON.stringify({ workspace, command }) });
+      const result = await api("/api/shell", { method: "POST", body: JSON.stringify({ workspace, command, memberId: agent.id }) });
       const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trimEnd();
       const status = result.timedOut ? "timed out" : `exit ${result.exitCode ?? "?"}`;
       postLocalNote(`\`\`\`\n$ ${command}\n${output || "(no output)"}\n\`\`\`\n${status} · ${Math.round((result.durationMs || 0) / 100) / 10}s · ${workspaceName(workspace) || workspace}`, "shell");
@@ -11591,6 +11671,7 @@ function Conversation({
             runAutomation={runAutomation}
             activeTab={panelTab}
             setActiveTab={setPanelTab}
+            focusRunId={focusRunId}
             copy={copy}
             handoffRetryMode={handoffRetryMode}
             onCreateHandoff={onCreateHandoff}
@@ -15822,6 +15903,7 @@ function TaskPanel({
   runAutomation,
   activeTab = "runs",
   setActiveTab,
+  focusRunId = "",
   copy = getLocaleCopy(DEFAULT_LOCALE),
   handoffRetryMode = DEFAULT_HANDOFF_RETRY_MODE,
   onCreateHandoff,
@@ -15879,7 +15961,7 @@ function TaskPanel({
         </div>
         <ScrollArea className="min-h-0 flex-1">
           <TabsContent value="runs" className="m-0 p-5">
-            <RunList runs={runs} tasks={tasks} agents={agents} copy={copy} onHandoff={openRunHandoff} />
+            <RunList runs={runs} tasks={tasks} agents={agents} copy={copy} onHandoff={openRunHandoff} focusRunId={focusRunId} />
           </TabsContent>
           <TabsContent value="tasks" className="m-0 p-5">
             <TaskList
@@ -15948,14 +16030,19 @@ function MissionControlStrip({ tasks = [], agents = [] }) {
   );
 }
 
-function RunList({ runs, tasks = [], agents = [], copy = getLocaleCopy(DEFAULT_LOCALE), onHandoff }) {
+function RunList({ runs, tasks = [], agents = [], copy = getLocaleCopy(DEFAULT_LOCALE), onHandoff, focusRunId = "" }) {
+  // A history link (?panel=runs&run=<id>) lands on that run with its output open.
+  useEffect(() => {
+    if (!focusRunId) return;
+    document.getElementById(`run-${focusRunId}`)?.scrollIntoView({ block: "start" });
+  }, [focusRunId, runs.length]);
   if (!runs.length) {
     return <EmptyBlock icon={TerminalSquare} title={copy.noAutohandRuns} body={copy.runsAppearAfterLaunch} />;
   }
   return (
     <div className="-mx-1 divide-y divide-border/60">
       {runs.map((run) => (
-        <article key={run.id} className="px-1 py-3">
+        <article key={run.id} id={`run-${run.id}`} className="px-1 py-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-sm">
@@ -15976,7 +16063,7 @@ function RunList({ runs, tasks = [], agents = [], copy = getLocaleCopy(DEFAULT_L
               </Button>
             </div>
           </div>
-          <RunActivity run={run} copy={copy} />
+          <RunActivity run={run} copy={copy} initialOpen={Boolean(focusRunId) && run.id === focusRunId} />
         </article>
       ))}
     </div>
@@ -15988,8 +16075,11 @@ function RunList({ runs, tasks = [], agents = [], copy = getLocaleCopy(DEFAULT_L
  * (the last 260 lines the runs list carries). Once a run has finished and the
  * disclosure is open, the full history comes from `GET /api/runs/:id/activity`.
  */
-function RunActivity({ run, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
-  const [open, setOpen] = useState(false);
+function RunActivity({ run, copy = getLocaleCopy(DEFAULT_LOCALE), initialOpen = false }) {
+  const [open, setOpen] = useState(Boolean(initialOpen));
+  useEffect(() => {
+    if (initialOpen) setOpen(true);
+  }, [initialOpen]);
   const [showRaw, setShowRaw] = useState(false);
   const [history, setHistory] = useState(null);
   const logs = Array.isArray(run.logs) ? run.logs : [];
@@ -18674,6 +18764,10 @@ function SquadMemberSectionPage({
     );
   }
 
+  if (section === "history") {
+    return <MemberHistoryPage agent={agent} copy={copy} locale={locale} navigate={navigate} />;
+  }
+
   if (section === "memory") {
     return (
       <MemoryInboxPage
@@ -18749,6 +18843,99 @@ function SquadMemberSectionPage({
           </CardFooter>
         </Card>
 
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Profile "History" section (#34): the member's audit trail from
+ * GET /api/members/:id/activity, filtered server-side and paged by record id.
+ */
+function MemberHistoryPage({ agent, copy = getLocaleCopy(DEFAULT_LOCALE), locale = DEFAULT_LOCALE, navigate }) {
+  const [records, setRecords] = useState([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [filter, setFilter] = useState("all");
+  const [loading, setLoading] = useState(false);
+  const requestRef = useRef(0);
+  const memberId = agent.id;
+
+  async function load({ reset = false, kind = filter } = {}) {
+    const request = ++requestRef.current;
+    setLoading(true);
+    try {
+      const before = reset ? "" : nextCursor(records);
+      const query = new URLSearchParams({
+        limit: String(HISTORY_PAGE),
+        ...(before ? { before } : {}),
+        ...(kind !== "all" ? { kind } : {}),
+      });
+      const page = await api(`/api/members/${encodeURIComponent(memberId)}/activity?${query}`);
+      if (request !== requestRef.current) return;
+      const incoming = Array.isArray(page?.records) ? page.records : [];
+      setRecords((current) => (reset ? mergeRecords([], incoming) : mergeRecords(current, incoming)));
+      setHasMore(Boolean(page?.hasMore));
+    } catch {
+      if (request === requestRef.current && reset) setRecords([]);
+    } finally {
+      if (request === requestRef.current) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setFilter("all");
+    void load({ reset: true, kind: "all" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberId]);
+
+  const linkClass = "underline-offset-4 hover:underline";
+  function renderLink(ref) {
+    if (!ref?.id) return null;
+    if (ref.type === "channel") {
+      return <MissionAnchor href={channelsPath(ref.id)} navigate={navigate} className={linkClass}>{ref.label}</MissionAnchor>;
+    }
+    if (ref.type === "task") {
+      return (
+        <MissionAnchor href={`${memberProfilePath(memberId, "task")}?task=${encodeURIComponent(ref.id)}`} navigate={navigate} className={linkClass}>
+          {ref.label}
+        </MissionAnchor>
+      );
+    }
+    if (ref.type === "member") {
+      return <MissionAnchor href={memberProfilePath(ref.id, "home")} navigate={navigate} className={linkClass}>{ref.label}</MissionAnchor>;
+    }
+    if (ref.type === "run") {
+      return (
+        <MissionAnchor href={`${memberChatPath(memberId)}&panel=runs&run=${encodeURIComponent(ref.id)}`} navigate={navigate} className={linkClass}>
+          {ref.label}
+        </MissionAnchor>
+      );
+    }
+    return null;
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <PageTitle title={localizedSectionLabel("history", copy)} />
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
+        <p className="text-sm text-muted-foreground">
+          {agent.name} / {localizedRole(agent, copy)}
+        </p>
+        <MemberHistory
+          records={records}
+          hasMore={hasMore}
+          loading={loading}
+          filter={filter}
+          onFilter={(kind) => {
+            setFilter(kind);
+            void load({ reset: true, kind });
+          }}
+          onLoadMore={() => load()}
+          onExport={() => window.open(`/api/members/${encodeURIComponent(memberId)}/activity/export`, "_blank")}
+          copy={copy}
+          locale={locale}
+          renderLink={renderLink}
+        />
       </div>
     </div>
   );
