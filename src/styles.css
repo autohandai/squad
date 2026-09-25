@@ -3,12 +3,7 @@
 
 @source "./App.jsx";
 @source "./data.js";
-@source "./components/channels/**/*.jsx";
-@source "./components/shell/**/*.jsx";
-@source "./components/members/**/*.jsx";
-@source "./components/inbox/**/*.jsx";
-@source "./components/ui/**/*.jsx";
-@source "./components/canvases/**/*.jsx";
+@source "./components/**/*.jsx";
 @source "./lib/**/*.js";
 
 /* Autohand type: Autohand Sans (variable, from public/fonts) for UI and
