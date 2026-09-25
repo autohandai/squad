@@ -385,7 +385,15 @@ function settle(workflow, run, now) {
   }
   const previous = lastFinishedResult(next);
   const failed = previous?.status === "failed";
-  return { ...next, status: failed ? "failed" : "completed", pendingApproval: null, finishedAt: now, error: failed ? next.error || `${previous.stepId} failed` : "" };
+  return { ...next, status: failed ? "failed" : "completed", pendingApproval: null, finishedAt: now, error: failed ? next.error || stepFailureText(workflow, previous) : "" };
+}
+
+// "step 2 of 3: <reply preview>" rather than the raw step id, so the stream row
+// and the search doc read like a sentence.
+function stepFailureText(workflow, result) {
+  const index = workflow.steps.findIndex((step) => step.id === result.stepId);
+  const position = index >= 0 ? `step ${index + 1} of ${workflow.steps.length}` : "a step";
+  return result.preview ? `${position}: ${result.preview}` : `${position} failed`;
 }
 
 /** A fresh run for a workflow; already parked at an approval when step one is gated. */
