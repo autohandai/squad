@@ -240,6 +240,17 @@ import {
   unreadCount as unreadNotificationCount,
 } from "@/lib/notifications";
 import { ChannelStream } from "@/components/channels/ChannelStream";
+import { WorkflowsSettings } from "@/components/channels/WorkflowsSettings";
+import { WorkflowRunMessage, WorkflowTag } from "@/components/channels/WorkflowRunMessage";
+import {
+  evaluateTriggers as evaluateWorkflowTriggers,
+  findRun as findWorkflowRun,
+  isTerminal as isWorkflowRunTerminal,
+  reactionApprovesRun as reactionApprovesWorkflowRun,
+  runStatusLabel as workflowRunStatusLabel,
+  triggerSummary as workflowTriggerSummary,
+  upsertRun as upsertWorkflowRun,
+} from "@/lib/workflows";
 import { MessageComposer } from "@/components/channels/MessageComposer";
 import { InboxPage } from "@/components/inbox/InboxPage";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
@@ -324,6 +335,7 @@ const STORAGE_KEYS = {
   theme: "autohandSquad.v1.theme",
   inboxReadAt: "autohandSquad.v1.inboxReadAt",
   channelProposals: "autohandSquad.v1.channelProposals",
+  workflowTriggers: "autohandSquad.v1.workflowTriggers",
 };
 
 // Fallback identity before the bridge reports the signed-in account.
@@ -3753,6 +3765,10 @@ function isMemberProfileRoute(route) {
 // (channels, channel messages, runs); the app pushes what only the browser
 // holds. These builders produce the `doc` shape POST /api/search/index takes.
 const SEARCH_PUSHED_KEY = "autohandSquad.v1.searchPushedAt";
+// Channel workflows (#28): how often the app asks the bridge for steps a
+// schedule or webhook started, and how many fired trigger keys to keep.
+const WORKFLOW_POLL_MS = 10_000;
+const WORKFLOW_FIRED_KEYS_KEPT = 2000;
 const SEARCH_PUSH_BATCH = 400;
 const SEARCH_FLUSH_MS = 250;
 const SEARCH_SEED_MESSAGE_ID = "m1";
@@ -3804,6 +3820,34 @@ function searchDocsForChannelMessages(messagesByChannel = {}, channels = []) {
         route: `${channelsPath(channel.id)}?message=${encodeURIComponent(message.id)}`,
         at: searchMessageTime(message),
       });
+    }
+  }
+  return docs;
+}
+
+// Channel workflows (#28): one doc per finished run so a search for the
+// workflow name, the triggering message or a step's result finds it.
+function searchDocsForWorkflowRuns(workflowsByChannel = {}, channels = []) {
+  const docs = [];
+  for (const [channelId, list] of Object.entries(workflowsByChannel)) {
+    const channel = channels.find((item) => item.id === channelId);
+    if (!channel) continue;
+    for (const workflow of Array.isArray(list) ? list : []) {
+      for (const run of Array.isArray(workflow?.runs) ? workflow.runs : []) {
+        if (!run?.id || !isWorkflowRunTerminal(run)) continue;
+        const previews = (run.stepResults || []).map((result) => result.preview).filter(Boolean);
+        docs.push({
+          id: `workflow:${run.id}`,
+          type: "workflow",
+          title: `${workflow.name} · #${channel.name}`,
+          body: [workflowRunStatusLabel(run.status), workflowTriggerSummary(workflow), run.trigger?.messageBody || "", run.error || "", ...previews].filter(Boolean).join("\n"),
+          memberId: workflow.steps?.[0]?.memberId || "",
+          channelId: channel.id,
+          runId: run.id,
+          route: missionControlPath({ workflow: workflow.id }),
+          at: run.finishedAt || run.startedAt || undefined,
+        });
+      }
     }
   }
   return docs;
@@ -3874,12 +3918,13 @@ function searchDocForCanvas(canvas) {
 }
 
 /** Every browser-held record as search docs (boot push and Rebuild). */
-function collectSearchDocs({ agents = [], tasks = [], messagesByAgent = {}, messagesByChannel = {}, channels = [] }) {
+function collectSearchDocs({ agents = [], tasks = [], messagesByAgent = {}, messagesByChannel = {}, channels = [], workflowsByChannel = {} }) {
   return [
     ...searchDocsForMembers(agents),
     ...searchDocsForTasks(tasks, agents),
     ...searchDocsForDirectMessages(messagesByAgent, agents),
     ...searchDocsForChannelMessages(messagesByChannel, channels),
+    ...searchDocsForWorkflowRuns(workflowsByChannel, channels),
   ];
 }
 
@@ -4611,6 +4656,19 @@ function App() {
     mergeSeedChannelMessages(readStored(storageKeysFor("channelMessages"), {}))
   );
   const [channelsBridgeReady, setChannelsBridgeReady] = useState(false);
+  // Channel workflows (#28, ADR-0021). The bridge owns workflows and their
+  // runs (channel-workflows.json); this is a mirror keyed by channel id and
+  // stays off the channel object, which normalizeChannelCopy would strip.
+  // Fired keys make each message or reaction start a workflow at most once,
+  // and the same set remembers which approvals a reaction already gave.
+  const [workflowsByChannel, setWorkflowsByChannel] = useState({});
+  const [firedWorkflowKeys, setFiredWorkflowKeys] = useState(() => {
+    const stored = readStored(storageKeysFor("workflowTriggers"), []);
+    return Array.isArray(stored) ? stored.filter((key) => typeof key === "string") : [];
+  });
+  const firedWorkflowKeysRef = useRef(firedWorkflowKeys);
+  const seenWorkflowIdsRef = useRef(new Set());
+  const dispatchedWorkflowStepsRef = useRef(new Set());
   const [runs, setRuns] = useState([]);
   const [runtime, setRuntime] = useState(null);
   const [workspaces, setWorkspaces] = useState([]);
@@ -4828,13 +4886,32 @@ function App() {
     persistLocal(STORAGE_KEYS.channelMessages, messagesByChannel);
   }, [messagesByChannel]);
 
+  useEffect(() => {
+    persistLocal(STORAGE_KEYS.workflowTriggers, firedWorkflowKeys.slice(-WORKFLOW_FIRED_KEYS_KEPT));
+  }, [firedWorkflowKeys]);
+
+  useEffect(() => {
+    if (!channelsBridgeReady) return undefined;
+    let cancelled = false;
+    api("/api/workflows")
+      .then((data) => {
+        if (!cancelled && data?.channels && typeof data.channels === "object") setWorkflowsByChannel(data.channels);
+      })
+      .catch(() => {
+        // No workflows route on this bridge: the settings section stays empty.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelsBridgeReady]);
+
   // Search (#33): the bridge index only learns about browser-held records
   // (members, tasks, handoffs, DM messages, optimistic channel posts) from
   // the app. Each state change is diffed against what was last pushed and
   // sent as one batched call; ids that vanish are removed. The first boot
   // pushes everything held in localStorage once.
-  const searchStateRef = useRef({ agents, tasks, messagesByAgent, messagesByChannel, channels });
-  searchStateRef.current = { agents, tasks, messagesByAgent, messagesByChannel, channels };
+  const searchStateRef = useRef({ agents, tasks, messagesByAgent, messagesByChannel, channels, workflowsByChannel });
+  searchStateRef.current = { agents, tasks, messagesByAgent, messagesByChannel, channels, workflowsByChannel };
   const searchSyncRef = useRef({ ready: false, signatures: new Map(), scopes: new Map(), docs: new Map(), removals: new Set(), timer: 0 });
 
   const flushSearchQueue = useCallback(() => {
@@ -4905,6 +4982,7 @@ function App() {
         tasks: searchDocsForTasks(state.tasks, state.agents),
         dm: searchDocsForDirectMessages(state.messagesByAgent, state.agents),
         channel: searchDocsForChannelMessages(state.messagesByChannel, state.channels),
+        workflows: searchDocsForWorkflowRuns(state.workflowsByChannel, state.channels),
       };
       for (const [scope, docs] of Object.entries(scopes)) seedSearchScope(scope, docs);
       searchSyncRef.current.ready = true;
@@ -4935,6 +5013,9 @@ function App() {
   useEffect(() => {
     syncSearchScope("channel", searchDocsForChannelMessages(messagesByChannel, channels));
   }, [messagesByChannel, channels, syncSearchScope]);
+  useEffect(() => {
+    syncSearchScope("workflows", searchDocsForWorkflowRuns(workflowsByChannel, channels));
+  }, [workflowsByChannel, channels, syncSearchScope]);
 
   // Settings → Runtime → Rebuild index: every browser-held doc plus every
   // canvas the bridge lists; the route adds channels, channel messages, and runs.
@@ -4955,6 +5036,7 @@ function App() {
     seedSearchScope("tasks", searchDocsForTasks(state.tasks, state.agents));
     seedSearchScope("dm", searchDocsForDirectMessages(state.messagesByAgent, state.agents));
     seedSearchScope("channel", searchDocsForChannelMessages(state.messagesByChannel, state.channels));
+    seedSearchScope("workflows", searchDocsForWorkflowRuns(state.workflowsByChannel, state.channels));
     try {
       window.localStorage.setItem(SEARCH_PUSHED_KEY, new Date().toISOString());
     } catch {
@@ -6432,8 +6514,11 @@ function App() {
   async function dispatchChannelMemberReply(
     channel,
     agent,
-    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null, canvases = [] }
+    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null, canvases = [], marker = null }
   ) {
+    // Workflow steps (#28) tag the reply and every update of it with the run
+    // marker so the stream, search and bridge telemetry can group by run.
+    const workflowMarker = marker?.workflowRunId ? { workflowRunId: marker.workflowRunId, workflowId: marker.workflowId || "", workflowName: marker.workflowName || "", stepId: marker.stepId || "" } : null;
     const now = new Date();
     const startedAt = now.toISOString();
     const time = now.toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" });
@@ -6465,6 +6550,7 @@ function App() {
       activityLabel: relayFrom ? `Replying to ${relayFrom.name} in #${channel.name}` : `Replying in #${channel.name}`,
       hop,
       relayFromAgentId: relayFrom?.id || "",
+      ...(workflowMarker || {}),
     });
 
     const profile = [
@@ -6510,12 +6596,14 @@ function App() {
         runtime: { autoMode: autoMode === true, selfJudge: selfJudge === true },
       },
       ...(canvasAttachment.canvasId ? { canvasId: canvasAttachment.canvasId, canvasDir: canvasAttachment.canvasDir } : {}),
+      ...(workflowMarker || {}),
     };
 
     let streamedAnswer = "";
     let streamError = null;
     let completed = false;
     let finalReplyText = "";
+    let settledStep = null;
     let liveEvents = [];
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 305000);
@@ -6532,6 +6620,7 @@ function App() {
               channel: data.channel,
               activityLabel: "Running local runtime...",
               updatedAt: new Date().toISOString(),
+              ...(workflowMarker || {}),
             });
             return;
           }
@@ -6550,6 +6639,7 @@ function App() {
               status: "loading",
               activityLabel: streamActivityLabel(data) || `Replying in #${channel.name}`,
               updatedAt: new Date().toISOString(),
+              ...(workflowMarker || {}),
             });
             return;
           }
@@ -6581,7 +6671,9 @@ function App() {
               durationMs: data.durationMs,
               activityLabel: "",
               updatedAt: completedAt,
+              ...(workflowMarker || {}),
             });
+            settledStep = { status: "completed", preview: replyText };
             return;
           }
           if (event === "error") {
@@ -6601,6 +6693,7 @@ function App() {
               durationMs: data.durationMs,
               activityLabel: "",
               updatedAt: completedAt,
+              ...(workflowMarker || {}),
             });
           }
         }
@@ -6617,7 +6710,9 @@ function App() {
           completedAt,
           activityLabel: "",
           updatedAt: completedAt,
+          ...(workflowMarker || {}),
         });
+        settledStep = { status: "completed", preview: replyText };
       }
     } catch (error) {
       const completedAt = new Date().toISOString();
@@ -6638,12 +6733,18 @@ function App() {
         durationMs: details.durationMs,
         activityLabel: "",
         updatedAt: completedAt,
+        ...(workflowMarker || {}),
       });
+      settledStep = { status: "failed", preview: message };
     } finally {
       window.clearTimeout(timeout);
       recordObservedEdits(agent.id, liveEvents, { channelId: channel.id, messageId, threadId, workspace: selectedWorkspace });
       void absorbCanvas(canvasAttachment.canvasId, agent.id);
     }
+
+    // A workflow step settles its run on the bridge; the result may hand back
+    // the next step to dispatch or park the run at an approval gate.
+    if (workflowMarker && settledStep) await finishWorkflowStep(workflowMarker, settledStep);
 
     // Agents talk to each other: when a reply @mentions other channel members,
     // they answer in the same thread with the reply as context. Hops are
@@ -6795,6 +6896,335 @@ function App() {
       )
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Channel workflows (#28, ADR-0021). The bridge route owns the state
+  // machine; the app evaluates message and reaction triggers (single user),
+  // posts the approval request, and dispatches each step through the normal
+  // channel reply path so a run reads as ordinary member messages.
+
+  const workflowStateRef = useRef({ channels, agents, messagesByChannel, workflowsByChannel });
+  workflowStateRef.current = { channels, agents, messagesByChannel, workflowsByChannel };
+
+  // Remember a trigger or approval key synchronously (the ref) so the effect
+  // cannot fire it twice before React commits the state update.
+  function rememberFiredWorkflowKey(key) {
+    if (!key || firedWorkflowKeysRef.current.includes(key)) return false;
+    firedWorkflowKeysRef.current = [...firedWorkflowKeysRef.current, key].slice(-WORKFLOW_FIRED_KEYS_KEPT);
+    setFiredWorkflowKeys(firedWorkflowKeysRef.current);
+    return true;
+  }
+
+  function replaceWorkflowInState(channelId, workflow) {
+    if (!workflow?.id) return;
+    setWorkflowsByChannel((current) => {
+      const list = current[channelId] || [];
+      const exists = list.some((item) => item.id === workflow.id);
+      return { ...current, [channelId]: exists ? list.map((item) => (item.id === workflow.id ? workflow : item)) : [...list, workflow] };
+    });
+  }
+
+  function storeWorkflowRun(run) {
+    if (!run?.id || !run.workflowId) return;
+    setWorkflowsByChannel((current) => {
+      const channelId = run.channelId || Object.keys(current).find((id) => (current[id] || []).some((item) => item.id === run.workflowId)) || "";
+      const list = current[channelId] || [];
+      if (!list.some((item) => item.id === run.workflowId)) return current;
+      return { ...current, [channelId]: list.map((item) => (item.id === run.workflowId ? upsertWorkflowRun(item, run) : item)) };
+    });
+  }
+
+  function workflowPath(channelId, workflowId = "", suffix = "") {
+    return `/api/channels/${encodeURIComponent(channelId)}/workflows${workflowId ? `/${encodeURIComponent(workflowId)}` : ""}${suffix}`;
+  }
+
+  async function saveWorkflow(channelId, draft) {
+    const existing = Boolean(draft?.id) && (workflowStateRef.current.workflowsByChannel[channelId] || []).some((item) => item.id === draft.id);
+    try {
+      const workflow = existing
+        ? await api(workflowPath(channelId, draft.id), { method: "PUT", body: JSON.stringify(draft) })
+        : await api(workflowPath(channelId), { method: "POST", body: JSON.stringify(draft) });
+      replaceWorkflowInState(channelId, workflow);
+      return workflow;
+    } catch (error) {
+      console.warn(`Workflow could not be saved: ${error?.message || error}`);
+      return null;
+    }
+  }
+
+  async function deleteWorkflow(channelId, workflowId) {
+    try {
+      await api(workflowPath(channelId, workflowId), { method: "DELETE" });
+    } catch (error) {
+      console.warn(`Workflow could not be deleted: ${error?.message || error}`);
+      return;
+    }
+    setWorkflowsByChannel((current) => ({ ...current, [channelId]: (current[channelId] || []).filter((item) => item.id !== workflowId) }));
+  }
+
+  async function toggleWorkflow(channelId, workflowId, enabled) {
+    try {
+      const workflow = await api(workflowPath(channelId, workflowId), { method: "PUT", body: JSON.stringify({ enabled: enabled === true }) });
+      replaceWorkflowInState(channelId, workflow);
+    } catch (error) {
+      console.warn(`Workflow could not be updated: ${error?.message || error}`);
+    }
+  }
+
+  async function runWorkflowNow(channelId, workflowId) {
+    try {
+      const result = await api(workflowPath(channelId, workflowId, "/run"), { method: "POST", body: "{}" });
+      await handleWorkflowResult(result);
+    } catch (error) {
+      console.warn(`Workflow could not start: ${error?.message || error}`);
+    }
+  }
+
+  function workflowMessageStamp() {
+    const now = new Date();
+    return { createdAt: now.toISOString(), updatedAt: now.toISOString(), time: now.toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }) };
+  }
+
+  // One system message per run asks for the approval; the run remembers its
+  // id so a matching reaction on that message counts as the approval.
+  async function postWorkflowApprovalRequest(run, workflowName = "") {
+    const channelId = run?.channelId;
+    if (!channelId || !run.pendingApproval) return;
+    const messageId = `wf-approval-${run.id}`;
+    const exists = (workflowStateRef.current.messagesByChannel[channelId] || []).some((message) => message.id === messageId);
+    if (!exists) {
+      appendChannelMessage(channelId, {
+        id: messageId,
+        channelId,
+        role: "system",
+        agentId: "",
+        body: localeCopy.workflowRunWaiting || "Waiting for approval",
+        workflowRunId: run.id,
+        workflowId: run.workflowId,
+        workflowName,
+        workflowApproval: true,
+        ...workflowMessageStamp(),
+      });
+    }
+    if (run.pendingApproval.messageId === messageId) return;
+    try {
+      const data = await api(`/api/workflows/${encodeURIComponent(run.id)}/approval-message`, { method: "POST", body: JSON.stringify({ messageId }) });
+      if (data?.run) storeWorkflowRun(data.run);
+    } catch {
+      // The run moved on (approved or declined already); the row follows the run.
+    }
+  }
+
+  async function handleWorkflowResult(result) {
+    const run = result?.run;
+    if (!run?.id) return;
+    const workflowName = result.workflow?.name || result.dispatch?.workflowName || "";
+    storeWorkflowRun(run);
+    if (run.status === "waiting_approval" && run.pendingApproval) await postWorkflowApprovalRequest(run, workflowName);
+    if (result.dispatch) await dispatchWorkflowStep(result.dispatch);
+  }
+
+  async function finishWorkflowStep(marker, { status, preview = "" }) {
+    try {
+      const result = await api(`/api/workflows/${encodeURIComponent(marker.workflowRunId)}/steps/${encodeURIComponent(marker.stepId)}/finished`, {
+        method: "POST",
+        body: JSON.stringify({ status: status === "failed" ? "failed" : "completed", preview: String(preview || "").slice(0, 200) }),
+      });
+      await handleWorkflowResult(result);
+    } catch {
+      // The run was declined or reset while the step ran; nothing left to advance.
+    }
+  }
+
+  // Post the step prompt as a system message from the workflow and let the
+  // member answer it in a thread, exactly like a user prompt would.
+  async function dispatchWorkflowStep(dispatch) {
+    if (!dispatch?.runId || !dispatch.stepId) return;
+    const guard = `${dispatch.runId}:${dispatch.stepId}`;
+    if (dispatchedWorkflowStepsRef.current.has(guard)) return;
+    dispatchedWorkflowStepsRef.current.add(guard);
+    const { channels: latestChannels, agents: latestAgents } = workflowStateRef.current;
+    const channel = latestChannels.find((item) => item.id === dispatch.channelId);
+    const agent = latestAgents.find((item) => item.id === dispatch.memberId);
+    const marker = { workflowRunId: dispatch.runId, workflowId: dispatch.workflowId || "", workflowName: dispatch.workflowName || "", stepId: dispatch.stepId, ...(dispatch.marker || {}) };
+    if (!channel || !agent) {
+      await finishWorkflowStep(marker, { status: "failed", preview: !channel ? "channel not found" : `member ${dispatch.memberId} is not in this squad` });
+      return;
+    }
+    const threadId = `thread_wf_${dispatch.runId}`;
+    const rootMessageId = `${threadId}-${dispatch.stepId}`;
+    try {
+      await api(`/api/workflows/${encodeURIComponent(dispatch.runId)}/steps/${encodeURIComponent(dispatch.stepId)}/started`, { method: "POST", body: JSON.stringify({ messageId: rootMessageId }) });
+    } catch {
+      // Not the current step any more (declined, or already started elsewhere).
+      return;
+    }
+    const stamp = workflowMessageStamp();
+    setChannelThreads((current) => {
+      const list = current[channel.id] || [];
+      if (list.some((thread) => thread.id === threadId)) return current;
+      return {
+        ...current,
+        [channel.id]: [
+          ...list,
+          {
+            id: threadId,
+            channelId: channel.id,
+            parentMessageId: rootMessageId,
+            title: String(dispatch.workflowName || dispatch.prompt || "").slice(0, 200),
+            creatorId: "workflow",
+            memberIds: [agent.id],
+            targetLabel: dispatch.workflowName || "",
+            autoMode: false,
+            selfJudge: false,
+            createdAt: stamp.createdAt,
+            updatedAt: stamp.updatedAt,
+          },
+        ],
+      };
+    });
+    appendChannelMessage(channel.id, {
+      id: rootMessageId,
+      channelId: channel.id,
+      role: "system",
+      agentId: "",
+      body: dispatch.prompt,
+      threadId,
+      parentMessageId: "",
+      targetMemberIds: [agent.id],
+      targetLabel: dispatch.workflowName || "",
+      ...marker,
+      ...stamp,
+    });
+    await dispatchChannelMemberReply(channel, agent, {
+      prompt: dispatch.prompt,
+      threadId,
+      parentMessageId: rootMessageId,
+      targetMemberIds: [agent.id],
+      targetLabel: dispatch.workflowName || "",
+      marker,
+    });
+  }
+
+  async function decideWorkflowRun(run, decision, { by = "user" } = {}) {
+    if (!run?.id) return;
+    try {
+      const result = await api(`/api/workflows/${encodeURIComponent(run.id)}/${decision === "approve" ? "approve" : "decline"}`, { method: "POST", body: JSON.stringify({ by }) });
+      await handleWorkflowResult(result);
+    } catch {
+      // Already decided (double click or a reaction beat the button).
+    }
+  }
+
+  // Evaluation loop: every message and reaction is matched against the
+  // channel's workflows; a hit is remembered before the request goes out so
+  // it fires once. A workflow seen for the first time (created, or loaded
+  // from the bridge on boot) treats everything already in the channel as
+  // history so old messages never start runs; reactions the run's approval
+  // message collects approve it, once.
+  useEffect(() => {
+    if (!channelsBridgeReady) return;
+    for (const channel of channels) {
+      const workflows = workflowsByChannel[channel.id] || [];
+      if (!workflows.length) continue;
+      const messages = messagesByChannel[channel.id] || [];
+      const fresh = workflows.filter((workflow) => !seenWorkflowIdsRef.current.has(workflow.id));
+      for (const workflow of fresh) {
+        seenWorkflowIdsRef.current.add(workflow.id);
+        const history = evaluateWorkflowTriggers({ workflows: [workflow], messages, reactionsByMessage: channelReactions, firedKeys: firedWorkflowKeysRef.current });
+        for (const hit of history) rememberFiredWorkflowKey(hit.key);
+      }
+      const hits = evaluateWorkflowTriggers({ workflows, messages, reactionsByMessage: channelReactions, firedKeys: firedWorkflowKeysRef.current });
+      for (const hit of hits) {
+        if (!rememberFiredWorkflowKey(hit.key)) continue;
+        const trigger = { type: hit.type, key: hit.key, messageId: hit.message?.id || "", messageBody: hit.message?.body || "", emoji: hit.reaction?.emoji || "" };
+        api(workflowPath(channel.id, hit.workflow.id, "/run"), { method: "POST", body: JSON.stringify(trigger) })
+          .then(handleWorkflowResult)
+          .catch(() => {});
+      }
+      for (const workflow of workflows) {
+        for (const run of workflow.runs || []) {
+          const messageId = run.pendingApproval?.messageId;
+          if (run.status !== "waiting_approval" || !messageId) continue;
+          const message = messages.find((item) => item.id === messageId);
+          const approving = (channelReactions[messageId] || []).some((reaction) => reactionApprovesWorkflowRun(run, reaction, message));
+          if (!approving || !rememberFiredWorkflowKey(`approval:${run.id}`)) continue;
+          void decideWorkflowRun(run, "approve", { by: "user" });
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messagesByChannel, channelReactions, workflowsByChannel, channels, channelsBridgeReady]);
+
+  // Schedules and webhooks start runs on the bridge while the app is away:
+  // poll for steps waiting to be dispatched, refresh the mirror, and ask for
+  // any approval a bridge-started run is waiting on.
+  useEffect(() => {
+    if (!channelsBridgeReady) return undefined;
+    let cancelled = false;
+    let busy = false;
+    let reconciled = false;
+    const bootAt = Date.now();
+    // A step this app dispatched before a reload has no live reply stream any
+    // more; settle it as failed once so the run does not stay running forever.
+    async function reconcileInterruptedSteps(channelsById) {
+      reconciled = true;
+      for (const list of Object.values(channelsById)) {
+        for (const workflow of Array.isArray(list) ? list : []) {
+          if (workflow.dispatch === "bridge") continue;
+          for (const run of workflow.runs || []) {
+            if (run.status !== "running") continue;
+            const stepId = workflow.steps?.[run.stepIndex]?.id;
+            const result = (run.stepResults || []).find((item) => item.stepId === stepId);
+            if (!result || result.status !== "running" || result.memberRunId || !result.messageId) continue;
+            if (!(Date.parse(result.startedAt || "") < bootAt)) continue;
+            dispatchedWorkflowStepsRef.current.add(`${run.id}:${stepId}`);
+            await finishWorkflowStep({ workflowRunId: run.id, stepId }, { status: "failed", preview: "reply interrupted before it finished" });
+          }
+        }
+      }
+    }
+    async function poll() {
+      if (busy || cancelled) return;
+      busy = true;
+      try {
+        if (!reconciled) {
+          const snapshot = await api("/api/workflows");
+          if (cancelled) return;
+          if (snapshot?.channels && typeof snapshot.channels === "object") await reconcileInterruptedSteps(snapshot.channels);
+        }
+        const pending = await api("/api/workflows/pending");
+        if (cancelled) return;
+        for (const dispatch of Array.isArray(pending?.dispatches) ? pending.dispatches : []) {
+          if (dispatch?.run) storeWorkflowRun(dispatch.run);
+          void dispatchWorkflowStep(dispatch);
+        }
+        const all = await api("/api/workflows");
+        if (cancelled || !all?.channels || typeof all.channels !== "object") return;
+        setWorkflowsByChannel((current) => (JSON.stringify(current) === JSON.stringify(all.channels) ? current : all.channels));
+        for (const list of Object.values(all.channels)) {
+          for (const workflow of Array.isArray(list) ? list : []) {
+            for (const run of workflow.runs || []) {
+              if (run.status === "waiting_approval" && run.pendingApproval && !run.pendingApproval.messageId) void postWorkflowApprovalRequest(run, workflow.name);
+            }
+          }
+        }
+      } catch {
+        // Bridge unavailable or without the workflows route; try again next tick.
+      } finally {
+        busy = false;
+      }
+    }
+    void poll();
+    const timer = window.setInterval(poll, WORKFLOW_POLL_MS);
+    window.addEventListener("focus", poll);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", poll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelsBridgeReady]);
 
   async function createAgent(draft, options = {}) {
     const id = createSquadMemberId();
@@ -7765,6 +8195,13 @@ function App() {
                 reactionsByMessage={channelReactions}
                 onReact={toggleReaction}
                 lastReadAt={channelViewMarkerRef.current.channelId === channelIdFromRoute(route) ? channelViewMarkerRef.current.lastReadAt : 0}
+                workflowsByChannel={workflowsByChannel}
+                onSaveWorkflow={saveWorkflow}
+                onDeleteWorkflow={deleteWorkflow}
+                onToggleWorkflow={toggleWorkflow}
+                onRunWorkflowNow={runWorkflowNow}
+                onApproveWorkflowRun={(run) => decideWorkflowRun(run, "approve")}
+                onDeclineWorkflowRun={(run) => decideWorkflowRun(run, "decline")}
               />
             ) : isMissionControl ? (
               <MissionControlPage
@@ -8223,6 +8660,15 @@ function ChannelUserAvatar({ className }) {
 
 function ChannelMessageAvatar({ message, agents = [], className }) {
   if (message?.role === "user") return <ChannelUserAvatar className={className} />;
+  if (message?.role === "system" && message?.workflowRunId) {
+    return (
+      <Avatar className={cn("size-8 rounded-md border border-border/70 bg-muted", className)}>
+        <AvatarFallback className="rounded-md bg-muted text-muted-foreground">
+          <Workflow className="size-4" aria-hidden="true" />
+        </AvatarFallback>
+      </Avatar>
+    );
+  }
   const agent = agents.find((item) => item.id === message?.agentId);
   return agent ? (
     <AgentAvatar agent={agent} className={cn("size-8 rounded-md", className)} />
@@ -8426,6 +8872,13 @@ function ChannelsPage({
   canvasRefreshKey = 0,
   initialCanvasId = "",
   onInitialCanvasConsumed,
+  workflowsByChannel = {},
+  onSaveWorkflow,
+  onDeleteWorkflow,
+  onToggleWorkflow,
+  onRunWorkflowNow,
+  onApproveWorkflowRun,
+  onDeclineWorkflowRun,
 }) {
   const { profile: accountProfile } = useContext(AccountContext);
   const [manageMembersOpen, setManageMembersOpen] = useState(false);
@@ -8442,6 +8895,8 @@ function ChannelsPage({
   const members = channel
     ? channel.memberIds.map((memberId) => agents.find((agent) => agent.id === memberId)).filter(Boolean)
     : [];
+  // Channel workflows (#28): settings section plus the run rows in the stream.
+  const channelWorkflows = channel ? workflowsByChannel[channel.id] || [] : [];
 
   useEffect(() => {
     setManageMembersOpen(false);
@@ -8664,6 +9119,16 @@ function ChannelsPage({
                     </div>
                   </div>
                   <Separator />
+                  <WorkflowsSettings
+                    workflows={channelWorkflows}
+                    members={members}
+                    onSave={(draft) => onSaveWorkflow?.(channel.id, draft)}
+                    onDelete={(workflowId) => onDeleteWorkflow?.(channel.id, workflowId)}
+                    onToggle={(workflowId, enabled) => onToggleWorkflow?.(channel.id, workflowId, enabled)}
+                    onRunNow={(workflowId) => onRunWorkflowNow?.(channel.id, workflowId)}
+                    copy={copy}
+                  />
+                  <Separator />
                   <Button variant="ghost" size="sm" className="justify-start" onClick={exportChannelLog}>
                     <FileCode2 data-icon="inline-start" />
                     Export markdown
@@ -8740,16 +9205,33 @@ function ChannelsPage({
                 locale={locale}
                 lastReadAt={lastReadAt}
                 reactionsByMessage={reactionsByMessage}
-                renderBody={(message) => (
-                  <div data-message-id={message.id}>
-                    <MarkdownBlocks text={message.body || ""} />
-                    {message.role === "agent" || message.agentId ? (
-                      <AgentWorkDetails message={message} isLoading={message.status === "loading"} durationLabel={messageDurationLabel(message)} copy={copy} />
-                    ) : null}
-                  </div>
-                )}
+                renderBody={(message) => {
+                  const found = message.workflowRunId ? findWorkflowRun(channelWorkflows, message.workflowRunId) : null;
+                  if (message.workflowApproval) {
+                    return (
+                      <div data-message-id={message.id}>
+                        {found ? (
+                          <WorkflowRunMessage run={found.run} workflow={found.workflow} members={agents} onApprove={onApproveWorkflowRun} onDecline={onDeclineWorkflowRun} copy={copy} />
+                        ) : (
+                          <span className="text-muted-foreground">{message.body}</span>
+                        )}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div data-message-id={message.id}>
+                      {message.workflowRunId ? (
+                        <WorkflowTag workflow={found?.workflow || { name: message.workflowName || "" }} run={found?.run} stepId={message.stepId} copy={copy} className="mb-1" />
+                      ) : null}
+                      <MarkdownBlocks text={message.body || ""} />
+                      {message.role === "agent" || message.agentId ? (
+                        <AgentWorkDetails message={message} isLoading={message.status === "loading"} durationLabel={messageDurationLabel(message)} copy={copy} />
+                      ) : null}
+                    </div>
+                  );
+                }}
                 renderAvatar={(message) => <ChannelMessageAvatar message={message} agents={agents} />}
-                authorName={(message) => channelMessageAuthorName(message, agents, accountProfile.name)}
+                authorName={(message) => (message.role === "system" && message.workflowRunId ? message.workflowName || copy.workflow || "Workflow" : channelMessageAuthorName(message, agents, accountProfile.name))}
                 onReact={onReact}
                 onReply={(message) => setReplyTo(message)}
                 emptyLabel={members.length ? copy.channelNoThreads : copy.channelNoMembers}
