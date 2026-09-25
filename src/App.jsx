@@ -51,6 +51,7 @@ import {
   Clock3,
   Ellipsis,
   FileCode2,
+  FileText,
   Folder,
   FolderGit2,
   Folders,
@@ -247,6 +248,9 @@ import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
+import { CanvasList } from "@/components/canvases/CanvasList";
+import { CanvasPanel } from "@/components/canvases/CanvasPanel";
+import { canvasMentionItems, expandCanvasMentions, isCanvasMentionQuery } from "@/lib/canvases";
 import { activityFromTrace, activityStats, classifyTool, normalizeActivity } from "@/lib/activity";
 import {
   commandsForHarness,
@@ -4834,6 +4838,66 @@ function App() {
     api("/api/events", { method: "POST", body: JSON.stringify({ name, ...payload }) }).catch(() => {});
   }
 
+  // Canvases (ADR-0023): the channel and member pages reload their canvases
+  // whenever this key changes — after a chat reply absorbed a canvas, or a run
+  // finished (the plug-in absorbs runs itself on run.finished).
+  const [canvasRefreshKey, setCanvasRefreshKey] = useState(0);
+  const bumpCanvasRefresh = useCallback(() => setCanvasRefreshKey((key) => key + 1), []);
+  const seenTerminalRunIdsRef = useRef(new Set());
+  useEffect(() => {
+    let finished = false;
+    for (const run of runs) {
+      if (!run?.id || !["completed", "failed", "stopped"].includes(run.status)) continue;
+      if (seenTerminalRunIdsRef.current.has(run.id)) continue;
+      seenTerminalRunIdsRef.current.add(run.id);
+      finished = true;
+    }
+    if (finished) bumpCanvasRefresh();
+  }, [runs, bumpCanvasRefresh]);
+  // `?canvas=<id>` on a channel or member route opens the Canvas tab on that
+  // canvas once (search hits and links deep-link this way).
+  const requestedCanvasId = useMemo(() => {
+    const params = new URLSearchParams(route.split("?")[1] || "");
+    return String(params.get("canvas") || "");
+  }, [route]);
+  function consumeCanvasParam() {
+    const next = routeWithParams(route, { canvas: null });
+    window.history.replaceState({}, "", next);
+    setRoute(next);
+  }
+
+  // `@canvas:slug` mentions attach the canvas to the prompt. The first one is
+  // materialized as a file the member may edit (and tagged on the payload so
+  // the bridge adds its folder); any others are inlined read-only.
+  async function attachCanvasMentions(text, canvases = []) {
+    const matched = expandCanvasMentions(text, canvases).canvases;
+    if (!matched.length) return { prompt: text, canvasId: "", canvasDir: "" };
+    const first = matched[0];
+    let paths = {};
+    let canvasDir = "";
+    try {
+      const materialized = await api(`/api/canvases/${encodeURIComponent(first.id)}/materialize`, { method: "POST", body: "{}" });
+      if (materialized?.path) paths = { [first.id]: materialized.path };
+      canvasDir = String(materialized?.dir || "");
+    } catch {
+      // Without a file the canvas is still inlined as read-only context.
+    }
+    const expanded = expandCanvasMentions(text, canvases, { paths });
+    return { prompt: expanded.prompt, canvasId: canvasDir ? first.id : "", canvasDir };
+  }
+
+  // After a chat reply (no run object) the web app asks the plug-in to read
+  // the materialized file back; a changed body becomes one member revision.
+  async function absorbCanvas(canvasId, authorId) {
+    if (!canvasId) return;
+    try {
+      await api(`/api/canvases/${encodeURIComponent(canvasId)}/absorb`, { method: "POST", body: JSON.stringify({ authorId }) });
+    } catch {
+      // The stored body stays as it was; the refresh below still runs.
+    }
+    bumpCanvasRefresh();
+  }
+
   const notificationBell = (
     <NotificationBell
       items={notifications}
@@ -5771,15 +5835,17 @@ function App() {
       startedAt,
     });
 
+    const canvasAttachment = await attachCanvasMentions(prompt, launch.canvases);
     const payload = {
       agentId,
-      prompt,
+      prompt: canvasAttachment.prompt,
       workspace: selectedWorkspace,
       policy: launch.policy,
       model: launch.model,
       profile,
       agent: agentLaunchPayload(agent, selectedWorkspace),
       collaboration: launch.collaboration || null,
+      ...(canvasAttachment.canvasId ? { canvasId: canvasAttachment.canvasId, canvasDir: canvasAttachment.canvasDir } : {}),
     };
     let streamedAnswer = "";
     let liveTrace = createLiveChatTrace();
@@ -5926,6 +5992,7 @@ function App() {
       };
     } finally {
       recordObservedEdits(agentId, liveEvents, { messageId: `${id}-a`, workspace: selectedWorkspace });
+      void absorbCanvas(canvasAttachment.canvasId, agentId);
     }
   }
 
@@ -6015,7 +6082,7 @@ function App() {
   async function dispatchChannelMemberReply(
     channel,
     agent,
-    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null }
+    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null, canvases = [] }
   ) {
     const now = new Date();
     const startedAt = now.toISOString();
@@ -6056,9 +6123,10 @@ function App() {
     ]
       .filter(Boolean)
       .join("\n\n");
+    const canvasAttachment = await attachCanvasMentions(prompt, canvases);
     const payload = {
       agentId: agent.id,
-      prompt,
+      prompt: canvasAttachment.prompt,
       workspace: selectedWorkspace,
       policy: agent.launch?.policy,
       model: agent.launch?.model,
@@ -6091,6 +6159,7 @@ function App() {
         threadId,
         runtime: { autoMode: autoMode === true, selfJudge: selfJudge === true },
       },
+      ...(canvasAttachment.canvasId ? { canvasId: canvasAttachment.canvasId, canvasDir: canvasAttachment.canvasDir } : {}),
     };
 
     let streamedAnswer = "";
@@ -6223,6 +6292,7 @@ function App() {
     } finally {
       window.clearTimeout(timeout);
       recordObservedEdits(agent.id, liveEvents, { channelId: channel.id, messageId, threadId, workspace: selectedWorkspace });
+      void absorbCanvas(canvasAttachment.canvasId, agent.id);
     }
 
     // Agents talk to each other: when a reply @mentions other channel members,
@@ -6257,7 +6327,7 @@ function App() {
   // One-prompt channel dispatch: a single user prompt opens a thread and fans
   // out to every squad member assigned to the channel; each member chooses its
   // own execution plan and posts an in-thread reply.
-  async function sendChannelPrompt(channelId, { prompt, autoMode, selfJudge } = {}) {
+  async function sendChannelPrompt(channelId, { prompt, autoMode, selfJudge, canvases = [] } = {}) {
     const channel = channels.find((item) => item.id === channelId);
     const text = String(prompt || "").trim();
     if (!channel || !text) return;
@@ -6314,6 +6384,7 @@ function App() {
           selfJudge: effectiveSelfJudge,
           targetMemberIds: target.targetMemberIds,
           targetLabel: target.targetLabel,
+          canvases,
         })
       )
     );
@@ -6321,7 +6392,7 @@ function App() {
 
   // Threaded follow-ups: replies stay grouped under the original thread and
   // reuse the thread's recorded auto-mode/self-judge defaults.
-  async function sendThreadFollowUp(channelId, threadId, prompt) {
+  async function sendThreadFollowUp(channelId, threadId, prompt, { canvases = [] } = {}) {
     const channel = channels.find((item) => item.id === channelId);
     const thread = (channelThreads[channelId] || []).find((item) => item.id === threadId);
     const text = String(prompt || "").trim();
@@ -6369,6 +6440,7 @@ function App() {
           selfJudge: thread.selfJudge === true,
           targetMemberIds: target.targetMemberIds,
           targetLabel: target.targetLabel,
+          canvases,
         })
       )
     );
@@ -7337,6 +7409,9 @@ function App() {
                 onResolveProposal={resolveChannelProposal}
                 onDispatch={sendChannelPrompt}
                 onFollowUp={sendThreadFollowUp}
+                canvasRefreshKey={canvasRefreshKey}
+                initialCanvasId={requestedCanvasId}
+                onInitialCanvasConsumed={consumeCanvasParam}
                 reactionsByMessage={channelReactions}
                 onReact={toggleReaction}
                 lastReadAt={channelViewMarkerRef.current.channelId === channelIdFromRoute(route) ? channelViewMarkerRef.current.lastReadAt : 0}
@@ -7469,6 +7544,9 @@ function App() {
                   window.history.replaceState({}, "", next);
                   setRoute(next);
                 }}
+                canvasRefreshKey={canvasRefreshKey}
+                initialCanvasId={requestedCanvasId}
+                onInitialCanvasConsumed={consumeCanvasParam}
                 chatSettings={chatSettings}
                 handoffRetryMode={resolveHandoffRetryMode(handoffSettings, runtime)}
                 onCreateHandoff={createHandoff}
@@ -7992,6 +8070,9 @@ function ChannelsPage({
   onLoadWorkspaceProfile,
   channelProposals = {},
   onResolveProposal,
+  canvasRefreshKey = 0,
+  initialCanvasId = "",
+  onInitialCanvasConsumed,
 }) {
   const { profile: accountProfile } = useContext(AccountContext);
   const [manageMembersOpen, setManageMembersOpen] = useState(false);
@@ -7999,6 +8080,9 @@ function ChannelsPage({
   const [createOpen, setCreateOpen] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
   const [draft, setDraft] = useState("");
+  // Canvases (ADR-0023): the channel's shared documents live on the Canvas tab.
+  const [view, setView] = useState("messages");
+  const [activeCanvasId, setActiveCanvasId] = useState("");
   const channel = channels.find((item) => item.id === activeChannelId) || null;
   const threads = channel ? channelThreads[channel.id] || [] : [];
   const channelMessages = channel ? messagesByChannel[channel.id] || [] : [];
@@ -8011,7 +8095,18 @@ function ChannelsPage({
     setDeleteArmed(false);
     setReplyTo(null);
     setDraft("");
+    setView("messages");
+    setActiveCanvasId("");
   }, [activeChannelId]);
+
+  const { canvases, loadCanvases } = useOwnerCanvases("channel", channel?.id || "", { refreshKey: canvasRefreshKey, live: view === "canvas" });
+  useEffect(() => {
+    if (!initialCanvasId) return;
+    setView("canvas");
+    setActiveCanvasId(initialCanvasId);
+    onInitialCanvasConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCanvasId]);
 
   // Presence (ADR-0014): who is thinking, typing, or running tools right now.
   const presenceItems = useMemo(() => presenceFromMessages(channelMessages, agents), [channelMessages, agents]);
@@ -8050,8 +8145,11 @@ function ChannelsPage({
         return { id: member.id, handle, label: `@${handle}`, detail: member.role || "" };
       }),
       ...channelProjects.map((project) => ({ id: `project:${project.path}`, handle: project.name, label: `@${project.name}`, detail: project.path, project })),
+      // Canvases: the composer filters these rows by the typed query, so
+      // `@canvas:` narrows the picker to the channel's canvases.
+      ...canvasMentionItems(canvases, "", 20).map((item) => ({ id: item.id, handle: item.token, label: `@${item.token}`, detail: item.detail })),
     ],
-    [channelProjects, members]
+    [canvases, channelProjects, members]
   );
 
   function addChannelProject(path) {
@@ -8089,11 +8187,11 @@ function ChannelsPage({
   function submitDraft(text) {
     if (!channel) return;
     if (replyTo?.threadId) {
-      onFollowUp?.(channel.id, replyTo.threadId, text);
+      onFollowUp?.(channel.id, replyTo.threadId, text, { canvases });
       setReplyTo(null);
       return;
     }
-    onDispatch?.(channel.id, { prompt: text, autoMode: channel.autoModeDefault === true, selfJudge: channel.autoModeDefault === true });
+    onDispatch?.(channel.id, { prompt: text, autoMode: channel.autoModeDefault === true, selfJudge: channel.autoModeDefault === true, canvases });
   }
   void projectDraft;
 
@@ -8130,6 +8228,12 @@ function ChannelsPage({
               )}
               <span className="min-w-0 truncate">{channel.name}</span>
             </h1>
+            <Tabs value={view} onValueChange={setView} className="ml-1">
+              <TabsList variant="line" className="h-8">
+                <TabsTrigger value="messages">{copy.messages || "Messages"}</TabsTrigger>
+                <TabsTrigger value="canvas">{copy.canvasTab || "Canvas"}</TabsTrigger>
+              </TabsList>
+            </Tabs>
             <span className="flex-1" />
             <Tooltip>
               <TooltipTrigger asChild>
@@ -8258,6 +8362,21 @@ function ChannelsPage({
             </div>
           ) : null}
 
+          {view === "canvas" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 lg:px-6">
+              <CanvasWorkspace
+                ownerType="channel"
+                ownerId={channel.id}
+                canvases={canvases}
+                activeCanvasId={activeCanvasId}
+                onSelect={setActiveCanvasId}
+                onRefresh={loadCanvases}
+                members={agents}
+                copy={copy}
+                className="mx-auto w-full max-w-3xl py-4"
+              />
+            </div>
+          ) : (
           <ScrollArea className="min-h-0 flex-1 px-2 lg:px-4">
             <div className="mx-auto w-full max-w-5xl py-3">
               <ChannelStream
@@ -8286,6 +8405,7 @@ function ChannelsPage({
               />
             </div>
           </ScrollArea>
+          )}
 
           <div className="shrink-0 px-4 pb-3 pt-2 lg:px-6">
             <div className="mx-auto w-full max-w-5xl">
@@ -10316,6 +10436,131 @@ function formatMentionLookupError(error) {
   return "File search unavailable";
 }
 
+// Canvases (ADR-0023): load the canvases one owner (a channel or a member)
+// holds. Reloads on `refreshKey`, and polls quietly while `live` (the Canvas
+// tab is open) so a member's PUT shows up without a manual refresh.
+function useOwnerCanvases(ownerType, ownerId, { refreshKey = 0, live = false } = {}) {
+  const [canvases, setCanvases] = useState([]);
+  const ownerRef = useRef(ownerId);
+  ownerRef.current = ownerId;
+  const loadCanvases = useCallback(async () => {
+    if (!ownerId) {
+      setCanvases([]);
+      return;
+    }
+    try {
+      const data = await api(`/api/canvases?ownerType=${encodeURIComponent(ownerType)}&ownerId=${encodeURIComponent(ownerId)}`);
+      if (ownerRef.current !== ownerId) return;
+      setCanvases(Array.isArray(data?.canvases) ? data.canvases : []);
+    } catch {
+      // Keep what we have; the next refresh or poll retries.
+    }
+  }, [ownerType, ownerId]);
+  useEffect(() => {
+    void loadCanvases();
+  }, [loadCanvases, refreshKey]);
+  useEffect(() => {
+    if (!live) return undefined;
+    const timer = window.setInterval(() => void loadCanvases(), 10000);
+    return () => window.clearInterval(timer);
+  }, [live, loadCanvases]);
+  return { canvases, loadCanvases };
+}
+
+// The Canvas tab of a channel or member chat: the owner's list, then the
+// selected canvas (editor + revision rail) under one divider. Every mutation
+// goes through the bridge and the list is reloaded afterwards.
+function CanvasWorkspace({ ownerType, ownerId, canvases = [], activeCanvasId = "", onSelect, onRefresh, members = [], copy, className }) {
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [error, setError] = useState("");
+  const activeCanvas = canvases.find((canvas) => canvas.id === activeCanvasId) || null;
+
+  async function mutate(request) {
+    setError("");
+    try {
+      const data = await request();
+      await onRefresh?.();
+      return data;
+    } catch (caught) {
+      setError(caught?.message || copy.canvasSaveError || "The canvas could not be saved.");
+      return null;
+    }
+  }
+
+  return (
+    <div className={cn("flex min-h-0 flex-col", className)}>
+      <CanvasList
+        canvases={canvases}
+        activeCanvasId={activeCanvasId}
+        members={members}
+        copy={copy}
+        onSelect={onSelect}
+        onCreate={async ({ title }) => {
+          const data = await mutate(() =>
+            api("/api/canvases", { method: "POST", body: JSON.stringify({ ownerType, ownerId, title, authorId: "user" }) })
+          );
+          if (data?.canvas?.id) onSelect?.(data.canvas.id);
+        }}
+        className="max-h-64 shrink-0"
+      />
+      {error ? (
+        <p className="pt-2 text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {activeCanvas ? (
+        <CanvasPanel
+          canvas={activeCanvas}
+          members={members}
+          copy={copy}
+          onChange={(patch) =>
+            mutate(() => api(`/api/canvases/${encodeURIComponent(activeCanvas.id)}`, { method: "PUT", body: JSON.stringify({ ...patch, authorId: "user" }) }))
+          }
+          onRevert={(revisionId) =>
+            mutate(() =>
+              api(`/api/canvases/${encodeURIComponent(activeCanvas.id)}/revert`, { method: "POST", body: JSON.stringify({ revisionId, authorId: "user" }) })
+            )
+          }
+          onDelete={(canvas) => setPendingDelete(canvas)}
+          renderMarkdown={(text) => <MarkdownBlocks text={text} />}
+          renderAvatar={(agent, avatarClassName) => <AgentAvatar agent={agent} className={avatarClassName} />}
+          className="mt-4 border-t border-border/70 pt-4"
+        />
+      ) : null}
+      <Dialog open={Boolean(pendingDelete)} onOpenChange={(open) => (open ? null : setPendingDelete(null))}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {formatCopy(copy.canvasDeleteTitle || "Delete “{title}”?", { title: pendingDelete?.title || copy.canvasTitlePlaceholder || "Untitled canvas" })}
+            </DialogTitle>
+            <DialogDescription>
+              {copy.canvasDeleteDescription || "This removes the canvas and every revision. Members can no longer mention it."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingDelete(null)}>
+              {copy.cancel || "Cancel"}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                const target = pendingDelete;
+                setPendingDelete(null);
+                if (!target) return;
+                const data = await mutate(() => api(`/api/canvases/${encodeURIComponent(target.id)}`, { method: "DELETE" }));
+                if (data && target.id === activeCanvasId) onSelect?.("");
+              }}
+            >
+              <Trash2 data-icon="inline-start" />
+              {copy.canvasDelete || "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 function AgentAvatar({ agent, large = false, className }) {
   const initial = agent?.name?.slice(0, 1).toUpperCase() || "S";
   return (
@@ -10404,6 +10649,9 @@ function Conversation({
   onLocalMessage,
   initialPanel = null,
   onInitialPanelConsumed,
+  canvasRefreshKey = 0,
+  initialCanvasId = "",
+  onInitialCanvasConsumed,
 }) {
   const defaultLaunch = agent.launch || { mode: "prompt", policy: "restricted", model: "", dryRun: false };
   const [harnessDraft, setHarnessDraft] = useState(() => harnessForAgent(agent));
@@ -10434,6 +10682,22 @@ function Conversation({
   }, [initialPanel]);
   const [profilePreviewOpen, setProfilePreviewOpen] = useState(false);
   const [automationFormOpen, setAutomationFormOpen] = useState(false);
+  // Canvases (ADR-0023): this member's documents, shown instead of the stream
+  // while the Canvas view is on; the composer stays so `@canvas:` still works.
+  const [view, setView] = useState("messages");
+  const [activeCanvasId, setActiveCanvasId] = useState("");
+  const { canvases, loadCanvases } = useOwnerCanvases("member", agent.id, { refreshKey: canvasRefreshKey, live: view === "canvas" });
+  useEffect(() => {
+    setView("messages");
+    setActiveCanvasId("");
+  }, [agent.id]);
+  useEffect(() => {
+    if (!initialCanvasId) return;
+    setView("canvas");
+    setActiveCanvasId(initialCanvasId);
+    onInitialCanvasConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCanvasId]);
   // Goal 09: recipe catalog + launch state for the composer.
   const [recipeCatalogOpen, setRecipeCatalogOpen] = useState(false);
   const [recipeLaunchTarget, setRecipeLaunchTarget] = useState(null);
@@ -10596,11 +10860,15 @@ function Conversation({
       .map((skill) => ({ type: "skill", prefix: "$", value: skill.id, title: skill.name || skill.id, detail: `Registry${skill.category ? ` · ${skill.category}` : ""}` }));
     return [...installed, ...catalog].slice(0, 12);
   }, [catalogSkills, installedSkillNames, mentionKind, mentionQuery]);
+  const canvasItems = useMemo(() => {
+    if (mentionKind !== "mention" || !isCanvasMentionQuery(mentionQuery)) return [];
+    return canvasMentionItems(canvases, mentionQuery).map((item) => ({ type: "canvas", prefix: "@", value: item.token, title: item.label, detail: item.detail }));
+  }, [canvases, mentionKind, mentionQuery]);
   const mentionItems = useMemo(() => {
     if (mentionKind === "command") return commandItems.slice(0, 10);
     if (mentionKind === "skill") return skillItems;
-    return [...memberMentionItems, ...fileMentionItems].slice(0, 6);
-  }, [commandItems, fileMentionItems, memberMentionItems, mentionKind, skillItems]);
+    return [...canvasItems, ...memberMentionItems, ...fileMentionItems].slice(0, 6);
+  }, [canvasItems, commandItems, fileMentionItems, memberMentionItems, mentionKind, skillItems]);
   const mentionOpen = Boolean(mentionState);
   const visibleMessages = useMemo(
     () => messages.filter((message) => !(message?.id === "m1" && message?.role === "agent" && message?.time === "Ready")),
@@ -10905,6 +11173,7 @@ function Conversation({
           policy: sourceLaunch.policy || policy,
           model: sourceLaunch.model || model,
           collaboration: sourceLaunch.collaboration,
+          canvases: targetAgentId === agent.id ? canvases : [],
           signal: controller.signal,
         })
       );
@@ -11317,6 +11586,21 @@ function Conversation({
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={copy.canvasTab || "Canvas"}
+                aria-pressed={view === "canvas"}
+                className={cn(view === "canvas" && "bg-muted text-foreground")}
+                onClick={() => setView((current) => (current === "canvas" ? "messages" : "canvas"))}
+              >
+                <FileText />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{copy.canvasTab || "Canvas"}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Button variant="ghost" size="icon-sm" aria-label={copy.taskList} onClick={() => openPanel("tasks")}>
                 <History />
               </Button>
@@ -11336,6 +11620,28 @@ function Conversation({
       </header>
 
       <div className="relative flex min-h-0 flex-1 flex-col">
+        {view === "canvas" ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto flex w-full max-w-3xl flex-col px-4 py-4 pb-10 sm:px-6">
+              <Tabs value={view} onValueChange={setView} className="pb-4">
+                <TabsList variant="line" className="h-8">
+                  <TabsTrigger value="messages">{copy.messages || "Messages"}</TabsTrigger>
+                  <TabsTrigger value="canvas">{copy.canvasTab || "Canvas"}</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <CanvasWorkspace
+                ownerType="member"
+                ownerId={agent.id}
+                canvases={canvases}
+                activeCanvasId={activeCanvasId}
+                onSelect={setActiveCanvasId}
+                onRefresh={loadCanvases}
+                members={agents}
+                copy={copy}
+              />
+            </div>
+          </div>
+        ) : (
         <ScrollArea className="min-h-0 flex-1">
           <div
             className={cn(
@@ -11371,6 +11677,7 @@ function Conversation({
             )}
           </div>
         </ScrollArea>
+        )}
 
         <form className="bg-gradient-to-t from-background via-background to-transparent px-3 pb-4 pt-6 sm:px-5" onSubmit={submit}>
           {recommendedRecipeMatches.length && !chatSending ? (
@@ -11970,7 +12277,7 @@ function MentionPicker({ items = [], loading = false, error = "", selectedIndex 
       <div className="flex max-h-52 flex-col overflow-y-auto p-1">
         {items.map((item, index) => {
           const Icon =
-            item.type === "agent" ? UserRound : item.type === "channel" ? Hash : item.type === "command" ? Command : item.type === "skill" ? Sparkles : FileCode2;
+            item.type === "agent" ? UserRound : item.type === "channel" ? Hash : item.type === "command" ? Command : item.type === "skill" ? Sparkles : item.type === "canvas" ? FileText : FileCode2;
           const label = item.type === "command" ? item.title : `${item.prefix || "@"}${item.title}`;
           return (
             <button

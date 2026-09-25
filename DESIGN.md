@@ -46,6 +46,7 @@
 - Channel detail pages should use the main canvas for the active channel, member controls, threads, and composer; avoid adding another left rail or boxed dashboard around channel navigation.
 - Channel creation and member assignment should stay reachable from both the sidebar category and an empty channel state.
 - Channel composers should match the normal chat mention autocomplete behavior for `@here` and member handles, including keyboard selection. Channel loading placeholders should say the member is typing rather than thinking.
+- A Canvas tab sits beside the stream as an underlined text tab (Messages | Canvas in the channel header; the member chat reaches the same view from a header icon). The canvas is title, editor, and a 224px revision rail separated by one divider; member edits are a bold rail row with a dot, and the diff colours only the changed lines (soft green / soft rose), never the page. `@canvas:slug` in either composer attaches the canvas to the message.
 
 ## Typography
 
