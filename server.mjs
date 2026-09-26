@@ -7,6 +7,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { profileWorkspace } from "./server/workspace-profile.mjs";
 import { bridgeEvents, emitBridgeEvent } from "./server/events.mjs";
 import { handlePluginRoute, loadRoutePlugins } from "./server/routes/index.mjs";
+import { proxyJson, proxyStream, remoteRequestAuth, resolveRemote } from "./server/routes/remote.route.mjs";
+import { isRemoteTransport } from "./server/remote/auth.mjs";
+import { StringDecoder } from "node:string_decoder";
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
@@ -43,6 +46,181 @@ function emitRunFinished(run) {
     title: run.title || "",
     workspace: run.workspace || "",
   });
+}
+
+// Remote members (docs/integration/remote.md): a member registered under
+// <squadStateDir>/remotes.json runs on another machine's bridge. Chat, stream
+// and run requests for it are forwarded with that bridge's bearer token and
+// the reply comes back unchanged with `transport: "remote"`. The remote
+// bridge emits its own run.finished for the work it runs; this bridge only
+// records chat.finished for what it forwarded and never touches `runs` for
+// a proxied run.
+//
+// The remote's run id is what the app holds afterwards, so GET /api/runs/:id
+// and POST /api/runs/:id/stop need to know which member (and so which
+// bridge) a run id belongs to: proxied run ids are remembered here, in
+// memory, bounded to the most recent few hundred.
+const remoteRunMembers = new Map();
+const REMOTE_RUN_MEMORY = 500;
+function rememberRemoteRun(runId, memberId) {
+  const id = String(runId || "").trim();
+  if (!id) return;
+  remoteRunMembers.delete(id);
+  remoteRunMembers.set(id, String(memberId || "").trim());
+  while (remoteRunMembers.size > REMOTE_RUN_MEMORY) remoteRunMembers.delete(remoteRunMembers.keys().next().value);
+}
+
+// `payload.workspace` is a path on this machine; the remote bridge uses its
+// default workspace unless the remote record pins one there.
+function remotePayload(payload, remote) {
+  const { workspace: _local, ...rest } = payload || {};
+  return remote?.workspace ? { ...rest, workspace: remote.workspace } : rest;
+}
+
+function remoteErrorEnvelope(res, error) {
+  if (res.headersSent) return;
+  json(res, error?.status || 502, {
+    success: false,
+    error: error?.message || String(error),
+    remote: error?.remote || null,
+    retryable: error?.retryable !== false,
+  });
+}
+
+function remoteChatFinished(payload, remote, outcome) {
+  emitBridgeEvent("chat.finished", {
+    memberId: String(payload.agentId || ""),
+    status: outcome?.status || "completed",
+    channelId: String(payload.channelId || payload.channel?.id || ""),
+    threadId: String(payload.threadId || payload.channel?.threadId || ""),
+    preview: String(outcome?.preview || "").slice(0, 140),
+    transport: "remote",
+    remote: { label: remote.label, url: remote.url },
+  });
+}
+
+function logRemoteProxy(remote, route, memberId, extra = {}) {
+  logEvent(SEVERITY.INFO, `${route} for ${memberId} proxied to ${remote.label}`, {
+    "event.name": "remote.proxied",
+    "url.path": route,
+    "autohand.member": memberId,
+    "autohand.remote.label": remote.label,
+    "autohand.remote.url": remote.url,
+    ...extra,
+  });
+}
+
+// Watch the SSE bytes piped back from a remote bridge for the final `done`
+// or `error` frame so chat.finished carries the same status and preview a
+// local stream would.
+function tapStreamOutcome(res) {
+  const write = res.write.bind(res);
+  const decoder = new StringDecoder("utf8");
+  let buffer = "";
+  let outcome = null;
+  res.write = (chunk, ...rest) => {
+    buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
+    const frames = buffer.split(/\r?\n\r?\n/);
+    buffer = frames.pop() || "";
+    if (buffer.length > 256 * 1024) buffer = buffer.slice(-64 * 1024);
+    for (const frame of frames) {
+      const event = frame.match(/^event:\s*(.+)$/m)?.[1]?.trim();
+      if (event !== "done" && event !== "error") continue;
+      const data = frame
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      let parsed = {};
+      try {
+        parsed = data ? JSON.parse(data) : {};
+      } catch {
+        parsed = {};
+      }
+      outcome =
+        event === "done"
+          ? { status: "completed", preview: String(parsed?.reply || "").slice(0, 140) }
+          : { status: "failed", preview: String(parsed?.error || "").slice(0, 140) };
+    }
+    return write(chunk, ...rest);
+  };
+  return () => outcome || { status: "completed", preview: "" };
+}
+
+async function proxyChatOnce(remote, payload, res) {
+  const memberId = String(payload.agentId || "");
+  try {
+    const reply = await proxyJson(remote, "/api/chat", remotePayload(payload, remote));
+    logRemoteProxy(remote, "/api/chat", memberId);
+    remoteChatFinished(payload, remote, { status: "completed", preview: String(reply?.reply || reply?.output || "") });
+    json(res, 200, { success: true, data: reply });
+  } catch (error) {
+    logRemoteProxy(remote, "/api/chat", memberId, { "error.type": error?.name || "Error", "error.message": error?.message || "" });
+    remoteChatFinished(payload, remote, { status: "failed", preview: error?.message || "" });
+    remoteErrorEnvelope(res, error);
+  }
+}
+
+async function proxyChatStream(remote, payload, res) {
+  const memberId = String(payload.agentId || "");
+  const outcomeOf = tapStreamOutcome(res);
+  try {
+    await proxyStream(remote, "/api/chat/stream", remotePayload(payload, remote), res);
+  } catch (error) {
+    // Only before headers were sent: the JSON envelope still reaches the client.
+    logRemoteProxy(remote, "/api/chat/stream", memberId, { "error.type": error?.name || "Error", "error.message": error?.message || "" });
+    remoteChatFinished(payload, remote, { status: "failed", preview: error?.message || "" });
+    remoteErrorEnvelope(res, error);
+    return;
+  }
+  const outcome = outcomeOf();
+  logRemoteProxy(remote, "/api/chat/stream", memberId, { "autohand.chat.status": outcome.status });
+  remoteChatFinished(payload, remote, outcome);
+}
+
+async function proxyRunStart(remote, payload, res) {
+  const memberId = String(payload.agentId || "");
+  try {
+    const summary = await proxyJson(remote, "/api/runs", remotePayload(payload, remote));
+    rememberRemoteRun(summary?.id, memberId);
+    logRemoteProxy(remote, "/api/runs", memberId, { "autohand.run.id": String(summary?.id || "") });
+    json(res, 201, { success: true, data: summary });
+  } catch (error) {
+    logRemoteProxy(remote, "/api/runs", memberId, { "error.type": error?.name || "Error", "error.message": error?.message || "" });
+    remoteErrorEnvelope(res, error);
+  }
+}
+
+// GET /api/runs/:id and POST /api/runs/:id/stop for a run this bridge
+// forwarded: the same request goes to the bridge that runs it.
+async function proxyRemoteRunRoute(req, res, url, runId) {
+  const memberId = remoteRunMembers.get(String(runId || ""));
+  if (!memberId) return false;
+  const remote = await resolveRemote(routeContext(), memberId, { req });
+  if (!remote) return false;
+  try {
+    const data = req.method === "POST" ? await proxyJson(remote, url.pathname, {}) : await proxyJson(remote, url.pathname);
+    logRemoteProxy(remote, url.pathname, memberId, { "autohand.run.id": String(runId) });
+    json(res, 200, { success: true, data });
+  } catch (error) {
+    remoteErrorEnvelope(res, error);
+  }
+  return true;
+}
+
+// Serving side: a request forwarded by another bridge arrives without a
+// workspace (the caller's path means nothing here) unless the remote record
+// over there pins one; this bridge's default workspace stands in.
+function withRemoteDefaultWorkspace(req, payload) {
+  if (!isRemoteTransport(req) || String(payload?.workspace || "").trim()) return payload;
+  const fallback = getDefaultWorkspace();
+  return fallback ? { ...payload, workspace: fallback } : payload;
+}
+
+// Paths another machine may reach with a bearer token this bridge minted.
+const REMOTE_SERVED_PATHS = [/^\/api\/chat$/, /^\/api\/chat\/stream$/, /^\/api\/runs$/, /^\/api\/runs\/[^/]+$/, /^\/api\/runs\/[^/]+\/stop$/, /^\/api\/runtime$/, /^\/api\/members\/presence$/];
+function remoteServedPath(pathname) {
+  return REMOTE_SERVED_PATHS.some((pattern) => pattern.test(pathname));
 }
 
 const args = new Map();
@@ -3368,6 +3546,43 @@ function isLiveRun(run) {
   return ["queued", "running", "launching"].includes(run?.status);
 }
 
+// Stop one live run: its child process, SDK client, and abort controller.
+// Returns true when something was actually stopped.
+async function stopRun(run, reason = "stopped") {
+  let stopped = false;
+  const child = run.process;
+  if (child && !childHasExited(child)) {
+    try {
+      terminateChildProcess(child, {
+        onForce: () => appendLog(run, "system", "Autohand CLI did not stop after SIGTERM; forcing stop"),
+      });
+      stopped = true;
+    } catch (error) {
+      appendLog(run, "system", `stop failed: ${error.message}`);
+    }
+  }
+  if (run.sdk) {
+    try {
+      await run.sdk.interrupt?.();
+      await run.sdk.close?.();
+      stopped = true;
+    } catch (error) {
+      appendLog(run, "system", `SDK stop failed: ${error.message}`);
+    } finally {
+      run.sdk = null;
+    }
+  }
+  if (run.abortController && !run.abortController.signal.aborted) {
+    run.abortController.abort();
+    stopped = true;
+  }
+  run.status = "stopped";
+  run.finishedAt = new Date().toISOString();
+  emitRunFinished(run);
+  appendLog(run, "system", reason);
+  return stopped;
+}
+
 async function stopManagedRuns(reason = "service stopped") {
   let stoppedRuns = 0;
   harnessLogins.cancelAll();
@@ -3376,36 +3591,7 @@ async function stopManagedRuns(reason = "service stopped") {
   }
   for (const run of runs.values()) {
     if (!isLiveRun(run)) continue;
-    const child = run.process;
-    if (child && !childHasExited(child)) {
-      try {
-        terminateChildProcess(child, {
-          onForce: () => appendLog(run, "system", "Autohand CLI did not stop after SIGTERM; forcing stop"),
-        });
-        stoppedRuns += 1;
-      } catch (error) {
-        appendLog(run, "system", `stop failed: ${error.message}`);
-      }
-    }
-    if (run.sdk) {
-      try {
-        await run.sdk.interrupt?.();
-        await run.sdk.close?.();
-        stoppedRuns += 1;
-      } catch (error) {
-        appendLog(run, "system", `SDK stop failed: ${error.message}`);
-      } finally {
-        run.sdk = null;
-      }
-    }
-    if (run.abortController && !run.abortController.signal.aborted) {
-      run.abortController.abort();
-      stoppedRuns += 1;
-    }
-    run.status = "stopped";
-    run.finishedAt = new Date().toISOString();
-    emitRunFinished(run);
-    appendLog(run, "system", reason);
+    if (await stopRun(run, reason)) stoppedRuns += 1;
   }
   return { stoppedRuns };
 }
@@ -6888,7 +7074,12 @@ async function handleApi(req, res, url) {
 
   if (url.pathname === "/api/chat" && req.method === "POST") {
     try {
-      const payload = await readBody(req);
+      const payload = withRemoteDefaultWorkspace(req, await readBody(req));
+      const remote = await resolveRemote(routeContext(), payload.agentId, { req });
+      if (remote) {
+        await proxyChatOnce(remote, payload, res);
+        return true;
+      }
       const reply = await chatOnce(payload);
       emitBridgeEvent("chat.finished", { memberId: String(payload.agentId || ""), status: "completed", channelId: String(payload.channelId || payload.channel?.id || ""), preview: String(reply?.reply || reply?.output || "").slice(0, 140) });
       json(res, 200, { success: true, data: reply });
@@ -6909,7 +7100,12 @@ async function handleApi(req, res, url) {
 
   if (url.pathname === "/api/chat/stream" && req.method === "POST") {
     try {
-      const payload = await readBody(req);
+      const payload = withRemoteDefaultWorkspace(req, await readBody(req));
+      const remote = await resolveRemote(routeContext(), payload.agentId, { req });
+      if (remote) {
+        await proxyChatStream(remote, payload, res);
+        return true;
+      }
       const outcome = await streamChat(payload, res);
       emitBridgeEvent("chat.finished", {
         memberId: String(payload.agentId || ""),
@@ -6927,12 +7123,28 @@ async function handleApi(req, res, url) {
 
   const runMatch = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
   if (runMatch && req.method === "GET") {
+    if (await proxyRemoteRunRoute(req, res, url, runMatch[1])) return true;
     const run = runs.get(runMatch[1]);
     if (!run) {
       json(res, 404, { success: false, error: "run not found" });
       return true;
     }
     json(res, 200, { success: true, data: runSummary(run) });
+    return true;
+  }
+
+  // Stop one run by id. A run this bridge forwarded is stopped on the bridge
+  // that runs it; a local run is stopped the same way service shutdown does.
+  const runStopMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/stop$/);
+  if (runStopMatch && req.method === "POST") {
+    if (await proxyRemoteRunRoute(req, res, url, runStopMatch[1])) return true;
+    const run = runs.get(runStopMatch[1]);
+    if (!run) {
+      json(res, 404, { success: false, error: "run not found" });
+      return true;
+    }
+    const stopped = isLiveRun(run) ? await stopRun(run, "stopped by user") : false;
+    json(res, 200, { success: true, data: { ...runSummary(run), stopped } });
     return true;
   }
 
@@ -6953,7 +7165,12 @@ async function handleApi(req, res, url) {
 
   if (url.pathname === "/api/runs" && req.method === "POST") {
     try {
-      const payload = await readBody(req);
+      const payload = withRemoteDefaultWorkspace(req, await readBody(req));
+      const remote = await resolveRemote(routeContext(), payload.agentId, { req });
+      if (remote) {
+        await proxyRunStart(remote, payload, res);
+        return true;
+      }
       json(res, 201, { success: true, data: await startRun(payload) });
     } catch (error) {
       json(res, 400, { success: false, error: error.message });
@@ -7223,7 +7440,40 @@ server = createServer(async (req, res) => {
     return;
   }
   if (url.pathname.startsWith("/api/")) {
-    if (!requestOriginAllowed(req, url)) {
+    // Another machine's bridge presenting a token this one minted: the
+    // same-origin check does not apply (there is no browser Origin), only
+    // the member-serving routes are reachable, and the token's label goes
+    // to the log so the audit trail shows which machine asked.
+    let auth = { remote: false, allowed: false, token: null };
+    try {
+      auth = await remoteRequestAuth(routeContext(), req);
+    } catch (error) {
+      logEvent(SEVERITY.WARN, `remote token check failed: ${error?.message || error}`, { "url.path": url.pathname });
+      auth = { remote: true, allowed: false, token: null };
+    }
+    if (auth.remote && !auth.allowed) {
+      logEvent(SEVERITY.WARN, `rejected remote request without a valid bearer token: ${req.method} ${url.pathname}`, {
+        "event.name": "remote.rejected",
+        "http.request.method": req.method,
+        "url.path": url.pathname,
+        "http.response.status_code": 401,
+      });
+      json(res, 401, { success: false, error: "bearer token required" });
+      return;
+    }
+    if (auth.remote) {
+      if (!remoteServedPath(url.pathname)) {
+        json(res, 404, { success: false, error: `no remote route for ${req.method} ${url.pathname}` });
+        return;
+      }
+      logEvent(SEVERITY.INFO, `remote request from ${auth.token?.label || "shared machine"}: ${req.method} ${url.pathname}`, {
+        "event.name": "remote.served",
+        "http.request.method": req.method,
+        "url.path": url.pathname,
+        "autohand.remote.token.id": auth.token?.id || "",
+        "autohand.remote.token.label": auth.token?.label || "",
+      });
+    } else if (!requestOriginAllowed(req, url)) {
       json(res, 403, { success: false, error: "cross-origin requests to the local bridge are not allowed" });
       return;
     }
