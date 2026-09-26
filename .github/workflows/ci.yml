@@ -319,6 +319,9 @@ jobs:
           name: web-dist-${{ github.sha }}
           path: dist
 
+      - name: Fetch pinned Autohand Code CLI
+        run: bun run cli:fetch
+
       - name: Package release manifest
         shell: bash
         env:
