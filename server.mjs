@@ -653,6 +653,8 @@ function getRuntime() {
     squadVersion: packageMetadata.version || "0.0.0",
     available: Boolean(autohandPath),
     defaultWorkspace: getDefaultWorkspace(),
+    // Names this machine in the relay workspace switcher and member ownership.
+    hostName: hostname(),
     workspaceRoot: homeDir,
     squadWorkspaceRoot,
     legacySquadWorkspaceRoots,
@@ -4368,6 +4370,10 @@ function normalizeChannel(item) {
     // Self-judge / auto-mode execution control is opt-in per channel and
     // always defaults OFF; only an explicit true enables it.
     autoModeDefault: item.autoModeDefault === true,
+    // Owned by the git route plug-in (docs/integration/git.md); kept verbatim so
+    // the web app's own PUT /api/channels mirror does not erase the binding.
+    git: item.git && typeof item.git === "object" ? item.git : undefined,
+    events: Array.isArray(item.events) ? item.events : undefined,
     createdAt,
     updatedAt: String(item.updatedAt || createdAt),
   };
@@ -4468,6 +4474,8 @@ async function writeChannelsState(input) {
   state.updatedAt = new Date().toISOString();
   await mkdir(squadStateDir, { recursive: true });
   await writeFile(channelsStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  // The relay module pushes local changes on this event (docs/integration/relay.md).
+  emitBridgeEvent("channels.changed", { source: "bridge" });
   return state;
 }
 
