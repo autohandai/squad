@@ -58,7 +58,7 @@
     "release:merge-manifests": "node scripts/merge-release-manifests.mjs",
     "desktop:stage": "node scripts/stage-desktop.mjs",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build",
+    "desktop:build": "bun run build && bun run desktop:stage && tauri build",
     "desktop:check": "cargo check --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
