@@ -90,6 +90,7 @@ export function WorkspaceSidebar({
   onCollapse,
   searchShortcutLabel = "⌘K",
   searchTrailing = null,
+  workspaceSwitcher = null,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const sections = useMemo(() => {
@@ -123,6 +124,8 @@ export function WorkspaceSidebar({
           </Tooltip>
         ) : null}
       </div>
+
+      {workspaceSwitcher ? <div className="flex min-w-0 items-center px-3 pb-2">{workspaceSwitcher}</div> : null}
 
       <div className="flex items-center gap-1 px-3">
         <button

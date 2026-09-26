@@ -37,6 +37,7 @@
     "check:search": "node scripts/check-search.mjs",
     "check:remote": "node scripts/check-remote.mjs",
     "check:relay": "node scripts/check-relay.mjs",
+    "relay": "node relay/server.mjs --port 8787 --data ./relay-data",
     "check:git": "node scripts/check-git.mjs",
     "check:workflows": "node scripts/check-workflows.mjs",
     "check:attachments": "node scripts/check-attachments.mjs",

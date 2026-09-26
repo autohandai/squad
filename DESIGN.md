@@ -100,11 +100,15 @@
 - The Execution panel is a plain sheet: a title with an inline count sentence, a "Now" divider list of active tasks, underlined text tabs, and divider lists for runs and tasks with a text disclosure for output. No metric tiles, no cards, no auto-opening on mention.
 - Sign-in surfaces are single-column, left-aligned, and calm: one primary action, the sign-in link and device code when the CLI prints them, a terminal alternative, and a **Check again** action.
 
+- The sidebar header carries a quiet workspace switcher (current workspace name, chevron, popover list with a status dot per relay workspace and a "Connect a relay…" row). Member ownership is one muted meta phrase ("Runs on Noah's Mac"), never a badge. People presence is one sentence under the member presence line.
+
 ## Member Profile
 
 - History is a divider list grouped by day with underlined text filters (All / Messages / Runs / Edits / Shell / Handoffs / Approvals), a ghost Load more, and one outline Export button. Rows are icon + sentence + a muted meta line (kind · time · links); failures use the destructive colour on the text only. No cards, no badges.
 
 - **Runs on** sits under Runs with as two divider rows (This machine / Remote bridge) with a check mark on the chosen one; URL, name, and token fields, a Test button, and one status sentence. Share this machine is a text disclosure that shows a minted token once with a copy button. Failures name the remote. A remote member reads "/ on Studio" in the profile summary and a reply that came back over the proxy ends its work-details meta with "via Studio"; the directory shows nothing, since the transport is a detail, not a badge.
+
+- Relay is a divider-row section: URL, Token, Workspace, one Save, the enable switch, a one-sentence status and a ghost Sync now.
 
 ## Maintenance
 

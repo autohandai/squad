@@ -81,6 +81,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Share2,
   ScanSearch,
   Search,
   Send,
@@ -260,6 +261,9 @@ import { InboxPage } from "@/components/inbox/InboxPage";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
+import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
+import { RelaySettings } from "@/components/settings/RelaySettings";
+import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel, peopleSentence, selectWorkspace } from "@/lib/workspaces";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -367,6 +371,8 @@ const AccountContext = createContext({ profile: ACCOUNT_PROFILE, signOut: null, 
 // Live member presence from the bridge (ADR-0016): who is working, idle,
 // online, offline, or unknown when the bridge is unreachable. Read with
 // `usePresence()` anywhere a dot or label is drawn.
+const EMPTY_LIST = [];
+
 const PresenceContext = createContext({ presenceMap: {}, bridgeReachable: true, entryFor: (agent) => ({ state: agent?.status === "offline" ? "offline" : "online" }), stopMember: null });
 
 // Members that run on another machine's bridge (docs/integration/remote.md).
@@ -5534,9 +5540,12 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadChannels() {
+  // Pulling the bridge's channel snapshot: run at boot, and again whenever the
+  // relay reports that another person's message or channel landed.
+  const cancelChannelLoadRef = useRef(false);
+  const reloadChannelsFromBridge = useCallback(async () => {
+    const cancelled = cancelChannelLoadRef.current;
+    {
       try {
         const data = await api("/api/channels");
         if (!cancelled && Array.isArray(data?.channels)) {
@@ -5604,11 +5613,14 @@ function App() {
         if (!cancelled) setChannelsBridgeReady(true);
       }
     }
-    loadChannels();
-    return () => {
-      cancelled = true;
-    };
   }, []);
+  useEffect(() => {
+    cancelChannelLoadRef.current = false;
+    void reloadChannelsFromBridge();
+    return () => {
+      cancelChannelLoadRef.current = true;
+    };
+  }, [reloadChannelsFromBridge]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5657,6 +5669,67 @@ function App() {
   useEffect(() => {
     void refreshRemoteMembers();
   }, [refreshRemoteMembers]);
+  // Relay: a self-hosted server that shares channels with other people
+  // (docs/integration/relay.md). Off until someone configures it.
+  const [relayConfig, setRelayConfig] = useState({ url: "", workspace: "", enabled: false, hasToken: false });
+  const [relayStatus, setRelayStatus] = useState({ configured: false, connected: false, peers: [], self: null });
+  const [workspaceSelection, setWorkspaceSelection] = useState({ selectedId: LOCAL_WORKSPACE_ID });
+  const refreshRelayStatus = useCallback(async () => {
+    try {
+      setRelayStatus(await api("/api/relay/status"));
+    } catch {
+      // The relay route is optional; the switcher simply shows Local.
+    }
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const config = await api("/api/relay/config");
+        if (!cancelled) setRelayConfig(config);
+      } catch {
+        return;
+      }
+      if (!cancelled) await refreshRelayStatus();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshRelayStatus]);
+  // A message or channel that arrived from another person is already merged
+  // into channels.json by the bridge; re-reading keeps the stream in step.
+  useEffect(() => {
+    if (!relayConfig.enabled) return undefined;
+    let source;
+    try {
+      source = new EventSource("/api/relay/events");
+    } catch {
+      return undefined;
+    }
+    const onChanged = () => {
+      void reloadChannelsFromBridge();
+    };
+    source.addEventListener("relay.message", onChanged);
+    source.addEventListener("relay.channel", onChanged);
+    source.addEventListener("relay.status", () => void refreshRelayStatus());
+    source.addEventListener("relay.presence", () => void refreshRelayStatus());
+    return () => source.close();
+  }, [relayConfig.enabled, reloadChannelsFromBridge, refreshRelayStatus]);
+
+  const relayWorkspaces = useMemo(
+    () => buildWorkspaceList({ relayConfig, relayStatus, hostName: runtime?.hostName, copy: localeCopy }),
+    [relayConfig, relayStatus, runtime?.hostName, localeCopy]
+  );
+  const workspaceSwitcher = (
+    <WorkspaceSwitcher
+      workspaces={relayWorkspaces}
+      selectedId={workspaceSelection.selectedId}
+      onSelect={(id) => setWorkspaceSelection((current) => selectWorkspace(current, relayWorkspaces, id))}
+      onConnectRelay={() => navigate("/settings#settings-relay")}
+      copy={localeCopy}
+    />
+  );
+
   const loadPresence = useCallback(async () => {
     try {
       const data = await api("/api/members/presence");
@@ -8236,6 +8309,7 @@ function App() {
             inboxCount={inboxCount}
             onSearch={() => setSearchOpen(true)}
             searchTrailing={notificationBell}
+            workspaceSwitcher={workspaceSwitcher}
             onCollapsedChange={setDesktopSidebarCollapsed}
           />
           <main className="app-main min-w-0">
@@ -8304,6 +8378,7 @@ function App() {
               />
             ) : isSquadDirectory ? (
               <SquadDirectoryPage
+                channelMessages={relayStatus?.connected ? Object.values(messagesByChannel).flat() : EMPTY_LIST}
                 agents={agents}
                 tasks={tasks}
                 runs={runs}
@@ -8318,6 +8393,7 @@ function App() {
               />
             ) : isChannels ? (
               <ChannelsPage
+                relayStatus={relayStatus}
                 channels={channels}
                 channelThreads={channelThreads}
                 messagesByChannel={messagesByChannel}
@@ -8398,6 +8474,15 @@ function App() {
                 onNotificationSettingsChange={updateNotificationSettings}
                 onTestNotification={sendTestNotification}
                 onRebuildSearchIndex={rebuildSearchIndex}
+                relayConfig={relayConfig}
+                relayStatus={relayStatus}
+                onSaveRelayConfig={async (patch) => {
+                  setRelayConfig(await api("/api/relay/config", { method: "PUT", body: JSON.stringify(patch) }));
+                  await refreshRelayStatus();
+                }}
+                onSyncRelay={async () => {
+                  setRelayStatus(await api("/api/relay/sync", { method: "POST" }));
+                }}
               />
             ) : isCreate ? (
               <CreateAgent
@@ -8574,6 +8659,7 @@ function App() {
                 setSearchOpen(true);
               }}
               searchTrailing={notificationBell}
+              workspaceSwitcher={workspaceSwitcher}
             />
           </SheetContent>
         </Sheet>
@@ -9023,6 +9109,7 @@ function ChannelsPage({
   canvasRefreshKey = 0,
   initialCanvasId = "",
   onInitialCanvasConsumed,
+  relayStatus = null,
   workflowsByChannel = {},
   onSaveWorkflow,
   onDeleteWorkflow,
@@ -9076,6 +9163,11 @@ function ChannelsPage({
 
   // Presence (ADR-0014): who is thinking, typing, or running tools right now.
   const presenceItems = useMemo(() => presenceFromMessages(channelMessages, agents), [channelMessages, agents]);
+  // Other people on the relay, in the same voice as the member presence line.
+  const peopleHereSentence = useMemo(
+    () => (relayStatus?.connected ? peopleSentence(relayStatus.peers, relayStatus.self, copy) : ""),
+    [relayStatus?.connected, relayStatus?.peers, relayStatus?.self, copy]
+  );
 
   // Media (#32): every anchor in the channel (a row keeps the ones with its
   // id) and a lookup across all messages, since anchors may point at earlier
@@ -9497,6 +9589,7 @@ function ChannelsPage({
                 hint={attachHint || (!members.length ? copy.channelNoMembers : "")}
               />
               <PresenceLine items={presenceItems} copy={copy} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} />
+              {peopleHereSentence ? <p className="px-1 pt-1 text-xs text-muted-foreground">{peopleHereSentence}</p> : null}
             </div>
           </div>
         </>
@@ -10974,6 +11067,7 @@ function SidebarContent({
   inboxCount = 0,
   onSearch,
   searchTrailing = null,
+  workspaceSwitcher = null,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const { entryFor: entryForPresence } = usePresence();
@@ -11071,6 +11165,7 @@ function SidebarContent({
       onCollapse={onCollapse}
       searchShortcutLabel={SEARCH_SHORTCUT_LABEL}
       searchTrailing={searchTrailing}
+      workspaceSwitcher={workspaceSwitcher}
     />
   );
 }
@@ -14647,6 +14742,7 @@ function SquadDirectoryPage({
   agents = [],
   tasks = [],
   runs = [],
+  channelMessages = [],
   runtime,
   workspaces = [],
   locale = DEFAULT_LOCALE,
@@ -14792,6 +14888,7 @@ function SquadDirectoryPage({
                   key={agent.id}
                   agent={agent}
                   agentRows={agentRows}
+                  ownershipMessages={channelMessages}
                   state={state}
                   runtime={runtime}
                   workspaces={workspaces}
@@ -14975,6 +15072,7 @@ function MemberStateControl({ agent, stateId, working = false, onChange }) {
 function SquadMemberRow({
   agent,
   agentRows = [],
+  ownershipMessages = [],
   state,
   runtime,
   workspaces = [],
@@ -14988,6 +15086,9 @@ function SquadMemberRow({
   const recent = agentRows.slice(0, 3);
   const workspace = getAgentWorkspace(agent, runtime, workspaces);
   const role = localizedRole(agent, copy) || agent.role;
+  // With a relay connected, say which machine a member runs on. One quiet
+  // phrase, never a badge; empty when everyone is on this machine.
+  const ownership = ownershipLabel(memberOwnership(agent.id, ownershipMessages, { name: runtime?.account?.name, host: runtime?.hostName }), copy);
   const { meta, stateId, working } = state;
   const isResting = stateId === "paused" || stateId === "offline";
 
@@ -15020,6 +15121,7 @@ function SquadMemberRow({
           {workspace ? (
             <span className="mt-0.5 hidden truncate text-[11px] text-muted-foreground/70 sm:block">
               {workspaceName(workspace) || workspace}
+              {ownership ? ` · ${ownership}` : ""}
             </span>
           ) : null}
         </span>
@@ -23124,6 +23226,10 @@ function SettingsPage({
   onNotificationSettingsChange,
   onTestNotification,
   onRebuildSearchIndex,
+  relayConfig,
+  relayStatus,
+  onSaveRelayConfig,
+  onSyncRelay,
 }) {
   const [searchRebuild, setSearchRebuild] = useState({ state: "idle", total: 0, error: "" });
   async function rebuildSearch() {
@@ -23207,6 +23313,7 @@ function SettingsPage({
     { id: "handoff", icon: Workflow, label: copy.handoffRetryPolicy, detail: handoffRetryModeLabel(effectiveHandoffRetryMode, copy) },
     { id: "mission-control", icon: Monitor, label: "Mission Control", detail: missionControlDetail },
     { id: "runtime", icon: Server, label: copy.runtimeBridge, detail: runtime?.version || copy.checkingRuntime },
+    { id: "relay", icon: Share2, label: copy.relay || "Relay", detail: relayStatusDetail(relayConfig, relayStatus, copy) },
     { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
   ];
   const requestedInitialSection = settingsSections.some((section) => section.id === initialSection) ? initialSection : "";
@@ -23567,11 +23674,35 @@ function SettingsPage({
                 </div>
               </div>
             </section>
+
+            <section id="settings-relay" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
+              <SettingsSectionHeader
+                title={copy.relay || "Relay"}
+                description={copy.relayDescription || "Share channels with your team through a relay you host."}
+              />
+              <RelaySettings
+                config={relayConfig}
+                status={relayStatus}
+                onSave={onSaveRelayConfig}
+                onSync={onSyncRelay}
+                copy={copy}
+              />
+            </section>
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+// One phrase for the settings nav: off, incomplete, or who is connected.
+function relayStatusDetail(config = {}, status = {}, copy = {}) {
+  if (!config?.enabled) return copy.relayOff || "Off";
+  if (status?.connected) {
+    const peers = Array.isArray(status.peers) ? status.peers.length : 0;
+    return peers ? `${config.workspace || ""} · ${peers + 1} ${copy.peopleOnline || "online"}`.trim() : config.workspace || copy.connecting || "Connected";
+  }
+  return copy.reconnecting || "Reconnecting…";
 }
 
 function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", onProviderSettingsChange }) {
