@@ -259,6 +259,7 @@ import { anchorsFromDraft, appendAnchorToken, frameKey, frameUrl, messageMediaCo
 import { InboxPage } from "@/components/inbox/InboxPage";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
+import { RunsOnSettings } from "@/components/members/RunsOnSettings";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -367,6 +368,17 @@ const AccountContext = createContext({ profile: ACCOUNT_PROFILE, signOut: null, 
 // online, offline, or unknown when the bridge is unreachable. Read with
 // `usePresence()` anywhere a dot or label is drawn.
 const PresenceContext = createContext({ presenceMap: {}, bridgeReachable: true, entryFor: (agent) => ({ state: agent?.status === "offline" ? "offline" : "online" }), stopMember: null });
+
+// Members that run on another machine's bridge (docs/integration/remote.md).
+// The transport is a detail on the profile, never a badge in the directory.
+const RemoteMembersContext = createContext({ remoteByMember: {}, refreshRemoteMembers: async () => {} });
+function useRemoteMembers() {
+  return useContext(RemoteMembersContext);
+}
+function remoteLabelFor(remoteByMember, agentId) {
+  const remote = remoteByMember?.[String(agentId || "")];
+  return remote ? remote.label || remote.url || "" : "";
+}
 function usePresence() {
   return useContext(PresenceContext);
 }
@@ -5622,10 +5634,51 @@ function App() {
 
   const [presenceMap, setPresenceMap] = useState({});
   const [bridgeReachable, setBridgeReachable] = useState(true);
+  // Members registered to another machine's bridge, keyed by member id.
+  const [remoteByMember, setRemoteByMember] = useState({});
+  const remoteByMemberRef = useRef({});
+  useEffect(() => {
+    remoteByMemberRef.current = remoteByMember;
+  }, [remoteByMember]);
+  const refreshRemoteMembers = useCallback(async () => {
+    try {
+      // The route answers with the list itself, not a { members } wrapper.
+      const data = await api("/api/remote/members");
+      const list = Array.isArray(data) ? data : data?.members || [];
+      const next = {};
+      for (const entry of list) next[String(entry.memberId)] = entry;
+      setRemoteByMember(next);
+      return next;
+    } catch {
+      // The registry is optional; members simply run here.
+      return remoteByMemberRef.current;
+    }
+  }, []);
+  useEffect(() => {
+    void refreshRemoteMembers();
+  }, [refreshRemoteMembers]);
   const loadPresence = useCallback(async () => {
     try {
       const data = await api("/api/members/presence");
-      setPresenceMap(data?.presence || {});
+      const presence = { ...(data?.presence || {}) };
+      // A remote member's state lives on the bridge that runs it; when that
+      // bridge cannot say, the local entry stands (run and chat activity).
+      const remotes = Object.keys(remoteByMemberRef.current);
+      if (remotes.length) {
+        await Promise.all(
+          remotes.map(async (memberId) => {
+            try {
+              const result = await api(`/api/remote/members/${encodeURIComponent(memberId)}/presence`);
+              if (result?.available === false) return;
+              const entry = result?.presence?.[memberId] || result?.entry || null;
+              if (entry) presence[memberId] = entry;
+            } catch {
+              // Unreachable remote: keep whatever this bridge knows.
+            }
+          })
+        );
+      }
+      setPresenceMap(presence);
       setBridgeReachable(true);
     } catch {
       // Keep the last map; every dot shows Unknown while the bridge is down.
@@ -5646,6 +5699,10 @@ function App() {
     await loadPresence();
     return result;
   }
+  const remoteMembersContextValue = useMemo(
+    () => ({ remoteByMember, refreshRemoteMembers }),
+    [remoteByMember, refreshRemoteMembers]
+  );
   const presenceContextValue = useMemo(
     () => ({ presenceMap, bridgeReachable, entryFor, stopMember }),
     // stopMember is a stable closure over api and loadPresence.
@@ -6346,6 +6403,13 @@ function App() {
             return;
           }
 
+          // A proxied stream opens with the bridge that actually runs the
+          // member, so the reply meta can read "via Studio".
+          if (event === "remote") {
+            updateMessage(agentId, `${id}-a`, { remote: { label: data.label || "", url: data.url || "" } });
+            return;
+          }
+
           if (event === "sdk") {
             if (data.type === "message_delta" && data.delta) {
               streamedAnswer = `${streamedAnswer}${data.delta}`;
@@ -6695,6 +6759,10 @@ function App() {
               updatedAt: new Date().toISOString(),
               ...(workflowMarker || {}),
             });
+            return;
+          }
+          if (event === "remote") {
+            updateChannelMessage(channel.id, messageId, { remote: { label: data.label || "", url: data.url || "" }, updatedAt: new Date().toISOString() });
             return;
           }
           if (event === "sdk") {
@@ -8127,6 +8195,7 @@ function App() {
   return (
     <AccountContext.Provider value={accountContextValue}>
     <PresenceContext.Provider value={presenceContextValue}>
+    <RemoteMembersContext.Provider value={remoteMembersContextValue}>
     <TooltipProvider>
       <div className="app-shell-root relative min-h-screen overflow-x-clip bg-background text-foreground">
         <div className={cn("app-shell-decor dark-grid pointer-events-none fixed inset-0 opacity-35", isCreate && "hidden")} />
@@ -8510,6 +8579,7 @@ function App() {
         </Sheet>
       </div>
     </TooltipProvider>
+    </RemoteMembersContext.Provider>
     </PresenceContext.Provider>
     </AccountContext.Provider>
   );
@@ -13550,7 +13620,15 @@ function AgentWorkDetails({ message, isLoading = false, durationLabel = "", copy
   const [showRaw, setShowRaw] = useState(false);
   if (!activity.length && !isLoading) return null;
   const stats = activityStats(activity);
-  const summary = [`${stats.rows} ${stats.rows === 1 ? "step" : "steps"}`, stats.tools ? `${stats.tools} ${stats.tools === 1 ? "tool" : "tools"}` : "", durationLabel]
+  // A reply that came back from another machine's bridge says so here, so the
+  // transport is visible without a badge on the row.
+  const via = message?.remote?.label || message?.remote?.url || "";
+  const summary = [
+    `${stats.rows} ${stats.rows === 1 ? "step" : "steps"}`,
+    stats.tools ? `${stats.tools} ${stats.tools === 1 ? "tool" : "tools"}` : "",
+    durationLabel,
+    via ? `${copy.via || "via"} ${via}` : "",
+  ]
     .filter(Boolean)
     .join(" · ");
   return (
@@ -22166,6 +22244,8 @@ function BrainCardPanel({ agent, onEdit }) {
 function ProfileHarnessSummary({ agent, harnesses = [], navigate }) {
   const assignment = harnessForAgent(agent);
   const readiness = readinessFor(harnesses, assignment.id);
+  const { remoteByMember } = useRemoteMembers();
+  const remoteLabel = remoteLabelFor(remoteByMember, agent.id);
   return (
     <section className="border-b border-border/75 pb-5" aria-labelledby="profile-harness-summary">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -22177,6 +22257,7 @@ function ProfileHarnessSummary({ agent, harnesses = [], navigate }) {
             {" / "}
             <span className={readinessTone(readiness?.status)}>{readinessLabel(readiness?.status)}</span>
             {assignment.model ? ` / ${assignment.model}` : ""}
+            {remoteLabel ? ` / on ${remoteLabel}` : ""}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "harness"))}>
@@ -22189,6 +22270,9 @@ function ProfileHarnessSummary({ agent, harnesses = [], navigate }) {
 }
 
 function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onRefreshHarnesses, navigate, updateAgent, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+  const { remoteByMember, refreshRemoteMembers } = useRemoteMembers();
+  const remote = remoteByMember?.[agent.id] || null;
+  const remotePath = `/api/remote/members/${encodeURIComponent(agent.id)}`;
   const [assignment, setAssignment] = useState(() => harnessForAgent(agent));
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -22253,6 +22337,29 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
             {copy.close || "Close"}
           </Button>
         </div>
+        <Separator />
+        <div>
+          <h2 className="text-lg font-semibold">{copy.runsOn || "Runs on"}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {copy.runsOnDescription ||
+              `${agent.name} runs on this machine unless you point it at another bridge. The work happens there; the conversation stays here.`}
+          </p>
+        </div>
+        <RunsOnSettings
+          remote={remote}
+          copy={copy}
+          onProbe={(candidate) => api(`${remotePath}/probe`, { method: "POST", body: JSON.stringify(candidate) })}
+          onSave={async (candidate) => {
+            const saved = await api(remotePath, { method: "PUT", body: JSON.stringify(candidate) });
+            await refreshRemoteMembers();
+            return saved;
+          }}
+          onRemove={async () => {
+            await api(remotePath, { method: "DELETE" });
+            await refreshRemoteMembers();
+          }}
+          onMintToken={(body) => api("/api/remote/tokens", { method: "POST", body: JSON.stringify(body || {}) })}
+        />
         <Separator />
         <dl className="grid gap-3 text-sm sm:grid-cols-[160px_minmax(0,1fr)]">
           {(harnesses.length ? harnesses : []).map((item) => (
