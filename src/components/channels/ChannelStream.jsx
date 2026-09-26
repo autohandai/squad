@@ -122,6 +122,7 @@ export function ChannelStream({
   lastReadAt = 0,
   reactionsByMessage = {},
   renderBody,
+  renderEvent,
   renderAvatar,
   authorName,
   onReact,
@@ -159,6 +160,19 @@ export function ChannelStream({
         const ms = timestampOf(message);
         const day = dayKey(ms, locale);
         const showDay = day && day !== previousDay;
+        // Repository events are one muted row, not an authored message, so
+        // they keep the day divider but skip the author grouping.
+        if (renderEvent && message.role === "event") {
+          if (showDay) previousDay = day;
+          previousAuthor = "";
+          previousTimestamp = ms;
+          return (
+            <Fragment key={message.id}>
+              {showDay ? <Divider label={day} /> : null}
+              {renderEvent(message)}
+            </Fragment>
+          );
+        }
         const isNew = !newShown && lastReadAt > 0 && ms > lastReadAt && message.role !== "user";
         const name = authorName ? authorName(message) : message.role === "user" ? userName : message.authorName || "Member";
         const compact = !showDay && !isNew && previousAuthor === name && ms - previousTimestamp < 4 * 60 * 1000;

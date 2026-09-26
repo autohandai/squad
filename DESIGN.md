@@ -102,6 +102,8 @@
 
 - The sidebar header carries a quiet workspace switcher (current workspace name, chevron, popover list with a status dot per relay workspace and a "Connect a relay…" row). Member ownership is one muted meta phrase ("Runs on Noah's Mac"), never a badge. People presence is one sentence under the member presence line.
 
+- Git events (commits, pull requests, CI) are one-line muted rows between messages, indented to the message text column: icon, short ref, title, a dot-and-word status, time on the right. No cards, no coloured fills; status colour follows the presence dots. Pull request rows reveal Review and Open on hover. The Repository section in channel settings is two inputs, one status sentence, and Bind/Unbind.
+
 ## Member Profile
 
 - History is a divider list grouped by day with underlined text filters (All / Messages / Runs / Edits / Shell / Handoffs / Approvals), a ghost Load more, and one outline Export button. Rows are icon + sentence + a muted meta line (kind · time · links); failures use the destructive colour on the text only. No cards, no badges.

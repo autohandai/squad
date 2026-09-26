@@ -243,6 +243,9 @@ import {
 } from "@/lib/notifications";
 import { ChannelStream } from "@/components/channels/ChannelStream";
 import { WorkflowsSettings } from "@/components/channels/WorkflowsSettings";
+import { RepositorySettings } from "@/components/channels/RepositorySettings";
+import { GitEventRow } from "@/components/channels/GitEventRow";
+import { isGitEvent, mergeEventsIntoStream } from "@/lib/git-events";
 import { WorkflowRunMessage, WorkflowTag } from "@/components/channels/WorkflowRunMessage";
 import {
   evaluateTriggers as evaluateWorkflowTriggers,
@@ -3443,6 +3446,10 @@ function normalizeChannelCopy(channel) {
     projects: normalizeChannelProjects(channel.projects),
     creatorId: String(channel.creatorId || "").trim(),
     autoModeDefault: channel.autoModeDefault === true,
+    // Owned by the git route plug-in (docs/integration/git.md). Kept verbatim
+    // so re-PUTting the channel list does not erase the repository binding.
+    ...(channel.git && typeof channel.git === "object" ? { git: channel.git } : {}),
+    ...(Array.isArray(channel.events) ? { events: channel.events } : {}),
     createdAt,
     updatedAt: String(channel.updatedAt || createdAt),
   };
@@ -9135,11 +9142,91 @@ function ChannelsPage({
   const channel = channels.find((item) => item.id === activeChannelId) || null;
   const threads = channel ? channelThreads[channel.id] || [] : [];
   const channelMessages = channel ? messagesByChannel[channel.id] || [] : [];
+  // Repository rows sit in the stream in time order beside the messages.
+  const streamWithGitEvents = useMemo(
+    () => (channel?.events?.length ? mergeEventsIntoStream(channelMessages, channel.events) : channelMessages),
+    [channelMessages, channel?.events]
+  );
   const members = channel
     ? channel.memberIds.map((memberId) => agents.find((agent) => agent.id === memberId)).filter(Boolean)
     : [];
   // Channel workflows (#28): settings section plus the run rows in the stream.
   const channelWorkflows = channel ? workflowsByChannel[channel.id] || [] : [];
+
+  // Git in channels (#29): the route plug-in owns the binding and polls every
+  // 30 s; the page mirrors its rows onto the channel and refreshes while open.
+  const [gitStatus, setGitStatus] = useState(null);
+  const [gitBusy, setGitBusy] = useState(false);
+  const [gitError, setGitError] = useState("");
+  useEffect(() => {
+    setGitStatus(null);
+    setGitError("");
+  }, [channel?.id]);
+  useEffect(() => {
+    if (!channel?.id || !channel?.git?.repoPath) return undefined;
+    let cancelled = false;
+    async function pull() {
+      try {
+        const data = await api(`/api/git/watch/${encodeURIComponent(channel.id)}`);
+        if (cancelled) return;
+        setGitStatus(data.status || null);
+        const events = Array.isArray(data.events) ? data.events : [];
+        const current = Array.isArray(channel.events) ? channel.events : [];
+        const changed =
+          events.length !== current.length ||
+          String(events[events.length - 1]?.updatedAt || "") !== String(current[current.length - 1]?.updatedAt || "");
+        if (changed) onUpdateChannel?.(channel.id, { events });
+      } catch {
+        // A binding the bridge forgot: the rows already in the channel stay.
+      }
+    }
+    void pull();
+    const timer = window.setInterval(pull, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [channel?.id, channel?.git?.repoPath, channel?.events, onUpdateChannel]);
+
+  async function pickRepositoryFolder(start) {
+    try {
+      const data = await api("/api/workspaces/pick", {
+        method: "POST",
+        body: JSON.stringify({ title: `Bind a repository to #${channel?.name || ""}`, start }),
+      });
+      return data?.path || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function bindRepository(binding) {
+    setGitBusy(true);
+    setGitError("");
+    try {
+      const data = await api("/api/git/watch", { method: "POST", body: JSON.stringify(binding) });
+      onUpdateChannel?.(binding.channelId, { git: data.binding, events: data.events || [] });
+      setGitStatus(data.status || null);
+    } catch (error) {
+      setGitError(error?.message || "Could not bind that folder.");
+    } finally {
+      setGitBusy(false);
+    }
+  }
+
+  async function unbindRepository(channelId) {
+    setGitBusy(true);
+    setGitError("");
+    try {
+      await api(`/api/git/watch/${encodeURIComponent(channelId)}`, { method: "DELETE" });
+      onUpdateChannel?.(channelId, { git: null });
+      setGitStatus(null);
+    } catch (error) {
+      setGitError(error?.message || "Could not unbind that repository.");
+    } finally {
+      setGitBusy(false);
+    }
+  }
 
   useEffect(() => {
     setManageMembersOpen(false);
@@ -9406,6 +9493,17 @@ function ChannelsPage({
                     copy={copy}
                   />
                   <Separator />
+                  <RepositorySettings
+                    channel={channel}
+                    status={gitStatus}
+                    busy={gitBusy}
+                    error={gitError}
+                    copy={copy}
+                    onPickFolder={pickRepositoryFolder}
+                    onBind={bindRepository}
+                    onUnbind={unbindRepository}
+                  />
+                  <Separator />
                   <Button variant="ghost" size="sm" className="justify-start" onClick={exportChannelLog}>
                     <FileCode2 data-icon="inline-start" />
                     Export markdown
@@ -9476,7 +9574,15 @@ function ChannelsPage({
             <div className="mx-auto w-full max-w-5xl py-3">
               <ChannelStream
                 channel={channel}
-                messages={channelMessages}
+                messages={streamWithGitEvents}
+                renderEvent={(event) => (!isGitEvent(event) ? null : (
+                  <GitEventRow
+                    event={event}
+                    copy={copy}
+                    locale={locale}
+                    onOpen={(item) => item?.url && window.open(item.url, "_blank", "noopener")}
+                  />
+                ))}
                 agents={agents}
                 userName={accountProfile.name}
                 locale={locale}
