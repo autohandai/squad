@@ -383,6 +383,8 @@ const UI_COPY_BY_LANGUAGE = {
     inboxNoApprovals: "No workflow is waiting for your approval.",
     gitNotBound: "Not bound to a repository.",
     gitNotWatching: "Not watching. {error}",
+    gitOpenPullRequest: "Open pull request",
+    gitPullRequestLadder: "No member in this channel is allowed to open a pull request yet. Raise one to Open PR in their Permission page.",
     gitWatching: "Watching",
     gitAt: "at",
     gitAhead: "ahead",

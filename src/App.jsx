@@ -9262,6 +9262,45 @@ function ChannelsPage({
 
   // "main at origin · 2 workflows": what this channel is wired to, or "" when
   // it is wired to nothing.
+  // The bridge will open a pull request for the bound branch, but only for a
+  // member standing high enough on the autonomy ladder. Pick the member in the
+  // channel who qualifies; when nobody does, say so instead of letting the
+  // route refuse after the round trip.
+  const pullRequestMember = useMemo(() => {
+    if (!channel?.git?.repoPath) return null;
+    const inChannel = agents.filter((agent) => channel.memberIds?.includes(agent.id));
+    return (
+      inChannel.find((agent) => PR_READY_LADDER_LEVELS.has(resolveAgentPermissionsForWorkspace(agent, channel.git.repoPath).ladderLevel)) || null
+    );
+  }, [channel?.git?.repoPath, channel?.memberIds, agents]);
+  const pullRequestHint = channel?.git?.repoPath && !pullRequestMember ? copy.gitPullRequestLadder || "No member in this channel is allowed to open a pull request yet. Raise one to Open PR in their Permission page." : "";
+
+  async function openPullRequestForChannel(channelId) {
+    if (!pullRequestMember || !channel?.git?.repoPath) return;
+    setGitBusy(true);
+    setGitError("");
+    try {
+      const permissions = resolveAgentPermissionsForWorkspace(pullRequestMember, channel.git.repoPath);
+      const data = await api("/api/git/pr", {
+        method: "POST",
+        body: JSON.stringify({
+          workspace: channel.git.repoPath,
+          title: `${channel.name}: ${channel.git.branch || "work"}`,
+          base: channel.git.branch || "",
+          permissionLevel: permissions.ladderLevel,
+          channelId,
+        }),
+      });
+      // The next poll picks the pull request up as an event row in the
+      // stream, so there is nothing to post here.
+      if (data?.url) window.open(data.url, "_blank", "noopener");
+    } catch (error) {
+      setGitError(error?.message || "Could not open a pull request.");
+    } finally {
+      setGitBusy(false);
+    }
+  }
+
   const channelSetupSummary = useMemo(() => {
     const parts = [];
     const branch = channel?.git?.branch || gitStatus?.branch || "";
@@ -9561,6 +9600,8 @@ function ChannelsPage({
                     onPickFolder={pickRepositoryFolder}
                     onBind={bindRepository}
                     onUnbind={unbindRepository}
+                    onOpenPullRequest={openPullRequestForChannel}
+                    pullRequestHint={pullRequestHint}
                   />
                   <Separator />
                   <Button variant="ghost" size="sm" className="justify-start" onClick={exportChannelLog}>

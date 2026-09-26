@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
  *   onBind       ({ channelId, repoPath, remote, branch }) => void
  *   onUnbind     (channelId) => void
  */
-export function RepositorySettings({ channel, status = null, busy = false, error = "", copy = {}, onPickFolder, onBind, onUnbind, className }) {
+export function RepositorySettings({ channel, status = null, busy = false, error = "", copy = {}, onPickFolder, onBind, onUnbind, onOpenPullRequest, pullRequestHint = "", className }) {
   const bound = channel?.git?.repoPath ? channel.git : null;
   const [repoPath, setRepoPath] = useState(bound?.repoPath || "");
   const [branch, setBranch] = useState(bound?.branch || "");
@@ -124,7 +124,26 @@ export function RepositorySettings({ channel, status = null, busy = false, error
             {copy.gitUnbind || "Unbind"}
           </Button>
         ) : null}
+        {/* The bridge can open a pull request for the bound branch; below the
+            ladder rung that allows it the control says why rather than
+            failing on the round trip. */}
+        {bound && onOpenPullRequest ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs"
+            onClick={() => onOpenPullRequest(channel.id)}
+            disabled={busy || Boolean(pullRequestHint)}
+            title={pullRequestHint || undefined}
+          >
+            {copy.gitOpenPullRequest || "Open pull request"}
+          </Button>
+        ) : null}
       </div>
+      {bound && pullRequestHint ? (
+        <p className="text-xs text-muted-foreground">{pullRequestHint}</p>
+      ) : null}
     </form>
   );
 }
