@@ -9422,7 +9422,7 @@ function ChannelsPage({
                   <Settings className="size-4" />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-72 p-3">
+              <PopoverContent align="end" className="w-72 max-h-[min(34rem,calc(100vh-6rem))] overflow-y-auto overscroll-contain p-3">
                 <div className="flex flex-col gap-3">
                   <label className="flex items-center justify-between gap-3 text-sm" htmlFor={`auto-mode-${channel.id}`}>
                     <span>
@@ -9694,8 +9694,12 @@ function ChannelsPage({
                 onAttach={attachFiles}
                 hint={attachHint || (!members.length ? copy.channelNoMembers : "")}
               />
-              <PresenceLine items={presenceItems} copy={copy} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} />
-              {peopleHereSentence ? <p className="px-1 pt-1 text-xs text-muted-foreground">{peopleHereSentence}</p> : null}
+              {/* Height is reserved so a member starting or stopping never
+                  shifts the composer under the cursor (DESIGN.md, ADR-0014). */}
+              <div className="min-h-6">
+                <PresenceLine items={presenceItems} copy={copy} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} />
+                {peopleHereSentence ? <p className="px-1 pt-1 text-xs text-muted-foreground">{peopleHereSentence}</p> : null}
+              </div>
             </div>
           </div>
         </>
@@ -10041,6 +10045,16 @@ function formatShortTime(value, locale = DEFAULT_LOCALE) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value || "");
   return date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+}
+
+// The element that actually scrolls above a node: the chat log is nested, so
+// document.scrollingElement is the wrong thing to measure against.
+function nearestScrollParent(node) {
+  for (let el = node?.parentElement; el; el = el.parentElement) {
+    const overflow = window.getComputedStyle(el).overflowY;
+    if ((overflow === "auto" || overflow === "scroll") && el.scrollHeight > el.clientHeight) return el;
+  }
+  return document.scrollingElement;
 }
 
 function messageDurationLabel(message) {
@@ -12216,9 +12230,25 @@ function Conversation({
     setWorkspaceError("");
   }, [agent.id, workspaceDraft]);
 
+  // Follow the conversation without fighting the reader. A streamed reply
+  // changes `body` on every delta; smooth-scrolling each time restarts a glide
+  // that never arrives and drags the view back when someone scrolls up to
+  // read. So: glide only for a discrete jump, snap while text grows, and do
+  // neither unless the reader is already at the bottom.
+  const lastScrolledMessageRef = useRef("");
   useEffect(() => {
+    const anchor = messagesEndRef.current;
+    if (!anchor) return undefined;
+    const jumped = lastScrolledMessageRef.current !== `${agent.id}:${latestVisibleMessage?.id || ""}`;
+    lastScrolledMessageRef.current = `${agent.id}:${latestVisibleMessage?.id || ""}`;
+    const scroller = nearestScrollParent(anchor);
+    const distanceFromBottom = scroller
+      ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
+      : 0;
+    if (!jumped && distanceFromBottom > 80) return undefined;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     const frame = window.requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+      anchor.scrollIntoView({ block: "end", behavior: jumped && !reduced ? "smooth" : "auto" });
     });
     return () => window.cancelAnimationFrame(frame);
   }, [
@@ -13819,6 +13849,13 @@ function useMessageActivity(message, isLoading) {
 function AgentWorkDetails({ message, isLoading = false, durationLabel = "", copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   const { activity, raw } = useMessageActivity(message, isLoading);
   const [showRaw, setShowRaw] = useState(false);
+  // Open while the member works, then leave it as the reader left it. Binding
+  // `open` straight to isLoading both trapped it open and slammed it shut the
+  // moment the reply landed, taking the page position with it.
+  const [open, setOpen] = useState(isLoading);
+  useEffect(() => {
+    if (isLoading) setOpen(true);
+  }, [isLoading]);
   if (!activity.length && !isLoading) return null;
   const stats = activityStats(activity);
   // A reply that came back from another machine's bridge says so here, so the
@@ -13833,7 +13870,7 @@ function AgentWorkDetails({ message, isLoading = false, durationLabel = "", copy
     .filter(Boolean)
     .join(" · ");
   return (
-    <details open={isLoading || undefined} className="group/trace mt-3 max-w-none">
+    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="group/trace mt-3 max-w-none">
       <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md py-1 text-xs text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
         <ChevronRight className="size-3.5 transition-transform group-open/trace:rotate-90" aria-hidden="true" />
         <span className="font-medium">Work details</span>
@@ -15193,8 +15230,10 @@ function SquadMemberRow({
   const workspace = getAgentWorkspace(agent, runtime, workspaces);
   const role = localizedRole(agent, copy) || agent.role;
   // With a relay connected, say which machine a member runs on. One quiet
-  // phrase, never a badge; empty when everyone is on this machine.
-  const ownership = ownershipLabel(memberOwnership(agent.id, ownershipMessages, { name: runtime?.account?.name, host: runtime?.hostName }), copy);
+  // phrase, never a badge, and nothing at all for a member that runs here:
+  // the transport is a detail (DESIGN.md, Workspace Shell).
+  const owner = memberOwnership(agent.id, ownershipMessages, { name: runtime?.account?.name, host: runtime?.hostName });
+  const ownership = owner?.isLocal === false ? ownershipLabel(owner, copy) : "";
   const { meta, stateId, working } = state;
   const isResting = stateId === "paused" || stateId === "offline";
 

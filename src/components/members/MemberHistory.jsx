@@ -138,7 +138,7 @@ function HistoryRow({ record, copy, renderLink, locale, now }) {
 
   return (
     <li className="flex gap-3 py-3">
-      <span className={cn("mt-0.5 grid size-5 shrink-0 place-items-center text-muted-foreground", failed && "text-destructive")} aria-hidden="true">
+      <span className="mt-0.5 grid size-5 shrink-0 place-items-center text-muted-foreground" aria-hidden="true">
         <Icon className="size-4" />
       </span>
       <div className="min-w-0 flex-1">

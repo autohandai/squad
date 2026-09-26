@@ -6,7 +6,9 @@ import { cn } from "@/lib/utils";
 import { currentWorkspace } from "@/lib/workspaces";
 
 function StatusDot({ workspace }) {
-  if (workspace.kind === "local") return null;
+  // A transparent placeholder rather than nothing, so every row's name
+  // starts at the same x.
+  if (workspace.kind === "local") return <span className="size-1.5 shrink-0" aria-hidden="true" />;
   const tone = !workspace.enabled ? "bg-muted-foreground/40" : workspace.connected ? "bg-emerald-500" : "bg-amber-500";
   return <span className={cn("size-1.5 shrink-0 rounded-full", tone)} aria-hidden="true" />;
 }

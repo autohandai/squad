@@ -194,6 +194,24 @@ html[data-shell="desktop"] [data-tauri-drag-region] {
   }
 }
 
+/* Motion is for explaining a change, never decoration. Under reduced motion
+   keep colour and opacity, drop movement, size changes and looping pulses.
+   Spinners stay: removing them leaves no progress signal at all. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse,
+  .animate-ping {
+    animation: none;
+  }
+  [data-entering] {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, opacity, box-shadow;
+  }
+}
+
 ::selection {
   background: color-mix(in srgb, var(--primary) 35%, transparent);
 }

@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { Check, Workflow, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -34,7 +36,37 @@ export function WorkflowTag({ workflow, run, stepId = "", showName = true, copy 
  *
  * Props: { run, workflow, members?, showName?, onApprove(run), onDecline(run), copy, className }
  */
+// "step 2 of 3 failed", or the engine's own sentence when it wrote one a
+// person can read. Never an internal step id.
+function humanRunError(run, workflow, copy = {}) {
+  const text = String(run?.error || "").trim();
+  if (!text) return "";
+  const match = text.match(/^(step_[A-Za-z0-9_]+)\b/);
+  if (!match) return text;
+  const steps = Array.isArray(workflow?.steps) ? workflow.steps : [];
+  const index = steps.findIndex((item) => item.id === match[1]);
+  if (index < 0) return "";
+  const label = (copy.workflowStepOf || "step {n} of {total}")
+    .replace("{n}", String(index + 1))
+    .replace("{total}", String(steps.length));
+  return `${label} ${copy.failed || "failed"}`;
+}
+
 export function WorkflowRunMessage({ run, workflow, members = [], showName = true, onApprove, onDecline, copy = {}, className }) {
+  // A decision travels to the bridge and back; without this the row sits
+  // unchanged under the pointer and the click looks lost. Declared before any
+  // early return so the hook order never changes.
+  const [deciding, setDeciding] = useState("");
+  async function decide(kind, handler) {
+    if (deciding) return;
+    setDeciding(kind);
+    try {
+      await handler?.(run);
+    } finally {
+      setDeciding("");
+    }
+  }
+
   if (!run) return null;
   const waiting = run.status === "waiting_approval" && run.pendingApproval;
   const step = waiting ? workflow?.steps?.find((item) => item.id === run.pendingApproval.stepId) : null;
@@ -43,11 +75,14 @@ export function WorkflowRunMessage({ run, workflow, members = [], showName = tru
 
   if (!waiting) {
     const tone = run.status === "failed" ? "text-destructive" : run.status === "declined" ? "text-muted-foreground" : "text-muted-foreground";
+    // The engine can leave a raw id here ("step_muhhf926_0 failed"). Say where
+    // it stopped instead, and say nothing rather than show the id.
+    const errorText = humanRunError(run, workflow, copy);
     return (
       <div className={cn("flex flex-wrap items-center gap-2 text-xs", tone, className)} role="status">
         {showName ? <WorkflowTag workflow={workflow} run={run} copy={copy} /> : null}
         <span>{runStatusLabel(run.status, copy)}</span>
-        {run.error ? <span className="truncate">· {run.error}</span> : null}
+        {errorText ? <span className="truncate">· {errorText}</span> : null}
       </div>
     );
   }
@@ -71,13 +106,13 @@ export function WorkflowRunMessage({ run, workflow, members = [], showName = tru
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => onApprove?.(run)}>
+        <Button size="sm" disabled={Boolean(deciding)} onClick={() => decide("approve", onApprove)}>
           <Check data-icon="inline-start" />
-          {copy.approve || "Approve"}
+          {deciding === "approve" ? copy.approving || "Approving…" : copy.approve || "Approve"}
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => onDecline?.(run)}>
+        <Button size="sm" variant="ghost" disabled={Boolean(deciding)} onClick={() => decide("decline", onDecline)}>
           <X data-icon="inline-start" />
-          {copy.decline || "Decline"}
+          {deciding === "decline" ? copy.declining || "Declining…" : copy.decline || "Decline"}
         </Button>
         <span className="text-xs text-muted-foreground">
           {(copy.workflowApprovalEmojiHint || "or react {emoji} to this message").replace("{emoji}", run.pendingApproval.emoji)}

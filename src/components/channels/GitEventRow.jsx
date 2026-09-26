@@ -31,7 +31,7 @@ export function GitEventRow({ event, copy = {}, locale = "en-US", now, onReview,
   return (
     <div
       className={cn("group flex min-w-0 items-center gap-2 py-1 pl-[2.75rem] pr-2 text-xs text-muted-foreground", className)}
-      role="listitem"
+     
       aria-label={`${event.kind} ${event.ref || ""} ${pill.label}`.trim()}
       data-kind={event.kind}
       data-status={event.status}

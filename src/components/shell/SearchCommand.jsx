@@ -213,7 +213,7 @@ export function SearchCommand({
         </CommandList>
       ) : null}
       {/* With an empty query cmdk owns ↑/↓/Enter for the pages, so the recent rows are mouse-only and carry no cursor fill. */}
-      <div className={searching ? "max-h-[360px] overflow-y-auto overflow-x-hidden" : "max-h-[360px] overflow-y-auto overflow-x-hidden [&_[role=option][data-active=true]]:bg-transparent [&_[role=option][data-active=true]]:hover:bg-muted/40"}>
+      <div className={searching ? "max-h-[min(28rem,55vh)] overflow-y-auto overflow-x-hidden" : "max-h-[min(28rem,55vh)] overflow-y-auto overflow-x-hidden [&_[role=option][data-active=true]]:bg-transparent [&_[role=option][data-active=true]]:hover:bg-muted/40"}>
         <SearchResults
           query={query}
           groups={groups}
