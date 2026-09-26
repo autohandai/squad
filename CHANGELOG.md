@@ -10,6 +10,50 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+- **Workflows in channels**: automations that trigger on a message, a
+  reaction, a schedule, or a webhook, run their steps through squad members,
+  and pause at approval gates you clear with a button or an emoji.
+- **Git as a channel object**: bind a repository folder to a channel and its
+  commits, pull requests, and CI results land in the stream as one-line rows.
+  Members can open a pull request once their autonomy ladder allows it.
+- **Canvases**: Markdown documents in a channel or a member chat that you and
+  the members edit together. Every save is an attributed revision with a diff
+  and Revert; mention `@canvas:<slug>` to hand one to a member.
+- **Media with anchored comments**: images and video render inline in
+  channels, and a comment can anchor to a region, a moment, or both. The
+  member receives the path, the region, and an extracted frame.
+- **Cross-surface search**: one index over messages, channels, members, runs,
+  tasks, handoffs, canvases, and workflow runs, grouped by type, with recent
+  searches and deep links that highlight the record in place.
+- **Activity feed**: agent replies and run output now show a semantic feed of
+  what happened (read, search, edit, shell, status) with a Raw toggle, in
+  member chat, channel replies, and the Execution panel.
+- **Notifications**: native alerts for finished and failed runs, waiting
+  handoffs and approvals, and mentions, suppressed while that conversation is
+  on screen. A bell beside search carries the unread feed.
+- **Member history**: a durable per-member record of every run, reply, edit,
+  shell command, handoff, and approval, filterable by kind and exportable.
+- **Remote members**: run a member on another machine's bridge. Chat, streams,
+  and runs are forwarded with a bearer token and replies stream back marked
+  with the bridge that ran them.
+- **Multi-user relay**: a relay you host yourself, so a team shares channels
+  and messages. The sidebar gains a workspace switcher and Settings a Relay
+  section.
+- **Presence and stop**: live per-member state with a stop control.
+
+### Fixed
+- Route plug-ins could load twice on a cold bridge, which made every feature
+  handle each event twice (duplicate notifications and audit rows).
+- Tailwind only scanned four component directories, so styles used by newer
+  features were never generated.
+- The form-control font reset was unlayered and overrode every utility, so
+  fonts and sizes never applied to inputs and textareas.
+- A local `tauri build` bundled whatever runtime happened to be staged, so a
+  desktop build could ship the previous release's server.
+- CI's release dry run never fetched the vendored Autohand CLI and failed on
+  every platform.
+
 ## [0.1.5] - 2026-09-24
 
 ### Added
