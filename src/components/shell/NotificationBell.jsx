@@ -4,7 +4,7 @@ import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { groupNotifications, relativeTime } from "@/lib/notifications";
+import { collapseNotifications, groupNotifications, relativeTime } from "@/lib/notifications";
 import { cn } from "@/lib/utils";
 
 function NotificationRow({ item, now, onOpen }) {
@@ -15,7 +15,10 @@ function NotificationRow({ item, now, onOpen }) {
       className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 px-3 py-2.5 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:bg-muted/50"
       onClick={() => onOpen?.(item)}
     >
-      <span className={cn("min-w-0 truncate text-sm", unread ? "font-semibold text-foreground" : "font-medium text-foreground/85")}>{item.title}</span>
+      <span className={cn("min-w-0 truncate text-sm", unread ? "font-semibold text-foreground" : "font-medium text-foreground/85")}>
+        {item.title}
+        {item.count > 1 ? <span className="ml-1.5 font-normal text-muted-foreground">{`\u00d7${item.count}`}</span> : null}
+      </span>
       <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <time dateTime={item.at}>{relativeTime(item.at, now)}</time>
         {unread ? <span className="size-1.5 rounded-full bg-foreground" aria-label="unread" /> : null}
@@ -34,7 +37,9 @@ export function NotificationBell({ items = [], unread = 0, onOpen, onMarkAllRead
   const [open, setOpen] = useState(false);
   const now = Date.now();
   const label = copy.notifications || "Notifications";
-  const groups = groupNotifications(items, now);
+  // One cause reads as one row: four identical failures collapse to a single
+  // entry with a count, so the unread dot keeps meaning something.
+  const groups = groupNotifications(items, now).map((group) => ({ ...group, items: collapseNotifications(group.items) }));
 
   function openItem(item) {
     setOpen(false);

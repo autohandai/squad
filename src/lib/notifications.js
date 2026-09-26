@@ -86,6 +86,34 @@ function startOfDay(time) {
   return date.getTime();
 }
 
+// One cause should read as one row. A member that fails four times in a row
+// produces four identical records; the feed collapses them into a single row
+// carrying the newest time and a count, so the unread dot keeps meaning
+// something on a bad day.
+export function collapseNotifications(items = []) {
+  const rows = [];
+  for (const item of items) {
+    const previous = rows[rows.length - 1];
+    const sameCause =
+      previous &&
+      previous.kind === item?.kind &&
+      String(previous.memberId || "") === String(item?.memberId || "") &&
+      String(previous.channelId || "") === String(item?.channelId || "") &&
+      String(previous.body || "") === String(item?.body || "");
+    if (!sameCause) {
+      rows.push({ ...item, count: 1, ids: [item?.id].filter(Boolean) });
+      continue;
+    }
+    previous.count += 1;
+    if (item?.id) previous.ids.push(item.id);
+    // Newest wins for the time and the read state: one unread copy keeps the
+    // row unread.
+    if (String(item?.at || "") > String(previous.at || "")) previous.at = item.at;
+    previous.read = previous.read && item?.read !== false;
+  }
+  return rows;
+}
+
 /** "Today" / "Yesterday" / "Earlier" groups for the bell popover. */
 export function groupNotifications(items = [], now = Date.now()) {
   const today = startOfDay(now);

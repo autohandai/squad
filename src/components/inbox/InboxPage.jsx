@@ -1,4 +1,4 @@
-import { ArrowRight, Bot, BrainCog, Hash, Inbox } from "lucide-react";
+import { ArrowRight, Bot, BrainCog, Hash, Inbox, Workflow } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -36,13 +36,14 @@ function Row({ icon: Icon, title, detail, time, onOpen, tone }) {
 export function InboxPage({
   unreadChannels = [],
   handoffs = [],
+  approvals = [],
   memoryProposals = [],
   copy = {},
   navigate = {},
   onMarkAllRead,
   timeLabel = () => "",
 }) {
-  const total = unreadChannels.length + handoffs.length + memoryProposals.length;
+  const total = unreadChannels.length + handoffs.length + approvals.length + memoryProposals.length;
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 lg:px-10 lg:py-8">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -83,6 +84,22 @@ export function InboxPage({
             time={timeLabel(item.at)}
             tone="text-amber-600 dark:text-amber-300"
             onOpen={() => navigate.task?.(item)}
+          />
+        ))}
+      </Section>
+
+      {/* A workflow parked at a gate is the most blocking thing the product
+          produces, so it belongs on the surface named for what needs you. */}
+      <Section title={copy.inboxApprovals || "Approvals waiting"} count={approvals.length} empty={copy.inboxNoApprovals || "No workflow is waiting for your approval."}>
+        {approvals.map((item) => (
+          <Row
+            key={item.id}
+            icon={Workflow}
+            title={item.title}
+            detail={item.detail}
+            time={timeLabel(item.at)}
+            tone="text-amber-600 dark:text-amber-300"
+            onOpen={() => navigate.approval?.(item)}
           />
         ))}
       </Section>

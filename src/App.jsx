@@ -5267,8 +5267,11 @@ function App() {
 
   function openNotification(item) {
     navigate(routeForNotification(item));
-    setNotifications((current) => current.map((entry) => (entry.id === item.id ? { ...entry, read: true } : entry)));
-    api("/api/notifications/read", { method: "POST", body: JSON.stringify({ ids: [item.id] }) })
+    // A collapsed row stands for several records, so opening it reads them all.
+    const ids = Array.isArray(item.ids) && item.ids.length ? item.ids : [item.id].filter(Boolean);
+    const reading = new Set(ids);
+    setNotifications((current) => current.map((entry) => (reading.has(entry.id) ? { ...entry, read: true } : entry)));
+    api("/api/notifications/read", { method: "POST", body: JSON.stringify({ ids }) })
       .then(() => loadNotifications())
       .catch(() => {});
   }
@@ -5961,6 +5964,32 @@ function App() {
     }
     return map;
   }, [agents, agentReads, messagesByAgent]);
+
+  // Workflow runs parked at an approval gate, newest first. The run carries the
+  // channel and the message that asked, so the row can land on the request.
+  const inboxApprovals = useMemo(() => {
+    const rows = [];
+    for (const [channelId, workflows] of Object.entries(workflowsByChannel)) {
+      const channel = channels.find((item) => item.id === channelId);
+      for (const workflow of workflows || []) {
+        for (const run of workflow.runs || []) {
+          if (run.status !== "waiting_approval" || !run.pendingApproval) continue;
+          const step = (workflow.steps || []).find((item) => item.id === run.pendingApproval.stepId);
+          const member = agents.find((item) => item.id === step?.memberId);
+          rows.push({
+            id: `approval-${run.id}`,
+            runId: run.id,
+            channelId,
+            messageId: run.pendingApproval.messageId || "",
+            title: workflow.name,
+            detail: [channel ? `#${channel.name}` : "", member ? member.name : ""].filter(Boolean).join(" · "),
+            at: run.pendingApproval.requestedAt || run.startedAt || "",
+          });
+        }
+      }
+    }
+    return rows.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  }, [workflowsByChannel, channels, agents]);
 
   const inboxHandoffs = useMemo(
     () =>
@@ -8369,6 +8398,7 @@ function App() {
               <InboxPage
                 unreadChannels={inboxUnreadChannels}
                 handoffs={inboxHandoffs}
+                approvals={inboxApprovals}
                 memoryProposals={inboxMemory}
                 copy={localeCopy}
                 timeLabel={(value) => (value ? formatRelativeTime(value, localeResolution.locale) : "")}
@@ -8376,6 +8406,8 @@ function App() {
                   channel: (channelId) => navigate(channelsPath(channelId)),
                   task: (item) => navigate(missionControlPath()),
                   memory: (item) => navigate(memberProfilePath(item.item?.ownerAgentId || item.item?.agentId || agents[0]?.id, "memory")),
+                  approval: (item) =>
+                    navigate(item.messageId ? `${channelsPath(item.channelId)}?message=${encodeURIComponent(item.messageId)}` : channelsPath(item.channelId)),
                 }}
                 onMarkAllRead={() => {
                   const now = new Date().toISOString();
@@ -9228,6 +9260,22 @@ function ChannelsPage({
     }
   }
 
+  // "main at origin · 2 workflows": what this channel is wired to, or "" when
+  // it is wired to nothing.
+  const channelSetupSummary = useMemo(() => {
+    const parts = [];
+    const branch = channel?.git?.branch || gitStatus?.branch || "";
+    if (channel?.git?.repoPath && branch) {
+      parts.push(`${branch}${channel.git.remote ? ` ${copy.gitAt || "at"} ${channel.git.remote}` : ""}`);
+    }
+    const count = channelWorkflows.filter((item) => item.enabled !== false).length;
+    if (count) {
+      parts.push(count === 1 ? copy.workflowStepCountOneWorkflow || "1 workflow" : `${count} ${copy.workflows || "workflows"}`.toLowerCase());
+    }
+    return parts.join(" · ");
+  }, [channel?.git?.repoPath, channel?.git?.branch, channel?.git?.remote, gitStatus?.branch, channelWorkflows, copy]);
+
+
   useEffect(() => {
     setManageMembersOpen(false);
     setDeleteArmed(false);
@@ -9417,9 +9465,20 @@ function ChannelsPage({
               <TooltipContent>{copy.manageChannelMembers}</TooltipContent>
             </Tooltip>
             <Popover>
+              {/* The channel's live setup reads in the header rather than
+                  hiding behind a gear: a bound repository and workflows are
+                  otherwise invisible to anyone who does not open icons. The
+                  text is part of the trigger, and absent when there is
+                  nothing to say. */}
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label={copy.settings || "Channel settings"}>
-                  <Settings className="size-4" />
+                <Button
+                  variant="ghost"
+                  size={channelSetupSummary ? "sm" : "icon-sm"}
+                  className={cn("text-muted-foreground", channelSetupSummary && "max-w-[22rem] gap-1.5 font-normal")}
+                  aria-label={copy.settings || "Channel settings"}
+                >
+                  {channelSetupSummary ? <span className="min-w-0 truncate text-xs">{channelSetupSummary}</span> : null}
+                  <Settings className="size-4 shrink-0" />
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-72 max-h-[min(34rem,calc(100vh-6rem))] overflow-y-auto overscroll-contain p-3">

@@ -135,6 +135,11 @@ export function relayStatusSentence(status = {}, config = {}, copy = {}, now = D
   if (!status.configured) return copy.relayIncomplete || "Add a relay URL, a token and a workspace to connect.";
   const host = String(config.url || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
   if (!status.connected) {
+    // A syscall string is not a sentence. Name the one thing the person can
+    // act on and keep the address out of it twice over.
+    if (/ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT|ECONNRESET/.test(String(status.lastError || ""))) {
+      return (copy.relayUnreachable || "Cannot reach the relay at {url}. Check that it is running and the address is right.").replace("{url}", host);
+    }
     const reason = status.lastError ? ` (${status.lastError})` : "";
     return `${copy.reconnectingTo || "Reconnecting to"} ${host}${reason}…`;
   }

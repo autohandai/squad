@@ -165,9 +165,11 @@ export function bindingSummary(binding, status, copy = {}) {
   if (!binding?.repoPath) return copy.gitNotBound || "Not bound to a repository.";
   const branch = binding.branch || status?.branch || "";
   const remote = binding.remote || status?.remote || "origin";
+  // A folder that cannot be read is not being watched, so say that instead of
+  // claiming to watch it and contradicting the claim in the same breath.
+  if (status?.error) return (copy.gitNotWatching || "Not watching. {error}").replace("{error}", status.error);
   const parts = [`${copy.gitWatching || "Watching"} ${branch}${remote ? ` ${copy.gitAt || "at"} ${remote}` : ""}`];
-  if (status?.error) parts.push(status.error);
-  else if (status) {
+  if (status) {
     if (Number.isFinite(status.ahead) && Number.isFinite(status.behind)) {
       parts.push(`${status.ahead} ${copy.gitAhead || "ahead"}, ${status.behind} ${copy.gitBehind || "behind"}`);
     }
