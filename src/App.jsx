@@ -18923,6 +18923,75 @@ function StatusBadge({ status, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   );
 }
 
+// One role in the picker, pulled out of the page so a keystroke in the name
+// field re-renders one card instead of the whole list of about twenty, each
+// with an avatar image. Measured on this machine it made no difference to
+// typing latency, which stayed at 1 to 3 ms either way; it is kept because
+// the list grows with every custom role, not because it fixed anything.
+const RoleChoiceCard = React.memo(function RoleChoiceCard({ role, selected, name, nameInputRef, onToggle, onNameChange }) {
+  return (
+    <article
+      className={cn(
+        "overflow-hidden rounded-md border bg-card shadow-xs transition-[border-color,box-shadow,background-color]",
+        selected
+          ? "border-[#171717] ring-1 ring-[#171717] dark:border-foreground dark:ring-foreground"
+          : "border-border"
+      )}
+    >
+      <button
+        type="button"
+        aria-pressed={selected}
+        className={cn(
+          "grid min-h-[92px] w-full grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 text-left transition-colors",
+          "hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/35"
+        )}
+        onClick={() => onToggle(role.id)}
+      >
+        <RoleAvatar roleId={role.id} src={role.avatar} alt={`${role.title} avatar`} />
+        <span className="min-w-0">
+          <span className="block truncate text-base font-semibold">{role.title}</span>
+          <span className="mt-1 block truncate text-sm text-muted-foreground">{role.description}</span>
+        </span>
+        <span className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <span className={cn("hidden sm:inline", selected && "text-foreground")}>{selected ? "Enabled" : "Off"}</span>
+          <span
+            aria-hidden="true"
+            className={cn(
+              "relative inline-flex h-[22px] w-10 shrink-0 rounded-full border transition-colors",
+              selected ? "border-primary bg-primary" : "border-input bg-input dark:bg-input/80"
+            )}
+          >
+            <span
+              className={cn(
+                "absolute top-1/2 size-4 -translate-y-1/2 rounded-full bg-background shadow-sm transition-transform dark:bg-foreground",
+                selected ? "translate-x-[18px] dark:bg-primary-foreground" : "translate-x-[2px]"
+              )}
+            />
+          </span>
+        </span>
+      </button>
+
+      {selected ? (
+        <div className="border-t bg-background/40 px-4 pb-4 pt-3">
+          <Field className="gap-2">
+            <FieldLabel htmlFor={`role-name-${role.id}`} className="text-sm">
+              Name <span className="text-primary">*</span>
+            </FieldLabel>
+            <Input
+              id={`role-name-${role.id}`}
+              ref={nameInputRef}
+              value={name}
+              onChange={(event) => onNameChange(role.id, event.target.value)}
+              placeholder="Enter squad member name"
+              className="h-10 bg-card"
+            />
+          </Field>
+        </div>
+      ) : null}
+    </article>
+  );
+});
+
 function RoleAvatar({ roleId, src, alt, size = "default" }) {
   const visual = roleVisuals[roleId] || roleVisuals["custom-role"];
   const Icon = visual.icon;
@@ -19207,6 +19276,12 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   const template = selectedTemplate || roleTemplates[0] || CUSTOM_ROLE_TEMPLATE;
   const runtimeShell = useMemo(() => ({ workspaceRoot, defaultWorkspace }), [workspaceRoot, defaultWorkspace]);
   const nameInputRef = useRef(null);
+  // Stable identities, so a memoised card is not re-rendered by a new
+  // function on every keystroke.
+  const handleRoleNameChange = useCallback((roleId, nextName) => {
+    setDraft((current) => ({ ...current, name: nextName }));
+    namesByTemplateRef.current = { ...namesByTemplateRef.current, [roleId]: nextName };
+  }, []);
   const namesByTemplateRef = useRef({});
   const [avatarError, setAvatarError] = useState("");
   const [draft, setDraft] = useState(() => ({
@@ -19239,16 +19314,17 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
       // A designed member is a custom role, so it goes through the same path a
       // hand-written one does: registered as a template, selected, and synced
       // into the draft. Anything else leaves the form half-filled.
-      createCustomTemplate({
-        ...createEmptyCustomRoleDraft(),
-        title: designed.role,
-        description: designed.description,
-        skillsText: (designed.skills || []).join(", "),
-        brainCard: { ...createEmptyCustomRoleDraft().brainCard, ...designed.brainCard },
-        sections: { ...createEmptyCustomRoleDraft().sections, ...(designed.instructions ? { identity: designed.instructions } : {}) },
-      });
-      // The template carries the role; the name belongs to this member.
-      if (designed.name) setDraft((current) => ({ ...current, name: designed.name }));
+      createCustomTemplate(
+        {
+          ...createEmptyCustomRoleDraft(),
+          title: designed.role,
+          description: designed.description,
+          skillsText: (designed.skills || []).join(", "),
+          brainCard: { ...createEmptyCustomRoleDraft().brainCard, ...designed.brainCard },
+          sections: { ...createEmptyCustomRoleDraft().sections, ...(designed.instructions ? { identity: designed.instructions } : {}) },
+        },
+        designed.name || ""
+      );
       setDesignNote(
         data?.source === "model"
           ? copyText.designedByModel || "Filled in. Change anything that is not right."
@@ -19267,7 +19343,13 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     setDraft((current) => ({
       ...current,
       employeeType: selectedTemplate.id,
-      name: namesByTemplateRef.current[selectedTemplate.id] ?? (current.employeeType === selectedTemplate.id ? current.name : ""),
+      // Never clobber a name already typed for this role. Creating a role
+      // fires this effect a moment after the field appears, so anything
+      // typed in that window used to vanish as it was being typed.
+      name:
+        current.employeeType === selectedTemplate.id && current.name
+          ? current.name
+          : namesByTemplateRef.current[selectedTemplate.id] ?? "",
       role: selectedTemplate.title,
       description: selectedTemplate.description,
       instructions: selectedTemplate.starter,
@@ -19294,17 +19376,17 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   const isCustomRole = Boolean(selectedTemplate?.id.startsWith(CUSTOM_ROLE_TEMPLATE.id));
   const isValid = Boolean(selectedTemplate && draft.name.trim() && draft.description.trim() && draft.instructions.trim());
 
-  function toggleTemplate(id) {
+  const toggleTemplate = useCallback((id) => {
     setTemplateId((current) => (current === id ? "" : id));
     setAvatarError("");
-  }
+  }, []);
 
   function selectCustomRole() {
     setCustomTemplateDialogOpen(true);
     setAvatarError("");
   }
 
-  function createCustomTemplate(templateDraft) {
+  function createCustomTemplate(templateDraft, initialName = "") {
     const id = `custom-role-${Date.now().toString(36)}`;
     const description = templateDraft.description.trim();
     const customTemplate = {
@@ -19327,12 +19409,12 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
       profileFiles: profileFilesFromDraft(templateDraft),
     };
     setCustomTemplates((current) => [...current, customTemplate]);
-    namesByTemplateRef.current = { ...namesByTemplateRef.current, [id]: "" };
+    namesByTemplateRef.current = { ...namesByTemplateRef.current, [id]: initialName };
     setTemplateId(id);
     setDraft((current) => ({
       ...current,
       employeeType: id,
-      name: "",
+      name: initialName,
       role: customTemplate.title,
       description: customTemplate.description,
       instructions: customTemplate.starter,
@@ -19414,77 +19496,19 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
           </div>
 
           <div role="group" aria-label="Enable squad roles" className="grid items-start gap-3 lg:grid-cols-2">
-            {availableTemplates.map((role) => {
-              const selected = templateId === role.id;
-              return (
-                <article
-                  key={role.id}
-                  className={cn(
-                    "overflow-hidden rounded-md border bg-card shadow-xs transition-[border-color,box-shadow,background-color]",
-                    selected
-                      ? "border-[#171717] ring-1 ring-[#171717] dark:border-foreground dark:ring-foreground"
-                      : "border-border"
-                  )}
-                >
-                  <button
-                    type="button"
-                    aria-pressed={selected}
-                    className={cn(
-                      "grid min-h-[92px] w-full grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 text-left transition-colors",
-                      "hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/35"
-                    )}
-                    onClick={() => toggleTemplate(role.id)}
-                  >
-                    <RoleAvatar roleId={role.id} src={role.avatar} alt={`${role.title} avatar`} />
-                    <span className="min-w-0">
-                      <span className="block truncate text-base font-semibold">{role.title}</span>
-                      <span className="mt-1 block truncate text-sm text-muted-foreground">{role.description}</span>
-                    </span>
-                    <span className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                      <span className={cn("hidden sm:inline", selected && "text-foreground")}>
-                        {selected ? "Enabled" : "Off"}
-                      </span>
-                      <span
-                        aria-hidden="true"
-                        className={cn(
-                          "relative inline-flex h-[22px] w-10 shrink-0 rounded-full border transition-colors",
-                          selected ? "border-primary bg-primary" : "border-input bg-input dark:bg-input/80"
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "absolute top-1/2 size-4 -translate-y-1/2 rounded-full bg-background shadow-sm transition-transform dark:bg-foreground",
-                            selected ? "translate-x-[18px] dark:bg-primary-foreground" : "translate-x-[2px]"
-                          )}
-                        />
-                      </span>
-                    </span>
-                  </button>
-
-                  {selected ? (
-                    <div className="border-t bg-background/40 px-4 pb-4 pt-3">
-                      <Field className="gap-2">
-                        <FieldLabel htmlFor={`role-name-${role.id}`} className="text-sm">
-                          Name <span className="text-primary">*</span>
-                        </FieldLabel>
-                        <Input
-                          id={`role-name-${role.id}`}
-                          ref={nameInputRef}
-                          value={draft.name}
-                          onChange={(event) => {
-                            const nextName = event.target.value;
-                            setDraft((current) => ({ ...current, name: nextName }));
-                            namesByTemplateRef.current = { ...namesByTemplateRef.current, [role.id]: nextName };
-                          }}
-                          placeholder="Enter squad member name"
-                          className="h-10 bg-card"
-                        />
-                      </Field>
-                    </div>
-                  ) : null}
-                </article>
-              );
-            })}
+            {availableTemplates.map((role) => (
+              <RoleChoiceCard
+                key={role.id}
+                role={role}
+                selected={templateId === role.id}
+                // Only the selected card is handed the name, so typing one
+                // re-renders one card instead of all of them.
+                name={templateId === role.id ? draft.name : ""}
+                nameInputRef={templateId === role.id ? nameInputRef : null}
+                onToggle={toggleTemplate}
+                onNameChange={handleRoleNameChange}
+              />
+            ))}
           </div>
         </section>
 
