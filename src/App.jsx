@@ -397,6 +397,24 @@ function normalizeImprovementSettings(value) {
   };
 }
 
+// Every section Settings renders, in order. The route parser and the page
+// both read this, so a new section is reachable by link the moment it exists;
+// the old parser kept its own stale copy and silently rejected anything added
+// after it was written.
+const SETTINGS_SECTION_IDS = Object.freeze([
+  "appearance",
+  "language",
+  "providers",
+  "chat",
+  "notifications",
+  "improvement",
+  "handoff",
+  "mission-control",
+  "runtime",
+  "relay",
+  "updates",
+]);
+
 const EMPTY_LIST = [];
 
 const PresenceContext = createContext({ presenceMap: {}, bridgeReachable: true, entryFor: (agent) => ({ state: agent?.status === "offline" ? "offline" : "online" }), stopMember: null });
@@ -5837,7 +5855,7 @@ function App() {
       workspaces={relayWorkspaces}
       selectedId={workspaceSelection.selectedId}
       onSelect={(id) => setWorkspaceSelection((current) => selectWorkspace(current, relayWorkspaces, id))}
-      onConnectRelay={() => navigate("/settings#settings-relay")}
+      onConnectRelay={() => navigate(`/settings?section=relay`)}
       copy={localeCopy}
     />
   );
@@ -6098,7 +6116,7 @@ function App() {
   const settingsSection = useMemo(() => {
     const params = new URLSearchParams(route.split("?")[1] || "");
     const section = params.get("section") || "";
-    return ["appearance", "language", "providers", "chat", "handoff", "runtime"].includes(section) ? section : "";
+    return SETTINGS_SECTION_IDS.includes(section) ? section : "";
   }, [route]);
 
   const unreadChannelIds = useMemo(() => {

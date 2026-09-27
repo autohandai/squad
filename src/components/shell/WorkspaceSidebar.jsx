@@ -30,9 +30,19 @@ function UnreadDot({ active }) {
   return <span className="size-1.5 rounded-full bg-foreground" aria-label="unread" />;
 }
 
+// What a member does, and what it is doing. The role is the part a person
+// cannot get from the row itself, so it leads; presence only follows when it
+// says something beyond "online".
+function memberTooltip(agent, presence) {
+  const role = String(agent?.role || "").trim();
+  const state = String(presence?.label || "").trim();
+  if (!role) return state;
+  return state && state.toLowerCase() !== "online" ? `${role} · ${state}` : role;
+}
+
 // `menu` renders beside the row rather than inside it: a row is a button, and
 // a button cannot contain another button.
-function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, bold = false, ariaLabel, menu }) {
+function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, bold = false, ariaLabel, menu, tooltip }) {
   const row = (
     <button
       type="button"
@@ -51,14 +61,22 @@ function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, 
       {trailing}
     </button>
   );
-  if (!menu) return row;
-  return (
+  const withMenu = menu ? (
     <div className="group/navrow relative flex min-w-0 items-center">
       {row}
       <span className="absolute right-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/navrow:opacity-100">
         {menu}
       </span>
     </div>
+  ) : (
+    row
+  );
+  if (!tooltip) return withMenu;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{withMenu}</TooltipTrigger>
+      <TooltipContent side="right">{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -265,6 +283,7 @@ export function WorkspaceSidebar({
                     }
                     trailing={<UnreadCount count={isActive ? 0 : unread} />}
                     menu={renderMemberMenu ? renderMemberMenu(agent) : null}
+                    tooltip={memberTooltip(agent, presence)}
                   />
                 );
               })
