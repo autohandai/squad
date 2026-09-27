@@ -22,4 +22,11 @@ const profileLine = source.split("\n").find((line) => line.includes("const profi
 assert.ok(profileLine, "the profile is still assembled in one place");
 assert.ok(!profileLine.includes("briefingContext"), "the briefing rides on the prompt, not the system prompt");
 
+// Channel replies must not pin the CLI transport: it bypasses the warm pool
+// and spawns a fresh CLI per message, measured at 15 s against 4 s.
+assert.ok(
+  !source.includes('transport: "cli"'),
+  "channel dispatch must not pin the CLI transport; the bridge falls back on its own"
+);
+
 console.log("check-prompt-stability: ok");

@@ -56,6 +56,13 @@ the time before the first message instead of landing on it. It answers 202
 immediately and never blocks: a warm-up that makes you wait is the thing it
 exists to prevent. A member on a break is not warmed.
 
+**Channel replies use the SDK.** The channel dispatch pinned
+`transport: "cli"`, which skipped the pool entirely and spawned a fresh CLI
+for every channel message. Measured on one member with one prompt: 15 s
+pinned, 4 to 6 s over the SDK. The bridge already falls back to the CLI when
+the SDK cannot start, so the pin bought nothing. `check-prompt-stability`
+fails if it comes back.
+
 **A user Stop leaves a healthy session.** Cancelling a reply marked the
 session unhealthy and closed it, so the next message paid a full cold start.
 An abort now releases the session as healthy when it had started.
@@ -69,9 +76,9 @@ An abort now releases the session as healthy when it had started.
 - Warming starts a CLI process for a member whose chat is merely opened. That
   is the trade: a process that may go unused against 40 seconds on the
   message that follows. The pool's idle sweep reclaims it.
-- The warm-up path is exercised end to end only as far as a bridge without a
-  signed-in harness allows: the route accepts and attempts. The full effect
-  needs a signed-in account to confirm.
+- Verified on the installed app with a real account: opening a conversation
+  leaves one warm session waiting, and the message that follows reached its
+  first token in 5.6 s against the 43.7 s cold measurement.
 
 ## Not done, and why
 

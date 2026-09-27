@@ -7091,7 +7091,10 @@ function App() {
       workspace: selectedWorkspace,
       policy: agent.launch?.policy,
       model: agent.launch?.model,
-      transport: "cli",
+      // Deliberately not pinned to "cli". Doing so skipped the warm session
+      // pool entirely and spawned a fresh CLI for every channel message,
+      // measured at 15 s against 4 s over the SDK. The bridge already falls
+      // back to the CLI when the SDK cannot start (ADR-0030).
       timeoutMs: 300000,
       profile,
       agent: withChannelProjects(agentLaunchPayload(agent, selectedWorkspace), channelProjects),
