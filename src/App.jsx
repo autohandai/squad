@@ -6054,6 +6054,21 @@ function App() {
   const activeRuns = runs.filter((run) => run.agentId === activeAgent?.id);
   const activeAutomations = automations.filter((automation) => automationBelongsToAgent(automation, activeAgent?.id));
   const fallbackWorkspace = getFallbackWorkspace(runtime, workspaces);
+
+  // Start the member's SDK session while the person is reading and typing.
+  // The CLI takes tens of seconds to boot from cold, and that cost lands on
+  // the first message unless it overlaps the time before it (ADR-0030).
+  useEffect(() => {
+    if (!activeMemberId || !onMemberChat) return;
+    const agent = agents.find((item) => item.id === activeMemberId);
+    if (!agent || isOnBreak(agent)) return;
+    api("/api/chat/warm", {
+      method: "POST",
+      body: JSON.stringify({ agentId: activeMemberId, workspace: normalizeSquadWorkspacePath(agent.workspace || fallbackWorkspace, runtime) }),
+    }).catch(() => {});
+    // Once per member per open: warming twice buys nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMemberId, onMemberChat]);
   const sidebarCounts = useMemo(
     () => missionControlCounts({ agents, tasks, runtime, memoryInbox }),
     [agents, memoryInbox, runtime, tasks]
@@ -6675,8 +6690,8 @@ function App() {
 
     const id = `chat-${Date.now().toString(36)}`;
     const collaborationContext = buildCollaborationProfileContext(launch.collaboration, agents, workspaces);
-    const teamContext = buildTeammateContext(agent, agents, { tasks, runs, messagesByChannel, hop: Number(launch.hop) || 0 });
-    const profile = [buildAgentProfile(agent, selectedWorkspace), teamContext, collaborationContext, briefingContext(briefingForActiveMember)].filter(Boolean).join("\n\n");
+    const teamContext = buildTeammateContext(agent, agents, { hop: Number(launch.hop) || 0 });
+    const profile = [buildAgentProfile(agent, selectedWorkspace), teamContext, collaborationContext].filter(Boolean).join("\n\n");
     touchAgent(agentId, startedAt);
     appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time });
 
@@ -6706,9 +6721,14 @@ function App() {
     });
 
     const canvasAttachment = await attachCanvasMentions(prompt, launch.canvases);
+    // The briefing rides on the first message of a fresh conversation, not on
+    // the system prompt: the warm session pool keys on the system prompt, so
+    // a briefing that changes with every visit would cold-start every chat
+    // (ADR-0028, and the 42 s cold start measured in ADR-0030).
+    const openingBriefing = (messagesByAgent[agentId] || []).length === 0 ? briefingContext(briefingForActiveMember) : "";
     const payload = {
       agentId,
-      prompt: canvasAttachment.prompt,
+      prompt: [openingBriefing, canvasAttachment.prompt].filter(Boolean).join("\n\n"),
       workspace: selectedWorkspace,
       policy: launch.policy,
       model: launch.model,
@@ -10832,13 +10852,16 @@ function mentionedChannelProjects(text, channel) {
 // Maximum member-to-member delegation depth from a direct chat.
 const DM_DELEGATION_MAX_HOPS = 2;
 
-function buildTeammateContext(agent, agents = [], { tasks = [], runs = [], messagesByChannel = {}, hop = 0 } = {}) {
+function buildTeammateContext(agent, agents = [], { hop = 0 } = {}) {
   const teammates = agents.filter((item) => item.id !== agent.id && item.status !== "offline");
   if (!teammates.length) return "";
-  const roster = teammates.map((item) => {
-    const presence = memberPresenceForAgent(item, { tasks, runs, messagesByChannel });
-    return `- @${mentionTokenForAgent(item)} — ${item.role || "Squad member"} (${presence?.label || "Online"})`;
-  });
+  // Deliberately durable: this text is the SDK's system prompt, and the warm
+  // session pool keys on it. A teammate's presence label changes whenever any
+  // run starts or stops, so including it changed the key between messages and
+  // cold-started the CLI every time, which measured 42 s against 3.5 s warm
+  // (ADR-0030). Who exists and what they do is what the member needs here;
+  // whether they are busy this second is not.
+  const roster = teammates.map((item) => `- @${mentionTokenForAgent(item)} — ${item.role || "Squad member"}`);
   const canDelegate = hop < DM_DELEGATION_MAX_HOPS;
   return [
     "Squad teammates available right now:",

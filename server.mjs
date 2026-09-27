@@ -5879,6 +5879,9 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     stream.send("done", result);
     return result;
   } catch (error) {
+    // A person pressing Stop is not a sick session. Discarding it here cost a
+    // full cold start on the next message (ADR-0030).
+    if (isAbortError(error) || signal?.aborted) healthy = started;
     if (error instanceof AutohandStallError) {
       throw decorateStallError(error, agentRuntime);
     }
@@ -5895,6 +5898,11 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
   } finally {
     await lease?.release(healthy);
   }
+}
+
+/** A cancelled request, however the runtime chose to spell it. */
+function isAbortError(error) {
+  return error?.name === "AbortError" || error?.code === "ABORT_ERR" || /\baborted\b/i.test(String(error?.message || ""));
 }
 
 // ---------------------------------------------------------------------------
@@ -6736,6 +6744,41 @@ async function handleApi(req, res, url) {
       json(res, 200, { success: true, data: { default: DEFAULT_HARNESS_ID, harnesses: harnesses.map(publicReadiness) } });
     } catch (error) {
       json(res, 500, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  // Warm a member's SDK session before the first message. sdk.start() returns
+  // at spawn, so the CLI finishes booting while the person is still typing;
+  // without this the first message of a conversation pays the full cold start
+  // (42 s measured against 4 s warm, ADR-0030).
+  if (url.pathname === "/api/chat/warm" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const agentId = sanitizeAgentId(payload.agentId || payload.agent?.id || "");
+      // The pool is created on first use, so do not test the lazy handle here:
+      // acquireSdkLease builds it. Only a missing member is a reason to stop.
+      if (!agentId) {
+        json(res, 200, { success: true, data: { agentId, warmed: false } });
+        return true;
+      }
+      const workspace = await cleanWorkspace(String(payload.workspace || "") || getDefaultWorkspace());
+      const agentRuntime = await ensureAgentRuntime({ ...payload, agentId }, workspace);
+      const profile = String(payload.profile || "").trim().slice(0, 12000);
+      const context = sdkRuntimeContext({ ...payload, agentId }, workspace, profile, agentRuntime);
+      // Answer immediately: warming is best effort and must never make the
+      // person wait on the thing it exists to avoid.
+      json(res, 202, { success: true, data: { agentId, warmed: true } });
+      acquireSdkLease({ ...payload, agentId }, workspace, context)
+        .then((lease) => lease?.release?.(true))
+        .catch((error) => {
+          logEvent(SEVERITY.DEBUG, `warm-up for ${agentId} did not start a session: ${error?.message || error}`, {
+            "event.name": "chat.warm.failed",
+            "autohand.member": agentId,
+          });
+        });
+    } catch (error) {
+      json(res, 400, { success: false, error: error.message });
     }
     return true;
   }
