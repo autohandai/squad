@@ -24508,8 +24508,16 @@ function SettingsPage({
             <section id="settings-relay" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
               <SettingsSectionHeader
                 title={copy.relay || "Relay"}
-                description={copy.relayDescription || "Share channels with your team through a relay you host."}
+                description={copy.relayDescription || "Share channels with your team through a relay you host. Nothing is shared until you run one and connect to it."}
               />
+              {/* The feature is unusable without knowing you must host the
+                  server yourself, so the section says how. */}
+              {relayConfig?.enabled ? null : (
+                <p className="mb-4 text-xs leading-5 text-muted-foreground">
+                  {copy.relayHowTo ||
+                    'No relay yet? Run one on a machine your team can reach: RELAY_TOKENS="you:a-secret" bun run relay. Then put its address and that secret below.'}
+                </p>
+              )}
               <RelaySettings
                 config={relayConfig}
                 status={relayStatus}
