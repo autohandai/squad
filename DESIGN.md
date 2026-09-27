@@ -113,6 +113,8 @@
 - Tables in a member's reply render as divider rows with no fills or borders around cells, scrolling horizontally inside the message column rather than widening it. A disabled primary button drops to a neutral surface, so it never reads as the page's call to action.
 - While a member is working, the direct-message composer carries one muted line under it saying what it is doing, in the same place the channel composer shows presence.
 
+- The new-member page opens with one line: describe the role and the rest of the page fills itself in. The result says whether a model designed it or the description alone did, and every field stays editable.
+
 ## Member Profile
 
 - History is a divider list grouped by day with underlined text filters (All / Messages / Runs / Edits / Shell / Handoffs / Approvals), a ghost Load more, and one outline Export button. Rows are icon + sentence + a muted meta line (kind · time · links); failures use the destructive colour on the text only. No cards, no badges.

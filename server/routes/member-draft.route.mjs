@@ -1,0 +1,101 @@
+// Designing a squad member from a sentence.
+//
+//   POST /api/members/draft { description }
+//     -> { draft, source: "model" | "fallback", error? }
+//
+// The shaping rules live in src/lib/member-draft.js so the browser and the
+// bridge agree on what a member looks like. This route only adds the model:
+// it asks one, validates whatever comes back through the same normaliser, and
+// falls back to the deterministic draft when there is no model, the model
+// fails, or it answers with something that is not the JSON it was asked for.
+//
+// See docs/adrs/ADR-0031-member-draft-skill.md.
+
+import { draftFromDescription, draftInstruction, mergeModelDraft } from "../../src/lib/member-draft.js";
+
+export const name = "member-draft";
+
+// A model slower than this is slower than filling the form in by hand, and a
+// person watching a spinner will not wait for it. The deterministic draft is
+// always ready, so giving up early costs nothing.
+const DRAFT_TIMEOUT_MS = 20_000;
+
+export async function handle(req, res, url, ctx) {
+  if (url.pathname !== "/api/members/draft" || req.method !== "POST") return false;
+
+  const body = await ctx.readBody(req);
+  const description = String(body?.description || "").trim();
+  const fallback = draftFromDescription(description);
+
+  if (!description) {
+    ctx.json(res, 200, { success: true, data: { draft: fallback, source: "fallback" } });
+    return true;
+  }
+
+  try {
+    const reply = await askModel(ctx, description, body, req);
+    const parsed = parseJsonObject(reply);
+    if (!parsed) {
+      ctx.json(res, 200, { success: true, data: { draft: fallback, source: "fallback", error: "the model did not answer with JSON" } });
+      return true;
+    }
+    ctx.json(res, 200, { success: true, data: { draft: mergeModelDraft(fallback, parsed), source: "model" } });
+  } catch (error) {
+    // A member the person can edit beats an error dialog.
+    ctx.logEvent(ctx.SEVERITY.DEBUG, `member draft fell back: ${error?.message || error}`, { "event.name": "member.draft.fallback" });
+    ctx.json(res, 200, { success: true, data: { draft: fallback, source: "fallback", error: String(error?.message || error) } });
+  }
+  return true;
+}
+
+/**
+ * One turn through the bridge's own chat route, so this uses whatever harness
+ * and account the app already has rather than opening a second path to a
+ * model.
+ */
+async function askModel(ctx, description, body, req) {
+  const runtime = ctx.getRuntime?.() || {};
+  const workspace = String(body?.workspace || runtime.defaultWorkspace || "").trim();
+  if (!workspace) throw new Error("no workspace to run in");
+  // The request arrived at this bridge, so its own Host header is the address
+  // to call back on. Guessing a port would break a bridge on any other one.
+  const host = String(req?.headers?.host || "127.0.0.1:19821");
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DRAFT_TIMEOUT_MS);
+  try {
+    const response = await fetch(`http://${host}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agentId: String(body?.agentId || "").trim() || "squad-designer",
+        prompt: draftInstruction(description),
+        workspace,
+        transport: "sdk",
+      }),
+      signal: controller.signal,
+    });
+    const envelope = await response.json();
+    if (!envelope?.success) throw new Error(envelope?.error || `chat returned ${response.status}`);
+    return String(envelope.data?.reply || envelope.data?.output || "");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The first JSON object in a reply, tolerating a code fence or stray prose. */
+function parseJsonObject(text) {
+  const value = String(text || "");
+  const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidates = [fenced?.[1], value, value.slice(value.indexOf("{"), value.lastIndexOf("}") + 1)];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate.trim());
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // Try the next shape.
+    }
+  }
+  return null;
+}

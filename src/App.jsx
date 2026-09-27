@@ -8835,6 +8835,7 @@ function App() {
               />
             ) : isCreate ? (
               <CreateAgent
+                copy={localeCopy}
                 onCreate={createAgent}
                 onCancel={() => navigate("/conversations/new")}
                 defaultWorkspace={requestedWorkspace || fallbackWorkspace}
@@ -19171,7 +19172,12 @@ function buildCustomRoleInstructions(templateDraft) {
     .join("\n\n");
 }
 
-function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harnesses = [], harnessesLoading = false, onRefreshHarnesses }) {
+function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harnesses = [], harnessesLoading = false, onRefreshHarnesses, copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
+  // "Design it": one sentence in, a whole member out. The route falls back to
+  // a deterministic draft when no model is reachable, so this never dead-ends.
+  const [roleWish, setRoleWish] = useState("");
+  const [designing, setDesigning] = useState(false);
+  const [designNote, setDesignNote] = useState("");
   const [customTemplates, setCustomTemplates] = useState([]);
   const [customTemplateDialogOpen, setCustomTemplateDialogOpen] = useState(false);
   const [templateId, setTemplateId] = useState("");
@@ -19196,6 +19202,43 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     brainCard: normalizeBrainCard(template.brainCard, template),
     harness: normalizeHarnessAssignmentCopy(null),
   }));
+
+  async function designMember() {
+    const description = roleWish.trim();
+    if (!description || designing) return;
+    setDesigning(true);
+    setDesignNote("");
+    try {
+      const data = await api("/api/members/draft", {
+        method: "POST",
+        body: JSON.stringify({ description, workspace: defaultWorkspace }),
+      });
+      const designed = data?.draft;
+      if (!designed) throw new Error("no draft came back");
+      // A designed member is a custom role, so it goes through the same path a
+      // hand-written one does: registered as a template, selected, and synced
+      // into the draft. Anything else leaves the form half-filled.
+      createCustomTemplate({
+        ...createEmptyCustomRoleDraft(),
+        title: designed.role,
+        description: designed.description,
+        skillsText: (designed.skills || []).join(", "),
+        brainCard: { ...createEmptyCustomRoleDraft().brainCard, ...designed.brainCard },
+        sections: { ...createEmptyCustomRoleDraft().sections, ...(designed.instructions ? { identity: designed.instructions } : {}) },
+      });
+      // The template carries the role; the name belongs to this member.
+      if (designed.name) setDraft((current) => ({ ...current, name: designed.name }));
+      setDesignNote(
+        data?.source === "model"
+          ? copyText.designedByModel || "Filled in. Change anything that is not right."
+          : copyText.designedLocally || "Filled in from the description. No model was reachable, so this is a starting point."
+      );
+    } catch (error) {
+      setDesignNote(error?.message || "Could not design that member.");
+    } finally {
+      setDesigning(false);
+    }
+  }
 
   useEffect(() => {
     if (!selectedTemplate) return;
@@ -19301,6 +19344,39 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
             Back
           </Button>
         </div>
+
+        {/* Describe the job and the whole member is filled in. The shaping
+            rules live in src/lib/member-draft.js and the bridge route asks a
+            model, so this is one skill rather than logic wired into the form
+            (ADR-0031). */}
+        <section className="mb-9 flex flex-col gap-2 border-b border-border/70 pb-9">
+          <FieldLabel htmlFor="member-description" className="text-sm font-medium text-muted-foreground">
+            {copyText.describeRole || "Describe the role"}
+          </FieldLabel>
+          <p className="text-xs text-muted-foreground">
+            {copyText.describeRoleDetail || "Say what you need in a sentence and the rest of this page fills itself in. You can change anything afterwards."}
+          </p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              id="member-description"
+              value={roleWish}
+              placeholder={copyText.describeRolePlaceholder || "Someone who writes and maintains our end-to-end tests"}
+              className="h-10 flex-1"
+              onChange={(event) => setRoleWish(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void designMember();
+                }
+              }}
+            />
+            <Button type="button" variant="outline" className="h-10 sm:w-auto" disabled={!roleWish.trim() || designing} onClick={() => void designMember()}>
+              {designing ? <Spinner /> : <Sparkles data-icon="inline-start" />}
+              {designing ? copyText.designing || "Designing…" : copyText.designMember || "Design it"}
+            </Button>
+          </div>
+          {designNote ? <p className="text-xs text-muted-foreground">{designNote}</p> : null}
+        </section>
 
         <section className="flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
