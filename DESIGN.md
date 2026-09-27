@@ -104,6 +104,8 @@
 
 - Git events (commits, pull requests, CI) are one-line muted rows between messages, indented to the message text column: icon, short ref, title, a dot-and-word status, time on the right. No cards, no coloured fills; status colour follows the presence dots. Pull request rows reveal Review and Open on hover. The Repository section in channel settings is two inputs, one status sentence, and Bind/Unbind.
 
+- A member row in the sidebar reveals a vertical overflow menu on hover: Chat, Details, Take a break, Delete. Chat comes first because it is what the row itself does. A member on a break declines new work in its own voice rather than going quiet, and delete asks first, naming the member.
+
 ## Member Profile
 
 - History is a divider list grouped by day with underlined text filters (All / Messages / Runs / Edits / Shell / Handoffs / Approvals), a ghost Load more, and one outline Export button. Rows are icon + sentence + a muted meta line (kind · time · links); failures use the destructive colour on the text only. No cards, no badges.

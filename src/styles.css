@@ -174,8 +174,11 @@ html[data-shell="desktop"] .app-main {
 html[data-shell="desktop"] .app-shell-decor {
   display: none;
 }
-html[data-shell="desktop"][data-platform="mac"] .app-sidebar {
-  /* Full-size content view: the traffic lights sit in the top 28px. */
+/* Full-size content view: the traffic lights sit in the top 28px, so any
+   full-height column that starts at the top of the window has to clear them.
+   One rule, so a new sidebar cannot forget it. */
+html[data-shell="desktop"][data-platform="mac"] .app-sidebar,
+html[data-shell="desktop"][data-platform="mac"] .app-titlebar-inset {
   padding-top: 28px;
 }
 html[data-shell="desktop"] [data-tauri-drag-region] {

@@ -42,6 +42,7 @@ import {
   CornerDownRight,
   CircleSlash,
   CircleUserRound,
+  EllipsisVertical,
   Layers,
   ListChecks,
   ClipboardCheck,
@@ -267,6 +268,7 @@ import { RunsOnSettings } from "@/components/members/RunsOnSettings";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
 import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel, peopleSentence, selectWorkspace } from "@/lib/workspaces";
+import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/member-availability";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -5400,6 +5402,35 @@ function App() {
     bumpCanvasRefresh();
   }
 
+  // A member's row menu. Chat first, then details, then the break, then
+  // delete behind a confirmation (ADR-0027).
+  const [pendingMemberDelete, setPendingMemberDelete] = useState(null);
+  async function toggleMemberBreak(agent) {
+    if (isOnBreak(agent)) {
+      updateAgent(agent.id, endBreak());
+      return;
+    }
+    // Stop first: a break means the member is not working, so nothing should
+    // still be running when the status flips.
+    await stopMember(agent.id).catch(() => {});
+    updateAgent(agent.id, beginBreak(agent));
+  }
+  const renderMemberMenu = useCallback(
+    (agent) => (
+      <MemberRowMenu
+        agent={agent}
+        copy={localeCopy}
+        onChat={() => navigate(memberChatPath(agent.id))}
+        onDetails={() => navigate(memberProfilePath(agent.id, "home"))}
+        onToggleBreak={() => void toggleMemberBreak(agent)}
+        onDelete={() => setPendingMemberDelete(agent)}
+      />
+    ),
+    // navigate, updateAgent and stopMember are stable closures over state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [localeCopy]
+  );
+
   const notificationBell = (
     <NotificationBell
       items={notifications}
@@ -6466,6 +6497,23 @@ function App() {
     const profile = [buildAgentProfile(agent, selectedWorkspace), teamContext, collaborationContext].filter(Boolean).join("\n\n");
     touchAgent(agentId, startedAt);
     appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time });
+
+    // A member on a break declines rather than silently queueing the work.
+    const availability = memberAvailability(agent, localeCopy);
+    if (!availability.canWork) {
+      appendMessage(agentId, {
+        id: `${id}-a`,
+        role: "agent",
+        body: availability.reply,
+        status: "complete",
+        declined: availability.reason,
+        time,
+        startedAt,
+        completedAt: startedAt,
+      });
+      return;
+    }
+
     appendMessage(agentId, {
       id: `${id}-a`,
       role: "agent",
@@ -6772,6 +6820,32 @@ function App() {
       runtime
     );
     const messageId = `${threadId}-${agent.id}-${Date.now().toString(36)}`;
+
+    // Same rule as a direct message: a member on a break says so instead of
+    // taking the work (src/lib/member-availability.js).
+    const channelAvailability = memberAvailability(agent, localeCopy);
+    if (!channelAvailability.canWork) {
+      appendChannelMessage(channel.id, {
+        id: messageId,
+        channelId: channel.id,
+        channelName: channel.name,
+        role: "agent",
+        agentId: agent.id,
+        targetMemberIds,
+        targetLabel,
+        body: channelAvailability.reply,
+        status: "complete",
+        declined: channelAvailability.reason,
+        time,
+        threadId,
+        parentMessageId,
+        startedAt,
+        updatedAt: startedAt,
+        completedAt: startedAt,
+      });
+      return;
+    }
+
     appendChannelMessage(channel.id, {
       id: messageId,
       channelId: channel.id,
@@ -8306,6 +8380,34 @@ function App() {
     <PresenceContext.Provider value={presenceContextValue}>
     <RemoteMembersContext.Provider value={remoteMembersContextValue}>
     <TooltipProvider>
+      <Dialog open={Boolean(pendingMemberDelete)} onOpenChange={(open) => (open ? null : setPendingMemberDelete(null))}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {formatCopy(localeCopy.memberDeleteTitle || "Delete {name}?", { name: pendingMemberDelete?.name || localeCopy.squadMember || "this member" })}
+            </DialogTitle>
+            <DialogDescription>
+              {localeCopy.memberDeleteDescription || "This stops any work in progress and removes the member from every channel. Its conversation history goes with it."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingMemberDelete(null)}>
+              {localeCopy.cancel || "Cancel"}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const target = pendingMemberDelete;
+                setPendingMemberDelete(null);
+                if (target) deleteAgent(target.id);
+              }}
+            >
+              <Trash2 data-icon="inline-start" />
+              {localeCopy.delete || "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <div className="app-shell-root relative min-h-screen overflow-x-clip bg-background text-foreground">
         <div className={cn("app-shell-decor dark-grid pointer-events-none fixed inset-0 opacity-35", isCreate && "hidden")} />
         <div className="app-shell-decor pointer-events-none fixed inset-x-0 top-0 h-px signal-line" />
@@ -8346,6 +8448,7 @@ function App() {
             onSearch={() => setSearchOpen(true)}
             searchTrailing={notificationBell}
             workspaceSwitcher={workspaceSwitcher}
+            renderMemberMenu={renderMemberMenu}
             onCollapsedChange={setDesktopSidebarCollapsed}
           />
           <main className="app-main min-w-0">
@@ -8699,6 +8802,7 @@ function App() {
               }}
               searchTrailing={notificationBell}
               workspaceSwitcher={workspaceSwitcher}
+              renderMemberMenu={renderMemberMenu}
             />
           </SheetContent>
         </Sheet>
@@ -11288,6 +11392,7 @@ function SidebarContent({
   onSearch,
   searchTrailing = null,
   workspaceSwitcher = null,
+  renderMemberMenu = null,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const { entryFor: entryForPresence } = usePresence();
@@ -11386,13 +11491,14 @@ function SidebarContent({
       searchShortcutLabel={SEARCH_SHORTCUT_LABEL}
       searchTrailing={searchTrailing}
       workspaceSwitcher={workspaceSwitcher}
+      renderMemberMenu={renderMemberMenu}
     />
   );
 }
 
 function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onCollapse, updateAvailable = false }) {
   return (
-    <div className="flex h-full min-h-screen flex-col bg-background">
+    <div className="app-titlebar-inset flex h-full min-h-screen flex-col bg-background">
       <div className="flex h-14 items-center gap-2 px-4">
         <Button
           variant="ghost"
@@ -15490,6 +15596,50 @@ function SquadMemberRow({
         </Popover>
       </div>
     </li>
+  );
+}
+
+// The overflow menu on a member row in the sidebar. Chat first, because that
+// is what the row itself does and the menu should agree with it. "Take a
+// break" stops whatever the member is doing and makes it decline new work
+// until the break ends (ADR-0027).
+function MemberRowMenu({ agent, copy, onChat, onDetails, onToggleBreak, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const resting = isOnBreak(agent);
+  function run(action) {
+    setOpen(false);
+    action?.();
+  }
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="size-6 text-muted-foreground hover:text-foreground"
+          aria-label={`${copy.memberActions || "Actions for"} ${agent.name}`}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <EllipsisVertical className="size-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" side="right" className="w-48 p-1">
+        <SquadMenuItem icon={MessageSquareText} onClick={() => run(onChat)}>
+          {copy.chat || "Chat"}
+        </SquadMenuItem>
+        <SquadMenuItem icon={CircleUserRound} onClick={() => run(onDetails)}>
+          {copy.memberDetails || "Details"}
+        </SquadMenuItem>
+        <Separator className="my-1" />
+        <SquadMenuItem icon={resting ? Play : PauseCircle} onClick={() => run(onToggleBreak)}>
+          {resting ? copy.endBreak || "End break" : copy.takeABreak || "Take a break"}
+        </SquadMenuItem>
+        <Separator className="my-1" />
+        <SquadMenuItem icon={Trash2} destructive onClick={() => run(onDelete)}>
+          {copy.delete || "Delete"}
+        </SquadMenuItem>
+      </PopoverContent>
+    </Popover>
   );
 }
 

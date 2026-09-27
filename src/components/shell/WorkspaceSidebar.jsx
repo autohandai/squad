@@ -30,8 +30,10 @@ function UnreadDot({ active }) {
   return <span className="size-1.5 rounded-full bg-foreground" aria-label="unread" />;
 }
 
-function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, bold = false, ariaLabel }) {
-  return (
+// `menu` renders beside the row rather than inside it: a row is a button, and
+// a button cannot contain another button.
+function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, bold = false, ariaLabel, menu }) {
+  const row = (
     <button
       type="button"
       aria-current={active ? "page" : undefined}
@@ -48,6 +50,15 @@ function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, 
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {trailing}
     </button>
+  );
+  if (!menu) return row;
+  return (
+    <div className="group/navrow relative flex min-w-0 items-center">
+      {row}
+      <span className="absolute right-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/navrow:opacity-100">
+        {menu}
+      </span>
+    </div>
   );
 }
 
@@ -91,6 +102,7 @@ export function WorkspaceSidebar({
   searchShortcutLabel = "⌘K",
   searchTrailing = null,
   workspaceSwitcher = null,
+  renderMemberMenu = null,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const sections = useMemo(() => {
@@ -252,6 +264,7 @@ export function WorkspaceSidebar({
                       </>
                     }
                     trailing={<UnreadCount count={isActive ? 0 : unread} />}
+                    menu={renderMemberMenu ? renderMemberMenu(agent) : null}
                   />
                 );
               })
