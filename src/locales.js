@@ -393,6 +393,7 @@ const UI_COPY_BY_LANGUAGE = {
     chiefAddSkill: "Add the skill",
     chiefConfirm: "Still true?",
     chiefRefine: "Work differently",
+    introClose: "Tell me what you need, or ask me what I would start with.",
     bootApp: "Interface loaded",
     bootSquad: "Reading your squad",
     bootBridge: "Starting the local bridge",

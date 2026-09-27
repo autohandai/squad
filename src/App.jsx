@@ -276,6 +276,7 @@ import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
 import { applyProposal, proposalSummary, reviewMember } from "@/lib/chief-of-staff";
 import { takeTable } from "@/lib/markdown-table";
 import { suggestionsFor } from "@/lib/member-suggestions";
+import { introductionFor } from "@/lib/member-introduction";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -7845,7 +7846,24 @@ function App() {
       profileFiles: buildAgentProfileFiles({ ...baseAgent, profileFiles: draft.profileFiles }),
     };
     setAgents((current) => [...current, agent]);
-    setMessagesByAgent((current) => ({ ...current, [id]: initialMessages(agent.name) }));
+    // A new member opens by saying what it is going to do, composed from its
+    // own configuration so it cannot promise something it is not set up for
+    // (ADR-0034). The old seed was a status line about isolated config.
+    setMessagesByAgent((current) => ({
+      ...current,
+      [id]: [
+        {
+          id: `intro-${id}`,
+          role: "agent",
+          body: introductionFor(agent, localeCopy),
+          status: "complete",
+          introduction: true,
+          time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
+          startedAt: timestamp,
+          completedAt: timestamp,
+        },
+      ],
+    }));
     navigate(routeWithParams(memberChatPath(id), { prompt: options.prompt || null }));
 
     try {

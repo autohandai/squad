@@ -1,3 +1,5 @@
+import { roleFromDescription } from "./member-introduction.js";
+
 // Creating a squad member from a sentence.
 //
 // The shaping rules live here rather than in the create form, so the same
@@ -43,10 +45,14 @@ const GENERIC = Object.freeze({ role: "Squad Member", name: "Nova", skills: ["re
 export function draftFromDescription(description) {
   const text = typeof description === "string" ? description.trim() : "";
   const hint = ROLE_HINTS.find((entry) => entry.match.test(text)) || GENERIC;
+  // A description often opens with the job title: "Chief of staff, controls
+  // everyone…". Use it rather than calling that member "Squad Member", which
+  // is what happened when the model timed out (ADR-0031).
+  const stated = roleFromDescription(text);
   const summary = text || "Helps with whatever the squad needs.";
   return normalizeDraft({
     name: hint.name,
-    role: hint.role,
+    role: stated || hint.role,
     description: summary,
     instructions: text,
     skills: hint.skills,

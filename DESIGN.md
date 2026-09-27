@@ -120,6 +120,8 @@
 
 - A member picks up a tool the work kept failing without, and adds a line to its own escalation rules when a run of work goes badly. Both are announced in its own conversation, never applied silently.
 
+- A new member's first message is the member saying what it will do: what it is, where it works, what it is set up for, and when it will stop and ask. Composed from its own configuration, never asked of a model, so every sentence can be checked against the profile beside it.
+
 ## Member Profile
 
 - History is a divider list grouped by day with underlined text filters (All / Messages / Runs / Edits / Shell / Handoffs / Approvals), a ghost Load more, and one outline Export button. Rows are icon + sentence + a muted meta line (kind · time · links); failures use the destructive colour on the text only. No cards, no badges.
