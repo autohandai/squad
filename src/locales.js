@@ -392,6 +392,8 @@ const UI_COPY_BY_LANGUAGE = {
     chiefRemember: "Remember",
     chiefAddSkill: "Add the skill",
     chiefConfirm: "Still true?",
+    filterFolders: "Type to find a folder…",
+    noFoldersMatch: "No folder matches. Paste a path below instead.",
     isWorking: "is working…",
     sinceYouWereHere: "Since you were last here",
     memberActions: "Actions for",

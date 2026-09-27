@@ -185,6 +185,8 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+// `Command` is already a lucide icon in this file, so the primitive is aliased.
+import { Command as CommandRoot, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -13553,29 +13555,36 @@ function Conversation({
                   <FieldGroup className="gap-4">
                     <Field className="gap-2">
                       <FieldLabel>{copy.selectWorkspace}</FieldLabel>
-                      <Select
-                        value={selectedAddWorkspaceValue}
-                        onValueChange={(value) => {
-                          setWorkspaceDraft(value);
-                          setWorkspaceError("");
-                        }}
-                        disabled={atProjectLimit || !addWorkspaceChoices.length}
-                      >
-                        <SelectTrigger className="h-9 w-full">
-                          <FolderGit2 />
-                          <SelectValue placeholder={copy.selectWorkspace} />
-                        </SelectTrigger>
-                        <SelectContent position="popper" className="max-h-[320px]">
-                          <SelectGroup>
-                            <SelectLabel>{copy.localFolders}</SelectLabel>
+                      {/* A machine can hold hundreds of repositories, and a
+                          list you can only scroll is not a chooser. Type to
+                          narrow it. */}
+                      <CommandRoot className="rounded-md border border-border/70 bg-transparent">
+                        <CommandInput
+                          placeholder={copy.filterFolders || "Type to find a folder…"}
+                          disabled={atProjectLimit || !addWorkspaceChoices.length}
+                        />
+                        <CommandList className="max-h-[220px]">
+                          <CommandEmpty className="px-3 py-4 text-xs text-muted-foreground">
+                            {copy.noFoldersMatch || "No folder matches. Paste a path below instead."}
+                          </CommandEmpty>
+                          <CommandGroup heading={copy.localFolders}>
                             {addWorkspaceChoices.map((item) => (
-                              <SelectItem key={item.path} value={item.path}>
-                                {item.label}
-                              </SelectItem>
+                              <CommandItem
+                                key={item.path}
+                                value={`${item.label} ${item.path}`}
+                                onSelect={() => {
+                                  setWorkspaceDraft(item.path);
+                                  setWorkspaceError("");
+                                }}
+                              >
+                                <FolderGit2 className="size-3.5 shrink-0 text-muted-foreground" />
+                                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                                {selectedAddWorkspaceValue === item.path ? <Check className="size-3.5 shrink-0" /> : null}
+                              </CommandItem>
                             ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
+                          </CommandGroup>
+                        </CommandList>
+                      </CommandRoot>
                     </Field>
 
                     <Field className="gap-2">
