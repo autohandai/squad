@@ -269,6 +269,7 @@ import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
 import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel, peopleSentence, selectWorkspace } from "@/lib/workspaces";
 import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/member-availability";
+import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -342,6 +343,7 @@ const STORAGE_KEYS = {
   locale: "autohandSquad.v1.locale",
   handoffSettings: "autohandSquad.v1.handoffSettings",
   memoryInbox: "autohandSquad.v1.memoryInbox",
+  memberVisits: "autohandSquad.v1.memberVisits",
   messages: "autohandSquad.v1.messages",
   sidebarCollapsed: "autohandSquad.v1.sidebarCollapsed",
   onboarding: "autohandSquad.v1.onboarding",
@@ -4209,6 +4211,55 @@ const MAX_STREAM_EVENTS_PER_MESSAGE = 800;
 // the member's activity log, fire-and-forget. Replies and shell commands are
 // recorded by the bridge itself (chat.finished, shell.ran), so only edits the
 // app observes in a reply's tool stream go through here.
+// Compare a member against the patch about to be applied and record what it
+// gained. Only additions: losing a skill is not something to brag about on
+// your next visit, and the audit trail keeps the removal anyway.
+function recordSkillAndMemoryChanges(agent, patch) {
+  if (!agent || !patch) return;
+  if (Array.isArray(patch.skills)) {
+    const before = new Set((Array.isArray(agent.skills) ? agent.skills : []).map(skillKey).filter(Boolean));
+    for (const skill of patch.skills) {
+      const key = skillKey(skill);
+      if (!key || before.has(key)) continue;
+      recordMemberActivity(agent.id, {
+        kind: "skill",
+        summary: `Added the skill ${skillLabel(skill)}`,
+        eventName: "skill.added",
+        refs: { skill: key },
+      });
+    }
+  }
+  if (Array.isArray(patch.memory)) {
+    const before = new Set((Array.isArray(agent.memory) ? agent.memory : []).map(memoryKey).filter(Boolean));
+    for (const entry of patch.memory) {
+      const key = memoryKey(entry);
+      if (!key || before.has(key)) continue;
+      recordMemberActivity(agent.id, {
+        kind: "memory",
+        summary: `Learned: ${memoryLabel(entry)}`,
+        eventName: "memory.added",
+        refs: { memory: key },
+      });
+    }
+  }
+}
+
+function skillKey(skill) {
+  return String(skill?.id || skill?.name || skill || "").trim().toLowerCase();
+}
+
+function skillLabel(skill) {
+  return String(skill?.name || skill?.id || skill || "").trim();
+}
+
+function memoryKey(entry) {
+  return String(entry?.id || entry?.text || entry?.body || entry || "").trim().toLowerCase().slice(0, 200);
+}
+
+function memoryLabel(entry) {
+  return String(entry?.text || entry?.body || entry?.title || entry || "").replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
 function recordMemberActivity(memberId, payload) {
   const id = normalizeSquadMemberId(memberId);
   if (!id || !payload) return;
@@ -5941,6 +5992,44 @@ function App() {
   }, [agents, route]);
 
   const activeAgent = agents.find((agent) => agent.id === activeAgentId) || agents[0];
+
+  // What a member did since this conversation was last opened. The facts come
+  // from the audit trail, so the briefing and the member's own opening words
+  // describe the same thing (ADR-0028).
+  const [memberVisits, setMemberVisits] = useState(() => readStored(STORAGE_KEYS.memberVisits, {}));
+  const [memberBriefing, setMemberBriefing] = useState({ memberId: "", lines: [] });
+  const activeMemberId = activeAgent?.id || "";
+  const onMemberChat = String(route).startsWith("/conversations/new");
+  useEffect(() => {
+    if (!activeMemberId || !onMemberChat) return undefined;
+    let cancelled = false;
+    const since = memberVisits[activeMemberId] || "";
+    (async () => {
+      try {
+        const page = await api(`/api/members/${encodeURIComponent(activeMemberId)}/activity?limit=100`);
+        if (cancelled) return;
+        const briefing = buildBriefing(page?.records || [], { since, copy: localeCopy });
+        setMemberBriefing({ memberId: activeMemberId, ...briefing });
+      } catch {
+        if (!cancelled) setMemberBriefing({ memberId: activeMemberId, lines: [] });
+      }
+    })();
+    // Opening the conversation is the visit, so the next one starts from here.
+    const seenAt = new Date().toISOString();
+    setMemberVisits((current) => {
+      const next = { ...current, [activeMemberId]: seenAt };
+      persistLocal(STORAGE_KEYS.memberVisits, next);
+      return next;
+    });
+    return () => {
+      cancelled = true;
+    };
+    // memberVisits is read once per member on purpose: re-running on its own
+    // write would clear the briefing the moment it appeared.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMemberId, onMemberChat, localeCopy]);
+  const briefingForActiveMember = memberBriefing.memberId === activeMemberId ? memberBriefing : { lines: [] };
+
   const activeRuns = runs.filter((run) => run.agentId === activeAgent?.id);
   const activeAutomations = automations.filter((automation) => automationBelongsToAgent(automation, activeAgent?.id));
   const fallbackWorkspace = getFallbackWorkspace(runtime, workspaces);
@@ -6232,7 +6321,14 @@ function App() {
 
   function updateAgent(agentId, patch) {
     setAgents((current) =>
-      current.map((agent) => (agent.id === agentId ? { ...agent, ...patch } : agent))
+      current.map((agent) => {
+        if (agent.id !== agentId) return agent;
+        // A gained skill or a new memory is the part of a member's history a
+        // person cannot see anywhere else, so it goes on the record and shows
+        // up in the next briefing (ADR-0028).
+        recordSkillAndMemoryChanges(agent, patch);
+        return { ...agent, ...patch };
+      })
     );
   }
 
@@ -6494,7 +6590,7 @@ function App() {
     const id = `chat-${Date.now().toString(36)}`;
     const collaborationContext = buildCollaborationProfileContext(launch.collaboration, agents, workspaces);
     const teamContext = buildTeammateContext(agent, agents, { tasks, runs, messagesByChannel, hop: Number(launch.hop) || 0 });
-    const profile = [buildAgentProfile(agent, selectedWorkspace), teamContext, collaborationContext].filter(Boolean).join("\n\n");
+    const profile = [buildAgentProfile(agent, selectedWorkspace), teamContext, collaborationContext, briefingContext(briefingForActiveMember)].filter(Boolean).join("\n\n");
     touchAgent(agentId, startedAt);
     appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time });
 
@@ -8672,6 +8768,7 @@ function App() {
               <Conversation
                 agent={activeAgent}
                 messages={messagesByAgent[activeAgent?.id] || []}
+                briefing={briefingForActiveMember}
                 agents={agents}
                 runtime={runtime}
                 workspaces={workspaces}
@@ -12074,7 +12171,7 @@ function AgentAvatar({ agent, large = false, className }) {
 }
 
 
-function ConversationWelcome({ agent, copy, onPrompt }) {
+function ConversationWelcome({ agent, copy, onPrompt, briefing = null }) {
   const suggestions = [
     "Help me fix {bug ID} in {repository}, finish the code changes, and prepare a PR.",
     "Help me check this component for interaction, accessibility, and responsive issues.",
@@ -12090,6 +12187,20 @@ function ConversationWelcome({ agent, copy, onPrompt }) {
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Hi, I&apos;m {agent.name}.</h1>
         <p className="text-base text-muted-foreground">{roleLabel}. {description ? description : "Tell me what you need and I will take it from there."}</p>
       </div>
+      {hasNews(briefing) ? (
+        <div className="w-full">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {copy.sinceYouWereHere || "Since you were last here"}
+          </p>
+          <ul className="divide-y divide-border/70 border-y border-border/70">
+            {briefing.lines.map((line) => (
+              <li key={line.kind} className="py-2 text-sm text-foreground/90">
+                {line.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="w-full">
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Try asking</p>
         <div className="divide-y divide-border/70 border-y border-border/70">
@@ -12114,6 +12225,7 @@ function Conversation({
   agent,
   agents = [],
   messages = [],
+  briefing = null,
   runtime,
   workspaces,
   runs,
@@ -13189,7 +13301,7 @@ function Conversation({
                 </div>
               </>
             ) : (
-              <ConversationWelcome agent={agent} copy={copy} onPrompt={chooseSuggestion} />
+              <ConversationWelcome agent={agent} copy={copy} onPrompt={chooseSuggestion} briefing={briefing} />
             )}
           </div>
         </ScrollArea>

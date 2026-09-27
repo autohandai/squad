@@ -1,4 +1,4 @@
-import { ArrowRightLeft, Download, FilePen, MessageSquareText, Play, ShieldCheck, TerminalSquare } from "lucide-react";
+import { ArrowRightLeft, BrainCog, Download, FilePen, MessageSquareText, Play, ShieldCheck, Sparkles, TerminalSquare } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -21,6 +21,8 @@ const KIND_ICONS = {
   shell: TerminalSquare,
   handoff: ArrowRightLeft,
   approval: ShieldCheck,
+  skill: Sparkles,
+  memory: BrainCog,
 };
 
 /**

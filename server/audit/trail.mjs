@@ -25,7 +25,10 @@ import process from "node:process";
 import { SEVERITY, anyValue, attributesFromObject, attributesToObject, severityText, spanIdFor, traceIdFor } from "../otel-logs.mjs";
 
 export const AUDIT_DIR = "audit";
-export const ACTIVITY_KINDS = Object.freeze(["message", "run", "edit", "shell", "handoff", "approval"]);
+// "skill" and "memory" are what a member gained rather than what it did, and
+// they are the part of its history a person cannot see anywhere else, so the
+// briefing leads on them (ADR-0028).
+export const ACTIVITY_KINDS = Object.freeze(["message", "run", "edit", "shell", "handoff", "approval", "skill", "memory"]);
 export const DEFAULT_PAGE = 50;
 export const MAX_PAGE = 500;
 

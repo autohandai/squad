@@ -1,7 +1,9 @@
 // Member history (ADR-0018): pure helpers for the profile "History" section.
 // No React, no DOM, so scripts/check-audit.mjs can import this from Node.
 
-export const HISTORY_KINDS = Object.freeze(["message", "run", "edit", "shell", "handoff", "approval"]);
+// Mirrors ACTIVITY_KINDS in server/audit/trail.mjs; scripts/check-audit.mjs
+// asserts the two agree, so a kind added there must be added here.
+export const HISTORY_KINDS = Object.freeze(["message", "run", "edit", "shell", "handoff", "approval", "skill", "memory"]);
 export const HISTORY_FILTERS = Object.freeze(["all", ...HISTORY_KINDS]);
 export const HISTORY_PAGE = 50;
 
@@ -13,6 +15,8 @@ const KIND_LABELS = Object.freeze({
   shell: "Shell",
   handoff: "Handoffs",
   approval: "Approvals",
+  skill: "Skills",
+  memory: "Memory",
 });
 
 const KIND_SINGULAR = Object.freeze({
@@ -22,6 +26,8 @@ const KIND_SINGULAR = Object.freeze({
   shell: "Shell",
   handoff: "Handoff",
   approval: "Approval",
+  skill: "Skill",
+  memory: "Memory",
 });
 
 /** Filter-chip label: copy.historyKinds.<kind> with a literal fallback. */

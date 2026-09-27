@@ -106,6 +106,8 @@
 
 - A member row in the sidebar reveals a vertical overflow menu on hover: Chat, Details, Take a break, Delete. Chat comes first because it is what the row itself does. A member on a break declines new work in its own voice rather than going quiet, and delete asks first, naming the member.
 
+- Opening a member's chat leads with what changed since your last visit, under a quiet "Since you were last here" label: a divider list of at most five lines, what it learned first. Every line comes from the member's own history, never from the model. A member with nothing to report shows nothing.
+
 ## Member Profile
 
 - History is a divider list grouped by day with underlined text filters (All / Messages / Runs / Edits / Shell / Handoffs / Approvals), a ghost Load more, and one outline Export button. Rows are icon + sentence + a muted meta line (kind · time · links); failures use the destructive colour on the text only. No cards, no badges.
