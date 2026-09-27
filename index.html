@@ -35,8 +35,48 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <title>Autohand Squad</title>
+    <style>
+      /* The boot screen. Kept in the document so it paints on the first
+         frame, before any stylesheet or bundle has been fetched. */
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        background: #0a0a0a;
+        color: #fafafa;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        z-index: 40;
+      }
+      @media (prefers-color-scheme: light) {
+        #boot { background: #ffffff; color: #171717; }
+      }
+      #boot-mark { border-radius: 14px; animation: boot-breathe 2.4s ease-in-out infinite; }
+      #boot-name { margin: 2px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+      #boot-status { margin: 0; font-size: 12px; opacity: 0.62; }
+      #boot[data-leaving] { opacity: 0; transition: opacity 180ms ease-out; }
+      @keyframes boot-breathe {
+        0%, 100% { transform: scale(1); opacity: 0.92; }
+        50% { transform: scale(1.04); opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-mark { animation: none; }
+        #boot[data-leaving] { transition: none; }
+      }
+    </style>
   </head>
   <body>
+    <!-- Shown before the bundle has parsed, so the window is never blank.
+         Inline on purpose: anything imported would arrive too late to help.
+         React removes it on mount. -->
+    <div id="boot" data-boot>
+      <img id="boot-mark" src="/brand/autohand-squad/autohand-squad-mark-dark.webp" alt="" width="56" height="56" decoding="async" />
+      <p id="boot-name">Autohand Squad</p>
+      <p id="boot-status">Waking the squad…</p>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/App.jsx"></script>
   </body>

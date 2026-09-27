@@ -215,6 +215,20 @@ html[data-shell="desktop"] [data-tauri-drag-region] {
   }
 }
 
+/* A member's avatar settling in on the boot screen. Short and small: it
+   should read as arriving, not as an entrance. */
+.boot-member {
+  display: inline-flex;
+  animation: boot-member-in 220ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes boot-member-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .boot-member { animation: none; }
+}
+
 ::selection {
   background: color-mix(in srgb, var(--primary) 35%, transparent);
 }

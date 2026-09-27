@@ -267,6 +267,7 @@ import { InboxPage } from "@/components/inbox/InboxPage";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
+import { BootChecks } from "@/components/shell/BootChecks";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
 import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel, peopleSentence, selectWorkspace } from "@/lib/workspaces";
@@ -274,6 +275,7 @@ import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/membe
 import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
 import { applyProposal, proposalSummary, reviewMember } from "@/lib/chief-of-staff";
 import { takeTable } from "@/lib/markdown-table";
+import { suggestionsFor } from "@/lib/member-suggestions";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -4814,6 +4816,10 @@ function App() {
     mergeSeedChannelMessages(readStored(storageKeysFor("channelMessages"), {}))
   );
   const [channelsBridgeReady, setChannelsBridgeReady] = useState(false);
+  // The boot screen shows until the bridge has answered once, either way.
+  // After that the app itself is the better thing to look at, even if the
+  // bridge is down: the shell explains that on its own.
+  const [bridgeAnswered, setBridgeAnswered] = useState(false);
   // Channel workflows (#28, ADR-0021). The bridge owns workflows and their
   // runs (channel-workflows.json); this is a mirror keyed by channel id and
   // stays off the channel object, which normalizeChannelCopy would strip.
@@ -5586,8 +5592,10 @@ function App() {
     try {
       const data = await api("/api/runtime");
       setRuntime(data);
+      setBridgeAnswered(true);
       return data;
     } catch {
+      setBridgeAnswered(true);
       // Keep the last known account so a bridge restart does not eject the
       // user to onboarding; only runtime availability is reset.
       let fallback = { available: false, autohandPath: "", version: "" };
@@ -8597,6 +8605,29 @@ function App() {
         startLogin={() => api("/api/harnesses/login", { method: "POST", body: JSON.stringify({ id: "autohand" }) })}
         loginStatus={() => api("/api/harnesses/login?id=autohand")}
         refreshAccount={refreshRuntime}
+      />
+    );
+  }
+
+  // Until the bridge has answered once, show what is actually being waited
+  // on rather than an empty shell. Every row is a real check (ADR-0033).
+  if (!bridgeAnswered) {
+    return (
+      <BootChecks
+        brand={<BrandMark theme={theme} className="size-14" />}
+        copy={localeCopy}
+        members={agents}
+        renderAvatar={(member, className) => <AgentAvatar agent={member} className={className} />}
+        checks={[
+          { id: "app", label: localeCopy.bootApp || "Interface loaded", state: "ok" },
+          {
+            id: "squad",
+            label: localeCopy.bootSquad || "Reading your squad",
+            state: agents.length ? "ok" : "waiting",
+            detail: agents.length ? String(agents.length) : "",
+          },
+          { id: "bridge", label: localeCopy.bootBridge || "Starting the local bridge", state: "waiting" },
+        ]}
       />
     );
   }
@@ -12354,11 +12385,10 @@ function AgentAvatar({ agent, large = false, className }) {
 
 
 function ConversationWelcome({ agent, copy, onPrompt, briefing = null }) {
-  const suggestions = [
-    "Help me fix {bug ID} in {repository}, finish the code changes, and prepare a PR.",
-    "Help me check this component for interaction, accessibility, and responsive issues.",
-    "Help me improve this frontend page's visual hierarchy and loading performance.",
-  ];
+  // Built from this member's own role, skills and workspace. The same three
+  // frontend prompts used to be offered to everyone, so a data engineer was
+  // invited to check a component for responsive issues (ADR-0032).
+  const suggestions = useMemo(() => suggestionsFor(agent), [agent]);
   const roleLabel = localizedRole(agent, copy);
 
   const description = String(agent?.description || agent?.instructions || "").trim();
@@ -25968,3 +25998,17 @@ root.render(
     <App />
   </RenderErrorBoundary>
 );
+
+// The boot screen in index.html has done its job once React has painted.
+// Two frames, so it fades over the mounted app rather than over nothing.
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    const boot = document.getElementById("boot");
+    if (!boot) return;
+    boot.setAttribute("data-leaving", "");
+    const remove = () => boot.remove();
+    boot.addEventListener("transitionend", remove, { once: true });
+    // A browser that skips the transition (reduced motion) never fires it.
+    setTimeout(remove, 400);
+  });
+});

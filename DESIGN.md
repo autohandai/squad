@@ -115,6 +115,9 @@
 
 - The new-member page opens with one line: describe the role and the rest of the page fills itself in. The result says whether a model designed it or the description alone did, and every field stays editable.
 
+- "Try asking" is built from the member's own role, skills and workspace, so no two members offer the same prompts and none contain a placeholder.
+- The window is never blank: an inline boot screen paints the mark and one line before the bundle parses, then real start-up checks replace it, with member avatars settling in as the squad is read. No progress bars, because a bar that measures nothing is a lie told smoothly.
+
 ## Member Profile
 
 - History is a divider list grouped by day with underlined text filters (All / Messages / Runs / Edits / Shell / Handoffs / Approvals), a ghost Load more, and one outline Export button. Rows are icon + sentence + a muted meta line (kind · time · links); failures use the destructive colour on the text only. No cards, no badges.
