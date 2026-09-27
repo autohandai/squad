@@ -270,6 +270,7 @@ import { RelaySettings } from "@/components/settings/RelaySettings";
 import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel, peopleSentence, selectWorkspace } from "@/lib/workspaces";
 import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/member-availability";
 import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
+import { applyProposal, proposalSummary, reviewMember } from "@/lib/chief-of-staff";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -344,6 +345,7 @@ const STORAGE_KEYS = {
   handoffSettings: "autohandSquad.v1.handoffSettings",
   memoryInbox: "autohandSquad.v1.memoryInbox",
   memberVisits: "autohandSquad.v1.memberVisits",
+  improvement: "autohandSquad.v1.improvement",
   messages: "autohandSquad.v1.messages",
   sidebarCollapsed: "autohandSquad.v1.sidebarCollapsed",
   onboarding: "autohandSquad.v1.onboarding",
@@ -378,6 +380,20 @@ const AccountContext = createContext({ profile: ACCOUNT_PROFILE, signOut: null, 
 // Live member presence from the bridge (ADR-0016): who is working, idle,
 // online, offline, or unknown when the bridge is unreachable. Read with
 // `usePresence()` anywhere a dot or label is drawn.
+// The chief of staff reviews each member on this cadence, starting shortly
+// after launch so it never competes with the first paint (ADR-0029).
+const IMPROVEMENT_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const IMPROVEMENT_START_DELAY_MS = 45_000;
+const DEFAULT_IMPROVEMENT_SETTINGS = Object.freeze({ enabled: true, applyAutomatically: true });
+
+function normalizeImprovementSettings(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    enabled: source.enabled !== false,
+    applyAutomatically: source.applyAutomatically !== false,
+  };
+}
+
 const EMPTY_LIST = [];
 
 const PresenceContext = createContext({ presenceMap: {}, bridgeReachable: true, entryFor: (agent) => ({ state: agent?.status === "offline" ? "offline" : "online" }), stopMember: null });
@@ -4941,6 +4957,7 @@ function App() {
     }
   }, [chatSettings]);
 
+
   useEffect(() => {
     try {
       window.localStorage.setItem(STORAGE_KEYS.onboarding, JSON.stringify(onboardingState));
@@ -5997,6 +6014,10 @@ function App() {
   // from the audit trail, so the briefing and the member's own opening words
   // describe the same thing (ADR-0028).
   const [memberVisits, setMemberVisits] = useState(() => readStored(STORAGE_KEYS.memberVisits, {}));
+  const [improvementSettings, setImprovementSettings] = useState(() => normalizeImprovementSettings(readStored(STORAGE_KEYS.improvement, DEFAULT_IMPROVEMENT_SETTINGS)));
+  useEffect(() => {
+    persistLocal(STORAGE_KEYS.improvement, normalizeImprovementSettings(improvementSettings));
+  }, [improvementSettings]);
   const [memberBriefing, setMemberBriefing] = useState({ memberId: "", lines: [] });
   const activeMemberId = activeAgent?.id || "";
   const onMemberChat = String(route).startsWith("/conversations/new");
@@ -6471,6 +6492,71 @@ function App() {
       return { ...current, [agentId]: [...existing, message] };
     });
   }
+
+  // The chief of staff (ADR-0029). Every few hours each member is reviewed
+  // against what it actually did: a failure that keeps happening becomes a
+  // memory, a command it runs often becomes a skill, an old memory gets
+  // re-checked. It then says so in its own conversation, which is the only
+  // way a member starts one without being asked.
+  const lastReviewRef = useRef(new Map());
+  const reviewMembers = useCallback(async () => {
+    if (!improvementSettings.enabled) return;
+    const now = new Date();
+    for (const agent of agents) {
+      if (!agent?.id || isOnBreak(agent)) continue;
+      const previous = lastReviewRef.current.get(agent.id) || 0;
+      if (now.getTime() - previous < IMPROVEMENT_INTERVAL_MS) continue;
+      lastReviewRef.current.set(agent.id, now.getTime());
+      try {
+        const page = await api(`/api/members/${encodeURIComponent(agent.id)}/activity?limit=200`);
+        const review = reviewMember({ agent, records: page?.records || [], now });
+        if (!review.hasWork) continue;
+        const done = [];
+        // Each patch builds on the last: applying every proposal against the
+        // original member would silently drop all but one of them.
+        let working = agent;
+        let merged = {};
+        for (const proposal of review.proposals) {
+          const summary = proposalSummary(proposal, localeCopy);
+          if (!summary) continue;
+          if (improvementSettings.applyAutomatically) {
+            const patch = applyProposal(working, proposal, now);
+            if (Object.keys(patch).length) {
+              working = { ...working, ...patch };
+              merged = { ...merged, ...patch };
+            }
+          }
+          done.push(summary);
+        }
+        if (Object.keys(merged).length) updateAgent(agent.id, merged);
+        if (!done.length) continue;
+        const lead = improvementSettings.applyAutomatically
+          ? localeCopy.chiefApplied || "I had a look at how I have been working and made a few changes:"
+          : localeCopy.chiefProposed || "I had a look at how I have been working. A few things I could change:";
+        appendMessage(agent.id, {
+          id: `chief-${agent.id}-${now.getTime().toString(36)}`,
+          role: "agent",
+          body: [lead, ...done.map((line) => `- ${line}`)].join("\n"),
+          status: "complete",
+          selfReview: true,
+          time: now.toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
+          startedAt: now.toISOString(),
+          completedAt: now.toISOString(),
+        });
+      } catch {
+        // No trail for this member yet, or the bridge is away. Try next time.
+      }
+    }
+  }, [agents, improvementSettings, localeCopy, localeResolution.locale]);
+  useEffect(() => {
+    if (!improvementSettings.enabled) return undefined;
+    const timer = window.setTimeout(() => void reviewMembers(), IMPROVEMENT_START_DELAY_MS);
+    const interval = window.setInterval(() => void reviewMembers(), IMPROVEMENT_INTERVAL_MS);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearInterval(interval);
+    };
+  }, [improvementSettings.enabled, reviewMembers]);
 
   function updateMessage(agentId, messageId, patch) {
     setMessagesByAgent((current) => {
@@ -8712,6 +8798,8 @@ function App() {
                 onNotificationSettingsChange={updateNotificationSettings}
                 onTestNotification={sendTestNotification}
                 onRebuildSearchIndex={rebuildSearchIndex}
+                improvementSettings={improvementSettings}
+                onImprovementSettingsChange={setImprovementSettings}
                 relayConfig={relayConfig}
                 relayStatus={relayStatus}
                 onSaveRelayConfig={async (patch) => {
@@ -23733,6 +23821,8 @@ function SettingsPage({
   onNotificationSettingsChange,
   onTestNotification,
   onRebuildSearchIndex,
+  improvementSettings = DEFAULT_IMPROVEMENT_SETTINGS,
+  onImprovementSettingsChange,
   relayConfig,
   relayStatus,
   onSaveRelayConfig,
@@ -23817,6 +23907,7 @@ function SettingsPage({
     { id: "providers", icon: Brain, label: "LLM Providers", detail: providerSettingsSummary },
     { id: "chat", icon: MessageSquareText, label: copy.chat, detail: chatSettingsDetail },
     { id: "notifications", icon: Bell, label: copy.notifications || "Notifications", detail: notificationSettingsDetail },
+    { id: "improvement", icon: Sparkles, label: copy.selfImprovement || "Self-improvement", detail: improvementDetail(improvementSettings, copy) },
     { id: "handoff", icon: Workflow, label: copy.handoffRetryPolicy, detail: handoffRetryModeLabel(effectiveHandoffRetryMode, copy) },
     { id: "mission-control", icon: Monitor, label: "Mission Control", detail: missionControlDetail },
     { id: "runtime", icon: Server, label: copy.runtimeBridge, detail: runtime?.version || copy.checkingRuntime },
@@ -24079,6 +24170,46 @@ function SettingsPage({
               />
             </section>
 
+            <section id="settings-improvement" className="scroll-mt-6 border-b border-border/70 py-8">
+              <SettingsSectionHeader
+                title={copy.selfImprovement || "Self-improvement"}
+                description={copy.selfImprovementDescription || "Members review how they have been working and keep their own skills and memory current."}
+              />
+              <div className="divide-y divide-border/65">
+                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+                  <FieldContent className="w-[260px] shrink-0 gap-1">
+                    <FieldTitle>
+                      <label htmlFor="improvement-enabled">{copy.selfImprovementEnabled || "Review their own work"}</label>
+                    </FieldTitle>
+                    <FieldDescription>
+                      {copy.selfImprovementEnabledDetail || "Every few hours, and never while a member is on a break."}
+                    </FieldDescription>
+                  </FieldContent>
+                  <Switch
+                    id="improvement-enabled"
+                    checked={improvementSettings.enabled}
+                    onCheckedChange={(checked) => onImprovementSettingsChange?.({ ...improvementSettings, enabled: checked === true })}
+                  />
+                </Field>
+                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+                  <FieldContent className="w-[260px] shrink-0 gap-1">
+                    <FieldTitle>
+                      <label htmlFor="improvement-auto">{copy.selfImprovementAuto || "Let them act on it"}</label>
+                    </FieldTitle>
+                    <FieldDescription>
+                      {copy.selfImprovementAutoDetail || "Add the skill or write the note themselves. Off, they ask first. Either way they tell you what they did."}
+                    </FieldDescription>
+                  </FieldContent>
+                  <Switch
+                    id="improvement-auto"
+                    disabled={!improvementSettings.enabled}
+                    checked={improvementSettings.applyAutomatically}
+                    onCheckedChange={(checked) => onImprovementSettingsChange?.({ ...improvementSettings, applyAutomatically: checked === true })}
+                  />
+                </Field>
+              </div>
+            </section>
+
             <section id="settings-handoff" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
               <SettingsSectionHeader title={copy.handoffRetryPolicy} description={handoffRetryDetail} />
               <div className="divide-y divide-border/65">
@@ -24203,6 +24334,12 @@ function SettingsPage({
 }
 
 // One phrase for the settings nav: off, incomplete, or who is connected.
+// One phrase for the settings nav: off, asking, or acting.
+function improvementDetail(settings = DEFAULT_IMPROVEMENT_SETTINGS, copy = {}) {
+  if (!settings?.enabled) return copy.relayOff || "Off";
+  return settings.applyAutomatically ? copy.selfImprovementActing || "On, acting" : copy.selfImprovementAsking || "On, asking first";
+}
+
 function relayStatusDetail(config = {}, status = {}, copy = {}) {
   if (!config?.enabled) return copy.relayOff || "Off";
   if (status?.connected) {
