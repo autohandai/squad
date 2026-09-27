@@ -118,6 +118,8 @@
 - "Try asking" is built from the member's own role, skills and workspace, so no two members offer the same prompts and none contain a placeholder.
 - The window is never blank: an inline boot screen paints the mark and one line before the bundle parses, then real start-up checks replace it, with member avatars settling in as the squad is read. No progress bars, because a bar that measures nothing is a lie told smoothly.
 
+- A member picks up a tool the work kept failing without, and adds a line to its own escalation rules when a run of work goes badly. Both are announced in its own conversation, never applied silently.
+
 ## Member Profile
 
 - History is a divider list grouped by day with underlined text filters (All / Messages / Runs / Edits / Shell / Handoffs / Approvals), a ghost Load more, and one outline Export button. Rows are icon + sentence + a muted meta line (kind · time · links); failures use the destructive colour on the text only. No cards, no badges.

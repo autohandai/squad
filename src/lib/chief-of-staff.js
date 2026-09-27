@@ -1,10 +1,12 @@
 // The chief of staff: reviews a member against what it actually did and
-// proposes a few concrete improvements. It is deliberately dull. Three rules,
+// proposes a few concrete improvements. It is deliberately dull. Five rules,
 // each with evidence you can point at:
 //
 //   1. A failure that keeps happening is worth remembering.
-//   2. A command it runs often enough is a routine worth naming as a skill.
-//   3. A memory that has sat untouched for a month is worth re-checking.
+//   2. A tool the work kept needing and it did not have is a gap to fill.
+//   3. A command it runs often enough is a routine worth naming as a skill.
+//   4. Enough failures in one window means its own operating rules need a line.
+//   5. A memory that has sat untouched for a month is worth re-checking.
 //
 // Every proposal carries the evidence that produced it, so nothing is
 // suggested on a hunch, and a review is capped so it stays something a person
@@ -19,6 +21,8 @@ export const MIN_FAILURES_TO_REMEMBER = 2;
 export const MIN_RUNS_TO_LEARN = 3;
 /** A memory older than this wants confirming. */
 export const STALE_MEMORY_DAYS = 30;
+/** This many failures in one window means the way it works needs changing. */
+export const MIN_FAILURES_TO_REFINE = 4;
 /** Never hand a person more than this at once. */
 export const MAX_PROPOSALS = 3;
 
@@ -38,7 +42,9 @@ export function reviewMember(input) {
 
   const proposals = [
     ...lessonsFromFailures(records, memory),
+    ...skillGapsFromFailures(records, skills),
     ...skillsFromRoutines(records, skills),
+    ...refineHowItWorks(records, agent.brainCard),
     ...staleMemories(memory, now),
   ];
 
@@ -59,6 +65,8 @@ export function proposalSummary(proposal, copy = {}) {
       return `${copy.chiefAddSkill || "Add the skill"} ${proposal.text}`;
     case "memory.confirm":
       return `${copy.chiefConfirm || "Still true?"} ${proposal.text}`;
+    case "brainCard.update":
+      return `${copy.chiefRefine || "Work differently"}: ${proposal.text}`;
     default:
       return "";
   }
@@ -76,6 +84,12 @@ export function applyProposal(agent, proposal, now = new Date()) {
     case "skill.add": {
       const skills = Array.isArray(agent.skills) ? agent.skills : [];
       return { skills: [...skills, { id: `skill_${slug(proposal.text)}`, name: proposal.text, at, source: "chief-of-staff" }] };
+    }
+    case "brainCard.update": {
+      const card = agent.brainCard && typeof agent.brainCard === "object" ? agent.brainCard : {};
+      const existing = String(card[proposal.field] || "").trim();
+      // Added to what is there, not over it: the rest of the rule still holds.
+      return { brainCard: { ...card, [proposal.field]: existing ? `${existing} ${proposal.text}` : proposal.text } };
     }
     case "memory.confirm": {
       const memory = Array.isArray(agent.memory) ? agent.memory : [];
@@ -137,6 +151,63 @@ function staleMemories(memory, now) {
   }
   // Oldest first: the least trustworthy memory is the one worth checking.
   return out.sort((a, b) => b.evidence.age - a.evidence.age);
+}
+
+/**
+ * A tool the work kept needing and the member did not have.
+ *
+ * Only failures that say so outright count: "not installed", "command not
+ * found", "cannot find module". Mining failure text for interesting-looking
+ * words was the first attempt and it proposed "token" as a skill, because a
+ * stop list of English is a losing game. A missing capability announces
+ * itself, so match that and nothing else.
+ */
+const MISSING_CAPABILITY = [
+  /([\w@./+-]{2,})\s+is not installed/i,
+  /([\w@./+-]{2,}):\s*command not found/i,
+  /command not found:\s*([\w@./+-]{2,})/i,
+  /cannot find module\s+['"]?([\w@./+-]{2,})/i,
+  /unknown command:?\s*([\w@./+-]{2,})/i,
+  /([\w@./+-]{2,})\s+is not recognized/i,
+  /no such (?:file or directory|command):\s*([\w@./+-]{2,})/i,
+];
+
+function skillGapsFromFailures(records, skills) {
+  const counts = new Map();
+  for (const record of records) {
+    if (!isFailure(record)) continue;
+    const summary = String(record.summary || "");
+    for (const pattern of MISSING_CAPABILITY) {
+      const match = summary.match(pattern);
+      if (!match) continue;
+      const tool = match[1].replace(/^[./]+|[.,:;]+$/g, "").trim();
+      if (tool.length < 2) continue;
+      counts.set(tool, (counts.get(tool) || 0) + 1);
+      break;
+    }
+  }
+  const known = skills.map((skill) => normalize(skill?.name || skill?.id || skill));
+  const out = [];
+  for (const [tool, count] of counts) {
+    if (count < MIN_FAILURES_TO_REMEMBER) continue;
+    if (known.some((name) => name.includes(normalize(tool)))) continue;
+    out.push({ kind: "skill.add", text: tool, skillName: tool, evidence: { count, of: "failures" } });
+  }
+  return out.sort((a, b) => b.evidence.count - a.evidence.count);
+}
+
+/**
+ * Enough failures in one window is not a lesson to memorise, it is a sign the
+ * member's own operating rules need a line. One line, added to what is there.
+ */
+function refineHowItWorks(records, brainCard) {
+  const failures = records.filter((record) => isFailure(record)).length;
+  if (failures < MIN_FAILURES_TO_REFINE) return [];
+  const field = "escalationRules";
+  const text = "Ask before retrying the same approach a third time.";
+  const current = normalize(brainCard && typeof brainCard === "object" ? brainCard[field] : "");
+  if (current.includes(normalize(text))) return [];
+  return [{ kind: "brainCard.update", field, text, evidence: { count: failures, of: "failures" } }];
 }
 
 // --- helpers ---------------------------------------------------------------

@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 
 import {
+  MIN_FAILURES_TO_REFINE,
   MIN_FAILURES_TO_REMEMBER,
   MIN_RUNS_TO_LEARN,
   STALE_MEMORY_DAYS,
@@ -159,6 +160,102 @@ const member = (over) => ({ id: "m1", name: "Noah", skills: [], memory: [], ...o
   assert.deepEqual(applyProposal(member(), null, now), {}, "no proposal changes nothing");
 }
 
+// --- a skill the job turned out to need -----------------------------------
+
+{
+  // The member keeps failing on something it has no skill for. That is the
+  // clearest possible signal of a gap in its tool belt.
+  const records = [
+    record({ kind: "run", status: "failed", summary: "Run failed: playwright is not installed" }),
+    record({ kind: "run", status: "failed", summary: "Run failed: playwright: command not found" }),
+  ];
+  const review = reviewMember({ agent: member(), records, now });
+  const gap = review.proposals.find((item) => item.kind === "skill.add" && /playwright/i.test(item.text));
+  assert.ok(gap, "a topic that keeps breaking the work becomes a skill to learn");
+  assert.equal(gap.evidence.of, "failures", "the evidence is the failures, not a guess");
+  assert.ok(gap.evidence.count >= 2);
+}
+
+{
+  // Already has it: nothing to learn.
+  const records = [
+    record({ kind: "run", status: "failed", summary: "Run failed: playwright is not installed" }),
+    record({ kind: "run", status: "failed", summary: "Run failed: playwright: command not found" }),
+  ];
+  const agent = member({ skills: [{ name: "playwright-end-to-end" }] });
+  const review = reviewMember({ agent, records, now });
+  assert.equal(
+    review.proposals.filter((item) => item.kind === "skill.add" && /playwright/i.test(item.text)).length,
+    0,
+    "a skill it already has is not proposed again"
+  );
+}
+
+{
+  // Common words are not skills.
+  const records = [
+    record({ kind: "run", status: "failed", summary: "Run failed: the file could not be found" }),
+    record({ kind: "run", status: "failed", summary: "Run failed: the file could not be found" }),
+  ];
+  const review = reviewMember({ agent: member(), records, now });
+  for (const proposal of review.proposals) {
+    if (proposal.kind !== "skill.add") continue;
+    assert.doesNotMatch(proposal.text, /\b(the|file|could|not|found|failed|run)\b/i, `"${proposal.text}" is not a skill`);
+  }
+}
+
+// --- refining how it works ------------------------------------------------
+
+{
+  // Enough failures in one window is a sign the way it works needs changing,
+  // not just that it needs to remember something.
+  const records = Array.from({ length: MIN_FAILURES_TO_REFINE }, (_, i) =>
+    record({ kind: "run", status: "failed", summary: `Run failed: cause ${i}` })
+  );
+  const review = reviewMember({ agent: member(), records, now });
+  const refine = review.proposals.find((item) => item.kind === "brainCard.update");
+  assert.ok(refine, "a run of failures is worth changing how it works");
+  assert.ok(refine.field, "the proposal names which part of the brain card it changes");
+  assert.ok(refine.text.length > 10, "and says what to change it to");
+  assert.equal(refine.evidence.count, MIN_FAILURES_TO_REFINE);
+}
+
+{
+  // A member already working that way is left alone.
+  const records = Array.from({ length: MIN_FAILURES_TO_REFINE }, (_, i) =>
+    record({ kind: "run", status: "failed", summary: `Run failed: cause ${i}` })
+  );
+  const agent = member({
+    brainCard: { escalationRules: "Ask before retrying the same approach a third time." },
+  });
+  const review = reviewMember({ agent, records, now });
+  assert.equal(
+    review.proposals.filter((item) => item.kind === "brainCard.update").length,
+    0,
+    "a rule it already follows is not proposed again"
+  );
+}
+
+{
+  // A quiet member is not told to change how it works.
+  const records = [record({ kind: "run", status: "failed", summary: "Run failed: one off" })];
+  const review = reviewMember({ agent: member(), records, now });
+  assert.equal(review.proposals.filter((item) => item.kind === "brainCard.update").length, 0);
+}
+
+{
+  const records = Array.from({ length: MIN_FAILURES_TO_REFINE }, (_, i) =>
+    record({ kind: "run", status: "failed", summary: `Run failed: cause ${i}` })
+  );
+  const agent = member({ brainCard: { purpose: "Keep the pipelines healthy.", escalationRules: "Stop on anything destructive." } });
+  const refine = reviewMember({ agent, records, now }).proposals.find((item) => item.kind === "brainCard.update");
+  const patch = applyProposal(agent, refine, now);
+  assert.ok(patch.brainCard, "applying it returns a brain card");
+  assert.ok(String(patch.brainCard[refine.field] || "").includes(refine.text), "the named field carries the new sentence");
+  assert.match(patch.brainCard[refine.field], /Stop on anything destructive/, "the rule it already had is kept, not replaced");
+  assert.equal(patch.brainCard.purpose, "Keep the pipelines healthy.", "the rest of the card survives");
+}
+
 // --- applying several proposals in a row ----------------------------------
 
 {
@@ -171,7 +268,8 @@ const member = (over) => ({ id: "m1", name: "Noah", skills: [], memory: [], ...o
     ...Array.from({ length: MIN_FAILURES_TO_REMEMBER }, () => record({ kind: "run", status: "failed", summary: "Run failed: needs Node 24" })),
   ];
   const { proposals } = reviewMember({ agent, records, now });
-  assert.equal(proposals.length, 2, "two distinct repeated failures are two lessons");
+  const lessons = proposals.filter((item) => item.kind === "memory.add");
+  assert.equal(lessons.length, 2, "two distinct repeated failures are two lessons");
   let working = agent;
   for (const proposal of proposals) working = { ...working, ...applyProposal(working, proposal, now) };
   assert.equal(working.memory.length, 2, "both lessons survive");

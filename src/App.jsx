@@ -389,6 +389,9 @@ const AccountContext = createContext({ profile: ACCOUNT_PROFILE, signOut: null, 
 // after launch so it never competes with the first paint (ADR-0029).
 const IMPROVEMENT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const IMPROVEMENT_START_DELAY_MS = 45_000;
+// The shortest gap between two reviews of the same member when its work keeps
+// finishing, so a burst of runs does not review it once per run.
+const IMPROVEMENT_AFTER_WORK_MS = 90_000;
 const DEFAULT_IMPROVEMENT_SETTINGS = Object.freeze({ enabled: true, applyAutomatically: true });
 
 function normalizeImprovementSettings(value) {
@@ -6543,13 +6546,18 @@ function App() {
   // re-checked. It then says so in its own conversation, which is the only
   // way a member starts one without being asked.
   const lastReviewRef = useRef(new Map());
-  const reviewMembers = useCallback(async () => {
+  const reviewMembers = useCallback(async ({ memberId = "", force = false } = {}) => {
     if (!improvementSettings.enabled) return;
     const now = new Date();
-    for (const agent of agents) {
+    for (const agent of memberId ? agents.filter((item) => item?.id === memberId) : agents) {
       if (!agent?.id || isOnBreak(agent)) continue;
       const previous = lastReviewRef.current.get(agent.id) || 0;
-      if (now.getTime() - previous < IMPROVEMENT_INTERVAL_MS) continue;
+      // A review right after a member finishes work is the point: it learns
+      // from the task it just did. The interval is only the floor for the
+      // periodic sweep, and a short guard still stops a burst of runs from
+      // reviewing the same member repeatedly.
+      const floor = force ? IMPROVEMENT_AFTER_WORK_MS : IMPROVEMENT_INTERVAL_MS;
+      if (now.getTime() - previous < floor) continue;
       lastReviewRef.current.set(agent.id, now.getTime());
       try {
         const page = await api(`/api/members/${encodeURIComponent(agent.id)}/activity?limit=200`);
@@ -6918,6 +6926,8 @@ function App() {
       };
     } finally {
       recordObservedEdits(agentId, liveEvents, { messageId: `${id}-a`, workspace: selectedWorkspace });
+      // Learn from the task it just finished, not hours later (ADR-0029).
+      void reviewMembers({ memberId: agentId, force: true });
       void absorbCanvas(canvasAttachment.canvasId, agentId);
     }
   }
@@ -7297,6 +7307,7 @@ function App() {
     } finally {
       window.clearTimeout(timeout);
       recordObservedEdits(agent.id, liveEvents, { channelId: channel.id, messageId, threadId, workspace: selectedWorkspace });
+      void reviewMembers({ memberId: agent.id, force: true });
       void absorbCanvas(canvasAttachment.canvasId, agent.id);
     }
 

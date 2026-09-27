@@ -392,6 +392,7 @@ const UI_COPY_BY_LANGUAGE = {
     chiefRemember: "Remember",
     chiefAddSkill: "Add the skill",
     chiefConfirm: "Still true?",
+    chiefRefine: "Work differently",
     bootApp: "Interface loaded",
     bootSquad: "Reading your squad",
     bootBridge: "Starting the local bridge",
