@@ -271,6 +271,7 @@ import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel
 import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/member-availability";
 import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
 import { applyProposal, proposalSummary, reviewMember } from "@/lib/chief-of-staff";
+import { takeTable } from "@/lib/markdown-table";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -9949,13 +9950,14 @@ function ChannelsPage({
                       type="button"
                       aria-pressed={isMember}
                       className={cn(
-                        "rounded-md border px-2.5 py-1 text-sm transition-colors",
+                        "flex items-center gap-1.5 rounded-md border py-1 pl-1 pr-2.5 text-sm transition-colors",
                         isMember
                           ? "border-primary/50 bg-primary/10 text-foreground"
                           : "border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
                       )}
                       onClick={() => onToggleMember?.(channel.id, agent.id)}
                     >
+                      <AgentAvatar agent={agent} className="size-5 rounded-md" />
                       {agent.name} · {isMember ? copy.leaveChannel : copy.joinChannel}
                     </button>
                   );
@@ -10528,7 +10530,8 @@ function parseMarkdownBlocks(text) {
     listItems = [];
   }
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const trimmed = line.trim();
     const fence = trimmed.match(/^```([A-Za-z0-9_-]*)/);
 
@@ -10563,6 +10566,19 @@ function parseMarkdownBlocks(text) {
       flushList();
       blocks.push({ type: "heading", depth: heading[1].length, text: heading[2] });
       continue;
+    }
+
+    // A table is several lines, so it is checked before the single-line cases
+    // and moves the cursor itself.
+    if (trimmed.includes("|")) {
+      const table = takeTable(lines, index);
+      if (table) {
+        flushParagraph();
+        flushList();
+        blocks.push({ type: "table", header: table.header, rows: table.rows });
+        index = table.next - 1;
+        continue;
+      }
     }
 
     const listMatch = line.match(/^(\s*)(?:[-*]|\d+\.)\s+(.+)$/);
@@ -10699,6 +10715,36 @@ function MarkdownBlocks({ text, muted = false }) {
             <pre key={index} className="max-h-80 overflow-auto rounded-md border bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
               <code>{block.code}</code>
             </pre>
+          );
+        }
+        if (block.type === "table") {
+          // Divider rows, no fills, and a horizontal scroller so a wide table
+          // never widens the message column (DESIGN.md).
+          return (
+            <div key={index} className="-mx-1 overflow-x-auto px-1">
+              <table className="w-full min-w-max border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-border/70">
+                    {block.header.map((cell, cellIndex) => (
+                      <th key={cellIndex} className="px-2.5 py-1.5 text-left font-medium text-foreground">
+                        <InlineMarkdown text={cell} />
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={rowIndex} className="border-b border-border/45 last:border-b-0">
+                      {row.map((cell, cellIndex) => (
+                        <td key={cellIndex} className="px-2.5 py-1.5 align-top text-foreground/90">
+                          <InlineMarkdown text={cell} />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           );
         }
         return (
@@ -11131,13 +11177,14 @@ function ChannelCreateDialog({
                     type="button"
                     aria-pressed={selected}
                     className={cn(
-                      "rounded-md border px-2.5 py-1 text-sm transition-colors",
+                      "flex items-center gap-1.5 rounded-md border py-1 pl-1 pr-2.5 text-sm transition-colors",
                       selected
                         ? "border-primary/50 bg-primary/10 text-foreground"
                         : "border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
                     )}
                     onClick={() => toggleDraftMember(agent.id)}
                   >
+                    <AgentAvatar agent={agent} className="size-5 rounded-md" />
                     {agent.name}
                   </button>
                 );
@@ -12451,6 +12498,16 @@ function Conversation({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPrompt, agent?.id]);
   const chatSending = chatSendingByAgent[agent.id] === true;
+  // The live label the stream last reported, so the composer can say what the
+  // member is doing rather than leaving the person watching a still page.
+  const liveActivityLabel = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.status !== "loading") continue;
+      return String(message.activityLabel || "").trim() || `${agent.name} ${copy.isWorking || "is working…"}`;
+    }
+    return `${agent.name} ${copy.isWorking || "is working…"}`;
+  }, [messages, agent.name, copy]);
   const queuedFollowups = queuedFollowupsByAgent[agent.id] || [];
   // Goal 09: recommend recipes from the current request, scoped to this member's role.
   // Typing must stay responsive: recipe matching and permission warnings run
@@ -13702,6 +13759,12 @@ function Conversation({
               </div>
             </div>
           </div>
+          {/* What the member is doing right now, in the same place the channel
+              composer says it. Without this, a reply in progress looks like
+              nothing happening. */}
+          <p className="min-h-5 px-3 pb-2 text-xs text-muted-foreground sm:px-5" aria-live="polite">
+            {chatSending ? liveActivityLabel : ""}
+          </p>
         </form>
       </div>
 

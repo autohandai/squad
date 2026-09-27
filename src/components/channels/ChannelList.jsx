@@ -28,6 +28,7 @@ function formatCount(template, count) {
 export function ChannelList({
   channels = [],
   agents = [],
+  renderAvatar = null,
   activeChannelId = "",
   threadCounts = {},
   copy = {},
@@ -181,13 +182,14 @@ export function ChannelList({
                       type="button"
                       aria-pressed={selected}
                       className={cn(
-                        "rounded-md border px-2.5 py-1 text-sm transition-colors",
+                        "flex items-center gap-1.5 rounded-md border py-1 pl-1 pr-2.5 text-sm transition-colors",
                         selected
                           ? "border-primary/50 bg-primary/10 text-foreground"
                           : "border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
                       )}
                       onClick={() => toggleDraftMember(agent.id)}
                     >
+                      {renderAvatar ? renderAvatar(agent, "size-5 rounded-md") : null}
                       {agent.name}
                     </button>
                   );
