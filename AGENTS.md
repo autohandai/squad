@@ -26,6 +26,13 @@ change as the code, never in a follow-up pass.
 - **`CHANGELOG.md`** — what shipped, in the user's language. Added, Changed,
   Fixed. A person reading it should recognise the thing they asked for.
 
+An ADR is per decision, not per commit. A commit carrying three unrelated
+judgements needs three records or one that covers all three; a commit that
+only implements a decision already recorded amends that record instead of
+opening a new one. Check before pushing: if a change would make someone ask
+"why is it like this?", the answer belongs in `docs/adrs/` before it ships,
+not after.
+
 Two rules that make the rest worth reading.
 
 - **Record what was learnt, not only what was done.** A fix whose cause was
