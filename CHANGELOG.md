@@ -96,6 +96,13 @@ list to the section for that version.
   decision, which buried the Inbox under rows that needed none.
 - The new-member page scrolled itself away from the answer, so the line saying
   whether a model or your description designed the member was never seen.
+- A deleted member came back on the next launch. Deleting removed it from
+  storage, and the seed list read "missing from storage" as "never seen" and
+  added it again (ADR-0038).
+- Skills you already have in `~/.autohand/skills`, `~/.claude/skills` or
+  `~/.agents/skills`, and the same folders in your workspace, are now found
+  and installed. They used to be invisible, so a member asking for one failed
+  with "not found in Skilled catalog" (ADR-0039).
 
 ## [0.1.5] - 2026-09-24
 

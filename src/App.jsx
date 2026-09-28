@@ -276,6 +276,7 @@ import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
 import { applyProposal, proposalSummary, reviewMember } from "@/lib/chief-of-staff";
 import { takeTable } from "@/lib/markdown-table";
 import { MEMBER_DESIGNER_ID } from "@/lib/member-draft";
+import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
@@ -340,6 +341,10 @@ class RenderErrorBoundary extends React.Component {
 
 const STORAGE_KEYS = {
   agents: "autohandSquad.v1.agents",
+  // Members the person deleted. Without this the seed list silently puts a
+  // deleted member back on the next load, because the merge below treats
+  // "not in storage" as "never seen".
+  removedAgents: "autohandSquad.v1.removedAgents",
   automations: "autohandSquad.v1.automations",
   channels: "autohandSquad.v1.channels",
   channelThreads: "autohandSquad.v1.channelThreads",
@@ -1448,8 +1453,6 @@ const RECOVERED_CHANNEL_MESSAGES = {
 };
 const ONBOARDING_ROUTE = "/welcome";
 const MEMBER_ROUTE_PREFIX = "/squad-members";
-const SQUAD_MEMBER_ID_PREFIX = "asq_";
-const LEGACY_SQUAD_MEMBER_ID_PREFIXES = ["wk_"];
 const SQUAD_WORKSPACE_DIR_NAME = ".autohandsquad";
 const LEGACY_SQUAD_WORKSPACE_DIR_NAMES = [".qoderwake", ".autohand-squad"];
 const PROJECT_LIMIT_UPPER_BOUND = 5;
@@ -2996,12 +2999,6 @@ function getThemePreset(preference, surface) {
   return THEME_PRESET_MAP[normalizedSurface].get(presetId) || THEME_PRESETS[normalizedSurface][0];
 }
 
-function normalizeSquadMemberId(id) {
-  const value = String(id || "").trim();
-  const legacyPrefix = LEGACY_SQUAD_MEMBER_ID_PREFIXES.find((prefix) => value.startsWith(prefix));
-  return legacyPrefix ? `${SQUAD_MEMBER_ID_PREFIX}${value.slice(legacyPrefix.length)}` : value;
-}
-
 function createSquadMemberId() {
   return `${SQUAD_MEMBER_ID_PREFIX}${Date.now().toString(36)}`;
 }
@@ -3428,15 +3425,6 @@ function normalizeMemoryInboxCopy(items, defaultAgentId = initialAgents[0]?.id) 
   return (Array.isArray(items) ? items : initialMemoryInbox)
     .map((item) => normalizeMemoryProposal(item, defaultAgentId))
     .filter(Boolean);
-}
-
-function mergeSeedAgents(storedAgents) {
-  const records = Array.isArray(storedAgents) ? storedAgents : [];
-  const seen = new Set(records.map((agent) => normalizeSquadMemberId(agent?.id)).filter(Boolean));
-  return [
-    ...records,
-    ...initialAgents.filter((agent) => !seen.has(normalizeSquadMemberId(agent.id))),
-  ];
 }
 
 function mergeSeedTasks(storedTasks) {
@@ -4811,9 +4799,13 @@ function MemberPresenceBadge({ presence, className }) {
 
 function App() {
   const [route, setRoute] = useState(() => window.location.pathname + window.location.search);
+  const [removedAgentIds, setRemovedAgentIds] = useState(() => {
+    return [...removedIdSet(readStored(storageKeysFor("removedAgents"), []))];
+  });
   const [agents, setAgents] = useState(() => {
     const storedAgents = readStored(storageKeysFor("agents"), initialAgents);
-    return mergeSeedAgents(storedAgents).map(normalizeAgentCopy);
+    const removed = readStored(storageKeysFor("removedAgents"), []);
+    return mergeSeedAgents(storedAgents, initialAgents, Array.isArray(removed) ? removed : []).map(normalizeAgentCopy);
   });
   const [tasks, setTasks] = useState(() => normalizeTasksCopy(mergeSeedTasks(readStored(storageKeysFor("tasks"), initialTasks))));
   const [automations, setAutomations] = useState(() => {
@@ -5049,6 +5041,10 @@ function App() {
   useEffect(() => {
     persistLocal(STORAGE_KEYS.agents, agents);
   }, [agents]);
+
+  useEffect(() => {
+    persistLocal(STORAGE_KEYS.removedAgents, removedAgentIds);
+  }, [removedAgentIds]);
 
   useEffect(() => {
     persistLocal(STORAGE_KEYS.automations, automations);
@@ -6454,6 +6450,7 @@ function App() {
     // Running work stops before the member disappears (ADR-0016).
     stopMember(agentId).catch(() => {});
     setAgents((current) => current.filter((agent) => normalizeSquadMemberId(agent.id) !== normalized));
+    setRemovedAgentIds((current) => rememberRemovedAgent(current, normalized));
     setChannels((current) =>
       current.map((channel) =>
         Array.isArray(channel.memberIds) && channel.memberIds.includes(agentId)
