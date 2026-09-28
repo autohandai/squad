@@ -99,6 +99,14 @@ list to the section for that version.
 - A deleted member came back on the next launch. Deleting removed it from
   storage, and the seed list read "missing from storage" as "never seen" and
   added it again (ADR-0038).
+- **Onboarding knows about git.** Picking a folder now says whether it is
+  tracked and who commits there will be from. An untracked folder offers to
+  start tracking, so nothing a teammate changes is unrecoverable (ADR-0050).
+- **Replay actually replays.** Every action on a Work row was a link that
+  added a query parameter and did nothing. Replay re-runs the failed work; the
+  rest say where they go (ADR-0049).
+- **A member remembers what it learns.** Memory entries were stringified on
+  save, so a member proposed the same lesson every hour forever (ADR-0048).
 - **The start-up screen wears the product.** The window you see while the app
   boots now carries the mark and the Autohand typeface on the same background
   as the app, so nothing flashes at the handover, and it says how long it has

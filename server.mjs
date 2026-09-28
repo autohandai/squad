@@ -18,6 +18,7 @@ import { arch, homedir, platform as osPlatform, release as osRelease, tmpdir } f
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 import { listLocalSkills, localSkillRoots, readSkillFolder } from "./server/skills/local.mjs";
+import { startTracking } from "./server/workspace-git.mjs";
 import {
   DEFAULT_HARNESS_ID,
   HarnessNotReadyError,
@@ -7364,6 +7365,23 @@ async function handleApi(req, res, url) {
       const profile = await profileWorkspace(workspace);
       workspaceProfileCache.set(workspace, { at: Date.now(), profile });
       json(res, 200, { success: true, data: profile });
+    } catch (error) {
+      json(res, error.status || 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  // Start tracking a folder with git. Onboarding offers this when the folder
+  // someone picked is not a repository, so work a member does there is
+  // recoverable from the first commit rather than the first regret.
+  if (url.pathname === "/api/workspaces/track" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const workspace = await cleanWorkspace(String(payload.path || "").replace(/\/+$/, ""));
+      const git = startTracking(workspace);
+      // The profile is cached for a minute and has just become wrong.
+      workspaceProfileCache.delete(workspace);
+      json(res, 200, { success: true, data: { path: workspace, git } });
     } catch (error) {
       json(res, error.status || 400, { success: false, error: error.message });
     }

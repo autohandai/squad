@@ -8,6 +8,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { createHash } from "node:crypto";
+import { readGitContext } from "./workspace-git.mjs";
 
 export const NEEDS = ["frontend", "backend", "mobile", "infra", "tests", "docs", "data", "security", "ai"];
 
@@ -224,6 +225,10 @@ export async function profileWorkspace(path) {
     markers: [...markers].sort(),
     fileCount,
   };
+  // Whether the folder is tracked, and who commits here would be from. Read
+  // at profile time so onboarding can say it at the moment the folder is
+  // chosen rather than after a member has already edited something.
+  profile.git = readGitContext(path);
   profile.summary = summarize(profile);
   profile.signature = createHash("sha256")
     .update(JSON.stringify([profile.languages, profile.frameworks, profile.needs, profile.markers]))

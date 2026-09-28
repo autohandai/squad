@@ -42,6 +42,8 @@ export function FirstRun({
   const [profileBusy, setProfileBusy] = useState(false);
   const [pickBusy, setPickBusy] = useState(false);
   const [folderError, setFolderError] = useState("");
+  const [tracking, setTracking] = useState(false);
+  const [trackError, setTrackError] = useState("");
   const [roleId, setRoleId] = useState("");
   const [name, setName] = useState("");
   const [starting, setStarting] = useState(false);
@@ -81,6 +83,23 @@ export function FirstRun({
 
   const suggestions = useMemo(() => suggestRoles(profile, roleTemplates, 3), [profile, roleTemplates]);
   const selected = suggestions.find((item) => item.template.id === roleId) || null;
+
+  // A folder that is not a repository is a folder where a member's work
+  // cannot be undone. Offer the one action that fixes that, at the moment the
+  // folder is chosen rather than after something has been edited.
+  async function startTracking() {
+    if (!folder || tracking) return;
+    setTracking(true);
+    setTrackError("");
+    try {
+      const result = await api("/api/workspaces/track", { method: "POST", body: JSON.stringify({ path: folder }) });
+      setProfile((current) => (current ? { ...current, git: result?.git || current.git } : current));
+    } catch (error) {
+      setTrackError(error?.message || "Could not start tracking that folder.");
+    } finally {
+      setTracking(false);
+    }
+  }
 
   function chooseFolder(path) {
     const next = String(path || "").trim();
@@ -213,6 +232,32 @@ export function FirstRun({
             <p className="mt-3 min-h-6 text-base text-muted-foreground">
               {profileBusy ? "Looking at the folder…" : folderError || profile?.summary || "A project."}
             </p>
+            {/* Version control, said once, where the folder is chosen. A
+                tracked folder says who commits will be from; an untracked one
+                offers to become tracked. Neither blocks going on. */}
+            {!profileBusy && profile?.git?.available !== false ? (
+              <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+                {profile?.git?.tracked ? (
+                  <span>
+                    Tracked by git{profile.git.branch ? ` on ${profile.git.branch}` : ""}
+                    {profile.git.name ? `. Commits here will be from ${profile.git.name}.` : "."}
+                  </span>
+                ) : (
+                  <>
+                    <span>Not tracked by git, so nothing a teammate changes here can be undone.</span>
+                    <button
+                      type="button"
+                      onClick={startTracking}
+                      disabled={tracking}
+                      className="underline underline-offset-4 transition-colors hover:text-foreground disabled:opacity-60"
+                    >
+                      {tracking ? "Starting…" : "Start tracking"}
+                    </button>
+                  </>
+                )}
+                {trackError ? <span className="text-destructive">{trackError}</span> : null}
+              </p>
+            ) : null}
             {!profileBusy ? (
               <ul className="mt-6 divide-y divide-border/70">
                 {suggestions.map(({ template, needs }, index) => (
