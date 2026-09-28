@@ -1,42 +1,6 @@
 export const AUTOHAND_SKILLS_REGISTRY_URL = "https://skilled.autohand.ai";
 
-export const brainCardFields = [
-  {
-    id: "purpose",
-    label: "Purpose",
-    prompt: "What this squad member is for and the kind of work it should own.",
-  },
-  {
-    id: "defaultWorkflow",
-    label: "Default workflow",
-    prompt: "The repeatable operating pattern this squad member should follow.",
-  },
-  {
-    id: "allowedTools",
-    label: "Allowed tools",
-    prompt: "Tool categories and boundaries the squad member can use under its permission policy.",
-  },
-  {
-    id: "escalationRules",
-    label: "Escalation rules",
-    prompt: "When to stop, ask, hand off, or request user confirmation.",
-  },
-  {
-    id: "definitionOfDone",
-    label: "Definition of done",
-    prompt: "The standard this squad member must satisfy before reporting completion.",
-  },
-  {
-    id: "reviewStyle",
-    label: "Review style",
-    prompt: "How this squad member critiques work, risk, and evidence.",
-  },
-  {
-    id: "memoryPolicy",
-    label: "Memory policy",
-    prompt: "What can become durable memory and what must stay session scoped.",
-  },
-];
+export { brainCardFields } from "./lib/brain-card.js";
 
 const roleTemplatePersonalities = {
   "frontend-developer":

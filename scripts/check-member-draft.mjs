@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { brainCardFields } from "../src/data.js";
+import { brainCardFields } from "../src/lib/brain-card.js";
 import {
   MEMBER_DESIGNER_ID,
   DRAFT_FIELDS,

@@ -1,4 +1,4 @@
-import { brainCardFields } from "../data.js";
+import { brainCardFields } from "./brain-card.js";
 import { roleFromDescription } from "./member-introduction.js";
 
 // Creating a squad member from a sentence.
