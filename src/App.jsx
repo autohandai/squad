@@ -12069,7 +12069,7 @@ function AccountMenuButton({
           </div>
           <div className="my-1 border-t border-border/70" />
           <AccountMenuItem icon={ListChecks} label="Setup guide" onClick={() => choose(onOnboarding)} hasChevron />
-          <AccountMenuItem icon={Monitor} label="Mission Control" onClick={() => choose(onMissionControl)} hasChevron />
+          <AccountMenuItem icon={Monitor} label={copy.work || "Work"} onClick={() => choose(onMissionControl)} hasChevron />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} hasChevron />
           <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} hasChevron />
           {openFeedback ? (
@@ -15257,44 +15257,35 @@ function MissionControlPage({
   const loadState = missionControlLoadState({ runtime, rows, runsError, workspacesError });
   const runningRows = rows.filter((row) => ["running", "launching", "handoff-pending"].includes(row.status));
 
+  // Four numbers in a bordered box is a dashboard telling you it has numbers.
+  // One sentence says the same thing and names only what is true right now,
+  // so a quiet squad reads as quiet instead of as four zeroes.
+  const busyOwnerIds = new Set(activeRows.map((row) => row.owner?.id).filter(Boolean));
+  const idleCount = Math.max(agents.length - busyOwnerIds.size, 0);
+  const summaryParts = [];
+  if (runningRows.length) summaryParts.push(`${formatLocalizedNumber(runningRows.length, locale)} working`);
+  if (blockedRows.length) summaryParts.push(`${formatLocalizedNumber(blockedRows.length, locale)} blocked`);
+  if (idleCount) summaryParts.push(`${formatLocalizedNumber(idleCount, locale)} free`);
+  if (counts.permissionWarnings) summaryParts.push(`${formatLocalizedNumber(counts.permissionWarnings, locale)} to review`);
+  const summary = summaryParts.length ? summaryParts.join(" \u00b7 ") : copy.workNothingRunning || "Nothing is running.";
+
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#fafafa] text-[#2f2f2f] dark:bg-[#fafafa] dark:text-[#2f2f2f]">
-      <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-10 px-4 py-6 sm:px-6 lg:px-10 lg:py-9">
-        <header className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(460px,0.46fr)] xl:items-end">
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-6 lg:px-10 lg:py-8">
+        <header className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
-            <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs font-medium uppercase text-[#666666]">
-              <span className="inline-flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-[#3f7f43]" aria-hidden="true" />
-                Live Squad Operations
-              </span>
-              <span className={blockedRows.length ? "text-[#8a4b00]" : "text-[#3d6a3f]"}>
-                {formatLocalizedNumber(blockedRows.length, locale)} Risks
-              </span>
-            </div>
-            <h1 className="max-w-5xl text-balance text-[2.75rem] font-semibold leading-[0.98] tracking-normal text-[#191815] sm:text-6xl lg:text-[5.5rem]">
-              Mission Control
+            <h1 className="flex items-center gap-2 text-lg font-semibold">
+              <Monitor className="size-4 text-muted-foreground" aria-hidden="true" />
+              {copy.work || "Work"}
             </h1>
-            <p className="mt-5 max-w-3xl text-pretty text-base leading-7 text-[#555555] sm:text-lg">
-              Every squad member, current task, repository, run state, blocker, last evidence, and next action in one operating view.
-            </p>
-            {onLaunchRecipe ? (
-              <button
-                type="button"
-                onClick={() => setRecipeCatalogOpen(true)}
-                className="mt-6 inline-flex h-9 items-center gap-2 rounded-md border border-[#cfcfcf] bg-white px-3.5 text-sm font-medium text-[#2f2f2f] transition-colors hover:border-[#9bbf90] hover:bg-[#f3f8f1] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[#b7d7ad]/60"
-                data-testid="mission-launch-recipe"
-              >
-                <BookOpen className="size-4" aria-hidden="true" />
-                {recipeText.launchRecipe}
-              </button>
-            ) : null}
+            <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
           </div>
-          <div className="grid min-w-0 grid-cols-2 gap-y-6 border-y border-[#dedede] py-5 sm:grid-cols-4 xl:grid-cols-2">
-            <MissionMetric label="Active Work" value={formatLocalizedNumber(activeRows.length, locale)} />
-            <MissionMetric label="Running" value={formatLocalizedNumber(runningRows.length, locale)} tone="live" />
-            <MissionMetric label="Memory Pending" value={formatLocalizedNumber(counts.memoryPending, locale)} />
-            <MissionMetric label="Permission Warnings" value={formatLocalizedNumber(counts.permissionWarnings, locale)} tone={counts.permissionWarnings ? "risk" : "quiet"} />
-          </div>
+          {onLaunchRecipe ? (
+            <Button variant="outline" size="sm" onClick={() => setRecipeCatalogOpen(true)} data-testid="mission-launch-recipe">
+              <BookOpen data-icon="inline-start" />
+              {recipeText.launchRecipe}
+            </Button>
+          ) : null}
         </header>
 
         <MissionControlStateNotice
@@ -15336,13 +15327,10 @@ function MissionControlPage({
             selectedRow={selectedRow}
           />
         ) : loadState !== "loading" ? (
-          <EmptyBlock icon={Monitor} title="No squad work yet" body="Start a squad member run and Mission Control will track the active and recent records here." />
+          <EmptyBlock icon={Monitor} title="No squad work yet" body="Start a squad member run and it will show up here." />
         ) : null}
 
-        <div className="grid gap-10 xl:grid-cols-[minmax(0,1fr)_380px]">
-          <MissionDetailPanel row={selectedRow} locale={locale} copy={copy} navigate={navigate} />
-          <MissionStateMatrix />
-        </div>
+        <MissionDetailPanel row={selectedRow} locale={locale} copy={copy} navigate={navigate} />
       </div>
 
       {onLaunchRecipe ? (
@@ -15412,7 +15400,7 @@ function squadStatusMeta(status) {
 }
 
 // Availability is the user-managed lifecycle state of a member, kept distinct
-// from the work/activity surfaced in Mission Control. The Squad page owns this.
+// from the work/activity surfaced on the Work page. The Squad page owns this.
 const SQUAD_MEMBER_STATES = [
   {
     id: "active",
@@ -15553,7 +15541,7 @@ function SquadDirectoryPage({
               <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Squad</h1>
               <p className="mt-3 max-w-2xl text-pretty text-base leading-7 text-muted-foreground">
                 Manage your AI team — set each member's availability and see what they're working on. Live work and task
-                detail live in Mission Control.
+                detail live under Work.
               </p>
             </div>
             <Button className="h-10 shrink-0 rounded-md" onClick={() => navigate(`${MEMBER_ROUTE_PREFIX}/new`)}>
@@ -15651,7 +15639,7 @@ function SquadDirectoryPage({
             <DialogTitle>Remove {pendingDelete?.name || "member"}?</DialogTitle>
             <DialogDescription>
               This removes {pendingDelete?.name || "this member"} from your squad, along with their conversations and
-              automations in this view. {copy.removeMemberStopsWork || "Running work stops first."} Task records stay in Mission Control history.
+              automations in this view. {copy.removeMemberStopsWork || "Running work stops first."} Task records stay in the Work history.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -15701,7 +15689,7 @@ function SquadStateBar({ stateCounts = [], total = 0, workingNow = 0, activeFilt
           onClick={() => navigate?.(missionControlPath())}
           className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
-          Live work in Mission Control
+          Live work under Work
           <ArrowUpRight className="size-3.5" aria-hidden="true" />
         </button>
       </div>
@@ -16039,22 +16027,6 @@ function SquadMenuItem({ icon: Icon, children, onClick, destructive = false }) {
   );
 }
 
-function MissionMetric({ label, value, tone = "neutral" }) {
-  const toneClass = {
-    live: "text-[#3f7f43]",
-    risk: "text-[#8a4b00]",
-    quiet: "text-[#4f4a43]",
-    neutral: "text-[#191815]",
-  }[tone] || "text-[#191815]";
-
-  return (
-    <div className="min-w-0 px-3 sm:px-4">
-      <div className={cn("truncate font-mono text-3xl font-semibold leading-none tabular-nums", toneClass)}>{value}</div>
-      <div className="mt-2 truncate text-xs font-medium uppercase text-[#858585]">{label}</div>
-    </div>
-  );
-}
-
 function MissionAnchor({ href, navigate, className, children, ...props }) {
   function onClick(event) {
     props.onClick?.(event);
@@ -16082,11 +16054,11 @@ function MissionAnchor({ href, navigate, className, children, ...props }) {
 function MissionControlStateNotice({ state, runsError, workspacesError, runtime }) {
   if (state === "loading") {
     return (
-      <div className="flex items-start gap-3 border-l-2 border-[#8fb885] pl-3 text-[#2f5131]" role="status">
+      <div className="flex items-start gap-3 border-l-2 border-ring pl-3 text-emerald-600 dark:text-emerald-400" role="status">
         <Spinner className="mt-0.5 size-4" aria-hidden="true" />
         <div>
-          <div className="text-sm font-semibold">Loading Mission Control signals</div>
-          <div className="mt-1 text-sm text-[#557357]">Checking runtime, runs, workspaces, and local bridge state.</div>
+          <div className="text-sm font-semibold">Loading work</div>
+          <div className="mt-1 text-sm text-muted-foreground">Checking runtime, runs, workspaces, and local bridge state.</div>
         </div>
       </div>
     );
@@ -16094,10 +16066,10 @@ function MissionControlStateNotice({ state, runsError, workspacesError, runtime 
 
   if (state === "failed") {
     return (
-      <div className="flex items-start gap-3 border-l-2 border-[#d44d36] pl-3 text-[#9b3726]" role="alert">
+      <div className="flex items-start gap-3 border-l-2 border-destructive pl-3 text-destructive" role="alert">
         <AlertTriangle className="mt-0.5 size-4" aria-hidden="true" />
         <div>
-          <div className="text-sm font-semibold">Mission Control data is incomplete</div>
+          <div className="text-sm font-semibold">Some work could not be loaded</div>
           <div className="mt-1 text-sm">{runsError || workspacesError || "The local bridge returned an unexpected response."}</div>
         </div>
       </div>
@@ -16106,12 +16078,12 @@ function MissionControlStateNotice({ state, runsError, workspacesError, runtime 
 
   if (state === "no-runtime") {
     return (
-      <div className="flex items-start gap-3 border-l-2 border-[#d44d36] pl-3 text-[#9b3726]" role="alert">
+      <div className="flex items-start gap-3 border-l-2 border-destructive pl-3 text-destructive" role="alert">
         <Unplug className="mt-0.5 size-4" aria-hidden="true" />
         <div>
           <div className="text-sm font-semibold">Local runtime is offline</div>
           <div className="mt-1 text-sm">
-          Mission Control is showing durable task records, but live run output is unavailable until the local bridge is running.
+          These are the saved task records. Live run output is unavailable until the local bridge is running.
           {runtime?.autohandPath ? ` Runtime path: ${runtime.autohandPath}` : ""}
           </div>
         </div>
@@ -16136,13 +16108,13 @@ function MissionPermissionWarnings({ agents = [], runtime, workspaces = [], navi
   if (!warningRows.length) return null;
 
   return (
-    <section className="border-y border-[#dedede] py-5" aria-labelledby="mission-permission-warnings">
+    <section className="border-y border-border/60 py-5" aria-labelledby="mission-permission-warnings">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 id="mission-permission-warnings" className="text-xl font-semibold text-[#191815]">Permission Warnings</h2>
-          <p className="mt-1 text-sm text-[#666666]">Autonomy, guard, and connector checks before risky work starts.</p>
+          <h2 id="mission-permission-warnings" className="text-xl font-semibold text-foreground">Permission Warnings</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Autonomy, guard, and connector checks before risky work starts.</p>
         </div>
-        <span className="text-xs font-medium uppercase text-[#8a4b00]">{warningRows.length} Warnings</span>
+        <span className="text-xs font-medium uppercase text-amber-600 dark:text-amber-500">{warningRows.length} Warnings</span>
       </div>
       <div className="grid gap-0 md:grid-cols-2 xl:grid-cols-3">
         {warningRows.slice(0, 6).map(({ agent, workspace, warning, ladder }) => (
@@ -16150,18 +16122,18 @@ function MissionPermissionWarnings({ agents = [], runtime, workspaces = [], navi
             key={`${agent.id}-${workspace}-${warning.id}`}
             href={memberProfilePath(agent.id, "permissions")}
             navigate={navigate}
-            className="grid gap-3 border-t border-[#e4e4e4] py-4 text-left transition-[background-color] hover:bg-[#f2f2f2] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[#b7d7ad]/60 md:border-r md:px-4"
+            className="grid gap-3 border-t border-border/60 py-4 text-left transition-[background-color] hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring md:border-r md:px-4"
           >
             <span className="flex min-w-0 items-center gap-3">
               <AgentAvatar agent={agent} />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold text-[#191815]">{agent.name}</span>
-                <span className="block truncate text-xs text-[#666666]">
+                <span className="block truncate text-sm font-semibold text-foreground">{agent.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">
                   Level {ladder.rank}: {ladder.label} / {workspaceName(workspace) || "workspace"}
                 </span>
               </span>
             </span>
-            <span className="border-l-2 border-[#c47a00] pl-3 text-xs leading-5 text-[#855800]">{warning.message}</span>
+            <span className="border-l-2 border-amber-500/70 pl-3 text-xs leading-5 text-amber-600 dark:text-amber-500">{warning.message}</span>
           </MissionAnchor>
         ))}
       </div>
@@ -16171,9 +16143,9 @@ function MissionPermissionWarnings({ agents = [], runtime, workspaces = [], navi
 
 function MissionControlSkeleton() {
   return (
-    <div className="grid gap-0 border-y border-[#dedede] md:grid-cols-2 xl:grid-cols-4" aria-label="Loading Mission Control dashboard">
+    <div className="flex flex-col border-t border-border/60" aria-label="Loading work">
       {[0, 1, 2, 3].map((item) => (
-        <div key={item} className="grid gap-3 border-b border-[#e8e8e8] py-5 md:border-r md:px-4">
+        <div key={item} className="grid gap-3 border-b border-border/60 py-5 md:border-r md:px-4">
           <Skeleton className="h-5 w-28" />
           <Skeleton className="h-4 w-full" />
           <Skeleton className="h-4 w-2/3" />
@@ -16186,56 +16158,46 @@ function MissionControlSkeleton() {
 function MissionMemberLanes({ agents = [], rows = [], runtime, workspaces = [], locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), navigate }) {
   if (!agents.length) return null;
 
+  // Divider rows, not a card wall. Each row answers the only question this
+  // section is asked: who is this, and what are they on right now.
   return (
     <section aria-labelledby="mission-squad-lanes">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 id="mission-squad-lanes" className="text-xl font-semibold text-[#191815]">Squad Board</h2>
-          <p className="mt-1 text-sm text-[#666666]">Current ownership across the team.</p>
-        </div>
-        <span className="text-xs font-medium uppercase text-[#858585]">
-          {formatLocalizedNumber(agents.length, locale)} Members
-        </span>
+      <div className="flex items-baseline justify-between gap-3 pb-2">
+        <h2 id="mission-squad-lanes" className="text-sm font-semibold">
+          {copy.workEveryone || "Everyone"}
+        </h2>
+        <span className="text-xs text-muted-foreground">{formatLocalizedNumber(agents.length, locale)}</span>
       </div>
-      <div className="grid border-y border-[#dedede] md:grid-cols-2 xl:grid-cols-4">
+      <div className="flex flex-col border-t border-border/60">
         {agents.map((agent) => {
           const currentRow = missionCurrentRowForAgent(agent, rows);
           const workspace = getAgentWorkspace(agent, runtime, workspaces);
           const permissions = resolveAgentPermissionsForWorkspace(agent, workspace);
           const ladder = autonomyLadderLevelMeta(permissions.ladderLevel);
           const warnings = permissionWarningsForAgent(agent, runtime, workspace);
+          const place = workspaceName(workspace) || workspace || "";
           return (
             <MissionAnchor
               key={agent.id}
               href={memberProfilePath(agent.id, "home")}
               navigate={navigate}
-              className="group grid min-h-36 gap-4 border-b border-[#e8e8e8] px-1 py-5 text-left transition-[background-color,color] hover:bg-[#f2f2f2] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[#b7d7ad]/60 md:border-r md:px-4 xl:last:border-r-0"
+              className="group flex items-start gap-3 border-b border-border/60 px-2 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:bg-muted/40"
             >
-              <div className="flex min-w-0 items-center gap-3">
-                <AgentAvatar agent={agent} />
-                <span className="min-w-0">
-                  <span className="block truncate text-base font-semibold text-[#191815]">{agent.name}</span>
-                  <span className="block truncate text-xs text-[#666666]">{localizedRole(agent, copy)}</span>
+              <AgentAvatar agent={agent} />
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="truncate text-sm font-medium">{agent.name}</span>
+                  <span className="truncate text-xs text-muted-foreground">{localizedRole(agent, copy)}</span>
                 </span>
-              </div>
-              <div className="min-w-0">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="mt-0.5 block truncate text-sm text-muted-foreground">
+                  {currentRow?.title || copy.workAvailable || "Free for a new task"}
+                </span>
+                <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <MissionStatusPill status={currentRow?.status || agent.status || "idle"} copy={copy} />
-                  <span className={cn("inline-flex h-6 items-center gap-1.5 rounded-md px-2 text-xs font-medium", warnings.length ? "bg-[#fff2df] text-[#8a4b00]" : "bg-[#eeeeee] text-[#555555]")}>
-                    <ShieldAlert className="size-3.5" aria-hidden="true" />
-                    L{ladder.rank}
-                  </span>
-                  {currentRow?.runtimeId ? (
-                    <span className="max-w-[8rem] truncate font-mono text-[10px] text-[#858585]">
-                      {compactRecordId(currentRow.runtimeId)}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="min-h-10 text-pretty text-sm font-medium leading-5 text-[#2f2f2f]">
-                  {currentRow?.title || "Available for a new task"}
-                </div>
-                <div className="mt-3 truncate text-xs text-[#858585]">{workspaceName(workspace) || workspace || "No workspace selected"}</div>
-              </div>
+                  {place ? <span className="truncate">{place}</span> : null}
+                  <span className={cn(warnings.length && "text-amber-600 dark:text-amber-500")}>L{ladder.rank}</span>
+                </span>
+              </span>
             </MissionAnchor>
           );
         })}
@@ -16244,42 +16206,34 @@ function MissionMemberLanes({ agents = [], rows = [], runtime, workspaces = [], 
   );
 }
 
-// Goal 07: filter Mission Control rows by recorded evaluation state. Calm,
+// Goal 07: filter Work rows by recorded evaluation state. Calm,
 // borderless chip row consistent with the surrounding neutral surface.
+// Text toggles on a divider row. These were outlined buttons, which read as
+// five things to press rather than one choice with five values.
 function MissionEvaluationFilter({ active = "", counts = {}, onChange, copy = getLocaleCopy(DEFAULT_LOCALE), locale = DEFAULT_LOCALE }) {
   const available = MISSION_EVALUATION_FILTERS.filter((filter) => counts[filter.id]);
   if (!available.length) return null;
+  const option = (id, label, count) => (
+    <button
+      key={id || "all"}
+      type="button"
+      aria-pressed={active === id}
+      onClick={() => onChange?.(active === id ? "" : id)}
+      className={cn(
+        "underline-offset-4 transition-colors hover:text-foreground",
+        active === id ? "font-medium text-foreground underline" : "text-muted-foreground"
+      )}
+    >
+      {label}
+      {count === undefined ? null : <span className="ml-1.5 tabular-nums">{formatLocalizedNumber(count, locale)}</span>}
+    </button>
+  );
 
   return (
-    <section aria-label={copy.evaluationFilterHeading} className="flex flex-wrap items-center gap-2 border-y border-[#dedede] py-3">
-      <span className="mr-1 inline-flex items-center gap-1.5 text-xs font-semibold uppercase text-[#858585]">
-        <ShieldCheck className="size-3.5" aria-hidden="true" />
-        {copy.evaluationFilterHeading}
-      </span>
-      <Button
-        type="button"
-        variant={active ? "ghost" : "outline"}
-        size="sm"
-        className="h-7 rounded-md px-2.5 text-xs"
-        aria-pressed={!active}
-        onClick={() => onChange?.("")}
-      >
-        {copy.allLabel || "All"}
-      </Button>
-      {available.map((filter) => (
-        <Button
-          key={filter.id}
-          type="button"
-          variant={active === filter.id ? "default" : "outline"}
-          size="sm"
-          className="h-7 rounded-md px-2.5 text-xs"
-          aria-pressed={active === filter.id}
-          onClick={() => onChange?.(active === filter.id ? "" : filter.id)}
-        >
-          {copy[filter.labelKey] || filter.id}
-          <span className="ml-1.5 text-[#858585]">{formatLocalizedNumber(counts[filter.id], locale)}</span>
-        </Button>
-      ))}
+    <section aria-label={copy.evaluationFilterHeading} className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-border/60 py-2.5 text-xs">
+      <span className="text-muted-foreground">{copy.evaluationFilterHeading}</span>
+      {option("", copy.allLabel || "All")}
+      {available.map((filter) => option(filter.id, copy[filter.labelKey] || filter.id, counts[filter.id]))}
     </section>
   );
 }
@@ -16288,10 +16242,10 @@ function MissionEvaluationBadge({ state, copy = getLocaleCopy(DEFAULT_LOCALE) })
   if (!state || state === "none") return null;
   const meta =
     state === "all-pass"
-      ? { dot: "bg-[#5d9f63]", text: "text-[#3d6a3f]", labelKey: "evaluationFilterAllPass" }
+      ? { dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400", labelKey: "evaluationFilterAllPass" }
       : state === "some-fail"
-        ? { dot: "bg-[#c0392b]", text: "text-[#a3271a]", labelKey: "evaluationFilterSomeFail" }
-        : { dot: "bg-[#8a8a8a]", text: "text-[#666666]", labelKey: "evaluationFilterIncomplete" };
+        ? { dot: "bg-destructive", text: "text-destructive", labelKey: "evaluationFilterSomeFail" }
+        : { dot: "bg-muted-foreground", text: "text-muted-foreground", labelKey: "evaluationFilterIncomplete" };
   return (
     <span className={cn("inline-flex items-center gap-1.5 text-[11px] font-medium", meta.text)}>
       <span className={cn("size-1.5 rounded-full", meta.dot)} aria-hidden="true" />
@@ -16300,104 +16254,58 @@ function MissionEvaluationBadge({ state, copy = getLocaleCopy(DEFAULT_LOCALE) })
   );
 }
 
+// One row grammar for a work record, at every width. This was a five-column
+// table above 1280px and a stack of cards below it, so the page had two
+// layouts for one list and neither fitted the column. A record is a title,
+// what moved, who owns it and what to do next; none of that needs a grid.
 function MissionControlTable({ rows = [], evaluationStates, selectedRow, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), navigate }) {
   return (
     <section aria-labelledby="mission-work-table">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 id="mission-work-table" className="text-xl font-semibold text-[#191815]">Active & Recent Work</h2>
-          <p className="mt-1 text-sm text-[#666666]">Prioritized by latest movement.</p>
-        </div>
-        <span className="text-xs font-medium uppercase text-[#858585]">
-          {formatLocalizedNumber(rows.length, locale)} Records
-        </span>
+      <div className="flex items-baseline justify-between gap-3 pb-2">
+        <h2 id="mission-work-table" className="text-sm font-semibold">
+          {copy.workRecent || "Active and recent"}
+        </h2>
+        <span className="text-xs text-muted-foreground">{formatLocalizedNumber(rows.length, locale)}</span>
       </div>
-
-      <div className="grid gap-3 xl:hidden">
+      <div className="flex flex-col border-t border-border/60">
         {rows.map((row) => (
-          <MissionControlCard key={row.id} row={row} selected={selectedRow?.id === row.id} copy={copy} locale={locale} navigate={navigate} />
+          <div
+            key={row.id}
+            // The selected record is marked, not filled. A tinted block on one
+            // row of a divider list is the only thing on the page that reads
+            // as a card.
+            className={cn(
+              "border-b border-border/60 border-l-2 border-l-transparent py-3 pl-3 pr-2",
+              selectedRow?.id === row.id && "border-l-foreground/40"
+            )}
+          >
+            <div className="flex items-baseline justify-between gap-3">
+              <MissionAnchor
+                href={row.detailPath}
+                navigate={navigate}
+                className="min-w-0 flex-1 truncate text-left text-sm font-medium hover:underline focus-visible:outline-none focus-visible:underline"
+              >
+                {row.title}
+              </MissionAnchor>
+              <time className="shrink-0 text-xs text-muted-foreground">{formatRecordDate(row.updatedAt, locale, copy)}</time>
+            </div>
+            {row.summary ? <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">{row.summary}</p> : null}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <MissionStatusPill status={row.status} copy={copy} />
+              {row.owner?.name ? <span className="truncate">{row.owner.name}</span> : null}
+              {row.repository ? <span className="truncate font-mono">{row.repository}</span> : null}
+              {row.runtimeId ? <span className="truncate font-mono">{compactRecordId(row.runtimeId)}</span> : null}
+              {evaluationStates?.get(row.id) ? <MissionEvaluationBadge state={evaluationStates.get(row.id)} copy={copy} /> : null}
+            </div>
+            <MissionRiskAndEvidence row={row} />
+            <MissionRowLinks row={row} navigate={navigate} />
+            <div className="mt-2">
+              <MissionNextActionButton row={row} navigate={navigate} />
+            </div>
+          </div>
         ))}
       </div>
-
-      <div className="hidden border-y border-[#dedede] xl:block">
-        <Table>
-          <TableHeader>
-            <TableRow className="border-[#dedede] hover:bg-transparent">
-              <TableHead className="w-[230px] text-xs uppercase text-[#858585]">Member</TableHead>
-              <TableHead className="text-xs uppercase text-[#858585]">Task</TableHead>
-              <TableHead className="w-[260px] text-xs uppercase text-[#858585]">Repository & Run</TableHead>
-              <TableHead className="w-[340px] text-xs uppercase text-[#858585]">Blocker & Evidence</TableHead>
-              <TableHead className="w-[210px] text-xs uppercase text-[#858585]">Next Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((row) => (
-              <TableRow key={row.id} className={cn("border-[#e8e8e8] align-top hover:bg-[#f2f2f2]", selectedRow?.id === row.id && "bg-[#f2f2f2]")}>
-                <TableCell className="whitespace-normal px-4 py-4">
-                  <MissionMemberCell row={row} copy={copy} navigate={navigate} />
-                </TableCell>
-                <TableCell className="max-w-[28rem] whitespace-normal px-4 py-4">
-                  <MissionAnchor
-                    href={row.detailPath}
-                    navigate={navigate}
-                    className="text-left font-semibold leading-5 text-[#191815] hover:text-[#3f6f3c] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[#b7d7ad]/60"
-                  >
-                    {row.title}
-                  </MissionAnchor>
-                  <p className="mt-2 line-clamp-3 text-xs leading-5 text-[#666666]">{row.summary}</p>
-                  <MissionRowLinks row={row} navigate={navigate} />
-                </TableCell>
-                <TableCell className="whitespace-normal px-4 py-4">
-                  <div className="truncate font-mono text-xs text-[#555555]">{row.repository}</div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <MissionStatusPill status={row.status} copy={copy} />
-                    {row.runtimeId ? <span className="max-w-[9rem] truncate font-mono text-[11px] text-[#858585]">{compactRecordId(row.runtimeId)}</span> : null}
-                  </div>
-                  {evaluationStates?.get(row.id) ? (
-                    <div className="mt-2">
-                      <MissionEvaluationBadge state={evaluationStates.get(row.id)} copy={copy} />
-                    </div>
-                  ) : null}
-                </TableCell>
-                <TableCell className="whitespace-normal px-4 py-4">
-                  <MissionRiskAndEvidence row={row} />
-                </TableCell>
-                <TableCell className="whitespace-normal px-4 py-4">
-                  <MissionNextActionButton row={row} navigate={navigate} />
-                  <time className="mt-2 block text-xs text-[#858585]">{formatRecordDate(row.updatedAt, locale, copy)}</time>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
     </section>
-  );
-}
-
-function MissionControlCard({ row, selected, copy, locale, navigate }) {
-  return (
-    <article className={cn("border-t border-[#dedede] py-5", selected && "bg-[#f2f2f2] px-3")}>
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <MissionMemberCell row={row} copy={copy} navigate={navigate} />
-        <MissionStatusPill status={row.status} copy={copy} />
-      </div>
-      <MissionAnchor
-        href={row.detailPath}
-        navigate={navigate}
-        className="mt-4 block w-full break-words text-left text-lg font-semibold leading-6 text-[#191815] hover:text-[#3f6f3c] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[#b7d7ad]/60"
-      >
-        {row.title}
-      </MissionAnchor>
-      <p className="mt-2 text-sm leading-6 text-[#666666]">{row.summary}</p>
-      <div className="mt-3 truncate text-xs font-mono text-[#555555]">{row.repository}</div>
-      <MissionRiskAndEvidence row={row} />
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <MissionNextActionButton row={row} navigate={navigate} />
-        <time className="text-xs text-[#858585]">{formatRecordDate(row.updatedAt, locale, copy)}</time>
-      </div>
-      <MissionRowLinks row={row} navigate={navigate} />
-    </article>
   );
 }
 
@@ -16407,12 +16315,12 @@ function MissionMemberCell({ row, copy = getLocaleCopy(DEFAULT_LOCALE), navigate
     <MissionAnchor
       href={row.profilePath}
       navigate={navigate}
-      className="flex min-w-0 items-center gap-3 text-left hover:text-[#3f6f3c] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[#b7d7ad]/60"
+      className="flex min-w-0 items-center gap-3 text-left hover:text-emerald-600 dark:text-emerald-400 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring"
     >
-      {owner ? <AgentAvatar agent={owner} /> : <span className="grid size-10 place-items-center rounded-full bg-[#eeeeee]"><UserRound className="size-4" aria-hidden="true" /></span>}
+      {owner ? <AgentAvatar agent={owner} /> : <span className="grid size-10 place-items-center rounded-full bg-muted"><UserRound className="size-4" aria-hidden="true" /></span>}
       <span className="min-w-0">
-        <span className="block truncate text-sm font-semibold text-[#191815]">{owner?.name || "Unassigned"}</span>
-        <span className="block truncate text-xs text-[#666666]">{owner ? localizedRole(owner, copy) : "Squad member"}</span>
+        <span className="block truncate text-sm font-semibold text-foreground">{owner?.name || "Unassigned"}</span>
+        <span className="block truncate text-xs text-muted-foreground">{owner ? localizedRole(owner, copy) : "Squad member"}</span>
       </span>
     </MissionAnchor>
   );
@@ -16423,19 +16331,19 @@ function MissionRiskAndEvidence({ row }) {
   return (
     <div className="mt-3 grid gap-2 xl:mt-0">
       {row.blocker ? (
-        <div className="break-words border-l-2 border-[#c47a00] pl-3 text-xs leading-5 text-[#855800]">
+        <div className="break-words border-l-2 border-amber-500/70 pl-3 text-xs leading-5 text-amber-600 dark:text-amber-500">
           <span className="font-semibold">Risk: </span>
           {row.blocker}
         </div>
       ) : null}
       {permissionWarning ? (
-        <div className="break-words border-l-2 border-[#c47a00] pl-3 text-xs leading-5 text-[#855800]">
+        <div className="break-words border-l-2 border-amber-500/70 pl-3 text-xs leading-5 text-amber-600 dark:text-amber-500">
           <span className="font-semibold">Permission: </span>
           {permissionWarning.message}
         </div>
       ) : null}
-      <div className="break-words text-xs leading-5 text-[#555555]">
-        <span className="font-semibold text-[#2f2f2f]">{row.evidence.type}: </span>
+      <div className="break-words text-xs leading-5 text-muted-foreground">
+        <span className="font-semibold text-foreground">{row.evidence.type}: </span>
         {row.evidence.label}
       </div>
     </div>
@@ -16460,7 +16368,7 @@ function MissionRowLinks({ row, navigate }) {
             key={link.id}
             href={link.path}
             navigate={navigate}
-            className="inline-flex h-8 items-center gap-1.5 text-xs font-medium text-[#555555] underline-offset-4 transition-[color,text-decoration-color] hover:text-[#191815] hover:underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[#b7d7ad]/60"
+            className="inline-flex h-8 items-center gap-1.5 text-xs font-medium text-muted-foreground underline-offset-4 transition-[color,text-decoration-color] hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring"
           >
             <Icon className="size-3.5" aria-hidden="true" />
             {link.label}
@@ -16471,10 +16379,13 @@ function MissionRowLinks({ row, navigate }) {
   );
 }
 
+// A dot and a word. The tinted container this used to draw put a coloured
+// rectangle on every row of every list, which is the state the page is in,
+// said as loudly as the work itself.
 function MissionStatusPill({ status, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   return (
-    <span className={cn("inline-flex h-6 w-fit shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium capitalize", missionStatusClass(status))}>
-      <span className={cn("mr-1.5 size-1.5 rounded-full", missionStatusDotClass(status))} aria-hidden="true" />
+    <span className="inline-flex w-fit shrink-0 items-center gap-1.5 text-xs capitalize">
+      <span className={cn("size-1.5 rounded-full", missionStatusDotClass(status))} aria-hidden="true" />
       {statusLabel(status, copy)}
     </span>
   );
@@ -16488,10 +16399,10 @@ function MissionNextActionButton({ row, navigate }) {
       href={action.path}
       navigate={navigate}
       className={cn(
-        "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[#b7d7ad]/60",
+        "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring",
         ["replay", "handoff"].includes(action.id)
-          ? "bg-[#191815] text-white hover:bg-[#33302b]"
-          : "bg-[#ededed] text-[#2f2f2f] hover:bg-[#dedede]"
+          ? "bg-primary text-primary-foreground hover:bg-primary/90"
+          : "bg-muted text-foreground hover:bg-muted/70"
       )}
     >
       <Icon className="size-3.5" aria-hidden="true" />
@@ -16597,9 +16508,9 @@ function RecipeOutcomePanel({ row, locale = DEFAULT_LOCALE, copy = getLocaleCopy
 function MissionDetailPanel({ row, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), navigate }) {
   if (!row) {
     return (
-      <section className="border-y border-[#dedede] py-6" aria-label="Task Record">
-        <h2 className="text-xl font-semibold text-[#191815]">Task Record</h2>
-        <p className="mt-2 text-sm leading-6 text-[#666666]">Select a work row to inspect its timeline and run output.</p>
+      <section className="border-y border-border/60 py-6" aria-label="Task Record">
+        <h2 className="text-xl font-semibold text-foreground">Task Record</h2>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">Select a work row to inspect its timeline and run output.</p>
       </section>
     );
   }
@@ -16607,20 +16518,20 @@ function MissionDetailPanel({ row, locale = DEFAULT_LOCALE, copy = getLocaleCopy
   const assignments = Array.isArray(row.task?.assignments) ? row.task.assignments.slice(-4).reverse() : [];
 
   return (
-    <section className="border-y border-[#dedede] py-6" aria-labelledby="mission-detail-title">
+    <section className="border-y border-border/60 py-6" aria-labelledby="mission-detail-title">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <MissionStatusPill status={row.status} copy={copy} />
-            <span className="font-mono text-[11px] text-[#858585]">{compactRecordId(row.task?.id || row.runtimeId || row.id)}</span>
+            <span className="font-mono text-[11px] text-muted-foreground">{compactRecordId(row.task?.id || row.runtimeId || row.id)}</span>
           </div>
-          <h2 id="mission-detail-title" className="text-pretty text-2xl font-semibold leading-7 text-[#191815]">{row.title}</h2>
-          <p className="mt-2 text-sm text-[#666666]">{row.repository} / {row.owner?.name || "unassigned"}</p>
+          <h2 id="mission-detail-title" className="text-pretty text-2xl font-semibold leading-7 text-foreground">{row.title}</h2>
+          <p className="mt-2 text-sm text-muted-foreground">{row.repository} / {row.owner?.name || "unassigned"}</p>
         </div>
         <MissionAnchor
           href={row.profilePath}
           navigate={navigate}
-          className="inline-flex h-8 items-center gap-1.5 text-xs font-medium text-[#555555] underline-offset-4 transition-[color,text-decoration-color] hover:text-[#191815] hover:underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[#b7d7ad]/60"
+          className="inline-flex h-8 items-center gap-1.5 text-xs font-medium text-muted-foreground underline-offset-4 transition-[color,text-decoration-color] hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring"
         >
           <CircleUserRound className="size-3.5" aria-hidden="true" />
           Profile
@@ -16629,32 +16540,32 @@ function MissionDetailPanel({ row, locale = DEFAULT_LOCALE, copy = getLocaleCopy
 
       <div className="mt-6 grid gap-6">
         <MissionRiskAndEvidence row={row} />
-        <div className="grid gap-5 border-y border-[#e4e4e4] py-4 md:grid-cols-3">
+        <div className="grid gap-5 border-y border-border/60 py-4 md:grid-cols-3">
           <div className="min-w-0">
-            <div className="text-xs font-medium uppercase text-[#858585]">Run State</div>
-            <div className="mt-2 truncate text-sm font-semibold text-[#191815]">{statusLabel(row.status, copy)}</div>
+            <div className="text-xs font-medium uppercase text-muted-foreground">Run State</div>
+            <div className="mt-2 truncate text-sm font-semibold text-foreground">{statusLabel(row.status, copy)}</div>
           </div>
           <div className="min-w-0">
-            <div className="text-xs font-medium uppercase text-[#858585]">Updated</div>
-            <div className="mt-2 truncate text-sm font-semibold text-[#191815]">{formatRecordDate(row.updatedAt, locale, copy)}</div>
+            <div className="text-xs font-medium uppercase text-muted-foreground">Updated</div>
+            <div className="mt-2 truncate text-sm font-semibold text-foreground">{formatRecordDate(row.updatedAt, locale, copy)}</div>
           </div>
           <div className="min-w-0">
-            <div className="text-xs font-medium uppercase text-[#858585]">Next Action</div>
-            <div className="mt-2 truncate text-sm font-semibold text-[#191815]">{row.nextAction.label}</div>
+            <div className="text-xs font-medium uppercase text-muted-foreground">Next Action</div>
+            <div className="mt-2 truncate text-sm font-semibold text-foreground">{row.nextAction.label}</div>
           </div>
         </div>
 
         {assignments.length ? (
-          <div className="border-b border-[#e4e4e4] pb-5">
-            <div className="mb-4 text-xs font-semibold uppercase text-[#858585]">Assignments</div>
+          <div className="border-b border-border/60 pb-5">
+            <div className="mb-4 text-xs font-semibold uppercase text-muted-foreground">Assignments</div>
             <div className="grid gap-4">
               {assignments.map((assignment) => (
-                <div key={assignment.id} className="border-l-2 border-[#dedede] pl-3">
+                <div key={assignment.id} className="border-l-2 border-border/60 pl-3">
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <MissionStatusPill status={assignment.status || "pending"} copy={copy} />
-                    <span className="text-[#555555]">{assignment.reason || "Assignment"}</span>
+                    <span className="text-muted-foreground">{assignment.reason || "Assignment"}</span>
                   </div>
-                  {assignment.sourceEvidence ? <p className="mt-2 text-xs leading-5 text-[#666666]">{assignment.sourceEvidence}</p> : null}
+                  {assignment.sourceEvidence ? <p className="mt-2 text-xs leading-5 text-muted-foreground">{assignment.sourceEvidence}</p> : null}
                 </div>
               ))}
             </div>
@@ -17415,26 +17326,6 @@ function RawEvidenceLogPanel({ event, locale = DEFAULT_LOCALE, copy = getLocaleC
           : "Raw log has not reported output yet."}
       </pre>
     </div>
-  );
-}
-
-function MissionStateMatrix() {
-  return (
-    <aside className="border-y border-[#dedede] py-6" aria-labelledby="mission-state-matrix">
-      <h2 id="mission-state-matrix" className="text-xl font-semibold text-[#191815]">State Matrix</h2>
-      <p className="mt-2 text-sm leading-6 text-[#666666]">Operational meanings for each work state.</p>
-      <div className="mt-5 grid gap-0">
-        {MISSION_STATE_MATRIX.map((row) => (
-          <div key={row.status} className="border-t border-[#e4e4e4] py-4 first:border-t-0">
-            <div className="mb-3">
-              <MissionStatusPill status={row.status} />
-            </div>
-            <div className="text-sm leading-5 text-[#2f2f2f]">{row.treatment}</div>
-            <div className="mt-2 text-xs leading-5 text-[#666666]">{row.evidence}</div>
-          </div>
-        ))}
-      </div>
-    </aside>
   );
 }
 
@@ -18271,7 +18162,7 @@ function MissionControlStrip({ tasks = [], agents = [] }) {
 
   if (!visibleTasks.length) return null;
   return (
-    <section className="border-b border-border/70 px-5 py-3" aria-label="Mission Control">
+    <section className="border-b border-border/70 px-5 py-3" aria-label="Work">
       <div className="mb-1 flex items-center justify-between gap-3">
         <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Now</h3>
         {blockedTasks.length ? <span className="text-xs text-destructive">{blockedTasks.length} blocked</span> : null}
@@ -19382,6 +19273,10 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     if (!description || designing) return;
     setDesigning(true);
     setDesignOutcome(null);
+    // The answer lands where the role list is sitting. Leaving seventeen
+    // rejected roles open under the wait means the result arrives at the
+    // bottom of a list the person is no longer choosing from.
+    setRolesOpen(false);
     const startedAt = new Date().toISOString();
     designStartedAtRef.current = startedAt;
     setDesignStartedAt(startedAt);
@@ -24389,7 +24284,7 @@ function SettingsPage({
     { id: "notifications", icon: Bell, label: copy.notifications || "Notifications", detail: notificationSettingsDetail },
     { id: "improvement", icon: Sparkles, label: copy.selfImprovement || "Self-improvement", detail: improvementDetail(improvementSettings, copy) },
     { id: "handoff", icon: Workflow, label: copy.handoffRetryPolicy, detail: handoffRetryModeLabel(effectiveHandoffRetryMode, copy) },
-    { id: "mission-control", icon: Monitor, label: "Mission Control", detail: missionControlDetail },
+    { id: "mission-control", icon: Monitor, label: copy.work || "Work", detail: missionControlDetail },
     { id: "runtime", icon: Server, label: copy.runtimeBridge, detail: runtime?.version || copy.checkingRuntime },
     { id: "relay", icon: Share2, label: copy.relay || "Relay", detail: relayStatusDetail(relayConfig, relayStatus, copy) },
     { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
@@ -24713,14 +24608,14 @@ function SettingsPage({
             </section>
 
             <section id="settings-mission-control" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader title="Mission Control" description={missionControlDetail} />
+              <SettingsSectionHeader title={copy.work || "Work"} description={missionControlDetail} />
               <a
                 href={missionControlPath()}
                 className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
                 onClick={(event) => handleLocalNavigation(event, missionControlPath())}
               >
                 <span className="min-w-0">
-                  <span className="block font-medium">Open Mission Control</span>
+                  <span className="block font-medium">{copy.workOpen || "Open Work"}</span>
                   <span className="mt-1 block truncate text-sm text-muted-foreground">Review active work, queue, and run evidence.</span>
                 </span>
                 <Badge variant={counts.permissionWarnings ? "destructive" : "secondary"} className="w-fit rounded-md px-1.5">

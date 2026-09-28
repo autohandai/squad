@@ -175,7 +175,7 @@ export function SearchCommand({
   const pages = [
     { id: "inbox", label: copy.inbox || "Inbox", icon: Inbox, value: "page inbox", go: onNavigate.inbox },
     { id: "agents", label: copy.agents || "Agents", icon: Bot, value: "page agents squad directory", go: onNavigate.agents },
-    { id: "mission-control", label: "Mission Control", icon: LayoutGrid, value: "page mission control", go: onNavigate.missionControl },
+    { id: "mission-control", label: "Work", icon: LayoutGrid, value: "page work mission control squad board", go: onNavigate.missionControl },
     { id: "settings", label: copy.settings || "Settings", icon: Settings, value: "page settings", go: onNavigate.settings },
   ];
   const pageMatches = searching ? pages.filter((page) => page.label.toLowerCase().includes(trimmed.toLowerCase())) : pages;

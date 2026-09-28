@@ -85,6 +85,16 @@
 - Providers in Settings are a divider-separated list, expanded one at a time. An account-backed provider (Autohand AI) shows its status as one sentence ("Signed in as …; an API key is optional"), a model select fed by the catalog, and a managed base URL placeholder; it never asks for a key it does not need.
 - The **Runs with** control is one select plus one readiness sentence; advanced fields (model override, executable path, Test harness) sit behind a text disclosure. The profile shows Harness as a text summary row beside Model, never as vendor cards.
 
+## Work
+
+- The surface that lists what the squad is doing is called **Work**, not Mission Control. The old name promised a command centre and the page is a roster of who is on what.
+- It opens with the page title and one sentence naming only what is true right now ("2 working · 3 blocked"), never a row of metric tiles. A quiet squad reads as quiet rather than as four zeroes.
+- Members and work records are both divider rows in one column, with the same grammar: what it is, one line of detail, then a dot-and-word status with the workspace and any marks beside it. No card grid, no five-column table, no tinted status chips.
+- A selected record is marked with a quiet left border, never a filled background, because a tinted block on one row of a divider list is the only thing that reads as a card.
+- Filters are text toggles on a divider row, underlined when active. They are one choice with several values, not several buttons.
+- Status meanings are documentation and do not live on the page.
+- The page uses the repo's own tokens. It used to hard-code a light palette and force it in dark mode, so the whole surface rendered white inside a dark app.
+
 ## Agent Chat
 
 - The header is one row: avatar, name (opens the profile preview), role, and a meta line with a live status dot (Online / Working), workspace, model, and a **Runs with** chip that opens the engine switcher. Actions on the right are **New chat** plus icon buttons for automation, tasks, and runs.
