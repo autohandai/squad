@@ -15,10 +15,15 @@ import { MEMBER_DESIGNER_ID, draftFromDescription, draftInstruction, mergeModelD
 
 export const name = "member-draft";
 
-// A model slower than this is slower than filling the form in by hand, and a
-// person watching a spinner will not wait for it. The deterministic draft is
-// always ready, so giving up early costs nothing.
-const DRAFT_TIMEOUT_MS = 20_000;
+// The ceiling exists for a model that is wedged, not for one that is working.
+// Twenty seconds was set when a cold start was eating the whole budget. With
+// the designer warmed and given no MCP servers (ADR-0036) a real answer takes
+// 12-15s, most of the difference being that the brain card the app actually
+// has is seven fields rather than the five this used to ask for. Cutting a
+// working model off at twenty put back the generic member all of this was
+// meant to fix. The page states this number, so check-member-draft.mjs holds
+// the two together.
+const DRAFT_TIMEOUT_MS = 30_000;
 
 export async function handle(req, res, url, ctx) {
   if (url.pathname !== "/api/members/draft" || req.method !== "POST") return false;

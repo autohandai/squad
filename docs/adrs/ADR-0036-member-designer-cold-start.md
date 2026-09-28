@@ -78,3 +78,37 @@ symptom would again look like a bad prompt.
 - The designer keeps the user's provider, account and harness, because it
   still goes through the app's own chat route. Only the servers it cannot use
   are gone.
+
+## The brain card the app actually has
+
+Making the model path run showed a second reason designed members were
+generic, one no test or error would have surfaced.
+
+`src/lib/member-draft.js` kept its own list of brain-card field names, with a
+comment saying it mirrored `src/data.js`. It had drifted. It asked the model
+for `successCriteria`, which the create form has no field for and silently
+dropped, and never asked for `definitionOfDone`, `reviewStyle` or
+`memoryPolicy`. Those three come from a generic role template when nothing
+fills them, so three of a designed member's seven brain-card fields were
+boilerplate however specific the description was. Nothing failed. The member
+was just worse.
+
+The list is now derived from `brainCardFields` itself, which is plain data
+with no imports and loads in Node as happily as in the browser, and the
+prompt asks for each field in the form's own words. `check-member-draft.mjs`
+asserts the draft carries exactly the form's fields, that each one is named
+in the instruction, and that the fallback fills all of them.
+
+That costs time. Seven fields instead of five took a warm answer from about
+9s to 12-15s, which put a working model back over the twenty-second ceiling
+and handed back the generic member this was all meant to fix. The ceiling is
+now thirty seconds. It is there for a model that is wedged, not one that is
+working, and the warm start is what keeps the common case near twelve.
+
+The page states that number in the sentence it shows while waiting, which is
+the most useful thing on screen during a wait, and a lie the moment the two
+drift. `check-member-draft.mjs` reads the route's constant, spells it, and
+asserts the copy says the same word.
+
+The promise line itself moved from twelve seconds to eighteen, so it appears
+when someone starts to worry rather than flashing as a normal answer lands.

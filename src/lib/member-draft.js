@@ -1,3 +1,4 @@
+import { brainCardFields } from "../data.js";
 import { roleFromDescription } from "./member-introduction.js";
 
 // Creating a squad member from a sentence.
@@ -23,8 +24,12 @@ const ROLE_LIMIT = 80;
 const TEXT_LIMIT = 600;
 const SKILL_LIMIT = 8;
 
-/** Brain card fields the create form expects; mirrors src/data.js. */
-const BRAIN_CARD_FIELDS = Object.freeze(["purpose", "defaultWorkflow", "allowedTools", "escalationRules", "successCriteria"]);
+// Brain card fields the create form expects, taken from the form's own list
+// rather than copied. The copy had drifted: it asked the model for
+// "successCriteria", which the app has no field for and threw away, and never
+// asked for definitionOfDone, reviewStyle or memoryPolicy, so three of a
+// designed member's seven fields were generic boilerplate.
+const BRAIN_CARD_FIELDS = Object.freeze(brainCardFields.map((field) => field.id));
 
 // Enough to produce a sensible member with no model available. Ordered, so
 // the first match wins: a description mentioning both tests and security is a
@@ -67,7 +72,9 @@ export function draftFromDescription(description) {
       defaultWorkflow: "Understand the ask, do the work in the workspace, and report what changed.",
       allowedTools: "Reading and editing files in the workspace, and running the project's own commands.",
       escalationRules: "Stop and ask when the change is destructive, outside the workspace, or not what was asked for.",
-      successCriteria: "The work is done, the checks pass, and the reply says what changed and why.",
+      definitionOfDone: "The work is done, the project's own checks pass, and the reply says what changed and why.",
+      reviewStyle: "Lead with what is wrong and why it matters, name the evidence, and say what you would do instead.",
+      memoryPolicy: "Keep durable decisions and standing preferences. Leave one-off task detail in the conversation.",
     },
   });
 }
@@ -119,8 +126,8 @@ export function draftInstruction(description) {
     ask || "(no description given)",
     "",
     "Answer with JSON only, no prose and no code fence, in exactly this shape:",
-    '{"name":"","role":"","description":"","instructions":"","skills":[],',
-    '"brainCard":{"purpose":"","defaultWorkflow":"","allowedTools":"","escalationRules":"","successCriteria":""}}',
+    `{"name":"","role":"","description":"","instructions":"","skills":[],`,
+    `"brainCard":{${BRAIN_CARD_FIELDS.map((field) => `"${field}":""`).join(",")}}}`,
     "",
     "Rules:",
     "- name: one word, a person's name, no title.",
@@ -132,7 +139,8 @@ export function draftInstruction(description) {
     "- description: one sentence about what this member owns, written about the member, never addressed to it as 'you'.",
     "- instructions: how it should work, addressed to the member as 'you'.",
     `- skills: at most ${SKILL_LIMIT} short phrases, lower case, no sentences.`,
-    "- brainCard: one sentence per field.",
+    "- brainCard: one sentence per field, each answering its own question:",
+    ...brainCardFields.map((field) => `    ${field.id}: ${field.prompt}`),
     "- Base every field on the request. Do not invent a different job.",
   ].join("\n");
 }

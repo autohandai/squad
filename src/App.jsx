@@ -396,8 +396,11 @@ const IMPROVEMENT_START_DELAY_MS = 45_000;
 const IMPROVEMENT_AFTER_WORK_MS = 90_000;
 // Below this, a draft answered so fast that showing a wait state would read as
 // a glitch; past this, the wait names the deadline so it is bounded, not open.
+// The promise line sits past a normal answer, which is 12-15s once the
+// designer is warm, so it appears when someone starts to worry rather than
+// flashing as the answer lands. The route gives up at 30s (ADR-0036).
 const DESIGN_WAIT_GATE_MS = 240;
-const DESIGN_WAIT_PROMISE_MS = 12_000;
+const DESIGN_WAIT_PROMISE_MS = 18_000;
 const DEFAULT_IMPROVEMENT_SETTINGS = Object.freeze({ enabled: true, applyAutomatically: true });
 
 function normalizeImprovementSettings(value) {
@@ -19284,6 +19287,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   // a deterministic draft when no model is reachable, so this never dead-ends.
   const [rolesOpen, setRolesOpen] = useState(false);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
+  const [howItWorksOpen, setHowItWorksOpen] = useState(false);
   const [roleWish, setRoleWish] = useState("");
   const [designing, setDesigning] = useState(false);
   const [designNote, setDesignNote] = useState("");
@@ -19295,7 +19299,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   const showWait = designing && designElapsed >= DESIGN_WAIT_GATE_MS;
   const waitLine =
     designElapsed >= DESIGN_WAIT_PROMISE_MS
-      ? copyText.designStillAsking || "Still asking. If nothing comes back by twenty seconds, this page fills itself in from your description instead."
+      ? copyText.designStillAsking || "Still asking. If nothing comes back by thirty seconds, this page fills itself in from your description instead."
       : copyText.designAsking || "Asking a model to design this.";
   const [customTemplates, setCustomTemplates] = useState([]);
   const [customTemplateDialogOpen, setCustomTemplateDialogOpen] = useState(false);
@@ -19685,6 +19689,58 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
               </div>
               <FieldDescription>Installed from skilled.autohand.ai into this squad member's isolated Autohand home.</FieldDescription>
             </Field>
+
+            {/* The draft comes back with instructions and five brain-card
+                fields, and they were saved with no control anywhere on this
+                screen to read or change them. They are the most specific
+                thing the model produced and the part that decides how the
+                member behaves, so they are here, one disclosure away rather
+                than on the page by default (ADR-0035). */}
+            <div className="flex flex-col">
+              <button
+                type="button"
+                aria-expanded={howItWorksOpen}
+                className="flex w-fit items-center gap-1.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                onClick={() => setHowItWorksOpen((open) => !open)}
+              >
+                {howItWorksOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+                {copyText.howItWorks || "How it will work"}
+              </button>
+              {howItWorksOpen ? (
+                <div className="mt-3 border-t border-border/60">
+                  <p className="py-3 text-xs text-muted-foreground">
+                    {copyText.howItWorksDetail || "The instructions and brain card this member starts with. Every line is editable."}
+                  </p>
+                  <div className="flex flex-col gap-2 border-t border-border/60 py-4 sm:flex-row sm:gap-6">
+                    <label htmlFor="member-instructions" className="shrink-0 pt-2 text-sm text-muted-foreground sm:w-[196px]">
+                      {copyText.memberInstructions || "Instructions"}
+                    </label>
+                    <Textarea
+                      id="member-instructions"
+                      value={draft.instructions}
+                      onChange={(event) => setDraft((current) => ({ ...current, instructions: event.target.value }))}
+                      className="min-h-[132px] flex-1 resize-y bg-transparent leading-6"
+                    />
+                  </div>
+                  {brainCardFields.map((field) => (
+                    <div key={field.id} className="flex flex-col gap-2 border-t border-border/60 py-4 sm:flex-row sm:gap-6">
+                      <label htmlFor={`member-brain-${field.id}`} className="shrink-0 pt-2 text-sm text-muted-foreground sm:w-[196px]">
+                        {field.label}
+                      </label>
+                      <Textarea
+                        id={`member-brain-${field.id}`}
+                        value={draft.brainCard?.[field.id] || ""}
+                        placeholder={field.prompt}
+                        onChange={(event) =>
+                          setDraft((current) => ({ ...current, brainCard: { ...(current.brainCard || {}), [field.id]: event.target.value } }))
+                        }
+                        className="min-h-[76px] flex-1 resize-y bg-transparent leading-6"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </FieldGroup>
         ) : null}
 

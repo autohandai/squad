@@ -72,7 +72,14 @@ fifty-four-portrait picker waits behind "Choose another portrait".
   reads as text and shows its edge on focus. Without that, picking a
   ready-made role would have left no way to name the member and Save
   permanently disabled.
-- Not done: the review state the product designer specified in full, with
-  every field as a labelled divider row and the brain card behind a
-  disclosure. The detail form below the member header is still the old
-  layout. The screen's thesis is delivered; its lower half is not yet.
+- The instructions and the brain card are now on the screen, behind a "How it
+  will work" disclosure of labelled divider rows. The reviewer called their
+  absence a correctness gap rather than polish, and was right: the draft
+  returned seven fields that the page saved and gave no way to read or change,
+  while ADR-0031 claimed every field stays editable.
+- Not done: the rest of the detail form is still the old layout of stacked
+  labelled fields rather than divider rows, and the ask does not collapse into
+  a "You asked for" line. The second was dropped rather than deferred. The
+  sentence stays in its textarea and the Design button stays enabled, so an
+  Edit control and a Design again control would each duplicate something
+  already on screen and a few hundred pixels higher.

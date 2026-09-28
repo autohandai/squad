@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+import { brainCardFields } from "../src/data.js";
 import {
   MEMBER_DESIGNER_ID,
   DRAFT_FIELDS,
@@ -140,6 +141,61 @@ for (const bad of [null, undefined, 42, {}, []]) {
 
   const route = readFileSync(new URL("../server/routes/member-draft.route.mjs", import.meta.url), "utf8");
   assert.match(route, /MEMBER_DESIGNER_ID/, "the route uses the shared id rather than its own literal");
+}
+
+// --- the page does not promise a deadline the bridge will not keep ---------
+//
+// The wait tells the person when it will stop ("If nothing comes back by
+// thirty seconds, this page fills itself in from your description instead").
+// That sentence is the most useful thing on screen during the wait, and it is
+// a lie the moment the route's ceiling moves without it.
+
+{
+  const route = readFileSync(new URL("../server/routes/member-draft.route.mjs", import.meta.url), "utf8");
+  const ceiling = route.match(/const DRAFT_TIMEOUT_MS = ([\d_]+);/);
+  assert.ok(ceiling, "the route declares DRAFT_TIMEOUT_MS");
+  const seconds = Number(ceiling[1].replace(/_/g, "")) / 1000;
+
+  const words = { 10: "ten", 15: "fifteen", 20: "twenty", 25: "twenty-five", 30: "thirty", 45: "forty-five", 60: "sixty" };
+  const spoken = words[seconds];
+  assert.ok(spoken, `add "${seconds}" to this check's word list, then say it on the page`);
+
+  const locales = readFileSync(new URL("../src/locales.js", import.meta.url), "utf8");
+  const promise = locales.match(/designStillAsking: "([^"]+)"/);
+  assert.ok(promise, "src/locales.js carries the waiting promise");
+  assert.ok(
+    promise[1].includes(`${spoken} seconds`),
+    `the page says "${promise[1]}" while the bridge gives up after ${seconds}s`
+  );
+}
+
+// --- the brain card matches the form it fills ------------------------------
+//
+// The draft module used to keep its own copy of the brain card's field names,
+// and the copy had drifted. It asked the model for "successCriteria", which
+// the create form has no field for and silently discarded, and never asked
+// for definitionOfDone, reviewStyle or memoryPolicy, so three of a designed
+// member's seven fields arrived as generic boilerplate however specific the
+// description was. Nothing failed; the member was just worse.
+
+{
+  const ids = brainCardFields.map((field) => field.id);
+  const draft = draftFromDescription("Chief of staff, delegates work across the squad");
+  assert.deepEqual(Object.keys(draft.brainCard).sort(), [...ids].sort(), "the draft carries exactly the form's fields");
+  for (const id of ids) {
+    assert.ok(draft.brainCard[id].length > 10, `the fallback fills ${id} rather than leaving the form to guess`);
+  }
+
+  const instruction = draftInstruction("Reviews our Terraform before it ships");
+  for (const field of brainCardFields) {
+    assert.match(instruction, new RegExp(field.id), `the model is asked for ${field.id}`);
+    assert.ok(instruction.includes(field.prompt), `${field.id} is asked for in the form's own words`);
+  }
+  assert.doesNotMatch(instruction, /successCriteria/, "no field the form cannot show");
+
+  // A model answering the shape it was asked for keeps every field.
+  const merged = mergeModelDraft(draft, { brainCard: Object.fromEntries(ids.map((id) => [id, `model ${id}`])) });
+  for (const id of ids) assert.equal(merged.brainCard[id], `model ${id}`, `${id} survives the merge`);
 }
 
 console.log("check-member-draft: ok");
