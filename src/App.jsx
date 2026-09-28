@@ -8439,6 +8439,7 @@ function App() {
           <main className="app-main min-w-0">
             <MobileTopbar
               activeAgent={activeAgent}
+              showsMember={sidebarActiveTarget(route, activeAgent).kind === "member"}
               theme={theme}
               copy={localeCopy}
               onMenu={() => setMobileSidebarOpen(true)}
@@ -11848,7 +11849,8 @@ function RuntimeCompact({ runtime }) {
   );
 }
 
-function MobileTopbar({ activeAgent, theme, copy = getLocaleCopy(DEFAULT_LOCALE), onMenu, onSettings, onMissionControl, onOnboarding, onAnalytics }) {
+function MobileTopbar({ activeAgent, showsMember = false, theme, copy = getLocaleCopy(DEFAULT_LOCALE), onMenu, onSettings, onMissionControl, onOnboarding, onAnalytics }) {
+  const subtitle = showsMember && activeAgent ? `${activeAgent.name} / ${localizedRole(activeAgent, copy)}` : "";
   return (
     <div className="sticky top-0 z-30 flex h-16 items-center justify-between border-b bg-background/90 px-3 backdrop-blur lg:hidden">
       <Button variant="ghost" size="icon" onClick={onMenu} aria-label={copy.sidebar}>
@@ -11859,9 +11861,10 @@ function MobileTopbar({ activeAgent, theme, copy = getLocaleCopy(DEFAULT_LOCALE)
           <BrandMark theme={theme} className="size-8" />
           <span className="truncate">Autohand Squad</span>
         </div>
-        <div className="truncate text-center text-xs text-muted-foreground">
-          {activeAgent?.name || copy.squadMember} / {activeAgent ? localizedRole(activeAgent, copy) : "CLI console"}
-        </div>
+        {/* Only a member's own surface names a member. This line used to
+            render activeAgent on every route, so the squad roster read
+            "Eva / QA Engineer" while showing the whole team. */}
+        {subtitle ? <div className="truncate text-center text-xs text-muted-foreground">{subtitle}</div> : null}
       </div>
       <AccountMenuButton copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} placement="bottom-end" />
     </div>

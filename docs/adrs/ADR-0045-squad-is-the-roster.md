@@ -85,6 +85,9 @@ Measured after, same viewport:
   its screen and reads the same at every width.
 - Search appears only past eight members. Below that it is a control for a
   list you can already see. Reversible in one line if it is missed.
-- Not done, and flagged by the review: below 1024px the mobile top bar names
-  the active member while you are looking at the whole team, because it always
-  renders `activeAgent` regardless of route. A separate fault, a separate fix.
+- Fixed alongside, found by the review: below 1024px the mobile top bar named
+  the active member on every route, so the roster read "Eva / QA Engineer"
+  while showing the whole team. It now names a member only on that member's
+  own surface, using the same route test the sidebar uses to decide which row
+  is active, so the two cannot disagree. On every other surface the line is
+  omitted rather than filled with a placeholder.
