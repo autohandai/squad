@@ -142,7 +142,12 @@ export function WorkspaceSidebar({
 
   return (
     <div className="app-sidebar flex h-full min-h-screen flex-col bg-card/70">
-      <div className="flex h-14 items-center gap-2 px-3">
+      {/* "deep" drags from anywhere in this row, not only a direct hit on the
+        row itself, which is why the bare attribute used to work on the
+        padding slivers alone. Buttons inside still block the drag and behave
+        normally (tauri drag.js: a clickable element without the attribute
+        returns false before the walk reaches this one). */}
+    <div className="flex h-14 items-center gap-2 px-3" data-tauri-drag-region="deep">
         <div className="flex min-w-0 flex-1 items-center gap-2">{brand}</div>
         {onCollapse ? (
           <Tooltip>

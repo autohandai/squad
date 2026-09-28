@@ -96,7 +96,7 @@
 - Status meanings are documentation and do not live on the page.
 - The page uses the repo's own tokens. It used to hard-code a light palette and force it in dark mode, so the whole surface rendered white inside a dark app.
 
-- The desktop window has no title bar of its own, so the shell reserves a band at the top for the traffic lights and renders one empty fixed strip that owns the window drag. It is the only drag region in the app: dragging delegated to page headers only works on the slivers between their children, and disappears entirely on a page that renders no such header.
+- The desktop window has no title bar of its own, so the shell reserves a band at the top for the traffic lights and renders one empty fixed strip that owns the window drag. Headers add to that area by declaring themselves deep drag regions, which drag from anywhere inside them while their own buttons keep working. It is the only drag region in the app: dragging delegated to page headers only works on the slivers between their children, and disappears entirely on a page that renders no such header.
 
 - The setup guide is onboarding, not an account action. It lives in Settings as its own section and can be run again at any time; it is not in the account menu beside Sign out.
 - In the desktop shell the webview's own context menu is suppressed, because Back and Reload are browser actions in something that is not a browser. Text fields keep theirs, since cut, copy and paste are the reason anyone right-clicks in one.

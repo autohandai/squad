@@ -13073,7 +13073,7 @@ function Conversation({
 
   return (
     <div className="flex h-[calc(100svh-4rem)] min-h-[560px] w-full max-w-full flex-col overflow-x-hidden bg-background/75 lg:h-screen lg:min-h-screen">
-      <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6">
+      <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6" data-tauri-drag-region="deep">
         <div className="flex min-w-0 items-center gap-3">
           <AgentAvatar agent={agent} className="size-9" />
           <div className="min-w-0">

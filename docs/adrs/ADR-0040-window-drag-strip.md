@@ -52,6 +52,31 @@ Measured before: 28px of overflow on the chat and Inbox pages. After: zero.
 The `lg:` variants are rewritten inside Tailwind's own `lg` query so they
 still do nothing below it.
 
+## Correction, same day: the headers come back, in the mode that works
+
+The owner reported the same symptom again. The strip was already shipped, so
+the report was against an older build, but re-reading Tauri's own `drag.js`
+while checking showed the first pass had left value on the table.
+
+A `data-tauri-drag-region` attribute takes a value. Bare, or `"true"`, means
+only a direct hit on that element drags, which is why the two headers worked
+on their padding slivers alone. `"deep"` means anywhere in the subtree drags,
+and a clickable element inside still blocks it: the walk hits the button
+first, finds it clickable with no attribute of its own, and refuses. So a
+header can be draggable everywhere except on its controls, which is what a
+title bar is.
+
+The first pass removed both header attributes and replaced them with the
+strip. The strip stays, because it is the only thing that covers a page
+rendering no header at all. The headers get the attribute back with the
+`"deep"` value, so the draggable area is the full-width band plus the whole
+sidebar brand row plus the whole chat header, rather than a 28px ribbon.
+
+Checked against a reimplementation of Tauri's own `isDragRegion`, driven over
+the real pages: the band drags at the left, middle and right of a member's
+Permissions page; the chat header drags from its middle and over its text; a
+button inside that header does not drag and still behaves as a button.
+
 ## Consequences
 
 - Every page can be dragged from anywhere along the top band. Verified on
