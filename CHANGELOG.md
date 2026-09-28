@@ -100,7 +100,7 @@ list to the section for that version.
   storage, and the seed list read "missing from storage" as "never seen" and
   added it again (ADR-0038).
 - The setup guide moved out of the account menu into Settings, where you can
-  run it again whenever you like.
+  run it again whenever you like (ADR-0043).
 - Right-clicking no longer offers the webview's Back and Reload. Text fields
   keep their menu.
 - The Save button on a new member is neutral while there is nothing to save,
