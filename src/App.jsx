@@ -14998,16 +14998,6 @@ function MissionControlPage({
 
         {loadState === "loading" ? <MissionControlSkeleton /> : null}
 
-        <MissionMemberLanes
-          agents={agents}
-          rows={rows}
-          runtime={runtime}
-          workspaces={workspaces}
-          locale={locale}
-          copy={copy}
-          navigate={navigate}
-        />
-
         <MissionEvaluationFilter
           active={evaluationState}
           counts={evaluationFilterCounts}
@@ -15224,81 +15214,75 @@ function SquadDirectoryPage({
     return haystack.includes(normalizedQuery);
   });
 
+  // Squad is the roster: who is on the team and every control that changes
+  // it. Work is the log. The two pages listed the same people with nearly the
+  // same fields, and this one spent 502px of a 900px screen before the first
+  // member appeared, against 145px on Work. One title, one sentence, one
+  // control row, then people.
+  const summary = (() => {
+    const parts = [`${formatLocalizedNumber(members.length, locale)} ${members.length === 1 ? "member" : "members"}`];
+    if (workingNow) parts.push(`${formatLocalizedNumber(workingNow, locale)} working`);
+    for (const state of stateCounts) {
+      if (state.id !== "active" && state.count) parts.push(`${formatLocalizedNumber(state.count, locale)} ${state.label.toLowerCase()}`);
+    }
+    return parts.join(" \u00b7 ");
+  })();
+  // Only the states that are true right now. Five buttons of which three read
+  // zero is five things to press, not one choice with values.
+  const filterOptions = [{ id: "all", label: copy.allLabel || "All" }, ...stateCounts.filter((state) => state.count)];
+
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto w-full max-w-[1400px] px-4 py-8 sm:px-6 lg:px-10 lg:py-12">
-        <header className="flex flex-col gap-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <div className="min-w-0">
-              <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                <span className="relative flex size-2">
-                  <span className="absolute inline-flex size-2 animate-ping rounded-full bg-emerald-500/70" />
-                  <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
-                </span>
-                Live · Autohand Squad
-              </div>
-              <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Squad</h1>
-              <p className="mt-3 max-w-2xl text-pretty text-base leading-7 text-muted-foreground">
-                Manage your AI team — set each member's availability and see what they're working on. Live work and task
-                detail live under Work.
-              </p>
-            </div>
-            <Button className="h-10 shrink-0 rounded-md" onClick={() => navigate(`${MEMBER_ROUTE_PREFIX}/new`)}>
-              <Plus data-icon="inline-start" />
-              {copy.createSquadMember || "New member"}
-            </Button>
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-6 lg:px-10 lg:py-8">
+        <header className="flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="flex items-center gap-2 text-lg font-semibold">
+              <Users className="size-4 text-muted-foreground" aria-hidden="true" />
+              {copy.squad || "Squad"}
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
           </div>
-
-          <SquadStateBar
-            stateCounts={stateCounts}
-            total={members.length}
-            workingNow={workingNow}
-            activeFilter={filter}
-            onSelect={setFilter}
-            navigate={navigate}
-            locale={locale}
-          />
+          <Button variant="outline" size="sm" onClick={() => navigate(`${MEMBER_ROUTE_PREFIX}/new`)}>
+            <Plus data-icon="inline-start" />
+            {copy.newMember || "New member"}
+          </Button>
         </header>
 
-        <div className="sticky top-0 z-10 -mx-1 mt-6 flex flex-col gap-3 bg-background/85 px-1 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative w-full sm:max-w-xs">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-border/60 py-2.5 text-xs">
+          {members.length > 8 ? (
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search members, roles, repos…"
+              placeholder={copy.searchMembers || "Search members"}
               aria-label="Search squad members"
-              className="h-10 pl-9"
+              className="h-8 w-full text-xs sm:w-[220px]"
             />
-          </div>
-          <ToggleGroup
-            type="single"
-            value={filter}
-            onValueChange={(value) => setFilter(value || "all")}
-            variant="outline"
-            className="w-fit"
-            aria-label="Filter members by status"
-          >
-            {SQUAD_FILTERS.map((item) => (
-              <ToggleGroupItem key={item.id} value={item.id} className="px-3 text-xs font-medium">
-                {item.label}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
+          ) : null}
+          <span className="text-muted-foreground">{copy.showLabel || "Show"}</span>
+          {filterOptions.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              aria-pressed={filter === option.id}
+              onClick={() => setFilter(filter === option.id ? "all" : option.id)}
+              className={cn(
+                "underline-offset-4 transition-colors hover:text-foreground",
+                filter === option.id ? "font-medium text-foreground underline" : "text-muted-foreground"
+              )}
+            >
+              {option.label}
+              {option.count === undefined ? null : <span className="ml-1.5 tabular-nums">{formatLocalizedNumber(option.count, locale)}</span>}
+            </button>
+          ))}
         </div>
 
         {filteredMembers.length ? (
-          <section aria-label="Squad members" className="mt-2">
-            <div className="hidden grid-cols-[minmax(0,1.5fr)_150px_minmax(0,2fr)_72px] items-center gap-4 border-b border-border/70 px-2 py-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground lg:grid">
-              <span>Member</span>
-              <span>State</span>
-              <span>Recent tasks</span>
-              <span className="text-right">Manage</span>
+          <section aria-labelledby="squad-everyone">
+            <div className="flex items-baseline justify-between gap-3 pb-2">
+              <h2 id="squad-everyone" className="text-sm font-semibold">{copy.workEveryone || "Everyone"}</h2>
+              <span className="text-xs text-muted-foreground">{formatLocalizedNumber(filteredMembers.length, locale)}</span>
             </div>
-            <ul className="divide-y divide-border/60">
+            <ul className="flex flex-col border-t border-border/60">
               {filteredMembers.map(({ agent, agentRows, state }) => (
                 <SquadMemberRow
                   key={agent.id}
@@ -15362,79 +15346,6 @@ function SquadDirectoryPage({
   );
 }
 
-function SquadStateBar({ stateCounts = [], total = 0, workingNow = 0, activeFilter = "all", onSelect, navigate, locale = DEFAULT_LOCALE }) {
-  const denominator = Math.max(total, 1);
-  const segments = stateCounts.filter((state) => state.count > 0);
-
-  return (
-    <section className="border-y border-border/70 py-5" aria-label="Team state">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Team state</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            <span className="font-semibold tabular-nums text-foreground">{formatLocalizedNumber(total, locale)}</span> members
-            {workingNow ? (
-              <>
-                {" · "}
-                <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                  {formatLocalizedNumber(workingNow, locale)} working now
-                </span>
-              </>
-            ) : null}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => navigate?.(missionControlPath())}
-          className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        >
-          Live work under Work
-          <ArrowUpRight className="size-3.5" aria-hidden="true" />
-        </button>
-      </div>
-
-      <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-muted" aria-hidden="true">
-        {segments.length ? (
-          segments.map((state) => (
-            <span
-              key={state.id}
-              className={cn("h-full", state.dot)}
-              style={{ width: `${(state.count / denominator) * 100}%` }}
-              title={`${state.label}: ${state.count}`}
-            />
-          ))
-        ) : (
-          <span className="h-full w-full" />
-        )}
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-x-3 gap-y-1.5">
-        {stateCounts.map((state) => {
-          const active = activeFilter === state.id;
-          return (
-            <button
-              key={state.id}
-              type="button"
-              aria-pressed={active}
-              onClick={() => onSelect?.(active ? "all" : state.id)}
-              className={cn(
-                "group inline-flex items-center gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
-                active && "bg-muted"
-              )}
-            >
-              <span className={cn("size-2 rounded-full", state.dot)} aria-hidden="true" />
-              <span className={cn("font-medium", active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground")}>
-                {state.label}
-              </span>
-              <span className="font-mono text-xs tabular-nums text-muted-foreground">{formatLocalizedNumber(state.count, locale)}</span>
-            </button>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 function MemberStateControl({ agent, stateId, working = false, onChange }) {
   const [open, setOpen] = useState(false);
   const meta = memberStateMeta(stateId);
@@ -15444,7 +15355,7 @@ function MemberStateControl({ agent, stateId, working = false, onChange }) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-transparent px-2 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          className="group/state inline-flex items-center gap-1.5 text-xs capitalize underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           aria-label={`Set state for ${agent?.name || "member"} — currently ${meta.label}`}
         >
           <span className={cn("size-1.5 rounded-full", meta.dot, working && "animate-pulse")} aria-hidden="true" />
@@ -15499,7 +15410,6 @@ function SquadMemberRow({
   onRequestDelete,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const recent = agentRows.slice(0, 3);
   const workspace = getAgentWorkspace(agent, runtime, workspaces);
   const role = localizedRole(agent, copy) || agent.role;
   // With a relay connected, say which machine a member runs on. One quiet
@@ -15516,80 +15426,56 @@ function SquadMemberRow({
   }
 
   return (
-    <li className="group grid grid-cols-1 items-start gap-4 px-2 py-4 transition-colors hover:bg-muted/40 lg:grid-cols-[minmax(0,1.5fr)_150px_minmax(0,2fr)_72px] lg:items-center">
-      <button
-        type="button"
-        onClick={() => navigate(memberProfilePath(agent.id, "home"))}
-        className="flex min-w-0 items-center gap-3 text-left focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      >
-        <span className="relative inline-flex shrink-0">
-          <AgentAvatar agent={agent} className="size-11" />
-          <span
-            className={cn(
-              "absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-background",
-              meta.dot,
-              working && "animate-pulse"
-            )}
-            aria-hidden="true"
-          />
-        </span>
-        <span className="min-w-0">
-          <span className="block truncate text-sm font-semibold">{agent.name}</span>
-          <span className="block truncate text-xs text-muted-foreground">{role || copy.squadMember || "Squad member"}</span>
-          {workspace ? (
-            <span className="mt-0.5 hidden truncate text-[11px] text-muted-foreground/70 sm:block">
-              {workspaceName(workspace) || workspace}
-              {ownership ? ` · ${ownership}` : ""}
-            </span>
-          ) : null}
-        </span>
-      </button>
-
-      <div className="min-w-0">
-        <MemberStateControl
-          agent={agent}
-          stateId={stateId}
-          working={working}
-          onChange={(next) => onSetState?.(agent.id, next)}
+    // One row grammar at every width. This was a four-column grid above
+    // 1024px and a vertical stack below it, so one list had two layouts and
+    // the row grew from 88px to 242px for identical content. The three recent
+    // task lines are gone: they are the Work page's content shown a second
+    // time, ragged, and they were the largest thing on the row. What stays is
+    // the one line naming the current commitment, because "can I give this
+    // person something" is the roster's question.
+    <li className="group flex items-start gap-3 border-b border-border/60 px-2 py-3 transition-colors hover:bg-muted/30">
+      <span className="relative inline-flex shrink-0">
+        <AgentAvatar agent={agent} />
+        <span
+          className={cn(
+            "absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-background",
+            meta.dot,
+            working && "animate-pulse"
+          )}
+          aria-hidden="true"
         />
-        <div className="mt-1.5 text-[11px] text-muted-foreground/70">
-          {working ? (
-            <span className="font-medium text-emerald-600 dark:text-emerald-400">Working now</span>
-          ) : state.lastActive ? (
-            <>Active {formatRelativeTime(state.lastActive, locale)}</>
-          ) : null}
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <button
+            type="button"
+            onClick={() => navigate(memberProfilePath(agent.id, "home"))}
+            className="truncate text-sm font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline"
+          >
+            {agent.name}
+          </button>
+          <span className="truncate text-xs text-muted-foreground">{role || copy.squadMember || "Squad member"}</span>
+        </div>
+        <p className="mt-0.5 truncate text-sm text-muted-foreground">
+          {agentRows[0]?.title || copy.workAvailable || "Free for a new task"}
+        </p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <MemberStateControl
+            agent={agent}
+            stateId={stateId}
+            working={working}
+            onChange={(next) => onSetState?.(agent.id, next)}
+          />
+          {workspace ? <span className="truncate">{workspaceName(workspace) || workspace}</span> : null}
+          {ownership ? <span className="truncate">{ownership}</span> : null}
+          {/* The status word already says a member is working, so the
+              last-active time only appears when it adds something. */}
+          {!working && state.lastActive ? <span>{formatRelativeTime(state.lastActive, locale)}</span> : null}
         </div>
       </div>
 
-      <div className="min-w-0">
-        {recent.length ? (
-          <ul className="flex flex-col gap-1.5">
-            {recent.map((row) => {
-              const rowMeta = squadStatusMeta(row.status);
-              return (
-                <li key={row.id}>
-                  <button
-                    type="button"
-                    onClick={() => navigate(row.taskPath || row.detailPath)}
-                    className="flex w-full min-w-0 items-center gap-2 rounded-sm py-0.5 text-left transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                    title={row.title}
-                  >
-                    <span className={cn("size-1.5 shrink-0 rounded-full", rowMeta.dot)} aria-hidden="true" />
-                    <span className="min-w-0 flex-1 truncate text-sm text-foreground/90">{row.title}</span>
-                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
-                      {formatRelativeTime(row.updatedAt, locale)}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <span className="text-sm text-muted-foreground/70">No recent tasks</span>
-        )}
-      </div>
-
-      <div className="flex items-center gap-1 lg:justify-end">
+      <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -15851,57 +15737,6 @@ function MissionControlSkeleton() {
         </div>
       ))}
     </div>
-  );
-}
-
-function MissionMemberLanes({ agents = [], rows = [], runtime, workspaces = [], locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), navigate }) {
-  if (!agents.length) return null;
-
-  // Divider rows, not a card wall. Each row answers the only question this
-  // section is asked: who is this, and what are they on right now.
-  return (
-    <section aria-labelledby="mission-squad-lanes">
-      <div className="flex items-baseline justify-between gap-3 pb-2">
-        <h2 id="mission-squad-lanes" className="text-sm font-semibold">
-          {copy.workEveryone || "Everyone"}
-        </h2>
-        <span className="text-xs text-muted-foreground">{formatLocalizedNumber(agents.length, locale)}</span>
-      </div>
-      <div className="flex flex-col border-t border-border/60">
-        {agents.map((agent) => {
-          const currentRow = missionCurrentRowForAgent(agent, rows);
-          const workspace = getAgentWorkspace(agent, runtime, workspaces);
-          const permissions = resolveAgentPermissionsForWorkspace(agent, workspace);
-          const ladder = autonomyLadderLevelMeta(permissions.ladderLevel);
-          const warnings = permissionWarningsForAgent(agent, runtime, workspace);
-          const place = workspaceName(workspace) || workspace || "";
-          return (
-            <MissionAnchor
-              key={agent.id}
-              href={memberProfilePath(agent.id, "home")}
-              navigate={navigate}
-              className="group flex items-start gap-3 border-b border-border/60 px-2 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:bg-muted/40"
-            >
-              <AgentAvatar agent={agent} />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="truncate text-sm font-medium">{agent.name}</span>
-                  <span className="truncate text-xs text-muted-foreground">{localizedRole(agent, copy)}</span>
-                </span>
-                <span className="mt-0.5 block truncate text-sm text-muted-foreground">
-                  {currentRow?.title || copy.workAvailable || "Free for a new task"}
-                </span>
-                <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                  <MissionStatusPill status={currentRow?.status || agent.status || "idle"} copy={copy} />
-                  {place ? <span className="truncate">{place}</span> : null}
-                  <span className={cn(warnings.length && "text-amber-600 dark:text-amber-500")}>L{ladder.rank}</span>
-                </span>
-              </span>
-            </MissionAnchor>
-          );
-        })}
-      </div>
-    </section>
   );
 }
 
@@ -17211,15 +17046,6 @@ function missionTaskStatus(task, run) {
   if (task?.status) return task.status;
   if (run?.status) return run.status;
   return "pending";
-}
-
-function missionCurrentRowForAgent(agent, rows = []) {
-  const agentRows = rows.filter((row) => row.owner?.id === agent.id);
-  return (
-    agentRows.find((row) => !["completed", "cancelled"].includes(row.status)) ||
-    agentRows[0] ||
-    null
-  );
 }
 
 function missionWorkspacePath(value, workspaces = []) {

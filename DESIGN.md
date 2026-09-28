@@ -71,6 +71,13 @@
 - Inbox: "Mark all read" clears unread channels and acknowledges handoffs and memory proposals up to that moment, so the badge drops to zero while pending proposals stay listed for a decision.
 - Native startup and recovery states should use the same calm app surface: concise progress, an actionable error, Restart Service, and Open Logs. Do not leave users in a blank webview or redirect them to a raw local server page.
 
+## Squad
+
+- **Squad** is the roster: who is on the team and every control that changes it. **Work** is the log: what the squad is doing and what is blocked. Neither page repeats the other's content.
+- It uses the Work page's grammar exactly: an 896px column, an 18px title with one sentence naming only what is true now, one divider control row of text toggles, then divider rows of people. No state box, no segmented bar, no column header, no second layout below a breakpoint.
+- A member row carries the name, the role, the one line naming the current commitment, then a dot-and-word availability control with the workspace beside it. Row actions appear on hover.
+- The surface is called Squad in the sidebar and in the heading. The create button says "New member", so the word is not said three times in one view.
+
 ## Workspace Shell (Buzz-style)
 
 - Presence dots have five states: accent and breathing while working, green online, amber idle, grey offline, and a dotted ring when the bridge is unreachable. Only working animates. Stop sits with the chat header actions and on the profile, confirming in a small popover.

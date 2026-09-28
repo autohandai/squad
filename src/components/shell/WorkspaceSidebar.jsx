@@ -187,7 +187,7 @@ export function WorkspaceSidebar({
           />
           <NavRow
             icon={Bot}
-            label={copy.agents || "Agents"}
+            label={copy.squad || "Squad"}
             active={active.kind === "agents"}
             onClick={onNavigate.agents}
             trailing={<span className="text-xs text-muted-foreground">{visibleAgents.length}</span>}

@@ -99,6 +99,11 @@ list to the section for that version.
 - A deleted member came back on the next launch. Deleting removed it from
   storage, and the seed list read "missing from storage" as "never seen" and
   added it again (ADR-0038).
+- **Squad is the roster, Work is the log.** The Squad page spent more than
+  half the first screen before showing a member; it now takes the Work page's
+  layout, fits one screen, and reads the same at every width. The recent-task
+  lines moved off it, because Work already owns them, and Work drops its
+  duplicate roster in return (ADR-0045).
 - Green now means state and nothing else. Buttons are neutral, so a colour on
   screen carries one meaning instead of three (ADR-0044).
 - The setup guide moved out of the account menu into Settings, where you can
