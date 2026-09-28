@@ -99,6 +99,14 @@ list to the section for that version.
 - A deleted member came back on the next launch. Deleting removed it from
   storage, and the seed list read "missing from storage" as "never seen" and
   added it again (ADR-0038).
+- A tool permission you changed no longer snaps back. Opening a member's chat
+  posted a warm-up that named the member but described nothing about it, and
+  the bridge used that to rewrite the member's permissions with empty allow,
+  ask and block lists. Editing the member's config.json by hand had the same
+  fate, because that file is generated from the app's record (ADR-0041).
+- The `skill`, `find_agent_skills` and `install_agent_skill` tools were
+  blocked at every autonomy level, so no member could use a skill it had.
+  Using and finding skills is now allowed, and installing one asks (ADR-0041).
 - The window can be dragged from anywhere along the top band, on every page.
   Dragging used to depend on whichever header a page rendered, so it worked
   only on slivers and not at all on a member's Permissions page. Content also

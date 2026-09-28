@@ -2483,6 +2483,13 @@ function builtInPoliciesForAutonomyLadder(levelId) {
     const group = BUILT_IN_TOOL_POLICY_GROUPS.find((item) => item.id === groupId);
     setTools((group?.tools || []).map(([tool]) => tool), mode);
   };
+  // Each tool in a group already declares the mode it was designed for, most
+  // of them "ask". Applying those rather than one blanket mode keeps the
+  // grant as narrow as the group's own author intended.
+  const applyGroupDefaults = (groupId) => {
+    const group = BUILT_IN_TOOL_POLICY_GROUPS.find((item) => item.id === groupId);
+    for (const [tool, mode] of group?.tools || []) setTools([tool], mode);
+  };
 
   setTools(
     [
@@ -2494,6 +2501,12 @@ function builtInPoliciesForAutonomyLadder(levelId) {
       "recall_memory",
       "smart_context_cropper",
       "team_status",
+      // Using a skill the member is already configured with, and looking up
+      // which skills exist, are reads of its own profile rather than actions
+      // on the world. These were blocked at every level of the ladder, so a
+      // member could never use any skill it had; the whole feature was off.
+      "skill",
+      "find_agent_skills",
     ],
     "allow"
   );
@@ -2516,6 +2529,13 @@ function builtInPoliciesForAutonomyLadder(levelId) {
     ],
     "ask"
   );
+
+  if (rank >= 1) {
+    // Installing a skill, writing memory or starting a teammate are changes,
+    // so they arrive at the mode their group declares, which for all of them
+    // is "ask". The person is prompted rather than refused.
+    applyGroupDefaults("profile-memory");
+  }
 
   if (rank >= 3) {
     setGroup("filesystem-read", "allow");
@@ -6110,9 +6130,13 @@ function App() {
     if (!activeMemberId || !onMemberChat) return;
     const agent = agents.find((item) => item.id === activeMemberId);
     if (!agent || isOnBreak(agent)) return;
+    // The agent goes with it. Without it the bridge builds different launch
+    // options, so the warmed session is keyed differently from the one the
+    // first message opens and the warm-up warms nothing.
+    const warmWorkspace = normalizeSquadWorkspacePath(agent.workspace || fallbackWorkspace, runtime);
     api("/api/chat/warm", {
       method: "POST",
-      body: JSON.stringify({ agentId: activeMemberId, workspace: normalizeSquadWorkspacePath(agent.workspace || fallbackWorkspace, runtime) }),
+      body: JSON.stringify({ agentId: activeMemberId, workspace: warmWorkspace, agent: agentLaunchPayload(agent, warmWorkspace) }),
     }).catch(() => {});
     // Once per member per open: warming twice buys nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps

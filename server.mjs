@@ -2469,7 +2469,8 @@ function isUtilityAgent(agentId) {
 }
 
 async function ensureAgentRuntime(input, workspace) {
-  const agent = input.agent && typeof input.agent === "object" ? input.agent : {};
+  const describesAgent = Boolean(input.agent && typeof input.agent === "object" && !Array.isArray(input.agent));
+  const agent = describesAgent ? input.agent : {};
   const agentId = sanitizeAgentId(agent.id || input.agentId);
   const agentHome = join(isolatedAgentsDir, agentId);
   const configPath = join(agentHome, "config.json");
@@ -2551,10 +2552,22 @@ async function ensureAgentRuntime(input, workspace) {
         modelAssignment: modelAssignmentFromAgent(agent),
         effectiveModel: publicResolvedProvider(resolvedProvider),
       },
-      permissions: {
-        ...(config.permissions && typeof config.permissions === "object" ? config.permissions : {}),
-        ...permissionSettings,
-      },
+      // Only rewrite the permission block when the caller actually described
+      // the member. A request that carries no agent knows nothing about its
+      // permissions, and `permissionSettingsFromAgent({})` returns empty tool
+      // lists, so an agent-less call used to erase every allow, ask and block
+      // the person had set. /api/chat/warm was exactly such a call, and it
+      // fires once per member every time a chat opens, which is why a tool
+      // moved from blocked to ask went back to blocked "the moment it tries
+      // to use it". Absence of information preserves; it does not delete.
+      ...(describesAgent
+        ? {
+            permissions: {
+              ...(config.permissions && typeof config.permissions === "object" ? config.permissions : {}),
+              ...permissionSettings,
+            },
+          }
+        : {}),
     };
     if (!syncedAuth) delete nextConfig.auth;
     await writeSecretFile(configPath, JSON.stringify(nextConfig, null, 2));
