@@ -112,3 +112,29 @@ asserts the copy says the same word.
 
 The promise line itself moved from twelve seconds to eighteen, so it appears
 when someone starts to worry rather than flashing as a normal answer lands.
+
+## The designer forgets between drafts
+
+Measured after everything above, three drafts of the same sentence on one
+session: 28s, then 20s, then 25s, and the last two came back as prose instead
+of the JSON they were asked for, so both fell back to the deterministic draft.
+
+The session pool keeps the CLI's own transcript. That is the point of it for a
+member chat, where the follow-up depends on what was said before, and it is
+exactly wrong here. Every draft is an independent one-shot request. By the
+third the model was continuing a conversation rather than answering a
+question, which costs tokens on the way in and reliability on the way out.
+
+The route now closes the designer's session once the answer has been sent and
+warms a fresh one behind it, so the next design finds a warm process with an
+empty conversation. It costs the person nothing: the CLI boots while they read
+the answer they already have. Only the app's own designer is recycled, since a
+caller naming their own member would lose that member's chat context.
+
+Four consecutive drafts after the change all came back from the model, against
+one of three before. Directly confirmed: design a member, then ask the same
+agent what name it suggested in its previous message, and it answers "NONE".
+
+What did not change is the variance. Those four took 15s, 15s, 22s and 29s.
+The ceiling is thirty seconds because a real answer can genuinely take most of
+that, not because the common case does.

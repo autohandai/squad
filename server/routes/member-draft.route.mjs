@@ -31,6 +31,7 @@ export async function handle(req, res, url, ctx) {
   const body = await ctx.readBody(req);
   const description = String(body?.description || "").trim();
   const fallback = draftFromDescription(description);
+  const agentId = String(body?.agentId || "").trim() || MEMBER_DESIGNER_ID;
 
   if (!description) {
     ctx.json(res, 200, { success: true, data: { draft: fallback, source: "fallback" } });
@@ -38,7 +39,7 @@ export async function handle(req, res, url, ctx) {
   }
 
   try {
-    const reply = await askModel(ctx, description, body, req);
+    const reply = await askModel(ctx, description, body, req, agentId);
     const parsed = parseJsonObject(reply);
     if (!parsed) {
       ctx.json(res, 200, { success: true, data: { draft: fallback, source: "fallback", error: "the model did not answer with JSON" } });
@@ -49,8 +50,44 @@ export async function handle(req, res, url, ctx) {
     // A member the person can edit beats an error dialog.
     ctx.logEvent(ctx.SEVERITY.DEBUG, `member draft fell back: ${error?.message || error}`, { "event.name": "member.draft.fallback" });
     ctx.json(res, 200, { success: true, data: { draft: fallback, source: "fallback", error: String(error?.message || error) } });
+  } finally {
+    recycleDesigner(ctx, req, agentId, body);
   }
   return true;
+}
+
+/**
+ * Give the next design a warm process with an empty conversation.
+ *
+ * The session pool keeps the CLI's own transcript, which is what a member
+ * chat wants and the opposite of what this wants: every draft is an
+ * independent one-shot request. Measured on one session, three drafts of the
+ * same sentence took 28s, then 20s, then 25s, and the last two came back as
+ * prose rather than the JSON they were asked for, because by then the model
+ * was continuing a conversation instead of answering a question.
+ *
+ * Closing the session and warming a new one costs the person nothing: it
+ * happens after their answer is already sent, and the CLI boots while they
+ * read it. Only the app's own designer is recycled; a caller naming their own
+ * member would lose that member's chat context.
+ */
+function recycleDesigner(ctx, req, agentId, body) {
+  if (agentId !== MEMBER_DESIGNER_ID) return;
+  const workspace = String(body?.workspace || ctx.getRuntime?.()?.defaultWorkspace || "").trim();
+  const host = String(req?.headers?.host || "127.0.0.1:19821");
+  Promise.resolve()
+    .then(() => ctx.sdkSessions?.reset?.(agentId, "member draft is one-shot"))
+    .then(() => {
+      if (!workspace) return null;
+      return fetch(`http://${host}/api/chat/warm`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agentId, workspace }),
+      });
+    })
+    .catch((error) => {
+      ctx.logEvent(ctx.SEVERITY.DEBUG, `designer not recycled: ${error?.message || error}`, { "event.name": "member.draft.recycle.failed" });
+    });
 }
 
 /**
@@ -58,7 +95,7 @@ export async function handle(req, res, url, ctx) {
  * and account the app already has rather than opening a second path to a
  * model.
  */
-async function askModel(ctx, description, body, req) {
+async function askModel(ctx, description, body, req, agentId) {
   const runtime = ctx.getRuntime?.() || {};
   const workspace = String(body?.workspace || runtime.defaultWorkspace || "").trim();
   if (!workspace) throw new Error("no workspace to run in");
@@ -73,7 +110,7 @@ async function askModel(ctx, description, body, req) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        agentId: String(body?.agentId || "").trim() || MEMBER_DESIGNER_ID,
+        agentId,
         prompt: draftInstruction(description),
         workspace,
         transport: "sdk",

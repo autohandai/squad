@@ -19698,8 +19698,9 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
               <FieldLabel>
                 Profile Avatar <span className="text-primary">*</span>
               </FieldLabel>
+              {/* The member header shows the portrait a hundred pixels above.
+                  Repeating it here was the same face twice on one screen. */}
               <div className="flex flex-wrap items-center gap-4">
-                <RoleAvatar roleId={template.id} src={draft.avatar} alt={`${draft.name || draft.role} avatar`} size="large" />
                 <input id="member-avatar-upload" type="file" accept={AVATAR_UPLOAD_ACCEPT} className="sr-only" onChange={uploadAvatar} />
                 <Button asChild variant="outline">
                   <label htmlFor="member-avatar-upload" className="cursor-pointer">
