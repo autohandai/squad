@@ -409,6 +409,7 @@ const UI_COPY_BY_LANGUAGE = {
     designMember: "Design this member",
     designShortcut: "⌘ Enter",
     designAsking: "Asking a model to design this.",
+    designStop: "Stop",
     designStillAsking: "Still asking. If nothing comes back by thirty seconds, this page fills itself in from your description instead.",
     orStartFromRole: "Or start from a ready-made role",
     writeYourOwnRole: "Write one yourself",

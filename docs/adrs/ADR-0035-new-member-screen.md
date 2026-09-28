@@ -51,6 +51,14 @@ in 200ms never flashes a wait state at all.
 The spinner leaves the button. A spinner inside a control says that control
 is busy; the control is not busy, a request is.
 
+**The wait can be stopped.** The ceiling moved to thirty seconds when the
+designer started answering properly (ADR-0036), and thirty seconds is long
+enough to notice the sentence was wrong. Stop aborts the request and returns
+the page to exactly where it was, with what was typed still in the box. It
+reports nothing afterwards, because there is no outcome to report about a
+request the person withdrew, and an answer that arrives after it is discarded
+rather than dropped onto a page that has moved on.
+
 **The page does not move.** A designed role no longer pulls focus, so the
 explanation stays in view. Measured: 989px of movement with the explanation
 off-screen before, zero after.

@@ -19330,6 +19330,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   const runtimeShell = useMemo(() => ({ workspaceRoot, defaultWorkspace }), [workspaceRoot, defaultWorkspace]);
   const nameInputRef = useRef(null);
   const designStartedAtRef = useRef("");
+  const designAbortRef = useRef(null);
   // The template id Design it just created, so the focus effect can leave the
   // page where the person left it.
   const designedTemplateRef = useRef("");
@@ -19384,10 +19385,13 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     const startedAt = new Date().toISOString();
     designStartedAtRef.current = startedAt;
     setDesignStartedAt(startedAt);
+    const controller = new AbortController();
+    designAbortRef.current = controller;
     try {
       const data = await api("/api/members/draft", {
         method: "POST",
         body: JSON.stringify({ description, workspace: defaultWorkspace }),
+        signal: controller.signal,
       });
       const designed = data?.draft;
       if (!designed) throw new Error("no draft came back");
@@ -19415,15 +19419,33 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
         role: designed.role || "",
       });
     } catch (error) {
-      setDesignOutcome({ kind: "error", reason: error?.message || "" });
+      // Stopping is not failing. The person asked for the wait to end, and
+      // cancelDesign has already put the page back where they left it.
+      if (!controller.signal.aborted) setDesignOutcome({ kind: "error", reason: error?.message || "" });
     } finally {
+      if (designAbortRef.current === controller) designAbortRef.current = null;
       // Once the wait line is on screen it stays long enough to read. Below
       // the show gate it was never mounted, so there is nothing to hold.
       const shown = Date.now() - new Date(designStartedAtRef.current || Date.now()).getTime();
       const remaining = DESIGN_WAIT_HOLD_MS - (shown - DESIGN_WAIT_GATE_MS);
-      if (shown >= DESIGN_WAIT_GATE_MS && remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+      // A stop is already handled; holding the line open after it would be
+      // the page arguing with the button that was just pressed.
+      if (!controller.signal.aborted && shown >= DESIGN_WAIT_GATE_MS && remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
       setDesigning(false);
     }
+  }
+
+  // Thirty seconds is long enough to notice the sentence was wrong. Stopping
+  // returns the page to exactly where it was, with what was typed still in
+  // the box, and says nothing: there is no outcome to report about a request
+  // the person withdrew.
+  function cancelDesign() {
+    designAbortRef.current?.abort();
+    designAbortRef.current = null;
+    setDesigning(false);
+    setDesignOutcome(null);
   }
 
   // Travelling to the answer is the person's decision, not the machine's, so
@@ -19609,6 +19631,9 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
                     <span />
                   </span>
                   {designElapsed >= 3000 ? <span className="tabular-nums">{formatDuration(designElapsed)}</span> : null}
+                  <button type="button" className="underline-offset-2 hover:underline" onClick={cancelDesign}>
+                    {copyText.designStop || "Stop"}
+                  </button>
                 </span>
               ) : null
             ) : designOutcome ? (
