@@ -125,7 +125,11 @@ export function draftInstruction(description) {
     "Rules:",
     "- name: one word, a person's name, no title.",
     `- role: a job title of at most ${ROLE_LIMIT} characters.`,
-    "- description: one sentence about what this member owns.",
+    // The description labels the member everywhere: the directory, the profile
+    // header, the channel picker. Saying "instructions" are addressed as "you"
+    // pulled the model into the second person for this field too, so it read
+    // "You own squad-wide coordination" in a list of members.
+    "- description: one sentence about what this member owns, written about the member, never addressed to it as 'you'.",
     "- instructions: how it should work, addressed to the member as 'you'.",
     `- skills: at most ${SKILL_LIMIT} short phrases, lower case, no sentences.`,
     "- brainCard: one sentence per field.",

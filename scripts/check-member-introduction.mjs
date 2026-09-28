@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 
-import { introductionFor, roleFromDescription } from "../src/lib/member-introduction.js";
+import { inMemberVoice, introductionFor, roleFromDescription } from "../src/lib/member-introduction.js";
 
 const chief = {
   name: "Avery",
@@ -71,5 +71,50 @@ assert.equal(roleFromDescription("Someone who reviews Terraform"), "", "a descri
 assert.equal(roleFromDescription(""), "");
 assert.equal(roleFromDescription(null), "");
 assert.ok(roleFromDescription("x".repeat(300)).length <= 80, "a role stays short");
+
+// --- the member speaks as itself ------------------------------------------
+//
+// The brain card is written to the member as "you", and a model fills every
+// field that way. Quoting it verbatim had a new member introduce itself and
+// then tell the user what the user does: "I'm Marcus, your Chief of Staff.
+// You coordinate all squad work." Only the model path produces that, and
+// before the designer's cold start was fixed the model path almost never ran,
+// so this shipped unnoticed.
+
+{
+  const modelWritten = {
+    name: "Marcus",
+    role: "Chief of Staff",
+    description: "Owns squad-wide coordination, task delegation, and work allocation.",
+    skills: ["task delegation", "progress tracking"],
+    workspace: "/Users/x/autohandSWE",
+    brainCard: {
+      purpose: "You coordinate all squad work by decomposing requests into tasks and assigning them to the right members.",
+      escalationRules: "You escalate when a task exceeds a member's scope or requires authority you do not hold.",
+    },
+  };
+  const text = introductionFor(modelWritten);
+  // "your Chief of Staff" and "tell me what you need" are the app's own
+  // framing and address the user correctly. What must never appear is the
+  // user cast as the one doing the member's job, which is any "you" followed
+  // by a verb in a sentence lifted out of the card.
+  assert.doesNotMatch(text, /\byou (?:coordinate|escalate|own|use|receive|succeed|intake|triage|oversee)\b/i, "the member never casts the user as the one doing its job");
+  assert.match(text, /I coordinate all squad work/, "its purpose is said in its own voice");
+  assert.match(text, /authority I do not hold/, "a second pronoun in the same sentence flips too");
+}
+
+{
+  // Verb agreement, contractions, and possessives.
+  assert.equal(inMemberVoice("You are responsible for the release."), "I am responsible for the release.");
+  assert.equal(inMemberVoice("You're the owner of your own queue."), "I'm the owner of my own queue.");
+  assert.equal(inMemberVoice("You escalate anything outside your scope to yourself."), "I escalate anything outside my scope to myself.");
+  // A card written in the third person or as an instruction is left alone,
+  // which is what the deterministic fallback produces.
+  const imperative = "Stop and ask when the change is destructive.";
+  assert.equal(inMemberVoice(imperative), imperative);
+  assert.equal(inMemberVoice("Keeps the squad busy on the highest value work."), "Keeps the squad busy on the highest value work.");
+  assert.equal(inMemberVoice(""), "");
+  assert.equal(inMemberVoice(null), "");
+}
 
 console.log("check-member-introduction: ok");

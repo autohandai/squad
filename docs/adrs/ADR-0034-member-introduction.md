@@ -60,3 +60,45 @@ person actually wrote fixes the class.
   a generic name. The role is now right, which is the part that shows
   everywhere. Making the rest robust means either a longer wait or a second
   attempt, and both trade against a create flow that should feel immediate.
+
+## Correction, 2026-09-28: the member speaks as itself
+
+Fixing the designer's cold start (ADR-0036) made the model path run for the
+first time, and it immediately showed this decision was half done. The brain
+card is an instruction sheet addressed to the member, so a model fills every
+field in the second person. Composing the introduction out of those fields
+verbatim produced:
+
+> I'm Marcus, your Chief of Staff on autohandSWE. **You** coordinate all squad
+> work by decomposing requests into tasks and assigning them to the right
+> members. … **You** escalate to the lead when a task is blocked…
+
+The member introduced itself and then told the user what the user does. It had
+shipped unnoticed because the fallback writes its purpose in the person's own
+words and its escalation rule as an instruction, and the fallback was
+answering every time.
+
+`inMemberVoice` converts a sentence written to the member into the member's
+own speech: the second-person pronouns, contractions and possessives, with
+"you are" and "you were" handled before the bare pronoun. Every "you" in the
+card means the member, so flipping all of them is right, including a second
+one in the same sentence: "requires authority you do not hold" becomes
+"requires authority I do not hold". Text with no second person in it comes
+back untouched, so a card written in the third person or as an instruction is
+left exactly as it was.
+
+The draft prompt now also pins the description to the third person. That field
+labels the member in the directory, the profile header and the channel picker,
+and the neighbouring "addressed to the member as 'you'" rule was pulling the
+model into writing "You own squad-wide coordination" there too.
+
+Two things are knowingly left:
+
+- A fallback escalation rule is an imperative ("Stop and ask when the change is
+  destructive"), which in the introduction reads as an instruction to the user
+  rather than a statement by the member. Turning an imperative into the first
+  person needs to know the verb, which is a worse trade than the odd reading,
+  and it only happens on the path where no model answered.
+- A model can still return a second-person description despite the prompt. The
+  field is editable on the screen where it appears, and converting it would
+  mean conjugating a verb rather than swapping a pronoun.

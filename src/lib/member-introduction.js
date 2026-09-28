@@ -21,8 +21,8 @@ export function introductionFor(agent, copy = {}) {
   const role = text(source.role) || copy.squadMember || "squad member";
   const project = folderName(source.workspace);
   const skills = (Array.isArray(source.skills) ? source.skills : []).map(readable).filter(Boolean).slice(0, 3);
-  const purpose = text(source.brainCard?.purpose) || text(source.description);
-  const escalation = firstSentence(text(source.brainCard?.escalationRules));
+  const purpose = inMemberVoice(source.brainCard?.purpose) || inMemberVoice(source.description);
+  const escalation = inMemberVoice(firstSentence(text(source.brainCard?.escalationRules)));
 
   const lines = [];
   // The role keeps its own case: it is a title, and the app capitalises it
@@ -75,6 +75,36 @@ export function roleFromDescription(description) {
 }
 
 // --- helpers ---------------------------------------------------------------
+
+// The brain card is an instruction sheet addressed to the member, so every
+// "you" in it means the member: "You escalate to the lead when a task is
+// blocked". The introduction is the member speaking, so quoting the card
+// verbatim had it telling the user what the user does. Longest forms first,
+// so "you are" is not eaten by "you".
+const SECOND_PERSON = Object.freeze([
+  [/\byou\s+are\b/gi, "I am"],
+  [/\byou\s+were\b/gi, "I was"],
+  [/\byou're\b/gi, "I'm"],
+  [/\byou've\b/gi, "I've"],
+  [/\byou'll\b/gi, "I'll"],
+  [/\byou'd\b/gi, "I'd"],
+  [/\byourself\b/gi, "myself"],
+  [/\byours\b/gi, "mine"],
+  [/\byour\b/gi, "my"],
+  [/\byou\b/gi, "I"],
+]);
+
+/**
+ * A sentence written to the member, said by the member. Text with no second
+ * person in it comes back untouched, so a card written in the third person or
+ * as an instruction is left exactly as it was.
+ */
+export function inMemberVoice(value) {
+  let out = text(value);
+  if (!out) return "";
+  for (const [pattern, replacement] of SECOND_PERSON) out = out.replace(pattern, replacement);
+  return out.charAt(0).toUpperCase() + out.slice(1);
+}
 
 function restatesRole(purpose, role) {
   const key = (value) => String(value || "").toLowerCase().replace(/^(?:a|an|the)\s+/, "").replace(/[^a-z0-9]+/g, " ").trim();
