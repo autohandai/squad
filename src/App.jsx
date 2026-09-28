@@ -400,6 +400,9 @@ const IMPROVEMENT_AFTER_WORK_MS = 90_000;
 // designer is warm, so it appears when someone starts to worry rather than
 // flashing as the answer lands. The route gives up at 30s (ADR-0036).
 const DESIGN_WAIT_GATE_MS = 240;
+// Once the line is up it stays long enough to read, so it is either absent or
+// legible, never a blink.
+const DESIGN_WAIT_HOLD_MS = 400;
 const DESIGN_WAIT_PROMISE_MS = 18_000;
 const DEFAULT_IMPROVEMENT_SETTINGS = Object.freeze({ enabled: true, applyAutomatically: true });
 
@@ -19290,13 +19293,37 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
   const [roleWish, setRoleWish] = useState("");
   const [designing, setDesigning] = useState(false);
-  const [designNote, setDesignNote] = useState("");
+  // What the last attempt produced, not just a sentence about it. The line is
+  // the only thing in the viewport that changes, so it has to name the member
+  // and offer the one action that outcome deserves.
+  const [designOutcome, setDesignOutcome] = useState(null);
   // The wait has two honest facts: how long it has been, and when it stops.
   // Everything else about a model is unknown, so nothing else appears to move.
   const [designStartedAt, setDesignStartedAt] = useState("");
   const designElapsed = useElapsedMs(designStartedAt, designing) || 0;
   // A show gate, so a draft that returns in 200 ms never flashes a wait state.
   const showWait = designing && designElapsed >= DESIGN_WAIT_GATE_MS;
+  // "Designed Marcus, a Chief of Staff." The person cannot see the member from
+  // where they are sitting, so the line says which one arrived.
+  const designOutcomeLine = (() => {
+    if (!designOutcome) return "";
+    if (designOutcome.kind === "error") {
+      const reason = String(designOutcome.reason || "").trim();
+      return reason
+        ? `${copyText.designFailed || "That did not work."} ${reason}`
+        : copyText.designFailed || "That did not work.";
+    }
+    const who = [designOutcome.name, designOutcome.role].filter(Boolean);
+    const named = who.length === 2 ? `${who[0]}, a ${who[1]}` : who[0] || "";
+    if (designOutcome.kind === "model") {
+      return named
+        ? `${copyText.designedNamed || "Designed"} ${named}.`
+        : copyText.designedByModel || "Filled in. Change anything that is not right.";
+    }
+    return named
+      ? `${copyText.designedLocallyNamed || "Built"} ${named}, from your description. No model answered in thirty seconds.`
+      : copyText.designedLocally || "Filled in from the description. No model was reachable, so this is a starting point.";
+  })();
   const waitLine =
     designElapsed >= DESIGN_WAIT_PROMISE_MS
       ? copyText.designStillAsking || "Still asking. If nothing comes back by thirty seconds, this page fills itself in from your description instead."
@@ -19309,6 +19336,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   const template = selectedTemplate || roleTemplates[0] || CUSTOM_ROLE_TEMPLATE;
   const runtimeShell = useMemo(() => ({ workspaceRoot, defaultWorkspace }), [workspaceRoot, defaultWorkspace]);
   const nameInputRef = useRef(null);
+  const designStartedAtRef = useRef("");
   // The template id Design it just created, so the focus effect can leave the
   // page where the person left it.
   const designedTemplateRef = useRef("");
@@ -19341,22 +19369,28 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   // deterministic fallback with generic skills however good the description
   // was. Warming costs no tokens: the session is acquired and released
   // without a prompt (ADR-0030, ADR-0036).
+  // The workspace can arrive after this screen mounts, on a bridge that is
+  // still starting. Watching it rather than mounting once means the warm-up
+  // still happens then; the ref keeps it to one per visit, since warming
+  // twice buys nothing.
+  const warmedDesignerRef = useRef(false);
   useEffect(() => {
-    if (!defaultWorkspace) return;
+    if (!defaultWorkspace || warmedDesignerRef.current) return;
+    warmedDesignerRef.current = true;
     api("/api/chat/warm", {
       method: "POST",
       body: JSON.stringify({ agentId: MEMBER_DESIGNER_ID, workspace: defaultWorkspace }),
     }).catch(() => {});
-    // Once per visit to this screen: warming twice buys nothing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [defaultWorkspace]);
 
   async function designMember() {
     const description = roleWish.trim();
     if (!description || designing) return;
     setDesigning(true);
-    setDesignNote("");
-    setDesignStartedAt(new Date().toISOString());
+    setDesignOutcome(null);
+    const startedAt = new Date().toISOString();
+    designStartedAtRef.current = startedAt;
+    setDesignStartedAt(startedAt);
     try {
       const data = await api("/api/members/draft", {
         method: "POST",
@@ -19382,16 +19416,33 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
         designed.name || "",
         { designed: true }
       );
-      setDesignNote(
-        data?.source === "model"
-          ? copyText.designedByModel || "Filled in. Change anything that is not right."
-          : copyText.designedLocally || "Filled in from the description. No model was reachable, so this is a starting point."
-      );
+      setDesignOutcome({
+        kind: data?.source === "model" ? "model" : "fallback",
+        name: designed.name || "",
+        role: designed.role || "",
+      });
     } catch (error) {
-      setDesignNote(error?.message || "Could not design that member.");
+      setDesignOutcome({ kind: "error", reason: error?.message || "" });
     } finally {
+      // Once the wait line is on screen it stays long enough to read. Below
+      // the show gate it was never mounted, so there is nothing to hold.
+      const shown = Date.now() - new Date(designStartedAtRef.current || Date.now()).getTime();
+      const remaining = DESIGN_WAIT_HOLD_MS - (shown - DESIGN_WAIT_GATE_MS);
+      if (shown >= DESIGN_WAIT_GATE_MS && remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
       setDesigning(false);
     }
+  }
+
+  // Travelling to the answer is the person's decision, not the machine's, so
+  // the page does not move on its own (ADR-0035). This is the way back for
+  // anyone who wants it, keyboard users included: it scrolls and then takes
+  // the caret to the name.
+  function reviewDesigned() {
+    const field = nameInputRef.current;
+    if (!field) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    field.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
+    field.focus({ preventScroll: true });
   }
 
   useEffect(() => {
@@ -19549,8 +19600,12 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
             <span className="text-xs text-muted-foreground">{copyText.designShortcut || "⌘ Enter"}</span>
           </div>
           {/* One slot: the wait is replaced in place by its own result, so the
-              explanation lands where the person is already looking. */}
-          <p className="min-h-5 text-xs text-muted-foreground" role="status" aria-live="polite">
+              explanation lands where the person is already looking. It is the
+              only thing in the viewport that changes, so it names the member
+              and carries the one action that outcome deserves. A fallback is a
+              lesser answer, not a broken one, so it reads the same as a good
+              one and differs by structure, not colour. */}
+          <p className="flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" role="status" aria-live="polite">
             {designing ? (
               showWait ? (
                 <span className="inline-flex items-center gap-2" data-entering>
@@ -19563,9 +19618,22 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
                   {designElapsed >= 3000 ? <span className="tabular-nums">{formatDuration(designElapsed)}</span> : null}
                 </span>
               ) : null
-            ) : (
-              designNote || ""
-            )}
+            ) : designOutcome ? (
+              <>
+                <span data-entering className={cn(designOutcome.kind === "error" && "text-destructive")}>
+                  {designOutcomeLine}
+                </span>
+                {designOutcome.kind === "model" ? (
+                  <button type="button" className="underline-offset-2 hover:underline" onClick={reviewDesigned}>
+                    {copyText.reviewItBelow || "Review it below"}
+                  </button>
+                ) : (
+                  <button type="button" className="underline-offset-2 hover:underline" onClick={() => void designMember()}>
+                    {copyText.tryAgain || "Try again"}
+                  </button>
+                )}
+              </>
+            ) : null}
           </p>
         </section>
 

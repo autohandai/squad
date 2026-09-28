@@ -77,9 +77,23 @@ fifty-four-portrait picker waits behind "Choose another portrait".
   absence a correctness gap rather than polish, and was right: the draft
   returned seven fields that the page saved and gave no way to read or change,
   while ADR-0031 claimed every field stays editable.
+- The line that replaces the wait names what arrived and carries the one
+  action that outcome deserves. "Designed Helena, a Chief of Staff" with
+  **Review it below**, which scrolls and then takes the caret to the name, so
+  travelling to the answer stays the person's decision. A fallback reads the
+  same way and differs by structure, not colour: "Built Nova, a Chief of
+  Staff, from your description. No model answered in thirty seconds" with
+  **Try again**. Making a usable result look damaged is the failure mode to
+  avoid. Only a genuine failure, a dead bridge, uses the destructive colour,
+  and on the text alone.
+- Once the wait line is up it holds for 400ms before its result replaces it,
+  so it is either absent or legible, never a blink.
 - Not done: the rest of the detail form is still the old layout of stacked
-  labelled fields rather than divider rows, and the ask does not collapse into
-  a "You asked for" line. The second was dropped rather than deferred. The
-  sentence stays in its textarea and the Design button stays enabled, so an
-  Edit control and a Design again control would each duplicate something
-  already on screen and a few hundred pixels higher.
+  labelled fields rather than divider rows. Two proposals were dropped rather
+  than deferred. The ask does not collapse into a "You asked for" line,
+  because the sentence stays in its textarea and the Design button stays
+  enabled, so an Edit control and a Design again control would each duplicate
+  something already on screen and a few hundred pixels higher. The entrance on
+  a newly designed role is gone with its reason: it was for telling two
+  near-identical cards apart, and the roles are now divider rows behind a
+  disclosure that stays closed.
