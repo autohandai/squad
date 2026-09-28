@@ -17,6 +17,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { arch, homedir, platform as osPlatform, release as osRelease, tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
+import { listLocalSkills, localSkillRoots, readSkillFolder } from "./server/skills/local.mjs";
 import {
   DEFAULT_HARNESS_ID,
   HarnessNotReadyError,
@@ -1504,8 +1505,14 @@ async function installAgentSkills(agent, agentHome, agentId) {
     return emptyInstall;
   }
 
-  const catalog = await loadSkillCatalog();
-  const catalogById = new Map(catalog.skills.map((skill) => [skill.id, skill]));
+  // Skills the person already has on this machine answer first. A skill in
+  // ~/.claude/skills used to be invisible here, so asking for it produced
+  // "not found in Skilled catalog" however plainly it was sitting on disk.
+  const localRoots = localSkillRoots({ homeDir, workspace: String(agent?.workspace || "") });
+  const localById = new Map((await listLocalSkills(localRoots)).map((skill) => [skill.id, skill]));
+
+  const catalog = await loadSkillCatalog().catch(() => ({ skills: [] }));
+  const catalogById = new Map((catalog?.skills || []).map((skill) => [skill.id, skill]));
   const install = {
     source: skilledBaseUrl,
     repository: defaultSkillsRepo,
@@ -1518,9 +1525,35 @@ async function installAgentSkills(agent, agentHome, agentId) {
   };
 
   for (const skillId of requestedSkills) {
+    const local = localById.get(skillId);
+    if (local) {
+      const targetDir = join(skillsDir, skillId);
+      const skillPath = join(targetDir, "SKILL.md");
+      const summary = { id: local.id, name: local.name, category: local.category, author: "", source: "local", url: "" };
+      if (existsSync(skillPath)) {
+        install.installed.push({ ...summary, status: "present", path: skillPath });
+        continue;
+      }
+      try {
+        for (const [relativePath, content] of await readSkillFolder(local.dir)) {
+          const targetPath = safeJoin(targetDir, relativePath);
+          await mkdir(dirname(targetPath), { recursive: true });
+          await writeFile(targetPath, content, "utf8");
+        }
+        install.installed.push({ ...summary, status: "installed", path: skillPath, from: local.root });
+      } catch (error) {
+        install.failed.push({ id: skillId, status: "error", reason: `could not copy from ${local.root}: ${error.message}` });
+      }
+      continue;
+    }
+
     const skill = catalogById.get(skillId);
     if (!skill) {
-      install.failed.push({ id: skillId, status: "missing", reason: "not found in Skilled catalog" });
+      install.failed.push({
+        id: skillId,
+        status: "missing",
+        reason: `not in the Skilled catalog, and no SKILL.md under ${localRoots.length} local skill folders`,
+      });
       continue;
     }
 
@@ -7401,12 +7434,25 @@ async function handleApi(req, res, url) {
 
   if (url.pathname === "/api/skills/catalog" && req.method === "GET") {
     try {
-      const catalog = await loadSkillCatalog();
       const query = String(url.searchParams.get("q") || "").trim().toLowerCase();
-      const skills = (catalog?.skills || [])
-        .filter((skill) => !query || `${skill.id} ${skill.name || ""} ${skill.category || ""}`.toLowerCase().includes(query))
-        .slice(0, 40)
-        .map((skill) => ({ id: skill.id, name: skill.name || skill.id, category: skill.category || "", author: skill.author || "" }));
+      // What the person already has comes first, and a missing catalog no
+      // longer empties the list: local skills are the ones that always work.
+      const localRoots = localSkillRoots({ homeDir, workspace: String(url.searchParams.get("workspace") || "") });
+      const local = (await listLocalSkills(localRoots).catch(() => [])).map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        category: skill.category,
+        author: "",
+        description: skill.description,
+        local: true,
+      }));
+      const catalog = await loadSkillCatalog().catch(() => ({ skills: [] }));
+      const seen = new Set(local.map((skill) => skill.id));
+      const remote = (catalog?.skills || [])
+        .filter((skill) => !seen.has(skill.id))
+        .map((skill) => ({ id: skill.id, name: skill.name || skill.id, category: skill.category || "", author: skill.author || "", local: false }));
+      const matches = (skill) => !query || `${skill.id} ${skill.name || ""} ${skill.category || ""} ${skill.description || ""}`.toLowerCase().includes(query);
+      const skills = [...local, ...remote].filter(matches).slice(0, 40);
       json(res, 200, { success: true, data: { skills } });
     } catch (error) {
       json(res, 500, { success: false, error: error.message });
