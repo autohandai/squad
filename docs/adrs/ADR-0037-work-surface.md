@@ -54,6 +54,18 @@ values.
 **The status glossary is gone.** It is documentation, and it was standing in
 an operating view.
 
+## Correction, same day: it had no way in
+
+Renaming it surfaced a second fault the rename made worse. Work has no row in
+the sidebar and never did. The only ways to it were the command palette, the
+account menu, a Settings row, and links out of Inbox handoffs. Changing the
+name changed the word someone would look for, on a page they already could not
+find, which is why the owner asked where it had gone.
+
+It now sits in the sidebar beside Inbox and Agents, with a count of tracked
+tasks, and the command palette still matches "mission control" so the old
+name keeps working as a search term.
+
 ## Consequences
 
 - The page renders correctly in both themes, which it did not before. Every

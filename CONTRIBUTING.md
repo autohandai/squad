@@ -143,6 +143,12 @@ Generated proof belongs under `.codex-artifacts/` and must not be committed.
 - Update [docs/release.md](docs/release.md) for CI, installer, manifest, signing,
   or release-contract changes.
 - Update [DESIGN.md](DESIGN.md) when the durable visual contract changes.
+- Write a `docs/adrs/ADR-00NN-<slug>.md` when a change rests on a judgement
+  someone could reasonably have made differently. Carry the evidence that
+  produced it, and name in Consequences what was knowingly left undone or
+  traded away.
+- Update [CHANGELOG.md](CHANGELOG.md) under Unreleased, in the language a
+  person would recognise from asking for the thing.
 
 ## Pull-request review
 

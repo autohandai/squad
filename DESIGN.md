@@ -87,6 +87,7 @@
 
 ## Work
 
+- **Work** sits in the sidebar beside Inbox and Agents, with a count of tracked tasks. A primary surface needs a permanent place to stand; this one was reachable only from the command palette, the account menu and links out of the Inbox.
 - The surface that lists what the squad is doing is called **Work**, not Mission Control. The old name promised a command centre and the page is a roster of who is on what.
 - It opens with the page title and one sentence naming only what is true right now ("2 working · 3 blocked"), never a row of metric tiles. A quiet squad reads as quiet rather than as four zeroes.
 - Members and work records are both divider rows in one column, with the same grammar: what it is, one line of detail, then a dot-and-word status with the workspace and any marks beside it. No card grid, no five-column table, no tinted status chips.

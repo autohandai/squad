@@ -1196,6 +1196,7 @@ function sidebarActiveTarget(route, activeAgent) {
   const [path, query = ""] = String(route || "").split("?");
   if (path === INBOX_ROUTE) return { kind: "inbox", id: "" };
   if (path === SQUAD_DIRECTORY_ROUTE || path === AGENTS_ROUTE) return { kind: "agents", id: "" };
+  if (path === MISSION_CONTROL_ROUTE) return { kind: "work", id: "" };
   if (path.startsWith(CHANNELS_ROUTE)) return { kind: "channel", id: channelIdFromRoute(route) };
   if (path === "/conversations/new") {
     const member = new URLSearchParams(query).get("member") || activeAgent?.id || "";
@@ -11804,6 +11805,7 @@ function SidebarContent({
       unreadChannelIds={unreadChannelIds}
       unreadCountByAgent={unreadCountByAgent}
       inboxCount={inboxCount}
+      workCount={sidebarCounts?.tasks || 0}
       presenceFor={(agent) => {
         const meta = presenceMeta(entryForPresence(agent).state, copy);
         return { ...meta, className: meta.dotClassName };
@@ -11817,6 +11819,7 @@ function SidebarContent({
         member: (targetId) => navigate(memberChatPath(targetId)),
         createChannel: () => setCreateChannelOpen(true),
         createMember: () => navigate(`${MEMBER_ROUTE_PREFIX}/new`),
+        missionControl: onMissionControl,
       }}
       footer={
         <>

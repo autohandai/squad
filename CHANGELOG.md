@@ -41,6 +41,30 @@ list to the section for that version.
   and messages. The sidebar gains a workspace switcher and Settings a Relay
   section.
 - **Presence and stop**: live per-member state with a stop control.
+- **Members that introduce themselves**: a new member's first message says
+  what it is, where it works, what it is set up for, and when it will stop and
+  ask, composed from its own configuration rather than asked of a model
+  (ADR-0034).
+- **Describe a member and the page fills itself in**: one sentence designs the
+  whole member, with the wait naming how long it has been, when it will stop,
+  and a Stop that leaves your sentence intact. The instructions and the brain
+  card are editable behind a disclosure (ADR-0031, ADR-0035).
+- **Members take breaks, brief you, and improve themselves**: a member can
+  decline work in its own voice, opening its chat leads with what changed
+  since your last visit, and a chief-of-staff pass proposes skills and rules
+  it needs (ADR-0027, ADR-0028, ADR-0029).
+- **Work in the sidebar**: the surface listing what every member is doing now
+  has a permanent row beside Inbox and Agents (ADR-0037).
+- **Replies in the Inbox**: a member answering you in a direct message reaches
+  the surface named for what needs you.
+- **Boot screen**: the window paints the mark and one line before the bundle
+  parses, then real start-up checks replace it (ADR-0033).
+
+### Changed
+- **Mission Control is now Work.** The old name promised a command centre for
+  what is a roster of who is on what. The page drops its display headline,
+  metric tiles, card grid, five-column table and status glossary for one
+  column of divider rows (ADR-0037).
 
 ### Fixed
 - Route plug-ins could load twice on a cold bridge, which made every feature
@@ -53,6 +77,25 @@ list to the section for that version.
   desktop build could ship the previous release's server.
 - CI's release dry run never fetched the vendored Autohand CLI and failed on
   every platform.
+- Designing a member always timed out, so every custom role came back from the
+  deterministic fallback with generic skills however good the description.
+  The designer was waiting on MCP servers it cannot use; it now gets none, is
+  warmed when the screen opens, and starts each draft with a clean
+  conversation (ADR-0036).
+- The draft asked a model for a brain-card field the app has no place for and
+  never asked for three it does, so three of a designed member's seven fields
+  were boilerplate.
+- A new member introduced itself and then told you what *you* do, because the
+  brain card is written to the member as "you" and was quoted verbatim.
+- Designing a member was dead in the installed desktop app: the route imported
+  a file the app does not ship, so the loader skipped it silently. A check now
+  walks the bridge's import graph.
+- The Work page (formerly Mission Control) forced a light palette in dark
+  mode, so it rendered white inside a dark app.
+- Skill installs and failures were filed as memory proposals needing a
+  decision, which buried the Inbox under rows that needed none.
+- The new-member page scrolled itself away from the answer, so the line saying
+  whether a model or your description designed the member was never seen.
 
 ## [0.1.5] - 2026-09-24
 
