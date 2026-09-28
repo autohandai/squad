@@ -581,15 +581,28 @@ jobs:
           fi
           "$node_bin" --version
           "$squad" --help
-          AUTOHAND_HOME="$state_root/autohand-home" AUTOHAND_SQUAD_HOME="$state_root" AUTOHAND_SQUAD_NODE="$node_bin" "$squad" serve --server-path "$server" --web-port "$web_port"
+          # `squad serve` waits for the bridge itself and exits non-zero when it
+          # never answers. Under `set -euo pipefail` that aborted the step on
+          # this line, so the diagnostic below — the bundled server's own log —
+          # never ran. This is the only place in any workflow, on any platform,
+          # where the bundled bridge actually boots, and when it failed on the
+          # Intel runner it produced no evidence at all. Let it fail soft and
+          # carry its status into the report.
+          serve_status=0
+          AUTOHAND_HOME="$state_root/autohand-home" AUTOHAND_SQUAD_HOME="$state_root" AUTOHAND_SQUAD_NODE="$node_bin" "$squad" serve --server-path "$server" --web-port "$web_port" || serve_status=$?
           ready=false
           for _ in {1..30}; do
             if curl -fsS "http://127.0.0.1:${web_port}/api/runtime" >/dev/null; then ready=true; break; fi
             sleep 1
           done
           if [[ "$ready" != "true" ]]; then
-            echo "::error::The web runtime inside the DMG did not start."
-            cat "$state_root/web-server.log" 2>/dev/null || true
+            echo "::error::The web runtime inside the DMG did not start (squad serve exited ${serve_status})."
+            echo "----- web-server.log -----"
+            cat "$state_root/web-server.log" 2>/dev/null || echo "(no web-server.log was written)"
+            echo "----- state directory -----"
+            ls -la "$state_root" 2>/dev/null || true
+            echo "----- listening sockets -----"
+            lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | head -20 || true
             exit 1
           fi
           curl -fsS "http://127.0.0.1:${web_port}/api/runtime" | "$node_bin" -e '
