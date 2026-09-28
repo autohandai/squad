@@ -393,6 +393,10 @@ const IMPROVEMENT_START_DELAY_MS = 45_000;
 // The shortest gap between two reviews of the same member when its work keeps
 // finishing, so a burst of runs does not review it once per run.
 const IMPROVEMENT_AFTER_WORK_MS = 90_000;
+// Below this, a draft answered so fast that showing a wait state would read as
+// a glitch; past this, the wait names the deadline so it is bounded, not open.
+const DESIGN_WAIT_GATE_MS = 240;
+const DESIGN_WAIT_PROMISE_MS = 12_000;
 const DEFAULT_IMPROVEMENT_SETTINGS = Object.freeze({ enabled: true, applyAutomatically: true });
 
 function normalizeImprovementSettings(value) {
@@ -18982,72 +18986,25 @@ function StatusBadge({ status, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   );
 }
 
-// One role in the picker, pulled out of the page so a keystroke in the name
-// field re-renders one card instead of the whole list of about twenty, each
-// with an avatar image. Measured on this machine it made no difference to
-// typing latency, which stayed at 1 to 3 ms either way; it is kept because
-// the list grows with every custom role, not because it fixed anything.
-const RoleChoiceCard = React.memo(function RoleChoiceCard({ role, selected, name, nameInputRef, onToggle, onNameChange }) {
+// One ready-made role, as a divider row. A selected choice shows a check mark
+// and a stronger label rather than a filled panel (DESIGN.md), and the name is
+// no longer asked for here: it arrives with the member.
+const RoleChoiceRow = React.memo(function RoleChoiceRow({ role, selected, onToggle }) {
   return (
-    <article
-      className={cn(
-        "overflow-hidden rounded-md border bg-card shadow-xs transition-[border-color,box-shadow,background-color]",
-        selected
-          ? "border-[#171717] ring-1 ring-[#171717] dark:border-foreground dark:ring-foreground"
-          : "border-border"
-      )}
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      className="flex w-full items-center gap-3 border-b border-border/60 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/35"
+      onClick={() => onToggle(role.id)}
     >
-      <button
-        type="button"
-        aria-pressed={selected}
-        className={cn(
-          "grid min-h-[92px] w-full grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 text-left transition-colors",
-          "hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/35"
-        )}
-        onClick={() => onToggle(role.id)}
-      >
-        <RoleAvatar roleId={role.id} src={role.avatar} alt={`${role.title} avatar`} />
-        <span className="min-w-0">
-          <span className="block truncate text-base font-semibold">{role.title}</span>
-          <span className="mt-1 block truncate text-sm text-muted-foreground">{role.description}</span>
-        </span>
-        <span className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <span className={cn("hidden sm:inline", selected && "text-foreground")}>{selected ? "Enabled" : "Off"}</span>
-          <span
-            aria-hidden="true"
-            className={cn(
-              "relative inline-flex h-[22px] w-10 shrink-0 rounded-full border transition-colors",
-              selected ? "border-primary bg-primary" : "border-input bg-input dark:bg-input/80"
-            )}
-          >
-            <span
-              className={cn(
-                "absolute top-1/2 size-4 -translate-y-1/2 rounded-full bg-background shadow-sm transition-transform dark:bg-foreground",
-                selected ? "translate-x-[18px] dark:bg-primary-foreground" : "translate-x-[2px]"
-              )}
-            />
-          </span>
-        </span>
-      </button>
-
-      {selected ? (
-        <div className="border-t bg-background/40 px-4 pb-4 pt-3">
-          <Field className="gap-2">
-            <FieldLabel htmlFor={`role-name-${role.id}`} className="text-sm">
-              Name <span className="text-primary">*</span>
-            </FieldLabel>
-            <Input
-              id={`role-name-${role.id}`}
-              ref={nameInputRef}
-              value={name}
-              onChange={(event) => onNameChange(role.id, event.target.value)}
-              placeholder="Enter squad member name"
-              className="h-10 bg-card"
-            />
-          </Field>
-        </div>
-      ) : null}
-    </article>
+      <RoleAvatar roleId={role.id} src={role.avatar} alt="" />
+      <span className="min-w-0 flex-1">
+        <span className={cn("block truncate text-sm", selected ? "font-medium text-foreground" : "text-foreground")}>{role.title}</span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">{role.description}</span>
+      </span>
+      {selected ? <Check className="size-4 shrink-0 text-foreground" /> : null}
+    </button>
   );
 });
 
@@ -19324,9 +19281,21 @@ function buildCustomRoleInstructions(templateDraft) {
 function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harnesses = [], harnessesLoading = false, onRefreshHarnesses, copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
   // "Design it": one sentence in, a whole member out. The route falls back to
   // a deterministic draft when no model is reachable, so this never dead-ends.
+  const [rolesOpen, setRolesOpen] = useState(false);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [roleWish, setRoleWish] = useState("");
   const [designing, setDesigning] = useState(false);
   const [designNote, setDesignNote] = useState("");
+  // The wait has two honest facts: how long it has been, and when it stops.
+  // Everything else about a model is unknown, so nothing else appears to move.
+  const [designStartedAt, setDesignStartedAt] = useState("");
+  const designElapsed = useElapsedMs(designStartedAt, designing) || 0;
+  // A show gate, so a draft that returns in 200 ms never flashes a wait state.
+  const showWait = designing && designElapsed >= DESIGN_WAIT_GATE_MS;
+  const waitLine =
+    designElapsed >= DESIGN_WAIT_PROMISE_MS
+      ? copyText.designStillAsking || "Still asking. If nothing comes back by twenty seconds, this page fills itself in from your description instead."
+      : copyText.designAsking || "Asking a model to design this.";
   const [customTemplates, setCustomTemplates] = useState([]);
   const [customTemplateDialogOpen, setCustomTemplateDialogOpen] = useState(false);
   const [templateId, setTemplateId] = useState("");
@@ -19366,6 +19335,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     if (!description || designing) return;
     setDesigning(true);
     setDesignNote("");
+    setDesignStartedAt(new Date().toISOString());
     try {
       const data = await api("/api/members/draft", {
         method: "POST",
@@ -19381,6 +19351,9 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
           ...createEmptyCustomRoleDraft(),
           title: designed.role,
           description: designed.description,
+          // A designed member arrives with a face. It was landing as a grey
+          // silhouette beside a wall of portraits, which read as unfinished.
+          avatar: birdAvatarForRole("", designed.role, designed.name || designed.role),
           skillsText: (designed.skills || []).join(", "),
           brainCard: { ...createEmptyCustomRoleDraft().brainCard, ...designed.brainCard },
           sections: { ...createEmptyCustomRoleDraft().sections, ...(designed.instructions ? { identity: designed.instructions } : {}) },
@@ -19506,7 +19479,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   return (
     <div className="min-h-[calc(100svh-4rem)] bg-background lg:min-h-screen">
       <form
-        className="mx-auto flex w-full max-w-[1120px] flex-col px-5 py-10 sm:px-8 lg:px-10 lg:py-20"
+        className="mx-auto flex w-full max-w-[720px] flex-col px-6 py-12 sm:px-8"
         onSubmit={(event) => {
           event.preventDefault();
           if (isValid) onCreate(draft);
@@ -19531,61 +19504,107 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
           <p className="text-xs text-muted-foreground">
             {copyText.describeRoleDetail || "Say what you need in a sentence and the rest of this page fills itself in. You can change anything afterwards."}
           </p>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Input
-              id="member-description"
-              value={roleWish}
-              placeholder={copyText.describeRolePlaceholder || "Someone who writes and maintains our end-to-end tests"}
-              className="h-10 flex-1"
-              onChange={(event) => setRoleWish(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void designMember();
-                }
-              }}
-            />
-            <Button type="button" variant="outline" className="h-10 sm:w-auto" disabled={!roleWish.trim() || designing} onClick={() => void designMember()}>
-              {designing ? <Spinner /> : <Sparkles data-icon="inline-start" />}
-              {designing ? copyText.designing || "Designing…" : copyText.designMember || "Design it"}
+          <Textarea
+            id="member-description"
+            rows={3}
+            value={roleWish}
+            placeholder={copyText.describeRolePlaceholder || "Someone who writes and maintains our end-to-end tests"}
+            className="min-h-[92px] resize-none text-base leading-7"
+            onChange={(event) => setRoleWish(event.target.value)}
+            onKeyDown={(event) => {
+              // Enter writes a newline now that this is a paragraph, not a
+              // field. Firing the request on Enter cut people off mid-sentence.
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void designMember();
+              }
+            }}
+          />
+          <div className="flex items-center gap-3">
+            <Button type="button" disabled={!roleWish.trim() || designing} onClick={() => void designMember()}>
+              <Sparkles data-icon="inline-start" />
+              {copyText.designMember || "Design this member"}
             </Button>
+            <span className="text-xs text-muted-foreground">{copyText.designShortcut || "⌘ Enter"}</span>
           </div>
-          {designNote ? <p className="text-xs text-muted-foreground">{designNote}</p> : null}
+          {/* One slot: the wait is replaced in place by its own result, so the
+              explanation lands where the person is already looking. */}
+          <p className="min-h-5 text-xs text-muted-foreground" role="status" aria-live="polite">
+            {designing ? (
+              showWait ? (
+                <span className="inline-flex items-center gap-2" data-entering>
+                  <span>{waitLine}</span>
+                  <span className="presence-dots" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  {designElapsed >= 3000 ? <span className="tabular-nums">{formatDuration(designElapsed)}</span> : null}
+                </span>
+              ) : null
+            ) : (
+              designNote || ""
+            )}
+          </p>
         </section>
 
-        <section className="flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-4">
-            <FieldLabel className="text-sm font-medium text-muted-foreground">Select a role</FieldLabel>
-            <Button
-              type="button"
-              variant="ghost"
-              className={cn("h-8 px-2 text-sm text-muted-foreground", isCustomRole && "text-foreground")}
-              onClick={selectCustomRole}
-            >
-              Custom Role
-              <ChevronRight data-icon="inline-end" />
-            </Button>
-          </div>
+        {/* Picking from a list is the fallback for when you already know the
+            title, so it is a disclosure rather than a wall of cards competing
+            with the one sentence that is the point of this page. */}
+        <section className="flex flex-col">
+          <button
+            type="button"
+            aria-expanded={rolesOpen}
+            className="flex w-full items-center gap-1.5 py-1 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+            onClick={() => setRolesOpen((open) => !open)}
+          >
+            {rolesOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+            {copyText.orStartFromRole || "Or start from a ready-made role"}
+            <span className="text-muted-foreground/70">· {availableTemplates.length}</span>
+          </button>
 
-          <div role="group" aria-label="Enable squad roles" className="grid items-start gap-3 lg:grid-cols-2">
-            {availableTemplates.map((role) => (
-              <RoleChoiceCard
-                key={role.id}
-                role={role}
-                selected={templateId === role.id}
-                // Only the selected card is handed the name, so typing one
-                // re-renders one card instead of all of them.
-                name={templateId === role.id ? draft.name : ""}
-                nameInputRef={templateId === role.id ? nameInputRef : null}
-                onToggle={toggleTemplate}
-                onNameChange={handleRoleNameChange}
-              />
-            ))}
-          </div>
+          {rolesOpen ? (
+            <div role="radiogroup" aria-label="Ready-made roles" className="mt-2 flex flex-col">
+              {availableTemplates.map((role) => (
+                <RoleChoiceRow
+                  key={role.id}
+                  role={role}
+                  selected={templateId === role.id}
+                  onToggle={toggleTemplate}
+                />
+              ))}
+              <Button
+                type="button"
+                variant="ghost"
+                className={cn("mt-2 h-8 w-fit px-2 text-xs text-muted-foreground", isCustomRole && "text-foreground")}
+                onClick={selectCustomRole}
+              >
+                {copyText.writeYourOwnRole || "Write one yourself"}
+                <ChevronRight data-icon="inline-end" />
+              </Button>
+            </div>
+          ) : null}
         </section>
 
         {selectedTemplate ? (
           <FieldGroup className="mt-8 gap-7">
+            {/* Who this is. The name reads as text and shows its edge on
+                focus, so the answer looks like a member rather than a form. */}
+            <div className="flex items-center gap-4 border-b border-border/70 pb-6">
+              <RoleAvatar roleId={template.id} src={draft.avatar} alt="" size="large" />
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <Input
+                  id="member-name"
+                  ref={nameInputRef}
+                  value={draft.name}
+                  placeholder={copyText.memberNamePlaceholder || "Name this member"}
+                  aria-label={copyText.memberName || "Name"}
+                  className="h-auto border-transparent bg-transparent px-0 text-2xl font-semibold shadow-none hover:border-input focus-visible:border-ring"
+                  onChange={(event) => handleRoleNameChange(template.id, event.target.value)}
+                />
+                <p className="truncate text-sm text-muted-foreground">{draft.role || template.title}</p>
+              </div>
+            </div>
             <Field>
               <FieldLabel>
                 Profile Avatar <span className="text-primary">*</span>
@@ -19600,7 +19619,20 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
                 </Button>
                 <span className="text-sm text-muted-foreground">PNG / JPG / WebP, max 2 MB</span>
               </div>
-              <AvatarPicker value={draft.avatar} onChange={(avatar) => setDraft((current) => ({ ...current, avatar }))} />
+              {/* The member already has a face. Fifty-four portraits on arrival
+                  is a wall to get past, so it waits to be asked for. */}
+              <button
+                type="button"
+                aria-expanded={avatarPickerOpen}
+                className="flex w-fit items-center gap-1.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                onClick={() => setAvatarPickerOpen((open) => !open)}
+              >
+                {avatarPickerOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+                {copyText.chooseAnotherAvatar || "Choose another portrait"}
+              </button>
+              {avatarPickerOpen ? (
+                <AvatarPicker value={draft.avatar} onChange={(avatar) => setDraft((current) => ({ ...current, avatar }))} />
+              ) : null}
               {avatarError ? <FieldDescription className="text-destructive">{avatarError}</FieldDescription> : null}
             </Field>
 

@@ -113,7 +113,9 @@
 - Tables in a member's reply render as divider rows with no fills or borders around cells, scrolling horizontally inside the message column rather than widening it. A disabled primary button drops to a neutral surface, so it never reads as the page's call to action.
 - While a member is working, the direct-message composer carries one muted line under it saying what it is doing, in the same place the channel composer shows presence.
 
-- The new-member page opens with one line: describe the role and the rest of the page fills itself in. The result says whether a model designed it or the description alone did, and every field stays editable.
+- The new-member page is one question and its answer, in a 720px column. Describing the role is the primary path, as a textarea that grows with the text: Enter writes a newline, ⌘ or Ctrl with Enter designs. Ready-made roles wait behind a disclosure as divider rows with a check on the selected one, never a card grid with toggles.
+- A wait for a model says the two things that are known: how long it has been, and when it will stop. The line appears where the answer will land, after a short gate so a fast reply never flashes it, and is replaced in place by its own result. Past twelve seconds it says what happens if nothing arrives. Spinners stay out of buttons: a control is not busy, a request is.
+- The designed member arrives as a member, with a name in a borderless heading, its role beneath, and a portrait picked from its own role and name. The fifty-four-portrait picker waits behind "Choose another portrait". Filling the page never scrolls it or takes focus, so the line saying whether a model or the description designed it stays in view.
 
 - "Try asking" is built from the member's own role, skills and workspace, so no two members offer the same prompts and none contain a placeholder.
 - The window is never blank: an inline boot screen paints the mark and one line before the bundle parses, then real start-up checks replace it, with member avatars settling in as the squad is read. No progress bars, because a bar that measures nothing is a lie told smoothly.
