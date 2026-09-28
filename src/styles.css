@@ -89,7 +89,13 @@
   --card-foreground: #faf9f5;
   --popover: #0d0d0d;
   --popover-foreground: #faf9f5;
-  --primary: #8ee5a1;
+  /* The primary is the page's action, and nothing else. It used to be the
+     brand green, which also carries state everywhere in this product: a
+     member online, a member working, a check that passed. One colour meaning
+     "press this", "this is alive" and "this succeeded" means the colour tells
+     you nothing. Green keeps state; the action is the plainest thing on the
+     surface, which is also what DESIGN.md asks for. */
+  --primary: #faf9f5;
   --primary-foreground: #0d0d0d;
   --secondary: #1a1a1a;
   --secondary-foreground: #faf9f5;
@@ -100,7 +106,7 @@
   --destructive: #ff6f61;
   --border: #262626;
   --input: #262626;
-  --ring: #8ee5a1;
+  --ring: #6b6b6b;
   --chart-1: #8ee5a1;
   --chart-2: #73cd94;
   --chart-3: #ffd06a;
@@ -116,8 +122,8 @@
   --card-foreground: #080a0d;
   --popover: #ffffff;
   --popover-foreground: #080a0d;
-  --primary: #5ed46f;
-  --primary-foreground: #102013;
+  --primary: #171717;
+  --primary-foreground: #ffffff;
   --secondary: #f4f4f5;
   --secondary-foreground: #1c241f;
   --muted: #f4f4f5;

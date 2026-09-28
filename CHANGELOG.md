@@ -99,6 +99,8 @@ list to the section for that version.
 - A deleted member came back on the next launch. Deleting removed it from
   storage, and the seed list read "missing from storage" as "never seen" and
   added it again (ADR-0038).
+- Green now means state and nothing else. Buttons are neutral, so a colour on
+  screen carries one meaning instead of three (ADR-0044).
 - The setup guide moved out of the account menu into Settings, where you can
   run it again whenever you like (ADR-0043).
 - Right-clicking no longer offers the webview's Back and Reload. Text fields
