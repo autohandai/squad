@@ -92,13 +92,29 @@ labels the member in the directory, the profile header and the channel picker,
 and the neighbouring "addressed to the member as 'you'" rule was pulling the
 model into writing "You own squad-wide coordination" there too.
 
-Two things are knowingly left:
+One thing is knowingly left: a model can still return a second-person
+description despite the prompt. The field is editable on the screen where it
+appears, and converting it would mean conjugating a verb rather than swapping
+a pronoun.
 
-- A fallback escalation rule is an imperative ("Stop and ask when the change is
-  destructive"), which in the introduction reads as an instruction to the user
-  rather than a statement by the member. Turning an imperative into the first
-  person needs to know the verb, which is a worse trade than the odd reading,
-  and it only happens on the path where no model answered.
-- A model can still return a second-person description despite the prompt. The
-  field is editable on the screen where it appears, and converting it would
-  mean conjugating a verb rather than swapping a pronoun.
+### Second correction: a brain card is configuration, not speech
+
+The imperative escalation rule was first recorded here as acceptable, on the
+grounds that it only happened when no model answered. Watching the model path
+once it actually ran showed that wrong twice over. It is the common shape, and
+there is a second one beside it:
+
+> I'm Marcus, your Chief of Staff on autohand. **To be the single control
+> point for all squad work**, owning intake, assignment and tracking. … **Stop
+> and ask the lead** when priorities conflict.
+
+A purpose is written as an infinitive phrase, so quoting it drops a fragment
+between two sentences. An escalation rule is written as an order, so quoting
+it has the member telling the person what to do. `asMemberSpeech` turns the
+first into "I'm here to be the single control point…" and the second into "I
+stop and ask the lead when…".
+
+The verbs that open an escalation rule are listed rather than guessed, because
+prefixing "I" to a sentence that does not begin with a bare verb produces
+something worse than the original. A sentence in neither shape is returned
+untouched, so a card written in the third person still reads as it was.

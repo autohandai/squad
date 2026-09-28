@@ -21,8 +21,8 @@ export function introductionFor(agent, copy = {}) {
   const role = text(source.role) || copy.squadMember || "squad member";
   const project = folderName(source.workspace);
   const skills = (Array.isArray(source.skills) ? source.skills : []).map(readable).filter(Boolean).slice(0, 3);
-  const purpose = inMemberVoice(source.brainCard?.purpose) || inMemberVoice(source.description);
-  const escalation = inMemberVoice(firstSentence(text(source.brainCard?.escalationRules)));
+  const purpose = asMemberSpeech(source.brainCard?.purpose, copy) || asMemberSpeech(source.description, copy);
+  const escalation = asMemberSpeech(firstSentence(text(source.brainCard?.escalationRules)), copy);
 
   const lines = [];
   // The role keeps its own case: it is a title, and the app capitalises it
@@ -96,14 +96,61 @@ const SECOND_PERSON = Object.freeze([
 
 /**
  * A sentence written to the member, said by the member. Text with no second
- * person in it comes back untouched, so a card written in the third person or
- * as an instruction is left exactly as it was.
+ * person in it comes back untouched, so a card written in the third person is
+ * left exactly as it was.
  */
 export function inMemberVoice(value) {
   let out = text(value);
   if (!out) return "";
   for (const [pattern, replacement] of SECOND_PERSON) out = out.replace(pattern, replacement);
   return out.charAt(0).toUpperCase() + out.slice(1);
+}
+
+// The other two shapes a brain card is written in, neither of which is a
+// sentence the member could say.
+//
+// A purpose is often an infinitive phrase: "To be the single control point
+// for all squad work". Quoted straight into the introduction that is a
+// fragment sitting between two complete sentences.
+//
+// An escalation rule is usually an order: "Stop and ask the lead when
+// priorities conflict". Quoted straight, the member appears to be telling the
+// person what to do. The verbs that open these rules are few and they are
+// listed rather than guessed, because prefixing "I" to a sentence that does
+// not start with a bare verb produces something worse than the original.
+const INSTRUCTION_VERBS = new Set([
+  "stop",
+  "ask",
+  "escalate",
+  "raise",
+  "flag",
+  "notify",
+  "check",
+  "confirm",
+  "defer",
+  "pause",
+  "report",
+  "request",
+  "hand",
+  "surface",
+  "alert",
+  "consult",
+]);
+
+/** A configuration line turned into something the member could say aloud. */
+export function asMemberSpeech(value, copy = {}) {
+  const line = inMemberVoice(value);
+  if (!line) return "";
+  const words = line.split(/\s+/);
+  const lead = words[0].toLowerCase().replace(/[^a-z']/g, "");
+  if (lead === "to" && words.length > 2) {
+    const rest = line.slice(line.indexOf(" ") + 1);
+    return `${copy.introHereTo || "I'm here to"} ${rest.charAt(0).toLowerCase()}${rest.slice(1)}`;
+  }
+  if (INSTRUCTION_VERBS.has(lead)) {
+    return `I ${lead}${line.slice(words[0].length)}`;
+  }
+  return line;
 }
 
 function restatesRole(purpose, role) {

@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 
-import { inMemberVoice, introductionFor, roleFromDescription } from "../src/lib/member-introduction.js";
+import { asMemberSpeech, inMemberVoice, introductionFor, roleFromDescription } from "../src/lib/member-introduction.js";
 
 const chief = {
   name: "Avery",
@@ -115,6 +115,54 @@ assert.ok(roleFromDescription("x".repeat(300)).length <= 80, "a role stays short
   assert.equal(inMemberVoice("Keeps the squad busy on the highest value work."), "Keeps the squad busy on the highest value work.");
   assert.equal(inMemberVoice(""), "");
   assert.equal(inMemberVoice(null), "");
+}
+
+// --- a brain card is configuration, not speech -----------------------------
+//
+// Two shapes reach the introduction that no member could say aloud. A purpose
+// is often an infinitive phrase, so quoting it drops a fragment between two
+// sentences. An escalation rule is usually an order, so quoting it has the
+// member telling the person what to do. Both turn up on the model path, which
+// is now the common one.
+
+{
+  assert.equal(
+    asMemberSpeech("To be the single control point for all squad work"),
+    "I'm here to be the single control point for all squad work",
+    "an infinitive purpose becomes a sentence"
+  );
+  assert.equal(
+    asMemberSpeech("Stop and ask the lead when priorities conflict"),
+    "I stop and ask the lead when priorities conflict",
+    "an order becomes a statement"
+  );
+  assert.equal(asMemberSpeech("Escalate anything outside your scope"), "I escalate anything outside my scope");
+  // A sentence that already is one is left alone.
+  assert.equal(asMemberSpeech("Keeps the squad busy on the highest value work."), "Keeps the squad busy on the highest value work.");
+  assert.equal(asMemberSpeech("Marcus owns squad-wide coordination."), "Marcus owns squad-wide coordination.");
+  // "To" alone is not an infinitive phrase, and a verb this does not know is
+  // left alone rather than mangled.
+  assert.equal(asMemberSpeech("To do"), "To do");
+  assert.equal(asMemberSpeech("Triage everything before lunch"), "Triage everything before lunch");
+  assert.equal(asMemberSpeech(""), "");
+  assert.equal(asMemberSpeech(null), "");
+}
+
+{
+  // End to end, on a card written the way a model writes one.
+  const text = introductionFor({
+    name: "Marcus",
+    role: "Chief of Staff",
+    skills: ["delegation"],
+    workspace: "/Users/x/autohand",
+    brainCard: {
+      purpose: "To be the single control point for all squad work",
+      escalationRules: "Stop and ask the lead when priorities conflict.",
+    },
+  });
+  assert.match(text, /I'm here to be the single control point/, "no fragment between the sentences");
+  assert.match(text, /I stop and ask the lead/, "the member says what it does, it does not give an order");
+  assert.doesNotMatch(text.split("Tell me what you need")[0], /(^|\. )Stop and ask/, "no bare imperative left");
 }
 
 console.log("check-member-introduction: ok");
