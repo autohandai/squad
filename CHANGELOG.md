@@ -99,6 +99,12 @@ list to the section for that version.
 - A deleted member came back on the next launch. Deleting removed it from
   storage, and the seed list read "missing from storage" as "never seen" and
   added it again (ADR-0038).
+- The setup guide moved out of the account menu into Settings, where you can
+  run it again whenever you like.
+- Right-clicking no longer offers the webview's Back and Reload. Text fields
+  keep their menu.
+- The Save button on a new member is neutral while there is nothing to save,
+  instead of a bright accent you cannot press.
 - A tool permission you changed no longer snaps back. Opening a member's chat
   posted a warm-up that named the member but described nothing about it, and
   the bridge used that to rewrite the member's permissions with empty allow,

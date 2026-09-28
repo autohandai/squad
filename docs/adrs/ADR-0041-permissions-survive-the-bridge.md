@@ -71,4 +71,5 @@ person is prompted rather than refused.
 - The permission policy should move to `src/lib/` so the ladder can be tested
   properly rather than grepped. Not done here: it is about three hundred lines
   of mechanical movement, and doing it in the same change as a security fix
-  would bury the fix.
+  would bury the fix. **Done in ADR-0042**; the regular expression this ADR
+  introduced is gone, replaced by a test that runs the policy.

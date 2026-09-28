@@ -277,6 +277,7 @@ import { applyProposal, proposalSummary, reviewMember } from "@/lib/chief-of-sta
 import { takeTable } from "@/lib/markdown-table";
 import { MEMBER_DESIGNER_ID } from "@/lib/member-draft";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
+import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
@@ -424,6 +425,7 @@ function normalizeImprovementSettings(value) {
 // the old parser kept its own stale copy and silently rejected anything added
 // after it was written.
 const SETTINGS_SECTION_IDS = Object.freeze([
+  "setup",
   "appearance",
   "language",
   "providers",
@@ -1791,198 +1793,6 @@ const FILE_GUARD_TARGET_TOOLS = [
   "delete_path",
 ];
 
-const BUILT_IN_TOOL_POLICY_GROUPS = [
-  {
-    id: "goals-planning",
-    title: "Goals & Planning",
-    tools: [
-      ["tools_registry", "allow"],
-      ["tool_search", "allow"],
-      ["ask_followup_question", "allow"],
-      ["todo_write", "allow"],
-      ["plan", "allow"],
-      ["exit_plan_mode", "allow"],
-      ["get_goal", "allow"],
-      ["create_goal", "ask"],
-      ["create_goal_from_template", "ask"],
-      ["update_goal", "ask"],
-      ["clear_goal", "ask"],
-      ["list_goal_templates", "allow"],
-      ["enqueue_goal", "ask"],
-      ["list_goal_queue", "allow"],
-      ["start_queued_goal", "ask"],
-      ["dequeue_goal", "ask"],
-      ["remove_queued_goal", "ask"],
-    ],
-  },
-  {
-    id: "profile-memory",
-    title: "Memory, Skills & Teams",
-    tools: [
-      ["skill", "allow"],
-      ["find_agent_skills", "allow"],
-      ["install_agent_skill", "ask"],
-      ["save_memory", "ask"],
-      ["recall_memory", "allow"],
-      ["smart_context_cropper", "allow"],
-      ["create_meta_tool", "ask"],
-      ["delegate_task", "ask"],
-      ["delegate_parallel", "ask"],
-      ["create_team", "ask"],
-      ["add_teammate", "ask"],
-      ["team_status", "allow"],
-      ["send_team_message", "ask"],
-    ],
-  },
-  {
-    id: "shell",
-    title: "Shell",
-    tools: [
-      ["shell", "ask"],
-      ["run_command", "ask"],
-      ["custom_command", "ask"],
-    ],
-  },
-  {
-    id: "filesystem-read",
-    title: "Filesystem Read & Inspect",
-    tools: [
-      ["read_file", "allow"],
-      ["fff_find", "allow"],
-      ["fff_grep", "allow"],
-      ["list_tree", "allow"],
-      ["file_stats", "allow"],
-      ["checksum", "ask"],
-    ],
-  },
-  {
-    id: "filesystem-write",
-    title: "Filesystem Write & Mutate",
-    tools: [
-      ["write_file", "ask"],
-      ["append_file", "ask"],
-      ["apply_patch", "ask"],
-      ["search_replace", "ask"],
-      ["notebook_edit", "ask"],
-      ["format_file", "ask"],
-      ["create_directory", "ask"],
-      ["rename_path", "ask"],
-      ["copy_path", "ask"],
-      ["delete_path", "block"],
-      ["add_dependency", "ask"],
-      ["remove_dependency", "ask"],
-    ],
-  },
-  {
-    id: "git-read",
-    title: "Git Read",
-    tools: [
-      ["git_status", "allow"],
-      ["git_list_untracked", "allow"],
-      ["git_diff", "allow"],
-      ["git_diff_range", "allow"],
-      ["git_log", "allow"],
-      ["git_branch", "allow"],
-      ["git_worktree_list", "allow"],
-      ["git_worktree_status_all", "allow"],
-      ["git_stash_list", "allow"],
-    ],
-  },
-  {
-    id: "git-write",
-    title: "Git Write",
-    tools: [
-      ["git_add", "ask"],
-      ["git_commit", "ask"],
-      ["auto_commit", "ask"],
-      ["git_push", "ask"],
-      ["git_fetch", "ask"],
-      ["git_pull", "ask"],
-      ["git_checkout", "ask"],
-      ["git_switch", "ask"],
-      ["git_merge", "ask"],
-      ["git_merge_abort", "ask"],
-      ["git_apply_patch", "ask"],
-      ["git_stash", "ask"],
-      ["git_stash_pop", "ask"],
-      ["git_stash_apply", "ask"],
-      ["git_stash_drop", "ask"],
-      ["git_cherry_pick", "ask"],
-      ["git_cherry_pick_abort", "ask"],
-      ["git_cherry_pick_continue", "ask"],
-      ["git_rebase", "ask"],
-      ["git_rebase_abort", "ask"],
-      ["git_rebase_continue", "ask"],
-      ["git_rebase_skip", "ask"],
-      ["git_reset", "block"],
-      ["git_worktree_add", "ask"],
-      ["git_worktree_remove", "ask"],
-      ["git_worktree_cleanup", "ask"],
-      ["git_worktree_run_parallel", "ask"],
-      ["git_worktree_sync", "ask"],
-      ["git_worktree_create_for_pr", "ask"],
-      ["git_worktree_create_from_template", "ask"],
-    ],
-  },
-  {
-    id: "web-browser",
-    title: "Web & Browser",
-    tools: [
-      ["web_search", "ask"],
-      ["fetch_url", "ask"],
-      ["web_repo", "ask"],
-      ["package_info", "allow"],
-      ["browser_screenshot", "allow"],
-      ["browser_navigate", "allow"],
-      ["browser_get_page_context", "allow"],
-      ["browser_get_element", "allow"],
-      ["browser_find_element", "allow"],
-      ["browser_wait_for_element", "allow"],
-      ["browser_get_tabs", "allow"],
-      ["browser_get_tab_groups", "allow"],
-      ["browser_read_network", "allow"],
-      ["browser_read_console", "allow"],
-      ["browser_click", "ask"],
-      ["browser_type", "ask"],
-      ["browser_scroll", "ask"],
-      ["browser_press_key", "ask"],
-      ["browser_execute_js", "ask"],
-    ],
-  },
-  {
-    id: "tasks-automation",
-    title: "Tasks & Automation",
-    tools: [
-      ["create_task", "ask"],
-      ["task_get", "allow"],
-      ["task_list", "allow"],
-      ["task_update", "ask"],
-      ["task_stop", "ask"],
-      ["task_output", "allow"],
-      ["sleep", "allow"],
-      ["cron_create", "ask"],
-      ["cron_delete", "ask"],
-      ["list_schedules", "allow"],
-      ["cancel_schedule", "ask"],
-    ],
-  },
-  {
-    id: "workspace-meta",
-    title: "Workspace & Review",
-    tools: [
-      ["enter_worktree", "ask"],
-      ["exit_worktree", "allow"],
-      ["project_tracker", "allow"],
-      ["request_directory_access", "ask"],
-      ["code_review", "allow"],
-    ],
-  },
-];
-
-const DEFAULT_BUILT_IN_TOOL_POLICIES = Object.fromEntries(
-  BUILT_IN_TOOL_POLICY_GROUPS.flatMap((group) => group.tools.map(([name, mode]) => [name, mode]))
-);
-
 const DEFAULT_AUTONOMY_LADDER_LEVEL = "edit-files";
 
 const AUTONOMY_LADDER_LEVELS = [
@@ -2068,16 +1878,6 @@ const AUTONOMY_LADDER_LEVELS = [
 
 const AUTONOMY_LADDER_LEVEL_IDS = AUTONOMY_LADDER_LEVELS.map((level) => level.id);
 const PR_READY_LADDER_LEVELS = new Set(["open-pr", "auto-merge-disabled"]);
-const MERGE_BLOCKED_TOOLS = new Set([
-  "git_merge",
-  "git_merge_abort",
-  "git_rebase",
-  "git_rebase_abort",
-  "git_rebase_continue",
-  "git_rebase_skip",
-  "git_reset",
-]);
-
 const MODEL_PROVIDER_OPTIONS = [
   "autohandai",
   "openrouter",
@@ -2469,135 +2269,6 @@ function toolModesForAutonomyLadder(levelId) {
   return modes;
 }
 
-function builtInPoliciesForAutonomyLadder(levelId) {
-  const rank = autonomyLadderRank(levelId);
-  const policies = Object.fromEntries(Object.keys(DEFAULT_BUILT_IN_TOOL_POLICIES).map((tool) => [tool, "block"]));
-  const setTools = (tools, mode) => {
-    for (const tool of tools) {
-      if (Object.prototype.hasOwnProperty.call(policies, tool)) {
-        policies[tool] = mode;
-      }
-    }
-  };
-  const setGroup = (groupId, mode) => {
-    const group = BUILT_IN_TOOL_POLICY_GROUPS.find((item) => item.id === groupId);
-    setTools((group?.tools || []).map(([tool]) => tool), mode);
-  };
-  // Each tool in a group already declares the mode it was designed for, most
-  // of them "ask". Applying those rather than one blanket mode keeps the
-  // grant as narrow as the group's own author intended.
-  const applyGroupDefaults = (groupId) => {
-    const group = BUILT_IN_TOOL_POLICY_GROUPS.find((item) => item.id === groupId);
-    for (const [tool, mode] of group?.tools || []) setTools([tool], mode);
-  };
-
-  setTools(
-    [
-      "tools_registry",
-      "tool_search",
-      "ask_followup_question",
-      "plan",
-      "list_goal_templates",
-      "recall_memory",
-      "smart_context_cropper",
-      "team_status",
-      // Using a skill the member is already configured with, and looking up
-      // which skills exist, are reads of its own profile rather than actions
-      // on the world. These were blocked at every level of the ladder, so a
-      // member could never use any skill it had; the whole feature was off.
-      "skill",
-      "find_agent_skills",
-    ],
-    "allow"
-  );
-  setTools(
-    [
-      "create_goal",
-      "create_goal_from_template",
-      "update_goal",
-      "clear_goal",
-      "enqueue_goal",
-      "dequeue_goal",
-      "remove_queued_goal",
-      "save_memory",
-      "delegate_task",
-      "delegate_parallel",
-      "create_team",
-      "add_teammate",
-      "send_team_message",
-      "create_meta_tool",
-    ],
-    "ask"
-  );
-
-  if (rank >= 1) {
-    // Installing a skill, writing memory or starting a teammate are changes,
-    // so they arrive at the mode their group declares, which for all of them
-    // is "ask". The person is prompted rather than refused.
-    applyGroupDefaults("profile-memory");
-  }
-
-  if (rank >= 3) {
-    setGroup("filesystem-read", "allow");
-    setGroup("git-read", "allow");
-    setTools(
-      [
-        "package_info",
-        "browser_screenshot",
-        "browser_navigate",
-        "browser_get_page_context",
-        "browser_get_element",
-        "browser_find_element",
-        "browser_wait_for_element",
-        "browser_read_network",
-        "browser_read_console",
-        "task_get",
-        "task_list",
-        "sleep",
-        "list_schedules",
-        "project_tracker",
-        "code_review",
-      ],
-      "allow"
-    );
-    setTools(
-      [
-        "shell",
-        "run_command",
-        "custom_command",
-        "web_search",
-        "fetch_url",
-        "web_repo",
-        "browser_click",
-        "browser_type",
-        "browser_scroll",
-        "browser_press_key",
-        "browser_execute_js",
-        "request_directory_access",
-      ],
-      "ask"
-    );
-  }
-
-  if (rank >= 4) {
-    setGroup("filesystem-write", "ask");
-    setGroup("tasks-automation", "ask");
-    setTools(["apply_patch", "format_file", "search_replace", "create_directory"], "allow");
-    setTools(["delete_path", "remove_dependency"], "block");
-  }
-
-  if (rank >= 5) {
-    setGroup("git-write", "ask");
-    setGroup("workspace-meta", "ask");
-    setTools(["exit_worktree", "project_tracker", "code_review"], "allow");
-    setTools(["git_push", "git_worktree_create_for_pr", "git_worktree_create_from_template"], "ask");
-  }
-
-  setTools([...MERGE_BLOCKED_TOOLS], "block");
-  setTools(["delete_path", "git_reset"], "block");
-  return policies;
-}
-
 function permissionPresetForAutonomyLadder(levelId) {
   const level = autonomyLadderLevelMeta(levelId);
   return {
@@ -2614,7 +2285,7 @@ function permissionPresetForAutonomyLadder(levelId) {
     allPathsAllowed: false,
     allUrlsAllowed: false,
     modes: toolModesForAutonomyLadder(level.id),
-    builtInPolicies: builtInPoliciesForAutonomyLadder(level.id),
+    builtInPolicies: builtInPoliciesForRank(autonomyLadderRank(level.id)),
   };
 }
 
@@ -8906,6 +8577,7 @@ function App() {
               />
             ) : isSettings ? (
               <SettingsPage
+                onOnboarding={openOnboarding}
                 updates={updates}
                 updatesChecking={updatesChecking}
                 onCheckUpdates={() => refreshUpdates(true)}
@@ -12096,7 +11768,6 @@ function AccountMenuButton({
             </div>
           </div>
           <div className="my-1 border-t border-border/70" />
-          <AccountMenuItem icon={ListChecks} label="Setup guide" onClick={() => choose(onOnboarding)} hasChevron />
           <AccountMenuItem icon={Monitor} label={copy.work || "Work"} onClick={() => choose(onMissionControl)} hasChevron />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} hasChevron />
           <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} hasChevron />
@@ -19754,16 +19425,17 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
           </FieldGroup>
         ) : null}
 
+        {/* The shared button already drops a disabled primary to a neutral
+            surface, which DESIGN.md asks for so it never reads as the page's
+            call to action. This one hard-coded its own colours and kept the
+            full accent fill at half opacity, so an empty page showed a bright
+            green Save with nothing to save. */}
         <div className="mt-16 flex flex-wrap items-center gap-3">
-          <Button
-            type="submit"
-            disabled={!isValid}
-            className="bg-[#181818] text-white hover:bg-[#2a2a2a] dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/90"
-          >
-            Save & Enable
+          <Button type="submit" disabled={!isValid}>
+            {copyText.saveMember || "Save member"}
           </Button>
           <Button type="button" variant="outline" onClick={onCancel}>
-            Cancel
+            {copyText.cancel || "Cancel"}
           </Button>
         </div>
       </form>
@@ -24198,6 +23870,7 @@ function SettingsAnalyticsPage({ locale = DEFAULT_LOCALE, copy = getLocaleCopy(D
 }
 
 function SettingsPage({
+  onOnboarding,
   updates = null,
   updatesChecking = false,
   onCheckUpdates,
@@ -24317,6 +23990,7 @@ function SettingsPage({
     { id: "relay", icon: Share2, label: copy.relay || "Relay", detail: relayStatusDetail(relayConfig, relayStatus, copy) },
     { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
   ];
+  settingsSections.unshift({ id: "setup", icon: ListChecks, label: copy.setupGuide || "Setup guide", detail: copy.setupGuideDetail || "Run the first-run checks again" });
   const requestedInitialSection = settingsSections.some((section) => section.id === initialSection) ? initialSection : "";
   const [activeSectionId, setActiveSectionId] = useState(requestedInitialSection || "appearance");
 
@@ -24650,6 +24324,20 @@ function SettingsPage({
                   {formatLocalizedNumber(counts.tasks || 0, activeLocale)}
                 </Badge>
               </a>
+            </section>
+
+            {/* Onboarding, not an account action. It used to sit in the
+                account menu beside Sign out, where a first-run checklist has
+                no business being, and there was no way back to it. */}
+            <section id="settings-setup" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
+              <SettingsSectionHeader
+                title={copy.setupGuide || "Setup guide"}
+                description={copy.setupGuideDetail || "Run the first-run checks again: runtime, account, model provider, workspace and your first squad member."}
+              />
+              <Button type="button" variant="outline" onClick={onOnboarding} disabled={!onOnboarding}>
+                <ListChecks data-icon="inline-start" />
+                {copy.runSetupGuide || "Run the setup guide"}
+              </Button>
             </section>
 
             <section id="settings-updates" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
@@ -26145,6 +25833,21 @@ const rootElement = document.getElementById("root");
   const html = document.documentElement;
   html.dataset.shell = "desktop";
   html.dataset.platform = /macos|darwin|Macintosh/i.test(agent) ? "mac" : /windows/i.test(agent) ? "windows" : "linux";
+  // The webview's own context menu offers Back and Reload, which are browser
+  // actions in something that is not a browser: Back has no meaning here and
+  // Reload throws away in-flight work. Text fields keep their menu, because
+  // cut, copy and paste are the reason anyone right-clicks in one.
+  document.addEventListener(
+    "contextmenu",
+    (event) => {
+      const target = event.target;
+      const editable =
+        target instanceof HTMLElement &&
+        (target.isContentEditable || target.closest("input, textarea, [contenteditable='true']"));
+      if (!editable) event.preventDefault();
+    },
+    { capture: true }
+  );
 })();
 
 const root = globalThis.__autohandSquadRoot || createRoot(rootElement);

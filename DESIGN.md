@@ -98,6 +98,10 @@
 
 - The desktop window has no title bar of its own, so the shell reserves a band at the top for the traffic lights and renders one empty fixed strip that owns the window drag. It is the only drag region in the app: dragging delegated to page headers only works on the slivers between their children, and disappears entirely on a page that renders no such header.
 
+- The setup guide is onboarding, not an account action. It lives in Settings as its own section and can be run again at any time; it is not in the account menu beside Sign out.
+- In the desktop shell the webview's own context menu is suppressed, because Back and Reload are browser actions in something that is not a browser. Text fields keep theirs, since cut, copy and paste are the reason anyone right-clicks in one.
+- A disabled primary button must come from the shared button primitive, which drops it to a neutral surface. A button that hard-codes its own accent colours keeps the fill when disabled and still reads as the page's call to action.
+
 ## Agent Chat
 
 - The header is one row: avatar, name (opens the profile preview), role, and a meta line with a live status dot (Online / Working), workspace, model, and a **Runs with** chip that opens the engine switcher. Actions on the right are **New chat** plus icon buttons for automation, tasks, and runs.

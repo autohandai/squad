@@ -104,25 +104,9 @@ try {
   const updated = await configFor(id);
   assert.ok(listHas(updated, "allowPatterns", "skill"), "a call that does describe the member still updates it");
 
-  // --- the ladder has to grant the skill tools at all ----------------------
-  //
-  // The ladder lives in src/App.jsx, which cannot be imported from Node, so
-  // this reads the source. It is a weaker test than the ones above and it
-  // exists because the failure it guards was silent: every tool started
-  // blocked, the skills group was never granted, and no member could use a
-  // skill it had. A rename will trip this; that is the cheaper mistake.
-
-  const app = await readFile(join(root, "src", "App.jsx"), "utf8");
-  const ladder = app.slice(app.indexOf("function builtInPoliciesForAutonomyLadder"));
-  const body = ladder.slice(0, ladder.indexOf("\nfunction "));
-  assert.ok(body.includes('"skill"'), "the ladder grants the skill tool at some level");
-  assert.ok(body.includes('"find_agent_skills"'), "and looking up which skills exist");
-  assert.ok(
-    body.includes('applyGroupDefaults("profile-memory")'),
-    "the rest of the skills and memory group is granted at its own declared modes, not blocked outright"
-  );
-  const groups = app.slice(app.indexOf("const BUILT_IN_TOOL_POLICY_GROUPS"));
-  assert.ok(groups.slice(0, groups.indexOf("\n];")).includes('["skill"'), "skill is still a known tool");
+  // The ladder itself is tested by running it, in
+  // scripts/check-permission-policy.mjs, now that the policy lives in
+  // src/lib and Node can import it.
 
   console.log("check-permissions: ok");
 } finally {
