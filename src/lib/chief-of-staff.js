@@ -19,6 +19,38 @@
 export const MIN_FAILURES_TO_REMEMBER = 2;
 /** The same command this many times is a routine, not a one-off. */
 export const MIN_RUNS_TO_LEARN = 3;
+/**
+ * One shape for a memory entry, wherever it came from.
+ *
+ * `applyProposal` writes `{ id, text, at, source }`, and the app used to save
+ * members with `memory.map((item) => String(item))`, which turned every one of
+ * those into the string "[object Object]". The entry was destroyed on save, so
+ * the lesson was never known, so the same one was proposed again on the next
+ * review. A user watched a member repeat the same sentence every hour for a
+ * night. Entries that are already that wreckage are dropped, because nothing
+ * can be recovered from them.
+ */
+export function normalizeMemoryEntries(memory) {
+  const list = Array.isArray(memory) ? memory : [];
+  const out = [];
+  const seen = new Set();
+  for (const entry of list) {
+    const text = entryText(entry);
+    if (!text || text === "[object Object]") continue;
+    const key = normalize(text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const source = entry && typeof entry === "object" ? entry : {};
+    out.push({
+      id: String(source.id || `mem_${slug(text)}`),
+      text,
+      at: String(source.at || ""),
+      source: String(source.source || ""),
+    });
+  }
+  return out;
+}
+
 /** A memory older than this wants confirming. */
 export const STALE_MEMORY_DAYS = 30;
 /** This many failures in one window means the way it works needs changing. */

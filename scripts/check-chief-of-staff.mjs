@@ -13,6 +13,7 @@ import {
   MIN_RUNS_TO_LEARN,
   STALE_MEMORY_DAYS,
   applyProposal,
+  normalizeMemoryEntries,
   proposalSummary,
   reviewMember,
 } from "../src/lib/chief-of-staff.js";
@@ -281,6 +282,49 @@ for (const bad of [null, undefined, "x", 42, {}, { agent: null }]) {
   const review = reviewMember(bad);
   assert.ok(Array.isArray(review.proposals), `proposals is always an array for ${JSON.stringify(bad)}`);
   assert.equal(typeof review.hasWork, "boolean");
+}
+
+// --- a lesson learnt once is not proposed again -----------------------------
+//
+// A user watched a member repeat the same sentence every hour through a night:
+// "Remember: workspace is required; choose a local project folder or git repo".
+// The review logic was right, and the app was saving members with
+// `memory.map((item) => String(item))`, which turned every entry written here
+// into the string "[object Object]". The lesson was destroyed on save, so it
+// was never known, so it was proposed again on the next review, forever.
+
+{
+  const now = new Date();
+  const records = [1, 2, 3].map(() => ({
+    kind: "run",
+    status: "failed",
+    at: now.toISOString(),
+    summary: "Run failed: workspace is required; choose a local project folder or git repo",
+  }));
+
+  let agent = { id: "kai", name: "Kai", memory: [], skills: [], brainCard: {} };
+  const rounds = [];
+  for (let round = 0; round < 3; round += 1) {
+    const review = reviewMember({ agent, records, now });
+    rounds.push(review.proposals.filter((proposal) => proposal.kind === "memory.add").length);
+    for (const proposal of review.proposals) agent = { ...agent, ...applyProposal(agent, proposal, now) };
+    // Exactly what the app does when it saves a member.
+    agent = { ...agent, memory: normalizeMemoryEntries(agent.memory) };
+  }
+  assert.deepEqual(rounds, [1, 0, 0], "the lesson is proposed once, then remembered");
+  assert.equal(agent.memory.length, 1, "and one entry is kept, not a string of wreckage");
+  assert.match(agent.memory[0].text, /workspace is required/);
+}
+
+{
+  // The shape survives a round trip, whatever it arrived as.
+  assert.deepEqual(normalizeMemoryEntries(null), []);
+  assert.deepEqual(normalizeMemoryEntries("nonsense"), []);
+  assert.equal(normalizeMemoryEntries(["[object Object]"]).length, 0, "old wreckage is dropped, not carried");
+  assert.equal(normalizeMemoryEntries(["a plain lesson"])[0].text, "a plain lesson", "a legacy string becomes an entry");
+  assert.equal(normalizeMemoryEntries([{ text: "same" }, { text: " Same " }]).length, 1, "one entry per lesson");
+  const kept = normalizeMemoryEntries([{ id: "m1", text: "keep me", at: "t", source: "chief-of-staff" }])[0];
+  assert.deepEqual(kept, { id: "m1", text: "keep me", at: "t", source: "chief-of-staff" }, "a good entry is untouched");
 }
 
 console.log("check-chief-of-staff: ok");

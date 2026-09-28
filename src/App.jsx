@@ -273,7 +273,7 @@ import { RelaySettings } from "@/components/settings/RelaySettings";
 import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel, peopleSentence, selectWorkspace } from "@/lib/workspaces";
 import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/member-availability";
 import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
-import { applyProposal, proposalSummary, reviewMember } from "@/lib/chief-of-staff";
+import { applyProposal, normalizeMemoryEntries, proposalSummary, reviewMember } from "@/lib/chief-of-staff";
 import { takeTable } from "@/lib/markdown-table";
 import { MEMBER_DESIGNER_ID } from "@/lib/member-draft";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
@@ -2963,7 +2963,10 @@ function normalizeAgentCopy(agent) {
     harness: normalizeHarnessAssignmentCopy(agent.harness),
     projects,
     brainCard,
-    memory: Array.isArray(agent.memory) ? agent.memory.map((item) => String(item || "")) : agent.memory,
+    // Memory entries are objects. Stringifying them turned every one into
+    // "[object Object]" on save, so a member never remembered what it had
+    // learnt and proposed the same lesson again every hour (ADR-0048).
+    memory: normalizeMemoryEntries(agent.memory),
   };
 }
 
@@ -7856,6 +7859,40 @@ function App() {
   // Goal 09: launch a recipe via the shared launch flow. The recipe id flows
   // into startAutohand, which derives the mode/policy/model overrides and tags
   // the task so its evidence and done criteria can be scored after the run.
+  // Replay: start a failed run again, with the same member, workspace and
+  // prompt. The button that said "Replay" used to be a link that added a
+  // query parameter and did nothing, which is why it looked broken.
+  const [replayingRowId, setReplayingRowId] = useState("");
+  async function replayRow(row) {
+    const agentId = row?.owner?.id;
+    const prompt = String(row?.run?.prompt || row?.run?.command || row?.task?.title || "").trim();
+    if (!agentId || !prompt || replayingRowId) return;
+    const agent = agents.find((item) => item.id === agentId);
+    if (!agent) return;
+    const workspace = normalizeSquadWorkspacePath(row.workspace || agent.workspace, runtime);
+    setReplayingRowId(row.id);
+    try {
+      const run = await api("/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          agentId,
+          title: row?.task?.title || prompt,
+          prompt,
+          workspace,
+          profile: buildAgentProfile(agent, workspace),
+          agent: agentLaunchPayload(agent, workspace),
+        }),
+      });
+      setRuns((current) => [run, ...current]);
+      navigate(missionControlPath({ run: run.id }));
+    } catch (error) {
+      // The row keeps its failed state and says why the retry did not start.
+      setRunsError(error?.message || "Could not start that run again.");
+    } finally {
+      setReplayingRowId("");
+    }
+  }
+
   function startRecipe({ recipe, recipeId, agentId, prompt }) {
     const resolved = recipe || findRecipeById(recipeId);
     if (!resolved) return;
@@ -8574,6 +8611,8 @@ function App() {
                 workspacesError={workspacesError}
                 counts={sidebarCounts}
                 onLaunchRecipe={startRecipe}
+                onReplayRow={replayRow}
+                replayingRowId={replayingRowId}
                 activeAgentId={activeAgent?.id}
               />
             ) : isSettings ? (
@@ -14917,6 +14956,8 @@ function MissionControlPage({
   workspacesError = "",
   counts = EMPTY_MISSION_COUNTS,
   onLaunchRecipe,
+  onReplayRow,
+  replayingRowId = "",
   activeAgentId,
 }) {
   const params = new URLSearchParams(route.split("?")[1] || "");
@@ -15017,6 +15058,8 @@ function MissionControlPage({
             copy={copy}
             navigate={navigate}
             selectedRow={selectedRow}
+            onReplayRow={onReplayRow}
+            replayingRowId={replayingRowId}
           />
         ) : loadState !== "loading" ? (
           <EmptyBlock icon={Monitor} title="No squad work yet" body="Start a squad member run and it will show up here." />
@@ -15795,7 +15838,7 @@ function MissionEvaluationBadge({ state, copy = getLocaleCopy(DEFAULT_LOCALE) })
 // table above 1280px and a stack of cards below it, so the page had two
 // layouts for one list and neither fitted the column. A record is a title,
 // what moved, who owns it and what to do next; none of that needs a grid.
-function MissionControlTable({ rows = [], evaluationStates, selectedRow, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), navigate }) {
+function MissionControlTable({ rows = [], evaluationStates, selectedRow, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, onReplayRow, replayingRowId = "" }) {
   return (
     <section aria-labelledby="mission-work-table">
       <div className="flex items-baseline justify-between gap-3 pb-2">
@@ -15837,7 +15880,7 @@ function MissionControlTable({ rows = [], evaluationStates, selectedRow, locale 
             <MissionRiskAndEvidence row={row} />
             <MissionRowLinks row={row} navigate={navigate} />
             <div className="mt-2">
-              <MissionNextActionButton row={row} navigate={navigate} />
+              <MissionNextActionButton row={row} navigate={navigate} onReplay={onReplayRow} replaying={replayingRowId === row.id} />
             </div>
           </div>
         ))}
@@ -15928,19 +15971,34 @@ function MissionStatusPill({ status, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   );
 }
 
-function MissionNextActionButton({ row, navigate }) {
+function MissionNextActionButton({ row, navigate, onReplay, replaying = false }) {
   const action = row.nextAction;
   const Icon = action.icon;
+  const shell =
+    "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring disabled:opacity-60";
+
+  // Replay starts the run again. It is a button because it does something;
+  // the others are links because they take you somewhere.
+  if (action.id === "replay") {
+    if (!onReplay) return null;
+    return (
+      <button
+        type="button"
+        disabled={replaying}
+        onClick={() => onReplay(row)}
+        className={cn(shell, "bg-primary text-primary-foreground hover:bg-primary/90")}
+      >
+        <Icon className={cn("size-3.5", replaying && "animate-spin")} aria-hidden="true" />
+        {replaying ? "Starting…" : action.label}
+      </button>
+    );
+  }
+
   return (
     <MissionAnchor
       href={action.path}
       navigate={navigate}
-      className={cn(
-        "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring",
-        ["replay", "handoff"].includes(action.id)
-          ? "bg-primary text-primary-foreground hover:bg-primary/90"
-          : "bg-muted text-foreground hover:bg-muted/70"
-      )}
+      className={cn(shell, "bg-muted text-foreground hover:bg-muted/70")}
     >
       <Icon className="size-3.5" aria-hidden="true" />
       {action.label}
@@ -17006,7 +17064,7 @@ function missionRowFromTask(task, run, agents, runtime, workspaces) {
     blocker: missionBlocker(task),
     permissionWarnings: owner ? permissionWarningsForAgent(owner, runtime, workspacePath) : [],
     evidence: missionLastEvidence(task, run),
-    nextAction: missionNextAction(status, detailPath, runPath),
+    nextAction: missionNextAction(status, { detailPath, ownerId: owner?.id }),
     updatedAt: task.updatedAt || run?.updatedAt || run?.startedAt || task.createdAt,
   };
 }
@@ -17040,7 +17098,7 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
     blocker: status === "failed" ? "Standalone run failed before a parent task was linked." : "",
     permissionWarnings: owner ? permissionWarningsForAgent(owner, runtime, workspacePath) : [],
     evidence: { type: "command", label: run.command || "Run command not recorded." },
-    nextAction: missionNextAction(status, detailPath, detailPath),
+    nextAction: missionNextAction(status, { detailPath, ownerId: owner?.id }),
     updatedAt: run.updatedAt || run.completedAt || run.startedAt || new Date().toISOString(),
   };
 }
@@ -17106,13 +17164,27 @@ function missionEvidenceType(text) {
   return "evidence";
 }
 
-function missionNextAction(status, detailPath, runPath) {
-  if (status === "completed") return { id: "archive", label: "Archive", icon: History, path: detailPath };
-  if (status === "failed") return { id: "replay", label: "Replay", icon: RefreshCw, path: runPath || detailPath };
-  if (status === "blocked") return { id: "handoff", label: "Hand Off", icon: Workflow, path: detailPath };
-  if (status === "handoff-pending") return { id: "review", label: "Review", icon: ClipboardCheck, path: detailPath };
-  if (status === "pending") return { id: "approve", label: "Approve", icon: BadgeCheck, path: detailPath };
-  return { id: "continue", label: "Continue", icon: Play, path: runPath || detailPath };
+/**
+ * What to do next about a row, and where that actually happens.
+ *
+ * These used to read Continue, Replay, Hand Off, Review, Approve and Archive,
+ * and every one of them was a link that added a query parameter to the page
+ * you were already on. Clicking Continue changed the URL and nothing else:
+ * measured, the page was byte-identical before and after. A verb on a control
+ * is a promise, so either the control keeps it or it stops saying it.
+ *
+ * Replay is the one that genuinely acts, because a failed run can be started
+ * again. The rest now name the surface that owns the decision and go there.
+ */
+function missionNextAction(status, { detailPath, ownerId } = {}) {
+  const chat = ownerId ? memberChatPath(ownerId) : detailPath;
+  if (status === "failed") return { id: "replay", label: "Replay", icon: RefreshCw, path: "" };
+  if (status === "handoff-pending" || status === "pending") {
+    return { id: "review", label: "Review", icon: ClipboardCheck, path: inboxPath() };
+  }
+  if (status === "running" || status === "launching") return { id: "open", label: "Open chat", icon: Play, path: chat };
+  if (status === "blocked") return { id: "open", label: "Open chat", icon: Workflow, path: chat };
+  return { id: "details", label: "Details", icon: History, path: detailPath };
 }
 
 function missionStatusClass(status) {
