@@ -174,12 +174,57 @@ html[data-shell="desktop"] .app-main {
 html[data-shell="desktop"] .app-shell-decor {
   display: none;
 }
-/* Full-size content view: the traffic lights sit in the top 28px, so any
-   full-height column that starts at the top of the window has to clear them.
-   One rule, so a new sidebar cannot forget it. */
-html[data-shell="desktop"][data-platform="mac"] .app-sidebar,
-html[data-shell="desktop"][data-platform="mac"] .app-titlebar-inset {
-  padding-top: 28px;
+/* Full-size content view: the window has no title bar of its own, so the page
+   has to reserve the band the traffic lights sit in AND provide something to
+   drag the window by.
+ *
+ * Dragging used to be delegated to whichever header a page happened to render,
+ * and those headers are full of children. Tauri starts a drag only when the
+ * pointer lands on the annotated element itself, so only the padding slivers
+ * between children worked, and a page that rendered no such header (every
+ * member profile, including Permissions) could not be dragged at all.
+ *
+ * `.app-drag-strip` is empty by design: with no children every pixel of it is
+ * a direct hit. It is the only drag region in the app.
+ *
+ * The band is reserved on the shell root rather than per column, so a new page
+ * or a new sidebar cannot forget it. `min-h-screen` inside the shell is
+ * rewritten to subtract the band; without that every page would overflow by
+ * exactly the inset and show a scrollbar it does not need. */
+html[data-shell="desktop"] {
+  --titlebar-inset: 0px;
+}
+html[data-shell="desktop"][data-platform="mac"] {
+  --titlebar-inset: 28px;
+}
+html[data-shell="desktop"] .app-drag-strip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-inset);
+  z-index: 60;
+}
+html[data-shell="desktop"] .app-shell-root {
+  padding-top: var(--titlebar-inset);
+}
+/* A full-height utility measures the viewport, not this padded shell, so
+   every one of them is exactly the inset too tall and shows a scrollbar the
+   page does not need. The `lg:` variants are rewritten inside Tailwind's own
+   `lg` query so they still do nothing below it. */
+html[data-shell="desktop"] .min-h-screen {
+  min-height: calc(100svh - var(--titlebar-inset));
+}
+html[data-shell="desktop"] .h-screen {
+  height: calc(100svh - var(--titlebar-inset));
+}
+@media (min-width: 64rem) {
+  html[data-shell="desktop"] .lg\:h-screen {
+    height: calc(100svh - var(--titlebar-inset));
+  }
+  html[data-shell="desktop"] .lg\:min-h-screen {
+    min-height: calc(100svh - var(--titlebar-inset));
+  }
 }
 html[data-shell="desktop"] [data-tauri-drag-region] {
   -webkit-user-select: none;

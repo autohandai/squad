@@ -99,6 +99,10 @@ list to the section for that version.
 - A deleted member came back on the next launch. Deleting removed it from
   storage, and the seed list read "missing from storage" as "never seen" and
   added it again (ADR-0038).
+- The window can be dragged from anywhere along the top band, on every page.
+  Dragging used to depend on whichever header a page rendered, so it worked
+  only on slivers and not at all on a member's Permissions page. Content also
+  no longer starts under the traffic lights (ADR-0040).
 - Skills you already have in `~/.autohand/skills`, `~/.claude/skills` or
   `~/.agents/skills`, and the same folders in your workspace, are now found
   and installed. They used to be invisible, so a member asking for one failed

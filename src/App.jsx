@@ -8695,6 +8695,10 @@ function App() {
         </DialogContent>
       </Dialog>
       <div className="app-shell-root relative min-h-screen overflow-x-clip bg-background text-foreground">
+        {/* The window's only drag region. Empty on purpose: Tauri drags only
+            when the pointer lands on the annotated element itself, so an
+            element with children is an element you mostly cannot drag. */}
+        <div className="app-drag-strip" data-tauri-drag-region aria-hidden="true" />
         <div className={cn("app-shell-decor dark-grid pointer-events-none fixed inset-0 opacity-35", isCreate && "hidden")} />
         <div className="app-shell-decor pointer-events-none fixed inset-x-0 top-0 h-px signal-line" />
         <div
@@ -11841,7 +11845,7 @@ function SidebarContent({
 
 function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onCollapse, updateAvailable = false }) {
   return (
-    <div className="app-titlebar-inset flex h-full min-h-screen flex-col bg-background">
+    <div className="flex h-full min-h-screen flex-col bg-background">
       <div className="flex h-14 items-center gap-2 px-4">
         <Button
           variant="ghost"
@@ -13374,7 +13378,7 @@ function Conversation({
 
   return (
     <div className="flex h-[calc(100svh-4rem)] min-h-[560px] w-full max-w-full flex-col overflow-x-hidden bg-background/75 lg:h-screen lg:min-h-screen">
-      <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6" data-tauri-drag-region>
+      <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <AgentAvatar agent={agent} className="size-9" />
           <div className="min-w-0">

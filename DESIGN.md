@@ -96,6 +96,8 @@
 - Status meanings are documentation and do not live on the page.
 - The page uses the repo's own tokens. It used to hard-code a light palette and force it in dark mode, so the whole surface rendered white inside a dark app.
 
+- The desktop window has no title bar of its own, so the shell reserves a band at the top for the traffic lights and renders one empty fixed strip that owns the window drag. It is the only drag region in the app: dragging delegated to page headers only works on the slivers between their children, and disappears entirely on a page that renders no such header.
+
 ## Agent Chat
 
 - The header is one row: avatar, name (opens the profile preview), role, and a meta line with a live status dot (Online / Working), workspace, model, and a **Runs with** chip that opens the engine switcher. Actions on the right are **New chat** plus icon buttons for automation, tasks, and runs.
