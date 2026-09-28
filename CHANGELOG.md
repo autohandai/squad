@@ -99,6 +99,10 @@ list to the section for that version.
 - A deleted member came back on the next launch. Deleting removed it from
   storage, and the seed list read "missing from storage" as "never seen" and
   added it again (ADR-0038).
+- **The start-up screen wears the product.** The window you see while the app
+  boots now carries the mark and the Autohand typeface on the same background
+  as the app, so nothing flashes at the handover, and it says how long it has
+  been waiting and when it gives up (ADR-0047).
 - **Squad is the roster, Work is the log.** The Squad page spent more than
   half the first screen before showing a member; it now takes the Work page's
   layout, fits one screen, and reads the same at every width. The recent-task

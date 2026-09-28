@@ -5,31 +5,95 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Autohand Squad</title>
 <style>
-  :root { color-scheme: light dark; --fg: #111; --muted: #6b6b6b; --bg: #fff; --line: #e6e6e6; }
-  @media (prefers-color-scheme: dark) { :root { --fg: #f2f2f2; --muted: #9a9a9a; --bg: #0b0b0b; --line: #262626; } }
-  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; }
+  /* This is the screen you actually see while the app starts. Tauri serves it
+     as the window's frontend while the Rust bootstrap runs on a worker
+     thread, so it is a standalone page: its mark and its typeface sit beside
+     it rather than coming from the app bundle.
+
+     It is built to match the React start-up screen that follows it, so the
+     handover costs no visible movement. Same background, same mark size, same
+     column, same row rhythm. Only the words change, which is honest, because
+     at that point a different program is reporting. */
+  @font-face {
+    font-family: "Autohand Sans";
+    src: url("assets/AutohandSans-Variable.woff2") format("woff2");
+    font-weight: 400 700;
+    font-display: block;
+  }
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #171717;
+    --muted: #737373;
+    --line: #dedede;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000000; --fg: #faf9f5; --muted: #8a8a8a; --line: #242424; }
+  }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 15px/1.6 "Autohand Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
   main { min-height: 100%; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
-  .card { width: min(28rem, 100%); }
-  h1 { font-size: 18px; margin: 0 0 4px; }
-  p { margin: 0; color: var(--muted); }
-  .row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-  .dot { width: 10px; height: 10px; border-radius: 999px; background: var(--fg); animation: pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 0%, 100% { opacity: .35 } 50% { opacity: 1 } }
-  .steps { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; font-size: 13px; color: var(--muted); }
-  .steps li { margin: 4px 0; }
+  .column { width: min(20rem, 100%); animation: enter 220ms cubic-bezier(0.4, 0, 0.2, 1) both; }
+  @keyframes enter { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
+  /* "dark" and "light" name the background the mark is drawn for, matching
+     BRAND_MARKS in the app, so the pairing is the same in both places. */
+  .mark { width: 56px; height: 56px; display: block; object-fit: contain; }
+  .mark.for-dark { display: none; }
+  @media (prefers-color-scheme: dark) { .mark.for-dark { display: block; } .mark.for-light { display: none; } }
+  h1 { font-size: 15px; font-weight: 600; margin: 20px 0 2px; letter-spacing: -0.01em; }
+  .lede { margin: 0; font-size: 13px; color: var(--muted); }
+  ul { list-style: none; margin: 20px 0 0; padding: 0; border-top: 1px solid var(--line); }
+  li { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  /* Every row is pending, and says so, because nothing here knows otherwise
+     yet: the Rust bootstrap emits no progress to this page. A row that
+     animated as if it had passed would be inventing a fact. */
+  .dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; opacity: 0.45; flex: none; }
+  li:first-child .dot { opacity: 1; animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+  .tail { margin: 14px 0 0; font-size: 12px; color: var(--muted); min-height: 1.5em; }
+  @media (prefers-reduced-motion: reduce) {
+    .column { animation: none; }
+    li:first-child .dot { animation: none; opacity: 1; }
+  }
 </style>
 </head>
 <body>
 <main>
-  <div class="card">
-    <div class="row"><span class="dot" aria-hidden="true"></span><h1>Starting Autohand Squad</h1></div>
-    <p id="status">Checking the local runtime…</p>
-    <ul class="steps">
-      <li>Preflight: state directory, bundled runtime, free ports</li>
-      <li>Starting the daemon and the web bridge</li>
-      <li>Waiting for the bridge to answer</li>
+  <div class="column">
+    <img class="mark for-dark" src="assets/mark-dark.png" alt="" aria-hidden="true" decoding="async" />
+    <img class="mark for-light" src="assets/mark-light.png" alt="" aria-hidden="true" decoding="async" />
+    <h1>Starting Autohand Squad</h1>
+    <p class="lede">Checking the local runtime.</p>
+    <ul>
+      <li><span class="dot" aria-hidden="true"></span>Preflight: state directory, bundled runtime, free ports</li>
+      <li><span class="dot" aria-hidden="true"></span>Starting the daemon and the web bridge</li>
+      <li><span class="dot" aria-hidden="true"></span>Waiting for the bridge to answer</li>
     </ul>
+    <p class="tail" id="tail" role="status" aria-live="polite"></p>
   </div>
 </main>
+<script>
+  // The two things this screen actually knows: how long it has been waiting,
+  // and when the bootstrap gives up. A normal start answers in under a
+  // second, so nothing appears before 1.2s and a healthy launch never flashes
+  // a wait state. Whole seconds, no easing: a number that eases is harder to
+  // read and implies a smoothness this does not have.
+  var CEILING = 30;
+  var GATE = 1200;
+  var PROMISE_AT = 24;
+  var started = Date.now();
+  var tail = document.getElementById("tail");
+  setInterval(function () {
+    var elapsed = Date.now() - started;
+    if (elapsed < GATE) return;
+    var seconds = Math.floor(elapsed / 1000);
+    tail.textContent = seconds >= PROMISE_AT
+      ? "Waiting " + seconds + "s. If nothing answers by " + CEILING + "s, Autohand Squad will say what it found in the logs."
+      : "Waiting " + seconds + "s. Stops at " + CEILING + ".";
+  }, 250);
+</script>
 </body>
 </html>

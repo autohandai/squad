@@ -145,6 +145,7 @@
 - The designed member arrives as a member, with a name in a borderless heading, its role beneath, and a portrait picked from its own role and name. The fifty-four-portrait picker waits behind "Choose another portrait". Filling the page never scrolls it or takes focus, so the line saying whether a model or the description designed it stays in view.
 
 - "Try asking" is built from the member's own role, skills and workspace, so no two members offer the same prompts and none contain a placeholder.
+- The desktop start-up screen is the native page Tauri serves while the Rust bootstrap runs, and it is built to match the React screen that follows so the handover costs no visible movement: same background, same 56px mark, same column, same typeface, which ships beside it. Its check rows do not animate, because nothing reports their state yet and a row that ticked would be inventing a fact. The wait says how long it has been and when it stops, after a gate long enough that a normal start never shows it.
 - The window is never blank: an inline boot screen paints the mark and one line before the bundle parses, then real start-up checks replace it, with member avatars settling in as the squad is read. No progress bars, because a bar that measures nothing is a lie told smoothly.
 
 - A member picks up a tool the work kept failing without, and adds a line to its own escalation rules when a run of work goes badly. Both are announced in its own conversation, never applied silently.
