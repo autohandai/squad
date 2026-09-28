@@ -19335,6 +19335,9 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   const template = selectedTemplate || roleTemplates[0] || CUSTOM_ROLE_TEMPLATE;
   const runtimeShell = useMemo(() => ({ workspaceRoot, defaultWorkspace }), [workspaceRoot, defaultWorkspace]);
   const nameInputRef = useRef(null);
+  // The template id Design it just created, so the focus effect can leave the
+  // page where the person left it.
+  const designedTemplateRef = useRef("");
   // Stable identities, so a memoised card is not re-rendered by a new
   // function on every keystroke.
   const handleRoleNameChange = useCallback((roleId, nextName) => {
@@ -19382,7 +19385,8 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
           brainCard: { ...createEmptyCustomRoleDraft().brainCard, ...designed.brainCard },
           sections: { ...createEmptyCustomRoleDraft().sections, ...(designed.instructions ? { identity: designed.instructions } : {}) },
         },
-        designed.name || ""
+        designed.name || "",
+        { designed: true }
       );
       setDesignNote(
         data?.source === "model"
@@ -19421,8 +19425,14 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   }, [selectedTemplate]);
 
   useEffect(() => {
-    if (!templateId) return;
-    const focusFrame = requestAnimationFrame(() => nameInputRef.current?.focus());
+    if (!templateId) return undefined;
+    // Focusing the name field scrolls it into view. When the person picked the
+    // card themselves that is right, because the card is under their cursor.
+    // When Design it produced the card it is hundreds of pixels away, and the
+    // jump carried the line explaining what was designed off the top of the
+    // screen. So: never move the page, and let them choose to go (ADR-0035).
+    if (designedTemplateRef.current === templateId) return undefined;
+    const focusFrame = requestAnimationFrame(() => nameInputRef.current?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(focusFrame);
   }, [templateId]);
 
@@ -19445,8 +19455,11 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     setAvatarError("");
   }
 
-  function createCustomTemplate(templateDraft, initialName = "") {
+  function createCustomTemplate(templateDraft, initialName = "", { designed = false } = {}) {
     const id = `custom-role-${Date.now().toString(36)}`;
+    // A designed role must not pull the page to itself; a hand-written one is
+    // already where the person is looking.
+    if (designed) designedTemplateRef.current = id;
     const description = templateDraft.description.trim();
     const customTemplate = {
       id,
