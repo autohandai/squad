@@ -7,8 +7,10 @@
 // See docs/adrs/ADR-0031-member-draft-skill.md.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
+  MEMBER_DESIGNER_ID,
   DRAFT_FIELDS,
   draftFromDescription,
   draftInstruction,
@@ -115,6 +117,29 @@ for (const bad of [null, undefined, 42, {}, []]) {
     assert.match(instruction, new RegExp(field), `it names the ${field} field`);
   }
   assert.ok(instruction.length < 4000, "the instruction stays small");
+}
+
+// --- the designer is not a member -----------------------------------------
+//
+// The bridge gives the designer no MCP servers, because it answers one
+// question with JSON and cannot use a tool. Starting the user's servers was
+// costing more than the designer's own twenty-second budget, so every custom
+// role came back from the deterministic fallback with generic skills. That
+// only holds while the bridge and this module agree on the designer's id, and
+// nothing else would notice if they drifted: the strip would silently stop
+// applying and the timeouts would quietly come back.
+
+{
+  assert.equal(MEMBER_DESIGNER_ID, "squad-designer", "the designer id is a wire value; changing it moves an agent home");
+
+  const bridge = readFileSync(new URL("../server.mjs", import.meta.url), "utf8");
+  const declaration = bridge.match(/const utilityAgentIds = new Set\(\[([^\]]*)\]\)/);
+  assert.ok(declaration, "server.mjs declares utilityAgentIds");
+  const ids = declaration[1].split(",").map((entry) => entry.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  assert.ok(ids.includes(MEMBER_DESIGNER_ID), `server.mjs treats ${MEMBER_DESIGNER_ID} as a utility agent, so it inherits no MCP servers`);
+
+  const route = readFileSync(new URL("../server/routes/member-draft.route.mjs", import.meta.url), "utf8");
+  assert.match(route, /MEMBER_DESIGNER_ID/, "the route uses the shared id rather than its own literal");
 }
 
 console.log("check-member-draft: ok");

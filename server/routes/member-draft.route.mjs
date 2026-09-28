@@ -11,7 +11,7 @@
 //
 // See docs/adrs/ADR-0031-member-draft-skill.md.
 
-import { draftFromDescription, draftInstruction, mergeModelDraft } from "../../src/lib/member-draft.js";
+import { MEMBER_DESIGNER_ID, draftFromDescription, draftInstruction, mergeModelDraft } from "../../src/lib/member-draft.js";
 
 export const name = "member-draft";
 
@@ -68,7 +68,7 @@ async function askModel(ctx, description, body, req) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        agentId: String(body?.agentId || "").trim() || "squad-designer",
+        agentId: String(body?.agentId || "").trim() || MEMBER_DESIGNER_ID,
         prompt: draftInstruction(description),
         workspace,
         transport: "sdk",

@@ -275,6 +275,7 @@ import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/membe
 import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
 import { applyProposal, proposalSummary, reviewMember } from "@/lib/chief-of-staff";
 import { takeTable } from "@/lib/markdown-table";
+import { MEMBER_DESIGNER_ID } from "@/lib/member-draft";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
@@ -19329,6 +19330,22 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     brainCard: normalizeBrainCard(template.brainCard, template),
     harness: normalizeHarnessAssignmentCopy(null),
   }));
+
+  // Start the designer's CLI while the person is still writing the sentence.
+  // Designing gives up after twenty seconds, and a cold start alone was
+  // spending more than that, so every custom role came back from the
+  // deterministic fallback with generic skills however good the description
+  // was. Warming costs no tokens: the session is acquired and released
+  // without a prompt (ADR-0030, ADR-0036).
+  useEffect(() => {
+    if (!defaultWorkspace) return;
+    api("/api/chat/warm", {
+      method: "POST",
+      body: JSON.stringify({ agentId: MEMBER_DESIGNER_ID, workspace: defaultWorkspace }),
+    }).catch(() => {});
+    // Once per visit to this screen: warming twice buys nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function designMember() {
     const description = roleWish.trim();

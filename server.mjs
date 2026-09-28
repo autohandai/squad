@@ -2427,6 +2427,14 @@ function assertAutohandAuth(agentRuntime) {
   }
 }
 
+// Agents the app runs for itself rather than members of the squad: they answer
+// one question with text, never hold a conversation, and never run a tool.
+const utilityAgentIds = new Set(["squad-designer"]);
+
+function isUtilityAgent(agentId) {
+  return utilityAgentIds.has(String(agentId || ""));
+}
+
 async function ensureAgentRuntime(input, workspace) {
   const agent = input.agent && typeof input.agent === "object" ? input.agent : {};
   const agentId = sanitizeAgentId(agent.id || input.agentId);
@@ -2474,6 +2482,14 @@ async function ensureAgentRuntime(input, workspace) {
     const nextConfig = {
       ...config,
       ...(syncedAuth ? { auth: syncedAuth } : {}),
+      // The user's MCP servers are copied into every agent home, and starting
+      // them is most of a cold start: a Docker image to run, an editor plugin
+      // that has to be open. A utility agent cannot use a tool, so it was
+      // paying that cost for nothing — enough of it to blow the member
+      // designer's own twenty-second budget and hand back a generic member
+      // every time. Measured on this machine: 20s+ and a timeout with the
+      // servers, 15.6s and a real answer without them.
+      ...(isUtilityAgent(agentId) ? { mcp: { ...(config.mcp && typeof config.mcp === "object" ? config.mcp : {}), servers: [] } } : {}),
       provider: resolvedProvider.provider,
       [resolvedProvider.provider]: {
         ...(config[resolvedProvider.provider] && typeof config[resolvedProvider.provider] === "object"

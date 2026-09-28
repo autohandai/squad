@@ -12,6 +12,12 @@ import { roleFromDescription } from "./member-introduction.js";
 
 export const DRAFT_FIELDS = Object.freeze(["name", "role", "description", "instructions", "skills", "brainCard"]);
 
+// The agent that designs members. Not a member of the squad: it answers one
+// question with JSON and never runs a tool, so the bridge gives it no MCP
+// servers (server.mjs `utilityAgentIds`) and the create screen warms it on
+// open. scripts/check-member-draft.mjs holds those two ends together.
+export const MEMBER_DESIGNER_ID = "squad-designer";
+
 const NAME_LIMIT = 60;
 const ROLE_LIMIT = 80;
 const TEXT_LIMIT = 600;
