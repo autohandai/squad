@@ -3459,8 +3459,15 @@ function mergeSeedTasks(storedTasks) {
   ];
 }
 
+// Proposals this app used to file for every skill install and every failure.
+// They are outcomes, not decisions, and they are dropped on read so an Inbox
+// that already filled up with them empties itself once.
+function isSkillProvisioningProposal(item) {
+  return String(item?.source?.label || "") === "Skill provisioning" || String(item?.source?.id || "").startsWith("provision-");
+}
+
 function mergeSeedMemoryInbox(storedItems) {
-  const records = normalizeMemoryInboxCopy(storedItems);
+  const records = normalizeMemoryInboxCopy(storedItems).filter((item) => !isSkillProvisioningProposal(item));
   const seen = new Set(records.map((item) => item.id));
   return [
     ...initialMemoryInbox.filter((item) => !seen.has(String(item.id || ""))),
@@ -6208,6 +6215,34 @@ function App() {
         .map((item) => ({ id: item.id, item, title: item.projectLabel || item.scope || "Memory proposal", detail: item.content || "", at: item.updatedAt || item.createdAt || "" })),
     [memoryInbox]
   );
+  // The Inbox has always described itself as "Replies, handoffs, and
+  // proposals that need you", and it carried everything except replies. A
+  // member answering you in a direct message put a count on its sidebar row
+  // and reached this page not at all, so the one surface named for what needs
+  // you was the one place the answer was not.
+  const inboxReplies = useMemo(
+    () =>
+      agents
+        .flatMap((agent) => {
+          const count = unreadCountByAgent.get(agent.id) || 0;
+          if (!count) return [];
+          const list = Array.isArray(messagesByAgent[agent.id]) ? messagesByAgent[agent.id] : [];
+          const latest = [...list].reverse().find((message) => message.role === "agent" && message.body);
+          return [
+            {
+              id: `reply-${agent.id}`,
+              agentId: agent.id,
+              name: agent.name,
+              avatar: agent.avatar,
+              count,
+              preview: String(latest?.body || "").replace(/\s+/g, " ").trim().slice(0, 160),
+              at: latest?.createdAt || latest?.updatedAt || "",
+            },
+          ];
+        })
+        .sort((a, b) => String(b.at).localeCompare(String(a.at))),
+    [agents, unreadCountByAgent, messagesByAgent]
+  );
   const inboxUnreadChannels = useMemo(
     () =>
       channels
@@ -6221,7 +6256,7 @@ function App() {
   );
   const inboxReadMs = Date.parse(inboxReadAt || "") || 0;
   const inboxNewItems = (items) => items.filter((item) => (Date.parse(item.at || "") || 0) >= inboxReadMs).length;
-  const inboxCount = inboxUnreadChannels.length + inboxNewItems(inboxHandoffs) + inboxNewItems(inboxMemory);
+  const inboxCount = inboxReplies.length + inboxUnreadChannels.length + inboxNewItems(inboxHandoffs) + inboxNewItems(inboxMemory);
 
   const accountProfile = useMemo(() => accountProfileFor(runtime?.account), [runtime?.account]);
   async function signOut() {
@@ -6529,15 +6564,6 @@ function App() {
 
   function purgeHiddenRejectedMemory() {
     setMemoryInbox((current) => current.filter((item) => !(item.status === "rejected" && item.isHidden)));
-  }
-
-  function appendMemoryProposals(proposals) {
-    const normalized = normalizeMemoryInboxCopy(proposals).filter(Boolean);
-    if (!normalized.length) return;
-    setMemoryInbox((current) => {
-      const seen = new Set(current.map((item) => item.id));
-      return [...normalized.filter((item) => !seen.has(item.id)), ...current];
-    });
   }
 
   function touchAgent(agentId, timestamp = new Date().toISOString()) {
@@ -7893,36 +7919,15 @@ function App() {
         profileDocs: provision.profileDocs,
         updatedAt: provisionedAt,
       });
-      appendMemoryProposals([
-        ...(provision.skillInstall?.installed || []).map((skill) => ({
-          id: `mem_${id}_${normalizeSkillId(skill.id)}_installed`,
-          agentId: id,
-          ownerAgentId: id,
-          status: "pending",
-          scope: "personal",
-          content: `Autohand skill ${skill.id} is installed for ${agent.name}'s profile.`,
-          confidence: 0.9,
-          confidenceRationale: "Local provisioning completed and returned this skill in the installed list.",
-          source: { type: "system", id: `provision-${id}`, label: "Skill provisioning", agentId: id },
-          evidence: `Skill source: ${AUTOHAND_SKILLS_REGISTRY_URL}. Install target: .autohand/agents/${id}/skills.`,
-          createdAt: provisionedAt,
-          updatedAt: provisionedAt,
-        })),
-        ...(provision.skillInstall?.failed || []).map((skill) => ({
-          id: `mem_${id}_${normalizeSkillId(skill.id)}_failed`,
-          agentId: id,
-          ownerAgentId: id,
-          status: "pending",
-          scope: "personal",
-          content: `Autohand skill ${skill.id} failed to install for ${agent.name}${skill.reason ? `: ${skill.reason}` : "."}`,
-          confidence: 0.78,
-          confidenceRationale: "Local provisioning returned the skill in the failed list; user should decide whether this belongs in durable memory.",
-          source: { type: "system", id: `provision-${id}`, label: "Skill provisioning", agentId: id },
-          evidence: skill.reason || `Skill source: ${AUTOHAND_SKILLS_REGISTRY_URL}.`,
-          createdAt: provisionedAt,
-          updatedAt: provisionedAt,
-        })),
-      ]);
+      // Provisioning outcomes are not memory proposals. A proposal is a
+      // candidate fact the person accepts or rejects into a member's memory;
+      // "skill X installed" and "skill X was not in the catalog" are results,
+      // and filing one per skill per member buried the Inbox under dozens of
+      // rows that needed no decision. Its own rationale said as much: "user
+      // should decide whether this belongs in durable memory". They are kept
+      // on the member as `skillInstall` and read back on its Skills page as
+      // installed / install failed, which is where someone looking for them
+      // would look.
     } catch (error) {
       const failedAt = new Date().toISOString();
       updateAgent(id, {
@@ -7935,22 +7940,8 @@ function App() {
         },
         updatedAt: failedAt,
       });
-      appendMemoryProposals([
-        {
-          id: `mem_${id}_provision_failed`,
-          agentId: id,
-          ownerAgentId: id,
-          status: "pending",
-          scope: "personal",
-          content: `Autohand profile provisioning failed for ${agent.name}: ${error.message}`,
-          confidence: 0.8,
-          confidenceRationale: "The local provisioning request failed; keep this out of active memory until reviewed.",
-          source: { type: "system", id: `provision-${id}`, label: "Skill provisioning", agentId: id },
-          evidence: error.message,
-          createdAt: failedAt,
-          updatedAt: failedAt,
-        },
-      ]);
+      // Same reasoning as above: a provisioning failure is an outcome, and it
+      // is already on the member as skillInstall.status "failed".
     }
   }
 
@@ -8796,6 +8787,7 @@ function App() {
               <SettingsAnalyticsPage locale={localeResolution.locale} copy={localeCopy} />
             ) : isInbox ? (
               <InboxPage
+                replies={inboxReplies}
                 unreadChannels={inboxUnreadChannels}
                 handoffs={inboxHandoffs}
                 approvals={inboxApprovals}
@@ -8804,6 +8796,7 @@ function App() {
                 timeLabel={(value) => (value ? formatRelativeTime(value, localeResolution.locale) : "")}
                 navigate={{
                   channel: (channelId) => navigate(channelsPath(channelId)),
+                  member: (agentId) => navigate(memberChatPath(agentId)),
                   task: (item) => navigate(missionControlPath()),
                   memory: (item) => navigate(memberProfilePath(item.item?.ownerAgentId || item.item?.agentId || agents[0]?.id, "memory")),
                   approval: (item) =>

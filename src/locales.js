@@ -70,6 +70,8 @@ const UI_COPY_BY_LANGUAGE = {
     activityPending: "in progress",
     inbox: "Inbox",
     inboxDescription: "Replies, handoffs, and proposals that need you.",
+    inboxReplies: "Replies",
+    inboxNoReplies: "No member is waiting on you.",
     inboxUnreadChannels: "Unread channels",
     inboxNoUnread: "You're caught up on every channel.",
     inboxHandoffs: "Handoffs waiting",

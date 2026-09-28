@@ -1,4 +1,4 @@
-import { ArrowRight, Bot, BrainCog, Hash, Inbox, Workflow } from "lucide-react";
+import { ArrowRight, Bot, BrainCog, Hash, Inbox, MessageSquare, Workflow } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -34,6 +34,7 @@ function Row({ icon: Icon, title, detail, time, onOpen, tone }) {
  * one calm list. Everything links back to the surface that owns it.
  */
 export function InboxPage({
+  replies = [],
   unreadChannels = [],
   handoffs = [],
   approvals = [],
@@ -43,7 +44,7 @@ export function InboxPage({
   onMarkAllRead,
   timeLabel = () => "",
 }) {
-  const total = unreadChannels.length + handoffs.length + approvals.length + memoryProposals.length;
+  const total = replies.length + unreadChannels.length + handoffs.length + approvals.length + memoryProposals.length;
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 lg:px-10 lg:py-8">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -60,6 +61,21 @@ export function InboxPage({
           </Button>
         ) : null}
       </header>
+
+      {/* Replies come first. A member answering you is the most immediate
+          thing this page has, and it was the one thing missing from it. */}
+      <Section title={copy.inboxReplies || "Replies"} count={replies.length} empty={copy.inboxNoReplies || "No member is waiting on you."}>
+        {replies.map((item) => (
+          <Row
+            key={item.id}
+            icon={MessageSquare}
+            title={item.count > 1 ? `${item.name} · ${item.count}` : item.name}
+            detail={item.preview}
+            time={timeLabel(item.at)}
+            onOpen={() => navigate.member?.(item.agentId)}
+          />
+        ))}
+      </Section>
 
       <Section title={copy.inboxUnreadChannels || "Unread channels"} count={unreadChannels.length} empty={copy.inboxNoUnread || "You're caught up on every channel."}>
         {unreadChannels.map((item) => (
