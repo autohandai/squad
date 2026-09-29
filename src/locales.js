@@ -428,6 +428,13 @@ const UI_COPY_BY_LANGUAGE = {
     saveMember: "Save member",
     squad: "Squad",
     suggestedForProject: "Suggested",
+    repliedLabel: "replied",
+    workDetails: "Work details",
+    workDetailsDetail:
+      "How much of a member's working shows under its reply. Summary keeps one line you can open; Always open expands it while the member works; Hidden leaves the reply on its own.",
+    workDetailsCollapsed: "Summary",
+    workDetailsExpanded: "Always open",
+    workDetailsHidden: "Hidden",
     canHelpWith: "can help with",
     newMember: "New member",
     searchMembers: "Search members",

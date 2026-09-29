@@ -2638,9 +2638,16 @@ function readHandoffSettings() {
   };
 }
 
+// How much of a member's working goes in the chat log (ADR-0055). "collapsed"
+// keeps the one-line summary and opens only when asked; "expanded" is the old
+// behaviour, which opens itself while the member works; "hidden" leaves the
+// reply alone.
+export const WORK_DETAIL_MODES = ["collapsed", "expanded", "hidden"];
+
 const DEFAULT_CHAT_SETTINGS = {
   displayCliOutput: false,
   squadSuggestions: true,
+  workDetails: "collapsed",
 };
 
 function normalizeChatSettings(settings) {
@@ -2649,6 +2656,7 @@ function normalizeChatSettings(settings) {
     displayCliOutput: source.displayCliOutput === true,
     // Squad recruiting (ADR-0015) is on unless explicitly switched off.
     squadSuggestions: source.squadSuggestions !== false,
+    workDetails: WORK_DETAIL_MODES.includes(source.workDetails) ? source.workDetails : "collapsed",
   };
 }
 
@@ -9890,12 +9898,14 @@ function ChannelsPage({
                         <MediaAttachment key={attachment.id} attachment={attachment} anchors={channelAnchors} onAnchor={addAnchorToDraft} copy={copy} />
                       ))}
                       {message.role === "agent" || message.agentId ? (
-                        <AgentWorkDetails message={message} isLoading={message.status === "loading"} durationLabel={messageDurationLabel(message)} copy={copy} />
+                        <AgentWorkDetails message={message} isLoading={message.status === "loading"} durationLabel={messageDurationLabel(message)} copy={copy} mode={chatSettings.workDetails} />
                       ) : null}
                     </div>
                   );
                 }}
                 renderAvatar={(message) => <ChannelMessageAvatar message={message} agents={agents} />}
+                renderMemberAvatar={(agent, avatarClassName) => <AgentAvatar agent={agent} className={avatarClassName} />}
+                repliedLabel={copy.repliedLabel || "replied"}
                 authorName={(message) => (message.role === "system" && message.workflowRunId ? message.workflowName || copy.workflow || "Workflow" : channelMessageAuthorName(message, agents, accountProfile.name))}
                 onReact={onReact}
                 onReply={(message) => setReplyTo(message)}
@@ -10672,6 +10682,11 @@ function buildAgentProfile(agent, workspace) {
     "The structured brain card is the source of truth for how this squad member thinks, works, escalates, reviews, and handles memory.",
     "The profile skills are installed from the curated Autohand Skills repository. Activate and use the relevant installed skills when they match the user's request.",
     "When the user sends a message in Autohand Squad, answer as this configured CLI instance and keep all work scoped to the selected folder unless the user explicitly changes it.",
+    "Answer like a colleague in a chat channel, not like a document. One to three short sentences is the default: say the thing and stop.",
+    "Write more only when the role, the brain card, this member's memory or the task itself calls for it - a review that has to list its findings, a plan that has to name its steps, an answer that would be wrong if it were shorter. Length is a cost to justify, never the default.",
+    "Do not open with a greeting or by announcing your own name and role; the channel already shows both. Do not restate the question, do not narrate what you are about to do, and do not close by offering a menu of things you could do instead - ask one direct question or say nothing.",
+    "Do not report repository or workspace status that nobody asked for. If it matters to the answer, one clause is enough.",
+    "Prose by default; a list only when the content really is a list, a code block only for code.",
     Array.isArray(agent?.skills) && agent.skills.length ? `Profile skills: ${agent.skills.join(", ")}` : "",
   ]
     .filter(Boolean)
@@ -14184,7 +14199,7 @@ function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETT
           </div>
         ) : null}
 
-        <AgentWorkDetails message={message} isLoading={isLoading} durationLabel={isLoading ? "" : durationLabel} copy={copy} />
+        <AgentWorkDetails message={message} isLoading={isLoading} durationLabel={isLoading ? "" : durationLabel} copy={copy} mode={normalizeChatSettings(chatSettings).workDetails} />
 
         {!isLoading && showRawOutput ? <RawTraceBlock raw={view.raw} /> : null}
       </div>
@@ -14221,16 +14236,19 @@ function useMessageActivity(message, isLoading) {
 }
 
 /** "Work details · 12 steps · 4 tools · 1 failed · 32s": a text disclosure over the activity feed. */
-function AgentWorkDetails({ message, isLoading = false, durationLabel = "", copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+function AgentWorkDetails({ message, isLoading = false, durationLabel = "", copy = getLocaleCopy(DEFAULT_LOCALE), mode = "collapsed" }) {
   const { activity, raw } = useMessageActivity(message, isLoading);
   const [showRaw, setShowRaw] = useState(false);
   // Open while the member works, then leave it as the reader left it. Binding
   // `open` straight to isLoading both trapped it open and slammed it shut the
-  // moment the reply landed, taking the page position with it.
-  const [open, setOpen] = useState(isLoading);
+  // moment the reply landed, taking the page position with it. Only "expanded"
+  // opens itself at all: the default is a summary line you choose to open.
+  const expands = mode === "expanded";
+  const [open, setOpen] = useState(expands);
   useEffect(() => {
-    if (isLoading) setOpen(true);
-  }, [isLoading]);
+    if (expands && isLoading) setOpen(true);
+  }, [expands, isLoading]);
+  if (mode === "hidden") return null;
   if (!activity.length && !isLoading) return null;
   const stats = activityStats(activity);
   // A reply that came back from another machine's bridge says so here, so the
@@ -24168,6 +24186,25 @@ function SettingsPage({
                     onCheckedChange={(checked) => updateChatSetting("displayCliOutput", checked)}
                     aria-label="Display diagnostic output"
                   />
+                </Field>
+                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+                  <FieldContent className="gap-1">
+                    <FieldTitle>{copy.workDetails || "Work details"}</FieldTitle>
+                    <FieldDescription>
+                      {copy.workDetailsDetail ||
+                        "How much of a member's working shows under its reply. Summary keeps one line you can open; Always open expands it while the member works; Hidden leaves the reply on its own."}
+                    </FieldDescription>
+                  </FieldContent>
+                  <Select value={normalizedChatSettings.workDetails} onValueChange={(value) => updateChatSetting("workDetails", value)}>
+                    <SelectTrigger className="w-44" aria-label={copy.workDetails || "Work details"}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="collapsed">{copy.workDetailsCollapsed || "Summary"}</SelectItem>
+                      <SelectItem value="expanded">{copy.workDetailsExpanded || "Always open"}</SelectItem>
+                      <SelectItem value="hidden">{copy.workDetailsHidden || "Hidden"}</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </Field>
                 <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
                   <FieldContent className="gap-1">

@@ -138,6 +138,63 @@ function MentionChips({ message, agents, userName, channelMemberIds = [] }) {
   );
 }
 
+/**
+ * Who answered each of your messages: every member who posted after it and
+ * before your next one. That window is what "replied to me" means in a channel
+ * where members answer on their own initiative rather than in a thread.
+ */
+function repliersByUserMessage(ordered, agents) {
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  const result = new Map();
+  let openId = "";
+  let seen = null;
+  const close = () => {
+    if (openId && seen && seen.size) result.set(openId, [...seen.values()]);
+    openId = "";
+    seen = null;
+  };
+  for (const message of ordered) {
+    if (message.role === "user") {
+      close();
+      openId = message.id;
+      seen = new Map();
+      continue;
+    }
+    if (!openId || message.role === "event") continue;
+    const agent = byId.get(message.agentId);
+    if (agent && !seen.has(agent.id)) seen.set(agent.id, agent);
+  }
+  close();
+  return result;
+}
+
+/** A small facepile under your own message: who picked it up. */
+function RepliedFaces({ agents = [], renderMemberAvatar, label = "replied" }) {
+  if (!agents.length) return null;
+  const names = agents.map((agent) => agent.name).filter(Boolean);
+  const sentence = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return (
+    <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <span className="flex -space-x-1">
+        {agents.slice(0, 5).map((agent) =>
+          renderMemberAvatar ? (
+            <span key={agent.id} className="rounded-[4px] ring-1 ring-background">
+              {renderMemberAvatar(agent, "size-4 rounded-[4px]")}
+            </span>
+          ) : (
+            <span key={agent.id} className="grid size-4 place-items-center rounded-[4px] bg-muted text-[8px] font-semibold ring-1 ring-background">
+              {String(agent.name || "?").slice(0, 1).toUpperCase()}
+            </span>
+          )
+        )}
+      </span>
+      <span className="truncate">
+        {sentence} {label}
+      </span>
+    </div>
+  );
+}
+
 function ReactionRow({ reactions = [], onReact, messageId }) {
   if (!reactions.length) return null;
   return (
@@ -204,14 +261,17 @@ export function ChannelStream({
   renderBody,
   renderEvent,
   renderAvatar,
+  renderMemberAvatar,
   authorName,
   onReact,
   onReply,
   emptyLabel = "No messages yet. Send the first one.",
   newLabel = "New",
   typingLabel = "is typing…",
+  repliedLabel = "replied",
 }) {
   const ordered = useMemo(() => sortChannelMessages(messages), [messages]);
+  const repliers = useMemo(() => repliersByUserMessage(ordered, agents), [ordered, agents]);
   const endRef = useRef(null);
   const lastCount = useRef(0);
 
@@ -304,6 +364,9 @@ export function ChannelStream({
                   )}
                 </div>
                 <ReactionRow reactions={reactionsByMessage[message.id] || []} onReact={onReact} messageId={message.id} />
+                {message.role === "user" ? (
+                  <RepliedFaces agents={repliers.get(message.id) || []} renderMemberAvatar={renderMemberAvatar} label={repliedLabel} />
+                ) : null}
               </div>
               {!loading ? (
                 <HoverActions messageId={message.id} onReact={onReact} onReply={onReply ? () => onReply(message) : null} />
