@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Reply, SmilePlus } from "lucide-react";
+import { Bot, Reply, SmilePlus, Zap } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -15,7 +15,7 @@ export { QUICK_REACTIONS };
  * single click; this is where the other five hundred live, so the row does not
  * have to grow to hold them.
  */
-function ReactionPicker({ onPick, label = "More reactions", className }) {
+export function ReactionPicker({ onPick, onSetUpFlow, setUpLabel = "Make a reaction do something…", label = "More reactions", className }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const groups = useMemo(() => searchReactions(query), [query]);
@@ -78,6 +78,20 @@ function ReactionPicker({ onPick, label = "More reactions", className }) {
             )}
           </div>
         </ScrollArea>
+        {onSetUpFlow ? (
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 border-t border-border/60 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+            onClick={() => {
+              setOpen(false);
+              setQuery("");
+              onSetUpFlow();
+            }}
+          >
+            <Zap className="size-3.5 shrink-0" aria-hidden="true" />
+            {setUpLabel}
+          </button>
+        ) : null}
       </PopoverContent>
     </Popover>
   );
@@ -195,7 +209,7 @@ function RepliedFaces({ agents = [], renderMemberAvatar, label = "replied" }) {
   );
 }
 
-function ReactionRow({ reactions = [], onReact, messageId }) {
+function ReactionRow({ reactions = [], onReact, messageId, onSetUpFlow, setUpLabel }) {
   if (!reactions.length) return null;
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1">
@@ -215,12 +229,12 @@ function ReactionRow({ reactions = [], onReact, messageId }) {
           <span className="font-medium">{reaction.count}</span>
         </button>
       ))}
-      <ReactionPicker label="Add a reaction" onPick={(emoji) => onReact?.(messageId, emoji)} />
+      <ReactionPicker label="Add a reaction" onPick={(emoji) => onReact?.(messageId, emoji)} onSetUpFlow={onSetUpFlow} setUpLabel={setUpLabel} />
     </div>
   );
 }
 
-function HoverActions({ messageId, onReact, onReply }) {
+function HoverActions({ messageId, onReact, onReply, onSetUpFlow, setUpLabel }) {
   return (
     <div className="absolute -top-3 right-2 hidden items-center gap-0.5 rounded-md border border-border/70 bg-background p-0.5 shadow-xs group-hover:flex group-focus-within:flex">
       {QUICK_REACTIONS.map((emoji) => (
@@ -234,7 +248,7 @@ function HoverActions({ messageId, onReact, onReply }) {
           {emoji}
         </button>
       ))}
-      <ReactionPicker onPick={(emoji) => onReact?.(messageId, emoji)} />
+      <ReactionPicker onPick={(emoji) => onReact?.(messageId, emoji)} onSetUpFlow={onSetUpFlow} setUpLabel={setUpLabel} />
       {onReply ? (
         <button type="button" className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Reply in thread" onClick={onReply}>
           <Reply className="size-3.5" />
@@ -269,6 +283,8 @@ export function ChannelStream({
   newLabel = "New",
   typingLabel = "is typing…",
   repliedLabel = "replied",
+  onSetUpReactionFlow,
+  setUpFlowLabel = "Make a reaction do something…",
 }) {
   const ordered = useMemo(() => sortChannelMessages(messages), [messages]);
   const repliers = useMemo(() => repliersByUserMessage(ordered, agents), [ordered, agents]);
@@ -363,13 +379,25 @@ export function ChannelStream({
                     <span className="whitespace-pre-wrap break-words">{message.body}</span>
                   )}
                 </div>
-                <ReactionRow reactions={reactionsByMessage[message.id] || []} onReact={onReact} messageId={message.id} />
+                <ReactionRow
+                  reactions={reactionsByMessage[message.id] || []}
+                  onReact={onReact}
+                  messageId={message.id}
+                  onSetUpFlow={onSetUpReactionFlow ? () => onSetUpReactionFlow(message) : null}
+                  setUpLabel={setUpFlowLabel}
+                />
                 {message.role === "user" ? (
                   <RepliedFaces agents={repliers.get(message.id) || []} renderMemberAvatar={renderMemberAvatar} label={repliedLabel} />
                 ) : null}
               </div>
               {!loading ? (
-                <HoverActions messageId={message.id} onReact={onReact} onReply={onReply ? () => onReply(message) : null} />
+                <HoverActions
+                  messageId={message.id}
+                  onReact={onReact}
+                  onReply={onReply ? () => onReply(message) : null}
+                  onSetUpFlow={onSetUpReactionFlow ? () => onSetUpReactionFlow(message) : null}
+                  setUpLabel={setUpFlowLabel}
+                />
               ) : null}
             </article>
           </Fragment>

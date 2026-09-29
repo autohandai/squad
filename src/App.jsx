@@ -5,6 +5,7 @@ import { FirstRun } from "@/components/onboarding/FirstRun";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
 import { NEED_HELP, joinList, proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
+import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
 import { PresenceDot, PresenceLabel } from "@/components/members/PresenceDot";
 import { StopMemberButton } from "@/components/members/StopMemberButton";
@@ -244,7 +245,7 @@ import {
   routeForNotification,
   unreadCount as unreadNotificationCount,
 } from "@/lib/notifications";
-import { ChannelStream } from "@/components/channels/ChannelStream";
+import { ChannelStream, ReactionPicker } from "@/components/channels/ChannelStream";
 import { WorkflowsSettings } from "@/components/channels/WorkflowsSettings";
 import { RepositorySettings } from "@/components/channels/RepositorySettings";
 import { GitEventRow } from "@/components/channels/GitEventRow";
@@ -9264,6 +9265,140 @@ function ChannelThreadItem({
 // Squad channels: channel list + channel detail flow. One prompt fans out to
 // every member assigned to the selected channel; replies stay grouped in
 // threads. Auto mode (self-judge) is a channel-level toggle that defaults OFF.
+/**
+ * The lazy way (ADR-0053): a reaction becomes a one-step flow without going to
+ * channel settings. Three actions, because that is what was asked for - run a
+ * prompt, ask a named member, or call a URL - and the first two are the same
+ * step with a different member, so only the URL one changes the fields.
+ */
+function ReactionFlowDialog({ draft, onDraftChange, members = [], copy = getLocaleCopy(DEFAULT_LOCALE), onSave }) {
+  const [problems, setProblems] = useState([]);
+  const open = Boolean(draft);
+  const set = (patch) => onDraftChange({ ...draft, ...patch });
+  const actionLabels = {
+    prompt: copy.reactionActionPrompt || "Run a prompt",
+    member: copy.reactionActionMember || "Ask a member",
+    url: copy.reactionActionUrl || "Call a URL",
+  };
+  const problemText = {
+    "step.url": copy.reactionNeedsUrl || "Enter an http or https address.",
+    "step.prompt": copy.reactionNeedsPrompt || "Say what you want done.",
+    "step.memberId": copy.reactionNeedsMember || "Choose a member.",
+  };
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) {
+          onDraftChange(null);
+          setProblems([]);
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>{copy.reactionFlowTitle || "When someone reacts"}</DialogTitle>
+          <DialogDescription>
+            {copy.reactionFlowDetail || "Pick an emoji and what it should set off. It runs whenever anyone reacts with it in this channel."}
+          </DialogDescription>
+        </DialogHeader>
+        {draft ? (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl" aria-hidden="true">
+                {draft.emoji}
+              </span>
+              <span className="text-sm text-muted-foreground">{reactionName(draft.emoji)}</span>
+              <ReactionPicker label={copy.reactionChange || "Choose another emoji"} onPick={(emoji) => set({ emoji })} />
+            </div>
+            <Field>
+              <FieldLabel htmlFor="reaction-action">{copy.reactionDoes || "Then"}</FieldLabel>
+              <Select value={draft.action} onValueChange={(action) => set({ action })}>
+                <SelectTrigger id="reaction-action">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {REACTION_ACTIONS.map((action) => (
+                    <SelectItem key={action} value={action}>
+                      {actionLabels[action]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            {draft.action === "url" ? (
+              <div className="flex gap-2">
+                <Select value={draft.method} onValueChange={(method) => set({ method })}>
+                  <SelectTrigger className="w-28" aria-label={copy.reactionMethod || "Method"}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["GET", "POST", "PUT", "PATCH", "DELETE"].map((method) => (
+                      <SelectItem key={method} value={method}>
+                        {method}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  value={draft.url}
+                  onChange={(event) => set({ url: event.target.value })}
+                  placeholder="https://api.example.com/hook"
+                  aria-label={copy.reactionUrl || "URL"}
+                />
+              </div>
+            ) : (
+              <>
+                {draft.action === "member" ? (
+                  <Field>
+                    <FieldLabel htmlFor="reaction-member">{copy.reactionMember || "Member"}</FieldLabel>
+                    <Select value={draft.memberId} onValueChange={(memberId) => set({ memberId })}>
+                      <SelectTrigger id="reaction-member">
+                        <SelectValue placeholder={copy.reactionPickMember || "Choose a member"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {members.map((member) => (
+                          <SelectItem key={member.id} value={member.id}>
+                            {member.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                ) : null}
+                <Field>
+                  <FieldLabel htmlFor="reaction-prompt">{copy.reactionPrompt || "Prompt"}</FieldLabel>
+                  <Textarea
+                    id="reaction-prompt"
+                    rows={3}
+                    value={draft.prompt}
+                    onChange={(event) => set({ prompt: event.target.value })}
+                    placeholder={copy.reactionPromptHint || "Review {{message}} and say what you would change."}
+                  />
+                  <FieldDescription>{copy.reactionTemplateHint || "{{message}} is the message that was reacted to."}</FieldDescription>
+                </Field>
+              </>
+            )}
+            {problems.length ? (
+              <p className="text-sm text-destructive">{problems.map((problem) => problemText[problem] || problem).join(" ")}</p>
+            ) : null}
+          </div>
+        ) : null}
+        <DialogFooter>
+          <Button
+            onClick={() => {
+              const found = onSave?.(draft) || [];
+              setProblems(found);
+            }}
+          >
+            {copy.reactionSave || "Create flow"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ChannelsPage({
   channels = [],
   channelThreads = {},
@@ -9306,6 +9441,9 @@ function ChannelsPage({
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
+  // "The lazy way": a reaction becomes a flow from the message it is on,
+  // rather than from channel settings three clicks away.
+  const [reactionFlow, setReactionFlow] = useState(null);
   const [draft, setDraft] = useState("");
   // Media (#32, ADR-0024): uploaded files waiting on the next send, plus the
   // last upload problem shown as the composer hint. Pending anchors need no
@@ -9798,6 +9936,19 @@ function ChannelsPage({
               Anyone this channel's projects need and the channel lacks is
               listed first with the reason, so adding the right member is a
               recommendation rather than a memory test. */}
+          <ReactionFlowDialog
+            draft={reactionFlow}
+            onDraftChange={setReactionFlow}
+            members={members}
+            copy={copy}
+            onSave={(payload) => {
+              const { draft, problems } = reactionFlowDraft(payload);
+              if (problems.length) return problems;
+              onSaveWorkflow?.(channel.id, draft);
+              setReactionFlow(null);
+              return [];
+            }}
+          />
           {manageMembersOpen ? (
             <div className="flex flex-col border-b border-border/70 px-4 py-3 lg:px-6">
               <p className="pb-1 text-xs text-muted-foreground">{copy.channelMembersDetail}</p>
@@ -9906,6 +10057,8 @@ function ChannelsPage({
                 renderAvatar={(message) => <ChannelMessageAvatar message={message} agents={agents} />}
                 renderMemberAvatar={(agent, avatarClassName) => <AgentAvatar agent={agent} className={avatarClassName} />}
                 repliedLabel={copy.repliedLabel || "replied"}
+                onSetUpReactionFlow={() => setReactionFlow({ emoji: "\u{1F680}", action: "prompt", memberId: members[0]?.id || "", prompt: "", url: "", method: "POST" })}
+                setUpFlowLabel={copy.setUpReactionFlow || "Make a reaction do something…"}
                 authorName={(message) => (message.role === "system" && message.workflowRunId ? message.workflowName || copy.workflow || "Workflow" : channelMessageAuthorName(message, agents, accountProfile.name))}
                 onReact={onReact}
                 onReply={(message) => setReplyTo(message)}

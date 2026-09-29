@@ -76,6 +76,23 @@ Measured in a headless browser: the picker opens from the reaction row with 581
 buttons across nine labelled groups, each carrying its name as the accessible
 label, and typing "bug" narrows it to 🐛. No console errors.
 
-`reactionFlowDraft` is in the module and checked, so a reaction can be turned
-into one of these workflows without opening channel settings. The dialog that
-calls it is not built yet.
+## Addendum: the lazy way
+
+The entry point is a footer row in the emoji picker — "Make a reaction do
+something…" — so the whole path is hover a message, open the picker, one click.
+Channel settings is still there and still does more; it is no longer the only
+way in.
+
+The dialog offers the three things that were asked for: run a prompt, ask a
+named member, call a URL. The first two are the same step with a different
+member, so only the URL choice changes the fields. It saves through
+`reactionFlowDraft` into the same `onSaveWorkflow` the settings sheet uses, and
+shows `validateWorkflow`'s problems in the dialog rather than saving something
+broken.
+
+Measured in a browser, from a seeded message: the picker's last control reads
+"Make a reaction do something…", clicking it opens the dialog pre-filled with 🚀
+and "Run a prompt", saving with an empty prompt keeps the dialog open and says
+"Say what you want done.", and saving with a prompt closes it and leaves the
+bridge holding one workflow — name "ship runs a prompt", trigger `reaction:🚀`,
+one member step. No console errors.
