@@ -567,27 +567,37 @@ const THEME_PRESETS = {
     {
       id: "autohand-light",
       label: "Autohand",
-      description: "Bright console. Green is reserved for signal, never for controls.",
-      swatches: ["#ffffff", "#171717", "#5ed46f", "#f4f4f5"],
+      // Paper, not a lightbox. Pure white gave an 11.5 L* ladder with nothing
+      // under it, so popover sat at the same value as the page and a dropdown
+      // had no lift at all. Anchoring at L*96.9 - the product's own #faf9f5 one
+      // step down - leaves popover white and genuinely raised.
+      //
+      // One ink. There used to be four near-blacks (#171717, #080a0d twice,
+      // #1c241f, #101511), two of them carrying a green cast, which is why the
+      // same small type looked slightly different in different places.
+      //
+      // muted-foreground was #737373: 4.31:1 on muted, below AA. Now 4.74:1.
+      description: "Warm paper. Green is reserved for signal, never for controls.",
+      swatches: ["#f7f6f2", "#1b1b18", "#5ed46f", "#eae9e4"],
       tokens: {
-        background: "#ffffff",
-        foreground: "#171717",
-        card: "#fafafa",
-        "card-foreground": "#080a0d",
+        background: "#f7f6f2",
+        foreground: "#1b1b18",
+        card: "#f1f0ec",
+        "card-foreground": "#1b1b18",
         popover: "#ffffff",
-        "popover-foreground": "#080a0d",
-        primary: "#171717",
-        "primary-foreground": "#ffffff",
-        secondary: "#f4f4f5",
-        "secondary-foreground": "#1c241f",
-        muted: "#f4f4f5",
-        "muted-foreground": "#737373",
-        accent: "#eeeeef",
-        "accent-foreground": "#101511",
+        "popover-foreground": "#1b1b18",
+        primary: "#1b1b18",
+        "primary-foreground": "#f7f6f2",
+        secondary: "#eae9e4",
+        "secondary-foreground": "#1b1b18",
+        muted: "#eae9e4",
+        "muted-foreground": "#67665f",
+        accent: "#e3e2dc",
+        "accent-foreground": "#1b1b18",
         destructive: "#b83d33",
-        border: "#dedede",
-        input: "#dedede",
-        ring: "#171717",
+        border: "#d8d6cf",
+        input: "#d8d6cf",
+        ring: "#1b1b18",
         "chart-1": "#5ed46f",
         "chart-2": "#3abf9f",
         "chart-3": "#f1b84b",

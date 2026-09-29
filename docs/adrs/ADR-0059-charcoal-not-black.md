@@ -65,3 +65,39 @@ surface, both per `DESIGN.md`.
 - Measured in the desktop shell: default renders `rgb(29,28,27)` with
   `theme-color` `#1d1c1b`; Soft's shell renders `rgb(236,238,244)` instead of
   transparent, so the grey band is gone; overflow 0 in every skin.
+
+## Addendum: the light theme, and a check so this cannot drift
+
+The light theme was the worse of the two. It was pure `#ffffff` with a ladder
+only 11.5 L\* deep, `popover` was the *same colour as the page* so a dropdown
+had no lift whatsoever, and it carried four different near-black inks
+(`#171717`, `#080a0d` twice, `#1c241f`, `#101511`) — two with a green cast, one
+with a blue one — which is why the same small type looked subtly different in
+different places.
+
+It is now anchored at `#f7f6f2`, the product's own off-white one step down, so
+`popover` can stay pure white and actually be raised. The four inks collapse to
+one, `#1b1b18`. Sixteen of twenty-three tokens changed; green and the charts are
+untouched, and `destructive` still returns 5.17:1 on the new paper.
+
+Ladder: background 96.9 · popover 100 (Δ3.1, was Δ0) · card 94.8 · muted 92.3 ·
+accent 89.8 · border 85.6 — the border sits at Δ11.3 against today's Δ11.5, so
+every divider keeps the weight it already had.
+
+Contrast, computed: foreground on background **15.96:1**, muted-foreground on
+background **5.33:1** (was 4.74), muted-foreground on muted **4.74:1** (was
+4.31, *below AA*), foreground on card **15.14:1**, muted-foreground on card
+**5.06:1** (was 4.54). The one pairing in either theme that reaches AA-large
+only is muted-foreground on accent — 4.44:1 light, 4.47:1 dark — which is
+secondary text on a transient hover fill.
+
+`check-theme-tokens.mjs` now holds all of it: the two copies must agree on every
+surface and ink token, both themes must clear AA on the five body-text pairings,
+`card` may not match the page, `popover` may not match `card`, each theme gets
+exactly one ink, and `index.html` must carry exactly one `theme-color` meta with
+App.jsx keeping it in step. Verified by changing one copy only and watching it
+fail with the reason.
+
+Charts are allowed to inherit: `.light` is a partial override of `:root`, and a
+chart colour that is briefly wrong before React runs is not worth duplicating a
+palette for.

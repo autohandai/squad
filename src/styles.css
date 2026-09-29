@@ -116,24 +116,24 @@
 
 .light {
   color-scheme: light;
-  --background: #ffffff;
-  --foreground: #171717;
-  --card: #fafafa;
-  --card-foreground: #080a0d;
+  --background: #f7f6f2;
+  --foreground: #1b1b18;
+  --card: #f1f0ec;
+  --card-foreground: #1b1b18;
   --popover: #ffffff;
-  --popover-foreground: #080a0d;
-  --primary: #171717;
-  --primary-foreground: #ffffff;
-  --secondary: #f4f4f5;
-  --secondary-foreground: #1c241f;
-  --muted: #f4f4f5;
-  --muted-foreground: #737373;
-  --accent: #eeeeef;
-  --accent-foreground: #101511;
+  --popover-foreground: #1b1b18;
+  --primary: #1b1b18;
+  --primary-foreground: #f7f6f2;
+  --secondary: #eae9e4;
+  --secondary-foreground: #1b1b18;
+  --muted: #eae9e4;
+  --muted-foreground: #67665f;
+  --accent: #e3e2dc;
+  --accent-foreground: #1b1b18;
   --destructive: #b83d33;
-  --border: #dedede;
-  --input: #dedede;
-  --ring: #171717;
+  --border: #d8d6cf;
+  --input: #d8d6cf;
+  --ring: #1b1b18;
 }
 
 * {
