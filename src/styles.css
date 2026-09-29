@@ -163,15 +163,29 @@ body {
 
 /* Desktop shell (Tauri): the window is vibrant behind the sidebar. Everything
    except the sidebar keeps an opaque background; the top strips are native
-   drag regions, and macOS gets an inset for the traffic lights. */
-html[data-shell="desktop"],
-html[data-shell="desktop"] body,
-html[data-shell="desktop"] #root,
-html[data-shell="desktop"] .app-shell-root {
-  background: transparent !important;
+   drag regions, and macOS gets an inset for the traffic lights.
+ *
+ * Scoped to the default skin, and deliberately NOT `!important`. Letting the
+ * vibrancy through is only right for a skin that has no opinion about its own
+ * surfaces; a skin that paints its own panels wants to be painted. As an
+ * unconditional `!important` this rule collided three separate times - with
+ * .app-shell-root, with .app-sidebar, and with the padding in ADR-0054 - and
+ * each was only visible in the packaged app. One opt-out per element, added as
+ * each was discovered, was the wrong shape.
+ *
+ * Positive match on the default skin rather than `:not([data-skin="soft"])`:
+ * both attributes are set by App.jsx at runtime and not in the same place, so
+ * there is a frame where `data-shell` exists and `data-skin` does not. A
+ * negated selector matches an element with no attribute at all, which would
+ * flash the vibrancy through a light skin on every launch. */
+html[data-shell="desktop"][data-skin="default"],
+html[data-shell="desktop"][data-skin="default"] body,
+html[data-shell="desktop"][data-skin="default"] #root,
+html[data-shell="desktop"][data-skin="default"] .app-shell-root {
+  background: transparent;
 }
-html[data-shell="desktop"] .app-sidebar {
-  background: transparent !important;
+html[data-shell="desktop"][data-skin="default"] .app-sidebar {
+  background: transparent;
   border-right: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 html[data-shell="desktop"] .app-main {
@@ -437,24 +451,13 @@ html[data-skin="soft"] .app-main {
 html[data-skin="soft"] aside {
   border-right: 0;
 }
-/* A skin that paints its own panels has to opt out of the desktop vibrancy.
-   The desktop shell makes the sidebar `transparent !important` so the window
-   material shows through, and `!important` beats any specificity a skin can
-   reach - so in the installed app the sidebar rendered as window material
-   while the main column rendered the skin's card colour. Two panels, two
-   different colours, which is what "soft is weird" was. */
+/* The sidebar keeps no border in these skins: they separate their panels by
+   value and by the gap between them, not by a line. The backgrounds no longer
+   need stating here - the desktop transparency above is scoped to the default
+   skin, so these simply keep the colours they already declare. */
 html[data-shell="desktop"][data-skin="soft"] .app-sidebar,
 html[data-shell="desktop"][data-skin="grut"] .app-sidebar {
-  background: var(--card) !important;
   border-right: 0;
-}
-/* The same collision one level up, and the one actually visible at the window
-   edge: the desktop shell makes .app-shell-root `transparent !important`, so
-   the inset this skin pads with showed the window's vibrancy - a mid-grey band
-   between the panels and around them, instead of the skin's own background. */
-html[data-shell="desktop"][data-skin="soft"] .app-shell-root,
-html[data-shell="desktop"][data-skin="grut"] .app-shell-root {
-  background: var(--background) !important;
 }
 /* The drag strip sits over the inset, so it keeps the page colour rather than
    a panel's. */
@@ -467,6 +470,12 @@ html[data-skin="soft"] .app-drag-strip {
 html[data-skin="grut"] .app-sidebar,
 html[data-skin="grut"] .app-main {
   box-shadow: none;
+}
+/* Opaque, not the `bg-card/70` the markup carries. A translucent sidebar over
+   an opaque page composites to an unpredictable value; this skin separates its
+   two columns by a single deliberate step, so that step has to be exact. */
+html[data-skin="grut"] .app-sidebar {
+  background: var(--card);
 }
 
 /* Avatars follow the skin's own shape: photographs want a soft square, blobs

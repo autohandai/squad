@@ -101,3 +101,29 @@ fail with the reason.
 Charts are allowed to inherit: `.light` is a partial override of `:root`, and a
 chart colour that is briefly wrong before React runs is not worth duplicating a
 palette for.
+
+## Addendum: the vibrancy rule was the wrong shape
+
+Three `!important` collisions came out of one four-selector rule — the padding
+in ADR-0054, `.app-sidebar` in ADR-0058, and `.app-shell-root` above — and each
+was invisible until the packaged app ran. Adding an opt-out per element as each
+surfaced was treating the symptom.
+
+Letting the window's vibrancy through is only ever right for a skin with no
+opinion about its own surfaces. So the rule is now scoped to the default skin
+and is no longer `!important`; a skin that paints its own panels simply paints
+them, and needs no opt-out at all. Two of the four `!important` declarations in
+the file are gone with it.
+
+It matches positively on `[data-skin="default"]` rather than negating soft and
+grut. Both `data-shell` and `data-skin` are set by App.jsx at runtime and not in
+the same place, so there is a frame where the shell attribute exists and the
+skin attribute does not — and a negated selector matches an element with no
+attribute at all. `:not([data-skin="soft"])` would therefore flash the vibrancy
+through a light skin on every launch. The positive form cannot.
+
+Removing the opt-outs exposed something they had been hiding: Grut's sidebar was
+only opaque because of the `!important` override, and underneath it the markup
+carries `bg-card/70`. A translucent sidebar over an opaque page composites to a
+value nobody chose. Grut separates its two columns by one deliberate step, so
+that step is now stated outright.
