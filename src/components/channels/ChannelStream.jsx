@@ -1,10 +1,87 @@
-import { Fragment, useEffect, useMemo, useRef } from "react";
-import { Bot, Reply } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Bot, Reply, SmilePlus } from "lucide-react";
 
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { QUICK_REACTIONS, reactionName, searchReactions } from "@/lib/reactions";
 import { cn } from "@/lib/utils";
 
-export const QUICK_REACTIONS = ["👀", "✅", "🎬", "❤️", "🚀"];
+export { QUICK_REACTIONS };
+
+/**
+ * Every emoji, grouped and searchable. The hover row keeps the five worth a
+ * single click; this is where the other five hundred live, so the row does not
+ * have to grow to hold them.
+ */
+function ReactionPicker({ onPick, label = "More reactions", className }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const groups = useMemo(() => searchReactions(query), [query]);
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setQuery("");
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          className={cn("grid size-6 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground", className)}
+        >
+          <SmilePlus className="size-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" side="bottom" className="w-80 p-0">
+        <div className="p-2">
+          <Input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search emoji"
+            aria-label="Search emoji"
+            className="h-8"
+          />
+        </div>
+        <ScrollArea className="h-64">
+          <div className="px-2 pb-2">
+            {groups.length ? (
+              groups.map((group) => (
+                <div key={group.id} className="pb-1">
+                  <p className="px-1 py-1 text-xs text-muted-foreground">{group.label}</p>
+                  <div className="grid grid-cols-8 gap-0.5">
+                    {group.items.map(([emoji, name]) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        title={name}
+                        aria-label={name}
+                        className="grid size-8 place-items-center rounded text-lg hover:bg-muted"
+                        onClick={() => {
+                          onPick?.(emoji);
+                          setOpen(false);
+                          setQuery("");
+                        }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="px-1 py-6 text-center text-sm text-muted-foreground">No emoji named “{query}”.</p>
+            )}
+          </div>
+        </ScrollArea>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function timestampOf(message) {
   const value = Date.parse(message?.createdAt || message?.updatedAt || message?.startedAt || "");
@@ -64,7 +141,7 @@ function MentionChips({ message, agents, userName, channelMemberIds = [] }) {
 function ReactionRow({ reactions = [], onReact, messageId }) {
   if (!reactions.length) return null;
   return (
-    <div className="mt-1.5 flex flex-wrap gap-1">
+    <div className="mt-1.5 flex flex-wrap items-center gap-1">
       {reactions.map((reaction) => (
         <button
           key={reaction.emoji}
@@ -77,9 +154,11 @@ function ReactionRow({ reactions = [], onReact, messageId }) {
           onClick={() => onReact?.(messageId, reaction.emoji)}
         >
           <span aria-hidden="true">{reaction.emoji}</span>
+          <span className="sr-only">{reactionName(reaction.emoji)}</span>
           <span className="font-medium">{reaction.count}</span>
         </button>
       ))}
+      <ReactionPicker label="Add a reaction" onPick={(emoji) => onReact?.(messageId, emoji)} />
     </div>
   );
 }
@@ -92,12 +171,13 @@ function HoverActions({ messageId, onReact, onReply }) {
           key={emoji}
           type="button"
           className="grid size-6 place-items-center rounded text-sm hover:bg-muted"
-          aria-label={`React ${emoji}`}
+          aria-label={`React ${reactionName(emoji)}`}
           onClick={() => onReact?.(messageId, emoji)}
         >
           {emoji}
         </button>
       ))}
+      <ReactionPicker onPick={(emoji) => onReact?.(messageId, emoji)} />
       {onReply ? (
         <button type="button" className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Reply in thread" onClick={onReply}>
           <Reply className="size-3.5" />

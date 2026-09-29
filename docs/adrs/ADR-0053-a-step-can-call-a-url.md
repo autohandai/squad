@@ -53,3 +53,29 @@ when the workflow is written rather than when it is run. The call is bounded at
   gate applies to it like any other step.
 - The reaction picker that makes these easy to create is the other half of this
   work and lands separately.
+
+## Addendum, same day: the picker
+
+The other half of the ask — "I want to add more icons for reactions" — is
+`src/lib/reactions.js`: 581 emoji in nine groups, each with a one-word lowercase
+name so it can be searched and so a screen reader has something to say. The
+hover row keeps its five, because a sixth is already a menu; everything else is
+behind one `SmilePlus` button that opens a searchable grid.
+
+Names are stored as one string per group (`"🐛 bug|🧪 test|…"`) rather than a
+few hundred two-element arrays, which is a page of punctuation nobody keeps
+tidy.
+
+`check-reactions.mjs` asserts what data cannot be allowed to get wrong: no emoji
+in two groups (a duplicate makes `reactionName` depend on group order), every
+name one lowercase word, and every emoji on the hover row also present in the
+picker. That last one failed the first time it ran — ❤️ was on the row and in no
+group, so it could be clicked but never found.
+
+Measured in a headless browser: the picker opens from the reaction row with 581
+buttons across nine labelled groups, each carrying its name as the accessible
+label, and typing "bug" narrows it to 🐛. No console errors.
+
+`reactionFlowDraft` is in the module and checked, so a reaction can be turned
+into one of these workflows without opening channel settings. The dialog that
+calls it is not built yet.
