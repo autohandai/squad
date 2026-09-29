@@ -78,8 +78,7 @@ import {
   Palette,
   PauseCircle,
   PanelRightOpen,
-  PanelLeftClose,
-  PanelLeftOpen,
+  PanelLeft,
   Paperclip,
   PencilLine,
   Play,
@@ -11469,7 +11468,7 @@ function CollapsedSidebarRail({
               aria-label="Expand sidebar"
               aria-keyshortcuts="Meta+B Control+B"
             >
-              <PanelLeftOpen />
+              <PanelLeft />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Expand sidebar ({SIDEBAR_SHORTCUT_LABEL})</TooltipContent>
@@ -11635,7 +11634,7 @@ function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLoc
             aria-label="Expand sidebar"
             aria-keyshortcuts="Meta+B Control+B"
           >
-            <PanelLeftOpen />
+            <PanelLeft />
           </Button>
         </TooltipTrigger>
         <TooltipContent>Expand sidebar ({SIDEBAR_SHORTCUT_LABEL})</TooltipContent>
@@ -11870,7 +11869,7 @@ function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCop
                   aria-label="Collapse sidebar"
                   aria-keyshortcuts="Meta+B Control+B"
                 >
-                  <PanelLeftClose />
+                  <PanelLeft />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Collapse sidebar ({SIDEBAR_SHORTCUT_LABEL})</TooltipContent>

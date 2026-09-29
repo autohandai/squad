@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bot, ChevronDown, ChevronRight, Hash, Inbox, Lock, Monitor, PanelLeftClose, Plus, Search } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, Hash, Inbox, Lock, Monitor, PanelLeft, Plus, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -153,7 +153,7 @@ export function WorkspaceSidebar({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon-sm" onClick={onCollapse} aria-label="Collapse sidebar" aria-keyshortcuts="Meta+B Control+B">
-                <PanelLeftClose />
+                <PanelLeft />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Collapse sidebar</TooltipContent>

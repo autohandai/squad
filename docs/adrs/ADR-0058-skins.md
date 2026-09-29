@@ -99,3 +99,29 @@ The generation itself only works in the foreground. Detached with `nohup` every
 call failed in about four seconds with no output at all, sixteen times; the same
 command run normally produced a 1.2 MB image in about a minute. Anything
 regenerating these should not background them with `nohup`.
+
+## Addendum: what the installed app showed that the browser did not
+
+Two defects only appeared once the skins ran in the packaged app.
+
+**The soft sidebar was the wrong colour.** The desktop shell sets
+`.app-sidebar { background: transparent !important }` so the window's vibrancy
+shows through, and `!important` beats any specificity a skin can reach. So the
+sidebar rendered as window material while the main column rendered the skin's
+card colour: two panels, two colours, which is what "soft is weird" was. A skin
+that paints its own panels now opts out explicitly, and both soft and grut do.
+
+**The two insets did not know about each other.** In the installed app the
+title-bar band (28px) and the skin's float (10px) are both live. The soft height
+rules come later in the file than the desktop ones and replace them outright, so
+subtracting only the skin's inset left the page 28px too tall. All four soft
+rules now subtract `--titlebar-inset` as well, which is `0px` outside the
+desktop shell and so costs the browser nothing.
+
+Neither was visible in a plain browser, because neither `data-shell="desktop"`
+nor the vibrancy exists there. Measuring a skin means measuring it with the
+shell attributes set.
+
+The sidebar toggle also moved from the `PanelLeftClose`/`PanelLeftOpen` pair to
+the plain `PanelLeft` glyph, which is the current convention and one icon for
+both directions.

@@ -402,7 +402,7 @@ html[data-skin="soft"] .app-shell-root {
    1595px - `.app-sidebar` kept its own `min-h-screen` and forced a full
    viewport inside a shorter wrapper. */
 html[data-skin="soft"] .min-h-screen:not(.app-shell-root) {
-  min-height: calc(100svh - (var(--skin-inset) * 2));
+  min-height: calc(100svh - var(--titlebar-inset, 0px) - (var(--skin-inset) * 2));
 }
 /* The shell is the outermost box and holds the inset as padding, so it keeps
    the whole viewport; shrinking it too left its content box one inset short of
@@ -412,7 +412,7 @@ html[data-skin="soft"] .app-shell-root {
 }
 html[data-skin="soft"] .h-screen,
 html[data-skin="soft"] .h-\[100svh\] {
-  height: calc(100svh - (var(--skin-inset) * 2));
+  height: calc(100svh - var(--titlebar-inset, 0px) - (var(--skin-inset) * 2));
 }
 html[data-skin="soft"] aside > div.sticky {
   top: var(--skin-inset);
@@ -423,10 +423,10 @@ html[data-skin="soft"] aside > div.sticky {
    `lg:h-screen`, so it alone held the layout a full viewport tall. */
 @media (min-width: 64rem) {
   html[data-skin="soft"] .lg\:h-screen {
-    height: calc(100svh - (var(--skin-inset) * 2));
+    height: calc(100svh - var(--titlebar-inset, 0px) - (var(--skin-inset) * 2));
   }
   html[data-skin="soft"] .lg\:min-h-screen {
-    min-height: calc(100svh - (var(--skin-inset) * 2));
+    min-height: calc(100svh - var(--titlebar-inset, 0px) - (var(--skin-inset) * 2));
   }
 }
 html[data-skin="soft"] .app-sidebar,
@@ -435,6 +435,17 @@ html[data-skin="soft"] .app-main {
   background: var(--card);
 }
 html[data-skin="soft"] aside {
+  border-right: 0;
+}
+/* A skin that paints its own panels has to opt out of the desktop vibrancy.
+   The desktop shell makes the sidebar `transparent !important` so the window
+   material shows through, and `!important` beats any specificity a skin can
+   reach - so in the installed app the sidebar rendered as window material
+   while the main column rendered the skin's card colour. Two panels, two
+   different colours, which is what "soft is weird" was. */
+html[data-shell="desktop"][data-skin="soft"] .app-sidebar,
+html[data-shell="desktop"][data-skin="grut"] .app-sidebar {
+  background: var(--card) !important;
   border-right: 0;
 }
 /* The drag strip sits over the inset, so it keeps the page colour rather than
