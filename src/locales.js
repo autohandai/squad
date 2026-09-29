@@ -427,6 +427,8 @@ const UI_COPY_BY_LANGUAGE = {
     memberInstructions: "Instructions",
     saveMember: "Save member",
     squad: "Squad",
+    suggestedForProject: "Suggested",
+    canHelpWith: "can help with",
     newMember: "New member",
     searchMembers: "Search members",
     showLabel: "Show",

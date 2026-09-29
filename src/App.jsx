@@ -4,7 +4,7 @@ import { onDesktopMenu } from "@/lib/desktop-menu";
 import { FirstRun } from "@/components/onboarding/FirstRun";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
-import { proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
+import { NEED_HELP, joinList, proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
 import { PresenceDot, PresenceLabel } from "@/components/members/PresenceDot";
 import { StopMemberButton } from "@/components/members/StopMemberButton";
@@ -9505,12 +9505,15 @@ function ChannelsPage({
   // is missing. Proposals are keyed by project signature, so a dismissed one
   // stays dismissed until the folder itself changes.
   const squadSuggestions = chatSettings.squadSuggestions !== false;
+  // The member picker reads the same profiles, and it is a list you opened on
+  // purpose: turning off the unsolicited "wants to join" nudge must not leave
+  // it with nothing to recommend.
   useEffect(() => {
-    if (!squadSuggestions || !channel) return;
+    if ((!squadSuggestions && !manageMembersOpen) || !channel) return;
     for (const project of channelProjects) {
       if (project.path && !workspaceProfiles[project.path]) onLoadWorkspaceProfile?.(project.path);
     }
-  }, [squadSuggestions, channel, channelProjects, workspaceProfiles, onLoadWorkspaceProfile]);
+  }, [squadSuggestions, manageMembersOpen, channel, channelProjects, workspaceProfiles, onLoadWorkspaceProfile]);
   const memberIdsKey = channel ? channel.memberIds.join(",") : "";
   const openProposals = useMemo(() => {
     if (!squadSuggestions || !channel) return [];
@@ -9524,6 +9527,25 @@ function ChannelsPage({
       .filter((proposal) => !channelProposals[proposal.key]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [squadSuggestions, channel, channelProjects, workspaceProfiles, memberIdsKey, agents, channelProposals]);
+  // Who this channel's projects need that the channel does not have. The same
+  // engine as the "wants to join" rows above, but a dismissal does not hide a
+  // member here: this is a list you opened on purpose.
+  const suggestedForChannel = useMemo(() => {
+    if (!channel) return new Map();
+    const projects = channelProjects
+      .map((project) => ({ name: project.name, path: project.path, profile: workspaceProfiles[project.path] }))
+      .filter((project) => project.profile && !project.profile.error);
+    if (!projects.length) return new Map();
+    const current = channel.memberIds.map((memberId) => agents.find((agent) => agent.id === memberId)).filter(Boolean);
+    return new Map(
+      proposeMembers({ projects, members: current, candidates: agents, limit: agents.length }).map((proposal) => [
+        proposal.agent.id,
+        proposal,
+      ])
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel, channelProjects, workspaceProfiles, memberIdsKey, agents]);
+
   const [projectDraft, setProjectDraft] = useState("");
   const [projectPickBusy, setProjectPickBusy] = useState(false);
   const mentionItems = useMemo(
@@ -9764,30 +9786,50 @@ function ChannelsPage({
             </Popover>
           </header>
 
+          {/* Members as divider rows with a check, not a wall of tinted chips.
+              Anyone this channel's projects need and the channel lacks is
+              listed first with the reason, so adding the right member is a
+              recommendation rather than a memory test. */}
           {manageMembersOpen ? (
-            <div className="flex flex-col gap-2 border-b border-border/70 px-4 py-3 lg:px-6">
-              <p className="text-xs text-muted-foreground">{copy.channelMembersDetail}</p>
-              <div className="flex flex-wrap gap-1.5">
-                {agents.map((agent) => {
-                  const isMember = channel.memberIds.includes(agent.id);
-                  return (
-                    <button
-                      key={agent.id}
-                      type="button"
-                      aria-pressed={isMember}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-md border py-1 pl-1 pr-2.5 text-sm transition-colors",
-                        isMember
-                          ? "border-primary/50 bg-primary/10 text-foreground"
-                          : "border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
-                      )}
-                      onClick={() => onToggleMember?.(channel.id, agent.id)}
-                    >
-                      <AgentAvatar agent={agent} className="size-5 rounded-md" />
-                      {agent.name} · {isMember ? copy.leaveChannel : copy.joinChannel}
-                    </button>
-                  );
-                })}
+            <div className="flex flex-col border-b border-border/70 px-4 py-3 lg:px-6">
+              <p className="pb-1 text-xs text-muted-foreground">{copy.channelMembersDetail}</p>
+              <div className="flex flex-col border-t border-border/60">
+                {[...agents]
+                  .sort((left, right) => {
+                    const suggested = Number(suggestedForChannel.has(right.id)) - Number(suggestedForChannel.has(left.id));
+                    if (suggested) return suggested;
+                    const joined = Number(channel.memberIds.includes(right.id)) - Number(channel.memberIds.includes(left.id));
+                    if (joined) return joined;
+                    return String(left.name || "").localeCompare(String(right.name || ""));
+                  })
+                  .map((agent) => {
+                    const isMember = channel.memberIds.includes(agent.id);
+                    const suggestion = suggestedForChannel.get(agent.id);
+                    return (
+                      <button
+                        key={agent.id}
+                        type="button"
+                        role="checkbox"
+                        aria-checked={isMember}
+                        className="flex items-center gap-3 border-b border-border/60 px-2 py-2.5 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:bg-muted/40"
+                        onClick={() => onToggleMember?.(channel.id, agent.id)}
+                      >
+                        <AgentAvatar agent={agent} className="size-7 rounded-md" />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-baseline gap-x-2">
+                            <span className={cn("truncate text-sm", isMember ? "font-medium text-foreground" : "text-foreground")}>{agent.name}</span>
+                            <span className="truncate text-xs text-muted-foreground">{localizedRole(agent, copy) || agent.role}</span>
+                          </span>
+                          {suggestion && !isMember ? (
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                              {copy.suggestedForProject || "Suggested"}{" · "}{copy.canHelpWith || "can help with"} {joinList((suggestion.needs || []).map((need) => NEED_HELP[need] || need))}
+                            </span>
+                          ) : null}
+                        </span>
+                        {isMember ? <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
+                      </button>
+                    );
+                  })}
               </div>
             </div>
           ) : null}

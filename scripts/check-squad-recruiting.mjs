@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { profileWorkspace } from "../server/workspace-profile.mjs";
-import { firstPromptFor, needsServedBy, proposalCopy, proposeMembers, suggestRoles } from "../src/lib/squad-recruiting.js";
+import { NEED_HELP, firstPromptFor, joinList, needsServedBy, proposalCopy, proposeMembers, suggestRoles } from "../src/lib/squad-recruiting.js";
 import { presenceFromMessages, presenceSentence } from "../src/lib/presence.js";
 
 const root = await mkdtemp(join(tmpdir(), "squad-recruiting-"));
@@ -66,6 +66,32 @@ try {
   const evaOnline = { ...eva, status: "online" };
   const withQa = proposeMembers({ projects: [{ name: "shop", profile: appProfile }], members: [noah], candidates: [kai, iris, evaOnline] });
   assert.deepEqual(withQa.map((item) => item.agent.id), ["eva"], "QA proposed for tests");
+
+  // The channel member picker (App.jsx, manageMembersOpen) calls proposeMembers
+  // with limit: agents.length so every uncovered need is named, not just the
+  // top two, and renders "Suggested \u00b7 can help with <needs>" per row.
+  const pickerProjects = [
+    { name: "api", path: service, profile: serviceProfile },
+    { name: "shop", path: app, profile: appProfile },
+  ];
+  const forPicker = proposeMembers({ projects: pickerProjects, members: [], candidates: [noah, kai, iris, evaOnline], limit: 4 });
+  const lines = new Map(forPicker.map((item) => [item.agent.id, joinList(item.needs.map((need) => NEED_HELP[need] || need))]));
+  // Unbounded, the picker names more than the two the nudge would show.
+  assert.ok(forPicker.length > 2, `picker proposals: ${forPicker.length}`);
+  assert.equal(lines.get("noah"), "the UI", "Noah's suggestion line");
+  assert.equal(lines.get("kai"), "the Dockerfile and CI", "Kai's suggestion line");
+  assert.equal(lines.get("eva"), "the test suite", "Eva's suggestion line");
+  // Each need is claimed once, so no two rows offer the same help.
+  const claimed = forPicker.flatMap((item) => item.needs);
+  assert.equal(claimed.length, new Set(claimed).size, `needs claimed twice: ${claimed}`);
+  // Someone already in the channel is never suggested to join it again.
+  const joined = proposeMembers({ projects: pickerProjects, members: [noah, kai, iris, evaOnline], candidates: [noah, kai, iris, evaOnline], limit: 4 });
+  assert.deepEqual(joined, [], "a full channel suggests nobody");
+  // A channel with no project bound has nothing to recommend from.
+  assert.deepEqual(proposeMembers({ projects: [], members: [], candidates: [noah, kai], limit: 4 }), [], "no project, no suggestions");
+  // An offline member stays a plain row: no reason to promise work they cannot take.
+  const offline = proposeMembers({ projects: [{ name: "shop", path: app, profile: appProfile }], members: [noah], candidates: [eva], limit: 4 });
+  assert.deepEqual(offline, [], "offline candidates are not suggested");
 
   const templates = [
     { id: "frontend-developer", title: "Frontend Developer" },
