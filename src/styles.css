@@ -427,12 +427,24 @@ html[data-skin="soft"] .min-h-screen:not(.app-shell-root) {
 html[data-skin="soft"] .app-shell-root {
   min-height: 100svh;
 }
-html[data-skin="soft"] .h-screen,
-html[data-skin="soft"] .h-\[100svh\] {
+html[data-skin="soft"] .h-screen {
   height: calc(100svh - var(--titlebar-inset, 0px) - (var(--skin-inset) * 2));
 }
-html[data-skin="soft"] aside > div.sticky {
+/* The sidebar's sticky wrapper is the only user of this, and it sits above the
+   skin's padding rather than inside it - so subtracting the title-bar band here
+   as well counted it twice and left the sidebar panel a band shorter than the
+   main one. */
+html[data-skin="soft"] .h-\[100svh\] {
+  height: calc(100svh - (var(--skin-inset) * 2));
+}
+html[data-skin="soft"] aside:has(.app-sidebar) > div.sticky {
   top: var(--skin-inset);
+}
+/* The strip is the whole empty band, and in this skin the band is the title-bar
+   inset plus the float. Left at the inset alone, the bottom sliver of an
+   apparently empty area was not draggable. */
+html[data-skin="soft"] .app-drag-strip {
+  height: calc(var(--titlebar-inset) + var(--skin-inset));
 }
 /* The `lg:` variants need rewriting inside Tailwind's own `lg` query or they
    still do nothing below it - and missing them is what kept a 20px scrollbar
@@ -448,11 +460,19 @@ html[data-skin="soft"] aside > div.sticky {
 }
 html[data-skin="soft"] .app-sidebar,
 html[data-skin="soft"] .app-main {
-  border-radius: var(--radius);
+  border-radius: var(--skin-panel-radius);
   background: var(--card);
 }
-html[data-skin="soft"] aside {
+/* Scoped to the shell's own aside. Unscoped, this stripped the right border
+   from every bordered content card in the app and left them three-sided.
+   The element is also a square translucent slab sitting behind a rounded
+   panel - a third surface colour showing at the corners and below - and its
+   backdrop blur is wasted over an opaque child. */
+html[data-skin="soft"] aside:has(.app-sidebar),
+html[data-skin="grut"] aside:has(.app-sidebar) {
   border-right: 0;
+  background: transparent;
+  backdrop-filter: none;
 }
 /* The sidebar keeps no border in these skins: they separate their panels by
    value and by the gap between them, not by a line. The backgrounds no longer

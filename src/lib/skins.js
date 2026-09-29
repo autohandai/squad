@@ -20,6 +20,11 @@ export const SKIN_VAR_DEFAULTS = {
   "skin-elevation-strong": "none",
   "skin-density": "1",
   "skin-avatar-radius": "0.375rem",
+  // What the two shell panels round by, when a skin insets them from the
+  // window edge. Separate from --radius on purpose: --radius is the skin's
+  // identity and reshapes every button, input and popover through
+  // --radius-sm/md/lg/xl, while this answers only to the window's frame mask.
+  "skin-panel-radius": "0px",
 };
 
 export const SKINS = [
@@ -37,6 +42,9 @@ export const SKINS = [
       "skin-elevation-strong": "none",
       "skin-density": "1",
       "skin-avatar-radius": "0.375rem",
+      // Not inset, so the panels reach the window edge and have no outer
+      // corner of their own to round.
+      "skin-panel-radius": "0px",
     },
     avatars: "photo",
     swatches: ["#0a0a0a", "#fafafa", "#5ed46f", "#27272a"],
@@ -72,21 +80,26 @@ export const SKINS = [
       "chart-5": "#9b8ed6",
     },
     vars: {
-      // 8px inside a 4px inset. The window frame is masked by AppKit at 12px
-      // and cannot be changed, so concentric corners need inner = outer - inset;
-      // at 20px/10px the margin was 10px along the flat edges but 17.5px across
-      // the diagonal, so the page colour pooled in each corner. That, not the
-      // radius itself, is what read as the corners disagreeing. 8/4 is uniform
-      // at every point and inside DESIGN.md's 4-8px range - this skin gets its
-      // identity from elevation and palette, not from bulbous corners.
-      radius: "0.5rem",
-      "skin-elevation": "0 1px 2px rgba(29, 35, 48, 0.04), 0 8px 24px rgba(29, 35, 48, 0.06)",
+      radius: "1.25rem",
+      // At a 4px inset the panels line the window rather than hover in it, so
+      // they must not carry the large shadow: a 24px blur offset 8px down
+      // covers the whole 4px margin and the bottom several times over, so the
+      // page colour meant to show between frame and panel renders as a dark
+      // rim. A float that fills its own gap reads as a bevel, which DESIGN.md
+      // rules out alongside bulbous corners. The strong shadow is unchanged -
+      // popovers and dialogs float over content and still have room to fall.
+      "skin-elevation": "0 1px 2px rgba(29, 35, 48, 0.05)",
       "skin-elevation-strong": "0 2px 4px rgba(29, 35, 48, 0.05), 0 18px 48px rgba(29, 35, 48, 0.10)",
       // Density stays at 1. Scaling the root to 18.4px cost the page a
       // scrollbar and started to disagree with the fixed-pixel icon sizes;
       // the float reads from radius and shadow, not from bigger type.
       "skin-density": "1",
       "skin-avatar-radius": "9999px",
+      // 12 - 4. The frame is masked at 12px and clips, so concentric corners
+      // need inner = outer - inset; at 20px inside a 10px inset the margin was
+      // 10px along the flat edges and 17.5px across the diagonal, pooling the
+      // page colour in every corner.
+      "skin-panel-radius": "8px",
     },
     avatars: "portrait",
     swatches: ["#eceef4", "#ef7a5c", "#f7f8fb", "#1d2330"],
@@ -127,6 +140,9 @@ export const SKINS = [
       "skin-elevation-strong": "none",
       "skin-density": "0.95",
       "skin-avatar-radius": "9999px",
+      // Not inset either, so its panels reach the window edge and the frame
+      // mask is the only corner there is.
+      "skin-panel-radius": "0px",
     },
     avatars: "blob",
     swatches: ["#0d0d0f", "#4d8df0", "#5bc4a4", "#f0a23c"],

@@ -152,18 +152,33 @@ const WINDOW_FRAME_RADIUS_PX = 12;
 const SKIN_INSET_PX = { default: 0, soft: 4, grut: 0 };
 const css = readFileSync("src/styles.css", "utf8");
 for (const skin of SKINS) {
-  const radius = parseFloat(skin.vars.radius) * 16;
+  // The PANEL radius, not --radius. They are two jobs: --radius is the skin's
+  // identity and reshapes every shadcn primitive through --radius-sm/md/lg/xl,
+  // while this one answers to the window frame. Holding the identity token to
+  // the frame's geometry reshapes every button in the skin for no reason.
+  const panel = parseFloat(skin.vars["skin-panel-radius"]);
+  assert.ok(Number.isFinite(panel), `${skin.id} must declare skin-panel-radius`);
   assert.ok(
-    radius <= WINDOW_FRAME_RADIUS_PX,
-    `${skin.id} asks for a ${radius}px radius; nothing above the window's ${WINDOW_FRAME_RADIUS_PX}px frame mask can agree with it at any inset`
+    panel <= WINDOW_FRAME_RADIUS_PX,
+    `${skin.id} panels ask for ${panel}px; nothing above the window's ${WINDOW_FRAME_RADIUS_PX}px frame mask can agree with it at any inset`
   );
   const inset = SKIN_INSET_PX[skin.id];
-  if (inset === undefined) continue;
+  assert.ok(inset !== undefined, `${skin.id} has no recorded inset`);
   if (inset > 0) {
     assert.equal(
-      radius,
+      panel,
       WINDOW_FRAME_RADIUS_PX - inset,
-      `${skin.id} insets by ${inset}px, so concentric corners want a ${WINDOW_FRAME_RADIUS_PX - inset}px radius, not ${radius}px`
+      `${skin.id} insets by ${inset}px, so concentric corners want a ${WINDOW_FRAME_RADIUS_PX - inset}px panel radius, not ${panel}px`
+    );
+    // A shadow bigger than the gap it falls into fills the gap: the page
+    // colour between frame and panel renders as a dark rim and the float reads
+    // as a bevel, which DESIGN.md rules out.
+    const elevation = skin.vars["skin-elevation"] || "none";
+    const blurs = [...elevation.matchAll(/(\d+)px\s+(\d+)px/g)].map((m) => Number(m[2]));
+    const worst = blurs.length ? Math.max(...blurs) : 0;
+    assert.ok(
+      worst <= inset * 2,
+      `${skin.id} insets by ${inset}px but its panel shadow blurs ${worst}px, which fills the gap and reads as a bevel`
     );
   }
 }

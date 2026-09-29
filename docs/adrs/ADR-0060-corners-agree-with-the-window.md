@@ -76,3 +76,49 @@ dependency on it beyond this check.
   the check says which skins no longer agree.
 - Re-measured after the change: all three skins render with page overflow 0 and
   no console errors in the desktop shell.
+
+## Addendum: what 8/4 broke, and what it exposed
+
+Tightening the inset to 4px made three things worse or visible, and one of them
+would have undone the change entirely.
+
+**The shadow no longer fitted the gap.** Soft's panel elevation was
+`0 1px 2px … , 0 8px 24px …`. A 24px blur offset 8px down needs room to fall;
+at a 10px inset it had some, at 4px it covers the whole margin on every side and
+the bottom several times over. The 4px of page colour that concentric corners
+buy would have rendered as a dark rim, and a float that fills its own gap reads
+as a bevel — which `DESIGN.md:8` rules out in the same sentence as bulbous
+corners. Panels at a 4px inset line the window rather than hover in it, so they
+now carry `0 1px 2px` alone. `--skin-elevation-strong` is untouched: popovers
+and dialogs float over content and still have room.
+
+`check-skins` now asserts a panel shadow may not blur more than twice its
+skin's inset, so this cannot be reintroduced by tuning one number.
+
+**The panel radius was the wrong token to change.** `--radius` is the skin's
+identity — ADR-0058 has it feeding `--radius-sm/md/lg/xl` and every shadcn
+primitive — while the panel radius answers to the window frame. They were one
+token doing two jobs, so holding the frame's geometry reshaped every button,
+input and popover in the skin. They are now separate: Soft keeps
+`--radius: 1.25rem` and its panels take `--skin-panel-radius: 8px`. The geometry
+check moved to the panel token with it.
+
+**An unscoped selector was stripping borders across the app.**
+`html[data-skin="soft"] aside { border-right: 0 }` matched *every* `<aside>`,
+including the bordered content cards at `src/App.jsx:20517` and `21471`, which
+rendered as three-sided boxes. Scoped to `aside:has(.app-sidebar)`. Verified by
+injecting that exact markup into a running Soft skin and reading back 1px on all
+four sides.
+
+The same element was also a square translucent slab behind a rounded panel — a
+third surface colour showing at the corners and below — with a backdrop blur
+wasted over an opaque child. It is now transparent with no filter.
+
+**And a band was counted twice.** `.h-[100svh]` is used once, by the sidebar's
+sticky wrapper, which sits *above* the skin's padding rather than inside it — so
+subtracting the title-bar inset there as well left the sidebar panel a full band
+shorter than the main one. Measured 745 against 745 after the split; it was 28px
+short before.
+
+The drag strip now spans the title-bar inset plus the float, because in this
+skin that whole band is what looks empty and draggable.
