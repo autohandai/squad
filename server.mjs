@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { hostname } from "node:os";
 import { OtelLogger, SEVERITY, parseLogEnvelope, resourceFromEnv, traceIdFor, spanIdFor } from "./server/otel-logs.mjs";
 import { SdkSessionPool } from "./server/sdk-sessions.mjs";
+import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { profileWorkspace } from "./server/workspace-profile.mjs";
@@ -5796,6 +5797,12 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     });
     healthy = true;
     const reply = sdkReplyFromEvents(output.events, output.rawStdout);
+    // The SDK reports provider and session failures as events, not as thrown
+    // errors, so a failed turn ends cleanly with nothing in it. Without this
+    // the empty reply became "Autohand returned no chat text." and a safety
+    // block, an oversized payload and a stalled stream were indistinguishable
+    // (ADR-0061).
+    const failure = replyFailure(output.events, reply);
     const trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
     const completedAt = Date.now();
     trace.command = context.command;
@@ -5804,6 +5811,7 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     trace.startedAt = new Date(startedAt).toISOString();
     trace.completedAt = new Date(completedAt).toISOString();
     trace.durationMs = completedAt - startedAt;
+    if (failure) throw new ChatRuntimeError(failure.message, { reply: "", trace, workspace, transport: "sdk" });
     const result = {
       reply: reply || "Autohand returned no chat text.",
       trace,
@@ -5911,6 +5919,12 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     }, signal);
     healthy = true;
     const reply = sdkReplyFromEvents(output.events, output.rawStdout);
+    // The SDK reports provider and session failures as events, not as thrown
+    // errors, so a failed turn ends cleanly with nothing in it. Without this
+    // the empty reply became "Autohand returned no chat text." and a safety
+    // block, an oversized payload and a stalled stream were indistinguishable
+    // (ADR-0061).
+    const failure = replyFailure(output.events, reply);
     const trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
     const completedAt = Date.now();
     trace.command = context.command;
@@ -5919,6 +5933,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     trace.startedAt = new Date(startedAt).toISOString();
     trace.completedAt = new Date(completedAt).toISOString();
     trace.durationMs = completedAt - startedAt;
+    if (failure) throw new ChatRuntimeError(failure.message, { reply: "", trace, workspace, transport: "sdk" });
     const result = {
       reply: reply || "Autohand returned no chat text.",
       trace,
