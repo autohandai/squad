@@ -11,6 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
+import { createServer } from "node:http";
 
 import {
   createRun,
@@ -368,6 +369,74 @@ try {
   assert.equal(fired2.length, 0, "not fired twice in the same minute");
   const nightlyRuns = (await call("GET", `/api/workflows/runs/${fired1[0].runId}`)).payload.data.run;
   assert.equal(nightlyRuns.trigger.type, "schedule");
+
+  // A URL step (ADR-0053) is the bridge's own work: it calls out, records what
+  // came back, and moves on without a member. Pointed at a real server here so
+  // the request itself is proven, not assumed.
+  const seen = [];
+  const memberRunsBefore = startedRuns.length;
+  const target = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      seen.push({ method: req.method, url: req.url, auth: req.headers["x-token"] || "", type: req.headers["content-type"] || "", body });
+      if (req.url === "/boom") { res.writeHead(500, { "content-type": "text/plain" }); res.end("nope"); return; }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+  });
+  await new Promise((resolve) => target.listen(0, "127.0.0.1", resolve));
+  const origin = `http://127.0.0.1:${target.address().port}`;
+  try {
+    const hook = await call("POST", "/api/channels/channel-release/workflows", {
+      name: "Ping the API",
+      trigger: { type: "reaction", emoji: "\u{1F680}" },
+      steps: [
+        { id: "h1", kind: "http", url: `${origin}/notify?from={{workflow}}`, method: "POST", headers: [{ name: "x-token", value: "s3cret" }], body: '{"said":"{{message}}"}' },
+        { id: "h2", memberId: "eva", prompt: "Say what the API answered: {{previous}}" },
+      ],
+    });
+    assert.equal(hook.status, 201, JSON.stringify(hook.payload));
+    const started = await call("POST", `/api/channels/channel-release/workflows/${hook.payload.data.id}/run`, { messageBody: "ship it" });
+    assert.equal(started.status, 202, JSON.stringify(started.payload));
+    assert.equal(seen.length, 1, "the bridge made exactly one request");
+    assert.equal(seen[0].method, "POST");
+    assert.equal(seen[0].url, "/notify?from=Ping%20the%20API", "the url template resolved");
+    assert.equal(seen[0].auth, "s3cret", "the header went out");
+    assert.equal(seen[0].type, "application/json", "a body without a content type gets json");
+    assert.equal(seen[0].body, '{"said":"ship it"}', "the body template resolved");
+    // The URL step completed on its own and the run is now on the member step.
+    const after = (await call("GET", `/api/workflows/runs/${started.payload.data.run.id}`)).payload.data.run;
+    const httpResult = after.stepResults.find((item) => item.stepId === "h1");
+    assert.equal(httpResult.status, "completed", JSON.stringify(after.stepResults));
+    assert.match(httpResult.preview, /^200 OK/, httpResult.preview);
+    assert.equal(after.stepIndex, 1, "the run moved to the member step by itself");
+    assert.equal(startedRuns.length, memberRunsBefore, "a URL step starts no member run of its own");
+
+    // A non-2xx answer fails the step rather than being reported as success.
+    const bad = await call("POST", "/api/channels/channel-release/workflows", {
+      name: "Call a failing API",
+      trigger: { type: "reaction", emoji: "\u{1F6A8}" },
+      steps: [{ id: "b1", kind: "http", url: `${origin}/boom`, method: "GET" }],
+    });
+    const badRun = await call("POST", `/api/channels/channel-release/workflows/${bad.payload.data.id}/run`, {});
+    const badAfter = (await call("GET", `/api/workflows/runs/${badRun.payload.data.run.id}`)).payload.data.run;
+    assert.equal(badAfter.stepResults[0].status, "failed", JSON.stringify(badAfter.stepResults));
+    assert.match(badAfter.stepResults[0].preview, /^500/, badAfter.stepResults[0].preview);
+    assert.equal(seen[1].body, "", "GET sends no body");
+
+    // A url the step may not call never becomes a request.
+    const refused = await call("POST", "/api/channels/channel-release/workflows", {
+      name: "Read a file",
+      trigger: { type: "reaction", emoji: "\u{1F4C1}" },
+      steps: [{ id: "f1", kind: "http", url: "file:///etc/passwd" }],
+    });
+    assert.equal(refused.status, 400, "a non-http url is rejected at save time");
+    assert.match(refused.payload.error, /step\.url/);
+    assert.equal(seen.length, 2, "no further requests were made");
+  } finally {
+    await new Promise((resolve) => target.close(resolve));
+  }
   route.stop();
 } finally {
   await rm(stateDir, { recursive: true, force: true });

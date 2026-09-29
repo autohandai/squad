@@ -18,9 +18,12 @@
 import { join } from "node:path";
 
 import {
+  MAX_HTTP_PREVIEW,
+  MAX_STEPS,
   createRun,
   dueSchedules,
   findRun,
+  httpUrl,
   isTerminal,
   nextRunState,
   normalizeWorkflow,
@@ -142,10 +145,57 @@ function runAttributes(workflow, run, extra = {}) {
 // Persist a run transition and act on the state it landed in: announce a
 // pending approval, start the next step on the bridge when the workflow asks
 // for it, or leave the step for the web app to dispatch (`dispatch` result).
+// A URL step is the bridge's own work - no member, no workspace, and it runs
+// whether or not the app is open. Perform it before deciding what this
+// transition has to announce, so approval and terminal handling below see the
+// state the call left behind. The guard bounds a chain of URL steps.
+const HTTP_STEP_TIMEOUT_MS = 20000;
+const BODYLESS_METHODS = new Set(["GET", "DELETE"]);
+
+async function callHttpStep(ctx, workflow, run, next) {
+  const now = new Date().toISOString();
+  const target = httpUrl(next.url);
+  if (!target) {
+    const reason = next.url ? `${next.url} is not an http(s) url` : "no url";
+    const failed = nextRunState(workflow, run, { type: "fail", error: `step ${next.step.id}: ${reason}` }, { now });
+    log(ctx, ctx.SEVERITY.ERROR, `workflow ${workflow.name} could not call ${next.step.id}: ${reason}`, runAttributes(workflow, failed, { "event.name": "workflow.step.failed", "autohand.workflow.step_id": next.step.id }));
+    return failed;
+  }
+  let current = nextRunState(workflow, run, { type: "step.started", stepId: next.step.id }, { now });
+  const headers = {};
+  for (const header of next.headers || []) headers[header.name] = header.value;
+  const sendsBody = !BODYLESS_METHODS.has(next.method) && Boolean(next.body);
+  if (sendsBody && !Object.keys(headers).some((name) => name.toLowerCase() === "content-type")) headers["content-type"] = "application/json";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HTTP_STEP_TIMEOUT_MS);
+  try {
+    const response = await fetch(target, { method: next.method, headers, body: sendsBody ? next.body : undefined, signal: controller.signal, redirect: "follow" });
+    const body = (await response.text().catch(() => "")).trim().slice(0, MAX_HTTP_PREVIEW);
+    const status = response.ok ? "completed" : "failed";
+    const preview = `${response.status} ${response.statusText}${body ? ` ${body}` : ""}`.trim().slice(0, MAX_HTTP_PREVIEW);
+    const settled = nextRunState(workflow, current, { type: "step.finished", stepId: next.step.id, status, preview }, { now: new Date().toISOString() });
+    log(ctx, response.ok ? ctx.SEVERITY.INFO : ctx.SEVERITY.WARN, `workflow ${workflow.name} called ${target.origin}${target.pathname}: ${response.status}`, runAttributes(workflow, settled, { "event.name": `workflow.step.${status}`, "autohand.workflow.step_id": next.step.id, "http.response.status_code": response.status, "http.request.method": next.method }));
+    return settled;
+  } catch (error) {
+    const reason = error?.name === "AbortError" ? `no answer in ${HTTP_STEP_TIMEOUT_MS / 1000}s` : String(error?.message || error);
+    const settled = nextRunState(workflow, current, { type: "step.finished", stepId: next.step.id, status: "failed", preview: reason.slice(0, MAX_HTTP_PREVIEW) }, { now: new Date().toISOString() });
+    log(ctx, ctx.SEVERITY.ERROR, `workflow ${workflow.name} could not reach ${target.origin}: ${reason}`, runAttributes(workflow, settled, { "event.name": "workflow.step.failed", "autohand.workflow.step_id": next.step.id }));
+    return settled;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function afterTransition(ctx, workflow, run, { reason = "" } = {}) {
   const channelId = workflow.channelId;
   let current = run;
   let dispatch = null;
+
+  for (let guard = 0; guard < MAX_STEPS && current.status === "running"; guard += 1) {
+    const next = stepToDispatch(workflow, current);
+    if (!next || next.kind !== "http") break;
+    current = await callHttpStep(ctx, workflow, current, next);
+  }
 
   if (current.status === "waiting_approval" && current.pendingApproval) {
     ctx.emit("approval.pending", {

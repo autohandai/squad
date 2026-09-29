@@ -16,6 +16,12 @@ export const TRIGGER_TYPES = ["message", "reaction", "schedule", "webhook"];
 export const RUN_STATUSES = ["running", "waiting_approval", "completed", "failed", "declined"];
 export const TERMINAL_STATUSES = ["completed", "failed", "declined"];
 export const STEP_CONDITIONS = ["always", "previous_failed", "previous_succeeded"];
+// A step either asks a member or calls a URL. Steps stored before this existed
+// have no kind and stay members, which is what they were.
+export const STEP_KINDS = ["member", "http"];
+export const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+export const MAX_HEADERS = 8;
+export const MAX_HTTP_PREVIEW = 400;
 export const APPROVAL_BY = ["user", "members"];
 export const DISPATCH_MODES = ["app", "bridge"];
 export const DEFAULT_APPROVAL_EMOJI = "✅";
@@ -28,6 +34,24 @@ export const MAX_RUNS_KEPT = 40;
 
 function text(value, max = 4000) {
   return String(value ?? "").trim().slice(0, max);
+}
+
+/**
+ * A URL a step is allowed to call: absolute, and http or https only. Anything
+ * else - file:, data:, a bare host, a template that did not resolve - is not a
+ * request we are willing to make on the user's behalf.
+ */
+export function httpUrl(value) {
+  const source = text(value, 2048);
+  if (!source) return null;
+  let parsed;
+  try {
+    parsed = new URL(source);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  return parsed;
 }
 
 function isoOr(value, fallback) {
@@ -72,15 +96,45 @@ export function normalizeApproval(input) {
   };
 }
 
+export function normalizeHeaders(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((header) => ({ name: text(header?.name, 128), value: text(header?.value, 1024) }))
+    .filter((header) => header.name)
+    .slice(0, MAX_HEADERS);
+}
+
 export function normalizeStep(input, index = 0) {
   const source = input && typeof input === "object" ? input : {};
-  return {
+  const kind = STEP_KINDS.includes(source.kind) ? source.kind : "member";
+  const base = {
     id: text(source.id, 96) || `step_${index + 1}`,
+    kind,
+    when: STEP_CONDITIONS.includes(source.when) ? source.when : "always",
+    approval: source.approval === true ? normalizeApproval({}) : normalizeApproval(source.approval),
+  };
+  if (kind === "http") {
+    const method = text(source.method, 10).toUpperCase();
+    return {
+      ...base,
+      memberId: "",
+      prompt: "",
+      workspace: "",
+      url: text(source.url, 2048),
+      method: HTTP_METHODS.includes(method) ? method : "POST",
+      headers: normalizeHeaders(source.headers),
+      body: text(source.body, 8000),
+    };
+  }
+  return {
+    ...base,
     memberId: text(source.memberId, 96),
     prompt: text(source.prompt, 8000),
-    when: STEP_CONDITIONS.includes(source.when) ? source.when : "always",
     workspace: text(source.workspace, 1024),
-    approval: source.approval === true ? normalizeApproval({}) : normalizeApproval(source.approval),
+    url: "",
+    method: "",
+    headers: [],
+    body: "",
   };
 }
 
@@ -200,8 +254,11 @@ export function validateWorkflow(workflow) {
   const item = normalizeWorkflow(workflow);
   if (!text(workflow?.name)) problems.push("name");
   if (!item.steps.length) problems.push("steps");
-  if (item.steps.some((step) => !step.memberId)) problems.push("step.memberId");
-  if (item.steps.some((step) => !step.prompt)) problems.push("step.prompt");
+  const memberSteps = item.steps.filter((step) => step.kind !== "http");
+  const httpSteps = item.steps.filter((step) => step.kind === "http");
+  if (memberSteps.some((step) => !step.memberId)) problems.push("step.memberId");
+  if (memberSteps.some((step) => !step.prompt)) problems.push("step.prompt");
+  if (httpSteps.some((step) => !httpUrl(step.url))) problems.push("step.url");
   if (item.trigger.type === "message" && !item.trigger.pattern) problems.push("trigger.pattern");
   if (item.trigger.type === "message" && item.trigger.pattern && !compilePattern(item.trigger.pattern)) problems.push("trigger.pattern");
   if (item.trigger.type === "schedule" && !parseCron(item.trigger.cron)) problems.push("trigger.cron");
@@ -485,12 +542,17 @@ export function reactionApprovesRun(run, reaction, message) {
 }
 
 /** Prompt with `{{message}}`, `{{previous}}` and `{{workflow}}` filled in. */
-export function renderStepPrompt(step, run, workflow) {
+/** {{message}}, {{previous}} and {{workflow}} in any step text. */
+export function renderStepTemplate(value, run, workflow) {
   const previous = lastFinishedResult(run || { stepResults: [] });
-  return String(step?.prompt || "")
+  return String(value || "")
     .replace(/\{\{\s*message\s*\}\}/g, run?.trigger?.messageBody || "")
     .replace(/\{\{\s*previous\s*\}\}/g, previous?.preview || "")
     .replace(/\{\{\s*workflow\s*\}\}/g, workflow?.name || "");
+}
+
+export function renderStepPrompt(step, run, workflow) {
+  return renderStepTemplate(step?.prompt, run, workflow);
 }
 
 /**
@@ -505,12 +567,28 @@ export function stepToDispatch(workflow, run) {
   const existing = resultFor(run, step.id);
   if (existing && existing.status !== "pending") return null;
   if (step.approval && !existing?.approvedAt) return null;
+  const marker = { workflowRunId: run.id, workflowId: workflow.id, workflowName: workflow.name, stepId: step.id };
+  if (step.kind === "http") {
+    return {
+      step,
+      kind: "http",
+      memberId: "",
+      prompt: "",
+      workspace: "",
+      url: renderStepTemplate(step.url, run, workflow),
+      method: step.method || "POST",
+      headers: (step.headers || []).map((header) => ({ name: header.name, value: renderStepTemplate(header.value, run, workflow) })),
+      body: renderStepTemplate(step.body, run, workflow),
+      marker,
+    };
+  }
   return {
     step,
+    kind: "member",
     memberId: step.memberId,
     prompt: renderStepPrompt(step, run, workflow),
     workspace: step.workspace || "",
-    marker: { workflowRunId: run.id, workflowId: workflow.id, workflowName: workflow.name, stepId: step.id },
+    marker,
   };
 }
 
