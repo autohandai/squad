@@ -341,3 +341,117 @@ html[data-shell="desktop"] [data-tauri-drag-region] {
 @media (prefers-reduced-motion: reduce) {
   .presence-dots span { animation: none; opacity: 0.7; }
 }
+
+/* --------------------------------------------------------------------------
+   Skins (ADR-0058)
+
+   A theme preset swaps 23 colour tokens, which is why every preset still looks
+   like the same product. A skin also sets shape, elevation and density - the
+   things that make two chat apps look like different software.
+
+   `--radius` already feeds --radius-sm/md/lg/xl and every shadcn primitive
+   reads those, so shape needs no rules here: setting the var reshapes the app.
+   What is left is elevation (which surfaces lift off the page) and density.
+
+   The default skin sets `--skin-elevation: none`, so all of this collapses to
+   nothing and DESIGN.md's flat, card-free surface is untouched. A skin that
+   asks for floating panels is declaring its own contract, not overriding that
+   one. */
+
+html[data-skin] {
+  /* Density is a modest scale on the root, so every rem-based gap, padding and
+     type size moves together. Kept close to 1: past about 10% the fixed-pixel
+     icon sizes stop agreeing with the text beside them. */
+  font-size: calc(16px * var(--skin-density, 1));
+}
+
+/* Surfaces that lift. Deliberately a short list - the two panels the eye reads
+   as "the app", plus anything that floats above them by nature. Message rows,
+   list rows and dividers stay flat in every skin, because a skin that puts a
+   shadow on every row is the bento layout DESIGN.md rules out. */
+html[data-skin] .app-sidebar,
+html[data-skin] .app-main {
+  box-shadow: var(--skin-elevation, none);
+}
+html[data-skin] [data-slot="popover-content"],
+html[data-skin] [data-slot="dialog-content"],
+html[data-skin] [data-slot="dropdown-menu-content"],
+html[data-skin] [data-slot="select-content"],
+html[data-skin] [data-slot="sheet-content"] {
+  box-shadow: var(--skin-elevation-strong, none);
+}
+
+/* The soft skin is the one that reads as panels floating on a tinted page, so
+   it is the only one that insets and rounds the two columns. Scoped to the
+   skin rather than expressed as tokens, because it is layout, not colour. */
+html[data-skin="soft"] {
+  --skin-inset: 10px;
+}
+/* The float is an inset, and an inset has to be paid for out of the viewport
+   rather than added to it. Padding the shell alone left the grid inside still
+   demanding a full 100svh, so the page grew by exactly the padding and gained a
+   scrollbar - measured at 20px. Everything that asks for a viewport height
+   inside this skin asks for the viewport minus the inset. */
+html[data-skin="soft"] .app-shell-root {
+  background: var(--background);
+  padding: var(--skin-inset);
+}
+/* Same idiom as the desktop title-bar inset above: every viewport-height
+   utility inside the skin subtracts the inset, rather than each container
+   being chased individually. Missing one is what turned a 20px overflow into
+   1595px - `.app-sidebar` kept its own `min-h-screen` and forced a full
+   viewport inside a shorter wrapper. */
+html[data-skin="soft"] .min-h-screen:not(.app-shell-root) {
+  min-height: calc(100svh - (var(--skin-inset) * 2));
+}
+/* The shell is the outermost box and holds the inset as padding, so it keeps
+   the whole viewport; shrinking it too left its content box one inset short of
+   the grid inside it, for a 20px scrollbar. */
+html[data-skin="soft"] .app-shell-root {
+  min-height: 100svh;
+}
+html[data-skin="soft"] .h-screen,
+html[data-skin="soft"] .h-\[100svh\] {
+  height: calc(100svh - (var(--skin-inset) * 2));
+}
+html[data-skin="soft"] aside > div.sticky {
+  top: var(--skin-inset);
+}
+/* The `lg:` variants need rewriting inside Tailwind's own `lg` query or they
+   still do nothing below it - and missing them is what kept a 20px scrollbar
+   after every container above had been accounted for: the chat column asks for
+   `lg:h-screen`, so it alone held the layout a full viewport tall. */
+@media (min-width: 64rem) {
+  html[data-skin="soft"] .lg\:h-screen {
+    height: calc(100svh - (var(--skin-inset) * 2));
+  }
+  html[data-skin="soft"] .lg\:min-h-screen {
+    min-height: calc(100svh - (var(--skin-inset) * 2));
+  }
+}
+html[data-skin="soft"] .app-sidebar,
+html[data-skin="soft"] .app-main {
+  border-radius: var(--radius);
+  background: var(--card);
+}
+html[data-skin="soft"] aside {
+  border-right: 0;
+}
+/* The drag strip sits over the inset, so it keeps the page colour rather than
+   a panel's. */
+html[data-skin="soft"] .app-drag-strip {
+  background: transparent;
+}
+
+/* Grut is flat by definition: no lift anywhere, and the divider does the work
+   a border would. */
+html[data-skin="grut"] .app-sidebar,
+html[data-skin="grut"] .app-main {
+  box-shadow: none;
+}
+
+/* Avatars follow the skin's own shape: photographs want a soft square, blobs
+   and portraits want a circle. */
+html[data-skin] [data-slot="avatar"] {
+  border-radius: var(--skin-avatar-radius, 0.375rem);
+}

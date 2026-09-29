@@ -5,6 +5,8 @@ import { FirstRun } from "@/components/onboarding/FirstRun";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
 import { NEED_HELP, joinList, proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
+import { DEFAULT_SKIN_ID, SKINS, SKIN_VAR_DEFAULTS, isSkinId, memberAvatar, skinById, surfaceForSkin } from "@/lib/skins";
+import { blobForMember, blobSvg } from "@/lib/blob-avatar";
 import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
 import { PresenceDot, PresenceLabel } from "@/components/members/PresenceDot";
@@ -365,6 +367,7 @@ const STORAGE_KEYS = {
   onboarding: "autohandSquad.v1.onboarding",
   tasks: "autohandSquad.v1.tasks",
   theme: "autohandSquad.v1.theme",
+  skin: "autohandSquad.v1.skin",
   inboxReadAt: "autohandSquad.v1.inboxReadAt",
   channelProposals: "autohandSquad.v1.channelProposals",
   workflowTriggers: "autohandSquad.v1.workflowTriggers",
@@ -446,6 +449,10 @@ const PresenceContext = createContext({ presenceMap: {}, bridgeReachable: true, 
 
 // Members that run on another machine's bridge (docs/integration/remote.md).
 // The transport is a detail on the profile, never a badge in the directory.
+// The active skin, so the twenty-four AgentAvatar call sites do not each have
+// to be handed it.
+const SkinContext = createContext(skinById(DEFAULT_SKIN_ID));
+
 const RemoteMembersContext = createContext({ remoteByMember: {}, refreshRemoteMembers: async () => {} });
 function useRemoteMembers() {
   return useContext(RemoteMembersContext);
@@ -2612,6 +2619,15 @@ function normalizeThemePreference(value) {
   };
 }
 
+function readSkinId() {
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEYS.skin);
+    return isSkinId(stored) ? stored : DEFAULT_SKIN_ID;
+  } catch {
+    return DEFAULT_SKIN_ID;
+  }
+}
+
 function readThemePreference() {
   const raw = readLocalStorage(storageKeysFor("theme"));
   if (!raw) return DEFAULT_THEME_PREFERENCE;
@@ -4559,6 +4575,7 @@ function App() {
   const [runsError, setRunsError] = useState("");
   const [workspacesError, setWorkspacesError] = useState("");
   const [themePreference, setThemePreference] = useState(readThemePreference);
+  const [skinId, setSkinId] = useState(readSkinId);
   const [handoffSettings, setHandoffSettings] = useState(readHandoffSettings);
   const [chatSettings, setChatSettings] = useState(readChatSettings);
   const [notifications, setNotifications] = useState([]);
@@ -4617,7 +4634,10 @@ function App() {
     [localePreference, systemLanguages]
   );
   const localeCopy = useMemo(() => getLocaleCopy(localeResolution.locale), [localeResolution.locale]);
-  const theme = resolveEffectiveThemeMode(themePreference, systemTheme);
+  const activeSkin = skinById(skinId);
+  // A skin whose whole point is being light has nothing to show in the dark, so
+  // it names its surface; the default skin names none and follows the user.
+  const theme = surfaceForSkin(activeSkin, resolveEffectiveThemeMode(themePreference, systemTheme));
   const activeThemePreset = getThemePreset(themePreference, theme);
 
   useEffect(() => {
@@ -4674,17 +4694,25 @@ function App() {
     root.dataset.themeMode = themePreference.mode;
     root.dataset.themeSurface = theme;
     root.dataset.themePreset = activeThemePreset.id;
+    root.dataset.skin = activeSkin.id;
 
+    // The skin's colours win where it has an opinion; where it has none the
+    // user's chosen preset shows through, which is how the default skin keeps
+    // all twenty presets working.
     for (const tokenName of THEME_TOKEN_NAMES) {
-      root.style.setProperty(`--${tokenName}`, activeThemePreset.tokens[tokenName]);
+      root.style.setProperty(`--${tokenName}`, activeSkin.tokens?.[tokenName] || activeThemePreset.tokens[tokenName]);
+    }
+    for (const [varName, fallback] of Object.entries(SKIN_VAR_DEFAULTS)) {
+      root.style.setProperty(`--${varName}`, activeSkin.vars?.[varName] ?? fallback);
     }
 
     try {
       window.localStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(themePreference));
+      window.localStorage.setItem(STORAGE_KEYS.skin, activeSkin.id);
     } catch {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
-  }, [activeThemePreset, theme, themePreference]);
+  }, [activeThemePreset, activeSkin, theme, themePreference]);
 
   useEffect(() => {
     try {
@@ -8411,6 +8439,7 @@ function App() {
 
   return (
     <AccountContext.Provider value={accountContextValue}>
+    <SkinContext.Provider value={activeSkin}>
     <PresenceContext.Provider value={presenceContextValue}>
     <RemoteMembersContext.Provider value={remoteMembersContextValue}>
     <TooltipProvider>
@@ -8638,6 +8667,8 @@ function App() {
                 updatesChecking={updatesChecking}
                 onCheckUpdates={() => refreshUpdates(true)}
                 themePreference={themePreference}
+                activeSkin={activeSkin}
+                onSkinChange={setSkinId}
                 setThemePreference={setThemePreference}
                 handoffSettings={handoffSettings}
                 setHandoffSettings={setHandoffSettings}
@@ -8858,6 +8889,7 @@ function App() {
     </TooltipProvider>
     </RemoteMembersContext.Provider>
     </PresenceContext.Provider>
+    </SkinContext.Provider>
     </AccountContext.Provider>
   );
 }
@@ -12372,10 +12404,35 @@ function CanvasWorkspace({ ownerType, ownerId, canvases = [], activeCanvasId = "
 }
 
 function AgentAvatar({ agent, large = false, className }) {
+  const skin = useContext(SkinContext);
   const initial = agent?.name?.slice(0, 1).toUpperCase() || "S";
+  const face = memberAvatar(agent, skin);
+  // A blob is drawn, not fetched: no border and no fill behind it, because the
+  // eyes are holes and whatever is behind the avatar shows through them.
+  if (face.kind === "blob") {
+    return (
+      <span
+        className={cn("inline-block shrink-0 overflow-hidden", large ? "size-24" : "size-8", className)}
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{ __html: blobSvg({ ...face.blob, title: agent?.name || "" }) }}
+      />
+    );
+  }
   return (
     <Avatar className={cn("rounded-full border border-border/70 bg-muted", large ? "size-24" : "size-8", className)}>
-      {agent?.avatar ? <AvatarImage src={agent.avatar} alt={agent.name || "Squad member"} className="object-cover" /> : null}
+      {face.src ? (
+        <AvatarImage
+          src={face.src}
+          alt={agent?.name || "Squad member"}
+          className="object-cover"
+          onError={(event) => {
+            // A custom role has no portrait drawn for it; fall back to the
+            // member's own picture rather than to an empty circle.
+            const image = event.currentTarget;
+            if (face.fallbackSrc && image.src !== face.fallbackSrc) image.src = face.fallbackSrc;
+          }}
+        />
+      ) : null}
       <AvatarFallback className="rounded-full bg-primary/12 text-primary">
         <span className={cn("font-extrabold", large ? "text-2xl" : "text-sm")}>{initial}</span>
       </AvatarFallback>
@@ -24011,6 +24068,8 @@ function SettingsPage({
   updatesChecking = false,
   onCheckUpdates,
   themePreference,
+  activeSkin = skinById(DEFAULT_SKIN_ID),
+  onSkinChange,
   setThemePreference,
   handoffSettings,
   setHandoffSettings,
@@ -24247,6 +24306,41 @@ function SettingsPage({
             <section id="settings-appearance" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
               <SettingsSectionHeader title={copy.appearance || "Appearance"} description={copy.appearanceDescription || "How the app looks."} />
               <div className="grid gap-8">
+                <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+                  <div className="min-w-0">
+                    <h4 id="skin-title" className="text-sm font-medium">{copy.skin || "Skin"}</h4>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {copy.skinDescription || "The whole look: shape, spacing, and who your members look like. A theme changes the colours inside a skin."}
+                    </p>
+                  </div>
+                  <div aria-labelledby="skin-title" className="flex flex-col border-t border-border/60">
+                    {SKINS.map((option) => {
+                      const selected = option.id === activeSkin.id;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          className="flex items-center gap-3 border-b border-border/60 px-2 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:bg-muted/40 focus-visible:outline-none"
+                          onClick={() => onSkinChange?.(option.id)}
+                        >
+                          <span className="flex shrink-0 overflow-hidden rounded-md border border-border/70" aria-hidden="true">
+                            {option.swatches.map((swatch) => (
+                              <span key={swatch} className="size-5" style={{ background: swatch }} />
+                            ))}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-medium">{option.label}</span>
+                            <span className="block text-xs text-muted-foreground">{option.description}</span>
+                          </span>
+                          {selected ? <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-center">
                   <div className="min-w-0">
                     <div className="text-sm font-medium">{copy.themeMode || "Mode"}</div>

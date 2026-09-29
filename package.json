@@ -61,7 +61,7 @@
     "check:web": "bun run build",
     "check:runtime": "cd daemon && cargo fmt -- --check && cargo test -j1 -- --test-threads=1 && cargo build --bins -j1",
     "check:release": "node scripts/check-release-workflows.mjs",
-    "ci": "bun run cli:fetch && bun run check:sdk && bun run check:harness && bun run check:otel && bun run check:sessions && bun run check:recruiting && bun run check:search && bun run check:notifications && bun run check:jsx && bun run check:bridge-imports && bun run check:members-presence && bun run check:activity && bun run check:audit && bun run check:canvases && bun run check:workflows && bun run check:reactions && bun run check:attachments && bun run check:remote && bun run check:relay && bun run check:member-availability && bun run check:member-briefing && bun run check:chief-of-staff && bun run check:prompt-stability && bun run check:markdown-table && bun run check:member-draft && bun run check:member-roster && bun run check:local-skills && bun run check:permissions && bun run check:permission-policy && bun run check:member-suggestions && bun run check:member-introduction && bun run check:git && bun run check:server && bun run check:release && bun run check:web && bun run check:runtime",
+    "ci": "bun run cli:fetch && bun run check:sdk && bun run check:harness && bun run check:otel && bun run check:sessions && bun run check:recruiting && bun run check:search && bun run check:notifications && bun run check:jsx && bun run check:bridge-imports && bun run check:members-presence && bun run check:activity && bun run check:audit && bun run check:canvases && bun run check:workflows && bun run check:reactions && bun run check:skins && bun run check:attachments && bun run check:remote && bun run check:relay && bun run check:member-availability && bun run check:member-briefing && bun run check:chief-of-staff && bun run check:prompt-stability && bun run check:markdown-table && bun run check:member-draft && bun run check:member-roster && bun run check:local-skills && bun run check:permissions && bun run check:permission-policy && bun run check:member-suggestions && bun run check:member-introduction && bun run check:git && bun run check:server && bun run check:release && bun run check:web && bun run check:runtime",
     "release:version": "node scripts/resolve-squad-version.mjs",
     "release:package": "node scripts/package-squad-release.mjs",
     "release:portable": "node scripts/package-squad-portable.mjs",
@@ -73,7 +73,8 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "bun run build && bun run desktop:stage && tauri build",
     "desktop:check": "cargo check --manifest-path src-tauri/Cargo.toml",
-    "check:reactions": "node scripts/check-reactions.mjs"
+    "check:reactions": "node scripts/check-reactions.mjs",
+    "check:skins": "node scripts/check-skins.mjs"
   },
   "dependencies": {
     "@autohandai/agent-sdk": "1.0.5",
