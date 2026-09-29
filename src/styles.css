@@ -83,11 +83,11 @@
   --font-ui: "Autohand Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-code: "Autohand Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --radius: 0.5rem;
-  --background: #000000;
+  --background: #1d1c1b;
   --foreground: #faf9f5;
-  --card: #0d0d0d;
+  --card: #232221;
   --card-foreground: #faf9f5;
-  --popover: #0d0d0d;
+  --popover: #2b2a28;
   --popover-foreground: #faf9f5;
   /* The primary is the page's action, and nothing else. It used to be the
      brand green, which also carries state everywhere in this product: a
@@ -96,17 +96,17 @@
      you nothing. Green keeps state; the action is the plainest thing on the
      surface, which is also what DESIGN.md asks for. */
   --primary: #faf9f5;
-  --primary-foreground: #0d0d0d;
-  --secondary: #1a1a1a;
+  --primary-foreground: #1d1c1b;
+  --secondary: #323130;
   --secondary-foreground: #faf9f5;
-  --muted: #1a1a1a;
-  --muted-foreground: #9c9d9e;
-  --accent: #242424;
+  --muted: #323130;
+  --muted-foreground: #a3a19b;
+  --accent: #3a3937;
   --accent-foreground: #faf9f5;
   --destructive: #ff6f61;
-  --border: #262626;
-  --input: #262626;
-  --ring: #6b6b6b;
+  --border: #3e3c39;
+  --input: #3e3c39;
+  --ring: #8f8d87;
   --chart-1: #8ee5a1;
   --chart-2: #73cd94;
   --chart-3: #ffd06a;
@@ -447,6 +447,14 @@ html[data-shell="desktop"][data-skin="soft"] .app-sidebar,
 html[data-shell="desktop"][data-skin="grut"] .app-sidebar {
   background: var(--card) !important;
   border-right: 0;
+}
+/* The same collision one level up, and the one actually visible at the window
+   edge: the desktop shell makes .app-shell-root `transparent !important`, so
+   the inset this skin pads with showed the window's vibrancy - a mid-grey band
+   between the panels and around them, instead of the skin's own background. */
+html[data-shell="desktop"][data-skin="soft"] .app-shell-root,
+html[data-shell="desktop"][data-skin="grut"] .app-shell-root {
+  background: var(--background) !important;
 }
 /* The drag strip sits over the inset, so it keeps the page colour rather than
    a panel's. */

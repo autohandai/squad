@@ -879,27 +879,35 @@ const THEME_PRESETS = {
     {
       id: "autohand-dark",
       label: "Autohand",
-      description: "Black console with green signal accents.",
-      swatches: ["#000000", "#faf9f5", "#8ee5a1", "#1a1a1a"],
+      // Charcoal, not black. Pure black leaves no headroom underneath, so every
+      // surface above it has to climb and the whole ladder crushes into the
+      // bottom 15 L* - card and popover were literally the same colour, so a
+      // dropdown over the sidebar separated by shadow alone. Anchoring the page
+      // at L*10 rebuilds the same ladder shape with real steps:
+      // 10.3 - 13.3 - 17.1 - 20.4 - 24.0 - 25.4. Warm-neutral because the ink
+      // is already a warm off-white; dead-neutral surfaces under it are what
+      // made this read as a black screen rather than graphite.
+      description: "Charcoal console with green signal accents.",
+      swatches: ["#1d1c1b", "#faf9f5", "#8ee5a1", "#323130"],
       tokens: {
-        background: "#000000",
+        background: "#1d1c1b",
         foreground: "#faf9f5",
-        card: "#0d0d0d",
+        card: "#232221",
         "card-foreground": "#faf9f5",
-        popover: "#0d0d0d",
+        popover: "#2b2a28",
         "popover-foreground": "#faf9f5",
         primary: "#faf9f5",
-        "primary-foreground": "#0d0d0d",
-        secondary: "#1a1a1a",
+        "primary-foreground": "#1d1c1b",
+        secondary: "#323130",
         "secondary-foreground": "#faf9f5",
-        muted: "#1a1a1a",
-        "muted-foreground": "#9c9d9e",
-        accent: "#242424",
+        muted: "#323130",
+        "muted-foreground": "#a3a19b",
+        accent: "#3a3937",
         "accent-foreground": "#faf9f5",
         destructive: "#ff6f61",
-        border: "#262626",
-        input: "#262626",
-        ring: "#6b6b6b",
+        border: "#3e3c39",
+        input: "#3e3c39",
+        ring: "#8f8d87",
         "chart-1": "#8ee5a1",
         "chart-2": "#73cd94",
         "chart-3": "#ffd06a",
@@ -4704,6 +4712,13 @@ function App() {
     for (const [varName, fallback] of Object.entries(SKIN_VAR_DEFAULTS)) {
       root.style.setProperty(`--${varName}`, activeSkin.vars?.[varName] ?? fallback);
     }
+
+    // The browser paints its own chrome from this - the strip behind a
+    // translucent title bar, the overscroll gutter. Left static it matched one
+    // palette out of twenty and no skin at all, which reads as a wrong-coloured
+    // band at the edge of the window.
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) themeColor.setAttribute("content", activeSkin.tokens?.background || activeThemePreset.tokens.background);
 
     try {
       window.localStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(themePreference));
@@ -11123,7 +11138,7 @@ function DesktopSidebar({ collapsed, onCollapsedChange, ...props }) {
     <aside
       className={cn(
         "hidden self-stretch overflow-visible border-r border-border/70 bg-card/70 backdrop-blur-xl lg:block",
-        collapsed && "bg-card/95 backdrop-blur-xl dark:bg-black/95 dark:backdrop-blur-none"
+        collapsed && "bg-card/95 backdrop-blur-xl dark:bg-card/95 dark:backdrop-blur-none"
       )}
     >
       <div className="sticky top-0 h-[100svh] overflow-visible">
@@ -11441,7 +11456,7 @@ function CollapsedSidebarRail({
   }
 
   return (
-    <div className="flex h-full min-h-screen w-[72px] flex-col items-center bg-card/95 px-2 py-3.5 text-card-foreground dark:bg-black">
+    <div className="flex h-full min-h-screen w-[72px] flex-col items-center bg-card/95 px-2 py-3.5 text-card-foreground dark:bg-card">
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -11593,7 +11608,7 @@ function CollapsedSidebarRail({
 
 function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onExpand }) {
   return (
-    <div className="flex h-full min-h-screen w-[72px] flex-col items-center bg-card/95 px-2 py-3.5 text-card-foreground dark:bg-black">
+    <div className="flex h-full min-h-screen w-[72px] flex-col items-center bg-card/95 px-2 py-3.5 text-card-foreground dark:bg-card">
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
