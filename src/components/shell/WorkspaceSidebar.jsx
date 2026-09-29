@@ -176,7 +176,10 @@ export function WorkspaceSidebar({
         {searchTrailing}
       </div>
 
-      <ScrollArea className="min-h-0 flex-1 px-3 pb-3 pt-3">
+      {/* No bottom padding: it sat outside the scroll viewport, so it stopped
+          the list short of the divider and left a band of nothing above the
+          account row. Without it a clipped row reads as "there is more below". */}
+      <ScrollArea className="min-h-0 flex-1 px-3 pt-3">
         <nav className="flex flex-col gap-0.5" aria-label="Workspace">
           <NavRow
             icon={Inbox}

@@ -6228,7 +6228,14 @@ function App() {
     setAgents((current) =>
       current.map((agent) => {
         if (agent.id !== accepted.ownerAgentId) return agent;
-        const memory = Array.from(new Set([...(Array.isArray(agent.memory) ? agent.memory : []), accepted.content]));
+        // Entries are objects (ADR-0048), so an accepted item joins as one.
+        // A Set over mixed strings and objects deduplicates neither; memoryKey
+        // is what already knows how to compare the two shapes.
+        const existing = normalizeMemoryEntries(agent.memory);
+        const addition = { id: accepted.id || memoryKey(accepted.content), text: accepted.content, at: timestamp, source: accepted.source || "" };
+        const memory = existing.some((entry) => memoryKey(entry) === memoryKey(addition))
+          ? existing
+          : normalizeMemoryEntries([...existing, addition]);
         const nextAgent = {
           ...agent,
           memory,
@@ -10847,11 +10854,11 @@ function buildAgentProfile(agent, workspace) {
 }
 
 function collaborationMemoryLines(agent, label) {
-  const memory = Array.isArray(agent?.memory) ? agent.memory.filter(Boolean) : [];
+  const memory = normalizeMemoryEntries(agent?.memory);
   if (!memory.length) return [`${label} memory: none saved yet.`];
   return [
     `${label} memory:`,
-    ...memory.slice(0, 8).map((item) => `- ${item}`),
+    ...memory.slice(0, 8).map((entry) => `- ${entry.text}`),
   ];
 }
 
@@ -11924,12 +11931,15 @@ function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings
   return (
     <div className="border-t p-4">
       {updateAvailable ? (
-        <Button variant="outline" className="h-9 w-full justify-center rounded-full border-border/70 bg-transparent" onClick={onSettings}>
+        <Button variant="outline" className="mb-3 h-9 w-full justify-center rounded-full border-border/70 bg-transparent" onClick={onSettings}>
           <CircleDot className="text-chart-3" data-icon="inline-start" />
           {copy.restartToUpdate}
         </Button>
       ) : null}
-      <div className="mt-3 flex items-center gap-3 rounded-md px-1 py-2">
+      {/* The gap belongs to the update button, not to the account row: carried
+          on the row it was 12px of dead space in the normal case, and it made
+          the footer top-heavy - 29px above the name against 16px below. */}
+      <div className="flex items-center gap-3 rounded-md px-1 py-2">
         <span className="grid size-9 place-items-center rounded-md bg-muted text-sm font-semibold">{profile.initials}</span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold">{profile.name}</span>
@@ -14857,7 +14867,7 @@ function contextLayerManifestForRow(row = {}) {
   const owner = row.owner || null;
   const task = row.task || null;
   const mode = row.run?.mode || owner?.launch?.mode || "prompt";
-  const memoryItems = Array.isArray(owner?.memory) ? owner.memory.filter(Boolean) : [];
+  const memoryItems = normalizeMemoryEntries(owner?.memory).map((entry) => entry.text);
   const brainCard = owner?.brainCard || null;
   const projects = Array.isArray(owner?.projects) ? owner.projects : [];
   const requestText = row.run?.title || task?.title || row.title || "";
@@ -18807,7 +18817,7 @@ function profileFilesFromDraft(templateDraft) {
 
 function defaultProfileFileContent(agent, sectionId) {
   const skills = normalizeSkillList(agent?.skills);
-  const memoryItems = Array.isArray(agent?.memory) ? agent.memory : [];
+  const memoryItems = normalizeMemoryEntries(agent?.memory).map((entry) => entry.text);
   const projects = normalizeAgentProjects(agent?.projects, agent?.workspace);
   const name = agent?.name || "Autohand agent";
   const role = agent?.role || "Software engineering agent";
@@ -21280,7 +21290,9 @@ function MemoryInboxPage({
   const accepted = visibleItems.filter((item) => item.status === "accepted");
   const rejected = visibleItems.filter((item) => item.status === "rejected");
   const hiddenRejectedCount = agentItems.filter((item) => item.status === "rejected" && item.isHidden).length;
-  const activeMemory = Array.isArray(agent.memory) ? agent.memory : [];
+  // Entries are {id, text, at, source} (ADR-0048); normalising here also
+  // carries the legacy plain strings some saves still hold.
+  const activeMemory = normalizeMemoryEntries(agent.memory);
 
   return (
     <div className="min-h-screen bg-background">
@@ -21384,9 +21396,10 @@ function MemoryInboxPage({
             </div>
             <div className="grid max-h-[420px] gap-2 overflow-auto pr-1">
               {activeMemory.length ? (
-                activeMemory.map((memory) => (
-                  <div key={memory} className="rounded-md border border-border/80 bg-background/65 p-3">
-                    <div className="text-sm leading-5">{memory}</div>
+                activeMemory.map((entry) => (
+                  <div key={entry.id} className="rounded-md border border-border/80 bg-background/65 p-3">
+                    <div className="text-sm leading-5">{entry.text}</div>
+                    {entry.source ? <div className="mt-1 text-xs text-muted-foreground">{entry.source}</div> : null}
                   </div>
                 ))
               ) : (
@@ -23442,16 +23455,19 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
             <div>
               <div className="mb-4 text-sm font-semibold text-muted-foreground">{copy.recentlyLearned}</div>
               <div className="flex flex-col gap-3">
-                {agent.memory.map((item) => (
-                  <div key={item} className="grid grid-cols-[40px_minmax(0,1fr)_80px] items-center gap-3">
+                {/* Memory entries are {id, text, at, source} (ADR-0048). This read
+                    them as "topic: detail" strings and called .split on each, which
+                    crashed the whole page the moment a member had any memory. */}
+                {normalizeMemoryEntries(agent.memory).map((entry) => (
+                  <div key={entry.id} className="grid grid-cols-[40px_minmax(0,1fr)_80px] items-center gap-3">
                     <span className="grid size-9 place-items-center rounded-md bg-[#211b40] text-[#8472ff]">
                       <Sparkles />
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold">{item.split(":")[0]}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{item.split(":")[1]?.trim() || "autohand-squad-skill"}</span>
+                      <span className="block truncate text-sm font-semibold">{entry.text}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{entry.source || "autohand-squad-skill"}</span>
                     </span>
-                    <span className="text-right text-xs text-muted-foreground">{formatCopy(copy.daysAgo, { count: formatLocalizedNumber(3, locale) })}</span>
+                    <span className="text-right text-xs text-muted-foreground">{entry.at ? formatRelativeTime(entry.at, locale) : ""}</span>
                   </div>
                 ))}
               </div>

@@ -327,4 +327,35 @@ for (const bad of [null, undefined, "x", 42, {}, { agent: null }]) {
   assert.deepEqual(kept, { id: "m1", text: "keep me", at: "t", source: "chief-of-staff" }, "a good entry is untouched");
 }
 
+// Every consumer of a member's memory must go through normalizeMemoryEntries.
+// Entries became {id, text, at, source} in ADR-0048; the places that still read
+// them as strings did not fail loudly - they rendered "[object Object]" into a
+// prompt, or threw React error #31 and took the whole page down. Both happened.
+{
+  const { readFileSync } = await import("node:fs");
+  const app = readFileSync("src/App.jsx", "utf8");
+  const offenders = [
+    ["agent.memory.map(", "memory rendered without normalizeMemoryEntries"],
+    ["owner.memory.filter(Boolean)", "memory stringified without normalizeMemoryEntries"],
+  ];
+  for (const [needle, why] of offenders) {
+    assert.ok(!app.includes(needle), `${why}: ${needle}`);
+  }
+  // The read sites that remain must name the normaliser on the same line.
+  for (const line of app.split("\n")) {
+    const reads = /\b(?:agent|owner)\??\.memory\b/.test(line);
+    if (!reads) continue;
+    const safe =
+      line.includes("normalizeMemoryEntries") ||
+      line.includes("memoryPolicy") ||
+      line.includes("memory?.length") ||
+      // memoryKey/memoryLabel are the two helpers that already read either
+      // shape. An Array.isArray guard is NOT an exemption: it is exactly how
+      // both crashes were written.
+      line.includes("memoryKey") ||
+      line.includes("memoryLabel");
+    assert.ok(safe, `raw memory read: ${line.trim().slice(0, 120)}`);
+  }
+}
+
 console.log("check-chief-of-staff: ok");
