@@ -193,10 +193,9 @@ html[data-shell="desktop"] .app-shell-decor {
  * `.app-drag-strip` is empty by design: with no children every pixel of it is
  * a direct hit. It is the only drag region in the app.
  *
- * The band is reserved on the shell root rather than per column, so a new page
- * or a new sidebar cannot forget it. `min-h-screen` inside the shell is
- * rewritten to subtract the band; without that every page would overflow by
- * exactly the inset and show a scrollbar it does not need. */
+ * The band is inset on the two columns rather than on the shell root, so the
+ * app's own background reaches the top edge of the window and the traffic
+ * lights sit on it. */
 html[data-shell="desktop"] {
   --titlebar-inset: 0px;
 }
@@ -211,13 +210,28 @@ html[data-shell="desktop"] .app-drag-strip {
   height: var(--titlebar-inset);
   z-index: 60;
 }
-html[data-shell="desktop"] .app-shell-root {
+/* The band used to be reserved by padding the shell root. The shell root and
+   everything above it is transparent, so that padding was a strip of window
+   vibrancy across the top of the app - a grey bar in a black app, sitting above
+   the sidebar and the main column instead of being part of either.
+ *
+ * The columns now run to the top edge and paint their own background there;
+ * only their content is inset, so the traffic lights sit on the app's surface
+ * rather than on a band of their own. Nothing else has to subtract the inset,
+ * which is why the `h-screen` rewrites that used to live here are gone: the
+ * shell is a full viewport tall again. */
+html[data-shell="desktop"] .app-sidebar,
+html[data-shell="desktop"] .app-main {
   padding-top: var(--titlebar-inset);
 }
-/* A full-height utility measures the viewport, not this padded shell, so
-   every one of them is exactly the inset too tall and shows a scrollbar the
-   page does not need. The `lg:` variants are rewritten inside Tailwind's own
-   `lg` query so they still do nothing below it. */
+/* A full-height utility measures the viewport, not the padded column it sits
+   in, so inside the shell every one of them is exactly the inset too tall and
+   the page gains a scrollbar it does not need. The `lg:` variants are rewritten
+   inside Tailwind's own `lg` query so they still do nothing below it.
+ *
+ * The sidebar column is the exception and asks for `h-[100svh]` by hand: it
+ * starts at the top edge rather than below the band, so it is the one element
+ * that really is a whole viewport tall. */
 html[data-shell="desktop"] .min-h-screen {
   min-height: calc(100svh - var(--titlebar-inset));
 }

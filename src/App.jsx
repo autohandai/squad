@@ -10920,7 +10920,7 @@ function DesktopSidebar({ collapsed, onCollapsedChange, ...props }) {
         collapsed && "bg-card/95 backdrop-blur-xl dark:bg-black/95 dark:backdrop-blur-none"
       )}
     >
-      <div className="sticky top-0 h-screen overflow-visible">
+      <div className="sticky top-0 h-[100svh] overflow-visible">
         {collapsed ? (
           <CollapsedSidebarRail {...props} onExpand={() => onCollapsedChange(false)} />
         ) : (
