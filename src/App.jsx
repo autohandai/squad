@@ -10910,17 +10910,23 @@ function agentLaunchPayload(agent, workspace) {
 
 function DesktopSidebar({ collapsed, onCollapsedChange, ...props }) {
   return (
+    // The column stretches to the whole grid row and the sidebar sticks inside
+    // it. Sticking the column itself left it 100vh tall in a taller row, so a
+    // page longer than the window - a busy run, a long thread - showed a strip
+    // of page background under the account footer where the sidebar stopped.
     <aside
       className={cn(
-        "sticky top-0 hidden h-screen min-h-screen self-start overflow-visible border-r border-border/70 bg-card/70 backdrop-blur-xl lg:block",
+        "hidden self-stretch overflow-visible border-r border-border/70 bg-card/70 backdrop-blur-xl lg:block",
         collapsed && "bg-card/95 backdrop-blur-xl dark:bg-black/95 dark:backdrop-blur-none"
       )}
     >
-      {collapsed ? (
-        <CollapsedSidebarRail {...props} onExpand={() => onCollapsedChange(false)} />
-      ) : (
-        <SidebarContent {...props} onCollapse={() => onCollapsedChange(true)} />
-      )}
+      <div className="sticky top-0 h-screen overflow-visible">
+        {collapsed ? (
+          <CollapsedSidebarRail {...props} onExpand={() => onCollapsedChange(false)} />
+        ) : (
+          <SidebarContent {...props} onCollapse={() => onCollapsedChange(true)} />
+        )}
+      </div>
     </aside>
   );
 }
