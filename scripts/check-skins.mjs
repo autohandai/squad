@@ -98,10 +98,10 @@ assert.equal(memberAvatar(member, skinById("default")).src, "/avatars/devops-eng
 // So every listed slug must have a file, and a slug that is not listed must
 // fall back to the member's own picture.
 for (const slug of SOFT_PORTRAIT_SLUGS) {
-  assert.ok(existsSync(`public/avatars/soft/${slug}.png`), `SOFT_PORTRAIT_SLUGS lists ${slug} but public/avatars/soft/${slug}.png is missing`);
+  assert.ok(existsSync(`public/avatars/soft/${slug}.jpg`), `SOFT_PORTRAIT_SLUGS lists ${slug} but public/avatars/soft/${slug}.jpg is missing`);
 }
 if (SOFT_PORTRAIT_SLUGS.includes("devops-engineer")) {
-  assert.equal(memberAvatar(member, skinById("soft")).src, "/avatars/soft/devops-engineer.png");
+  assert.equal(memberAvatar(member, skinById("soft")).src, "/avatars/soft/devops-engineer.jpg");
   assert.equal(memberAvatar(member, skinById("soft")).fallbackSrc, "/avatars/devops-engineer.jpg");
 } else {
   assert.equal(memberAvatar(member, skinById("soft")).src, "/avatars/devops-engineer.jpg", "an undrawn role keeps its photo");

@@ -156,7 +156,24 @@ export function surfaceForSkin(skin, userSurface) {
  * initial, not a photo. Listing what exists keeps the skin pointing only at
  * files that are there; `check-skins` fails if an entry has no file.
  */
-export const SOFT_PORTRAIT_SLUGS = [];
+export const SOFT_PORTRAIT_SLUGS = [
+  "ai-engineer",
+  "backend-engineer",
+  "common-qa-engineer",
+  "content-operations-specialist",
+  "data-analyst",
+  "devops-engineer",
+  "frontend-developer",
+  "full-stack-developer",
+  "mobile-developer",
+  "platform-engineer",
+  "product-manager",
+  "scrum-master",
+  "security-engineer",
+  "solution-architect",
+  "technical-writer",
+  "ux-ui-designer",
+];
 
 /** The role slug a member's artwork is filed under. */
 export function roleSlug(member) {
@@ -177,7 +194,7 @@ export function memberAvatar(member, skin) {
   if (kind === "portrait") {
     const slug = roleSlug(member);
     if (slug && SOFT_PORTRAIT_SLUGS.includes(slug)) {
-      return { kind: "image", src: `/avatars/soft/${slug}.png`, fallbackSrc: member?.avatar || "" };
+      return { kind: "image", src: `/avatars/soft/${slug}.jpg`, fallbackSrc: member?.avatar || "" };
     }
     // No portrait drawn for this role yet: the member's own picture is a
     // better answer than an empty circle.

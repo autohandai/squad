@@ -77,3 +77,25 @@ existing picture. The skin therefore works before the art exists.
   prefix leaves the similarity in the low bits, and `hash % 8` gave every seeded
   member a triangle. The hash now avalanches before it is sliced, and three
   salted passes make three independent choices.
+
+## Addendum, same day: the soft portraits
+
+Sixteen role portraits now exist, one per role in the existing avatar set, drawn
+with `gpt-image-2` under one art direction so they read as one cast: soft
+editorial vector illustration, off-white ground, muted palette, a single coral
+accent on the clothing. The role only changes the character.
+
+They are **228 KB for all sixteen**, because each 1024px PNG is downscaled to a
+256px JPEG and the original deleted immediately. Kept at source size they would
+have added roughly 20 MB to a repository already carrying 21 MB of avatars, for
+pictures the app draws at between 16 and 96 pixels. They use `.jpg` because the
+existing role avatars do.
+
+`SOFT_PORTRAIT_SLUGS` now lists all sixteen, and `check-skins` fails if any of
+them has no file on disk. A role with no portrait - a custom one the user
+invents - still falls through to its own picture.
+
+The generation itself only works in the foreground. Detached with `nohup` every
+call failed in about four seconds with no output at all, sixteen times; the same
+command run normally produced a 1.2 MB image in about a minute. Anything
+regenerating these should not background them with `nohup`.
