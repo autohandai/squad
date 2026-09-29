@@ -140,4 +140,40 @@ const titled = blobSvg(blobForMember({ id: "asq_kai_devops", name: "Kai" }));
 assert.ok(titled.includes("<title>Kai</title>"), titled.slice(0, 120));
 assert.ok(blobSvg({ shape: "circle" }).includes('aria-hidden="true"'), "an unnamed blob is decorative");
 
+// Corner geometry against the window frame (ADR-0060). macOS masks the window
+// at a fixed 12px - measured with an AppKit probe, not remembered, and not
+// settable from Tauri or from public AppKit. Concentric corners need
+// inner = outer - inset, so a panel radius above 12px cannot agree with the
+// frame at ANY positive inset: at 20px inside a 10px inset the margin was 10px
+// along the flat edges and 17.5px across the diagonal, and the page colour
+// pooled in the corners. DESIGN.md asks for 4-8px and names bulbous corners
+// explicitly.
+const WINDOW_FRAME_RADIUS_PX = 12;
+const SKIN_INSET_PX = { default: 0, soft: 4, grut: 0 };
+const css = readFileSync("src/styles.css", "utf8");
+for (const skin of SKINS) {
+  const radius = parseFloat(skin.vars.radius) * 16;
+  assert.ok(
+    radius <= WINDOW_FRAME_RADIUS_PX,
+    `${skin.id} asks for a ${radius}px radius; nothing above the window's ${WINDOW_FRAME_RADIUS_PX}px frame mask can agree with it at any inset`
+  );
+  const inset = SKIN_INSET_PX[skin.id];
+  if (inset === undefined) continue;
+  if (inset > 0) {
+    assert.equal(
+      radius,
+      WINDOW_FRAME_RADIUS_PX - inset,
+      `${skin.id} insets by ${inset}px, so concentric corners want a ${WINDOW_FRAME_RADIUS_PX - inset}px radius, not ${radius}px`
+    );
+  }
+}
+// The inset the stylesheet actually applies has to be the one assumed above.
+const softInset = css.match(/data-skin="soft"\][^{]*\{[^}]*--skin-inset:\s*(\d+)px/);
+assert.ok(softInset, "the soft skin must declare --skin-inset");
+assert.equal(
+  Number(softInset[1]),
+  SKIN_INSET_PX.soft,
+  `styles.css insets soft by ${softInset[1]}px but the radius is chosen for ${SKIN_INSET_PX.soft}px`
+);
+
 console.log(`check-skins: ok (${SKINS.length} skins, ${BLOB_SHAPES.length * BLOB_EXPRESSIONS.length * BLOB_COLOURS.length} blobs)`);

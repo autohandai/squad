@@ -399,7 +399,10 @@ html[data-skin] [data-slot="sheet-content"] {
    it is the only one that insets and rounds the two columns. Scoped to the
    skin rather than expressed as tokens, because it is layout, not colour. */
 html[data-skin="soft"] {
-  --skin-inset: 10px;
+  /* 4px, to pair with the 8px panel radius against the window's fixed 12px
+     frame mask: inner = outer - inset gives a margin that stays 4px along the
+     flat edges and across the diagonal alike. */
+  --skin-inset: 4px;
 }
 /* The float is an inset, and an inset has to be paid for out of the viewport
    rather than added to it. Padding the shell alone left the grid inside still

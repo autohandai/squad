@@ -15,7 +15,7 @@ export const DEFAULT_SKIN_ID = "default";
 
 /** Every var a skin may set beyond the colour tokens, with its default. */
 export const SKIN_VAR_DEFAULTS = {
-  radius: "0.625rem",
+  radius: "0.5rem",
   "skin-elevation": "none",
   "skin-elevation-strong": "none",
   "skin-density": "1",
@@ -32,7 +32,7 @@ export const SKINS = [
     surface: null,
     tokens: null,
     vars: {
-      radius: "0.625rem",
+      radius: "0.5rem",
       "skin-elevation": "none",
       "skin-elevation-strong": "none",
       "skin-density": "1",
@@ -72,7 +72,14 @@ export const SKINS = [
       "chart-5": "#9b8ed6",
     },
     vars: {
-      radius: "1.25rem",
+      // 8px inside a 4px inset. The window frame is masked by AppKit at 12px
+      // and cannot be changed, so concentric corners need inner = outer - inset;
+      // at 20px/10px the margin was 10px along the flat edges but 17.5px across
+      // the diagonal, so the page colour pooled in each corner. That, not the
+      // radius itself, is what read as the corners disagreeing. 8/4 is uniform
+      // at every point and inside DESIGN.md's 4-8px range - this skin gets its
+      // identity from elevation and palette, not from bulbous corners.
+      radius: "0.5rem",
       "skin-elevation": "0 1px 2px rgba(29, 35, 48, 0.04), 0 8px 24px rgba(29, 35, 48, 0.06)",
       "skin-elevation-strong": "0 2px 4px rgba(29, 35, 48, 0.05), 0 18px 48px rgba(29, 35, 48, 0.10)",
       // Density stays at 1. Scaling the root to 18.4px cost the page a
