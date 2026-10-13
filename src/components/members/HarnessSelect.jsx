@@ -68,9 +68,10 @@ export function HarnessSelect({
   description = "The engine that executes this member. Personality, model, and permissions stay the same when you change it.",
   showAdvanced = true,
   compact = false,
+  defaultAdvancedOpen = false,
 }) {
   const assignment = normalizeHarnessAssignment(value);
-  const [advancedOpen, setAdvancedOpen] = useState(Boolean(assignment.executablePath || assignment.model || assignment.effort || assignment.access));
+  const [advancedOpen, setAdvancedOpen] = useState(defaultAdvancedOpen || Boolean(assignment.executablePath || assignment.model || assignment.effort || assignment.access));
   const [customModel, setCustomModel] = useState(false);
   const external = assignment.id !== "autohand";
   const [signIn, setSignIn] = useState({ state: "idle" });

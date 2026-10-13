@@ -80,8 +80,9 @@ export function trimTitle(text, max = 88) {
   return `${(cut > max * 0.5 ? head.slice(0, cut) : value.slice(0, max)).replace(/[\s,;:.-]+$/, "")}…`;
 }
 
-/** "chat reply" | "goal" | "launched", in the copy's words. */
+/** "outside Squad" | "chat reply" | "goal" | "launched", in the copy's words. */
 export function runKindLabel(run, copy = {}) {
+  if (run?.mode === "external") return copy.runExternal || "outside Squad";
   if (run?.mode === "chat") return copy.chatRun || "chat reply";
   if (run?.mode === "goal" || run?.kind === "goal") return copy.runGoal || "goal";
   return copy.runLaunched || "launched";

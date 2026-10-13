@@ -7668,6 +7668,8 @@ function routeContext() {
       await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, "utf8");
     },
     runs,
+    // Finished runs written through route plug-ins too (ADR-0127).
+    persistRuns: () => runHistory.persist(),
     goals,
     projectObserver,
     availability: memberAvailability,

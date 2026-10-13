@@ -285,6 +285,8 @@ import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, workRowsIn
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { PreviousChats } from "@/components/chat/PreviousChats";
+import { OutsideSessionsSettings } from "@/components/settings/OutsideSessionsSettings";
+import { runsForMember } from "@/lib/external-sessions";
 import { FolderAccessCard } from "@/components/chat/FolderAccessCard";
 import { ScheduleOffer } from "@/components/chat/ScheduleOffer";
 import { EffortSlider } from "@/components/chat/EffortSlider";
@@ -6428,7 +6430,8 @@ function App() {
   }, [activeMemberId, onMemberChat, localeCopy]);
   const briefingForActiveMember = memberBriefing.memberId === activeMemberId ? memberBriefing : { lines: [] };
 
-  const activeRuns = runs.filter((run) => run.agentId === activeAgent?.id);
+  // Its own runs plus sessions started outside Squad on its engine and folders (ADR-0127).
+  const activeRuns = runsForMember(runs, activeAgent);
   const activeAutomations = automations.filter((automation) => automationBelongsToAgent(automation, activeAgent?.id));
   const fallbackWorkspace = getFallbackWorkspace(runtime, workspaces);
 
@@ -9557,7 +9560,7 @@ function App() {
           {member ? <Conversation
             promptByAgent={chatDraftsByAgent} setPromptByAgent={setChatDraftsByAgent}
             compact agent={member} agents={agents} messages={messagesByAgent[member.id] || []}
-            runtime={runtime} workspaces={workspaces} runs={runs.filter((run) => run.agentId === member.id)} providerSettings={providerSettings}
+            runtime={runtime} workspaces={workspaces} runs={runsForMember(runs, member)} providerSettings={providerSettings}
             locale={localeResolution.locale} copy={localeCopy} onStart={startAutohand} onChat={sendChat}
             onLocalMessage={appendMessage} onUpdateMessage={updateMessage} onNewConversation={(id) => startNewConversation(id, { preserveRoute: true })}
             onFolderRequests={recordFolderRequests} onFolderSettled={settleFolderRequest}
@@ -21240,7 +21243,97 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
   );
 }
 
+// Claude Code, Codex and ACP members (ADR-0125, revision): their model,
+// effort and access come from the engine, not from the workspace's LLM
+// providers, so the Model page shows and edits those. It used to show the
+// Autohand provider assignment, which these members never use.
+function EngineModelPage({ agent, navigate, updateAgent }) {
+  const assignment = harnessForAgent(agent);
+  const [draft, setDraft] = useState(assignment);
+  const [harnesses, setHarnesses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const refresh = useCallback(async (force = false) => {
+    setLoading(true);
+    setHarnesses(await fetchHarnesses(api, { refresh: force }));
+    setLoading(false);
+  }, []);
+  useEffect(() => { void refresh(false); }, [refresh]);
+  useEffect(() => { setDraft(harnessForAgent(agent)); }, [agent.id, agent.harness]);
+  const readiness = readinessFor(harnesses, draft.id);
+  const summary = engineModelSummary({ harness: draft, readiness });
+  const engine = harnessLabel(draft.id);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(assignment);
+  const sourceText = { member: "this member's own choice", "last-reply": "what the last reply ran on", "engine-default": `${engine}'s own default`, none: `${engine}'s own default` }[summary?.source || "none"];
+
+  return (
+    <div className="min-h-screen bg-background">
+      <PageTitle title="Model" />
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-7 px-4 py-7 sm:px-6 lg:px-8" data-testid="engine-model-page">
+        <header className="border-b border-border/70 pb-7">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-primary">
+            <Brain className="size-4" />
+            <span>{agent.name}</span>
+          </div>
+          <h2 className="text-3xl font-semibold tracking-normal">Model</h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+            {agent.name} runs with {engine}. Its model, reasoning effort and access come from {engine}, not from the workspace's LLM providers.
+          </p>
+        </header>
+
+        <section className="grid gap-5 border-b border-border/70 pb-7 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <div>
+            <div className="text-sm font-medium">Effective model</div>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">What the next message will run on.</p>
+          </div>
+          <div className="grid gap-2">
+            <div className="text-base font-semibold" data-testid="engine-model-label">{summary?.label || `${engine} default`}</div>
+            <p className="text-sm text-muted-foreground">Source: {sourceText}</p>
+          </div>
+        </section>
+
+        <section className="grid gap-5 border-b border-border/70 pb-7 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <div>
+            <div className="text-sm font-medium">Engine settings</div>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">Model, reasoning effort and access for every message. The composer can still change them for one message.</p>
+          </div>
+          <div className="flex flex-col gap-4">
+            <HarnessSelect
+              api={api}
+              id="model-page-harness"
+              defaultAdvancedOpen
+              label="Runs with"
+              value={draft}
+              onChange={setDraft}
+              harnesses={harnesses}
+              loading={loading}
+              onRefresh={() => refresh(true)}
+              description=""
+            />
+            <div className="flex items-center gap-2">
+              <Button type="button" size="sm" disabled={!dirty || !updateAgent} onClick={() => updateAgent?.(agent.id, { harness: normalizeHarnessAssignmentCopy(draft), updatedAt: new Date().toISOString() })}>
+                Save
+              </Button>
+              {dirty ? <Button type="button" variant="ghost" size="sm" onClick={() => setDraft(assignment)}>Discard</Button> : null}
+            </div>
+          </div>
+        </section>
+
+        <p className="text-sm text-muted-foreground">
+          The workspace provider in{" "}
+          <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => navigate("/settings/providers")}>LLM Providers</button>{" "}
+          applies only if {agent.name} is switched back to Autohand Code.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function AgentModelPage({ agent, providerSettings, navigate, updateAgent }) {
+  if (harnessForAgent(agent).id !== "autohand") return <EngineModelPage agent={agent} navigate={navigate} updateAgent={updateAgent} />;
+  return <AutohandModelPage agent={agent} providerSettings={providerSettings} navigate={navigate} updateAgent={updateAgent} />;
+}
+
+function AutohandModelPage({ agent, providerSettings, navigate, updateAgent }) {
   const currentAssignment = modelAssignmentForAgent(agent);
   const [draft, setDraft] = useState(currentAssignment);
   const definitions = providerDefinitionsFromSettings(providerSettings);
@@ -24913,6 +25006,7 @@ function SettingsPage({
         <SettingsSectionHeader title={copy.runtimeBridge} description={runtime?.version || copy.checkingRuntime} />
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="divide-y divide-border/65">
+            <OutsideSessionsSettings api={api} />
             <a
               href="/extensions"
               className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
