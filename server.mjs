@@ -7,6 +7,8 @@ import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { profileWorkspace } from "./server/workspace-profile.mjs";
 import { desktopUpdateStatus, openDesktopTarget, RELEASES_URL, upgradeDesktop } from "./server/desktop-updates.mjs";
+import { createUsageLedgerCache, usageLedger } from "./server/usage/ledger.mjs";
+import { autoCheckUpdatesEnabled, readSystemSettings } from "./server/system/settings.mjs";
 import { readAppInfo } from "./server/app-info.mjs";
 import { bundledComputerClient, createComputerUse } from "./server/computer-use.mjs";
 import { createProductTelemetry, readProductTelemetryConfig } from "./server/product-telemetry.mjs";
@@ -5145,6 +5147,8 @@ function usageRecordFromEvent(event) {
     nestedNumericField(metadata, [["usage", "tokens"], ["usage", "totalTokens"], ["usage", "total_tokens"]]) ||
     inputTokens + outputTokens;
   const durationMs = numericField(metadata, ["durationMs", "duration_ms", "elapsedMs", "elapsed_ms"]);
+  const steps = numericField(metadata, ["steps", "stepCount", "step_count", "toolCalls", "tool_calls"]);
+  const runId = String(metadata.runId || metadata.run_id || "").trim();
   const provider = String(metadata.provider || nestedStringField(metadata, [["effectiveModel", "provider"], ["model", "provider"]]) || "").trim();
   const model = String(metadata.model || nestedStringField(metadata, [["effectiveModel", "model"], ["model", "model"]]) || "").trim();
   const harness = String(metadata.harness || metadata.transport || event?.surface || event?.clientType || event?.client_type || "telemetry").trim();
@@ -5163,6 +5167,7 @@ function usageRecordFromEvent(event) {
     at: event?.timestamp || null,
     source: eventName || "telemetry",
     harness,
+    runId: runId || null,
     agentId: metadata.agentId || metadata.agent_id || null,
     provider: provider || null,
     model: model || null,
@@ -5170,6 +5175,8 @@ function usageRecordFromEvent(event) {
     inputTokens,
     outputTokens,
     durationMs,
+    // Steps are known only when the harness reported them (ADR-0091).
+    steps: "steps" in metadata || "stepCount" in metadata || "toolCalls" in metadata ? steps : null,
     status: metadata.status || eventName || null,
   };
 }
@@ -5183,10 +5190,13 @@ function usageRecordFromRun(run) {
   if (!startedAt && !finishedAt && !status) return null;
   const inputTokens = numericField(run, ["inputTokens", "input_tokens", "promptTokens", "prompt_tokens"]);
   const outputTokens = numericField(run, ["outputTokens", "output_tokens", "completionTokens", "completion_tokens"]);
+  const traceSteps = Array.isArray(run.trace?.toolCalls) ? run.trace.toolCalls.length : Array.isArray(run.trace?.steps) ? run.trace.steps.length : null;
+  const steps = numericField(run, ["steps", "stepCount", "step_count"]) || traceSteps;
   return {
     at: finishedAt || startedAt,
     source: "run",
     harness: run.transport || run.harness || harnessFromCommand(run.command) || "autohand-cli",
+    runId: run.id || run.runId || run.run_id || null,
     agentId: run.agentId || run.agent_id || null,
     provider: effectiveModel.provider || run.provider || null,
     model: effectiveModel.model || run.model || null,
@@ -5194,6 +5204,7 @@ function usageRecordFromRun(run) {
     inputTokens,
     outputTokens,
     durationMs: numericField(run, ["durationMs", "duration_ms"]) || durationBetween(startedAt, finishedAt),
+    steps: steps === null || steps === undefined ? null : steps,
     status,
   };
 }
@@ -5238,12 +5249,17 @@ function usageSnapshot(runs, telemetry) {
   };
 }
 
-function usageMetadata({ payload = {}, agentRuntime = {}, transport = "", status = "completed", durationMs = 0, startedAt = "", completedAt = "", trace = null, command = "" }) {
+function usageMetadata({ payload = {}, agentRuntime = {}, transport = "", status = "completed", durationMs = 0, startedAt = "", completedAt = "", trace = null, command = "", runId = "" }) {
   const effectiveModel = normalizeEffectiveModel(agentRuntime.effectiveModel || payload.effectiveModel);
   const traceUsage = trace?.usage && typeof trace.usage === "object" ? trace.usage : {};
   const inputTokens = numericField(traceUsage, ["inputTokens", "input_tokens", "promptTokens", "prompt_tokens"]);
   const outputTokens = numericField(traceUsage, ["outputTokens", "output_tokens", "completionTokens", "completion_tokens"]);
+  // Steps (tool calls) when the trace carries them; the usage ledger shows
+  // "—" for records without them (ADR-0091).
+  const steps = Array.isArray(trace?.toolCalls) ? trace.toolCalls.length : Array.isArray(trace?.steps) ? trace.steps.length : null;
   return {
+    ...(runId ? { runId: String(runId) } : {}),
+    ...(steps === null ? {} : { steps }),
     harness: transport || trace?.transport || harnessFromCommand(command || trace?.command) || "autohand-cli",
     transport: transport || trace?.transport || "",
     status,
@@ -5308,9 +5324,65 @@ async function fetchAnalyticsDaemonSnapshot() {
   }
 }
 
+// The usage ledger (ADR-0091) is computed by the bridge for both analytics
+// paths: the installed app serves the analytics daemon's snapshot, which does
+// not carry breakdowns, so the bridge attaches them from the same
+// telemetry.jsonl and run records. The cache key is what those reads depend
+// on, because the Usage page polls every second and telemetry.jsonl is large.
+const usageLedgerCache = createUsageLedgerCache();
+
+async function usageLedgerSignature() {
+  let telemetryStat = "none";
+  try {
+    const info = await stat(join(squadStateDir, "telemetry.jsonl"));
+    telemetryStat = `${info.size}:${info.mtimeMs}`;
+  } catch {
+    // no telemetry yet
+  }
+  let runFiles = 0;
+  try {
+    runFiles = (await readdir(join(squadStateDir, "runs"))).length;
+  } catch {
+    // no runs folder yet
+  }
+  const liveRuns = Array.from(runs.values()).map((run) => `${run.id}:${run.status}`).join(",");
+  const liveStatusStat = await stat(liveStatusPath).then((info) => `${info.size}:${info.mtimeMs}`).catch(() => "none");
+  return `${telemetryStat}|${runFiles}|${liveRuns}|${liveStatusStat}`;
+}
+
+function mergedRuns(diskRuns) {
+  const runtimeRuns = Array.from(runs.values()).map(runSummary);
+  const runMap = new Map();
+  for (const run of [...diskRuns, ...runtimeRuns]) {
+    if (run?.id) runMap.set(run.id, run);
+  }
+  return Array.from(runMap.values());
+}
+
+function usageRecordsFrom(allRuns, telemetry) {
+  return [...telemetry.map(usageRecordFromEvent).filter(Boolean), ...allRuns.map(usageRecordFromRun).filter(Boolean)];
+}
+
+async function usageLedgerSnapshot(preloaded = null) {
+  const signature = await usageLedgerSignature();
+  return usageLedgerCache.get(signature, async () => {
+    const [diskRuns, telemetry, liveStatus] = preloaded
+      ? [preloaded.diskRuns, preloaded.telemetry, preloaded.liveStatus]
+      : await Promise.all([
+          readJsonDir(join(squadStateDir, "runs")),
+          readJsonLines(join(squadStateDir, "telemetry.jsonl")),
+          readOptionalJsonFile(liveStatusPath),
+        ]);
+    return usageLedger({ records: usageRecordsFrom(mergedRuns(diskRuns), telemetry), members: liveStatus?.members });
+  });
+}
+
 async function analyticsSnapshot() {
   const daemonSnapshot = await fetchAnalyticsDaemonSnapshot();
-  if (daemonSnapshot?.success) return daemonSnapshot;
+  if (daemonSnapshot?.success) {
+    const ledger = await usageLedgerSnapshot().catch(() => null);
+    return ledger ? { ...daemonSnapshot, usage: { ...(daemonSnapshot.usage || {}), ...ledger } } : daemonSnapshot;
+  }
 
   const [daemonRecord, analyticsRecord, webServerRecord, installRecord, updateRecord, queueItems, diskRuns, telemetry, liveStatus] =
     await Promise.all([
@@ -5325,13 +5397,9 @@ async function analyticsSnapshot() {
       readOptionalJsonFile(liveStatusPath),
     ]);
 
-  const runtimeRuns = Array.from(runs.values()).map(runSummary);
-  const runMap = new Map();
-  for (const run of [...diskRuns, ...runtimeRuns]) {
-    if (run?.id) runMap.set(run.id, run);
-  }
-  const allRuns = Array.from(runMap.values());
-  const usage = usageSnapshot(allRuns, telemetry);
+  const allRuns = mergedRuns(diskRuns);
+  const ledger = await usageLedgerSnapshot({ diskRuns, telemetry, liveStatus }).catch(() => null);
+  const usage = { ...usageSnapshot(allRuns, telemetry), ...(ledger || {}) };
   const activeRuns = allRuns.filter((run) => ["queued", "running"].includes(run.status));
   const failedRuns = allRuns.filter((run) => run.status === "failed");
   const completedRuns = allRuns.filter((run) => run.status === "completed");
@@ -6029,7 +6097,7 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
         run.finishedAt = new Date().toISOString();
         emitRunFinished(run);
         appendLog(run, "system", "SDK run completed");
-        recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "sdk", status: run.status, trace: run.trace, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
+        recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "sdk", status: run.status, trace: run.trace, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt, runId: run.id }));
       }
     } catch (error) {
       if (run.status !== "stopped") {
@@ -6038,7 +6106,7 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
         run.finishedAt = new Date().toISOString();
         emitRunFinished(run);
         appendLog(run, "stderr", error.message || String(error));
-        recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "sdk", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
+        recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "sdk", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt, runId: run.id }));
       }
     } finally {
       await sdk.close?.().catch((error) => appendLog(run, "system", `SDK close failed: ${error.message}`));
@@ -6079,7 +6147,7 @@ function startCliRun(run, args, workspace, agentRuntime, payload) {
     run.exitCode = code;
     if (run.status === "stopped") {
       appendLog(run, "system", `stopped with code ${code}`);
-      recordUsageTelemetry("usage.recorded", usageMetadata({ payload: { agentId: run.agentId }, agentRuntime, transport: "cli", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: new Date().toISOString() }));
+      recordUsageTelemetry("usage.recorded", usageMetadata({ payload: { agentId: run.agentId }, agentRuntime, transport: "cli", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: new Date().toISOString(), runId: run.id }));
       return;
     }
     // A spawn error also emits close. Keep its failure, and never process
@@ -6099,7 +6167,7 @@ function startCliRun(run, args, workspace, agentRuntime, payload) {
     run.finishedAt = new Date().toISOString();
     emitRunFinished(run);
     appendLog(run, "system", `exited with code ${code}`);
-    recordUsageTelemetry("usage.recorded", usageMetadata({ payload: { agentId: run.agentId }, agentRuntime, transport: "cli", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
+    recordUsageTelemetry("usage.recorded", usageMetadata({ payload: { agentId: run.agentId }, agentRuntime, transport: "cli", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt, runId: run.id }));
   });
 }
 
@@ -7048,6 +7116,7 @@ function routeContext() {
   return {
     rootDir,
     squadStateDir,
+    appStateDir,
     squadWorkspaceRoot,
     homeDir,
     packageMetadata,
@@ -7782,10 +7851,13 @@ async function handleApi(req, res, url) {
   // Fresh repository checks and verified installer downloads stay on the
   // local bridge; the client cannot supply a URL, path or command.
   if (url.pathname === "/api/updates" && req.method === "GET") {
+    // Settings → System "Check for updates automatically" (ADR-0091) gates
+    // unattended checks only; refresh=1 is the person asking and always runs.
     const data = await desktopUpdateStatus({
       squadStateDir,
       appVersion: packageMetadata.version || "",
       refresh: url.searchParams.get("refresh") === "1",
+      autoCheck: autoCheckUpdatesEnabled(await readSystemSettings(squadStateDir)),
     });
     json(res, 200, { success: true, data });
     return true;

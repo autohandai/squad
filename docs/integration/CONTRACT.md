@@ -79,6 +79,7 @@ Route paths are matched with plain string comparison or a `RegExp` on
 | --- | --- | --- |
 | `rootDir` | string | repository root (or bundle runtime dir) |
 | `squadStateDir` | string | `~/.autohand/squad` — app state; put new files here |
+| `appStateDir` | string | member state root; each member's home is `<appStateDir>/agents/<id>/` (profile docs, memory, sessions). `~/.autohand/squad/web-state` in the installed app, `<rootDir>/.autohand` in dev (ADR-0105) |
 | `squadWorkspaceRoot` | string | `~/.autohandsquad` — per-member workspaces |
 | `homeDir` | string | user home |
 | `packageMetadata` | object | package.json |

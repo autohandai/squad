@@ -282,6 +282,9 @@ import { BootChecks } from "@/components/shell/BootChecks";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
 import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
+import { SystemSettings } from "@/components/settings/SystemSettings";
+import { UsageBreakdown } from "@/components/settings/UsageBreakdown";
+import { shouldAutoCheckUpdates } from "@/lib/system-settings";
 import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel, peopleSentence, selectWorkspace } from "@/lib/workspaces";
 import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/member-availability";
 import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
@@ -479,6 +482,7 @@ const SETTINGS_SECTION_IDS = Object.freeze([
   "relay",
   "remote-access",
   "updates",
+  "system",
 ]);
 
 const EMPTY_LIST = [];
@@ -4734,9 +4738,17 @@ function App() {
       setUpdatesError(error.message || "Could not open the releases page.");
     }
   }
+  // The unattended check follows Settings → System "Check for updates
+  // automatically" (ADR-0105); the bridge reports the switch on every answer.
+  const updatesAutoCheckRef = useRef(true);
+  useEffect(() => {
+    updatesAutoCheckRef.current = shouldAutoCheckUpdates(updates);
+  }, [updates]);
   useEffect(() => {
     void refreshUpdates(false);
-    const timer = window.setInterval(() => void refreshUpdates(false), 30 * 60_000);
+    const timer = window.setInterval(() => {
+      if (updatesAutoCheckRef.current) void refreshUpdates(false);
+    }, 30 * 60_000);
     return () => window.clearInterval(timer);
   }, []);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -9187,6 +9199,7 @@ function App() {
                 }}
                 remoteAccess={remoteAccess}
                 remoteAccessActions={remoteAccessActions}
+                onAutoCheckUpdatesChange={() => void refreshUpdates(false)}
               />
             ) : isCreate ? (
               <CreateAgent
@@ -24599,6 +24612,7 @@ function SettingsPage({
   onSyncRelay,
   remoteAccess = null,
   remoteAccessActions = null,
+  onAutoCheckUpdatesChange,
 }) {
   const [searchRebuild, setSearchRebuild] = useState({ state: "idle", total: 0, error: "" });
   async function rebuildSearch() {
@@ -24687,6 +24701,7 @@ function SettingsPage({
     { id: "relay", icon: Share2, label: copy.relay || "Relay", detail: relayStatusDetail(relayConfig, relayStatus, copy) },
     { id: "remote-access", icon: Smartphone, label: copy.remoteAccess || "Remote access", detail: remoteAccessDetail(remoteAccess, copy) },
     { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
+    { id: "system", icon: Database, label: copy.system || "System", detail: copy.systemDetail || "Counts and data folder" },
   ];
   settingsSections.unshift({ id: "setup", icon: ListChecks, label: copy.setupGuide || "Setup guide", detail: copy.setupGuideDetail || "Run the first-run checks again" });
   const requestedInitialSection = settingsSections.some((section) => section.id === initialSection) ? initialSection : "";
@@ -25116,6 +25131,14 @@ function SettingsPage({
                 description={updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} is available on GitHub.` : "Releases are checked on GitHub (autohandai/squad)."}
               />
               <SettingsUpdatesPanel updates={updates} checking={updatesChecking} error={updatesError} upgrading={updatesUpgrading} upgradeResult={updatesUpgradeResult} onCheck={onCheckUpdates} onUpgrade={onUpgradeApp} onOpenReleases={onOpenReleases} />
+            </section>
+
+            <section id="settings-system" className="scroll-mt-6 border-b border-border/70 py-8">
+              <SettingsSectionHeader
+                title={copy.system || "System"}
+                description={copy.systemDescription || "What this squad holds on this computer, where it lives, and whether the app looks for releases on its own."}
+              />
+              <SystemSettings api={api} locale={activeLocale} copy={copy} onAutoCheckUpdatesChange={onAutoCheckUpdatesChange} />
             </section>
 
             <section id="settings-runtime" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
@@ -25908,6 +25931,10 @@ function AnalyticsPanel({ active, locale }) {
             ))}
           </CardContent>
         </Card>
+      </div>
+
+      <div className="border-t border-border/70 pt-6">
+        <UsageBreakdown usage={usage} locale={locale} />
       </div>
 
       <AnalyticsFailureList recentErrors={recentErrors} locale={locale} />

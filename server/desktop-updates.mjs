@@ -35,8 +35,14 @@ async function daemonRequest(fetchImpl, url, options = {}, timeoutMs = 3000) {
   } finally { clearTimeout(timer); }
 }
 
-/** A failed fresh check never turns a cached snapshot into a current result. */
-export async function desktopUpdateStatus({ squadStateDir, appVersion, refresh = false, readJsonImpl = readJson, fetchImpl = fetch }) {
+/**
+ * A failed fresh check never turns a cached snapshot into a current result.
+ * `autoCheck` is the Settings → System switch (ADR-0105): when it is off an
+ * unattended call (refresh=false) only reports what update.json already
+ * holds and never asks the daemon to contact the repository; a manual check
+ * (refresh=true) always runs.
+ */
+export async function desktopUpdateStatus({ squadStateDir, appVersion, refresh = false, autoCheck = true, readJsonImpl = readJson, fetchImpl = fetch }) {
   const [record, saved] = await Promise.all([
     readJsonImpl(join(squadStateDir, "daemon.json")),
     readJsonImpl(join(squadStateDir, "update.json")),
@@ -50,7 +56,7 @@ export async function desktopUpdateStatus({ squadStateDir, appVersion, refresh =
       const base = daemonBaseUrl(record.url);
       await daemonRequest(fetchImpl, `${base}/health`);
       daemonReachable = true;
-      if (refresh || !snapshot) {
+      if (refresh || (!snapshot && autoCheck !== false)) {
         try {
           const body = await daemonRequest(fetchImpl, `${base}/updates/check`, { method: "POST" }, 30_000);
           const result = body?.data || body;
@@ -64,7 +70,7 @@ export async function desktopUpdateStatus({ squadStateDir, appVersion, refresh =
     } catch (error) { checkError = error.message || "The local update service is unavailable."; }
   }
   const status = !daemonReachable ? "offline" : checkError || snapshot?.error || snapshot?.success === false ? "check-failed" : !snapshot?.checkedAt || snapshot?.success !== true ? "never-checked" : snapshot.updateAvailable ? "available" : "up-to-date";
-  return { daemonReachable, appVersion, repository: UPDATE_REPOSITORY, releasesUrl: RELEASES_URL, snapshot, status, checkError: checkError || snapshot?.error || "", fresh };
+  return { daemonReachable, appVersion, repository: UPDATE_REPOSITORY, releasesUrl: RELEASES_URL, snapshot, status, checkError: checkError || snapshot?.error || "", fresh, autoCheck: autoCheck !== false, skipped: !refresh && autoCheck === false };
 }
 
 export function verifiedInstaller(snapshot, { platform = process.platform, arch = process.arch } = {}) {
