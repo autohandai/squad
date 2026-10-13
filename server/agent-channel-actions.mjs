@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import { channelError } from './channels-store.mjs';
+import { resolveMentions, resolveResponderRecipients } from '../src/lib/channel-responders.js';
 
 const at = () => new Date().toISOString();
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -97,7 +98,7 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
     }
     const channelId = `channel-${randomUUID()}`;
     const timestamp = at();
-    const channel = { id: channelId, name: action.name, visibility: 'public', memberIds: action.memberIds, creatorId: receipt.actorId, projects: [{ name: basename(receipt.workspace), path: receipt.workspace }], autoModeDefault: false, createdAt: timestamp, updatedAt: timestamp };
+    const channel = { id: channelId, name: action.name, visibility: 'public', memberIds: action.memberIds, creatorId: receipt.actorId, projects: [{ name: basename(receipt.workspace), path: receipt.workspace }], autoModeDefault: false, responder: { mode: 'everyone', leadMemberId: '' }, createdAt: timestamp, updatedAt: timestamp };
     state.channels.push(channel);
     receipt.status = 'created'; receipt.channelId = channelId;
     receipt.message = `Created #${channel.name} and invited you. Open the channel to see its purpose and replies.`;
@@ -107,10 +108,16 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
     const threadId = `${receipt.id}-thread`;
     const actor = state.agentChannelAccess[receipt.actorId].agent;
     const body = `${actor.name} opened this channel: ${action.purpose}`;
-    state.messages.push({ id: rootId, channelId, role: 'user', agentId: actor.id, authorName: actor.name, body, status: 'complete', threadId, workspace: receipt.workspace, createdAt: timestamp, updatedAt: timestamp });
-    state.threads.push({ id: threadId, channelId, parentMessageId: rootId, title: action.purpose, creatorId: receipt.actorId, memberIds: action.memberIds, replyCount: 0, createdAt: timestamp, updatedAt: timestamp });
-    receipt.threadId = threadId; receipt.parentMessageId = rootId;
-    for (const memberId of action.memberIds) receipt.deliveries.push({ id: `${receipt.id}-${memberId}`, memberId, status: 'queued', updatedAt: timestamp });
+    // Same responder rule as the browser (ADR-0094): members the purpose
+    // @mentions answer it; otherwise the channel's mode decides. A channel
+    // created here starts on Everyone, so the mode never asks the model.
+    const roster = action.memberIds.map(memberId => ({ id: memberId, name: state.agentChannelAccess[memberId]?.agent?.name || memberId }));
+    const recipients = resolveResponderRecipients({ mentions: resolveMentions(action.purpose, roster), channel, pick: null });
+    const memberIds = recipients.memberIds.length ? recipients.memberIds : action.memberIds;
+    state.messages.push({ id: rootId, channelId, role: 'user', agentId: actor.id, authorName: actor.name, body, status: 'complete', threadId, workspace: receipt.workspace, targetMemberIds: memberIds, ...(recipients.responder ? { responder: recipients.responder } : {}), createdAt: timestamp, updatedAt: timestamp });
+    state.threads.push({ id: threadId, channelId, parentMessageId: rootId, title: action.purpose, creatorId: receipt.actorId, memberIds, replyCount: 0, createdAt: timestamp, updatedAt: timestamp });
+    receipt.threadId = threadId; receipt.parentMessageId = rootId; receipt.recipientRule = recipients.rule;
+    for (const memberId of memberIds) receipt.deliveries.push({ id: `${receipt.id}-${memberId}`, memberId, status: 'queued', updatedAt: timestamp });
   }
   async function finish(context, result, signal) {
     const { text, actions } = parseReply(result.reply);

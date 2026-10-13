@@ -3,6 +3,8 @@ import { useProjectObserver } from "@/lib/use-project-observer";
 import { onDesktopMenu } from "@/lib/desktop-menu";
 import { FirstRun } from "@/components/onboarding/FirstRun";
 import { ChannelDetailsSettings } from "@/components/channels/ChannelDetailsSettings";
+import { AnsweredByTag } from "@/components/channels/ResponderSettings";
+import { needsResponderPick, normalizeResponder, resolveResponderRecipients, responderTargetHint } from "@/lib/channel-responders";
 import { AgentChannelProposals } from "@/components/channels/AgentChannelProposals";
 import { AppInformation } from "@/components/app-info/AppInformation";
 import { JoinProposal } from "@/components/channels/JoinProposal";
@@ -3289,6 +3291,9 @@ function normalizeChannelCopy(channel) {
     section: String(channel.section || "").trim(),
     creatorId: String(channel.creatorId || "").trim(),
     autoModeDefault: channel.autoModeDefault === true,
+    // Who answers un-mentioned messages (ADR-0094); kept so the mirrored
+    // channel list cannot erase a saved lead or mode.
+    responder: normalizeResponder(channel.responder),
     // Owned by the git route plug-in (docs/integration/git.md). Kept verbatim
     // so re-PUTting the channel list does not erase the repository binding.
     ...(channel.git && typeof channel.git === "object" ? { git: channel.git } : {}),
@@ -3901,6 +3906,11 @@ async function api(path, options = {}) {
     throw new Error(payload.error || `${route} failed: ${response.status}`);
   }
   return payload.data;
+}
+
+// Stable so the settings row's effect runs once per open (ADR-0094).
+function loadResponderAvailability() {
+  return api("/api/responders/availability");
 }
 
 function splitRoute(route) {
@@ -7228,7 +7238,7 @@ function App() {
   async function dispatchChannelMemberReply(
     channel,
     agent,
-    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null, canvases = [], marker = null, attachments = [], anchors = [] }
+    { prompt, threadId, parentMessageId, autoMode, selfJudge, targetMemberIds = [], targetLabel = "", hop = 0, relayFrom = null, canvases = [], marker = null, attachments = [], anchors = [], responder = null }
   ) {
     // Workflow steps (#28) tag the reply and every update of it with the run
     // marker so the stream, search and bridge telemetry can group by run.
@@ -7290,6 +7300,7 @@ function App() {
       activityLabel: relayFrom ? `Replying to ${relayFrom.name} in #${channel.name}` : `Replying in #${channel.name}`,
       hop,
       relayFromAgentId: relayFrom?.id || "",
+      ...(responder ? { responder } : {}),
       ...(workflowMarker || {}),
     });
 
@@ -7547,9 +7558,16 @@ function App() {
     const channel = channels.find((item) => item.id === channelId);
     const text = String(prompt || "").trim();
     if (!channel || !text) return;
-    const target = resolveChannelMentionTargets(text, channel, agents);
-    const members = target.targetAgents;
+    const mentions = resolveChannelMentionTargets(text, channel, agents);
+    // Responder rules (ADR-0094): mentions and @here win; otherwise the
+    // channel's mode decides, and only Auto asks the bridge to pick.
+    const pick = needsResponderPick(mentions, channel) ? await requestResponderPick(channel, text) : null;
+    const recipients = resolveResponderRecipients({ mentions, channel, pick });
+    const members = channelAgentsByIds(recipients.memberIds, agents);
     if (!members.length) return;
+    const targetMemberIds = members.map((agent) => agent.id);
+    const targetLabel = mentions.hasMentions || recipients.rule === "everyone" ? mentions.targetLabel : members.map(channelMentionLabel).join(", ");
+    const responder = recipients.responder;
     const now = new Date();
     const timestamp = now.toISOString();
     const time = now.toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" });
@@ -7568,8 +7586,8 @@ function App() {
           parentMessageId: rootMessageId,
           title: text.slice(0, 200),
           creatorId: "user",
-          memberIds: target.targetMemberIds,
-          targetLabel: target.targetLabel,
+          memberIds: targetMemberIds,
+          targetLabel,
           autoMode: effectiveAutoMode,
           selfJudge: effectiveSelfJudge,
           createdAt: timestamp,
@@ -7584,10 +7602,11 @@ function App() {
       time,
       threadId,
       parentMessageId: "",
-      targetMemberIds: target.targetMemberIds,
-      targetLabel: target.targetLabel,
+      targetMemberIds,
+      targetLabel,
       createdAt: timestamp,
       updatedAt: timestamp,
+      ...(responder ? { responder } : {}),
       ...(attachments.length ? { attachments } : {}),
       ...(anchors.length ? { anchors } : {}),
     });
@@ -7600,14 +7619,32 @@ function App() {
           parentMessageId: rootMessageId,
           autoMode: effectiveAutoMode,
           selfJudge: effectiveSelfJudge,
-          targetMemberIds: target.targetMemberIds,
-          targetLabel: target.targetLabel,
+          targetMemberIds,
+          targetLabel,
           canvases,
           attachments,
           anchors,
+          responder,
         })
       )
     );
+  }
+
+  // One pick call per un-mentioned message in an Auto channel; the bridge
+  // owns the provider call and the fallback. A failed request falls back the
+  // same way (lead, else everyone) and says why.
+  async function requestResponderPick(channel, message) {
+    const roster = channelMembersFor(channel, agents).map((agent) => ({ id: agent.id, name: agent.name, role: agent.role || "", purpose: agent.description || "" }));
+    const lines = (messagesByChannel[channel.id] || [])
+      .filter((item) => item.body && item.status !== "loading")
+      .slice(-6)
+      .map((item) => `${channelMessageAuthorName(item, agents, ACCOUNT_PROFILE.name)}: ${String(item.body).slice(0, 240)}`);
+    try {
+      const data = await api(`/api/channels/${encodeURIComponent(channel.id)}/responders/pick`, { method: "POST", body: JSON.stringify({ message, members: roster, lines }) });
+      return data?.responder ? { ...data.responder, memberIds: data.memberIds } : { reason: data?.reason || "pick unavailable" };
+    } catch (error) {
+      return { reason: `pick failed: ${error.message}` };
+    }
   }
 
   // Threaded follow-ups: replies stay grouped under the original thread and
@@ -9589,7 +9626,7 @@ function ChannelMentionComposer({ channel, members = [], copy = getLocaleCopy(DE
       </div>
       <p className={cn("text-xs", error || hasInvalidOnly ? "text-destructive" : "text-muted-foreground")}>
         {error || (hasInvalidOnly ? "Use @here or mention a channel member by name." : null) ||
-          `Target: ${targetLabel || "channel"}. ${autoMode ? copy.channelAutoModeOn : copy.channelAutoModeOff}.`}
+          `Target: ${targetLabel || responderTargetHint(channel, members) || "channel"}. ${autoMode ? copy.channelAutoModeOn : copy.channelAutoModeOff}.`}
       </p>
     </div>
   );
@@ -9733,6 +9770,7 @@ function ChannelThreadItem({
       <div className="ml-11 mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {thread.autoMode === true ? <Badge variant="secondary" className="rounded-md px-1.5 py-0">Auto mode on</Badge> : null}
         {thread.targetLabel ? <span>{thread.targetLabel}</span> : null}
+        <AnsweredByTag responder={rootMessage?.responder} members={agents} />
       </div>
 
       {replyCount > 0 ? (
@@ -10366,7 +10404,7 @@ function ChannelsPage({
               </PopoverTrigger>
               <PopoverContent align="end" className="w-72 max-h-[min(34rem,calc(100vh-6rem))] overflow-y-auto overscroll-contain p-3">
                 <div className="flex flex-col gap-3">
-                  <ChannelDetailsSettings key={channel.id} channel={channel} onSave={patch => onUpdateChannel?.(channel.id, patch)} />
+                  <ChannelDetailsSettings key={channel.id} channel={channel} members={agents} loadAutoAvailability={loadResponderAvailability} onSave={patch => onUpdateChannel?.(channel.id, patch)} />
                   <Separator />
                   <label className="flex items-center justify-between gap-3 text-sm" htmlFor={`auto-mode-${channel.id}`}>
                     <span>

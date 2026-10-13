@@ -33,6 +33,8 @@ import { listLocalSkills, localSkillRoots, readSkillFolder } from "./server/skil
 import { startTracking } from "./server/workspace-git.mjs";
 import { channelError, createChannelsStore } from "./server/channels-store.mjs";
 import { createAgentChannelActions } from "./server/agent-channel-actions.mjs";
+import { createResponderPicker } from "./server/responders/pick.mjs";
+import { normalizeResponder, responderStatus } from "./src/lib/channel-responders.js";
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
 import { memberProfileDefaults } from "./src/lib/member-profiles.js";
 import { CHAT_TURN_CEILING_MS } from "./src/lib/chat-timing.js";
@@ -4740,6 +4742,8 @@ function normalizeChannel(item) {
     // Self-judge / auto-mode execution control is opt-in per channel and
     // always defaults OFF; only an explicit true enables it.
     autoModeDefault: item.autoModeDefault === true,
+    // Who answers un-mentioned messages (ADR-0094): everyone, a lead, or auto.
+    responder: normalizeResponder(item.responder),
     // Owned by the git route plug-in (docs/integration/git.md); kept verbatim so
     // the web app's own PUT /api/channels mirror does not erase the binding.
     git: item.git && typeof item.git === "object" ? item.git : undefined,
@@ -4841,6 +4845,37 @@ function normalizeChannelsState(input) {
 const channelsStore = createChannelsStore({ filename: channelsStatePath, normalize: normalizeChannelsState, changed: () => emitBridgeEvent("channels.changed", { source: "bridge" }) });
 const readChannelsState = () => channelsStore.read();
 const writeChannelsState = input => channelsStore.replace(input);
+// Auto responder picks use the workspace default provider (no member
+// override) and only when it can be called directly (ADR-0094).
+const responderPicker = createResponderPicker({
+  resolveProvider: () => resolveProviderForAgent(null),
+  autohandBaseUrl: AUTOHAND_AI_DEFAULT_BASE_URL,
+  log: (entry) => console.log(`responders: pick ${JSON.stringify(entry)}`),
+});
+
+// Roster for a pick: the caller's member copies (name, role, purpose) win,
+// the bridge's own member copies fill gaps, bare ids are the floor.
+function responderRoster(channel, state, members = []) {
+  const supplied = new Map((Array.isArray(members) ? members : []).filter((member) => member && member.id).map((member) => [String(member.id), member]));
+  return channel.memberIds.map((memberId) => {
+    const given = supplied.get(memberId);
+    const known = state.agentChannelAccess?.[memberId]?.agent;
+    return {
+      id: memberId,
+      name: String(given?.name || known?.name || memberId).slice(0, 80),
+      role: String(given?.role || known?.role || "").slice(0, 80),
+      purpose: String(given?.purpose || given?.description || known?.description || "").slice(0, 240),
+    };
+  });
+}
+
+function responderRecentLines(channel, state, limit = 6) {
+  return state.messages
+    .filter((message) => message.channelId === channel.id && message.body)
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    .slice(-limit)
+    .map((message) => `${message.role === "user" ? message.authorName || "User" : state.agentChannelAccess?.[message.agentId]?.agent?.name || message.authorName || message.agentId || "Member"}: ${String(message.body).slice(0, 240)}`);
+}
 const mutateChannelsState = operation => channelsStore.mutate(operation);
 const agentChannelActions = createAgentChannelActions({ store: channelsStore, availability: memberAvailability, sanitizeId: sanitizeAgentId, run: payload => chatOnce(payload), reportError: error => console.error("Channel purpose queue:", error.message) });
 
@@ -4879,12 +4914,17 @@ async function updateChannel(channelId, patch) {
     ...(source.git !== undefined ? { git: source.git } : {}),
     ...(Array.isArray(source.events) ? { events: source.events } : {}),
     ...(source.autoModeDefault !== undefined ? { autoModeDefault: source.autoModeDefault === true } : {}),
+    ...(source.responder !== undefined ? { responder: normalizeResponder(source.responder) } : {}),
     id: existing.id,
     creatorId: existing.creatorId,
     createdAt: existing.createdAt,
     updatedAt: new Date().toISOString(),
   });
   if (state.channels.some(item => item.id !== channelId && item.name.toLowerCase() === next.name.toLowerCase())) throw channelError(`A channel named ${next.name} already exists.`, 409);
+  // A lead must be on the roster when it is chosen; a lead that leaves later
+  // is kept and reported as missing, so the row can say why everyone answers.
+  if (source.responder !== undefined && next.responder.mode === "lead" && !next.responder.leadMemberId) throw channelError("Choose a lead from the channel members.");
+  if (source.responder !== undefined && next.responder.leadMemberId && !next.memberIds.includes(next.responder.leadMemberId)) throw channelError("The lead must be a member of this channel.");
   state.channels = state.channels.map((item) => (item.id === channelId ? next : item));
   return next;
   });
@@ -7455,6 +7495,39 @@ async function handleApi(req, res, url) {
     try {
       const payload = await readBody(req, CHANNEL_HISTORY_MAX_BYTES);
       json(res, 200, { success: true, data: await writeChannelsState(payload) });
+    } catch (error) {
+      json(res, error.status || 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  // Responder rules (ADR-0094). Availability tells the settings row whether
+  // Auto can run; pick decides one message's recipients and is the only place
+  // the model is asked. Mentions never reach it.
+  if (url.pathname === "/api/responders/availability" && req.method === "GET") {
+    json(res, 200, { success: true, data: await responderPicker.availability() });
+    return true;
+  }
+
+  const responderPickMatch = url.pathname.match(/^\/api\/channels\/([^/]+)\/responders\/pick$/);
+  if (responderPickMatch && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const state = await readChannelsState();
+      const channel = state.channels.find((item) => item.id === decodeURIComponent(responderPickMatch[1]));
+      if (!channel) {
+        json(res, 404, { success: false, error: "channel not found" });
+        return true;
+      }
+      const message = String(payload.message || "").trim();
+      if (!message) {
+        json(res, 400, { success: false, error: "message is required" });
+        return true;
+      }
+      const roster = responderRoster(channel, state, payload.members);
+      const lines = Array.isArray(payload.lines) ? payload.lines.map((line) => String(line || "")).filter(Boolean).slice(-6) : responderRecentLines(channel, state);
+      const decision = await responderPicker.pick({ channel, roster, message, lines });
+      json(res, 200, { success: true, data: { ...decision, status: responderStatus(channel, { autoUnavailable: decision.available === false ? decision.reason : "" }) } });
     } catch (error) {
       json(res, error.status || 400, { success: false, error: error.message });
     }
