@@ -20,7 +20,7 @@ const os=process.platform,arch=process.arch,version='1.2.3-fixture',exe=os==='wi
 const names={'darwin/arm64':'autohand-macos-arm64','darwin/x64':'autohand-macos-x64','linux/x64':'autohand-linux-x64','linux/arm64':'autohand-linux-arm64','win32/x64':'autohand-windows-x64.exe'};
 try{
  for(const name of ['squad','autohand-squad-daemon','autohand-squad-analytics','autohand-squad-tray','autohand-squad-ui'])await file(join(root,'daemon','target','release',name+exe));
- const web=join(root,'web');for(const name of ['server.mjs','package.json','bun.lock','README.md','dist/index.html','server/harness/index.mjs'])await file(join(web,name));
+ const web=join(root,'web');for(const name of ['server.mjs','package.json','bun.lock','README.md','dist/index.html','server/harness/index.mjs','server/control-plane/mcp-server.mjs','server/connectors/web-research-mcp.mjs'])await file(join(web,name));
  await file(join(web,'package.json'),JSON.stringify({type:'module'}));
  await cp(new URL('../src/lib/',import.meta.url),join(web,'src/lib'),{recursive:true});
  await file(join(web,'server/routes/workflows.route.mjs'),await readFile(new URL('../server/routes/workflows.route.mjs',import.meta.url),'utf8'));
