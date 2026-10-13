@@ -56,6 +56,9 @@ async function stageRuntime() {
   await assertFile(join(runtimeDir, 'server', 'harness', 'index.mjs'));
   // `squad mcp` runs this entry from the staged runtime (ADR-0109).
   await assertFile(join(runtimeDir, 'server', 'control-plane', 'mcp-server.mjs'));
+  // The built-in Web research connector is a child process the bridge spawns
+  // by path (ADR-0107); the runtime must carry it.
+  await assertFile(join(runtimeDir, 'server', 'connectors', 'web-research-mcp.mjs'));
   // Route plug-ins share pure logic with the web app (src/lib/*.js, no React,
   // no DOM); they import it relatively, so it ships beside server/.
   await cp(join(rootDir, 'src', 'lib'), join(runtimeDir, 'src', 'lib'), { recursive: true });

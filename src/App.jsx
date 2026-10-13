@@ -287,6 +287,7 @@ import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings
 import { SystemSettings } from "@/components/settings/SystemSettings";
 import { UsageBreakdown } from "@/components/settings/UsageBreakdown";
 import { shouldAutoCheckUpdates } from "@/lib/system-settings";
+import { ConnectorsSettings } from "@/components/settings/ConnectorsSettings";
 import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel, peopleSentence, selectWorkspace } from "@/lib/workspaces";
 import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/member-availability";
 import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
@@ -483,6 +484,7 @@ const SETTINGS_SECTION_IDS = Object.freeze([
   "runtime",
   "relay",
   "remote-access",
+  "connectors",
   "updates",
   "system",
 ]);
@@ -5829,6 +5831,41 @@ function App() {
       cancelled = true;
     };
   }, [refreshRelayStatus]);
+  // Connectors (docs/integration/connectors.md, ADR-0107): MCP servers the
+  // person added plus the built-in Web research server. Read once; every
+  // action returns the fresh record, so the list is patched in place.
+  const [connectors, setConnectors] = useState(EMPTY_LIST);
+  const refreshConnectors = useCallback(async () => {
+    try {
+      setConnectors((await api("/api/connectors")).connectors || EMPTY_LIST);
+    } catch {
+      // The route is optional; the section simply stays empty.
+    }
+  }, []);
+  useEffect(() => { void refreshConnectors(); }, [refreshConnectors]);
+  const connectorActions = useMemo(() => ({
+    create: async (input) => {
+      await api("/api/connectors", { method: "POST", body: JSON.stringify(input) });
+      await refreshConnectors();
+    },
+    update: async (id, patch) => {
+      const record = await api(`/api/connectors/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(patch) });
+      setConnectors((current) => current.map((item) => (item.id === id ? record : item)));
+    },
+    remove: async (id) => {
+      await api(`/api/connectors/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setConnectors((current) => current.filter((item) => item.id !== id));
+    },
+    test: async (id) => {
+      const result = await api(`/api/connectors/${encodeURIComponent(id)}/test`, { method: "POST" });
+      if (result?.connector) setConnectors((current) => current.map((item) => (item.id === id ? result.connector : item)));
+      return result;
+    },
+    toggle: async (id, enabled) => {
+      const record = await api(`/api/connectors/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`, { method: "POST" });
+      setConnectors((current) => current.map((item) => (item.id === id ? record : item)));
+    },
+  }), [refreshConnectors]);
   // A message or channel that arrived from another person is already merged
   // into channels.json by the bridge; re-reading keeps the stream in step.
   useEffect(() => {
@@ -9237,6 +9274,8 @@ function App() {
                 remoteAccess={remoteAccess}
                 remoteAccessActions={remoteAccessActions}
                 onAutoCheckUpdatesChange={() => void refreshUpdates(false)}
+                connectors={connectors}
+                connectorActions={connectorActions}
               />
             ) : isCreate ? (
               <CreateAgent
@@ -24651,6 +24690,8 @@ function SettingsPage({
   remoteAccess = null,
   remoteAccessActions = null,
   onAutoCheckUpdatesChange,
+  connectors = EMPTY_LIST,
+  connectorActions = null,
 }) {
   const [searchRebuild, setSearchRebuild] = useState({ state: "idle", total: 0, error: "" });
   async function rebuildSearch() {
@@ -24738,6 +24779,7 @@ function SettingsPage({
     { id: "runtime", icon: Server, label: copy.runtimeBridge, detail: runtime?.version || copy.checkingRuntime },
     { id: "relay", icon: Share2, label: copy.relay || "Relay", detail: relayStatusDetail(relayConfig, relayStatus, copy) },
     { id: "remote-access", icon: Smartphone, label: copy.remoteAccess || "Remote access", detail: remoteAccessDetail(remoteAccess, copy) },
+    { id: "connectors", icon: Unplug, label: copy.connectors || "Connectors", detail: connectorsDetail(connectors, copy) },
     { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
     { id: "system", icon: Database, label: copy.system || "System", detail: copy.systemDetail || "Counts and data folder" },
   ];
@@ -25273,11 +25315,33 @@ function SettingsPage({
                 copy={copy}
               />
             </section>
+            <section id="settings-connectors" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
+              <SettingsSectionHeader
+                title={copy.connectors || "Connectors"}
+                description={copy.connectorsDescription || "MCP servers every member can reach. A member uses them only when its MCP connectors permission is set to Allow."}
+              />
+              <ConnectorsSettings
+                connectors={connectors}
+                onCreate={connectorActions?.create}
+                onUpdate={connectorActions?.update}
+                onDelete={connectorActions?.remove}
+                onTest={connectorActions?.test}
+                onToggle={connectorActions?.toggle}
+                copy={copy}
+              />
+            </section>
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+// One phrase for the settings nav: how many connectors are on.
+function connectorsDetail(connectors, copy = {}) {
+  const on = (connectors || []).filter((connector) => connector.enabled).length;
+  if (!on) return copy.connectorsOff || "Off";
+  return formatCopy(copy.connectorsOn || "{count} on", { count: on });
 }
 
 // One phrase for the settings nav: off, incomplete, or who is connected.

@@ -11,6 +11,8 @@ import { createUsageLedgerCache, usageLedger } from "./server/usage/ledger.mjs";
 import { autoCheckUpdatesEnabled, readSystemSettings } from "./server/system/settings.mjs";
 import { readAppInfo } from "./server/app-info.mjs";
 import { bundledComputerClient, createComputerUse } from "./server/computer-use.mjs";
+import { createConnectorStore } from "./server/connectors/store.mjs";
+import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
 import { createProductTelemetry, readProductTelemetryConfig } from "./server/product-telemetry.mjs";
 import { MemberAvailability } from "./server/members/availability.mjs";
 import { GoalManager } from "./server/goal-manager.mjs";
@@ -364,6 +366,10 @@ let nativeGrantKey = await readNativeComputerGrantKey();
 const computerClient = await bundledComputerClient(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR ? resolve(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR) : rootDir).catch(() => null);
 const computerUse = createComputerUse({ stateDir: squadStateDir, rootDir, bridgeUrl: `http://127.0.0.1:${port}`, nativeClient: computerClient, emit: emitBridgeEvent });
 const computerWorkRuntimes = new Map();
+// Connectors (ADR-0107): MCP servers the person added plus the built-in Web
+// research server, injected through the same managed seam as Computer Use.
+const connectors = createConnectorStore({ stateDir: squadStateDir, rootDir, nodePath: process.execPath });
+const firecrawlBaseUrl = String(process.env.FIRECRAWL_API_URL || "").trim();
 
 async function readNativeComputerGrantKey() {
   let file;
@@ -2261,6 +2267,11 @@ function normalizeAgentPermissions(agent) {
           .map(([tool, mode]) => [tool, mode])
       )
     : {};
+  // The ladder's capability modes (shell.read, web.fetch, mcp.connectors, ...)
+  // are kept so an agent-less call still knows whether connectors are allowed.
+  const modes = permissions.modes && typeof permissions.modes === "object"
+    ? Object.fromEntries(Object.entries(permissions.modes).filter(([id, mode]) => id && toolPolicyModes.has(mode)))
+    : {};
   const modelSecurity = permissions.modelSecurity && typeof permissions.modelSecurity === "object" ? permissions.modelSecurity : {};
   const provider = modelSecurityProviders.has(modelSecurity.provider) ? modelSecurity.provider : "autohandai";
   const model = String(modelSecurity.model || "").trim();
@@ -2272,6 +2283,7 @@ function normalizeAgentPermissions(agent) {
     fileGuardEnabled: permissions.fileGuardEnabled !== false,
     modelSecurityEnabled: permissions.modelSecurityEnabled === true,
     builtInPolicies,
+    modes,
     sensitivePaths: uniqueStrings(Array.isArray(permissions.sensitivePaths) ? permissions.sensitivePaths : []),
     allPathsAllowed: permissions.allPathsAllowed === true,
     allUrlsAllowed: permissions.allUrlsAllowed === true,
@@ -2735,6 +2747,9 @@ async function ensureAgentRuntimeInner(input, workspace) {
     model: String(input.model || harnessAssignment.model || ""), baseUrl: "", source: "harness",
   } : await resolveProviderForAgent(agent);
 
+  // Enabled connectors reach a member only when its mcp.connectors policy
+  // is "allow" (ADR-0107); the person's own MCP entries are always kept.
+  const connectorSpecs = !isUtilityAgent(agentId) && connectorsAllowed(agent) ? await connectors.enabledSpecs({ firecrawlBaseUrl }) : [];
   try {
     const permissionSettings = permissionSettingsFromAgent(agent);
     const normalizedPermissions = normalizeAgentPermissions(agent);
@@ -2759,7 +2774,9 @@ async function ensureAgentRuntimeInner(input, workspace) {
       // designer's own twenty-second budget and hand back a generic member
       // every time. Measured on this machine: 20s+ and a timeout with the
       // servers, 15.6s and a real answer without them.
-      ...(isUtilityAgent(agentId) ? { mcp: { ...(config.mcp && typeof config.mcp === "object" ? config.mcp : {}), servers: [] } } : {}),
+      mcp: isUtilityAgent(agentId)
+        ? { ...(config.mcp && typeof config.mcp === "object" ? config.mcp : {}), servers: [] }
+        : mergeAutohandMcp(config.mcp, autohandServersFor(connectorSpecs)),
       ...(!externalHarness ? { provider: resolvedProvider.provider,
       [resolvedProvider.provider]: {
         ...(config[resolvedProvider.provider] && typeof config[resolvedProvider.provider] === "object"
@@ -2865,6 +2882,8 @@ async function ensureAgentRuntimeInner(input, workspace) {
     resolvedProvider,
     authReady,
     harness: harnessAssignmentFromAgent(agent),
+    // Launch specs carry connector secrets; keep them out of public summaries.
+    connectorServers: connectorSpecs,
   }, input);
 }
 
@@ -2938,7 +2957,7 @@ async function autohandArgs(input) {
   const prompt = String(input.prompt || "").trim();
   let profile = String(input.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(input, workspace);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const args = ["--path", workspace, "--config", agentRuntime.configPath];
@@ -3026,7 +3045,7 @@ function sdkTransportEnabled(input, mode) {
 }
 
 function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const model = selectedModelForInput(input, permissions, agentRuntime);
@@ -6447,7 +6466,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   const agentRuntime = await ensureAgentRuntime(payload, workspace);
   const assignment = harnessAssignmentFromAgent(agentRuntime.agent);
   const adapter = getAdapter(assignment);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers)].filter(Boolean).join("\n\n");
   const readiness = await assertHarnessReady(assignment, { context: harnessContextFor(assignment.id) });
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const addDirs = [];
@@ -6463,6 +6482,16 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
     computerConfigPath = join(agentRuntime.agentHome, "computer-use-configs", `${agentRuntime.computerUse.id}.claude.json`);
     await writeSecretFile(computerConfigPath, JSON.stringify({ mcpServers: { "autohand-computer-use": { command: agentRuntime.computerUse.mcpServer.command, args: agentRuntime.computerUse.mcpServer.args, env: agentRuntime.computerUse.mcpServer.env } } }));
     agentRuntime.computerUse.externalConfigPath = computerConfigPath;
+  }
+  // Connectors for Claude travel in a private --mcp-config file rewritten
+  // every turn; Codex takes them as -c overrides (ADR-0107).
+  const connectorSpecs = Array.isArray(agentRuntime.connectorServers) ? agentRuntime.connectorServers : [];
+  let connectorConfigPath = "";
+  if (connectorSpecs.length && adapter.id === "claude") {
+    const directory = join(agentRuntime.agentHome, "connector-configs");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    connectorConfigPath = join(directory, "claude.json");
+    await writeSecretFile(connectorConfigPath, JSON.stringify(claudeMcpConfig(connectorSpecs)));
   }
   const build = (resume) => {
     const built = adapter.buildArgs({
@@ -6484,6 +6513,14 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
       const values = [`${prefix}.command=${JSON.stringify(server.command)}`, `${prefix}.args=${JSON.stringify(server.args)}`, `${prefix}.env={${Object.entries(server.env).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(",")}}`];
       for (const value of values) built.args.unshift("-c", value);
       built.displayArgs.unshift("-c", "<squad-computer-use-config>");
+    }
+    if (connectorConfigPath && adapter.id === "claude") {
+      built.args.push("--mcp-config", connectorConfigPath);
+      built.displayArgs.push("--mcp-config", "<squad-connectors-config>");
+    } else if (connectorSpecs.length && adapter.id === "codex") {
+      const overrides = codexConfigArgs(connectorSpecs);
+      for (let index = overrides.length - 2; index >= 0; index -= 2) built.args.unshift(overrides[index], overrides[index + 1]);
+      built.displayArgs.unshift("-c", "<squad-connectors-config>");
     }
     return built;
   };
@@ -7177,6 +7214,8 @@ function routeContext() {
     availability: memberAvailability,
     computerUse,
     authorizeComputerUseGrant,
+    connectors,
+    firecrawlBaseUrl,
     stopChats,
     runSummary,
     isLiveRun,
