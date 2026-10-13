@@ -64,3 +64,22 @@ const ownFailure=[{...dependencyTask,handoffs:[{...qa,ownCompletedAt:''},review]
 const malformedHandoffs=[{...acceptedTask,handoffs:[{...accepted,id:undefined},null,{status:'pending'}],assignments:[{}]}];
 const safe=recoverInterruptedHandoffs(malformedHandoffs,boot)[0];assert.equal(safe.handoffs[1],null);assert.equal(safe.handoffs[2].status,'pending');assert.equal(safe.assignments[0].status,undefined);
 console.log('Checkpoint result recovery passed: saved successful parent output joins completed child receipts without re-execution; unresolved, empty, and own-failed results stay blocked.');
+
+// A reply left "loading" by a reload is closed once the bridge says nothing is running (bug hunt #42).
+{
+  const { recoverOrphanedChats, ORPHANED_REPLY_NOTE } = await import('../src/lib/chat-recovery.js');
+  const t0 = Date.parse('2026-10-14T00:00:00Z');
+  const convo = { eva: [{ id: 'q', role: 'user', body: 'hi', startedAt: '2026-10-14T00:00:00Z' }, { id: 'a', role: 'agent', status: 'loading', body: 'Eva is thinking...', startedAt: '2026-10-14T00:00:00Z' }] };
+  const idle = { eva: { state: 'idle', activeRuns: 0 } };
+  const closed = recoverOrphanedChats(convo, { presence: idle, now: t0 + 60_000 });
+  assert.equal(closed.eva[1].status, 'error'); assert.equal(closed.eva[1].interrupted, true);
+  assert.equal(closed.eva[1].body, ORPHANED_REPLY_NOTE, 'the placeholder is replaced by the note');
+  assert.equal(closed.eva[0], convo.eva[0], 'the question is untouched');
+  assert.equal(recoverOrphanedChats(convo, { presence: { eva: { state: 'working', activeRuns: 1 } }, now: t0 + 60_000 }), convo, 'a working member keeps its reply');
+  assert.equal(recoverOrphanedChats(convo, { presence: idle, streaming: new Set(['eva']), now: t0 + 60_000 }), convo, 'this page streaming it keeps it');
+  assert.equal(recoverOrphanedChats(convo, { presence: idle, now: t0 + 5_000 }), convo, 'a reply just sent is given time to register');
+  assert.equal(recoverOrphanedChats(convo, { presence: {}, now: t0 + 60_000 }), convo, 'unknown presence decides nothing');
+  const goal = { eva: [{ ...convo.eva[1], goalId: 'g1' }] };
+  assert.equal(recoverOrphanedChats(goal, { presence: idle, now: t0 + 60_000 }), goal, 'goals recover on their own');
+  console.log('Orphaned reply recovery passed.');
+}

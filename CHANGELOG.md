@@ -69,6 +69,9 @@ list to the section for that version.
 - The member page's activity calendar shows what that member actually did, ending today, instead of the same made-up year for everyone.
 - Chat header: Stop appears only while something is running; Task list has its own icon; the runs button is called Runs. Suggested prompts read as sentences ("With testing strategies in mind…", "As an Operations Lead…").
 - Member page: the brain card renders its lists as lists, the autonomy line counts the tools that ask first, the memory policy is shown once, the two ✕ buttons that did nothing are gone, Memory & Growth no longer says "No memory updates yet" above a memory, and empty tables say so. The page drops its nested boxes for dividers.
+- A reply that was running when the page was reloaded or closed no longer spins forever: it is marked "stopped before it finished" with Retry. Retry no longer posts your question a second time. A message sent while Squad's local service is down says so in plain words instead of "Failed to fetch", and members show their initial when their picture cannot load.
+- A member that does not answer now fails with what to try (sign in with `autohand login`, check the model) instead of "chat timed out waiting for Autohand".
+- Channel settings open in a side panel, so Workflows, Repository, Export and Delete channel are no longer hidden below the fold. `/squad-members/<id>/chat` opens the chat, and unknown member pages open the member's Home.
 - Sidebar: a member row's tooltip no longer covers its own menu, and the ⋯ button stays visible while its menu is open.
 
 - The Model page of a Claude Code, Codex or ACP member shows that engine, its model and its settings instead of the workspace's Autohand provider, which those members never use.

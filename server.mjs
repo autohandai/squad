@@ -6567,7 +6567,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
       stream.send("sdk", {
         type: "status",
         status: "sdk_startup_failed",
-        label: "SDK bridge did not produce events; trying CLI transport...",
+        label: `SDK bridge did not produce events (${String(error?.message || error || "no reason given").replace(/\s+/g, " ").slice(0, 200)}); trying CLI transport...`,
         timestamp: new Date().toISOString(),
       });
       throw new SdkBridgeStartupError(`SDK prompt failed before producing events: ${error.message}`, error);
@@ -7119,7 +7119,10 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
     }
 
     const timer = setTimeout(() => {
-      stopChildWithError("chat timed out waiting for Autohand");
+      // Say what happened and what to try; "chat timed out waiting for
+      // Autohand" left people guessing (bug hunt 2026-10, #44).
+      const silent = !String(stdout || "").trim();
+      stopChildWithError(`Autohand Code did not answer within ${Math.round(timeoutMs / 1000)} seconds${silent ? " and printed nothing" : ""}. Run \`autohand login\` in a terminal if you have not recently, check the model on this member's Model page, then Retry.`);
     }, timeoutMs);
 
     abortHandler = () => {

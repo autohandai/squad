@@ -91,3 +91,33 @@ export function recoverCompletedHandoffParents(tasks, at = new Date().toISOStrin
   });
   return { tasks: returns.length ? next : tasks, returns };
 }
+
+export const ORPHANED_REPLY_NOTE = "This reply stopped before it finished, most likely because the page was reloaded or closed while it was running. Retry to ask again.";
+
+/**
+ * A reply still marked "loading" that nobody is producing any more: this page
+ * is not streaming it (`streaming` holds the member ids it is streaming for)
+ * and the bridge says the member has no live run. Closing or reloading the
+ * page ends the turn on the bridge, so without this the reply spun forever
+ * (bug hunt 2026-10, #42). `graceMs` covers the moment between sending and
+ * the bridge registering the run.
+ */
+export function recoverOrphanedChats(conversations, { presence = {}, streaming = new Set(), now = Date.now(), graceMs = 20_000 } = {}) {
+  let next = conversations;
+  for (const [memberId, messages] of Object.entries(conversations || {})) {
+    if (!Array.isArray(messages) || streaming.has(memberId)) continue;
+    const entry = presence?.[memberId];
+    if (!entry || entry.state === "working" || Number(entry.activeRuns) > 0) continue;
+    let changed = false;
+    const recovered = messages.map((message) => {
+      const beganAt = Date.parse(message?.startedAt || "");
+      if (message?.status !== "loading" || message.goalId || message.role === "user" || !Number.isFinite(beganAt) || now - beganAt < graceMs) return message;
+      changed = true;
+      return { ...message, status: "error", interrupted: true, activityLabel: "", completedAt: new Date(now).toISOString(),
+        body: `${withoutThinkingPlaceholder(message.body)}\n\n${ORPHANED_REPLY_NOTE}`.trim(),
+        ...(message.progress ? { progress: { ...message.progress, outcome: "interrupted" } } : {}) };
+    });
+    if (changed) { if (next === conversations) next = { ...conversations }; next[memberId] = recovered; }
+  }
+  return next;
+}

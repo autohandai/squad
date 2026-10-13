@@ -52,6 +52,23 @@ the same way.
    divider each. Metrics are a value over a label. Empty states have no
    frame. The permission ladder is a stepped line rather than six tiles.
 
+4. **A reply nobody is producing is closed, not left spinning.** Killing
+   the bridge, then reloading the page mid-reply, showed what a person sees:
+   a reply stuck at "Running local runtime… 1 min 37 sec" and counting,
+   while `/api/runs` already said `stopped`. A chat turn ends on the bridge
+   when its stream closes (`streamChat` aborts on `res.close`), and the
+   browser's recovery only knew about bridge restarts. Now, on every presence
+   poll, a `loading` reply is closed as interrupted when this page is not
+   streaming it and the bridge reports the member with no live run
+   (`recoverOrphanedChats`, 20 s grace).
+5. **Retry answers the same question again.** It used to post the question
+   a second time and leave the failed reply in place. The failed reply is now
+   marked `superseded` and hidden, through the same `message.patch` event
+   other windows already apply.
+6. **Channel settings are a side sheet.** They run to about 1,070 px. A
+   popover capped at 34rem hid Workflows, Repository, Export and Delete below
+   a scroll with no visible cue.
+
 ## Consequences
 
 - Installs that already saved the pie-shop channel, the seed tasks or the
@@ -63,6 +80,15 @@ the same way.
 - `Metric` and `EmptyBlock` are shared, so every page that uses them loses
   its frames at once. That was checked on the member page only; other pages
   were not re-screenshotted for this change.
+- Reloading the page still ends the member's turn on the bridge; this
+  change only makes the page say so. Keeping the turn alive across a reload
+  (as goals already do) needs the bridge to hold the reply until a page
+  collects it. That was not built.
+- The Autohand CLI in the throwaway home printed nothing for 25 s in
+  `--mode rpc` and the chat failed after 180 s. That hang is in the CLI and
+  was not diagnosed further. Squad now names the SDK's failure reason in the
+  run and gives a next step in the timeout message, but still waits the full
+  timeout on the CLI fallback.
 - The checks that listed seed task ids (`check-inbox-browser`,
   `verify-work-profile-browser`, `verify-goals-browser`) still map over the
   seed arrays, which are now empty. `verify-channel-browser` no longer

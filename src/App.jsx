@@ -223,6 +223,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
+  SheetTrigger,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -357,7 +358,7 @@ import { CHAT_STREAM_CEILING_MS } from "@/lib/chat-timing";
 import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn, settingsPath, settingsSectionFromRoute, DEFAULT_SETTINGS_SECTION } from "@/lib/settings-navigation";
 import { SettingsShell, SettingsSectionHeader } from "@/components/settings/SettingsShell";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs } from "@/lib/chat-recovery";
+import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats } from "@/lib/chat-recovery";
 import { getAttentionBadgeClient } from "@/lib/attention-badge";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { CanvasList } from "@/components/canvases/CanvasList";
@@ -1967,10 +1968,10 @@ const MEMBER_SECTIONS = [
   { id: "history", label: "History", icon: History },
   { id: "model", label: "Model", icon: Brain },
   { id: "harness", label: "Harness", icon: Cpu },
-  { id: "skill", label: "Skill", icon: Sparkles },
-  { id: "connector", label: "Connector", icon: Unplug },
-  { id: "im", label: "IM", icon: MessageSquareText },
-  { id: "permissions", label: "Permission", icon: ShieldAlert },
+  { id: "skill", label: "Skills", icon: Sparkles },
+  { id: "connector", label: "Connectors", icon: Unplug },
+  { id: "im", label: "Messaging", icon: MessageSquareText },
+  { id: "permissions", label: "Permissions", icon: ShieldAlert },
 ];
 
 const CUSTOM_ROLE_TEMPLATE = {
@@ -3518,7 +3519,16 @@ function projectMemoryPatchForAgent(item, agent, runtime) {
 
 function memberSectionFromRoute(route) {
   const match = route.match(/^\/squad-members\/[^/?#]+\/([^/?#]+)/);
-  return match?.[1] || "home";
+  const section = match?.[1] || "home";
+  // An address someone typed or kept ("…/chat", an old section name) opens
+  // the member's Home rather than an empty placeholder page.
+  return MEMBER_SECTIONS.some((item) => item.id === section) ? section : "home";
+}
+
+/** "/squad-members/<id>/chat" is where people expect the chat to be. */
+function memberChatRedirect(route) {
+  const match = String(route || "").match(/^\/squad-members\/([^/?#]+)\/(?:chat|conversation|messages)\/?(?:[?#]|$)/);
+  return match && match[1] !== "new" ? memberChatPath(decodeURIComponent(match[1])) : "";
 }
 
 function memberAutomationIdFromRoute(route) {
@@ -3743,8 +3753,21 @@ function highlightSearchHit(find, { attempts = 40, delay = 350 } = {}) {
   };
 }
 
+// A fetch that never reached the bridge rejects with the browser's own words
+// ("Failed to fetch", "Load failed"), which is what a person used to read
+// under "Could not answer". Say what happened instead; an abort stays an abort.
+const BRIDGE_UNREACHABLE_MESSAGE = "Squad's local service did not answer, so this was not sent. Retry once it is back; nothing was lost.";
+async function bridgeFetch(path, init) {
+  try {
+    return await fetch(path, init);
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    throw Object.assign(new Error(BRIDGE_UNREACHABLE_MESSAGE), { code: "bridge-unreachable", cause: error });
+  }
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await bridgeFetch(path, {
     headers: { accept: "application/json", "content-type": "application/json" },
     ...options,
   });
@@ -3842,7 +3865,7 @@ function parseServerEventBlock(block) {
 }
 
 async function streamApi(path, options = {}, onEvent) {
-  const response = await fetch(path, {
+  const response = await bridgeFetch(path, {
     headers: { accept: "text/event-stream", "content-type": "application/json" },
     ...options,
   });
@@ -5934,6 +5957,10 @@ function App() {
       }
       setPresenceMap(presence);
       setBridgeReachable(true);
+      // A reply this page is not streaming, for a member the bridge says is
+      // not running anything, has ended without its final update.
+      const streaming = new Set([...chatMembersRef.current.entries()].filter(([, count]) => count > 0).map(([id]) => id));
+      setMessagesByAgent((current) => recoverOrphanedChats(current, { presence, streaming }));
     } catch {
       // Keep the last map; every dot shows Unknown while the bridge is down.
       setBridgeReachable(false);
@@ -6569,6 +6596,13 @@ function App() {
   };
   useEffect(() => onDesktopMenu((action) => desktopMenuRef.current?.(action)), []);
 
+  useEffect(() => {
+    const target = memberChatRedirect(route);
+    if (!target) return;
+    window.history.replaceState(window.history.state, "", target);
+    setRoute(target);
+  }, [route]);
+
   function navigate(path) {
     const state = {};
     if (isSettingsDestination(path)) {
@@ -7187,7 +7221,10 @@ function App() {
       return { queued: true, item };
     }
     touchAgent(agentId, startedAt);
-    appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time, startedAt, requestId, ...checkpoint });
+    // Retry answers the same question again: the failed reply steps aside and
+    // the question is not posted a second time.
+    if (launch.retryOf) updateMessage(agentId, launch.retryOf, { superseded: true });
+    else appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time, startedAt, requestId, ...checkpoint });
 
     // A member on a break declines rather than silently queueing the work.
     const availability = memberAvailability(agent, localeCopy);
@@ -10679,13 +10716,13 @@ function ChannelsPage({
               </TooltipTrigger>
               <TooltipContent>{copy.manageChannelMembers}</TooltipContent>
             </Tooltip>
-            <Popover>
+            <Sheet>
               {/* The channel's live setup reads in the header rather than
                   hiding behind a gear: a bound repository and workflows are
                   otherwise invisible to anyone who does not open icons. The
                   text is part of the trigger, and absent when there is
                   nothing to say. */}
-              <PopoverTrigger asChild>
+              <SheetTrigger asChild>
                 <Button
                   variant="ghost"
                   size={channelSetupSummary ? "sm" : "icon-sm"}
@@ -10695,9 +10732,16 @@ function ChannelsPage({
                   {channelSetupSummary ? <span className="min-w-0 truncate text-xs">{channelSetupSummary}</span> : null}
                   <Settings className="size-4 shrink-0" />
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-72 max-h-[min(34rem,calc(100vh-6rem))] overflow-y-auto overscroll-contain p-3">
-                <div className="flex flex-col gap-3">
+              </SheetTrigger>
+              {/* A side sheet, not a popover: the settings run to about 1,070 px
+                  and a 34rem popover hid Workflows, Repository and Delete
+                  channel below a scroll nobody could see. */}
+              <SheetContent closeLabel={copy.close} className="w-full gap-0 overflow-y-auto border-border/80 p-0 sm:max-w-md">
+                <SheetHeader className="border-b border-border/60 px-5 py-4">
+                  <SheetTitle>#{channel.name}</SheetTitle>
+                  <SheetDescription>{copy.settings || "Channel settings"}</SheetDescription>
+                </SheetHeader>
+                <div className="flex flex-col gap-3 px-5 py-4">
                   <ChannelDetailsSettings key={channel.id} channel={channel} members={agents} loadAutoAvailability={loadResponderAvailability} onSave={patch => onUpdateChannel?.(channel.id, patch)} />
                   <Separator />
                   <label className="flex items-center justify-between gap-3 text-sm" htmlFor={`auto-mode-${channel.id}`}>
@@ -10802,8 +10846,8 @@ function ChannelsPage({
                     {deleteArmed ? `${copy.deleteChannel}?` : copy.deleteChannel}
                   </Button>
                 </div>
-              </PopoverContent>
-            </Popover>
+              </SheetContent>
+            </Sheet>
           </header>
 
           {/* Members as divider rows with a check, not a wall of tinted chips.
@@ -13174,8 +13218,10 @@ function AgentAvatar({ agent, large = false, className }) {
           }}
         />
       ) : null}
-      <AvatarFallback className="rounded-full bg-primary/12 text-primary">
-        <CircleUserRound className={large ? "size-12" : "size-5"} aria-hidden="true" />
+      <AvatarFallback className={cn("rounded-full bg-primary/12 font-medium text-primary", large ? "text-3xl" : "text-xs")}>
+        {/* The member's initial, so a picture that cannot load (the bridge is
+            away, the file moved) still says who this is. */}
+        {String(agent?.name || "").trim().charAt(0).toUpperCase() || <CircleUserRound className={large ? "size-12" : "size-5"} aria-hidden="true" />}
       </AvatarFallback>
     </Avatar>
   );
@@ -13568,7 +13614,7 @@ function Conversation({
   }, [canvasItems, commandItems, fileMentionItems, memberMentionItems, mentionKind, skillItems]);
   const mentionOpen = Boolean(mentionState);
   const visibleMessages = useMemo(
-    () => messages.filter((message) => !(message?.id === "m1" && message?.role === "agent" && message?.time === "Ready")),
+    () => messages.filter((message) => !message?.superseded && !(message?.id === "m1" && message?.role === "agent" && message?.time === "Ready")),
     [messages]
   );
   const hasConversationMessages = visibleMessages.length > 0;
@@ -13883,6 +13929,7 @@ function Conversation({
           access: sourceLaunch.access || access,
           mode: sourceLaunch.mode,
           requestId: sourceLaunch.requestId,
+          retryOf: sourceLaunch.retryOf,
           collaboration: sourceLaunch.collaboration,
           canvases: targetAgentId === agent.id ? canvases : [],
           signal: controller.signal,
@@ -14020,7 +14067,7 @@ function Conversation({
     const index = visibleMessages.findIndex((item) => item.id === message.id);
     const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
     if (!previousUser?.body) return;
-    sendPromptNow({ prompt: previousUser.body, workspace, policy, model, effort, access, retry: true, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
+    sendPromptNow({ prompt: previousUser.body, workspace, policy, model, effort, access, retry: true, retryOf: message.id, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
   };
 
   function postLocalNote(body, status = "note") {
@@ -14847,7 +14894,7 @@ function Conversation({
           {/* What the member is doing right now, in the same place the channel
               composer says it. Without this, a reply in progress looks like
               nothing happening. */}
-          <p className="min-h-5 px-3 pb-2 text-xs text-muted-foreground sm:px-5" aria-live="polite">
+          <p className="mx-auto mt-1.5 min-h-4 w-full max-w-3xl px-3 text-xs text-muted-foreground" aria-live="polite">
             {chatSending ? liveActivityLabel : ""}
           </p>
         </form>
