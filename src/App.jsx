@@ -41,8 +41,6 @@ import {
   BadgeCheck,
   Ban,
   BookOpen,
-  Bell,
-  Volume2,
   Bot,
   Cpu,
   Boxes,
@@ -82,7 +80,6 @@ import {
   History,
   Inbox,
   KeyRound,
-  Languages,
   LayoutList,
   LockKeyhole,
   LogOut,
@@ -90,7 +87,6 @@ import {
   MessageSquareText,
   Monitor,
   Moon,
-  Palette,
   PauseCircle,
   Pin,
   PanelRightOpen,
@@ -100,8 +96,6 @@ import {
   Play,
   Plus,
   RefreshCw,
-  Share2,
-  Smartphone,
   ScanSearch,
   Search,
   Send,
@@ -255,7 +249,6 @@ import { NotificationBell } from "@/components/shell/NotificationBell";
 import { NotificationSettings } from "@/components/settings/NotificationSettings";
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
-  NOTIFICATION_KINDS,
   NOTIFICATION_POLL_MS,
   markAllRead as markAllNotificationsRead,
   mergeNotifications,
@@ -340,7 +333,7 @@ import { ComputerUseEvidence } from "@/components/computer-use/ComputerUseEviden
 import { useComputerUseEvidence } from "@/components/computer-use/useComputerUseEvidence";
 import { evidenceForMessage } from "@/components/computer-use/model";
 import { goalMessagePatch, goalProgress, isGoalRunning, latestMemberGoal, reconcileGoalMessages } from "@/lib/member-goals";
-import { reconcileRemoteTurns, remoteAccessDetail } from "@/lib/remote-access";
+import { reconcileRemoteTurns } from "@/lib/remote-access";
 import { isQueueRunning, movedQueueIds, reconcileQueueMessages } from "@/lib/member-queue";
 import { FollowUpQueue } from "@/components/chat/FollowUpQueue";
 import { ContextGaugeMeta, ContextWarningLine } from "@/components/chat/ContextGauge";
@@ -351,7 +344,8 @@ import { getNativeNotificationClient } from "@/lib/native-notifications";
 import { applySharedConversationEvent, conversationEventForSharing } from "@/lib/shared-conversations";
 import { formatDuration } from "@/lib/duration";
 import { CHAT_STREAM_CEILING_MS } from "@/lib/chat-timing";
-import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn } from "@/lib/settings-navigation";
+import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn, settingsPath, settingsSectionFromRoute, DEFAULT_SETTINGS_SECTION } from "@/lib/settings-navigation";
+import { SettingsShell, SettingsSectionHeader } from "@/components/settings/SettingsShell";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs } from "@/lib/chat-recovery";
 import { getAttentionBadgeClient } from "@/lib/attention-badge";
@@ -503,28 +497,6 @@ function normalizeImprovementSettings(value) {
     observeAssignedProjects: source.observeAssignedProjects !== false,
   };
 }
-
-// Every section Settings renders, in order. The route parser and the page
-// both read this, so a new section is reachable by link the moment it exists;
-// the old parser kept its own stale copy and silently rejected anything added
-// after it was written.
-const SETTINGS_SECTION_IDS = Object.freeze([
-  "setup",
-  "appearance",
-  "language",
-  "providers",
-  "chat",
-  "notifications",
-  "improvement",
-  "handoff",
-  "mission-control",
-  "runtime",
-  "relay",
-  "remote-access",
-  "connectors",
-  "updates",
-  "system",
-]);
 
 const EMPTY_LIST = [];
 
@@ -6444,11 +6416,10 @@ function App() {
     if (!["runs", "tasks", "automations"].includes(panel)) return null;
     return { tab: panel, runId: String(params.get("run") || "") };
   }, [route]);
-  const settingsSection = useMemo(() => {
-    const params = new URLSearchParams(route.split("?")[1] || "");
-    const section = params.get("section") || route.split("?")[0].match(/^\/settings\/([^/]+)$/)?.[1] || "";
-    return SETTINGS_SECTION_IDS.includes(section) ? section : "";
-  }, [route]);
+  // The section list, ?section= links and the old #settings-<id> anchors all
+  // name a section (src/lib/settings-navigation.js); the hash is read once on
+  // entry because route state never carries it.
+  const settingsSection = useMemo(() => settingsSectionFromRoute(route, window.location.hash), [route]);
 
   const unreadChannelIds = useMemo(() => {
     const set = new Set();
@@ -6718,7 +6689,7 @@ function App() {
   }
 
   function openSettings(section) {
-    navigate(section === "updates" ? "/settings/updates" : "/settings");
+    navigate(settingsPath(section));
   }
 
   function checkForUpgrades() {
@@ -9599,10 +9570,12 @@ function App() {
         <div
           className={cn(
             "relative grid min-h-screen transition-[grid-template-columns] duration-200 ease-out",
-            desktopSidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[280px_minmax(0,1fr)]"
+            isSettings ? "lg:grid-cols-[minmax(0,1fr)]" : desktopSidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[280px_minmax(0,1fr)]"
           )}
         >
-          <DesktopSidebar
+          {/* Settings is its own shell (ADR-0119): no app sidebar, the page
+              carries Back and its own section list. */}
+          {isSettings ? null : <DesktopSidebar
             updateAvailable={updates?.snapshot?.updateAvailable === true}
             agents={agents}
             activeAgent={activeAgent}
@@ -9637,12 +9610,12 @@ function App() {
             onCreateTeam={() => setNewTeamOpen(true)}
             onTemplates={() => setTemplatesOpen(true)}
             onCollapsedChange={setDesktopSidebarCollapsed}
-          />
+          />}
           <main className="app-main min-w-0">
             {channelOperationError ? <div role="alert" className="px-6 py-3 text-sm text-destructive">{channelOperationError}</div> : null}
             <AgentChannelProposals proposals={agentChannelActions.filter(action => action.status === "proposed")} members={agents} onDecision={decideChannelProposal} />
             <VaultRequests vault={vaultRequests} members={agents} copy={localeCopy} />
-            <MobileTopbar
+            {isSettings ? null : <MobileTopbar
               activeAgent={activeAgent}
               showsMember={sidebarActiveTarget(route, activeAgent).kind === "member"}
               theme={theme}
@@ -9652,7 +9625,7 @@ function App() {
               onMissionControl={() => navigate(missionControlPath())}
               onOnboarding={openOnboarding}
               onAnalytics={openAnalytics}
-            />
+            />}
             {isOnboarding ? (
               <FirstRun
                 runtime={runtime}
@@ -9822,7 +9795,7 @@ function App() {
                 navigate={navigate}
                 providerSettings={providerSettings}
                 providerSettingsError={providerSettingsError}
-                initialSection={settingsSection}
+                section={settingsSection}
                 counts={sidebarCounts}
                 onProviderSettingsChange={setProviderSettings}
                 notificationSettings={notificationSettings}
@@ -24108,7 +24081,7 @@ function SettingsPage({
   navigate,
   providerSettings,
   providerSettingsError = "",
-  initialSection = "",
+  section = "",
   counts = EMPTY_MISSION_COUNTS,
   onProviderSettingsChange,
   notificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
@@ -24170,7 +24143,6 @@ function SettingsPage({
   const normalizedThemePreference = normalizeThemePreference(themePreference);
   const activeThemeLabel = effectiveTheme === THEME_MODE_LIGHT ? copy.light : copy.dark;
   const visibleThemePresetSurface = normalizeThemeSurface(effectiveTheme);
-  const visibleThemePreset = getThemePreset(normalizedThemePreference, visibleThemePresetSurface);
   const themeModeDetail =
     normalizedThemePreference.mode === THEME_MODE_SYSTEM
       ? formatCopy(copy.systemThemeDetail, { theme: activeThemeLabel })
@@ -24184,71 +24156,37 @@ function SettingsPage({
         mode: handoffRetryModeLabel(bridgeHandoffRetryMode, copy),
       });
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
-  const chatSettingsDetail = normalizedChatSettings.displayCliOutput
-    ? "Diagnostics visible"
-    : "Clean answers";
-  const providerSettingsSummary = providerSettings
-    ? providerSummaryLabel(effectiveModelForAgent({ modelAssignment: { mode: "inherit" } }, providerSettings))
-    : "Loading providers";
   const missionControlDetail = `${formatLocalizedNumber(counts.tasks || 0, activeLocale)} tracked ${
     counts.tasks === 1 ? "task" : "tasks"
   }`;
   const normalizedNotificationSettings = normalizeNotificationSettings(notificationSettings);
-  const notificationKindsOn = NOTIFICATION_KINDS.filter((kind) => normalizedNotificationSettings[kind.key]).length;
-  const notificationSettingsDetail =
-    notificationKindsOn === NOTIFICATION_KINDS.length
-      ? copy.notificationsAllOn || "All on"
-      : notificationKindsOn === 0
-        ? copy.notificationsOff || "Off"
-        : formatCopy(copy.notificationsSomeOn || "{on} of {total} on", { on: notificationKindsOn, total: NOTIFICATION_KINDS.length });
+  // The list, in display order (src/lib/settings-navigation.js owns the ids).
+  // Labels only: a second line per row made the pinned list taller than a
+  // 760px window, which hid the last sections behind the fold.
   const settingsSections = [
-    { id: "appearance", icon: Palette, label: copy.appearance || "Appearance", detail: `${activeThemeLabel} / ${visibleThemePreset.label}` },
-    { id: "language", icon: Languages, label: copy.language, detail: formatLocaleSummary(activeLocale, activeLocale) },
-    { id: "providers", icon: Brain, label: "LLM Providers", detail: providerSettingsSummary },
-    { id: "chat", icon: MessageSquareText, label: copy.chat, detail: chatSettingsDetail },
-    { id: "notifications", icon: Bell, label: copy.notifications || "Notifications", detail: notificationSettingsDetail },
-    { id: "voice", icon: Volume2, label: copy.voice || "Voice", detail: copy.voiceDetail || "Built-in or ElevenLabs" },
-    { id: "vault", icon: KeyRound, label: copy.vault || "Vault", detail: copy.vaultDetail || "Logins, cards and personal details" },
-    { id: "improvement", icon: Sparkles, label: copy.selfImprovement || "Self-improvement", detail: improvementDetail(improvementSettings, copy) },
-    { id: "handoff", icon: Workflow, label: copy.handoffRetryPolicy, detail: handoffRetryModeLabel(effectiveHandoffRetryMode, copy) },
-    { id: "mission-control", icon: Monitor, label: copy.needsYou || "Needs you", detail: missionControlDetail },
-    { id: "runtime", icon: Server, label: copy.runtimeBridge, detail: runtime?.version || copy.checkingRuntime },
-    { id: "relay", icon: Share2, label: copy.relay || "Relay", detail: relayStatusDetail(relayConfig, relayStatus, copy) },
-    { id: "remote-access", icon: Smartphone, label: copy.remoteAccess || "Remote access", detail: remoteAccessDetail(remoteAccess, copy) },
-    { id: "connectors", icon: Unplug, label: copy.connectors || "Connectors", detail: connectorsDetail(connectors, copy) },
-    { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
-    { id: "system", icon: Database, label: copy.system || "System", detail: copy.systemDetail || "Counts and data folder" },
+    { id: "setup", label: copy.setupGuide || "Setup guide" },
+    { id: "appearance", label: copy.appearance || "Appearance" },
+    { id: "language", label: copy.language },
+    { id: "providers", label: "LLM Providers" },
+    { id: "chat", label: copy.chat },
+    { id: "notifications", label: copy.notifications || "Notifications" },
+    { id: "voice", label: copy.voice || "Voice" },
+    { id: "vault", label: copy.vault || "Vault" },
+    { id: "improvement", label: copy.selfImprovement || "Self-improvement" },
+    { id: "handoff", label: copy.handoffRetryPolicy },
+    { id: "mission-control", label: copy.needsYou || "Needs you" },
+    { id: "runtime", label: copy.runtimeBridge },
+    { id: "relay", label: copy.relay || "Relay" },
+    { id: "remote-access", label: copy.remoteAccess || "Remote access" },
+    { id: "connectors", label: copy.connectors || "Connectors" },
+    { id: "updates", label: "Updates" },
+    { id: "system", label: copy.system || "System" },
   ];
-  settingsSections.unshift({ id: "setup", icon: ListChecks, label: copy.setupGuide || "Setup guide", detail: copy.setupGuideDetail || "Run the first-run checks again" });
-  const requestedInitialSection = settingsSections.some((section) => section.id === initialSection) ? initialSection : "";
-  const [activeSectionId, setActiveSectionId] = useState(requestedInitialSection || "appearance");
-
-  // The section list follows the reader: whichever section crosses the upper
-  // third of the viewport is the current one.
-  useEffect(() => {
-    if (typeof IntersectionObserver === "undefined") return undefined;
-    const sections = Array.from(document.querySelectorAll("section[id^='settings-']"));
-    if (!sections.length) return undefined;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible[0]) setActiveSectionId(visible[0].target.id.replace(/^settings-/, ""));
-      },
-      { rootMargin: "-8% 0px -66% 0px", threshold: 0 }
-    );
-    sections.forEach((section) => observer.observe(section));
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!requestedInitialSection) return undefined;
-    const frame = window.requestAnimationFrame(() => {
-      document.getElementById(`settings-${requestedInitialSection}`)?.scrollIntoView({ block: "start" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-    // Re-run once the provider list has loaded: it sits above most sections
-    // and shifts them down when it appears.
-  }, [requestedInitialSection, Boolean(providerSettings)]);
+  // The route names the section (ADR-0119); an unknown one shows the default
+  // rather than an empty page. Selecting a row pushes /settings/<id>, so the
+  // browser's Back and Forward move between sections and the ADR-0088 origin
+  // travels with every entry.
+  const activeSectionId = settingsSections.some((item) => item.id === section) ? section : DEFAULT_SETTINGS_SECTION;
 
   function updateLocale(value) {
     if (value === LOCALE_MODE_AUTO) {
@@ -24302,506 +24240,488 @@ function SettingsPage({
     navigate(path);
   }
 
-  return (
-    <div className="min-h-screen bg-background">
-      <PageTitle title={copy.settings} leading={<Button variant="ghost" size="icon-sm" aria-label="Back from Settings" title="Back" onClick={onBack}><ArrowLeft /></Button>} />
-      <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-6 lg:px-10 lg:py-10">
-        <div className="lg:grid lg:grid-cols-[192px_minmax(0,1fr)] lg:gap-14">
-          <aside className="min-w-0 lg:sticky lg:top-8 lg:self-start">
-            <nav
-              aria-label={`${copy.settings} sections`}
-              className="-mx-2 flex gap-1 overflow-x-auto pb-1 [scrollbar-width:none] lg:mx-0 lg:flex-col lg:overflow-visible lg:pb-0"
-            >
-              {settingsSections.map((section) => {
-                const active = section.id === activeSectionId;
+  // Only the selected section renders. Each body is the same markup the
+  // stacked page had; the shell owns the list, the motion and the keyboard.
+  const sectionBodies = {
+    // Onboarding, not an account action. It used to sit in the account menu
+    // beside Sign out, where a first-run checklist has no business being, and
+    // there was no way back to it.
+    setup: () => (
+      <>
+        <SettingsSectionHeader
+          title={copy.setupGuide || "Setup guide"}
+          description={copy.setupGuideDetail || "Run the first-run checks again: runtime, account, model provider, workspace and your first squad member."}
+        />
+        <Button type="button" variant="outline" onClick={onOnboarding} disabled={!onOnboarding}>
+          <ListChecks data-icon="inline-start" />
+          {copy.runSetupGuide || "Run the setup guide"}
+        </Button>
+      </>
+    ),
+    appearance: () => (
+      <>
+        <SettingsSectionHeader title={copy.appearance || "Appearance"} description={copy.appearanceDescription || "How the app looks."} />
+        <div className="grid gap-8">
+          <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+            <div className="min-w-0">
+              <h4 id="skin-title" className="text-sm font-medium">{copy.skin || "Skin"}</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {copy.skinDescription || "The whole look: shape, spacing, and who your members look like. A theme changes the colours inside a skin."}
+              </p>
+            </div>
+            <div aria-labelledby="skin-title" className="flex flex-col border-t border-border/60">
+              {SKINS.map((option) => {
+                const selected = option.id === activeSkin.id;
                 return (
-                  <a
-                    key={section.id}
-                    href={`#settings-${section.id}`}
-                    aria-current={active ? "location" : undefined}
-                    onClick={() => setActiveSectionId(section.id)}
-                    className={cn(
-                      "shrink-0 whitespace-nowrap rounded-md px-2 py-1.5 text-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
-                      active ? "bg-muted/60 font-medium text-foreground" : "text-muted-foreground"
-                    )}
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    className="flex items-center gap-3 border-b border-border/60 px-2 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:bg-muted/40 focus-visible:outline-none"
+                    onClick={() => onSkinChange?.(option.id)}
                   >
-                    {section.label}
-                  </a>
+                    <span className="flex shrink-0 overflow-hidden rounded-md border border-border/70" aria-hidden="true">
+                      {option.swatches.map((swatch) => (
+                        <span key={swatch} className="size-5" style={{ background: swatch }} />
+                      ))}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium">{option.label}</span>
+                      <span className="block text-xs text-muted-foreground">{option.description}</span>
+                    </span>
+                    {selected ? <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
+                  </button>
                 );
               })}
-            </nav>
-            <p className="mt-6 hidden items-center gap-2 text-xs text-muted-foreground lg:flex">
-              <span className={cn("size-1.5 shrink-0 rounded-full", runtime?.available ? "bg-emerald-500" : "bg-destructive")} aria-hidden="true" />
-              <span className="truncate">{runtime?.available ? `Autohand Code ${String(runtime?.version || "").split(" ")[0]} · ${statusLabel("ready", copy).toLowerCase()}` : copy.checkingRuntime}</span>
-            </p>
-          </aside>
+            </div>
+          </div>
 
-          <div className="mt-8 flex min-w-0 max-w-3xl flex-col lg:mt-0">
-            <section id="settings-appearance" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader title={copy.appearance || "Appearance"} description={copy.appearanceDescription || "How the app looks."} />
-              <div className="grid gap-8">
-                <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-                  <div className="min-w-0">
-                    <h4 id="skin-title" className="text-sm font-medium">{copy.skin || "Skin"}</h4>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {copy.skinDescription || "The whole look: shape, spacing, and who your members look like. A theme changes the colours inside a skin."}
-                    </p>
-                  </div>
-                  <div aria-labelledby="skin-title" className="flex flex-col border-t border-border/60">
-                    {SKINS.map((option) => {
-                      const selected = option.id === activeSkin.id;
-                      return (
-                        <button
-                          key={option.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={selected}
-                          className="flex items-center gap-3 border-b border-border/60 px-2 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:bg-muted/40 focus-visible:outline-none"
-                          onClick={() => onSkinChange?.(option.id)}
-                        >
-                          <span className="flex shrink-0 overflow-hidden rounded-md border border-border/70" aria-hidden="true">
-                            {option.swatches.map((swatch) => (
-                              <span key={swatch} className="size-5" style={{ background: swatch }} />
-                            ))}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-medium">{option.label}</span>
-                            <span className="block text-xs text-muted-foreground">{option.description}</span>
-                          </span>
-                          {selected ? <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+          <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-center">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">{copy.themeMode || "Mode"}</div>
+              <p className="mt-1 text-sm text-muted-foreground">{themeModeDetail}</p>
+            </div>
+            <ToggleGroup
+              type="single"
+              value={normalizedThemePreference.mode}
+              onValueChange={(value) => value && updateThemeMode(value)}
+              variant="outline"
+              className="grid w-full grid-cols-3 sm:max-w-md"
+              aria-label={copy.theme}
+            >
+              <ToggleGroupItem value={THEME_MODE_SYSTEM} className="justify-center px-2">
+                <Monitor data-icon="inline-start" />
+                {copy.system}
+              </ToggleGroupItem>
+              <ToggleGroupItem value={THEME_MODE_DARK} className="justify-center px-2">
+                <Moon data-icon="inline-start" />
+                {copy.dark}
+              </ToggleGroupItem>
+              <ToggleGroupItem value={THEME_MODE_LIGHT} className="justify-center px-2">
+                <Sun data-icon="inline-start" />
+                {copy.light}
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
 
-                <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-center">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">{copy.themeMode || "Mode"}</div>
-                    <p className="mt-1 text-sm text-muted-foreground">{themeModeDetail}</p>
-                  </div>
-                  <ToggleGroup
-                    type="single"
-                    value={normalizedThemePreference.mode}
-                    onValueChange={(value) => value && updateThemeMode(value)}
-                    variant="outline"
-                    className="grid w-full grid-cols-3 sm:max-w-md"
-                    aria-label={copy.theme}
-                  >
-                    <ToggleGroupItem value={THEME_MODE_SYSTEM} className="justify-center px-2">
-                      <Monitor data-icon="inline-start" />
-                      {copy.system}
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value={THEME_MODE_DARK} className="justify-center px-2">
-                      <Moon data-icon="inline-start" />
-                      {copy.dark}
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value={THEME_MODE_LIGHT} className="justify-center px-2">
-                      <Sun data-icon="inline-start" />
-                      {copy.light}
-                    </ToggleGroupItem>
-                  </ToggleGroup>
-                </div>
-
-                <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-                  <div className="min-w-0">
-                    <h4 id="theme-presets-title" className="text-sm font-medium">{copy.themePresets}</h4>
-                    <p className="mt-1 text-sm text-muted-foreground">{copy.themePresetsDescription}</p>
-                  </div>
-                  <div aria-labelledby="theme-presets-title" className="grid gap-6 lg:grid-cols-2">
-                    {THEME_SURFACES.map((surface) => (
-                      <ThemePresetControl
-                        key={surface}
-                        surface={surface}
-                        value={normalizedThemePreference[`${surface}Theme`]}
-                        active={visibleThemePresetSurface === surface}
-                        copy={copy}
-                        onValueChange={(value) => updateThemePreset(surface, value)}
-                      />
-                    ))}
-                    {normalizedThemePreference.mode === THEME_MODE_SYSTEM ? (
-                      <p className="text-xs text-muted-foreground lg:col-span-2">
-                        {formatCopy(copy.systemPreferenceSummary, {
-                          theme: systemTheme === THEME_MODE_LIGHT ? copy.light : copy.dark,
-                        })}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section id="settings-language" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader title={copy.language} description={localeDetail} />
-              <div className="grid gap-8">
-
-                <Field className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-center">
-                  <FieldLabel className="text-sm font-medium">{copy.displayLanguage || "Display language"}</FieldLabel>
-                  <Select value={selectedLocaleValue} onValueChange={updateLocale}>
-                    <SelectTrigger className="h-10 w-full min-w-0 justify-between sm:max-w-md" aria-label={copy.language}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent align="end" className="max-h-[min(70vh,28rem)] w-[calc(100vw-2rem)] sm:w-[20rem]">
-                      <SelectItem value={LOCALE_MODE_AUTO}>
-                        {copy.automatic} - {copy.useAutomaticLocale}
-                      </SelectItem>
-                      {localeGroups.map((group) => (
-                        <SelectGroup key={group.id}>
-                          <SelectLabel>{group.label}</SelectLabel>
-                          {group.locales.map((locale) => (
-                            <SelectItem key={locale.code} value={locale.code}>
-                              {formatLocaleMenuLabel(locale.code, activeLocale)}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </div>
-            </section>
-
-            <section id="settings-providers" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader title="LLM Providers" description="Configure the provider registry and workspace default used by new agent runs." />
-              <ProviderSettingsPanel
-                providerSettings={providerSettings}
-                providerSettingsError={providerSettingsError}
-                onProviderSettingsChange={onProviderSettingsChange}
-              />
-            </section>
-
-            <section id="settings-chat" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader title={copy.chat} description="Keep normal replies focused, with runtime diagnostics available when you need them." />
-              <div className="divide-y divide-border/65">
-                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
-                  <FieldContent className="gap-1">
-                    <FieldTitle>Display diagnostic output</FieldTitle>
-                    <FieldDescription>Show raw stdout and stderr for troubleshooting. Leave this off for clean answers.</FieldDescription>
-                  </FieldContent>
-                  <Switch
-                    checked={normalizedChatSettings.displayCliOutput}
-                    onCheckedChange={(checked) => updateChatSetting("displayCliOutput", checked)}
-                    aria-label="Display diagnostic output"
-                  />
-                </Field>
-                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
-                  <FieldContent className="gap-1">
-                    <FieldTitle>{copy.workDetails || "Work details"}</FieldTitle>
-                    <FieldDescription>
-                      {copy.workDetailsDetail ||
-                        "How much of a member's working shows under its reply. Summary keeps one line you can open; Always open expands it while the member works; Hidden leaves the reply on its own."}
-                    </FieldDescription>
-                  </FieldContent>
-                  <Select value={normalizedChatSettings.workDetails} onValueChange={(value) => updateChatSetting("workDetails", value)}>
-                    <SelectTrigger className="w-44" aria-label={copy.workDetails || "Work details"}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="collapsed">{copy.workDetailsCollapsed || "Summary"}</SelectItem>
-                      <SelectItem value="expanded">{copy.workDetailsExpanded || "Always open"}</SelectItem>
-                      <SelectItem value="hidden">{copy.workDetailsHidden || "Hidden"}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
-                  <FieldContent className="gap-1">
-                    <FieldTitle>{copy.squadSuggestions || "Squad suggestions"}</FieldTitle>
-                    <FieldDescription>{copy.squadSuggestionsDetail || "When a channel's project needs a role nobody in it covers, that member asks to join. Only you see the request."}</FieldDescription>
-                  </FieldContent>
-                  <Switch
-                    checked={normalizedChatSettings.squadSuggestions !== false}
-                    onCheckedChange={(checked) => updateChatSetting("squadSuggestions", checked)}
-                    aria-label={copy.squadSuggestions || "Squad suggestions"}
-                  />
-                </Field>
-              </div>
-            </section>
-
-            <section id="settings-notifications" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader
-                title={copy.notifications || "Notifications"}
-                description={copy.notificationsDescription || "Native alerts when the squad needs you and the window is elsewhere."}
-              />
-              <NotificationSettings
-                settings={normalizedNotificationSettings}
-                copy={copy}
-                onChange={onNotificationSettingsChange}
-                onTest={onTestNotification}
-              />
-            </section>
-
-            <section id="settings-voice" className="scroll-mt-6 border-b border-border/70 py-8">
-              <SettingsSectionHeader
-                title={copy.voice || "Voice"}
-                description={copy.voiceDescription || "How replies sound when they are read aloud. The voices built into this computer work without any setup."}
-              />
-              <VoiceSettings api={api} copy={copy} />
-            </section>
-
-            <section id="settings-vault" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader
-                title={copy.vault || "Vault"}
-                description={copy.vaultDescription || "Logins, cards and personal details members can ask for but never see. Sealed on this computer; filled only inside a member workstation."}
-              />
-              <VaultSettings api={api} copy={copy} />
-            </section>
-
-            <section id="settings-improvement" className="scroll-mt-6 border-b border-border/70 py-8">
-              <SettingsSectionHeader
-                title={copy.selfImprovement || "Self-improvement"}
-                description={copy.selfImprovementDescription || "Members review how they have been working and keep their own skills and memory current."}
-              />
-              <div className="divide-y divide-border/65">
-                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
-                  <FieldContent className="w-[260px] shrink-0 gap-1">
-                    <FieldTitle>
-                      <label htmlFor="improvement-enabled">{copy.selfImprovementEnabled || "Review their own work"}</label>
-                    </FieldTitle>
-                    <FieldDescription>
-                      {copy.selfImprovementEnabledDetail || "Every few hours, and never while a member is on a break."}
-                    </FieldDescription>
-                  </FieldContent>
-                  <Switch
-                    id="improvement-enabled"
-                    checked={improvementSettings.enabled}
-                    onCheckedChange={(checked) => onImprovementSettingsChange?.({ ...improvementSettings, enabled: checked === true })}
-                  />
-                </Field>
-                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
-                  <FieldContent className="w-[260px] shrink-0 gap-1">
-                    <FieldTitle>
-                      <label htmlFor="improvement-auto">{copy.selfImprovementAuto || "Let them act on it"}</label>
-                    </FieldTitle>
-                    <FieldDescription>
-                      {copy.selfImprovementAutoDetail || "Add the skill or write the note themselves. Off, they ask first. Either way they tell you what they did."}
-                    </FieldDescription>
-                  </FieldContent>
-                  <Switch
-                    id="improvement-auto"
-                    disabled={!improvementSettings.enabled}
-                    checked={improvementSettings.applyAutomatically}
-                    onCheckedChange={(checked) => onImprovementSettingsChange?.({ ...improvementSettings, applyAutomatically: checked === true })}
-                  />
-                </Field>
-                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
-                  <FieldContent className="max-w-md gap-1">
-                    <FieldTitle><label htmlFor="observe-projects">Observe assigned projects</label></FieldTitle>
-                    <FieldDescription>Idle members check their project folders and message you about concrete improvements. Checks pause during work and breaks; suggestions wait for your direction.</FieldDescription>
-                    <FieldDescription>Reviews run at most once an hour per member, up to four per member and twelve for the squad each day.</FieldDescription>
-                    {projectObserver?.error ? <p role="status" className="text-xs text-destructive">{projectObserver.error}</p> : projectObserver?.snapshot ? <p className="text-xs text-muted-foreground">{projectObserver.snapshot.activeMemberId ? "A member is reviewing a project." : projectObserver.snapshot.running && improvementSettings.observeAssignedProjects ? "Watching assigned projects." : "Project observation is paused."}</p> : null}
-                    {projectObserver?.snapshot?.observations?.filter(item => item.error || item.status === "unsupported").map(item => <p key={item.memberId + item.project} role="status" className="text-xs text-destructive">{item.error || item.unsupported?.message || item.reason}</p>)}
-                  </FieldContent>
-                  <Switch id="observe-projects" checked={improvementSettings.observeAssignedProjects} onCheckedChange={checked => onImprovementSettingsChange?.({ ...improvementSettings, observeAssignedProjects: checked === true })} />
-                </Field>
-              </div>
-            </section>
-
-            <section id="settings-handoff" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader title={copy.handoffRetryPolicy} description={handoffRetryDetail} />
-              <div className="divide-y divide-border/65">
-                {[HANDOFF_RETRY_BRIDGE_DEFAULT, ...HANDOFF_RETRY_MODES].map((mode) => (
-                  <HandoffRetryChoice
-                    key={mode}
-                    mode={mode}
-                    selected={selectedHandoffRetryValue === mode}
-                    bridgeDefaultMode={bridgeHandoffRetryMode}
-                    copy={copy}
-                    onSelect={updateHandoffRetryMode}
-                  />
-                ))}
-              </div>
-              <p className="mt-4 text-xs text-muted-foreground">
-                {formatCopy(copy.handoffRetryEnvDefault, {
-                  variable: "AUTOHAND_SQUAD_HANDOFF_RETRY_MODE",
-                  mode: handoffRetryModeLabel(bridgeHandoffRetryMode, copy),
-                })}
-              </p>
-            </section>
-
-            <section id="settings-mission-control" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader title={copy.needsYou || "Needs you"} description={missionControlDetail} />
-              <a
-                href={missionControlPath()}
-                className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-                onClick={(event) => handleLocalNavigation(event, missionControlPath())}
-              >
-                <span className="min-w-0">
-                  <span className="block font-medium">{copy.openNeedsYou || "Open Needs you"}</span>
-                  <span className="mt-1 block truncate text-sm text-muted-foreground">Review active work, queue, and run evidence.</span>
-                </span>
-                <Badge variant={counts.permissionWarnings ? "destructive" : "secondary"} className="w-fit rounded-md px-1.5">
-                  {formatLocalizedNumber(counts.tasks || 0, activeLocale)}
-                </Badge>
-              </a>
-            </section>
-
-            {/* Onboarding, not an account action. It used to sit in the
-                account menu beside Sign out, where a first-run checklist has
-                no business being, and there was no way back to it. */}
-            <section id="settings-setup" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader
-                title={copy.setupGuide || "Setup guide"}
-                description={copy.setupGuideDetail || "Run the first-run checks again: runtime, account, model provider, workspace and your first squad member."}
-              />
-              <Button type="button" variant="outline" onClick={onOnboarding} disabled={!onOnboarding}>
-                <ListChecks data-icon="inline-start" />
-                {copy.runSetupGuide || "Run the setup guide"}
-              </Button>
-            </section>
-
-            <section id="settings-updates" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
-              <SettingsSectionHeader
-                title="Updates"
-                description={updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} is available on GitHub.` : "Releases are checked on GitHub (autohandai/squad)."}
-              />
-              <SettingsUpdatesPanel updates={updates} checking={updatesChecking} error={updatesError} upgrading={updatesUpgrading} upgradeResult={updatesUpgradeResult} onCheck={onCheckUpdates} onUpgrade={onUpgradeApp} onOpenReleases={onOpenReleases} />
-            </section>
-
-            <section id="settings-system" className="scroll-mt-6 border-b border-border/70 py-8">
-              <SettingsSectionHeader
-                title={copy.system || "System"}
-                description={copy.systemDescription || "What this squad holds on this computer, where it lives, and whether the app looks for releases on its own."}
-              />
-              <SystemSettings api={api} locale={activeLocale} copy={copy} onAutoCheckUpdatesChange={onAutoCheckUpdatesChange} />
-            </section>
-
-            <section id="settings-runtime" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
-              <SettingsSectionHeader title={copy.runtimeBridge} description={runtime?.version || copy.checkingRuntime} />
-              <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
-                <div className="divide-y divide-border/65">
-                  <a
-                    href="/extensions"
-                    className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-                    onClick={(event) => handleLocalNavigation(event, "/extensions")}
-                  >
-                    <span className="min-w-0">
-                      <span className="block font-medium">{copy.runtimeBridge}</span>
-                      <span className="mt-1 block truncate text-sm text-muted-foreground">{runtime?.autohandPath || "Autohand path not found"}</span>
-                    </span>
-                    <ChevronRight className="hidden size-4 text-muted-foreground sm:block" />
-                  </a>
-                  <a
-                    href="/usage"
-                    className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-                    onClick={(event) => handleLocalNavigation(event, "/usage")}
-                  >
-                    <span className="min-w-0">
-                      <span className="block font-medium">{copy.analytics}</span>
-                      <span className="mt-1 block truncate text-sm text-muted-foreground">{runtime?.version || copy.checkingRuntime}</span>
-                    </span>
-                    <ArrowUpRight className="hidden size-4 text-muted-foreground sm:block" />
-                  </a>
-                  <Field orientation="horizontal" className="items-center justify-between gap-6 px-2 py-4">
-                    <FieldContent className="gap-1">
-                      <FieldTitle>{copy.searchIndex || "Search index"}</FieldTitle>
-                      <FieldDescription>
-                        {searchRebuild.state === "error"
-                          ? searchRebuild.error
-                          : searchRebuild.state === "done"
-                            ? formatCopy(copy.searchIndexRebuilt || "Rebuilt with {count} records.", { count: formatLocalizedNumber(searchRebuild.total, activeLocale) })
-                            : copy.searchIndexDescription || "Rebuild the search index from this browser's messages, tasks, and members plus the bridge's channels and runs."}
-                      </FieldDescription>
-                    </FieldContent>
-                    <Button type="button" variant="outline" size="sm" disabled={searchRebuild.state === "running" || !onRebuildSearchIndex} onClick={rebuildSearch}>
-                      {searchRebuild.state === "running" ? copy.searchIndexRebuilding || "Rebuilding…" : copy.searchIndexRebuild || "Rebuild index"}
-                    </Button>
-                  </Field>
-                </div>
-
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{copy.localStorage}</div>
-                  <p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.localStorageDescription}</p>
-                  <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
-                    <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.theme}</code>
-                    <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.locale}</code>
-                    <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.chatSettings}</code>
-                    <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.handoffSettings}</code>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section id="settings-relay" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
-              <SettingsSectionHeader
-                title={copy.relay || "Relay"}
-                description={copy.relayDescription || "Share channels with your team through a relay you host. Nothing is shared until you run one and connect to it."}
-              />
-              {/* The feature is unusable without knowing you must host the
-                  server yourself, so the section says how. */}
-              {relayConfig?.enabled ? null : (
-                <p className="mb-4 text-xs leading-5 text-muted-foreground">
-                  {copy.relayHowTo ||
-                    'No relay yet? Run one on a machine your team can reach: RELAY_TOKENS="you:a-secret" bun run relay. Then put its address and that secret below.'}
+          <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+            <div className="min-w-0">
+              <h4 id="theme-presets-title" className="text-sm font-medium">{copy.themePresets}</h4>
+              <p className="mt-1 text-sm text-muted-foreground">{copy.themePresetsDescription}</p>
+            </div>
+            <div aria-labelledby="theme-presets-title" className="grid gap-6 lg:grid-cols-2">
+              {THEME_SURFACES.map((surface) => (
+                <ThemePresetControl
+                  key={surface}
+                  surface={surface}
+                  value={normalizedThemePreference[`${surface}Theme`]}
+                  active={visibleThemePresetSurface === surface}
+                  copy={copy}
+                  onValueChange={(value) => updateThemePreset(surface, value)}
+                />
+              ))}
+              {normalizedThemePreference.mode === THEME_MODE_SYSTEM ? (
+                <p className="text-xs text-muted-foreground lg:col-span-2">
+                  {formatCopy(copy.systemPreferenceSummary, {
+                    theme: systemTheme === THEME_MODE_LIGHT ? copy.light : copy.dark,
+                  })}
                 </p>
-              )}
-              <RelaySettings
-                config={relayConfig}
-                status={relayStatus}
-                onSave={onSaveRelayConfig}
-                onSync={onSyncRelay}
-                copy={copy}
-              />
-            </section>
-
-            <section id="settings-remote-access" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
-              <SettingsSectionHeader
-                title={copy.remoteAccess || "Remote access"}
-                description={copy.remoteAccessDescription || "Talk to your members from Telegram while Squad keeps running here. The bridge polls Telegram from this machine; nothing is opened to the internet, and only the one account you pair is answered."}
-              />
-              <RemoteAccessSettings
-                status={remoteAccess || {}}
-                onConnect={remoteAccessActions?.connect}
-                onDisconnect={remoteAccessActions?.disconnect}
-                onUnpair={remoteAccessActions?.unpair}
-                onRotatePairing={remoteAccessActions?.rotatePairing}
-                onNotifyMode={remoteAccessActions?.setNotifyMode}
-                onRefresh={remoteAccessActions?.refresh}
-                copy={copy}
-              />
-            </section>
-            <section id="settings-connectors" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
-              <SettingsSectionHeader
-                title={copy.connectors || "Connectors"}
-                description={copy.connectorsDescription || "MCP servers every member can reach. A member uses them only when its MCP connectors permission is set to Allow."}
-              />
-              <ConnectorsSettings
-                connectors={connectors}
-                onCreate={connectorActions?.create}
-                onUpdate={connectorActions?.update}
-                onDelete={connectorActions?.remove}
-                onTest={connectorActions?.test}
-                onToggle={connectorActions?.toggle}
-                copy={copy}
-              />
-            </section>
+              ) : null}
+            </div>
           </div>
         </div>
-      </div>
-    </div>
+      </>
+    ),
+    language: () => (
+      <>
+        <SettingsSectionHeader title={copy.language} description={localeDetail} />
+        <div className="grid gap-8">
+
+          <Field className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-center">
+            <FieldLabel className="text-sm font-medium">{copy.displayLanguage || "Display language"}</FieldLabel>
+            <Select value={selectedLocaleValue} onValueChange={updateLocale}>
+              <SelectTrigger className="h-10 w-full min-w-0 justify-between sm:max-w-md" aria-label={copy.language}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end" className="max-h-[min(70vh,28rem)] w-[calc(100vw-2rem)] sm:w-[20rem]">
+                <SelectItem value={LOCALE_MODE_AUTO}>
+                  {copy.automatic} - {copy.useAutomaticLocale}
+                </SelectItem>
+                {localeGroups.map((group) => (
+                  <SelectGroup key={group.id}>
+                    <SelectLabel>{group.label}</SelectLabel>
+                    {group.locales.map((locale) => (
+                      <SelectItem key={locale.code} value={locale.code}>
+                        {formatLocaleMenuLabel(locale.code, activeLocale)}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+        </div>
+      </>
+    ),
+    providers: () => (
+      <>
+        <SettingsSectionHeader title="LLM Providers" description="Configure the provider registry and workspace default used by new agent runs." />
+        <ProviderSettingsPanel
+          providerSettings={providerSettings}
+          providerSettingsError={providerSettingsError}
+          onProviderSettingsChange={onProviderSettingsChange}
+        />
+      </>
+    ),
+    chat: () => (
+      <>
+        <SettingsSectionHeader title={copy.chat} description="Keep normal replies focused, with runtime diagnostics available when you need them." />
+        <div className="divide-y divide-border/65">
+          <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+            <FieldContent className="gap-1">
+              <FieldTitle>Display diagnostic output</FieldTitle>
+              <FieldDescription>Show raw stdout and stderr for troubleshooting. Leave this off for clean answers.</FieldDescription>
+            </FieldContent>
+            <Switch
+              checked={normalizedChatSettings.displayCliOutput}
+              onCheckedChange={(checked) => updateChatSetting("displayCliOutput", checked)}
+              aria-label="Display diagnostic output"
+            />
+          </Field>
+          <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+            <FieldContent className="gap-1">
+              <FieldTitle>{copy.workDetails || "Work details"}</FieldTitle>
+              <FieldDescription>
+                {copy.workDetailsDetail ||
+                  "How much of a member's working shows under its reply. Summary keeps one line you can open; Always open expands it while the member works; Hidden leaves the reply on its own."}
+              </FieldDescription>
+            </FieldContent>
+            <Select value={normalizedChatSettings.workDetails} onValueChange={(value) => updateChatSetting("workDetails", value)}>
+              <SelectTrigger className="w-44" aria-label={copy.workDetails || "Work details"}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="collapsed">{copy.workDetailsCollapsed || "Summary"}</SelectItem>
+                <SelectItem value="expanded">{copy.workDetailsExpanded || "Always open"}</SelectItem>
+                <SelectItem value="hidden">{copy.workDetailsHidden || "Hidden"}</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+            <FieldContent className="gap-1">
+              <FieldTitle>{copy.squadSuggestions || "Squad suggestions"}</FieldTitle>
+              <FieldDescription>{copy.squadSuggestionsDetail || "When a channel's project needs a role nobody in it covers, that member asks to join. Only you see the request."}</FieldDescription>
+            </FieldContent>
+            <Switch
+              checked={normalizedChatSettings.squadSuggestions !== false}
+              onCheckedChange={(checked) => updateChatSetting("squadSuggestions", checked)}
+              aria-label={copy.squadSuggestions || "Squad suggestions"}
+            />
+          </Field>
+        </div>
+      </>
+    ),
+    notifications: () => (
+      <>
+        <SettingsSectionHeader
+          title={copy.notifications || "Notifications"}
+          description={copy.notificationsDescription || "Native alerts when the squad needs you and the window is elsewhere."}
+        />
+        <NotificationSettings
+          settings={normalizedNotificationSettings}
+          copy={copy}
+          onChange={onNotificationSettingsChange}
+          onTest={onTestNotification}
+        />
+      </>
+    ),
+    voice: () => (
+      <>
+        <SettingsSectionHeader
+          title={copy.voice || "Voice"}
+          description={copy.voiceDescription || "How replies sound when they are read aloud. The voices built into this computer work without any setup."}
+        />
+        <VoiceSettings api={api} copy={copy} />
+      </>
+    ),
+    vault: () => (
+      <>
+        <SettingsSectionHeader
+          title={copy.vault || "Vault"}
+          description={copy.vaultDescription || "Logins, cards and personal details members can ask for but never see. Sealed on this computer; filled only inside a member workstation."}
+        />
+        <VaultSettings api={api} copy={copy} />
+      </>
+    ),
+    improvement: () => (
+      <>
+        <SettingsSectionHeader
+          title={copy.selfImprovement || "Self-improvement"}
+          description={copy.selfImprovementDescription || "Members review how they have been working and keep their own skills and memory current."}
+        />
+        <div className="divide-y divide-border/65">
+          <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+            <FieldContent className="w-[260px] shrink-0 gap-1">
+              <FieldTitle>
+                <label htmlFor="improvement-enabled">{copy.selfImprovementEnabled || "Review their own work"}</label>
+              </FieldTitle>
+              <FieldDescription>
+                {copy.selfImprovementEnabledDetail || "Every few hours, and never while a member is on a break."}
+              </FieldDescription>
+            </FieldContent>
+            <Switch
+              id="improvement-enabled"
+              checked={improvementSettings.enabled}
+              onCheckedChange={(checked) => onImprovementSettingsChange?.({ ...improvementSettings, enabled: checked === true })}
+            />
+          </Field>
+          <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+            <FieldContent className="w-[260px] shrink-0 gap-1">
+              <FieldTitle>
+                <label htmlFor="improvement-auto">{copy.selfImprovementAuto || "Let them act on it"}</label>
+              </FieldTitle>
+              <FieldDescription>
+                {copy.selfImprovementAutoDetail || "Add the skill or write the note themselves. Off, they ask first. Either way they tell you what they did."}
+              </FieldDescription>
+            </FieldContent>
+            <Switch
+              id="improvement-auto"
+              disabled={!improvementSettings.enabled}
+              checked={improvementSettings.applyAutomatically}
+              onCheckedChange={(checked) => onImprovementSettingsChange?.({ ...improvementSettings, applyAutomatically: checked === true })}
+            />
+          </Field>
+          <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+            <FieldContent className="max-w-md gap-1">
+              <FieldTitle><label htmlFor="observe-projects">Observe assigned projects</label></FieldTitle>
+              <FieldDescription>Idle members check their project folders and message you about concrete improvements. Checks pause during work and breaks; suggestions wait for your direction.</FieldDescription>
+              <FieldDescription>Reviews run at most once an hour per member, up to four per member and twelve for the squad each day.</FieldDescription>
+              {projectObserver?.error ? <p role="status" className="text-xs text-destructive">{projectObserver.error}</p> : projectObserver?.snapshot ? <p className="text-xs text-muted-foreground">{projectObserver.snapshot.activeMemberId ? "A member is reviewing a project." : projectObserver.snapshot.running && improvementSettings.observeAssignedProjects ? "Watching assigned projects." : "Project observation is paused."}</p> : null}
+              {projectObserver?.snapshot?.observations?.filter(item => item.error || item.status === "unsupported").map(item => <p key={item.memberId + item.project} role="status" className="text-xs text-destructive">{item.error || item.unsupported?.message || item.reason}</p>)}
+            </FieldContent>
+            <Switch id="observe-projects" checked={improvementSettings.observeAssignedProjects} onCheckedChange={checked => onImprovementSettingsChange?.({ ...improvementSettings, observeAssignedProjects: checked === true })} />
+          </Field>
+        </div>
+      </>
+    ),
+    handoff: () => (
+      <>
+        <SettingsSectionHeader title={copy.handoffRetryPolicy} description={handoffRetryDetail} />
+        <div className="divide-y divide-border/65">
+          {[HANDOFF_RETRY_BRIDGE_DEFAULT, ...HANDOFF_RETRY_MODES].map((mode) => (
+            <HandoffRetryChoice
+              key={mode}
+              mode={mode}
+              selected={selectedHandoffRetryValue === mode}
+              bridgeDefaultMode={bridgeHandoffRetryMode}
+              copy={copy}
+              onSelect={updateHandoffRetryMode}
+            />
+          ))}
+        </div>
+        <p className="mt-4 text-xs text-muted-foreground">
+          {formatCopy(copy.handoffRetryEnvDefault, {
+            variable: "AUTOHAND_SQUAD_HANDOFF_RETRY_MODE",
+            mode: handoffRetryModeLabel(bridgeHandoffRetryMode, copy),
+          })}
+        </p>
+      </>
+    ),
+    "mission-control": () => (
+      <>
+        <SettingsSectionHeader title={copy.needsYou || "Needs you"} description={missionControlDetail} />
+        <a
+          href={missionControlPath()}
+          className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+          onClick={(event) => handleLocalNavigation(event, missionControlPath())}
+        >
+          <span className="min-w-0">
+            <span className="block font-medium">{copy.openNeedsYou || "Open Needs you"}</span>
+            <span className="mt-1 block truncate text-sm text-muted-foreground">Review active work, queue, and run evidence.</span>
+          </span>
+          <Badge variant={counts.permissionWarnings ? "destructive" : "secondary"} className="w-fit rounded-md px-1.5">
+            {formatLocalizedNumber(counts.tasks || 0, activeLocale)}
+          </Badge>
+        </a>
+      </>
+    ),
+    runtime: () => (
+      <>
+        <SettingsSectionHeader title={copy.runtimeBridge} description={runtime?.version || copy.checkingRuntime} />
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="divide-y divide-border/65">
+            <a
+              href="/extensions"
+              className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+              onClick={(event) => handleLocalNavigation(event, "/extensions")}
+            >
+              <span className="min-w-0">
+                <span className="block font-medium">{copy.runtimeBridge}</span>
+                <span className="mt-1 block truncate text-sm text-muted-foreground">{runtime?.autohandPath || "Autohand path not found"}</span>
+              </span>
+              <ChevronRight className="hidden size-4 text-muted-foreground sm:block" />
+            </a>
+            <a
+              href="/usage"
+              className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+              onClick={(event) => handleLocalNavigation(event, "/usage")}
+            >
+              <span className="min-w-0">
+                <span className="block font-medium">{copy.analytics}</span>
+                <span className="mt-1 block truncate text-sm text-muted-foreground">{runtime?.version || copy.checkingRuntime}</span>
+              </span>
+              <ArrowUpRight className="hidden size-4 text-muted-foreground sm:block" />
+            </a>
+            <Field orientation="horizontal" className="items-center justify-between gap-6 px-2 py-4">
+              <FieldContent className="gap-1">
+                <FieldTitle>{copy.searchIndex || "Search index"}</FieldTitle>
+                <FieldDescription>
+                  {searchRebuild.state === "error"
+                    ? searchRebuild.error
+                    : searchRebuild.state === "done"
+                      ? formatCopy(copy.searchIndexRebuilt || "Rebuilt with {count} records.", { count: formatLocalizedNumber(searchRebuild.total, activeLocale) })
+                      : copy.searchIndexDescription || "Rebuild the search index from this browser's messages, tasks, and members plus the bridge's channels and runs."}
+                </FieldDescription>
+              </FieldContent>
+              <Button type="button" variant="outline" size="sm" disabled={searchRebuild.state === "running" || !onRebuildSearchIndex} onClick={rebuildSearch}>
+                {searchRebuild.state === "running" ? copy.searchIndexRebuilding || "Rebuilding…" : copy.searchIndexRebuild || "Rebuild index"}
+              </Button>
+            </Field>
+          </div>
+
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{copy.localStorage}</div>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.localStorageDescription}</p>
+            <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
+              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.theme}</code>
+              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.locale}</code>
+              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.chatSettings}</code>
+              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.handoffSettings}</code>
+            </div>
+          </div>
+        </div>
+      </>
+    ),
+    relay: () => (
+      <>
+        <SettingsSectionHeader
+          title={copy.relay || "Relay"}
+          description={copy.relayDescription || "Share channels with your team through a relay you host. Nothing is shared until you run one and connect to it."}
+        />
+        {/* The feature is unusable without knowing you must host the
+            server yourself, so the section says how. */}
+        {relayConfig?.enabled ? null : (
+          <p className="mb-4 text-xs leading-5 text-muted-foreground">
+            {copy.relayHowTo ||
+              'No relay yet? Run one on a machine your team can reach: RELAY_TOKENS="you:a-secret" bun run relay. Then put its address and that secret below.'}
+          </p>
+        )}
+        <RelaySettings
+          config={relayConfig}
+          status={relayStatus}
+          onSave={onSaveRelayConfig}
+          onSync={onSyncRelay}
+          copy={copy}
+        />
+      </>
+    ),
+    "remote-access": () => (
+      <>
+        <SettingsSectionHeader
+          title={copy.remoteAccess || "Remote access"}
+          description={copy.remoteAccessDescription || "Talk to your members from Telegram while Squad keeps running here. The bridge polls Telegram from this machine; nothing is opened to the internet, and only the one account you pair is answered."}
+        />
+        <RemoteAccessSettings
+          status={remoteAccess || {}}
+          onConnect={remoteAccessActions?.connect}
+          onDisconnect={remoteAccessActions?.disconnect}
+          onUnpair={remoteAccessActions?.unpair}
+          onRotatePairing={remoteAccessActions?.rotatePairing}
+          onNotifyMode={remoteAccessActions?.setNotifyMode}
+          onRefresh={remoteAccessActions?.refresh}
+          copy={copy}
+        />
+      </>
+    ),
+    connectors: () => (
+      <>
+        <SettingsSectionHeader
+          title={copy.connectors || "Connectors"}
+          description={copy.connectorsDescription || "MCP servers every member can reach. A member uses them only when its MCP connectors permission is set to Allow."}
+        />
+        <ConnectorsSettings
+          connectors={connectors}
+          onCreate={connectorActions?.create}
+          onUpdate={connectorActions?.update}
+          onDelete={connectorActions?.remove}
+          onTest={connectorActions?.test}
+          onToggle={connectorActions?.toggle}
+          copy={copy}
+        />
+      </>
+    ),
+    updates: () => (
+      <>
+        <SettingsSectionHeader
+          title="Updates"
+          description={updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} is available on GitHub.` : "Releases are checked on GitHub (autohandai/squad)."}
+        />
+        <SettingsUpdatesPanel updates={updates} checking={updatesChecking} error={updatesError} upgrading={updatesUpgrading} upgradeResult={updatesUpgradeResult} onCheck={onCheckUpdates} onUpgrade={onUpgradeApp} onOpenReleases={onOpenReleases} />
+      </>
+    ),
+    system: () => (
+      <>
+        <SettingsSectionHeader
+          title={copy.system || "System"}
+          description={copy.systemDescription || "What this squad holds on this computer, where it lives, and whether the app looks for releases on its own."}
+        />
+        <SystemSettings api={api} locale={activeLocale} copy={copy} onAutoCheckUpdatesChange={onAutoCheckUpdatesChange} />
+      </>
+    ),
+  };
+
+  const runtimeStatus = (
+    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span className={cn("size-1.5 shrink-0 rounded-full", runtime?.available ? "bg-emerald-500" : "bg-destructive")} aria-hidden="true" />
+      <span className="truncate">{runtime?.available ? `Autohand Code ${String(runtime?.version || "").split(" ")[0]} · ${statusLabel("ready", copy).toLowerCase()}` : copy.checkingRuntime}</span>
+    </p>
   );
-}
 
-// One phrase for the settings nav: how many connectors are on.
-function connectorsDetail(connectors, copy = {}) {
-  const on = (connectors || []).filter((connector) => connector.enabled).length;
-  if (!on) return copy.connectorsOff || "Off";
-  return formatCopy(copy.connectorsOn || "{count} on", { count: on });
-}
-
-// One phrase for the settings nav: off, incomplete, or who is connected.
-// One phrase for the settings nav: off, asking, or acting.
-function improvementDetail(settings = DEFAULT_IMPROVEMENT_SETTINGS, copy = {}) {
-  if (!settings?.enabled) return copy.relayOff || "Off";
-  return settings.applyAutomatically ? copy.selfImprovementActing || "On, acting" : copy.selfImprovementAsking || "On, asking first";
-}
-
-function relayStatusDetail(config = {}, status = {}, copy = {}) {
-  if (!config?.enabled) return copy.relayOff || "Off";
-  if (status?.connected) {
-    const peers = Array.isArray(status.peers) ? status.peers.length : 0;
-    return peers ? `${config.workspace || ""} · ${peers + 1} ${copy.peopleOnline || "online"}`.trim() : config.workspace || copy.connecting || "Connected";
-  }
-  return copy.reconnecting || "Reconnecting…";
+  return (
+    <SettingsShell
+      sections={settingsSections}
+      activeId={activeSectionId}
+      onSelect={(id) => navigate(settingsPath(id))}
+      onBack={onBack}
+      title={copy.settings}
+      status={runtimeStatus}
+    >
+      <section id={`settings-${activeSectionId}`} className="min-w-0">
+        {sectionBodies[activeSectionId]?.()}
+      </section>
+    </SettingsShell>
+  );
 }
 
 function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", onProviderSettingsChange }) {
@@ -25105,15 +25025,6 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
           </Button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function SettingsSectionHeader({ title, description }) {
-  return (
-    <div className="mb-6 min-w-0">
-      <h3 className="text-base font-semibold">{title}</h3>
-      {description ? <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p> : null}
     </div>
   );
 }

@@ -49,6 +49,7 @@ list to the section for that version.
 ### Changed
 
 - The Execution panel beside a member's chat now looks like the rest of the app. The title is followed by one sentence saying what is going on ("1 running · 1 handoff waiting", or "Nothing running right now."), a short Now list of open tasks only when there are any, and plain underlined Runs / Tasks / Automations tabs instead of three boxed buttons. Runs are grouped by day and each one is a single line: a small status dot, the member, your question, the time; a second muted line says "chat reply", "goal" or "launched" and names the engine or model only when it was not the member's usual one. Stop appears on a run that is still going. Tasks, handoffs and automations are plain rows too, with no pills, cards or icon tiles, and an empty tab is one sentence.
+- Settings is no longer one long page. Opening it hides the sidebar and shows a list of sections on the left (Setup guide, Appearance, Language, LLM Providers, Chat, Notifications, Voice, Vault, Self-improvement, Handoff retry policy, Needs you, Runtime bridge, Relay, Remote access, Connectors, Updates, System) with only the chosen section on the right. Clicking a section slides the marker to it and fades the section in; the browser's Back and Forward move between sections, Up/Down and Enter work in the list, Escape goes back to where you came from, and every existing link such as "Settings → Vault" opens that section directly. On a narrow window the list becomes one scrolling row.
 
 ### Fixed
 

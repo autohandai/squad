@@ -522,3 +522,41 @@ html[data-skin] [data-slot="avatar"] {
 @media (prefers-reduced-motion: reduce) {
   .effort-slider *, .effort-level, .effort-bolt { animation: none !important; transition: none !important; }
 }
+
+/* Settings shell (ADR-0119): one indicator slides to the selected section
+   row (a quiet left bar beside the list, an underline when the list is a
+   row), and the chosen section's content fades up in place. Nothing else on
+   the page moves. */
+.settings-nav-indicator {
+  position: absolute;
+  pointer-events: none;
+  background: var(--foreground);
+  border-radius: 1px;
+  left: var(--settings-indicator-left, 0);
+  width: var(--settings-indicator-width, 0);
+  bottom: -1px;
+  height: 2px;
+}
+.settings-nav-live .settings-nav-indicator {
+  transition: left 180ms cubic-bezier(0.2, 0.8, 0.2, 1), width 180ms cubic-bezier(0.2, 0.8, 0.2, 1), top 180ms cubic-bezier(0.2, 0.8, 0.2, 1), height 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (min-width: 48rem) {
+  .settings-nav-indicator {
+    left: 0;
+    width: 2px;
+    bottom: auto;
+    top: var(--settings-indicator-top, 0);
+    height: var(--settings-indicator-height, 0);
+  }
+}
+.settings-section-enter {
+  animation: settings-section-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes settings-section-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav-indicator { transition: none !important; }
+  .settings-section-enter { animation: none; }
+}
