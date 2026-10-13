@@ -30,7 +30,11 @@ A summary is `{ id, memberId, title, startedAt, endedAt, createdAt, harness, wor
 
 `GET /api/runs` lists chat turns with `mode: "chat"`, `kind: "chat"`, `harness` (`autohand` | `codex` | `claude`), `transport` (`sdk` or the harness id), the prompt as `title`, `reply`, `sessionId`, `durationMs` and the log rows the Execution feed reads. `POST /api/runs/:id/stop` aborts the turn. No `run.finished` event is emitted for a chat run; `chat.finished` already covers it.
 
-Finished runs (completed, failed, stopped) are written to `<appStateDir>/run-history.json` (newest 200, last 120 log lines each) and restored at boot with `restored: true`. `GET /api/runs/:id/activity` still reads the run's OTLP file.
+Finished runs (completed, failed, stopped, interrupted) are written to `<appStateDir>/run-history.json` (newest 200, last 120 log lines each) and restored at boot with `restored: true`. `GET /api/runs/:id/activity` still reads the run's OTLP file.
+
+Live chat turns are written too (ADR-0123), with `prompt` and the launch payload a retry needs (never returned by the API). A record that was live when the bridge died comes back as `status: "interrupted"`, `interrupted: true`, `finishedAt` = boot time, with one `system` log line ("Squad restarted while this reply was running…"). Its summary carries `retryable` (true while the launch is held and it has not been retried), `retriedAt` and `retryItemId`. `POST /api/runs/:id/retry` (served by the queues plug-in, see `docs/integration/queues.md`) re-sends the prompt through the member's queue; 409 for any other status, a second retry, or a goal/queue/routine/channel turn.
+
+Cold starts (ADR-0123): when an engine exits with no events, the bridge classifies it (`server/harness/cold-start.mjs`: `disk-space`, `binary-missing`, `not-signed-in`, `bad-flag`, `engine-crash`), retries a transient one once after 750 ms with the same resume id, and the `error` event's `error` text is the classified reason. The run log gets `system` lines (`cold start: …; retrying once in 750 ms`, `… started on the second attempt`). The structured log carries `harness.cold_start` with `autohand.cold_start.kind`. The stale-session retry (forget the resume id, run again fresh) only fires when the engine named the session as the problem.
 
 ## Browser
 

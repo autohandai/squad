@@ -773,6 +773,7 @@ mod tests {
             last_telemetry_flush_at: None,
             last_sync_at: None,
             last_update_check_at: None,
+            web_server_restarts: 0,
             daemon: None,
         }
     }

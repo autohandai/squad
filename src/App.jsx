@@ -311,6 +311,7 @@ import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel
 import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/member-availability";
 import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
 import { applyProposal, normalizeMemoryEntries, proposalSummary, reviewMember } from "@/lib/chief-of-staff";
+import { bridgeStatusLine, presencePollInterval } from "@/lib/bridge-status";
 import { takeTable } from "@/lib/markdown-table";
 import { MEMBER_DESIGNER_ID, editDraftRole } from "@/lib/member-draft";
 import { parseLocalJson, writeLocalJson, compactChannelMessagesCache, isStorageQuotaError } from "@/lib/local-cache";
@@ -6098,9 +6099,28 @@ function App() {
   }, []);
   useEffect(() => {
     loadPresence();
-    const timer = window.setInterval(loadPresence, 10_000);
+    const timer = window.setInterval(loadPresence, presencePollInterval(bridgeReachable));
     return () => window.clearInterval(timer);
-  }, [loadPresence]);
+  }, [loadPresence, bridgeReachable]);
+  // The bridge was away and is back (ADR-0123): re-read the runtime so the
+  // recovery keyed on serverStartedAt runs, and note how long it was gone.
+  const bridgeAwaySinceRef = useRef(0);
+  const [bridgeAwayMs, setBridgeAwayMs] = useState(0);
+  useEffect(() => {
+    if (bridgeReachable) {
+      if (bridgeAwaySinceRef.current) void refreshRuntime();
+      bridgeAwaySinceRef.current = 0;
+      setBridgeAwayMs(0);
+      return undefined;
+    }
+    if (!bridgeAwaySinceRef.current) bridgeAwaySinceRef.current = Date.now();
+    const tick = () => setBridgeAwayMs(Date.now() - bridgeAwaySinceRef.current);
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bridgeReachable]);
+  const bridgeLine = bridgeStatusLine({ bridgeReachable, awaySinceMs: bridgeAwayMs, copy: localeCopy });
   const entryFor = useCallback(
     (agent) => presenceFor(agent?.id, presenceMap, { bridgeReachable, memberStatus: agent?.status }),
     [presenceMap, bridgeReachable]
@@ -9633,6 +9653,7 @@ function App() {
             onCollapsedChange={setDesktopSidebarCollapsed}
           />}
           <main className="app-main min-w-0">
+            {bridgeLine ? <div role="status" aria-live="polite" data-testid="bridge-status" className="px-6 py-2 text-xs text-muted-foreground">{bridgeLine}</div> : null}
             {channelOperationError ? <div role="alert" className="px-6 py-3 text-sm text-destructive">{channelOperationError}</div> : null}
             <AgentChannelProposals proposals={agentChannelActions.filter(action => action.status === "proposed")} members={agents} onDecision={decideChannelProposal} />
             <VaultRequests vault={vaultRequests} members={agents} copy={localeCopy} />

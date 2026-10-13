@@ -49,7 +49,9 @@ const stored = historyRecord({ id: 'r', agentId: 'alex', title: 'T', mode: 'chat
 assert.equal(stored.logs.length, 120, 'only the log tail is stored'); assert.equal(stored.logs.at(-1).line, 'l299');
 const back = runFromRecord(stored);
 assert.equal(back.restored, true); assert.equal(back.status, 'completed'); assert.equal(back.abortController, null); assert.deepEqual(back.channelActions, []);
-assert.equal(runFromRecord({ ...stored, status: 'running' }), null);
+const wasLive = runFromRecord({ ...stored, status: 'running' }, { bootAt: '2026-10-14T00:28:00.000Z' });
+assert.equal(wasLive.status, 'interrupted', 'a record that was live when written belongs to a dead process: it comes back interrupted (ADR-0123)');
+assert.equal(wasLive.finishedAt, '2026-10-14T00:28:00.000Z');
 const agent = { id: 'alex', harness: { id: 'claude' }, workspace: '/w', conversationStartedAt: '2026-10-13T01:00:00.000Z' };
 const payloadOut = archivePayload(agent, [msg(1, 'user', 'Plan the week')], { endedAt: '2026-10-13T02:00:00.000Z' });
 assert.equal(payloadOut.harness, 'claude'); assert.equal(payloadOut.startedAt, '2026-10-13T01:00:00.000Z'); assert.equal(payloadOut.title, 'Plan the week'); assert.equal(payloadOut.workspace, '/w');

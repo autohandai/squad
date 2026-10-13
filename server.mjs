@@ -19,6 +19,7 @@ import { createProductTelemetry, readProductTelemetryConfig } from "./server/pro
 import { MemberAvailability } from "./server/members/availability.mjs";
 import { GoalManager } from "./server/goal-manager.mjs";
 import { contextUsageFromUsage } from "./server/queues/context-gauge.mjs";
+import { privateLaunch } from "./server/queues/store.mjs";
 import { ProjectObserver } from "./server/project-observer.mjs";
 import { createProjectObserverReview } from "./server/project-observer-review.mjs";
 import { cleanWorkResult, withWorkProgress } from "./server/work-progress.mjs";
@@ -66,9 +67,12 @@ import {
   normalizeHarnessAssignment,
   publicReadiness,
   readResumeId,
+  redactHome,
   runExternalHarness,
   writeResumeId,
 } from "./server/harness/index.mjs";
+import { COLD_START_RETRY_DELAY_MS, classifyColdStart, engineHome, freeDiskBytes, looksLikeStaleSession } from "./server/harness/cold-start.mjs";
+import { formatDuration } from "./src/lib/duration.js";
 
 // Keep native human approval out of every agent/helper inherited environment.
 const initialNativeGrantKey = String(process.env.AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN || "");
@@ -4024,6 +4028,12 @@ function runSummary(run) {
     finishedAt: run.finishedAt,
     channel: run.channel || null,
     reply: run.reply || "",
+    // Interrupted by a restart (ADR-0123): Retry is offered while the launch
+    // payload is still held and the run has not been retried yet.
+    interrupted: run.interrupted === true,
+    retryable: run.status === "interrupted" && Boolean(run.launch) && !run.retryItemId,
+    retriedAt: run.retriedAt || "",
+    retryItemId: run.retryItemId || "",
     channelActions: run.channelActions || [],
     computerUse: run.computerUse || null,
     contextPack: run.contextPack || null,
@@ -6120,7 +6130,8 @@ function chatStreamEventFromSdkEvent(event) {
 
   return {
     type: "status",
-    status: String(event?.type || "sdk_event"),
+    status: String(event?.status || event?.type || "sdk_event"),
+    ...(event?.label ? { label: String(event.label) } : {}),
     timestamp,
   };
 }
@@ -6690,20 +6701,52 @@ function externalCommandLabel(adapter, displayArgs) {
 
 async function executeExternalHarness(prepared, { timeoutMs, inactivityMs = 0, signal, onEvent }) {
   const { adapter, executable, workspace, envVars, agentRuntime } = prepared;
-  // ACP agents (ADR-0122) speak JSON-RPC over stdio instead of printing
-  // JSONL; the adapter brings its own runner and the turn travels in
-  // `attempt.turn`. Everything after this point is shared.
-  const run = (attempt) => (adapter.transport === "acp"
+  const note = (label) => {
+    try { onEvent({ type: "status", status: "harness_cold_start", label, timestamp: new Date().toISOString() }); } catch {}
+  };
+  // ACP agents (ADR-0122) speak JSON-RPC over stdio and bring their own
+  // runner; the turn travels in `attempt.turn`. Everything after is shared.
+  const runOnce = (attempt) => (adapter.transport === "acp"
     ? adapter.run({ adapter, executable, args: attempt.args, cwd: workspace, env: envVars, turn: attempt.turn, timeoutMs, inactivityMs, signal, onEvent, terminate: terminateChildProcess, clientVersion: packageMetadata.version })
     : runExternalHarness({ adapter, executable, args: attempt.args, cwd: workspace, env: envVars, timeoutMs, inactivityMs, signal, onEvent, terminate: terminateChildProcess }));
+  // What a start failure looked like, in words (ADR-0123): the engine's own
+  // disk and the workspace's are measured once per turn, only when needed.
+  const classify = (output) => classifyColdStart({
+    adapterLabel: adapter.label,
+    output,
+    durationMs: output.durationMs,
+    executable: redactHome(executable),
+    freeBytes: {
+      home: freeDiskBytes(engineHome(adapter.id, { homeDir, agentHome: agentRuntime.agentHome })),
+      workspace: freeDiskBytes(workspace),
+    },
+  });
   let attempt = prepared.build(prepared.resumeId);
-  let output = await run(attempt);
-  // A stale resume id (deleted session, new vendor version) must not strand
-  // the member: retry once with a fresh session, then persist the new id.
-  if (output.error && prepared.resumeId && !output.stopped && !output.timedOut && output.events.filter((event) => event.type !== "tool_update").length <= 1) {
+  let output = await runOnce(attempt);
+  let cold = output.error ? classify(output) : null;
+  // A transient start failure (disk, runtime) gets one quiet retry with the
+  // same session: the conversation was never the problem.
+  if (cold?.transient && !signal?.aborted) {
+    note(`${cold.detail}; retrying once in ${formatDuration(COLD_START_RETRY_DELAY_MS)}.`);
+    logEvent(SEVERITY.WARN, `${adapter.label} cold start: ${cold.detail}; retrying once`, { "event.name": "harness.cold_start", "autohand.harness": adapter.id, "autohand.member.id": agentRuntime.agentId, "autohand.cold_start.kind": cold.kind });
+    await new Promise((resolve) => setTimeout(resolve, COLD_START_RETRY_DELAY_MS));
+    output = await runOnce(attempt);
+    cold = output.error ? classify(output) : null;
+    if (!output.error) note(`${adapter.label} started on the second attempt.`);
+  }
+  if (cold) {
+    note(cold.detail);
+    logEvent(SEVERITY.ERROR, `${adapter.label} cold start: ${cold.detail}`, { "event.name": "harness.cold_start", "autohand.harness": adapter.id, "autohand.member.id": agentRuntime.agentId, "autohand.cold_start.kind": cold.kind });
+    output = { ...output, error: cold.reason, coldStart: cold };
+  } else if (output.error && prepared.resumeId && !output.stopped && !output.timedOut && looksLikeStaleSession(output)) {
+    // A stale resume id (deleted session, new vendor version) must not strand
+    // the member: retry once with a fresh session, then persist the new id.
+    // Only when the engine said the session is the problem; a start failure
+    // used to land here and wiped the member's conversation (ADR-0123).
+    note(`${adapter.label} could not resume the saved session; starting a fresh one.`);
     await writeResumeId(agentRuntime.agentHome, adapter.id, workspace, "");
     attempt = prepared.build("");
-    output = await run(attempt);
+    output = await runOnce(attempt);
   }
   if (output.resumeId && !output.stopped) {
     await writeResumeId(agentRuntime.agentHome, adapter.id, workspace, output.resumeId).catch(() => {});
@@ -7232,9 +7275,22 @@ function beginChatRun(payload, workId, startedAt) {
     contextLayers: null,
     logs: [],
     abortController: new AbortController(),
+    // What a retry re-sends through the member's queue if this turn is cut
+    // short by a bridge restart (ADR-0123). Direct turns only: goals, queue
+    // items, routines and channel turns have their own recovery.
+    launch: retryLaunch(payload),
   };
   runs.set(workId, run);
+  runHistory.persist();
   return run;
+}
+
+function retryLaunch(payload) {
+  if (!payload || payload.goalId || payload.goal || payload.mode === "goal") return null;
+  if (channelContextFromPayload(payload)) return null;
+  if (/^(queue|goal|routine|observer)-/.test(String(payload.requestId || ""))) return null;
+  if (payload.collaboration) return null;
+  return privateLaunch({ ...payload, model: payload.model || "", effort: payload.effort || "", access: payload.access || "" });
 }
 
 // The chat stream carries the browser's event shapes (message_delta, tool
@@ -7318,6 +7374,7 @@ function finishChatRun(run, { result = null, error = null, aborted = false } = {
   run.finishedEventAt = finishedAt; // chat.finished already reaches the audit trail; no run.finished here
   appendLog(run, "system", `${run.harness || "member"} reply ${run.status}`);
   run.abortController = null;
+  run.launch = null; // a finished turn is never retried from the Runs tab
   runHistory.persist();
 }
 

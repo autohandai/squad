@@ -13,6 +13,8 @@ import {
   MIN_RUNS_TO_LEARN,
   STALE_MEMORY_DAYS,
   applyProposal,
+  isErrorReply,
+  isWorkSample,
   normalizeMemoryEntries,
   proposalSummary,
   reviewMember,
@@ -359,3 +361,49 @@ for (const bad of [null, undefined, "x", 42, {}, { agent: null }]) {
 }
 
 console.log("check-chief-of-staff: ok");
+
+// --- a reply that failed is not a sample of work (ADR-0123) -----------------
+
+{
+  // The night of 2026-10-14: two "Reply failed: error: An unknown error
+  // occurred (Unexpected)" records became "Remember: error: An unknown error
+  // occurred (Unexpected)". Nothing about the member's work was in them.
+  const failure = "Reply failed: error: An unknown error occurred (Unexpected)";
+  const records = Array.from({ length: MIN_FAILURES_TO_REFINE + 1 }, () => record({ kind: "message", eventName: "chat.finished", status: "failed", summary: failure }));
+  const review = reviewMember({ agent: member(), records, now });
+  assert.deepEqual(review.proposals, [], "an engine error is not a lesson, a skill gap or a reason to change the rules");
+  assert.equal(review.hasWork, false);
+}
+
+{
+  for (const sample of [
+    { status: "error", summary: "Anything at all" },
+    { status: "failed", summary: "Reply failed: Claude Code exited 62 ms after starting, before it read the request" },
+    { status: "failed", summary: "Run failed: Alex could not answer: Claude Code is not signed in" },
+    { status: "failed", summary: "Run failed: this follow-up was interrupted when Squad restarted" },
+    { status: "failed", summary: "Run failed: Claude Code stopped after 5 min without activity. Retry to continue." },
+    { status: "failed", summary: "Run failed: the disk is nearly full: 222 MiB free" },
+    { kind: "message", eventName: "chat.finished", status: "failed", summary: "Reply failed: anything" },
+  ]) assert.equal(isErrorReply(record(sample)), true, `not a work sample: ${sample.summary}`);
+  for (const sample of [
+    { status: "failed", summary: "Run failed: the build needs Node 24" },
+    { kind: "shell", summary: "Ran bun run build (exit 1)" },
+    { status: "completed", summary: "Replied: Done." },
+  ]) assert.equal(isWorkSample(record(sample)), true, `a work sample: ${sample.summary}`);
+  assert.equal(isErrorReply(null), false);
+}
+
+{
+  // Real work failures still teach; the engine failures beside them do not
+  // count towards the threshold either.
+  const lesson = "Run failed: the build needs Node 24";
+  const records = [
+    ...Array.from({ length: MIN_FAILURES_TO_REMEMBER }, () => record({ kind: "run", status: "failed", summary: lesson })),
+    ...Array.from({ length: MIN_FAILURES_TO_REFINE }, () => record({ kind: "message", eventName: "chat.finished", status: "failed", summary: "Reply failed: error: An unknown error occurred (Unexpected)" })),
+  ];
+  const review = reviewMember({ agent: member(), records, now });
+  assert.equal(review.proposals.length, 1, "only the real lesson remains");
+  assert.equal(review.proposals[0].kind, "memory.add");
+  assert.match(review.proposals[0].text, /Node 24/);
+}
+console.log("Chief of staff: a failed reply is never learnt from.");

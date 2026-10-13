@@ -1,12 +1,13 @@
 use crate::api::{ApiClient, RemoteMetrics, TelemetryFlushSnapshot};
+use crate::cli::{fetch_web_runtime, process_is_running, spawn_web_server, terminate_process};
 use crate::config::{resolve_config, ConfigOverrides, SquadConfig};
 use crate::live_status::{
     read_fresh_live_status_snapshot, LiveStatusAutomation, LiveStatusJob, LiveStatusMember,
 };
 use crate::state::{
     default_state_paths, ensure_device_id, now_string, read_channels_state, read_daemon_record,
-    remove_daemon_record, write_channels_state, write_daemon_record, ChannelsState, DaemonRecord,
-    StatePaths,
+    read_web_server_record, remove_daemon_record, write_channels_state, write_daemon_record,
+    ChannelsState, DaemonRecord, StatePaths,
 };
 use crate::telemetry::{append_telemetry_event, daemon_event, TelemetryEvent};
 use crate::VERSION;
@@ -18,7 +19,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -92,6 +93,9 @@ pub struct StatusResponse {
     pub last_telemetry_flush_at: Option<String>,
     pub last_sync_at: Option<String>,
     pub last_update_check_at: Option<String>,
+    /// How many times this daemon has restarted the web bridge (ADR-0123).
+    #[serde(default)]
+    pub web_server_restarts: u64,
     pub daemon: Option<DaemonRecord>,
 }
 
@@ -239,6 +243,7 @@ struct AppState {
     accepting_work: Arc<AtomicBool>,
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
     device_id: String,
+    web_restarts: Arc<AtomicU64>,
 }
 
 pub async fn run_daemon(overrides: ConfigOverrides) -> Result<()> {
@@ -284,6 +289,7 @@ pub async fn run_daemon_with_paths(paths: StatePaths, overrides: ConfigOverrides
         accepting_work: Arc::new(AtomicBool::new(true)),
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
         device_id,
+        web_restarts: Arc::new(AtomicU64::new(0)),
     });
     record_daemon_event(
         &state,
@@ -297,6 +303,7 @@ pub async fn run_daemon_with_paths(paths: StatePaths, overrides: ConfigOverrides
         }),
     );
     spawn_observability_loop(state.clone());
+    spawn_bridge_supervisor(state.clone());
 
     loop {
         tokio::select! {
@@ -931,6 +938,174 @@ async fn send_ping(state: &AppState, metrics: DaemonMetrics) -> crate::api::Ping
     snapshot
 }
 
+// ---------------------------------------------------------------------------
+// Bridge supervision (ADR-0123). `squad serve` spawned the Node bridge
+// detached and nothing watched it afterwards: a crash left the desktop
+// window pointing at a port nobody listened on. The daemon now probes the
+// bridge with a deadline and brings it back, with a backoff so a bridge that
+// cannot start does not spin, and never while a stop is in progress (the
+// web-server record is gone by then) or while the daemon itself is draining.
+
+/// Seconds between probes of `GET /api/runtime` (800 ms deadline each).
+const BRIDGE_PROBE_INTERVAL: Duration = Duration::from_secs(5);
+/// Consecutive failed probes before an unresponsive bridge is restarted.
+pub(crate) const BRIDGE_PROBE_FAILURES_BEFORE_RESTART: u32 = 3;
+const BRIDGE_RESTART_BACKOFF_BASE: Duration = Duration::from_secs(5);
+const BRIDGE_RESTART_BACKOFF_CAP: Duration = Duration::from_secs(60);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BridgeAction {
+    /// No bridge record: the person stopped it, or it was never started here.
+    Skip,
+    /// The bridge answered.
+    Healthy,
+    /// A probe failed but the process is alive; wait for the next probe.
+    Wait,
+    /// Start the bridge again, with the reason for the log.
+    Restart(String),
+}
+
+/// Pure: what to do after one probe. `failures` counts the consecutive
+/// failed probes before this one.
+pub(crate) fn bridge_action(
+    record_present: bool,
+    accepting_work: bool,
+    pid_alive: bool,
+    probe_ok: bool,
+    failures: u32,
+) -> BridgeAction {
+    if !record_present || !accepting_work {
+        return BridgeAction::Skip;
+    }
+    if probe_ok {
+        return BridgeAction::Healthy;
+    }
+    if !pid_alive {
+        return BridgeAction::Restart("the bridge process is gone".to_string());
+    }
+    let failed = failures + 1;
+    if failed >= BRIDGE_PROBE_FAILURES_BEFORE_RESTART {
+        return BridgeAction::Restart(format!(
+            "the bridge did not answer {failed} probes in a row ({}s each)",
+            BRIDGE_PROBE_INTERVAL.as_secs()
+        ));
+    }
+    BridgeAction::Wait
+}
+
+/// Pure: how long to wait after the n-th consecutive restart (0-based)
+/// before probing again: 5 s, 10 s, 20 s, 40 s, then a minute.
+pub(crate) fn bridge_restart_backoff(restarts_in_row: u32) -> Duration {
+    let factor = 1u32 << restarts_in_row.min(4);
+    (BRIDGE_RESTART_BACKOFF_BASE * factor).min(BRIDGE_RESTART_BACKOFF_CAP)
+}
+
+fn spawn_bridge_supervisor(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut failures: u32 = 0;
+        let mut restarts_in_row: u32 = 0;
+        loop {
+            sleep(BRIDGE_PROBE_INTERVAL).await;
+            let record = read_web_server_record(&state.paths).ok().flatten();
+            let record = match record {
+                Some(record) if record.host == state.config.host => record,
+                _ => {
+                    failures = 0;
+                    restarts_in_row = 0;
+                    continue;
+                }
+            };
+            let host = record.host.clone();
+            let port = record.port;
+            let pid = record.pid;
+            let probe = tokio::task::spawn_blocking(move || fetch_web_runtime(&host, port).is_ok())
+                .await
+                .unwrap_or(false);
+            let alive = if probe {
+                true
+            } else {
+                tokio::task::spawn_blocking(move || process_is_running(pid))
+                    .await
+                    .unwrap_or(false)
+            };
+            match bridge_action(
+                true,
+                state.accepting_work.load(Ordering::SeqCst),
+                alive,
+                probe,
+                failures,
+            ) {
+                BridgeAction::Skip => {
+                    failures = 0;
+                }
+                BridgeAction::Healthy => {
+                    if restarts_in_row > 0 {
+                        append_server_log(&state.paths, "web server is answering again");
+                    }
+                    failures = 0;
+                    restarts_in_row = 0;
+                }
+                BridgeAction::Wait => {
+                    failures += 1;
+                    append_server_log(
+                        &state.paths,
+                        &format!(
+                            "web server did not answer probe {failures} of {BRIDGE_PROBE_FAILURES_BEFORE_RESTART} (pid {pid} alive)"
+                        ),
+                    );
+                }
+                BridgeAction::Restart(reason) => {
+                    failures = 0;
+                    append_server_log(
+                        &state.paths,
+                        &format!("web server restart: {reason}; restarting pid {pid}"),
+                    );
+                    let paths = state.paths.clone();
+                    let config = state.config.clone();
+                    let server_path = record.server_path.clone();
+                    let dev = record.dev;
+                    let result = tokio::task::spawn_blocking(move || {
+                        if process_is_running(pid) {
+                            terminate_process(pid);
+                        }
+                        spawn_web_server(&paths, &config, Path::new(&server_path), dev, port)
+                    })
+                    .await
+                    .unwrap_or_else(|error| Err(anyhow!("restart task failed: {error}")));
+                    match result {
+                        Ok(()) => {
+                            let count = state.web_restarts.fetch_add(1, Ordering::SeqCst) + 1;
+                            let new_pid = read_web_server_record(&state.paths)
+                                .ok()
+                                .flatten()
+                                .map(|record| record.pid)
+                                .unwrap_or(0);
+                            append_server_log(
+                                &state.paths,
+                                &format!("web server restarted as pid {new_pid} (restart {count} this daemon run)"),
+                            );
+                            record_daemon_event(
+                                &state,
+                                "daemon.web_server_restarted",
+                                json!({ "reason": reason, "previousPid": pid, "pid": new_pid, "restarts": count }),
+                            );
+                        }
+                        Err(error) => {
+                            append_server_log(
+                                &state.paths,
+                                &format!("web server restart failed: {error:#}"),
+                            );
+                        }
+                    }
+                    let backoff = bridge_restart_backoff(restarts_in_row);
+                    restarts_in_row = restarts_in_row.saturating_add(1);
+                    sleep(backoff).await;
+                }
+            }
+        }
+    });
+}
+
 fn spawn_observability_loop(state: Arc<AppState>) {
     tokio::spawn(async move {
         run_observability_cycle(&state).await;
@@ -1242,6 +1417,7 @@ fn status_payload(state: &AppState) -> StatusResponse {
         ),
         last_sync_at: read_timestamp_field(&state.paths.sync_json, "syncedAt"),
         last_update_check_at: read_timestamp_field(&state.paths.update_json, "checkedAt"),
+        web_server_restarts: state.web_restarts.load(Ordering::SeqCst),
         daemon,
     }
 }
@@ -1781,6 +1957,49 @@ mod tests {
     }
 
     #[test]
+    fn bridge_supervisor_restarts_only_when_the_bridge_is_really_gone() {
+        use super::{bridge_action, bridge_restart_backoff, BridgeAction};
+        // No record: the person stopped the bridge; nothing to do.
+        assert_eq!(
+            bridge_action(false, true, false, false, 5),
+            BridgeAction::Skip
+        );
+        // Draining daemon: a restart would fight the stop.
+        assert_eq!(
+            bridge_action(true, false, true, false, 5),
+            BridgeAction::Skip
+        );
+        // Answering: healthy, whatever happened before.
+        assert_eq!(
+            bridge_action(true, true, true, true, 2),
+            BridgeAction::Healthy
+        );
+        // Process gone: restart at once.
+        assert!(matches!(
+            bridge_action(true, true, false, false, 0),
+            BridgeAction::Restart(_)
+        ));
+        // Alive but silent: wait for the deadline (three probes), then restart.
+        assert_eq!(
+            bridge_action(true, true, true, false, 0),
+            BridgeAction::Wait
+        );
+        assert_eq!(
+            bridge_action(true, true, true, false, 1),
+            BridgeAction::Wait
+        );
+        assert!(matches!(
+            bridge_action(true, true, true, false, 2),
+            BridgeAction::Restart(_)
+        ));
+        // Backoff doubles and caps at a minute.
+        assert_eq!(bridge_restart_backoff(0).as_secs(), 5);
+        assert_eq!(bridge_restart_backoff(1).as_secs(), 10);
+        assert_eq!(bridge_restart_backoff(3).as_secs(), 40);
+        assert_eq!(bridge_restart_backoff(9).as_secs(), 60);
+    }
+
+    #[test]
     fn generated_ids_are_safe_as_cross_platform_file_names() {
         let id = next_id();
 
@@ -1840,6 +2059,7 @@ mod tests {
             accepting_work: Arc::new(AtomicBool::new(true)),
             shutdown_tx: Arc::new(Mutex::new(None)),
             device_id: "device-1".to_string(),
+            web_restarts: Arc::new(AtomicU64::new(0)),
         };
         let status = status_payload(&state);
 
@@ -1868,6 +2088,7 @@ mod tests {
             accepting_work: Arc::new(AtomicBool::new(true)),
             shutdown_tx: Arc::new(Mutex::new(None)),
             device_id: "device-1".to_string(),
+            web_restarts: Arc::new(AtomicU64::new(0)),
         };
         let status = status_payload(&state);
 
@@ -1895,6 +2116,7 @@ mod tests {
             accepting_work: Arc::new(AtomicBool::new(true)),
             shutdown_tx: Arc::new(Mutex::new(None)),
             device_id: "device-1".to_string(),
+            web_restarts: Arc::new(AtomicU64::new(0)),
         };
 
         let (status, login) = login_response(

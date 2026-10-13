@@ -1846,7 +1846,7 @@ fn spawn_tray(
     Ok(Some("Autohand Squad tray started\n".to_string()))
 }
 
-fn spawn_web_server(
+pub(crate) fn spawn_web_server(
     paths: &StatePaths,
     config: &SquadConfig,
     server_path: &Path,
@@ -1929,7 +1929,7 @@ fn detach_background(command: &mut Command) {
     }
 }
 
-fn terminate_process(pid: u32) -> bool {
+pub(crate) fn terminate_process(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }

@@ -64,7 +64,32 @@ async function memberQueue(memberId) {
   return { ...queues[memberId], context: gauges[memberId] || null };
 }
 
+/**
+ * `POST /api/runs/:id/retry` (ADR-0123): a chat turn the restart interrupted
+ * is sent again, as a queued follow-up with the same prompt and launch
+ * payload, so it runs when the member is free and in order with anything
+ * else waiting. The run remembers the item it became; a second retry is 409.
+ */
+async function retryInterruptedRun(req, res, runId, ctx) {
+  const run = ctx.runs?.get?.(runId);
+  if (!run) { ctx.json(res, 404, { success: false, error: "run not found" }); return true; }
+  if (run.status !== "interrupted") { ctx.json(res, 409, { success: false, error: "Only a run that a restart interrupted can be retried from here." }); return true; }
+  if (run.retryItemId) { ctx.json(res, 409, { success: false, error: "This run was already retried.", itemId: run.retryItemId }); return true; }
+  if (!run.launch || !run.prompt) { ctx.json(res, 409, { success: false, error: "This run cannot be retried from here: it was a goal, routine, queue or channel turn, which recover on their own." }); return true; }
+  const item = await store.enqueue({ ...run.launch, agentId: run.agentId, text: run.prompt, workspace: run.launch.workspace || run.workspace });
+  run.retryItemId = item.id;
+  run.retriedAt = new Date().toISOString();
+  ctx.emit?.("queue.enqueued", { memberId: run.agentId, itemId: item.id, text: item.text.slice(0, 140), retryOfRunId: run.id });
+  dispatcher.schedule();
+  const queue = await memberQueue(run.agentId);
+  ctx.logEvent?.(ctx.SEVERITY?.INFO ?? 9, `run ${run.id} retried as queue item ${item.id}`, { "event.name": "run.retried", "autohand.run.id": run.id, "autohand.member.id": run.agentId });
+  ctx.json(res, 201, { success: true, data: { item, runId: run.id, paused: queue.paused, pauseReason: queue.pauseReason || "" } });
+  return true;
+}
+
 export async function handle(req, res, url, ctx) {
+  const retryMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/retry$/);
+  if (retryMatch && req.method === "POST") return retryInterruptedRun(req, res, decodeURIComponent(retryMatch[1]), ctx);
   if (!url.pathname.startsWith("/api/queues")) return false;
   if (!store) { ctx.json(res, 503, { success: false, error: "queues are not ready" }); return true; }
   try {

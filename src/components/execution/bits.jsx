@@ -9,7 +9,7 @@ export function StatusDot({ status, className }) {
   const live = status === "running" || status === "launching" || status === "queued" || status === "active";
   const on = status === "online" || status === "ready";
   const bad = status === "failed" || status === "blocked";
-  const held = status === "stopped" || status === "paused" || status === "handoff-pending" || status === "pending";
+  const held = status === "stopped" || status === "paused" || status === "handoff-pending" || status === "pending" || status === "interrupted";
   return (
     <span
       aria-hidden="true"

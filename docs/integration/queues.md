@@ -30,6 +30,10 @@ startedAt, finishedAt, reply, error, progress, result, interrupted? }` with
 `status` in `queued | running | done | failed | cancelled`. `gauge` =
 `{ percent, usedTokens, window, warning, model, harness, at }`.
 
+### `POST /api/runs/:id/retry` (ADR-0123)
+
+Re-sends a chat turn that a bridge restart interrupted. The run must be `status: "interrupted"` with a held launch payload (a direct chat turn; goal, queue, routine and channel turns answer 409). Enqueues `{ ...launch, text: run.prompt }` on the member's queue, records `retryItemId`/`retriedAt` on the run, emits `queue.enqueued` with `retryOfRunId`, and answers `201 { item, runId, paused, pauseReason }`. `paused` is true when the member's queue is paused (for example by the restart itself, ADR-0111); the item then waits for Resume. A second retry of the same run is 409.
+
 ## Bridge context used
 
 `ctx.executeTurn` (the same bridge-owned turn goals use), `ctx.registerChat`,

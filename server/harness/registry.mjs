@@ -225,7 +225,9 @@ function newParseState() {
 /**
  * Spawn the harness executable, parse JSONL from stdout, and deliver
  * SDK-shaped events to `onEvent`. Resolves with { events, rawStdout,
- * rawStderr, exitCode, resumeId, error, timedOut, stopped }.
+ * rawStderr, exitCode, resumeId, error, timedOut, stopped, spawnError,
+ * startedAt, durationMs }. A spawn failure resolves too (exitCode null,
+ * spawnError set) so a cold start can be named instead of thrown.
  */
 export function runExternalHarness({
   adapter,
@@ -240,12 +242,14 @@ export function runExternalHarness({
   onEvent = () => {},
   terminate,
 }) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const events = [];
+    const startedAt = Date.now();
     let rawStdout = "";
     let rawStderr = "";
     let pending = "";
     let settled = false;
+    let spawnError = "";
     let timedOut = false;
     let timeoutKind = '';
     let stopped = false;
@@ -344,11 +348,15 @@ export function runExternalHarness({
       if (abortHandler && signal) signal.removeEventListener("abort", abortHandler);
       if (pending.trim()) handleLine(pending);
       if (error) {
-        reject(error);
-        return;
+        // A spawn failure (ENOENT, EACCES) is a cold start, not an answer:
+        // it resolves like any other exit so the caller can say what it was.
+        spawnError = String(error?.code || error?.message || error);
+        if (!rawStderr.trim()) rawStderr = String(error?.message || error);
+        exitCode = null;
       }
       let failure = "";
-      if (timedOut) failure = timeoutKind === 'inactivity'
+      if (spawnError) failure = `${adapter.label} could not be started: ${spawnError}`;
+      else if (timedOut) failure = timeoutKind === 'inactivity'
         ? `${adapter.label} stopped after ${formatDuration(inactivityMs)} without activity. Retry to continue.`
         : `${adapter.label} stopped after ${formatDuration(timeoutMs)} (maximum runtime). Retry to continue.`;
       else if (stopped) failure = "chat stopped by the user";
@@ -369,6 +377,9 @@ export function runExternalHarness({
         timeoutKind,
         stopped,
         stalled,
+        spawnError,
+        startedAt,
+        durationMs: Date.now() - startedAt,
       });
     };
 
@@ -382,7 +393,7 @@ export function runExternalHarness({
       signal.addEventListener("abort", abortHandler, { once: true });
     }
 
-    child.on("error", (error) => finish(error));
+    child.on("error", (error) => finish(error, null));
     child.on("close", (code) => finish(null, code));
   });
 }

@@ -66,7 +66,22 @@ export function RunList({ runs = [], tasks = [], agents = [], copy = {}, locale 
 
 function RunRow({ run, agent, linked, copy, locale, now, AgentAvatar, api, onHandoff, focused }) {
   const [stopping, setStopping] = useState(false);
+  const [retry, setRetry] = useState({ busy: false, note: "" });
   const live = isLiveRun(run);
+  // A turn the restart cut short (ADR-0123): Retry sends the same request
+  // again through the member's queue; the row then says it was retried.
+  const retryable = run.status === "interrupted" && run.retryable !== false && !run.retryItemId && Boolean(api);
+
+  async function retryRun() {
+    if (!api || retry.busy) return;
+    setRetry({ busy: true, note: "" });
+    try {
+      const data = await api(`/api/runs/${encodeURIComponent(run.id)}/retry`, { method: "POST" });
+      setRetry({ busy: false, note: data?.paused ? copy.retryQueuedPaused || "Queued. The member's queue is paused; resume it to run." : copy.retryQueued || "Queued; it runs when the member is free." });
+    } catch (error) {
+      setRetry({ busy: false, note: error?.message || copy.retryFailed || "Could not retry." });
+    }
+  }
   const statusWord = runStatusWord(run, copy);
   const meta = runMetaParts(run, agent, { copy, linked });
   const title = trimTitle(run.title) || copy.chatRun || "chat reply";
@@ -98,6 +113,11 @@ function RunRow({ run, agent, linked, copy, locale, now, AgentAvatar, api, onHan
               {copy.stop || "Stop"}
             </Button>
           ) : null}
+          {retryable ? (
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs text-muted-foreground" onClick={retryRun} disabled={retry.busy}>
+              {copy.retry || "Retry"}
+            </Button>
+          ) : null}
           {onHandoff ? (
             <Button
               type="button"
@@ -121,6 +141,7 @@ function RunRow({ run, agent, linked, copy, locale, now, AgentAvatar, api, onHan
           {statusWord ? <span className={cn(run.status === "failed" ? "text-destructive" : "text-amber-700 dark:text-amber-300")}>{statusWord} · </span> : null}
           {meta.join(" · ")}
         </p>
+        {retry.note ? <p className="mt-0.5 text-xs text-muted-foreground" role="status">{retry.note}</p> : null}
         <RunActivity run={run} copy={copy} api={api} initialOpen={focused} />
       </div>
     </article>

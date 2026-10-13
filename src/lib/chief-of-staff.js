@@ -2,6 +2,7 @@
 // proposes a few concrete improvements. It is deliberately dull. Five rules,
 // each with evidence you can point at:
 //
+//   0. A reply that failed is not a sample of work: it is never learnt from.
 //   1. A failure that keeps happening is worth remembering.
 //   2. A tool the work kept needing and it did not have is a gap to fill.
 //   3. A command it runs often enough is a routine worth naming as a skill.
@@ -249,7 +250,31 @@ function empty() {
 }
 
 function isFailure(record) {
+  if (!isWorkSample(record)) return false;
   return String(record?.status || "") === "failed" || /\bfailed\b/i.test(String(record?.summary || ""));
+}
+
+/**
+ * Text that describes the engine failing to answer rather than the member's
+ * work. A reply that never happened ("Reply failed", "could not answer") or
+ * a runtime that did not start (unknown error, exit code, disk, sign-in, a
+ * restart) says nothing about how the member works; it must never become a
+ * memory. ADR-0123 records the night it did.
+ */
+const ERROR_REPLY_RE = /^reply failed\b|could not answer|an unknown error occurred|\(unexpected\)|exited with code|exited \d+|could not be started|not signed in|not logged in|no space left|disk is nearly full|produced no events|stopped after .* without activity|maximum runtime|interrupted when squad restarted|squad restarted|bridge restarted|cold start|before it read the request|rejected the command|agent stream failed|returned no chat text|is not ready \(/i;
+
+/** True when the record is a reply that failed, not a sample of work. */
+export function isErrorReply(record) {
+  if (!record || typeof record !== "object") return false;
+  if (String(record.status || "") === "error") return true;
+  if (String(record.eventName || "") === "chat.finished" && String(record.status || "") === "failed") return true;
+  const text = `${record.summary || ""} ${record.body || ""}`.replace(/\s+/g, " ").trim();
+  return ERROR_REPLY_RE.test(text);
+}
+
+/** A record the review may learn from: something the member actually did. */
+export function isWorkSample(record) {
+  return Boolean(record) && typeof record === "object" && !isErrorReply(record);
 }
 
 /** "Run failed: the build needs Node 24" -> "the build needs Node 24". */

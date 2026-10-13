@@ -114,6 +114,7 @@ export function runMetaParts(run, agent, { copy = {}, linked = false } = {}) {
 export function runStatusWord(run, copy = {}) {
   const labels = copy.statusLabels || {};
   if (run?.status === "failed") return labels.failed || "failed";
+  if (run?.status === "interrupted") return run?.retryItemId ? labels.retried || "interrupted · retried" : labels.interrupted || "interrupted by a restart";
   if (run?.status === "stopped") return labels.stopped || "stopped";
   if (run?.status === "queued") return labels.queued || "queued";
   return "";
