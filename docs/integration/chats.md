@@ -3,6 +3,7 @@
 Module files:
 
 - `server/chats/store.mjs` — `ChatStore` over `<squadStateDir>/chats/<memberId>/<chatId>.json`; `buildChatRecord()`, `boundMessages()`, `chatSummary()` (pure).
+- `server/chats/recall.mjs` — `buildRecall()` (pure), `collectRecallSources()`; the block is appended to the profile on every direct-message turn (ADR-0115).
 - `server/chats/sessions.mjs` — read, capture, clear and restore a member's harness resume ids (`<agentHome>/harness-sessions.json`).
 - `server/routes/chats.route.mjs` — auto-loaded route plug-in.
 - `server/runs/history.mjs` — finished runs persisted to `<appStateDir>/run-history.json` and restored at boot.
@@ -20,6 +21,7 @@ Module files:
 | `GET /api/members/:id/chats/:chatId` | the record: summary fields plus `messages` and `sessions` |
 | `POST /api/members/:id/chats/:chatId/open` | `{ chat, archived, sessionsRestored }`. Body `{ current? }` with the same shape as the POST above puts the current conversation away first. Restores the chat's session ids and removes it from the list; 404 once opened |
 | `DELETE /api/members/:id/chats/:chatId` | `{ removed }` |
+| `GET /api/members/:id/recall` | `{ text, counts }` — the "Earlier conversations" block the member receives on its next direct-message turn (ADR-0115); `counts` is `{ ownChats, otherChats, otherTurns, channels }` |
 | `POST /api/chat/reset` | `{ agentId, closed, forgotten }` — `forgotten` is the number of harness ids cleared |
 
 A summary is `{ id, memberId, title, startedAt, endedAt, createdAt, harness, workspace, messageCount, turns, limited, resumable }`. `limited` means stream events or trace events were dropped to fit; `resumable` means the record holds at least one engine session id.

@@ -12,6 +12,8 @@
 //                                                 restores the chosen chat's harness session ids and
 //                                                 removes it from the list → { chat, archived }
 //   DELETE /api/members/:id/chats/:chatId         { removed }
+//   GET    /api/members/:id/recall                { text, counts } — the "Earlier conversations" block
+//                                                 the member receives on its next direct-message turn
 //
 // A summary is { id, memberId, title, startedAt, endedAt, createdAt, harness,
 // workspace, messageCount, turns, limited, resumable }.
@@ -20,6 +22,7 @@ import { join } from "node:path";
 
 import { ChatStore, buildChatRecord, validChatId, validMemberId } from "../chats/store.mjs";
 import { captureHarnessSessions, restoreHarnessSessions } from "../chats/sessions.mjs";
+import { buildRecall, collectRecallSources } from "../chats/recall.mjs";
 
 export const name = "chats";
 
@@ -28,6 +31,7 @@ export const name = "chats";
 // swallowed (ADR-0113, "what was learnt"). The store trims to 4 MB.
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
 const LIST = /^\/api\/members\/([^/]+)\/chats$/;
+const RECALL = /^\/api\/members\/([^/]+)\/recall$/;
 const ONE = /^\/api\/members\/([^/]+)\/chats\/([^/]+)$/;
 const OPEN = /^\/api\/members\/([^/]+)\/chats\/([^/]+)\/open$/;
 
@@ -81,7 +85,21 @@ export async function handle(req, res, url, ctx) {
   if (!store) return false;
   const context = ctx || bridge;
 
-  let match = url.pathname.match(OPEN);
+  // What the member will be told about earlier conversations on its next
+  // turn (ADR-0115), so a person can see it rather than guess.
+  let match = url.pathname.match(RECALL);
+  if (match && req.method === "GET") {
+    try {
+      const memberId = memberIdFrom(match);
+      const sources = await collectRecallSources({ memberId, store, runs: context.runs, readChannelsState: context.readChannelsState, readStatus: () => context.readOptionalJsonFile(join(context.squadStateDir, "web-status.json")) });
+      context.json(res, 200, { success: true, data: buildRecall(sources) });
+    } catch (error) {
+      fail(res, context, error);
+    }
+    return true;
+  }
+
+  match = url.pathname.match(OPEN);
   if (match && req.method === "POST") {
     try {
       const memberId = memberIdFrom(match);

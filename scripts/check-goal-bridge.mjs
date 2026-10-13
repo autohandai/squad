@@ -45,7 +45,7 @@ if(args[0]==='--version'){console.log('codex 1.0.0');process.exit(0);}
 if(args[0]==='login'){console.log('Logged in using fixture');process.exit(0);}
 if(args[0]==='auth'){console.log(JSON.stringify({loggedIn:true,authMethod:'fixture'}));process.exit(0);}
 const claude=args[0]==='-p';
-const prompt=claude?args[1]:args.at(-1);
+const prompt=(claude?args[1]:args.at(-1)).split('</operating_instructions>').pop();// the user prompt; the profile (with recall of earlier turns, ADR-0115) must not decide the fixture's reply
 const member=process.env.AUTOHAND_SQUAD_MEMBER;
 const previous=fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse):[];
 const turn=previous.filter(x=>x.member===member&&x.kind==='start').length+1;

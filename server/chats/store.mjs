@@ -91,13 +91,24 @@ export function buildChatRecord(memberId, input, { id, now = new Date().toISOStr
     turns: countTurns(bounded.messages),
     limited: bounded.limited,
     sessions: isPlainObject(sessions) ? sessions : {},
+    digest: chatDigest(bounded.messages),
     messages: bounded.messages,
   };
+}
+
+/** A two-line digest for recall (ADR-0115): what was asked first, what was answered last. */
+export function chatDigest(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  const firstQuestion = list.find((message) => message?.role === "user" && String(message.body || "").trim());
+  const lastReply = [...list].reverse().find((message) => message?.role === "agent" && String(message.body || "").trim() && message.status !== "error");
+  const clip = (text) => String(text || "").replace(/\s+/g, " ").trim().slice(0, 400);
+  return { firstQuestion: clip(firstQuestion?.body), lastReply: clip(lastReply?.body) };
 }
 
 export function chatSummary(record) {
   const sessionCount = Object.values(record?.sessions || {}).reduce((total, entries) => total + Object.keys(isPlainObject(entries) ? entries : {}).length, 0);
   return {
+    digest: isPlainObject(record?.digest) ? record.digest : chatDigest(record?.messages),
     id: record.id,
     memberId: record.memberId,
     title: record.title,
@@ -137,20 +148,63 @@ export class ChatStore {
     }
   }
 
-  /** Newest first. Reads the files, not an index, so a lost index cannot hide a chat. */
+  /**
+   * Newest first. `index.json` (summaries with digests, rewritten on every
+   * save and remove) answers the list and recall without opening the
+   * records; when it is missing the files are scanned and it is rebuilt.
+   */
   async list(memberId) {
+    const dir = this.memberDir(memberId);
+    const indexed = await this.readIndex(dir);
+    if (indexed) return indexed;
+    return this.rebuildIndex(memberId);
+  }
+
+  async readIndex(dir) {
+    try {
+      const parsed = JSON.parse(await readFile(join(dir, "index.json"), "utf8"));
+      return Array.isArray(parsed?.chats) ? parsed.chats.filter((item) => isPlainObject(item) && typeof item.id === "string") : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async rebuildIndex(memberId) {
     const dir = this.memberDir(memberId);
     let names = [];
     try {
-      names = (await readdir(dir)).filter((name) => name.endsWith(".json"));
+      names = (await readdir(dir)).filter((name) => name.endsWith(".json") && name !== "index.json");
     } catch {
       return [];
     }
     const records = await Promise.all(names.map((name) => this.readRecord(join(dir, name))));
-    return records
+    const chats = records
       .filter(Boolean)
       .map(chatSummary)
       .sort((a, b) => Date.parse(b.endedAt || b.createdAt || 0) - Date.parse(a.endedAt || a.createdAt || 0));
+    // Always rewrite: removing the last chat must empty the index, not leave it stale.
+    await this.writeIndex(dir, chats).catch(() => {});
+    return chats;
+  }
+
+  async writeIndex(dir, chats) {
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const path = join(dir, "index.json");
+    const temp = `${path}.${process.pid}.tmp`;
+    await writeFile(temp, JSON.stringify({ version: 1, chats }), "utf8");
+    await rename(temp, path);
+  }
+
+  /** Every member's summaries, for recall across the squad (ADR-0115). */
+  async listAll() {
+    let members = [];
+    try {
+      members = await readdir(this.root);
+    } catch {
+      return [];
+    }
+    const lists = await Promise.all(members.filter(validMemberId).map((memberId) => this.list(memberId).catch(() => [])));
+    return lists.flat();
   }
 
   async get(memberId, chatId) {
@@ -164,6 +218,7 @@ export class ChatStore {
     await writeFile(temp, JSON.stringify(record), "utf8");
     await rename(temp, path);
     await this.prune(record.memberId);
+    await this.rebuildIndex(record.memberId);
     return chatSummary(record);
   }
 
@@ -171,12 +226,13 @@ export class ChatStore {
     const path = this.filePath(memberId, chatId);
     const existed = Boolean(await this.readRecord(path));
     await rm(path, { force: true });
+    if (existed) await this.rebuildIndex(memberId);
     return existed;
   }
 
   /** Keep the newest MAX_CHATS_PER_MEMBER; the rest are deleted oldest first. */
   async prune(memberId) {
-    const summaries = await this.list(memberId);
+    const summaries = await this.rebuildIndex(memberId);
     for (const stale of summaries.slice(MAX_CHATS_PER_MEMBER)) {
       await rm(this.filePath(memberId, stale.id), { force: true });
     }

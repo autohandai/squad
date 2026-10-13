@@ -41,6 +41,8 @@ import { createAgentChannelActions } from "./server/agent-channel-actions.mjs";
 import { createResponderPicker } from "./server/responders/pick.mjs";
 import { createRunHistory, runHistoryPath } from "./server/runs/history.mjs";
 import { clearHarnessSessions } from "./server/chats/sessions.mjs";
+import { ChatStore } from "./server/chats/store.mjs";
+import { buildRecall, collectRecallSources } from "./server/chats/recall.mjs";
 import { normalizeResponder, responderStatus } from "./src/lib/channel-responders.js";
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
 import { memberProfileDefaults } from "./src/lib/member-profiles.js";
@@ -373,6 +375,8 @@ const activeChats = new Map();
 // Finished runs outlive the process (ADR-0113): restored at boot, saved on
 // every finish, bounded to the newest 200.
 const runHistory = createRunHistory({ path: runHistoryPath(appStateDir), runs, log: (message) => logEvent(SEVERITY.INFO, message, { "event.name": "run.history" }) });
+// Previous chats (ADR-0113) read here for recall (ADR-0115); the chats route owns writes.
+const chatStore = new ChatStore({ squadStateDir });
 let nativeGrantKey = await readNativeComputerGrantKey();
 const computerClient = await bundledComputerClient(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR ? resolve(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR) : rootDir).catch(() => null);
 const computerUse = createComputerUse({ stateDir: squadStateDir, rootDir, bridgeUrl: `http://127.0.0.1:${port}`, nativeClient: computerClient, emit: emitBridgeEvent });
@@ -3017,7 +3021,7 @@ async function autohandArgs(input) {
   const prompt = String(input.prompt || "").trim();
   let profile = String(input.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(input, workspace);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const args = ["--path", workspace, "--config", agentRuntime.configPath];
@@ -3105,7 +3109,7 @@ function sdkTransportEnabled(input, mode) {
 }
 
 function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const model = selectedModelForInput(input, permissions, agentRuntime);
@@ -3200,6 +3204,7 @@ const contextLayerOrder = [
   "projectMemory",
   "taskContextPack",
   "userRequest",
+  "recentConversations",
   "toolTranscript",
 ];
 
@@ -3697,6 +3702,22 @@ function assembleContextLayers(mode, payload, agentRuntime) {
       summary: clampSummary(prompt),
     });
   }
+
+  // Earlier conversations (ADR-0115): present on direct-message turns, so a
+  // reader of Work details can see the member was told what came before.
+  const recall = payload?._recall && typeof payload._recall === "object" ? payload._recall : null;
+  layers.push({
+    name: "recentConversations",
+    included: Boolean(recall?.text),
+    source: "bridge:chats",
+    sourceKey: null,
+    sourceRef: "chats+runs+channels",
+    contentHash: recall?.text ? contextHash(recall.text) : null,
+    summary: recall?.text
+      ? clampSummary(`${recall.counts.ownChats} previous chat(s), ${recall.counts.otherTurns + recall.counts.otherChats} from other members, ${recall.counts.channels} channel(s).`)
+      : "",
+    ...(recall?.text ? {} : { reason: payload?.channelId || payload?.channel?.channelId ? "Channel turns carry the thread instead." : "Nothing earlier to recall yet." }),
+  });
 
   // The tool/result transcript is produced while the run executes; recorded as a
   // placeholder layer at assembly time and refreshed from logs in runSummary().
@@ -6531,7 +6552,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   const agentRuntime = await ensureAgentRuntime(payload, workspace);
   const assignment = harnessAssignmentFromAgent(agentRuntime.agent);
   const adapter = getAdapter(assignment);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(payload)].filter(Boolean).join("\n\n");
   const readiness = await assertHarnessReady(assignment, { context: harnessContextFor(assignment.id) });
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const addDirs = [];
@@ -7252,6 +7273,9 @@ function finishChatRun(run, { result = null, error = null, aborted = false } = {
     run.sessionId = String(result.sessionId || "");
     run.durationMs = Number.isFinite(Number(result.durationMs)) ? Number(result.durationMs) : Date.parse(finishedAt) - Date.parse(run.startedAt);
     run.channelActions = Array.isArray(result.channelActions) ? result.channelActions : [];
+    // The chat result carries the context manifest (recall layer included);
+    // the run shows the same one in the Execution panel.
+    if (result.contextLayers && typeof result.contextLayers === "object") run.contextLayers = result.contextLayers;
     run.status = result.declined ? "stopped" : "completed";
     run.exitCode = result.declined ? null : 0;
   } else {
@@ -7271,9 +7295,29 @@ function finishChatRun(run, { result = null, error = null, aborted = false } = {
   runHistory.persist();
 }
 
+// Recall (ADR-0115): the block a member receives about earlier conversations.
+// Direct-message turns only; a channel turn already carries its thread.
+function recallInstructions(payload) {
+  const text = payload?._recall?.text;
+  return typeof text === "string" && text ? text : "";
+}
+
+async function recallForTurn(payload) {
+  if (channelContextFromPayload(payload)) return null;
+  const memberId = sanitizeAgentId(payload.agentId || payload.agent?.id || "");
+  try {
+    const sources = await collectRecallSources({ memberId, store: chatStore, runs, readChannelsState, readStatus: () => readOptionalJsonFile(liveStatusPath) });
+    return buildRecall(sources);
+  } catch (error) {
+    logEvent(SEVERITY.DEBUG, `recall skipped for ${memberId}: ${error?.message || error}`, { "event.name": "chat.recall.skipped", "autohand.member.id": memberId });
+    return null;
+  }
+}
+
 async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.now() }) {
   if (signal?.aborted) throw new Error("chat stopped by the user");
   await memberAvailability.assertCanWork(payload);
+  payload = { ...payload, _recall: await recallForTurn(payload) };
   stream = withWorkProgress(stream);
   let result;
   if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {

@@ -18,6 +18,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { boundMessages, buildChatRecord, chatSummary, chatTitleFrom, MAX_MESSAGES_PER_CHAT } from '../server/chats/store.mjs';
 import { countHarnessSessions, normalizeHarnessSessions } from '../server/chats/sessions.mjs';
+import { buildRecall, turnTitle } from '../server/chats/recall.mjs';
 import { historyRecord, runFromRecord } from '../server/runs/history.mjs';
 import { archivePayload, chatMetaLine, conversationHasWork, messagesForTransfer, restoreConversationEvent, sortChats } from '../src/lib/chat-sessions.js';
 import { applySharedConversationEvent } from '../src/lib/shared-conversations.js';
@@ -38,7 +39,7 @@ assert.equal(bounded.messages[1].workDetailsLimited, true); assert.ok(bounded.me
 assert.throws(() => buildChatRecord('alex', { messages: [] }, { id: 'chat-1' }), /at least one message/);
 const record = buildChatRecord('alex', { messages: [msg(1, 'user', 'Plan the week'), msg(2, 'agent', 'Done')], harness: 'claude', workspace: '/w', startedAt: '2026-10-13T01:00:00.000Z' }, { id: 'chat-1', now: '2026-10-13T02:00:00.000Z', sessions: { claude: { '/w': { resumeId: 's1', updatedAt: 't' } } } });
 assert.equal(record.title, 'Plan the week'); assert.equal(record.turns, 1); assert.equal(record.messageCount, 2);
-assert.deepEqual(chatSummary(record), { id: 'chat-1', memberId: 'alex', title: 'Plan the week', startedAt: '2026-10-13T01:00:00.000Z', endedAt: '2026-10-13T02:00:00.000Z', createdAt: '2026-10-13T02:00:00.000Z', harness: 'claude', workspace: '/w', messageCount: 2, turns: 1, limited: false, resumable: true });
+assert.deepEqual(chatSummary(record), { digest: { firstQuestion: 'Plan the week', lastReply: 'Done' }, id: 'chat-1', memberId: 'alex', title: 'Plan the week', startedAt: '2026-10-13T01:00:00.000Z', endedAt: '2026-10-13T02:00:00.000Z', createdAt: '2026-10-13T02:00:00.000Z', harness: 'claude', workspace: '/w', messageCount: 2, turns: 1, limited: false, resumable: true });
 assert.deepEqual(normalizeHarnessSessions({ claude: { '/w': { resumeId: 's1', updatedAt: 't' }, '/x': { resumeId: '' } }, 'bad id!': { '/w': { resumeId: 'z' } }, codex: 'nope' }), { claude: { '/w': { resumeId: 's1', updatedAt: 't' } } });
 assert.equal(countHarnessSessions({ claude: { '/w': { resumeId: 's1' }, '/v': { resumeId: 's2' } }, codex: { '/w': { resumeId: 't1' } } }), 3);
 assert.equal(historyRecord({ id: 'r', status: 'running', logs: [] }), null, 'live runs are never recorded');
@@ -66,7 +67,25 @@ const later = applySharedConversationEvent(restored, { type: 'message.append', m
 assert.equal(later.alex.length, 151, 'the conversation continues after a restore');
 assert.equal(chatMetaLine({ turns: 1, harness: 'claude', endedAt: 't' }, { harnessName: (id) => id.toUpperCase(), relative: () => '2h ago' }), '1 turn · CLAUDE · 2h ago');
 assert.deepEqual(sortChats([{ id: 'a', endedAt: '2026-10-13T01:00:00.000Z' }, { id: 'b', endedAt: '2026-10-13T03:00:00.000Z' }]).map((c) => c.id), ['b', 'a']);
-console.log('Chat pure checks passed: bounds, record, sessions, history, restore event.');
+assert.equal(turnTitle('Pursue this explicit goal until it is achieved or you need a human decision:\nShip the release\n\nWork in the currently assigned harness'), 'goal: Ship the release', 'goal turns recall the goal, not the preamble');
+assert.equal(turnTitle('Plain question'), 'Plain question');
+const recallSources = { memberId: 'alex', members: [{ id: 'alex', name: 'Alex' }, { id: 'noah', name: 'Noah' }],
+  ownChats: [{ memberId: 'alex', title: 'Plan the week', turns: 2, endedAt: '2026-10-13T01:00:00.000Z', digest: { lastReply: 'Here is the plan, api_key=sk-abcdef123456 kept' } }],
+  otherChats: [{ memberId: 'noah', title: 'Fix the build', turns: 1, endedAt: '2026-10-13T00:00:00.000Z', digest: { lastReply: 'Green.' } }],
+  otherTurns: [{ agentId: 'noah', title: 'Check CI', reply: 'CI is green.', finishedAt: '2026-10-13T02:00:00.000Z' }, { agentId: 'alex', title: 'mine', reply: 'x', finishedAt: '2026-10-13T02:00:00.000Z' }],
+  channels: [{ id: 'c1', name: 'leads', memberIds: ['alex', 'noah'] }, { id: 'c2', name: 'private', memberIds: ['noah'] }],
+  messages: [{ channelId: 'c1', role: 'user', authorName: 'Igor', body: 'Any update?', createdAt: '2026-10-13T02:30:00.000Z' }, { channelId: 'c1', role: 'agent', agentId: 'noah', body: 'Working on it', createdAt: '2026-10-13T02:31:00.000Z' }, { channelId: 'c2', role: 'user', authorName: 'Igor', body: 'secret channel', createdAt: '2026-10-13T02:32:00.000Z' }] };
+const built = buildRecall(recallSources, { now: Date.parse('2026-10-13T03:00:00.000Z') });
+assert.deepEqual(built.counts, { ownChats: 1, otherChats: 1, otherTurns: 1, channels: 1 });
+assert.ok(built.text.includes('"Plan the week" (2 turns)') && built.text.includes('2 h ago'), built.text);
+assert.ok(built.text.includes('api_key=[redacted]'), 'secrets in digests are redacted');
+assert.ok(built.text.includes('Noah, 1 h ago: asked "Check CI", replied "CI is green."'), built.text);
+assert.ok(!built.text.includes('"mine"'), 'the member\'s own live turns are not listed as other members\' work');
+assert.ok(built.text.includes('#leads') && built.text.includes('Igor: "Any update?" · Noah: "Working on it"'), built.text);
+assert.ok(!built.text.includes('secret channel'), 'channels the member is not in are left out');
+assert.equal(buildRecall({ memberId: 'alex' }).text, '', 'nothing earlier: no block');
+assert.ok(buildRecall(recallSources, { budget: 300 }).text.length <= 300, 'the block respects its budget');
+console.log('Chat pure checks passed: bounds, record, sessions, history, restore event, recall.');
 
 // ---------- bridge ----------
 const directory = await mkdtemp(join(tmpdir(), 'squad-chats-'));
@@ -174,6 +193,29 @@ process.exit(0);
   // 3. The next turn starts a new session; opening the chat brings the old one back.
   await chat('alex', 'Something new');
   assert.equal((await calls()).at(-1).resume, '', 'after New chat the engine is not resumed');
+
+  // 3a. Recall (ADR-0115): the new turn is told about the chat that was put away,
+  //     and another member is told what Alex was asked.
+  const newTurnArgs = (await calls()).at(-1).args;
+  const systemPrompt = newTurnArgs[newTurnArgs.indexOf('--append-system-prompt') + 1] || '';
+  assert.ok(systemPrompt.includes('Earlier conversations'), 'the turn after New chat carries the recall block');
+  assert.ok(systemPrompt.includes('Look at the readme'), 'it names the chat that was put away');
+  assert.ok(systemPrompt.includes('Inspected the readme.'), 'with its last reply');
+  const recall = (await api('/api/members/alex/recall')).data;
+  assert.equal(recall.counts.ownChats, 1, 'GET recall shows one previous chat for alex');
+  assert.ok(recall.text.startsWith('Earlier conversations'), recall.text.slice(0, 80));
+  const latestRun = (await api('/api/runs')).data.find((run) => run.agentId === 'alex');
+  const layer = latestRun.contextLayers.layers.find((item) => item.name === 'recentConversations');
+  assert.equal(layer?.included, true, 'the context manifest records that recall was included');
+  await chat('bob', 'Hello from bob');
+  const bobArgs = (await calls()).at(-1).args;
+  const bobPrompt = bobArgs[bobArgs.indexOf('--append-system-prompt') + 1] || '';
+  assert.ok(bobPrompt.includes('What other members were asked recently'), 'another member hears what Alex was asked');
+  assert.ok(bobPrompt.includes('Something new'), 'including the live turn that never left the browser');
+  const bobRecall = (await api('/api/members/bob/recall')).data;
+  assert.equal(bobRecall.counts.ownChats, 0); assert.ok(bobRecall.counts.otherTurns >= 1); assert.equal(bobRecall.counts.otherChats, 2, 'alex\'s put-away chat and the heavy member\'s');
+  const chatOnlyRun = (await api('/api/runs')).data.find((run) => run.agentId === 'bob');
+  assert.equal(chatOnlyRun.status, 'completed');
   const secondSession = await resumeIdOnDisk();
   assert.notEqual(secondSession, firstSession);
   const opened = await api(`/api/members/alex/chats/${archived.data.id}/open`, { current: { messages: [{ id: 'u2', role: 'user', body: 'Something new', startedAt: '2026-10-13T02:00:00.000Z' }], harness: 'claude', workspace: rootDir } });
