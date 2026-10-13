@@ -16,6 +16,7 @@ import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstruct
 import { createProductTelemetry, readProductTelemetryConfig } from "./server/product-telemetry.mjs";
 import { MemberAvailability } from "./server/members/availability.mjs";
 import { GoalManager } from "./server/goal-manager.mjs";
+import { contextUsageFromUsage } from "./server/queues/context-gauge.mjs";
 import { ProjectObserver } from "./server/project-observer.mjs";
 import { createProjectObserverReview } from "./server/project-observer-review.mjs";
 import { cleanWorkResult, withWorkProgress } from "./server/work-progress.mjs";
@@ -438,6 +439,11 @@ bridgeEvents.on("computer-use.evidence", (evidence) => {
   const run = runs.get(evidence.runId);
   if (run) run.computerUse = { sessionId: evidence.sessionId, runId: evidence.runId, files: evidence.files };
 });
+// One bridge-owned turn launcher for goals and member queues (ADR-0111):
+// the same chat turn the streaming route runs, with events as callbacks.
+const executeBridgeTurn = (payload, { signal, onEvent }) => executeChatTurn(payload, {
+  signal, stream: { send: onEvent }, startedAt: Date.now(),
+});
 const goals = new GoalManager({
   squadStateDir,
   assertCanWork: async (payload) => {
@@ -445,10 +451,18 @@ const goals = new GoalManager({
     await memberAvailability.assertCanWork(payload);
   },
   emit: emitBridgeEvent,
-  executeTurn: (payload, { signal, onEvent }) => executeChatTurn(payload, {
-    signal, stream: { send: onEvent }, startedAt: Date.now(),
-  }),
+  executeTurn: executeBridgeTurn,
 });
+// Everything the bridge holds for a member that means "working": the queue
+// dispatcher waits for all of it before starting the next follow-up.
+async function isMemberBusy(memberId) {
+  const id = String(memberId || "");
+  if (!id) return false;
+  if (activeChats.get(id)?.size || observerRunStarts.get(id)) return true;
+  if (sdkSessions?.stats().sessions.some((session) => session.agentId === id && session.busy)) return true;
+  if ([...runs.values()].some((run) => run.agentId === id && isLiveRun(run))) return true;
+  return (await goals.list(id)).some((goal) => goal.status === "running");
+}
 
 const observerRunStarts = new Map();
 let observerAccountTransition = false;
@@ -5332,10 +5346,14 @@ function usageMetadata({ payload = {}, agentRuntime = {}, transport = "", status
     tokens: numericField(traceUsage, ["tokens", "totalTokens", "total_tokens"]) || inputTokens + outputTokens,
     inputTokens,
     outputTokens,
+    // Context read on the last request and the model window when the harness
+    // reports one; the member context gauge is computed from these (ADR-0111).
+    ...contextUsageFromUsage(traceUsage),
   };
 }
 
 function recordUsageTelemetry(event, metadata) {
+  emitBridgeEvent(event, metadata);
   void appendTelemetryEvent(event, metadata).catch((error) => {
     console.warn(`usage telemetry failed: ${error.message}`);
   });
@@ -7212,6 +7230,17 @@ function routeContext() {
     goals,
     projectObserver,
     availability: memberAvailability,
+    executeTurn: executeBridgeTurn,
+    registerChat,
+    isMemberBusy,
+    modelContextWindow: ({ provider = "", model = "" } = {}) => {
+      const id = String(model || "").trim();
+      if (!id) return 0;
+      // Only the Autohand AI catalog carries window sizes today; other
+      // providers report none, and no window means no gauge.
+      if (provider && provider !== "autohandai") return 0;
+      return Number(autohandAiModels().find((entry) => entry.id === id)?.contextWindow) || 0;
+    },
     computerUse,
     authorizeComputerUseGrant,
     connectors,

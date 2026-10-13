@@ -252,7 +252,13 @@ export function parseLine(line, state) {
 
   if (type === "result") {
     const events = [];
-    if (event.usage) events.push({ type: "usage", usage: event.usage, costUsd: event.total_cost_usd, timestamp });
+    if (event.usage) {
+      // Current Claude Code builds also report per-model usage with the
+      // model's context window; the member context gauge needs that window
+      // (ADR-0111). Older builds omit it and the gauge stays absent.
+      const modelUsage = event.modelUsage && typeof event.modelUsage === "object" ? event.modelUsage : null;
+      events.push({ type: "usage", usage: modelUsage ? { ...event.usage, modelUsage } : event.usage, costUsd: event.total_cost_usd, timestamp });
+    }
     if (event.is_error || String(event.subtype || "").startsWith("error")) {
       events.push({ type: "error", message: event.result || event.error || `Claude Code ended with ${event.subtype || "an error"}`, timestamp });
     } else {

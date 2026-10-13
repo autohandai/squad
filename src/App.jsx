@@ -316,6 +316,9 @@ import { useComputerUseEvidence } from "@/components/computer-use/useComputerUse
 import { evidenceForMessage } from "@/components/computer-use/model";
 import { goalMessagePatch, goalProgress, isGoalRunning, latestMemberGoal, reconcileGoalMessages } from "@/lib/member-goals";
 import { reconcileRemoteTurns, remoteAccessDetail } from "@/lib/remote-access";
+import { isQueueRunning, movedQueueIds, reconcileQueueMessages } from "@/lib/member-queue";
+import { FollowUpQueue } from "@/components/chat/FollowUpQueue";
+import { ContextGaugeMeta, ContextWarningLine } from "@/components/chat/ContextGauge";
 import { taskProgressFromMessage } from "@/lib/task-progress";
 import { SidebarUpdateNotice } from "@/components/account/SidebarUpdateNotice";
 import { identifySquadTelemetry, recordSignInStarted, recordMemberCreated, recordMemberUsed, recordFeatureUsed } from "@/lib/product-telemetry";
@@ -5955,6 +5958,18 @@ function App() {
       throw error;
     }
   }, [localeResolution.locale]);
+  // Durable member queues and the context gauge live on the bridge (ADR-0111);
+  // the browser only mirrors them, like goals.
+  const [memberQueues, setMemberQueues] = useState({});
+  const [memberContext, setMemberContext] = useState({});
+  const refreshMemberQueues = useCallback(async () => {
+    const data = await api("/api/queues");
+    const queues = data?.queues || {};
+    setMemberQueues(queues);
+    setMemberContext(data?.context || {});
+    setMessagesByAgent((current) => reconcileQueueMessages(current, queues, membersRef.current, localeResolution.locale));
+    return queues;
+  }, [localeResolution.locale]);
   useEffect(() => {
     let cancelled = false;
     let pending = false;
@@ -5968,6 +5983,7 @@ function App() {
           const turns = Array.isArray(data?.turns) ? data.turns : [];
           if (turns.length) setMessagesByAgent((current) => reconcileRemoteTurns(current, turns, membersRef.current, localeResolution.locale));
         }),
+        refreshMemberQueues(),
         api("/api/members/breaks").then((records) => {
           if (cancelled) return;
           setAgents((current) => {
@@ -5989,12 +6005,25 @@ function App() {
     void pollMemberWork();
     const timer = window.setInterval(pollMemberWork, 2500);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [refreshMemberGoals, localeResolution.locale]);
+  }, [refreshMemberGoals, refreshMemberQueues, localeResolution.locale]);
 
   async function controlMemberGoal(action, goal) {
     const updated = await api(`/api/goals/${encodeURIComponent(goal.id)}/${action}`, { method: "POST" });
     await refreshMemberGoals();
     return updated;
+  }
+  async function controlMemberQueue(memberId, action, body = {}) {
+    const member = encodeURIComponent(memberId);
+    let result;
+    if (action === "edit") result = await api(`/api/queues/items/${encodeURIComponent(body.id)}/update`, { method: "POST", body: JSON.stringify({ text: body.text }) });
+    else if (action === "cancel") result = await api(`/api/queues/items/${encodeURIComponent(body.id)}/cancel`, { method: "POST" });
+    else if (action === "move") {
+      const ids = movedQueueIds(memberQueues[memberId], body.id, body.delta);
+      if (!ids) return null;
+      result = await api(`/api/queues/${member}/reorder`, { method: "POST", body: JSON.stringify({ ids }) });
+    } else result = await api(`/api/queues/${member}/${action}`, { method: "POST" });
+    await refreshMemberQueues();
+    return result;
   }
   const remoteMembersContextValue = useMemo(
     () => ({ remoteByMember, refreshRemoteMembers }),
@@ -6923,6 +6952,17 @@ function App() {
     const collaborationContext = buildCollaborationProfileContext(launch.collaboration, agents, workspaces);
     const teamContext = buildTeammateContext(agent, agents, { hop: Number(launch.hop) || 0 });
     const profile = [buildAgentProfile(agent, selectedWorkspace), teamContext, collaborationContext].filter(Boolean).join("\n\n");
+    // A follow-up sent while the member is busy goes to its durable queue on
+    // the bridge (ADR-0111); it enters the conversation when the dispatcher
+    // runs it, through the same reconciliation goals use.
+    if (launch.queue) {
+      const item = await api(`/api/queues/${encodeURIComponent(agentId)}/items`, {
+        method: "POST",
+        body: JSON.stringify({ requestId, squadMembers: agents.map(member => channelActionMember(member)), agentId, mode: "prompt", text: prompt, workspace: selectedWorkspace, policy: launch.policy, model: launch.model, profile, agent: channelActionMember(agent, selectedWorkspace) }),
+      });
+      void refreshMemberQueues().catch(() => {});
+      return { queued: true, item };
+    }
     touchAgent(agentId, startedAt);
     appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time, startedAt, requestId, ...checkpoint });
 
@@ -8989,6 +9029,7 @@ function App() {
             locale={localeResolution.locale} copy={localeCopy} onStart={startAutohand} onChat={sendChat}
             onLocalMessage={appendMessage} onNewConversation={(id) => startNewConversation(id, { preserveRoute: true })}
             goals={memberGoals.filter((goal) => goal.agentId === member.id)} goalsError={memberGoalsError} onGoalAction={controlMemberGoal} onMemberBreak={setMemberBreak}
+            queue={memberQueues[member.id]} contextGauge={memberContext[member.id]} onQueueAction={controlMemberQueue}
             openTerminal={openTerminal} navigate={quickNavigate} taskPanelOpen={taskPanelOpen} setTaskPanelOpen={setTaskPanelOpen}
             tasks={tasks.filter((task) => taskBelongsToAgent(task, member.id))} automations={automations.filter((item) => automationBelongsToAgent(item, member.id))}
             setAutomations={setAutomations} runAutomation={runAutomation} updateAgent={updateAgent} chatSettings={chatSettings}
@@ -9342,6 +9383,9 @@ function App() {
                 goals={memberGoals.filter((goal) => goal.agentId === activeAgent?.id)}
                 goalsError={memberGoalsError}
                 onGoalAction={controlMemberGoal}
+                queue={memberQueues[activeAgent?.id]}
+                contextGauge={memberContext[activeAgent?.id]}
+                onQueueAction={controlMemberQueue}
                 onMemberBreak={setMemberBreak}
                 onLocalMessage={appendMessage}
                 onNewConversation={startNewConversation}
@@ -13088,6 +13132,9 @@ function Conversation({
   goals = [],
   goalsError = "",
   onGoalAction,
+  queue = null,
+  contextGauge = null,
+  onQueueAction,
   onMemberBreak,
   onNewConversation,
   openTerminal,
@@ -13181,9 +13228,9 @@ function Conversation({
   const [goalActionBusy, setGoalActionBusy] = useState(false);
   const [goalActionError, setGoalActionError] = useState("");
   const currentGoal = latestMemberGoal(goals, agent.id);
-  const [queuedFollowupsByAgent, setQueuedFollowupsByAgent] = useState({});
+  const [queueActionBusy, setQueueActionBusy] = useState(false);
+  const [queueActionError, setQueueActionError] = useState("");
   const chatSendingRef = useRef({});
-  const queuedFollowupsRef = useRef({});
   const activeChatControllerRef = useRef({});
   const promptRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -13201,7 +13248,7 @@ function Conversation({
     onInitialPromptConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPrompt, agent?.id]);
-  const chatSending = chatSendingByAgent[agent.id] === true || isGoalRunning(currentGoal);
+  const chatSending = chatSendingByAgent[agent.id] === true || isGoalRunning(currentGoal) || isQueueRunning(queue);
   // The live label the stream last reported, so the composer can say what the
   // member is doing rather than leaving the person watching a still page.
   const liveActivityLabel = useMemo(() => {
@@ -13212,7 +13259,6 @@ function Conversation({
     }
     return `${agent.name} ${copy.isWorking || "is working…"}`;
   }, [messages, agent.name, copy]);
-  const queuedFollowups = queuedFollowupsByAgent[agent.id] || [];
   // Goal 09: recommend recipes from the current request, scoped to this member's role.
   // Typing must stay responsive: recipe matching and permission warnings run
   // against a deferred copy of the prompt, so keystrokes never wait on them.
@@ -13559,41 +13605,29 @@ function Conversation({
     setChatSendingByAgent((current) => ({ ...current, [agentId]: nextValue }));
   }
 
-  function setQueuedFollowupItems(agentId, nextItems) {
-    queuedFollowupsRef.current = { ...queuedFollowupsRef.current, [agentId]: nextItems };
-    setQueuedFollowupsByAgent((current) => ({ ...current, [agentId]: nextItems }));
+  async function runQueueAction(action, body) {
+    if (!onQueueAction || queueActionBusy) return null;
+    setQueueActionBusy(true);
+    setQueueActionError("");
+    try {
+      return await onQueueAction(agent.id, action, body);
+    } catch (error) {
+      setQueueActionError(`Could not ${action === "edit" ? "save" : action} the follow-up: ${error.message}`);
+      return null;
+    } finally {
+      setQueueActionBusy(false);
+    }
   }
 
-  function updateQueuedFollowups(updater) {
-    const nextItems = updater(queuedFollowupsRef.current[agent.id] || []);
-    setQueuedFollowupItems(agent.id, nextItems);
-  }
-
-  function queuedFollowupFromPrompt(nextPrompt) {
-    return {
-      id: `followup-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      prompt: nextPrompt.trim(),
-      workspace,
-      policy,
-      model,
-    };
-  }
-
+  // A follow-up while the member is busy lands in its durable queue on the
+  // bridge; the dispatcher sends it once the member is free (ADR-0111).
   function queuePrompt(nextPrompt) {
     const queuedPrompt = String(nextPrompt || "").trim();
     if (!queuedPrompt) return;
-    updateQueuedFollowups((items) => [...items, queuedFollowupFromPrompt(queuedPrompt)]);
-    window.requestAnimationFrame(() => promptRef.current?.focus());
-  }
-
-  function updateQueuedFollowupPrompt(itemId, nextPrompt) {
-    updateQueuedFollowups((items) =>
-      items.map((item) => (item.id === itemId ? { ...item, prompt: nextPrompt } : item))
-    );
-  }
-
-  function removeQueuedFollowup(itemId) {
-    updateQueuedFollowups((items) => items.filter((item) => item.id !== itemId));
+    void Promise.resolve(onChat(agent.id, { prompt: queuedPrompt, workspace, policy, model, queue: true })).catch((error) => {
+      postLocalNote(`Could not queue the follow-up: ${error.message}`);
+      setPromptByAgent((current) => ({ ...current, [agent.id]: current[agent.id] || queuedPrompt }));
+    });
     window.requestAnimationFrame(() => promptRef.current?.focus());
   }
 
@@ -13604,6 +13638,11 @@ function Conversation({
   function steerNow(nextItem, agentId = agent.id) {
     const text = String(nextItem?.prompt || "").trim();
     if (!text) return;
+    if (agentId === agent.id && isQueueRunning(queue)) {
+      // The running turn is bridge-owned: stop the queue first, then send.
+      void runQueueAction("stop").then(() => sendPromptNow({ ...nextItem, prompt: text }, { agentId, restorePromptOnError: true }));
+      return;
+    }
     if (!chatSendingRef.current[agentId]) {
       sendPromptNow({ ...nextItem, prompt: text }, { agentId, restorePromptOnError: true });
       return;
@@ -13612,25 +13651,20 @@ function Conversation({
     activeChatControllerRef.current[agentId]?.abort();
   }
 
-  function steerQueuedFollowup(itemId) {
-    const item = (queuedFollowupsRef.current[agent.id] || []).find((entry) => entry.id === itemId);
-    if (!item) return;
-    updateQueuedFollowups((items) => items.filter((entry) => entry.id !== itemId));
-    steerNow(item);
+  // Send now from the queue: take the item off the bridge first so the
+  // dispatcher cannot run it a second time, then steer with its text.
+  async function sendQueuedNow(item) {
+    const cancelled = await runQueueAction("cancel", { id: item.id });
+    if (!cancelled) return;
+    steerNow({ prompt: item.text, workspace: item.workspace || workspace, policy, model });
   }
 
-  function sendNextQueuedFollowup(agentId = agent.id) {
+  function sendPendingSteer(agentId = agent.id) {
     if (chatSendingRef.current[agentId]) return;
     const steer = pendingSteerRef.current[agentId];
-    if (steer) {
-      pendingSteerRef.current = { ...pendingSteerRef.current, [agentId]: null };
-      sendPromptNow(steer, { agentId, restorePromptOnError: true });
-      return;
-    }
-    const [nextItem, ...remainingItems] = queuedFollowupsRef.current[agentId] || [];
-    if (!nextItem) return;
-    setQueuedFollowupItems(agentId, remainingItems);
-    sendPromptNow(nextItem, { agentId, restorePromptOnError: true });
+    if (!steer) return;
+    pendingSteerRef.current = { ...pendingSteerRef.current, [agentId]: null };
+    sendPromptNow(steer, { agentId, restorePromptOnError: true });
   }
 
   function sendPromptNow(nextItem, options = {}) {
@@ -13711,10 +13745,10 @@ function Conversation({
             activeChatControllerRef.current = { ...activeChatControllerRef.current, [targetAgentId]: null };
           }
           setActiveChatSending(targetAgentId, false);
-          // Stop only cancels the queue; a steer (Send now / Cmd+Enter) still
-          // sends its message after the interrupted turn settles.
-          if (!controller.signal.aborted || pendingSteerRef.current[targetAgentId]) {
-            window.setTimeout(() => sendNextQueuedFollowup(targetAgentId), 0);
+          // The bridge dispatches queued follow-ups itself once this turn is
+          // out of the way; only a steer (Send now / Cmd+Enter) sends here.
+          if (pendingSteerRef.current[targetAgentId]) {
+            window.setTimeout(() => sendPendingSteer(targetAgentId), 0);
           }
         });
     } catch {
@@ -13742,6 +13776,8 @@ function Conversation({
 
   function stopActiveChat() {
     if (isGoalRunning(currentGoal)) void runGoalAction("pause", currentGoal);
+    // Stop cancels the running follow-up and pauses the queue (ADR-0111).
+    if (isQueueRunning(queue)) void runQueueAction("stop");
     activeChatControllerRef.current[agent.id]?.abort();
   }
 
@@ -13769,7 +13805,6 @@ function Conversation({
       await onMemberBreak?.(agent.id, active);
       if (active) {
         activeChatControllerRef.current[agent.id]?.abort();
-        setQueuedFollowupItems(agent.id, []);
       }
       recordFeatureUsed("break", active ? "pause" : "resume");
       onLocalMessage?.(agent.id, { id: `break-${Date.now()}`, role: "agent", body: active ? "I'm on my break, so I'm not accepting new work or handoffs. Use /break off when you want me back." : "I'm back and ready for work. Use /goal resume to continue a paused goal.", status: "complete", local: true, time: new Date().toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) });
@@ -13918,7 +13953,7 @@ function Conversation({
       setPromptByAgent((current) => ({ ...current, [agent.id]: submittedPrompt }));
       return;
     }
-    if (chatSendingRef.current[agent.id]) {
+    if (chatSendingRef.current[agent.id] || isQueueRunning(queue)) {
       queuePrompt(expandedPrompt);
       return;
     }
@@ -13986,7 +14021,7 @@ function Conversation({
 
   function startFreshChat() {
     stopActiveChat();
-    setQueuedFollowupItems(agent.id, []);
+    void runQueueAction("clear");
     setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
     setMentionState(null);
     onNewConversation?.(agent.id);
@@ -14038,7 +14073,8 @@ function Conversation({
           </div>
         </ScrollArea>
         <form className="shrink-0 p-3 pt-2" onSubmit={submit} data-testid="quick-chat-composer">
-          {queuedFollowups.length ? <QueuedFollowups items={queuedFollowups} copy={copy} onChange={updateQueuedFollowupPrompt} onRemove={removeQueuedFollowup} onSendNow={steerQueuedFollowup} /> : null}
+          <FollowUpQueue compact queue={queue} copy={copy} busy={queueActionBusy} error={queueActionError} onEdit={(id, text) => runQueueAction("edit", { id, text })} onMove={(id, delta) => runQueueAction("move", { id, delta })} onCancel={(id) => runQueueAction("cancel", { id })} onPause={() => runQueueAction("pause")} onResume={() => runQueueAction("resume")} />
+          <ContextWarningLine gauge={contextGauge} copy={copy} className="mb-2" />
           {blockedWorkspace ? <p className="mb-2 text-xs text-destructive">Choose a project folder for {agent.name} in Squad before sending work.</p> : null}
           {launchWarnings.length ? <p className="mb-2 text-xs text-muted-foreground">{launchWarnings.map((warning) => warning.detail).join(" ")}</p> : null}
           <InputGroup className="h-auto flex-col items-stretch border-border bg-transparent shadow-none focus-within:border-ring/60 has-[[data-slot=input-group-control]:focus-visible]:ring-0 dark:bg-transparent" aria-label={`Message ${agent.name}`}>
@@ -14104,6 +14140,7 @@ function Conversation({
                 <span className="min-w-0 max-w-40 truncate sm:max-w-[18rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
                 <span className="hidden text-border sm:inline">·</span>
                 <span className="hidden min-w-0 max-w-48 truncate sm:inline">{providerSummaryLabel(effectiveModel)}</span>
+                <ContextGaugeMeta gauge={contextGauge} copy={copy} className="hidden sm:inline" separator={<span className="hidden text-border sm:inline">·</span>} />
               </> : null}
               <span className={cn("text-border", !compact && "hidden sm:inline")}>·</span>
               <Popover open={harnessPopoverOpen} onOpenChange={setHarnessPopoverOpen}>
@@ -14281,16 +14318,20 @@ function Conversation({
               onSelect={(recipe) => setRecipeLaunchTarget(recipe)}
             />
           ) : null}
+          <ContextWarningLine gauge={contextGauge} copy={copy} className="mx-auto mb-2 w-full max-w-3xl px-1" />
           <div className="mx-auto flex w-full max-w-3xl flex-col rounded-2xl border border-border bg-card shadow-xs transition-[border-color,box-shadow] focus-within:border-ring/60 focus-within:shadow-sm">
-            {queuedFollowups.length ? (
-              <QueuedFollowups
-                items={queuedFollowups}
-                copy={copy}
-                onChange={updateQueuedFollowupPrompt}
-                onRemove={removeQueuedFollowup}
-                onSendNow={steerQueuedFollowup}
-              />
-            ) : null}
+            <FollowUpQueue
+              queue={queue}
+              copy={copy}
+              busy={queueActionBusy}
+              error={queueActionError}
+              onEdit={(id, text) => runQueueAction("edit", { id, text })}
+              onMove={(id, delta) => runQueueAction("move", { id, delta })}
+              onCancel={(id) => runQueueAction("cancel", { id })}
+              onSendNow={sendQueuedNow}
+              onPause={() => runQueueAction("pause")}
+              onResume={() => runQueueAction("resume")}
+            />
             {launchWarnings.length ? <LaunchPermissionWarnings warnings={launchWarnings} /> : null}
             <div className="flex flex-col gap-2 p-2">
               <div className="relative">
@@ -14615,147 +14656,6 @@ function ContextPackPreviewDialog({ pack, loading, error, open, onOpenChange, lo
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function QueuedFollowups({ items = [], copy = getLocaleCopy(DEFAULT_LOCALE), onChange, onRemove, onSendNow }) {
-  const [editingId, setEditingId] = useState("");
-  const [draft, setDraft] = useState("");
-  const editingItem = items.find((item) => item.id === editingId);
-
-  useEffect(() => {
-    if (!editingId) return;
-    if (!editingItem) {
-      setEditingId("");
-      setDraft("");
-    }
-  }, [editingId, editingItem]);
-
-  function startEdit(item) {
-    setEditingId(item.id);
-    setDraft(item.prompt);
-  }
-
-  function cancelEdit() {
-    setEditingId("");
-    setDraft("");
-  }
-
-  function saveEdit() {
-    const nextPrompt = draft.trim();
-    if (!editingId) return;
-    if (nextPrompt) {
-      onChange?.(editingId, nextPrompt);
-    } else {
-      onRemove?.(editingId);
-    }
-    cancelEdit();
-  }
-
-  return (
-    <div className="border-b bg-background/30" data-queued-followups>
-      <div className="flex min-h-9 items-center justify-between gap-3 px-3 py-2 text-xs text-muted-foreground">
-        <div className="flex min-w-0 items-center gap-2">
-          <LayoutList className="size-3.5 shrink-0" />
-          <span className="truncate font-medium text-foreground/80">{copy.queuedFollowups}</span>
-          <Badge variant="outline" className="h-5 rounded-md px-1.5 text-[10px]">
-            {items.length}
-          </Badge>
-        </div>
-      </div>
-      <div className="divide-y divide-border/70">
-        {items.map((item, index) => {
-          const editing = item.id === editingId;
-          return (
-            <div key={item.id} className="grid min-h-11 items-center gap-2 px-3 py-2 [grid-template-columns:auto_minmax(0,1fr)_auto]">
-              <span className="flex size-6 items-center justify-center rounded-md text-muted-foreground">
-                <LayoutList className="size-3.5" />
-              </span>
-              {editing ? (
-                <Input
-                  autoFocus
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      saveEdit();
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      cancelEdit();
-                    }
-                  }}
-                  className="h-8 border-0 bg-background/70 px-2 text-sm shadow-none focus-visible:ring-2"
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="min-w-0 truncate rounded-sm text-left text-sm text-foreground/88 outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40"
-                  onClick={() => startEdit(item)}
-                >
-                  {item.prompt}
-                </button>
-              )}
-              <div className="flex shrink-0 items-center gap-1">
-                <Badge variant="outline" className="hidden h-5 rounded-md px-1.5 text-[10px] sm:inline-flex">
-                  {index === 0 ? copy.nextQueuedFollowup : `#${index + 1}`}
-                </Badge>
-                {editing ? (
-                  <>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button type="button" variant="ghost" size="icon-xs" aria-label={copy.saveQueuedFollowup} onClick={saveEdit}>
-                          <CheckCircle2 />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>{copy.saveQueuedFollowup}</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button type="button" variant="ghost" size="icon-xs" aria-label={copy.cancelQueuedEdit} onClick={cancelEdit}>
-                          <X />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>{copy.cancelQueuedEdit}</TooltipContent>
-                    </Tooltip>
-                  </>
-                ) : (
-                  <>
-                    {onSendNow ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button type="button" variant="ghost" size="icon-xs" aria-label="Send now (interrupts the current reply)" onClick={() => onSendNow(item.id)}>
-                            <Send />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Send now · interrupts the current reply</TooltipContent>
-                      </Tooltip>
-                    ) : null}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button type="button" variant="ghost" size="icon-xs" aria-label={copy.editQueuedFollowup} onClick={() => startEdit(item)}>
-                          <PencilLine />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>{copy.editQueuedFollowup}</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button type="button" variant="ghost" size="icon-xs" aria-label={copy.removeQueuedFollowup} onClick={() => onRemove?.(item.id)}>
-                          <Trash2 />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>{copy.removeQueuedFollowup}</TooltipContent>
-                    </Tooltip>
-                  </>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
