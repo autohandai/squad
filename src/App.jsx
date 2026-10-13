@@ -288,6 +288,8 @@ import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, workRowsIn
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { PreviousChats } from "@/components/chat/PreviousChats";
+import { FolderAccessCard } from "@/components/chat/FolderAccessCard";
+import { continuationPrompt, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
 import { archivePayload, conversationHasWork, restoreConversationEvent } from "@/lib/chat-sessions";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
 import { MemberMenu } from "@/components/members/MemberMenu";
@@ -9307,7 +9309,7 @@ function App() {
             compact agent={member} agents={agents} messages={messagesByAgent[member.id] || []}
             runtime={runtime} workspaces={workspaces} runs={runs.filter((run) => run.agentId === member.id)} providerSettings={providerSettings}
             locale={localeResolution.locale} copy={localeCopy} onStart={startAutohand} onChat={sendChat}
-            onLocalMessage={appendMessage} onNewConversation={(id) => startNewConversation(id, { preserveRoute: true })}
+            onLocalMessage={appendMessage} onUpdateMessage={updateMessage} onNewConversation={(id) => startNewConversation(id, { preserveRoute: true })}
             previousChats={previousChatsByAgent[member.id] || []} previousChatsLoading={previousChatsLoading} onLoadPreviousChats={loadPreviousChats} onOpenPreviousChat={openPreviousChat} onRemovePreviousChat={removePreviousChat}
             goals={memberGoals.filter((goal) => goal.agentId === member.id)} goalsError={memberGoalsError} onGoalAction={controlMemberGoal} onMemberBreak={setMemberBreak}
             queue={memberQueues[member.id]} contextGauge={memberContext[member.id]} onQueueAction={controlMemberQueue}
@@ -9735,6 +9737,7 @@ function App() {
                 onQueueAction={controlMemberQueue}
                 onMemberBreak={setMemberBreak}
                 onLocalMessage={appendMessage}
+                onUpdateMessage={updateMessage}
                 onNewConversation={startNewConversation}
                 previousChats={previousChatsByAgent[activeAgent?.id] || []}
                 previousChatsLoading={previousChatsLoading}
@@ -13526,6 +13529,7 @@ function Conversation({
   harnessesLoading = false,
   onRefreshHarnesses,
   onLocalMessage,
+  onUpdateMessage,
   initialPanel = null,
   onInitialPanelConsumed,
   canvasRefreshKey = 0,
@@ -14406,6 +14410,18 @@ function Conversation({
     setTaskPanelOpen(true);
   }
 
+  // Folder access (ADR-0116): Allow adds the folder to the member, which the
+  // bridge turns into --add-dir on every later turn, then asks it to go on.
+  function decideFolderAccess(message, folder, decision) {
+    if (!folder) return;
+    if (decision === "allow") {
+      updateAgent?.(agent.id, { projects: projectsWithFolder(agent, folder), updatedAt: new Date().toISOString() });
+      sendPromptNow({ prompt: continuationPrompt(folder), workspace, policy, model, effort, access }, { agentId: agent.id, restorePromptOnError: true });
+      return;
+    }
+    onUpdateMessage?.(agent.id, message.id, { folderAccessDismissed: [...(Array.isArray(message.folderAccessDismissed) ? message.folderAccessDismissed : []), folder] });
+  }
+
   function startFreshChat() {
     stopActiveChat();
     void runQueueAction("clear");
@@ -14455,7 +14471,7 @@ function Conversation({
           <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} className="px-3 sm:px-3" />
           <div className="flex flex-col gap-4 px-3 py-3">
             {hasConversationMessages ? localizedMessages.map((message) => (
-              <SquadMessage key={message.id} compact agent={agent} message={message} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} />
+              <SquadMessage key={message.id} compact agent={agent} message={message} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} memberBusy={Boolean(chatSending)} />
             )) : <p className="py-3 text-sm text-muted-foreground">Send a message to {agent.name}.</p>}
             <div ref={messagesEndRef} aria-hidden="true" />
           </div>
@@ -14698,6 +14714,8 @@ function Conversation({
                       copy={copy}
                       chatSettings={chatSettings}
                       onRetry={retryMessage}
+                      onFolderAccess={decideFolderAccess}
+                      memberBusy={Boolean(chatSending)}
                     />
                   ))}
                   <div ref={messagesEndRef} aria-hidden="true" />
@@ -15290,9 +15308,9 @@ function SquadStatusRow({ agent, activeMode, latestRun, runtime, workspace, work
   );
 }
 
-const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
+const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onFolderAccess, memberBusy = false }) {
   const isUser = message.role === "user";
-  if (!isUser) return <AgentResponseMessage compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} />;
+  if (!isUser) return <AgentResponseMessage compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onFolderAccess={onFolderAccess} memberBusy={memberBusy} />;
 
   return (
     <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
@@ -15304,7 +15322,7 @@ const SquadMessage = memo(function SquadMessage({ agent, message, computerEviden
   );
 });
 
-function AgentResponseMessage({ agent, message, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry }) {
+function AgentResponseMessage({ agent, message, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onFolderAccess, memberBusy = false }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
   // Trace normalisation and body parsing are the expensive part of a row.
   const view = useMemo(() => buildAgentResponseView(message), [message]);
@@ -15383,6 +15401,15 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
         <ComputerUseEvidence files={computerEvidence} compact={compact} />
         {!compact ? <AgentWorkUpdate message={message} isLoading={isLoading} /> : null}
         {!compact ? <AgentWorkDetails message={message} isLoading={isLoading} durationLabel={isLoading ? "" : durationLabel} copy={copy} mode={normalizeChatSettings(chatSettings).workDetails} /> : null}
+        {!isLoading && onFolderAccess ? (
+          <FolderAccessCard
+            folders={pendingFolderRequests(agent, message)}
+            memberName={agent?.name || "The member"}
+            busy={memberBusy}
+            copy={copy}
+            onDecide={(folder, decision) => onFolderAccess(message, folder, decision)}
+          />
+        ) : null}
 
         {!compact && !isLoading && showRawOutput ? <RawTraceBlock raw={view.raw} /> : null}
       </div>

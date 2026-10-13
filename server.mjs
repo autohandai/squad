@@ -2954,6 +2954,9 @@ async function ensureAgentRuntimeInner(input, workspace) {
 function runtimeMemberInstructions(agentRuntime) {
   const agent = agentRuntime.agent || {};
   const persona = agent.profileFiles?.find(file => file.section === "persona")?.content || "";
+  // Durable memory travels inline too (ADR-0115): a member in plan mode or on
+  // an engine that never opens MEMORY.md still knows what it saved.
+  const memory = agent.profileFiles?.find(file => file.section === "memory")?.content || "";
   const brain = agentRuntime.brainCard || {};
   const policies = normalizeAgentPermissions(agent).builtInPolicies;
   return [
@@ -2962,6 +2965,7 @@ function runtimeMemberInstructions(agentRuntime) {
     `Role: ${agent.role || "Software engineering agent"}`,
     agent.instructions ? `Operating instructions: ${String(agent.instructions).slice(0, 4000)}` : "",
     persona ? `Personality:\n${String(persona).slice(0, 5000)}` : "",
+    memory.trim() ? `Durable memory (MEMORY.md):\n${String(memory).slice(0, 4000)}` : "",
     ...brainCardFieldDefinitions.map(field => `${field.label}: ${String(brain[field.id] || "").slice(0, 1500)}`),
     `Selected workspace: ${agentRuntime.workspace}`,
     `Profile map: ${agentRuntime.profileDocs?.agentsPath || ""}`,
@@ -6560,6 +6564,10 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   if (canvasDirFor(payload)) addDirs.push(canvasDirFor(payload));
   for (const project of normalizeAgentProjects(agentRuntime.agent)) {
     if (project.path !== workspace) addDirs.push(project.path);
+  }
+  // The engine's own folders (Claude Code's plans dir) are always reachable (ADR-0116).
+  for (const dir of typeof adapter.engineDirs === "function" ? adapter.engineDirs() : []) {
+    if (dir && dir !== workspace && !addDirs.includes(dir)) addDirs.push(dir);
   }
   const model = String(payload.model || assignment.model || "").trim();
   // Access and reasoning effort (ADR-0114): the turn's explicit choice, else

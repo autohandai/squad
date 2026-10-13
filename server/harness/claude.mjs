@@ -3,7 +3,7 @@
 // server.mjs work unchanged.
 
 import { join } from "node:path";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { compareVersions, fileExists, findExecutable, homeDir, parseVersion, probe, redactHome } from "./discovery.mjs";
 import { resolveAccess } from "./access.mjs";
 
@@ -141,6 +141,19 @@ function claudeOptions(executable) {
     accessModes: ["plan", "write", "full"],
     defaults: { model: defaultModel, effort: "" },
   };
+}
+
+/**
+ * Folders that are Claude Code's own and must be reachable whatever the
+ * member's folders are (ADR-0116): `--restricted` confines the file tools to
+ * the working directory and `--add-dir` folders, which blocked plan mode
+ * from writing its plan to ~/.claude/plans. Only that subfolder is added;
+ * ~/.claude itself holds credentials and settings.
+ */
+export function engineDirs() {
+  const plans = join(claudeHome(), "plans");
+  try { mkdirSync(plans, { recursive: true }); } catch {}
+  return [plans];
 }
 
 /** Pure: pull the option lists out of `claude --help` text. */

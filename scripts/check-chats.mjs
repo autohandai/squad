@@ -22,6 +22,7 @@ import { buildRecall, turnTitle } from '../server/chats/recall.mjs';
 import { historyRecord, runFromRecord } from '../server/runs/history.mjs';
 import { archivePayload, chatMetaLine, conversationHasWork, messagesForTransfer, restoreConversationEvent, sortChats } from '../src/lib/chat-sessions.js';
 import { applySharedConversationEvent } from '../src/lib/shared-conversations.js';
+import { continuationPrompt, deniedFolders, folderFromDeniedPath, pendingFolderRequests, projectsWithFolder } from '../src/lib/folder-access.js';
 
 // ---------- pure checks ----------
 const msg = (i, role, body, extra = {}) => ({ id: `m${i}`, role, body, startedAt: `2026-10-13T0${i % 10}:00:00.000Z`, ...extra });
@@ -85,7 +86,19 @@ assert.ok(built.text.includes('#leads') && built.text.includes('Igor: "Any updat
 assert.ok(!built.text.includes('secret channel'), 'channels the member is not in are left out');
 assert.equal(buildRecall({ memberId: 'alex' }).text, '', 'nothing earlier: no block');
 assert.ok(buildRecall(recallSources, { budget: 300 }).text.length <= 300, 'the block respects its budget');
-console.log('Chat pure checks passed: bounds, record, sessions, history, restore event, recall.');
+const denial = '{\n  "pattern": "/Users/igor/.claude/plans/*"\n}\n/Users/igor/.claude/plans is outside /Users/igor/Documents/leads, /Users/igor/.autohand/squad/web-state/agents/x/profile; --restricted confines the file tools to the working directory.';
+const denied = { id: 'a9', role: 'agent', body: 'Blocked.', streamEvents: [{ type: 'tool_end', toolName: 'Glob', success: false, output: denial }, { type: 'tool_end', toolName: 'Read', success: true, output: 'fine' }, { type: 'tool_end', toolName: 'Read', success: false, output: '/Users/igor/notes/todo.md is outside /w; --restricted confines the file tools to the working directory.' }] };
+assert.deepEqual(deniedFolders(denied), ['/Users/igor/.claude/plans', '/Users/igor/notes'], 'denied folders come from the refusal text; a file becomes its folder');
+assert.equal(folderFromDeniedPath('/Users/igor/.claude/plans/**'), '/Users/igor/.claude/plans');
+assert.equal(folderFromDeniedPath('C:\\Users\\igor\\notes\\todo.md'), 'C:\\Users\\igor\\notes');
+assert.deepEqual(deniedFolders({ streamEvents: [{ type: 'tool_end', success: false, output: 'some other error' }] }), [], 'other failures are not folder requests');
+const memberWithFolder = { projects: projectsWithFolder({ projects: [{ path: '/w' }] }, '/Users/igor/notes') };
+assert.equal(memberWithFolder.projects.length, 2); assert.equal(memberWithFolder.projects[1].kind, 'folder'); assert.equal(memberWithFolder.projects[1].name, 'notes');
+assert.equal(projectsWithFolder(memberWithFolder, '/Users/igor/notes'), memberWithFolder.projects, 'granting twice is a no-op');
+assert.deepEqual(pendingFolderRequests(memberWithFolder, denied), ['/Users/igor/.claude/plans'], 'a granted folder is no longer asked about');
+assert.deepEqual(pendingFolderRequests(memberWithFolder, { ...denied, folderAccessDismissed: ['/Users/igor/.claude/plans'] }), [], 'nor a dismissed one');
+assert.ok(continuationPrompt('/x').includes('/x'));
+console.log('Chat pure checks passed: bounds, record, sessions, history, restore event, recall, folder access.');
 
 // ---------- bridge ----------
 const directory = await mkdtemp(join(tmpdir(), 'squad-chats-'));
@@ -245,6 +258,18 @@ process.exit(0);
   seen = (await calls()).at(-1).args;
   assert.equal(seen[seen.indexOf('--permission-mode') + 1], 'bypassPermissions', 'the member\'s engine settings apply when the turn chooses nothing');
   assert.equal(seen[seen.indexOf('--effort') + 1], 'low');
+  // 3c. Personality and durable memory reach the engine inline (ADR-0115).
+  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'What do you remember?'), agent: { ...member('alex'), profileFiles: [{ section: 'persona', fileName: 'PERSONALITY.md', content: 'Dry, direct, no filler.' }, { section: 'memory', fileName: 'MEMORY.md', content: 'The NZ shortlist is built by scripts/nz_shortlist.py.' }] } }) })).text();
+  const profiled = (await calls()).at(-1).args;
+  const profileText = profiled[profiled.indexOf('--append-system-prompt') + 1] || '';
+  assert.ok(profileText.includes('Personality:\nDry, direct, no filler.'), 'PERSONALITY.md content is inline');
+  assert.ok(profileText.includes('Durable memory (MEMORY.md):\nThe NZ shortlist is built by scripts/nz_shortlist.py.'), 'MEMORY.md content is inline');
+  assert.ok(profileText.includes('Profile map:'), 'and the profile map still points at the files');
+  // 3d. Claude Code's own plans folder is always an --add-dir (ADR-0116).
+  const plansDir = join(directory, 'claude', 'plans');
+  assert.ok(profiled.includes('--add-dir') && profiled[profiled.indexOf('--add-dir') + 1] !== undefined);
+  assert.ok(profiled.some((value, index) => profiled[index - 1] === '--add-dir' && value === plansDir), `plans dir is added: ${JSON.stringify(profiled.filter((v, i) => profiled[i - 1] === '--add-dir'))}`);
+  assert.ok(await readFile(join(plansDir, '..', 'plans', '.keep')).catch(() => true), 'the folder exists (created by the bridge)');
   const readiness = (await api('/api/harnesses')).data.harnesses.find((h) => h.id === 'claude');
   assert.ok(Array.isArray(readiness.accessModes) && readiness.accessModes.includes('plan'), 'readiness lists access modes');
   assert.ok(Array.isArray(readiness.efforts), 'readiness carries an effort list (the global listing probes the machine\'s own claude, not the member fixture)');
@@ -255,7 +280,7 @@ process.exit(0);
 
   // 5. Finished runs survive a restart.
   const before = (await api('/api/runs')).data.filter((run) => run.agentId === 'alex');
-  assert.equal(before.length, 6);
+  assert.equal(before.length, 7);
   await delay(700); // the history write is debounced
   await stopBridge();
   await startBridge();
