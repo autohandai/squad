@@ -100,6 +100,7 @@ Route paths are matched with plain string comparison or a `RegExp` on
 | `getRuntime()` | fn | the `/api/runtime` snapshot (account, versions, paths) |
 | `cleanWorkspace(path)` | async fn | validates a folder path inside the home directory, returns the normalized path or throws |
 | `spawnSync` | fn | `node:child_process` |
+| `agentsDir` | string | member homes: `<agentsDir>/<member id>/{skills,profile}`. Read-only for plug-ins (team export, ADR-0106); provisioning stays in `server.mjs`. |
 
 Members (agents) live in the browser (`localStorage`) and are mirrored to the
 bridge only through `web-status.json`; a route that needs member metadata

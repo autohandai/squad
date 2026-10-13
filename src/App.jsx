@@ -88,6 +88,7 @@ import {
   Moon,
   Palette,
   PauseCircle,
+  Pin,
   PanelRightOpen,
   PanelLeft,
   Paperclip,
@@ -283,6 +284,13 @@ import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, workRowsIn
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
+import { MemberMenu } from "@/components/members/MemberMenu";
+import { HiddenMembersGroup } from "@/components/members/HiddenMembersGroup";
+import { TeamMenu } from "@/components/teams/TeamMenu";
+import { ShareTeamDialog } from "@/components/teams/ShareTeamDialog";
+import { ImportTeamDialog } from "@/components/teams/ImportTeamDialog";
+import { duplicateCreationStash, hiddenMembers, hidePatch, markUnreadReadAt, orderMembers, pinPatch } from "@/lib/member-menus";
+import { presetTemplate } from "@/lib/teams";
 import { BootChecks } from "@/components/shell/BootChecks";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
@@ -5478,21 +5486,24 @@ function App() {
     if (active) await stopMember(agentId);
     await refreshMemberGoals();
   }
-  const renderMemberMenu = useCallback(
-    (agent) => (
-      <MemberRowMenu
-        agent={agent}
-        copy={localeCopy}
-        onChat={() => navigate(memberChatPath(agent.id))}
-        onDetails={() => navigate(memberProfilePath(agent.id, "home"))}
-        onToggleBreak={() => void toggleMemberBreak(agent)}
-        onDelete={() => setPendingMemberDelete(agent)}
-      />
-    ),
-    // navigate, updateAgent and stopMember are stable closures over state setters.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [localeCopy]
-  );
+  // Team sharing and presets (ADR-0106). The dialogs live here so a member
+  // menu anywhere can open Share as preset…; presets feed New member's list.
+  const [sharePreset, setSharePreset] = useState(null);
+  const [shareTeamOpen, setShareTeamOpen] = useState(false);
+  const [importTeamOpen, setImportTeamOpen] = useState(false);
+  const [teamPresets, setTeamPresets] = useState([]);
+  const refreshTeamPresets = useCallback(async () => {
+    try {
+      const data = await api("/api/teams/presets");
+      setTeamPresets(Array.isArray(data?.presets) ? data.presets : []);
+    } catch {
+      // An older bridge has no presets route; New member lists built-in roles only.
+    }
+  }, []);
+  useEffect(() => {
+    void refreshTeamPresets();
+  }, [refreshTeamPresets]);
+  const presetTemplates = useMemo(() => teamPresets.map((entry) => presetTemplate(entry.preset)).filter(Boolean), [teamPresets]);
 
   const notificationBell = (
     <NotificationBell
@@ -6356,6 +6367,71 @@ function App() {
         })
         .sort((a, b) => String(b.at).localeCompare(String(a.at))),
     [agents, unreadCountByAgent, messagesByAgent]
+  );
+
+  // The member menu (ADR-0106): the same items on a directory row, a sidebar
+  // row and the chat header. Pin and Hide are patches on the member record,
+  // so they persist with it; Mark unread moves the read marker back to just
+  // before the latest reply, so the count is the one a new reply would give.
+  function pinMember(agent) {
+    updateAgent(agent.id, pinPatch(agent, agent.pinned !== true));
+  }
+  function hideMember(agent) {
+    updateAgent(agent.id, hidePatch(agent, agent.hidden !== true));
+  }
+  function markMemberUnread(agentId, { leave = false } = {}) {
+    const readAt = markUnreadReadAt(messagesByAgent[agentId] || []);
+    if (!readAt) return;
+    setAgentReads((current) => ({ ...current, [agentId]: readAt }));
+    // From inside the conversation the page would mark it read again at the
+    // next message, so marking unread there also leaves for Needs you.
+    if (leave) navigate(missionControlPath());
+  }
+  function markMemberRead(agentId) {
+    const now = new Date().toISOString();
+    setAgentReads((current) => ({ ...current, [agentId]: now }));
+  }
+  // Duplicate opens New member with this member's role, personality, brain
+  // card, skills and harness restored as an unfinished draft (ADR-0077), so
+  // the copy is prepared by the same confirmed creation as any member.
+  function duplicateMember(agent) {
+    const workspace = normalizeSquadWorkspacePath(agent.workspace, runtime) || fallbackWorkspace || "";
+    const stash = duplicateCreationStash(agent, { memberId: createSquadMemberId() });
+    try {
+      window.localStorage.setItem(`${STORAGE_KEYS.memberCreation}:${workspace}`, JSON.stringify({ ...stash, draft: { ...stash.draft, workspace } }));
+    } catch (error) {
+      console.warn(`Could not stage the duplicate draft: ${error?.message || error}`);
+    }
+    navigate(routeWithParams(`${MEMBER_ROUTE_PREFIX}/new`, { workspace: workspace || null }));
+  }
+  const renderMemberMenu = useCallback(
+    (agent, context = "sidebar") => (
+      <MemberMenu
+        agent={agent}
+        copy={localeCopy}
+        trigger={context === "sidebar" ? "vertical" : "ellipsis"}
+        side={context === "sidebar" ? "right" : undefined}
+        onChat={context === "chat" ? undefined : () => navigate(memberChatPath(agent.id))}
+        onProfile={() => navigate(memberProfilePath(agent.id, "home"))}
+        resting={isOnBreak(agent)}
+        toggleStateLabel={isOnBreak(agent) ? localeCopy.endBreak || "End break" : localeCopy.takeABreak || "Take a break"}
+        onToggleState={() => void toggleMemberBreak(agent)}
+        pinned={agent.pinned === true}
+        onPin={() => pinMember(agent)}
+        unread={unreadCountByAgent.get(agent.id) || 0}
+        canMarkUnread={Boolean(markUnreadReadAt(messagesByAgent[agent.id] || []))}
+        onMarkUnread={() => markMemberUnread(agent.id, { leave: context === "chat" })}
+        onMarkRead={context === "chat" ? undefined : () => markMemberRead(agent.id)}
+        onDuplicate={() => duplicateMember(agent)}
+        onSharePreset={() => setSharePreset(agent)}
+        hidden={agent.hidden === true}
+        onHide={() => hideMember(agent)}
+        onRemove={() => setPendingMemberDelete(agent)}
+      />
+    ),
+    // navigate, updateAgent and the member handlers are stable closures over state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [localeCopy, unreadCountByAgent, messagesByAgent, runtime, fallbackWorkspace]
   );
   const inboxUnreadChannels = useMemo(
     () =>
@@ -8145,7 +8221,8 @@ function App() {
       brainCard: normalizeBrainCard(draft.brainCard, draft),
       skillSource: draft.skillSource || AUTOHAND_SKILLS_REGISTRY_URL,
       launch: { mode: "prompt", policy: "restricted", model: "", dryRun: false },
-      permissions: createDefaultPermissionState(),
+      // An imported member starts where it can only ask (ADR-0106).
+      permissions: options.ladderLevel ? normalizePermissionState({ ...createDefaultPermissionState(), ...permissionPresetForAutonomyLadder(options.ladderLevel) }) : createDefaultPermissionState(),
       modelAssignment: { mode: "inherit" },
       stats: { activeDays: 0, automations: 0, tasks: 0, projects: projects.length },
       memory: ["Created from Autohand Squad.", `Autohand Skills Source: ${AUTOHAND_SKILLS_REGISTRY_URL}`],
@@ -9087,6 +9164,51 @@ function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ShareTeamDialog
+        open={shareTeamOpen || Boolean(sharePreset)}
+        onOpenChange={(open) => {
+          if (open) return;
+          setShareTeamOpen(false);
+          setSharePreset(null);
+        }}
+        agents={agents}
+        channels={channels}
+        workflowsByChannel={workflowsByChannel}
+        api={api}
+        defaultTeamName={localeCopy.squad || "Squad"}
+        preset={sharePreset}
+        copy={localeCopy}
+        renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
+        roleFor={(agent) => localizedRole(agent, localeCopy) || agent.role}
+      />
+      <ImportTeamDialog
+        open={importTeamOpen}
+        onOpenChange={setImportTeamOpen}
+        agents={agents}
+        api={api}
+        copy={localeCopy}
+        onCreateMember={(draft, options) =>
+          createAgent(
+            {
+              ...draft,
+              avatar: draft.avatar || birdAvatarForRole("", draft.role, draft.name),
+              // Starter notes go through the ordinary profile writer as MEMORY.md.
+              profileFiles: draft.notes ? [{ section: "memory", fileName: "MEMORY.md", content: draft.notes, source: "manual" }] : [],
+            },
+            { ...options, navigate: false, ladderLevel: "suggest-commands" }
+          )
+        }
+        onImported={async () => {
+          await reloadChannelsFromBridge().catch(() => {});
+          try {
+            const all = await api("/api/workflows");
+            if (all?.channels && typeof all.channels === "object") setWorkflowsByChannel(all.channels);
+          } catch {
+            // The ten-second workflow poll picks them up.
+          }
+          void refreshTeamPresets();
+        }}
+      />
       <div className="app-shell-root relative min-h-screen overflow-x-clip bg-background text-foreground">
         {/* The window's only drag region. Empty on purpose: Tauri drags only
             when the pointer lands on the annotated element itself, so an
@@ -9198,6 +9320,16 @@ function App() {
                 counts={sidebarCounts}
                 onDeleteAgent={deleteAgent}
                 updateAgent={updateAgent}
+                unreadCountByAgent={unreadCountByAgent}
+                onPin={pinMember}
+                onHide={hideMember}
+                onMarkUnread={markMemberUnread}
+                onMarkRead={markMemberRead}
+                canMarkUnread={(agent) => Boolean(markUnreadReadAt(messagesByAgent[agent.id] || []))}
+                onDuplicate={duplicateMember}
+                onSharePreset={setSharePreset}
+                onShareTeam={() => setShareTeamOpen(true)}
+                onImportTeam={() => setImportTeamOpen(true)}
               />
             ) : isChannels ? (
               <ChannelsPage
@@ -9332,6 +9464,7 @@ function App() {
                 key={requestedWorkspace || fallbackWorkspace || "member-creation"}
                 copy={localeCopy}
                 existingMemberIds={agents.map(agent => agent.id)}
+                presets={presetTemplates}
                 onCreate={(draft, options) => createAgent(draft, { ...options, ...(onboardingIsIncomplete(onboardingState) ? { completeOnboarding: true, prompt: firstPromptFor(draft.role, workspaceLabel(draft.workspace, workspaces), draft.description) } : {}) })}
                 onCancel={() => navigate(onboardingIsIncomplete(onboardingState) ? "/welcome" : "/conversations/new")}
                 defaultWorkspace={requestedWorkspace || fallbackWorkspace}
@@ -9433,6 +9566,7 @@ function App() {
                 onCancelHandoff={cancelHandoff}
                 onFailHandoff={markHandoffFailed}
                 onRetryHandoff={retryHandoff}
+                menu={activeAgent ? renderMemberMenu(activeAgent, "chat") : null}
               />
             )}
           </main>
@@ -12448,7 +12582,7 @@ function SidebarContent({
         </Button>
       }
       copy={copy}
-      agents={visibleAgents}
+      agents={orderMembers(visibleAgents)}
       channels={channels}
       active={sidebarActiveTarget(route, activeAgent)}
       unreadChannelIds={unreadChannelIds}
@@ -13174,6 +13308,7 @@ function Conversation({
   canvasRefreshKey = 0,
   initialCanvasId = "",
   onInitialCanvasConsumed,
+  menu = null,
 }) {
   const defaultLaunch = agent.launch || { mode: "prompt", policy: "restricted", model: "", dryRun: false };
   const [harnessDraft, setHarnessDraft] = useState(() => harnessForAgent(agent));
@@ -14249,6 +14384,7 @@ function Conversation({
             <TooltipContent>{copy.current}</TooltipContent>
           </Tooltip>
           </> : null}
+          {menu}
         </div>
       </header>
 
@@ -16010,6 +16146,16 @@ function SquadDirectoryPage({
   counts = EMPTY_MISSION_COUNTS,
   onDeleteAgent,
   updateAgent,
+  unreadCountByAgent = new Map(),
+  onPin,
+  onHide,
+  onMarkUnread,
+  onMarkRead,
+  canMarkUnread,
+  onDuplicate,
+  onSharePreset,
+  onShareTeam,
+  onImportTeam,
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -16019,7 +16165,9 @@ function SquadDirectoryPage({
     updateAgent?.(agentId, { status: stateId, updatedAt: new Date().toISOString() });
   }
 
-  const visibleAgents = useMemo(() => agents.filter((agent) => agent?.id && agent?.name), [agents]);
+  // Pinned first, hidden in their own group below the list (ADR-0106).
+  const visibleAgents = useMemo(() => orderMembers(agents.filter((agent) => agent?.id && agent?.name)), [agents]);
+  const hidden = useMemo(() => hiddenMembers(agents.filter((agent) => agent?.id && agent?.name)), [agents]);
   const rows = useMemo(
     () => buildMissionRows({ agents: visibleAgents, tasks, runs, runtime, workspaces }),
     [visibleAgents, tasks, runs, runtime, workspaces]
@@ -16078,6 +16226,7 @@ function SquadDirectoryPage({
     for (const state of stateCounts) {
       if (state.id !== "active" && state.count) parts.push(`${formatLocalizedNumber(state.count, locale)} ${state.label.toLowerCase()}`);
     }
+    if (hidden.length) parts.push(`${formatLocalizedNumber(hidden.length, locale)} ${(copy.hiddenMembers || "hidden").toLowerCase()}`);
     return parts.join(" \u00b7 ");
   })();
   // Only the states that are true right now. Five buttons of which three read
@@ -16095,10 +16244,13 @@ function SquadDirectoryPage({
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => navigate(`${MEMBER_ROUTE_PREFIX}/new`)}>
-            <Plus data-icon="inline-start" />
-            {copy.newMember || "New member"}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="sm" onClick={() => navigate(`${MEMBER_ROUTE_PREFIX}/new`)}>
+              <Plus data-icon="inline-start" />
+              {copy.newMember || "New member"}
+            </Button>
+            <TeamMenu copy={copy} onShare={onShareTeam} onImport={onImportTeam} />
+          </div>
         </header>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-border/60 py-2.5 text-xs">
@@ -16150,6 +16302,14 @@ function SquadDirectoryPage({
                   navigate={navigate}
                   onSetState={handleSetState}
                   onRequestDelete={() => setPendingDelete(agent)}
+                  unread={unreadCountByAgent.get(agent.id) || 0}
+                  canMarkUnread={canMarkUnread ? canMarkUnread(agent) : true}
+                  onPin={onPin ? () => onPin(agent) : undefined}
+                  onHide={onHide ? () => onHide(agent) : undefined}
+                  onMarkUnread={onMarkUnread ? () => onMarkUnread(agent.id) : undefined}
+                  onMarkRead={onMarkRead ? () => onMarkRead(agent.id) : undefined}
+                  onDuplicate={onDuplicate ? () => onDuplicate(agent) : undefined}
+                  onSharePreset={onSharePreset ? () => onSharePreset(agent) : undefined}
                 />
               ))}
             </ul>
@@ -16167,6 +16327,15 @@ function SquadDirectoryPage({
             />
           </div>
         )}
+
+        <HiddenMembersGroup
+          members={hidden}
+          copy={copy}
+          renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
+          roleFor={(agent) => localizedRole(agent, copy) || agent.role || copy.squadMember || "Squad member"}
+          onShow={(agent) => onHide?.(agent)}
+          onOpen={(agent) => navigate(memberProfilePath(agent.id, "home"))}
+        />
       </div>
 
       <Dialog open={Boolean(pendingDelete)} onOpenChange={(open) => (open ? null : setPendingDelete(null))}>
@@ -16261,8 +16430,15 @@ function SquadMemberRow({
   navigate,
   onSetState,
   onRequestDelete,
+  unread = 0,
+  canMarkUnread = true,
+  onPin,
+  onHide,
+  onMarkUnread,
+  onMarkRead,
+  onDuplicate,
+  onSharePreset,
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const workspace = getAgentWorkspace(agent, runtime, workspaces);
   const role = localizedRole(agent, copy) || agent.role;
   // With a relay connected, say which machine a member runs on. One quiet
@@ -16272,11 +16448,6 @@ function SquadMemberRow({
   const ownership = owner?.isLocal === false ? ownershipLabel(owner, copy) : "";
   const { meta, stateId, working } = state;
   const isResting = stateId === "paused" || stateId === "offline";
-
-  function go(path) {
-    setMenuOpen(false);
-    navigate(path);
-  }
 
   return (
     // One row grammar at every width. This was a four-column grid above
@@ -16308,6 +16479,7 @@ function SquadMemberRow({
           >
             {agent.name}
           </button>
+          {agent.pinned ? <Pin className="size-3 shrink-0 text-muted-foreground" aria-label={copy.pinned || "Pinned"} /> : null}
           <span className="truncate text-xs text-muted-foreground">{role || copy.squadMember || "Squad member"}</span>
         </div>
         <p className="mt-0.5 truncate text-sm text-muted-foreground">
@@ -16344,108 +16516,29 @@ function SquadMemberRow({
           <TooltipContent>Open chat</TooltipContent>
         </Tooltip>
 
-        <Popover open={menuOpen} onOpenChange={setMenuOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 text-muted-foreground hover:text-foreground"
-              aria-label={`Manage ${agent.name}`}
-            >
-              <Ellipsis className="size-4" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-52 p-1">
-            <SquadMenuItem icon={MessageSquareText} onClick={() => go(memberChatPath(agent.id))}>
-              Open chat
-            </SquadMenuItem>
-            <SquadMenuItem icon={CircleUserRound} onClick={() => go(memberProfilePath(agent.id, "home"))}>
-              View profile
-            </SquadMenuItem>
-            <SquadMenuItem icon={Workflow} onClick={() => go(automationListPath(agent.id))}>
-              Automations
-            </SquadMenuItem>
-            <Separator className="my-1" />
-            {isResting ? (
-              <SquadMenuItem
-                icon={Play}
-                onClick={() => {
-                  setMenuOpen(false);
-                  onSetState?.(agent.id, "active");
-                }}
-              >
-                Set active
-              </SquadMenuItem>
-            ) : (
-              <SquadMenuItem
-                icon={PauseCircle}
-                onClick={() => {
-                  setMenuOpen(false);
-                  onSetState?.(agent.id, "paused");
-                }}
-              >
-                Pause member
-              </SquadMenuItem>
-            )}
-            <Separator className="my-1" />
-            <SquadMenuItem
-              icon={Trash2}
-              destructive
-              onClick={() => {
-                setMenuOpen(false);
-                onRequestDelete?.();
-              }}
-            >
-              Remove member
-            </SquadMenuItem>
-          </PopoverContent>
-        </Popover>
+        <MemberMenu
+          agent={agent}
+          copy={copy}
+          onChat={() => navigate(memberChatPath(agent.id))}
+          onProfile={() => navigate(memberProfilePath(agent.id, "home"))}
+          onAutomations={() => navigate(automationListPath(agent.id))}
+          resting={isResting}
+          toggleStateLabel={isResting ? copy.setActive || "Set active" : copy.pauseMember || "Pause member"}
+          onToggleState={() => onSetState?.(agent.id, isResting ? "active" : "paused")}
+          pinned={agent.pinned === true}
+          onPin={onPin}
+          unread={unread}
+          canMarkUnread={canMarkUnread}
+          onMarkUnread={onMarkUnread}
+          onMarkRead={onMarkRead}
+          onDuplicate={onDuplicate}
+          onSharePreset={onSharePreset}
+          hidden={agent.hidden === true}
+          onHide={onHide}
+          onRemove={onRequestDelete}
+        />
       </div>
     </li>
-  );
-}
-
-// The overflow menu on a member row in the sidebar. Chat first, because that
-// is what the row itself does and the menu should agree with it. "Take a
-// break" stops whatever the member is doing and makes it decline new work
-// until the break ends (ADR-0027).
-function MemberRowMenu({ agent, copy, onChat, onDetails, onToggleBreak, onDelete }) {
-  const [open, setOpen] = useState(false);
-  const resting = isOnBreak(agent);
-  function run(action) {
-    setOpen(false);
-    action?.();
-  }
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="size-6 text-muted-foreground hover:text-foreground"
-          aria-label={`${copy.memberActions || "Actions for"} ${agent.name}`}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <EllipsisVertical className="size-3.5" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" side="right" className="w-48 p-1">
-        <SquadMenuItem icon={MessageSquareText} onClick={() => run(onChat)}>
-          {copy.chat || "Chat"}
-        </SquadMenuItem>
-        <SquadMenuItem icon={CircleUserRound} onClick={() => run(onDetails)}>
-          {copy.memberDetails || "Details"}
-        </SquadMenuItem>
-        <Separator className="my-1" />
-        <SquadMenuItem icon={resting ? Play : PauseCircle} onClick={() => run(onToggleBreak)}>
-          {resting ? copy.endBreak || "End break" : copy.takeABreak || "Take a break"}
-        </SquadMenuItem>
-        <Separator className="my-1" />
-        <SquadMenuItem icon={Trash2} destructive onClick={() => run(onDelete)}>
-          {copy.delete || "Delete"}
-        </SquadMenuItem>
-      </PopoverContent>
-    </Popover>
   );
 }
 
@@ -19518,7 +19611,7 @@ function buildCustomRoleInstructions(templateDraft) {
     .join("\n\n");
 }
 
-function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, existingMemberIds = [], harnesses = [], harnessesLoading = false, onRefreshHarnesses, copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
+function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, existingMemberIds = [], harnesses = [], harnessesLoading = false, onRefreshHarnesses, presets = [], copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
   const creationStorageKey = `${STORAGE_KEYS.memberCreation}:${defaultWorkspace || ""}`;
   const [savedCreation] = useState(() => {
     const saved = readStored(creationStorageKey, null);
@@ -19574,9 +19667,11 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
       : copyText.designAsking || "Asking a model to design this.";
   const [customTemplates, setCustomTemplates] = useState(() => (Array.isArray(savedCreation?.customTemplates) ? savedCreation.customTemplates : []).filter(template => template && typeof template.id === "string" && template.id.startsWith("custom-role-") && typeof template.title === "string" && typeof template.description === "string" && typeof template.starter === "string"));
   const [customTemplateDialogOpen, setCustomTemplateDialogOpen] = useState(false);
-  const [templateId, setTemplateId] = useState(() => [...roleTemplates, ...customTemplates].some(template => template.id === savedCreation?.templateId) ? savedCreation.templateId : "");
+  const [templateId, setTemplateId] = useState(() => [...presets, ...roleTemplates, ...customTemplates].some(template => template.id === savedCreation?.templateId) ? savedCreation.templateId : "");
   const appliedTemplateRef = useRef(templateId);
-  const availableTemplates = useMemo(() => [...roleTemplates, ...customTemplates], [customTemplates]);
+  // Imported presets come first (ADR-0106), then the built-in roles, then
+  // roles written on this screen.
+  const availableTemplates = useMemo(() => [...presets, ...roleTemplates, ...customTemplates], [presets, customTemplates]);
   const selectedTemplate = availableTemplates.find((item) => item.id === templateId);
   const template = selectedTemplate || roleTemplates[0] || CUSTOM_ROLE_TEMPLATE;
   const runtimeShell = useMemo(() => ({ workspaceRoot, defaultWorkspace }), [workspaceRoot, defaultWorkspace]);
@@ -19977,13 +20072,16 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
 
           {rolesOpen ? (
             <div role="radiogroup" aria-label="Ready-made roles" className="mt-2 flex flex-col">
-              {availableTemplates.map((role) => (
-                <RoleChoiceRow
-                  key={role.id}
-                  role={role}
-                  selected={templateId === role.id}
-                  onToggle={toggleTemplate}
-                />
+              {availableTemplates.map((role, index) => (
+                <React.Fragment key={role.id}>
+                  {presets.length && index === 0 ? <p className="pt-1 pb-1 text-xs text-muted-foreground">{copyText.importedPresets || "Imported presets"}</p> : null}
+                  {presets.length && index === presets.length ? <p className="pt-4 pb-1 text-xs text-muted-foreground">{copyText.readyMadeRoles || "Ready-made roles"}</p> : null}
+                  <RoleChoiceRow
+                    role={role}
+                    selected={templateId === role.id}
+                    onToggle={toggleTemplate}
+                  />
+                </React.Fragment>
               ))}
               <Button
                 type="button"

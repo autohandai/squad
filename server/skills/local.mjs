@@ -19,13 +19,17 @@ import { join } from "node:path";
 
 /** Where a skill can live, in the order a name is resolved. */
 export function localSkillRoots(options) {
-  const { homeDir = "", workspace = "" } = options && typeof options === "object" ? options : {};
+  const { homeDir = "", workspace = "", squadStateDir = "" } = options && typeof options === "object" ? options : {};
   const roots = [];
   // The workspace first: a skill checked in beside the code is the most
   // specific answer to "which skill did you mean".
   if (workspace) {
     roots.push(join(workspace, ".autohand", "skills"), join(workspace, ".claude", "skills"), join(workspace, ".agents", "skills"));
   }
+  // Skills that arrived in a team file (server/teams, ADR-0106) live in the
+  // app's own state folder, so they are found by name like any local skill
+  // and never written into a folder the person owns.
+  if (squadStateDir) roots.push(join(squadStateDir, "skills"));
   if (homeDir) {
     roots.push(join(homeDir, ".autohand", "skills"), join(homeDir, ".claude", "skills"), join(homeDir, ".agents", "skills"));
   }

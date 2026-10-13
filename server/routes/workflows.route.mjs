@@ -381,6 +381,36 @@ function prepareWorkflow(input, channelId, existing = null) {
   return { ...workflow, channelId };
 }
 
+// Team import (server/teams, ADR-0106): add a channel's workflows in one go,
+// every one disabled with no runs, through the same preparation and
+// validation as POST /api/channels/:id/workflows. `removeChannelWorkflows`
+// is its undo, so a failed import can leave the store as it found it.
+export async function importWorkflows(ctx, channelId, inputs = []) {
+  await loadStore(ctx);
+  const created = [];
+  for (const input of inputs) {
+    const workflow = prepareWorkflow({ ...input, enabled: false, runs: [] }, channelId);
+    const problems = validateWorkflow({ ...input, ...workflow, name: input?.name });
+    if (problems.length) throw new Error(`workflow ${String(input?.name || "").trim() || "(unnamed)"} is incomplete: ${problems.join(", ")}`);
+    if (workflowsFor(channelId).some((item) => item.id === workflow.id)) throw new Error(`workflow id ${workflow.id} already exists`);
+    replaceWorkflow(channelId, { ...workflow, enabled: false });
+    created.push({ ...workflow, enabled: false });
+  }
+  await saveStore(ctx);
+  for (const workflow of created) {
+    log(ctx, ctx.SEVERITY.INFO, `workflow ${workflow.name} imported (paused)`, { "event.name": "workflow.created", "autohand.workflow.id": workflow.id, "autohand.channel.id": channelId, "autohand.workflow.trigger": workflow.trigger.type });
+  }
+  return created;
+}
+
+export async function removeChannelWorkflows(ctx, channelId) {
+  await loadStore(ctx);
+  const removed = workflowsFor(channelId);
+  delete store.channels[channelId];
+  await saveStore(ctx);
+  return removed;
+}
+
 export async function handle(req, res, url, ctx) {
   const path = url.pathname;
   if (!path.startsWith("/api/channels/") && !path.startsWith("/api/workflows") && !path.startsWith("/api/webhooks/")) return false;

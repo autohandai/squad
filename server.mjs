@@ -1751,7 +1751,7 @@ async function installAgentSkills(agent, agentHome, agentId) {
   // Skills the person already has on this machine answer first. A skill in
   // ~/.claude/skills used to be invisible here, so asking for it produced
   // "not found in Skilled catalog" however plainly it was sitting on disk.
-  const localRoots = localSkillRoots({ homeDir, workspace: String(agent?.workspace || "") });
+  const localRoots = localSkillRoots({ homeDir, squadStateDir, workspace: String(agent?.workspace || "") });
   const localById = new Map((await listLocalSkills(localRoots)).map((skill) => [skill.id, skill]));
 
   const catalog = await loadSkillCatalog().catch(() => ({ skills: [] }));
@@ -7308,6 +7308,9 @@ function routeContext() {
     getRuntime,
     cleanWorkspace,
     spawnSync,
+    // Member homes: <agentsDir>/<member id>/{skills,profile}. Read-only use
+    // by team export (server/teams, ADR-0106); provisioning stays here.
+    agentsDir: isolatedAgentsDir,
   };
 }
 
@@ -8084,7 +8087,7 @@ async function handleApi(req, res, url) {
       const query = String(url.searchParams.get("q") || "").trim().toLowerCase();
       // What the person already has comes first, and a missing catalog no
       // longer empties the list: local skills are the ones that always work.
-      const localRoots = localSkillRoots({ homeDir, workspace: String(url.searchParams.get("workspace") || "") });
+      const localRoots = localSkillRoots({ homeDir, squadStateDir, workspace: String(url.searchParams.get("workspace") || "") });
       const local = (await listLocalSkills(localRoots).catch(() => [])).map((skill) => ({
         id: skill.id,
         name: skill.name,
