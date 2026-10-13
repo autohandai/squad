@@ -30,18 +30,27 @@ export function suggestionsFor(agent) {
   const first = skills[0] || "";
   const second = skills[1] || first;
 
+  const subject = project || "this project";
   const asks = [];
   if (first) {
-    asks.push(`Look${where ? ` at ${project}` : " at this project"} and tell me the three things most worth fixing for ${first}.`);
+    asks.push(`With ${first} in mind, look at ${subject} and tell me the three things most worth fixing.`);
   }
-  asks.push(`As a ${role}, what would you take ownership of${where}? Start with what worries you most.`);
+  asks.push(`As ${withArticle(role)}, what would you take ownership of${where}? Start with what worries you most.`);
   if (second) {
-    asks.push(`Find the weakest part of ${project || "this project"} for ${second}, then fix it and show me the change.`);
+    asks.push(`Find the weakest part of ${subject} when it comes to ${second}, then fix it and show me the change.`);
   }
   // Fillers, in order, for a member with few or no skills.
-  asks.push(`Walk me through${where || " this project"} the way a ${role} would read it.`);
+  asks.push(`Walk me through ${subject} the way ${withArticle(role)} would read it.`);
   asks.push(`What would you change first${where}, and what would you leave alone?`);
   return asks.slice(0, SUGGESTION_LIMIT);
+}
+
+/** "a QA Engineer", "an Operations Lead", "an SRE". */
+function withArticle(role) {
+  const word = role.split(" ")[0] || "";
+  const acronym = /^[A-Z]{2,}$/.test(word);
+  const vowelSound = acronym ? /^[AEFHILMNORSX]/.test(word) : /^[aeiou]/i.test(word) && !/^(uni|use|usu|one|eu)/i.test(word);
+  return `${vowelSound ? "an" : "a"} ${role}`;
 }
 
 function clean(value) {

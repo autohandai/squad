@@ -45,7 +45,7 @@ function memberTooltip(agent, presence) {
 // `menu` renders beside the row rather than inside it: a row is a button, and
 // a button cannot contain another button.
 function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, bold = false, ariaLabel, menu, tooltip }) {
-  const row = (
+  const button = (
     <button
       type="button"
       aria-current={active ? "page" : undefined}
@@ -63,22 +63,24 @@ function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, 
       {trailing}
     </button>
   );
-  const withMenu = menu ? (
+  // The tooltip belongs to the row's button only: on the whole row it stayed
+  // open over the row's own menu and covered its last item.
+  const row = tooltip ? (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent side="right">{tooltip}</TooltipContent>
+    </Tooltip>
+  ) : (
+    button
+  );
+  if (!menu) return row;
+  return (
     <div className="group/navrow relative flex min-w-0 items-center">
       {row}
-      <span className="absolute right-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/navrow:opacity-100">
+      <span className="absolute right-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/navrow:opacity-100 has-[[data-state=open]]:opacity-100">
         {menu}
       </span>
     </div>
-  ) : (
-    row
-  );
-  if (!tooltip) return withMenu;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{withMenu}</TooltipTrigger>
-      <TooltipContent side="right">{tooltip}</TooltipContent>
-    </Tooltip>
   );
 }
 

@@ -65,6 +65,12 @@ list to the section for that version.
 
 ### Fixed
 
+- A new install no longer comes with someone else's work: no `clients-pie-shop-nz` channel, no tasks "running" in a folder you never opened, no pending decision in Needs you, no active "Smoke test" automation, and the four starting members no longer point at a folder on another computer or claim days of activity. Deleting `#general` or `#release-reviews` now sticks. The full list of fixes from this pass, with causes, is in `docs/reports/bughunt-2026-10.md`.
+- The member page's activity calendar shows what that member actually did, ending today, instead of the same made-up year for everyone.
+- Chat header: Stop appears only while something is running; Task list has its own icon; the runs button is called Runs. Suggested prompts read as sentences ("With testing strategies in mind…", "As an Operations Lead…").
+- Member page: the brain card renders its lists as lists, the autonomy line counts the tools that ask first, the memory policy is shown once, the two ✕ buttons that did nothing are gone, Memory & Growth no longer says "No memory updates yet" above a memory, and empty tables say so. The page drops its nested boxes for dividers.
+- Sidebar: a member row's tooltip no longer covers its own menu, and the ⋯ button stays visible while its menu is open.
+
 - The Model page of a Claude Code, Codex or ACP member shows that engine, its model and its settings instead of the workspace's Autohand provider, which those members never use.
 
 - Renaming a member in chat now updates it everywhere (header, sidebar, every reply) even when you send the rename while the member is still answering, and when it arrives from a goal, Telegram or a routine. Before, the member said its new name but kept the old one.

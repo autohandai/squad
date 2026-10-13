@@ -158,9 +158,7 @@ const fixtures = {
   agents: [alex, noah, iris],
   removedAgents: initialAgents.map((agent) => agent.id),
   settledSeeds, decidedMemory,
-  // The recovered pie-shop channel (src/App.jsx RECOVERED_CHANNELS) merges in
-  // like the seeds, so it is marked read too.
-  seedChannelIds: [...initialChannels.map((channel) => channel.id), "channel-6eb6c6df-afc4-48c4-bac5-b3ceb9fe3e55", CHANNEL_ID],
+  seedChannelIds: [...initialChannels.map((channel) => channel.id), CHANNEL_ID],
   messages: {
     [alex.id]: [
       { id: "inbox-u1", role: "user", body: runs[3].title, status: "complete", startedAt: at(8), createdAt: at(8) },

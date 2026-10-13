@@ -39,6 +39,7 @@ import {
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   ArrowUpRight,
   ArrowLeft,
   BadgeCheck,
@@ -124,7 +125,6 @@ import {
   Zap,
 } from "lucide-react";
 import {
-  buildActivity,
   extensionRows,
   initialAgents,
   initialAutomations,
@@ -322,6 +322,7 @@ import { takeTable } from "@/lib/markdown-table";
 import { MEMBER_DESIGNER_ID, editDraftRole } from "@/lib/member-draft";
 import { parseLocalJson, writeLocalJson, compactChannelMessagesCache, isStorageQuotaError } from "@/lib/local-cache";
 import { MemberWorkspacePicker } from "@/components/chat/MemberWorkspacePicker";
+import { activityCalendar } from "@/lib/activity-calendar";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
@@ -1397,158 +1398,6 @@ const CHANNEL_VISIBILITY_OPTIONS = [
   { id: CHANNEL_VISIBILITY_PUBLIC, icon: Globe2, labelKey: "channelPublic", detailKey: "channelPublicDetail" },
   { id: CHANNEL_VISIBILITY_PRIVATE, icon: Lock, labelKey: "channelPrivate", detailKey: "channelPrivateDetail" },
 ];
-const RECOVERED_PIE_SHOP_CHANNEL_ID = "channel-6eb6c6df-afc4-48c4-bac5-b3ceb9fe3e55";
-const RECOVERED_PIE_SHOP_WORKSPACE = "/Users/igorcosta/Documents/autohand/demo/pieshop";
-const RECOVERED_CHANNELS = [
-  {
-    id: RECOVERED_PIE_SHOP_CHANNEL_ID,
-    name: "clients-pie-shop-nz",
-    visibility: CHANNEL_VISIBILITY_PUBLIC,
-    memberIds: ["b3bc502e795a", "asq_noah_frontend", "asq_iris_reviewer", "asq_kai_devops"],
-    creatorId: "codex-live-test",
-    autoModeDefault: true,
-    createdAt: "2026-07-05T01:19:04.493Z",
-    updatedAt: "2026-07-05T10:09:47.000Z",
-  },
-];
-const RECOVERED_CHANNEL_THREADS = [
-  {
-    id: "thread_live_pieshop_mr73s27l",
-    channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-    parentMessageId: "thread_live_pieshop_mr73s27l-root",
-    title: "Build a static NZ pie shop website",
-    creatorId: "codex-live-test",
-    memberIds: ["asq_noah_frontend"],
-    autoMode: false,
-    selfJudge: false,
-    replyCount: 1,
-    createdAt: "2026-07-05T01:19:04.498Z",
-    updatedAt: "2026-07-05T01:27:47.553Z",
-  },
-  {
-    id: "thread_live_pieshop_openrouter_mr74gsz5",
-    channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-    parentMessageId: "thread_live_pieshop_openrouter_mr74gsz5-root",
-    title: "OpenRouter live static NZ pie shop build",
-    creatorId: "codex-live-test",
-    memberIds: ["asq_noah_frontend", "b3bc502e795a", "asq_iris_reviewer", "asq_kai_devops"],
-    autoMode: false,
-    selfJudge: false,
-    replyCount: 4,
-    createdAt: "2026-07-05T01:38:18.955Z",
-    updatedAt: "2026-07-05T02:08:00.000Z",
-  },
-];
-const RECOVERED_CHANNEL_MESSAGES = {
-  [RECOVERED_PIE_SHOP_CHANNEL_ID]: [
-    {
-      id: "thread_live_pieshop_mr73s27l-root",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "user",
-      body: "Build a static NZ pie shop website",
-      status: "complete",
-      time: "13:19",
-      threadId: "thread_live_pieshop_mr73s27l",
-      parentMessageId: "",
-      createdAt: "2026-07-05T01:19:04.498Z",
-      updatedAt: "2026-07-05T01:19:04.498Z",
-    },
-    {
-      id: "thread_live_pieshop_mr73s27l-recovered",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "agent",
-      agentId: "asq_noah_frontend",
-      body: "Recovered from local run evidence: the first pie-shop run created the project direction, but its full reply bodies were not persisted to the channel log. The later OpenRouter thread below contains the actionable implementation, QA, review, and serving handoff.",
-      status: "complete",
-      time: "13:27",
-      threadId: "thread_live_pieshop_mr73s27l",
-      parentMessageId: "thread_live_pieshop_mr73s27l-root",
-      workspace: RECOVERED_PIE_SHOP_WORKSPACE,
-      transport: "recovered",
-      createdAt: "2026-07-05T01:27:47.553Z",
-      updatedAt: "2026-07-05T01:27:47.553Z",
-    },
-    {
-      id: "thread_live_pieshop_openrouter_mr74gsz5-root",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "user",
-      body: "OpenRouter live static NZ pie shop build",
-      status: "complete",
-      time: "13:38",
-      threadId: "thread_live_pieshop_openrouter_mr74gsz5",
-      parentMessageId: "",
-      createdAt: "2026-07-05T01:38:18.955Z",
-      updatedAt: "2026-07-05T01:38:18.955Z",
-    },
-    {
-      id: "thread_live_pieshop_openrouter_mr74gsz5-noah",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "agent",
-      agentId: "asq_noah_frontend",
-      body: "Noah implementation handoff: built the static site workspace with index.html, styles.css, script.js, and README.md. The page links the CSS and JS, includes menu filter buttons, pie cards with data-type values, and an order modal wired by orderBtn, closeBtn, and orderModal.",
-      status: "complete",
-      time: "13:48",
-      threadId: "thread_live_pieshop_openrouter_mr74gsz5",
-      parentMessageId: "thread_live_pieshop_openrouter_mr74gsz5-root",
-      workspace: RECOVERED_PIE_SHOP_WORKSPACE,
-      transport: "recovered",
-      createdAt: "2026-07-05T01:48:00.000Z",
-      updatedAt: "2026-07-05T01:48:00.000Z",
-    },
-    {
-      id: "thread_live_pieshop_openrouter_mr74gsz5-eva",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "agent",
-      agentId: "b3bc502e795a",
-      body: "Eva QA handoff: verified index.html, styles.css, script.js, and README.md are present; HTML links the assets; the script selectors match orderBtn, closeBtn, and orderModal; README includes local run commands.",
-      status: "complete",
-      time: "13:55",
-      threadId: "thread_live_pieshop_openrouter_mr74gsz5",
-      parentMessageId: "thread_live_pieshop_openrouter_mr74gsz5-root",
-      workspace: RECOVERED_PIE_SHOP_WORKSPACE,
-      transport: "recovered",
-      createdAt: "2026-07-05T01:55:00.000Z",
-      updatedAt: "2026-07-05T01:55:00.000Z",
-    },
-    {
-      id: "thread_live_pieshop_openrouter_mr74gsz5-iris",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "agent",
-      agentId: "asq_iris_reviewer",
-      body: "Iris review handoff: reviewed the evidence after the fixes. The site structure uses semantic sections, selector guards, active filter state, modal focus and escape handling, and README serving commands. Residual risk is limited to deeper browser/manual accessibility testing beyond the static checks.",
-      status: "complete",
-      time: "14:03",
-      threadId: "thread_live_pieshop_openrouter_mr74gsz5",
-      parentMessageId: "thread_live_pieshop_openrouter_mr74gsz5-root",
-      workspace: RECOVERED_PIE_SHOP_WORKSPACE,
-      transport: "recovered",
-      createdAt: "2026-07-05T02:03:00.000Z",
-      updatedAt: "2026-07-05T02:03:00.000Z",
-    },
-    {
-      id: "thread_live_pieshop_openrouter_mr74gsz5-kai",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "agent",
-      agentId: "asq_kai_devops",
-      body: "Kai serving handoff: the static site is ready to serve from /Users/igorcosta/Documents/autohand/demo/pieshop. Verified local URL used port 4174 because 4173 was already occupied. Commands: cd /Users/igorcosta/Documents/autohand/demo/pieshop; python3 -m http.server 4174 --bind 127.0.0.1; open http://127.0.0.1:4174.",
-      status: "complete",
-      time: "14:08",
-      threadId: "thread_live_pieshop_openrouter_mr74gsz5",
-      parentMessageId: "thread_live_pieshop_openrouter_mr74gsz5-root",
-      workspace: RECOVERED_PIE_SHOP_WORKSPACE,
-      transport: "recovered",
-      createdAt: "2026-07-05T02:08:00.000Z",
-      updatedAt: "2026-07-05T02:08:00.000Z",
-    },
-  ],
-};
 const ONBOARDING_ROUTE = "/welcome";
 const MEMBER_ROUTE_PREFIX = "/squad-members";
 const SQUAD_WORKSPACE_DIR_NAME = ".autohandsquad";
@@ -3331,11 +3180,10 @@ function normalizeChannelCopy(channel) {
 function mergeSeedChannels(stored) {
   const records = (Array.isArray(stored) ? stored : []).map(normalizeChannelCopy).filter(Boolean);
   const seen = new Set(records.map((channel) => channel.id));
-  return [
-    ...records,
-    ...initialChannels.filter((channel) => !seen.has(channel.id)).map(normalizeChannelCopy).filter(Boolean),
-    ...RECOVERED_CHANNELS.filter((channel) => !seen.has(channel.id)).map(normalizeChannelCopy).filter(Boolean),
-  ];
+  // Seed channels are a first-run default (readStored hands them over when
+  // nothing is saved); once channels are saved, a deleted one stays deleted.
+  if (Array.isArray(stored)) return records;
+  return [...records, ...initialChannels.filter((channel) => !seen.has(channel.id)).map(normalizeChannelCopy).filter(Boolean)];
 }
 
 function normalizeChannelThreadCopy(thread) {
@@ -3393,27 +3241,11 @@ function normalizeChannelMessagesCopy(messagesByChannel) {
 }
 
 function mergeSeedChannelThreads(stored) {
-  const next = normalizeChannelThreadsCopy(stored);
-  for (const seed of RECOVERED_CHANNEL_THREADS.map(normalizeChannelThreadCopy).filter(Boolean)) {
-    const existing = next[seed.channelId] || [];
-    if (existing.some((thread) => thread.id === seed.id)) continue;
-    next[seed.channelId] = [...existing, seed];
-  }
-  return next;
+  return normalizeChannelThreadsCopy(stored);
 }
 
 function mergeSeedChannelMessages(stored) {
-  const next = normalizeChannelMessagesCopy(stored);
-  const seedMessages = normalizeChannelMessagesCopy(RECOVERED_CHANNEL_MESSAGES);
-  for (const [channelId, messages] of Object.entries(seedMessages)) {
-    const existing = next[channelId] || [];
-    const byId = new Map(existing.map((message) => [message.id, message]));
-    for (const message of messages) {
-      if (!byId.has(message.id)) byId.set(message.id, message);
-    }
-    next[channelId] = Array.from(byId.values());
-  }
-  return next;
+  return normalizeChannelMessagesCopy(stored);
 }
 
 const CHANNEL_MENTION_PATTERN = /@([A-Za-z0-9][A-Za-z0-9._-]*)/g;
@@ -14606,7 +14438,8 @@ function Conversation({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          {stopMember && !["offline", "unknown"].includes(entryForPresence(agent).state) ? (
+          {/* Stop only means something while there is work to end. */}
+          {stopMember && (chatSending || runningCount > 0) && !["offline", "unknown"].includes(entryForPresence(agent).state) ? (
             <StopMemberButton member={agent} onStop={stopMember} iconOnly copy={copy} disabled={!runtime?.available} />
           ) : null}
           <Button variant="outline" size="sm" className="h-8" onClick={startFreshChat}>
@@ -14650,19 +14483,19 @@ function Conversation({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon-sm" aria-label={copy.taskList} onClick={() => openPanel("tasks")}>
-                <History />
+                <ListChecks />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{copy.taskList}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" className="relative" aria-label={copy.current} onClick={() => openPanel("runs")}>
+              <Button variant="ghost" size="icon-sm" className="relative" aria-label={copy.runsPanel || "Runs"} onClick={() => openPanel("runs")}>
                 <CircleDot className={cn(runningCount && "text-primary")} />
                 {runningCount ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary" aria-hidden="true" /> : null}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{copy.current}</TooltipContent>
+            <TooltipContent>{runningCount ? `${copy.runsPanel || "Runs"} · ${runningCount} running` : copy.runsPanel || "Runs"}</TooltipContent>
           </Tooltip>
           </> : null}
           {menu}
@@ -15507,8 +15340,8 @@ function RawTraceBlock({ raw }) {
 
 function Metric({ label, value }) {
   return (
-    <div className="min-w-0 rounded-lg border bg-muted/35 p-3">
-      <div className="min-w-0 truncate text-sm font-semibold">{value}</div>
+    <div className="min-w-0">
+      <div className="min-w-0 truncate text-lg font-semibold tabular-nums">{value}</div>
       <div className="mt-1 text-xs text-muted-foreground">{label}</div>
     </div>
   );
@@ -18537,9 +18370,9 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
         ))}
       </dl>
       <div className="mt-3 border-t border-border/60 pt-3">
-        <Button type="button" size="sm" className="w-full" onClick={onViewProfile}>
+        <Button type="button" variant="outline" size="sm" className="w-full" onClick={onViewProfile}>
           View profile
-          <ArrowUpRight data-icon="inline-end" />
+          <ArrowRight data-icon="inline-end" />
         </Button>
       </div>
     </PopoverContent>
@@ -18564,7 +18397,7 @@ function HandoffTimelinePanel({ tasks = [], agents = [], locale = DEFAULT_LOCALE
   }
 
   return (
-    <section className="rounded-md border bg-muted/20 p-4" aria-label="Handoff timeline">
+    <section className="border-t border-border/60 pt-4" aria-label="Handoff timeline">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold">Handoff timeline</h3>
@@ -18907,7 +18740,7 @@ function RecipeCatalogDialog({
 
 function EmptyBlock({ icon: Icon, title, body }) {
   return (
-    <Empty className="border">
+    <Empty className="py-8">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <Icon />
@@ -23483,8 +23316,9 @@ function permissionSummary(agent, workspace = agent?.workspace) {
   const ladder = autonomyLadderLevelMeta(permissions.ladderLevel);
   const policyEntries = Object.entries(permissions.builtInPolicies || {});
   const allowCount = policyEntries.filter(([, mode]) => mode === "allow").length;
+  const askCount = policyEntries.filter(([, mode]) => mode === "ask").length;
   const blockCount = policyEntries.filter(([, mode]) => mode === "block").length;
-  return `Level ${ladder.rank}: ${ladder.label}, ${allowCount} autonomous tools, ${blockCount} blocked`;
+  return `Level ${ladder.rank}: ${ladder.label}. ${allowCount} tools run freely, ${askCount} ask first, ${blockCount} blocked`;
 }
 
 function capabilityLevel(agent) {
@@ -23504,8 +23338,8 @@ function connectorReadiness(agent) {
 
 function toolCategorySummary(agent) {
   const brainCard = brainCardForAgent(agent);
-  const fromBrainCard = brainCardPreviewLines(brainCard.allowedTools, 3).map((line) => line.replace(/^[-\d.]+\s*/, ""));
-  if (fromBrainCard.length) return fromBrainCard.join("; ");
+  const fromBrainCard = brainCardPreviewLines(brainCard.allowedTools, 3).map((line) => line.replace(/^[-\d.]+\s*/, "").replace(/[.;]+$/, ""));
+  if (fromBrainCard.length) return `${fromBrainCard.join("; ")}.`;
   const tools = Array.isArray(agent?.tools) ? agent.tools.map((tool) => tool.name).filter(Boolean) : [];
   return tools.length ? tools.join(", ") : "Autohand CLI and installed profile skills";
 }
@@ -23530,18 +23364,31 @@ function buildAgentIdCardText(agent) {
 
 function BrainCardFieldBlock({ field, value }) {
   const lines = brainCardPreviewLines(value, 12);
+  // Authors write these as "- item" or "1. item"; show a list, not the dashes.
+  const marker = /^(?:[-*•]|\d+[.)])\s+/;
+  const listed = lines.length > 0 && lines.every((line) => marker.test(line));
+  const ordered = listed && /^\d/.test(lines[0]);
+  const List = ordered ? "ol" : "ul";
   return (
-    <section className="rounded-md border bg-background/55 p-4">
+    <section className="border-t border-border/60 pt-3">
       <h4 className="text-sm font-semibold text-foreground">{field.label}</h4>
-      <div className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
-        {lines.length ? (
-          lines.map((line, index) => (
-            <p key={`${field.id}-${index}`} className="whitespace-pre-wrap">
-              {line}
-            </p>
-          ))
-        ) : (
+      <div className="mt-2 text-sm leading-6 text-muted-foreground">
+        {!lines.length ? (
           <p>Not configured.</p>
+        ) : listed ? (
+          <List className={cn("space-y-1 pl-5", ordered ? "list-decimal" : "list-disc")}>
+            {lines.map((line, index) => (
+              <li key={`${field.id}-${index}`}>{line.replace(marker, "")}</li>
+            ))}
+          </List>
+        ) : (
+          <div className="space-y-2">
+            {lines.map((line, index) => (
+              <p key={`${field.id}-${index}`} className="whitespace-pre-wrap">
+                {line}
+              </p>
+            ))}
+          </div>
         )}
       </div>
     </section>
@@ -23550,7 +23397,6 @@ function BrainCardFieldBlock({ field, value }) {
 
 function CompactAgentIdCard({ agent }) {
   const [copied, setCopied] = useState(false);
-  const brainCard = brainCardForAgent(agent);
   const rows = [
     { label: "Capability", value: capabilityLevel(agent) },
     { label: "Autonomy", value: permissionSummary(agent, agent?.workspace) },
@@ -23570,7 +23416,7 @@ function CompactAgentIdCard({ agent }) {
   }
 
   return (
-    <aside className="rounded-md border bg-muted/20 p-4">
+    <aside className="lg:border-l lg:border-border/60 lg:pl-5">
       <div className="flex items-start gap-3">
         <AgentAvatar agent={agent} className="size-11" />
         <div className="min-w-0">
@@ -23578,18 +23424,14 @@ function CompactAgentIdCard({ agent }) {
           <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{agent.staffId || agent.id}</div>
         </div>
       </div>
-      <div className="mt-4 grid gap-3">
+      <dl className="mt-4 divide-y divide-border/60">
         {rows.map((row) => (
-          <div key={row.label} className="rounded-md bg-background/70 p-3">
-            <div className="text-[11px] font-medium uppercase text-muted-foreground">{row.label}</div>
-            <div className="mt-1 text-sm leading-5">{row.value}</div>
+          <div key={row.label} className="py-2.5">
+            <dt className="text-xs text-muted-foreground">{row.label}</dt>
+            <dd className="mt-0.5 text-sm leading-5">{row.value}</dd>
           </div>
         ))}
-      </div>
-      <div className="mt-3 rounded-md bg-background/70 p-3">
-        <div className="text-[11px] font-medium uppercase text-muted-foreground">Memory policy</div>
-        <p className="mt-1 max-h-28 overflow-auto text-sm leading-5 text-muted-foreground">{brainCard.memoryPolicy}</p>
-      </div>
+      </dl>
       <Button type="button" variant="outline" size="sm" className="mt-4 w-full" onClick={copyIdCard}>
         <ClipboardCheck data-icon="inline-start" />
         {copied ? "Copied" : "Copy ID card"}
@@ -23624,9 +23466,11 @@ function ProfilePermissionLadder({ agent, runtime, workspaces = [], navigate, co
           return (
             <div
               key={level.id}
+              aria-current={selected ? "step" : undefined}
               className={cn(
-                "min-h-16 rounded-md border px-3 py-2",
-                selected ? "border-primary/45 bg-primary/10 text-foreground" : "border-border/70 bg-muted/20 text-muted-foreground"
+                "border-t-2 pt-2 transition-colors",
+                level.rank <= activeLevel.rank ? "border-primary/70" : "border-border/70",
+                selected ? "text-foreground" : "text-muted-foreground"
               )}
             >
               <div className="text-[11px] font-medium uppercase">Level {level.rank}</div>
@@ -23648,8 +23492,8 @@ function ProfilePermissionLadder({ agent, runtime, workspaces = [], navigate, co
 function BrainCardPanel({ agent, onEdit }) {
   const brainCard = brainCardForAgent(agent);
   return (
-    <Card className="rounded-md border-border/80 bg-card/75 shadow-none" id="brain-card">
-      <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <Card className="gap-4 rounded-none border-0 border-t border-border/75 bg-transparent py-5 shadow-none" id="brain-card">
+      <CardHeader className="gap-3 px-0 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <Brain className="size-5 text-primary" />
@@ -23664,8 +23508,8 @@ function BrainCardPanel({ agent, onEdit }) {
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="grid gap-3 md:grid-cols-2">
+      <CardContent className="grid gap-5 px-0 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="grid content-start gap-x-6 gap-y-4 md:grid-cols-2">
           {brainCardFields.map((field) => (
             <BrainCardFieldBlock key={field.id} field={field} value={brainCard[field.id]} />
           ))}
@@ -23846,7 +23690,12 @@ function ProfileModelSummary({ agent, providerSettings, navigate }) {
 
 function Profile({ agent, agents = [], tasks, automations, runtime, workspaces = [], runs, providerSettings, navigate, openTerminal, updateAgent, startAutohand, initialWorkRecordTab = "timeline", locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), harnesses = [] }) {
   const { entryFor: entryForPresence, stopMember } = usePresence();
-  const activity = useMemo(() => buildActivity(), []);
+  const activity = useMemo(() => {
+    const stamps = [];
+    for (const run of runs || []) if (run?.agentId === agent.id) stamps.push(run.startedAt || run.finishedAt);
+    for (const task of tasks || []) if ([task?.agentId, task?.currentOwnerId].includes(agent.id)) stamps.push(task.updatedAt || task.createdAt);
+    return activityCalendar(stamps, { locale });
+  }, [runs, tasks, agent.id, locale]);
   const [workRecordTab, setWorkRecordTab] = useState(initialWorkRecordTab);
   const [profileEditOpen, setProfileEditOpen] = useState(false);
   // Goal 09: recipe launch from the member profile.
@@ -23897,7 +23746,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                   <Settings data-icon="inline-start" />
                   {copy.edit}
                 </Button>
-                {stopMember ? <StopMemberButton member={agent} onStop={stopMember} copy={copy} /> : null}
+                {stopMember && (entryForPresence(agent).state === "working" || (runs || []).some((run) => run.agentId === agent.id && LIVE_RUN_STATUSES.has(run.status))) ? <StopMemberButton member={agent} onStop={stopMember} copy={copy} /> : null}
                 <Button variant="outline" size="sm" onClick={() => navigate(memberChatPath(agent.id))}>
                   <MessageSquareText data-icon="inline-start" />
                   {copy.chat}
@@ -23925,9 +23774,9 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
           <ProfileRecipes agent={agent} copy={copy} onLaunch={(recipe) => setProfileRecipeTarget(recipe)} />
         ) : null}
 
-        <Card className="rounded-md border-border/80 bg-card/75 shadow-none">
+        <Card className="gap-4 rounded-none border-0 border-t border-border/75 bg-transparent py-5 shadow-none">
           <Tabs value={workRecordTab} onValueChange={setWorkRecordTab}>
-            <CardHeader className="flex-row items-center gap-4">
+            <CardHeader className="flex-row items-center gap-4 px-0">
               <CardTitle className="text-lg">{copy.workRecord}</CardTitle>
               <TabsList variant="line" className="h-auto flex-wrap justify-start gap-2 bg-transparent p-0">
                 <TabsTrigger value="timeline" className="h-9 flex-none px-3">
@@ -23935,7 +23784,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                   {copy.timelineView}
                 </TabsTrigger>
                 <TabsTrigger value="tasks" className="h-9 flex-none px-3">
-                  <History data-icon="inline-start" />
+                  <ListChecks data-icon="inline-start" />
                   {copy.tasks}
                 </TabsTrigger>
                 <TabsTrigger value="automations" className="h-9 flex-none px-3">
@@ -23943,22 +23792,17 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                   {copy.automations}
                 </TabsTrigger>
               </TabsList>
-              <CardAction>
-                <Button variant="ghost" size="icon-sm" aria-label={copy.closeWorkRecord}>
-                  <X />
-                </Button>
-              </CardAction>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-0">
               <TabsContent value="timeline" className="m-0 flex flex-col gap-4">
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <Metric label={copy.activeDays} value={`${formatLocalizedNumber(agent.stats.activeDays ?? 0, locale)}d`} />
+                  <Metric label={copy.activeDays} value={`${formatLocalizedNumber(activity.activeDays, locale)}d`} />
                   <Metric label={copy.automations} value={formatLocalizedNumber(automations.length || agent.stats.automations || 0, locale)} />
                   <Metric label={copy.tasks} value={formatLocalizedNumber(tasks.length || agent.stats.tasks || 0, locale)} />
-                  <Metric label={copy.projects} value={formatLocalizedNumber(agent.stats.projects || 0, locale)} />
+                  <Metric label={copy.projects} value={formatLocalizedNumber(Array.isArray(agent.projects) ? agent.projects.length : agent.stats.projects || 0, locale)} />
                 </div>
                 <HandoffTimelinePanel tasks={tasks} agents={agents} locale={locale} copy={copy} />
-                <ActivityHeatmap values={activity} />
+                <ActivityHeatmap calendar={activity} />
               </TabsContent>
               <TabsContent value="tasks" className="m-0">
                 <WorkRecordTasksTable tasks={tasks} copy={copy} locale={locale} />
@@ -23970,21 +23814,18 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
           </Tabs>
         </Card>
 
-        <Card className="rounded-md border-border/80 bg-card/75 shadow-none">
-          <CardHeader className="flex-row items-center gap-3">
+        <Card className="gap-3 rounded-none border-0 border-t border-border/75 bg-transparent py-5 shadow-none">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 px-0">
             <CardTitle>{copy.memoryGrowth}</CardTitle>
             <Button variant="ghost" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "memory"))}>
               {copy.viewAllMemory}
               <ChevronRight data-icon="inline-end" />
             </Button>
-            <CardAction>
-              <Button variant="ghost" size="icon-sm" aria-label={copy.closeMemory}>
-                <X />
-              </Button>
-            </CardAction>
           </CardHeader>
-          <CardContent className="grid min-h-72 gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
-            <div className="grid place-items-center text-sm text-muted-foreground">{copy.noMemoryUpdatesYet}</div>
+          <CardContent className="px-0">
+            {!normalizeMemoryEntries(agent.memory).length ? (
+              <p className="py-6 text-sm text-muted-foreground">{copy.noMemoryUpdatesYet}</p>
+            ) : (
             <div>
               <div className="mb-4 text-sm font-semibold text-muted-foreground">{copy.recentlyLearned}</div>
               <div className="flex flex-col gap-3">
@@ -23993,7 +23834,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                     crashed the whole page the moment a member had any memory. */}
                 {normalizeMemoryEntries(agent.memory).map((entry) => (
                   <div key={entry.id} className="grid grid-cols-[40px_minmax(0,1fr)_80px] items-center gap-3">
-                    <span className="grid size-9 place-items-center rounded-md bg-[#211b40] text-[#8472ff]">
+                    <span className="grid size-9 place-items-center rounded-md bg-primary/10 text-primary">
                       <Sparkles />
                     </span>
                     <span className="min-w-0">
@@ -24005,11 +23846,15 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                 ))}
               </div>
             </div>
+            )}
           </CardContent>
         </Card>
 
         <div className="grid gap-5 lg:grid-cols-[1fr_1.1fr]">
-          <RunList runs={runs} tasks={tasks} agents={agents} copy={copy} locale={locale} AgentAvatar={AgentAvatar} api={api} />
+          <section className="min-w-0">
+            <h3 className="mb-2 text-base font-semibold">{copy.runsPanel || "Runs"}</h3>
+            <RunList runs={runs} tasks={tasks} agents={agents} copy={copy} locale={locale} AgentAvatar={AgentAvatar} api={api} />
+          </section>
           <AutomationSummary automations={automations} copy={copy} />
         </div>
       </div>
@@ -24074,22 +23919,26 @@ function ProfileRecipes({ agent, copy = getLocaleCopy(DEFAULT_LOCALE), onLaunch 
   );
 }
 
-function ActivityHeatmap({ values }) {
-  const months = ["May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May"];
-  const cells = Array.from({ length: 286 }, (_, index) => {
-    const reverseIndex = values.length - 1 - (285 - index);
-    return reverseIndex >= 0 ? values[reverseIndex] : 0;
-  });
+function ActivityHeatmap({ calendar }) {
+  const { weeks, months, activeDays } = calendar;
+  const shade = (value) => cn(
+    "size-3 rounded-[3px]",
+    value === 0 && "bg-muted-foreground/15 dark:bg-muted/35",
+    value === 1 && "bg-primary/35",
+    value === 2 && "bg-primary/65",
+    value === 3 && "bg-primary"
+  );
+  const dayLabel = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" });
   return (
-    <div className="overflow-x-auto rounded-md border border-border/80 bg-muted/25 p-4">
-      <div className="min-w-[760px]">
-        <div className="ml-14 grid [grid-template-columns:repeat(13,minmax(0,1fr))] text-center text-xs text-muted-foreground">
-          {months.map((month, index) => (
-            <span key={`${month}-${index}`}>{month}</span>
+    <div className="overflow-x-auto border-t border-border/60 pt-4">
+      <div className="w-max min-w-full">
+        <div className="ml-11 grid gap-1.5 text-xs text-muted-foreground" style={{ gridTemplateColumns: `repeat(${weeks.length}, 0.75rem)` }}>
+          {months.map((month) => (
+            <span key={`${month.label}-${month.week}`} className="whitespace-nowrap" style={{ gridColumnStart: month.week + 1 }}>{month.label}</span>
           ))}
         </div>
-        <div className="mt-3 grid grid-cols-[44px_minmax(0,1fr)] gap-3">
-          <div className="grid grid-rows-7 text-xs text-muted-foreground">
+        <div className="mt-2 flex gap-3">
+          <div className="grid w-8 grid-rows-7 gap-1.5 text-[11px] leading-3 text-muted-foreground">
             <span />
             <span>Mon</span>
             <span />
@@ -24099,36 +23948,22 @@ function ActivityHeatmap({ values }) {
             <span />
           </div>
           <div className="grid grid-flow-col grid-rows-7 gap-1.5">
-            {cells.map((value, index) => (
-              <span
-                key={`${index}-${value}`}
-                className={cn(
-                  "size-3 rounded-[3px]",
-                  value === 0 && "bg-muted-foreground/15 dark:bg-muted/35",
-                  value === 1 && "bg-primary/35",
-                  value === 2 && "bg-primary/65",
-                  value === 3 && "bg-primary"
-                )}
-                title={`Day ${index + 1}: level ${value}`}
-              />
+            {weeks.flatMap((week, weekIndex) => week.map((cell, day) =>
+              cell ? (
+                <span key={`${weekIndex}-${day}`} className={shade(cell.level)} title={`${dayLabel.format(cell.date)}: ${cell.count ? `${cell.count} ${cell.count === 1 ? "thing" : "things"} done` : "nothing"}`} />
+              ) : (
+                <span key={`${weekIndex}-${day}`} className="size-3" aria-hidden="true" />
+              )
             ))}
           </div>
         </div>
-        <div className="mt-6 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-          <span>Less</span>
-          {[0, 1, 2, 3].map((value) => (
-            <span
-              key={value}
-              className={cn(
-                "size-3 rounded-[3px]",
-                value === 0 && "bg-muted-foreground/15 dark:bg-muted/35",
-                value === 1 && "bg-primary/35",
-                value === 2 && "bg-primary/65",
-                value === 3 && "bg-primary"
-              )}
-            />
-          ))}
-          <span>More</span>
+        <div className="mt-4 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>{activeDays ? `Active on ${activeDays} ${activeDays === 1 ? "day" : "days"}` : "No activity yet"}</span>
+          <span className="flex items-center gap-1.5">
+            <span>Less</span>
+            {[0, 1, 2, 3].map((value) => <span key={value} className={shade(value)} />)}
+            <span>More</span>
+          </span>
         </div>
       </div>
     </div>
@@ -24137,12 +23972,12 @@ function ActivityHeatmap({ values }) {
 
 function AutomationSummary({ automations, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   return (
-    <Card className="border-border/80 bg-card/75">
-      <CardHeader>
+    <Card className="gap-2 rounded-none border-0 bg-transparent py-0 shadow-none">
+      <CardHeader className="px-0">
         <CardTitle>{copy.automations}</CardTitle>
         <CardDescription>{copy.scheduledLocalAutohandWork}</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-0">
         <Table>
           <TableHeader>
             <TableRow>
@@ -24153,6 +23988,11 @@ function AutomationSummary({ automations, copy = getLocaleCopy(DEFAULT_LOCALE) }
             </TableRow>
           </TableHeader>
           <TableBody>
+            {!automations.length ? (
+              <TableRow>
+                <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">{copy.noAutomationsYet || "No automations yet"}</TableCell>
+              </TableRow>
+            ) : null}
             {automations.map((automation) => (
               <TableRow key={automation.id}>
                 <TableCell className="font-medium">{automation.name}</TableCell>

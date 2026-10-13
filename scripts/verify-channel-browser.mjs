@@ -14,15 +14,6 @@ const screenshotPath = process.env.AUTOHAND_VERIFY_SCREENSHOT || join(rootDir, "
 const workspace = rootDir;
 const workspaceRoot = process.env.HOME || rootDir;
 const verifyChannelName = "clients-browser-verify-nz";
-const recoveredPieShopChannelId = "channel-6eb6c6df-afc4-48c4-bac5-b3ceb9fe3e55";
-const recoveredPieShopExpected = [
-  "Build a static NZ pie shop website",
-  "OpenRouter live static NZ pie shop build",
-  "Noah implementation handoff",
-  "Eva QA handoff",
-  "Iris review handoff",
-  "Kai serving handoff",
-];
 
 function chromePath() {
   const candidates = [
@@ -394,35 +385,6 @@ async function main() {
       throw error;
     });
 
-    await cdp.send("Page.navigate", { url: `${baseUrl}/channels/${recoveredPieShopChannelId}` });
-    let lastRecoveredTranscriptProbe = null;
-    const recoveredTranscript = await waitFor(async () => {
-      lastRecoveredTranscriptProbe = await evaluate(cdp, `
-        (() => {
-          const expected = ${JSON.stringify(recoveredPieShopExpected)};
-          const main = document.querySelector('main')?.innerText || '';
-          const sidebar = document.querySelector('aside')?.innerText || '';
-          const messages = JSON.parse(localStorage.getItem('autohandSquad.v1.channelMessages') || '{}');
-          const pieShopMessages = messages[${JSON.stringify(recoveredPieShopChannelId)}] || [];
-          const persistedText = pieShopMessages.map((message) => message.body || '').join('\\n');
-          return {
-            ok: expected.every((text) => main.includes(text) || persistedText.includes(text)) && sidebar.includes('clients-pie-shop-nz') && pieShopMessages.length >= 6,
-            expected,
-            main: main.slice(0, 2600),
-            sidebar: sidebar.slice(0, 1200),
-            messageCount: pieShopMessages.length,
-          };
-        })()
-      `);
-      return lastRecoveredTranscriptProbe.ok ? lastRecoveredTranscriptProbe : null;
-    }, {
-      timeoutMs: 12000,
-      intervalMs: 250,
-      label: "recovered pie-shop channel transcript",
-    }).catch((error) => {
-      console.error(JSON.stringify({ lastRecoveredTranscriptProbe }, null, 2));
-      throw error;
-    });
 
     await cdp.send("Page.navigate", { url: `${baseUrl}/channels` });
     await waitFor(async () => {
@@ -793,7 +755,6 @@ async function main() {
 
     console.log(JSON.stringify({
       ok: true,
-      recoveredPieShopTranscript: recoveredTranscript.ok,
       busyPresence: busyPresence.ok,
       channelId: verification.channel.id,
       channelName: verification.channel.name,

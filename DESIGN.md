@@ -252,3 +252,6 @@
 - The Automations editor's Schedule section is a divider list of label-and-control rows (Repeat, the kind's own fields, Time zone, Run limit, Next). The next three dates come from the bridge and read as plain text lines; no calendar widget, no card.
 - A scheduled automation's row carries one quiet meta line: a status dot, last run and outcome, next run, and "Needs Squad open" in amber when the bridge cannot run it alone. The detail page lists recorded occurrences (including skipped and missed) as divider rows.
 - A schedule proposal from chat is a divider section at the top of the member's chat: who proposes what, the rule in words with its time zone, the next three dates as small text, then Decline and Confirm. No card frame, no tinted fill; nothing is scheduled until Confirm.
+- Seed data is a first-run default with nothing personal in it: no absolute paths, no fabricated tasks, memory, automations or activity, and no dates from before the install. A seed the person deletes stays deleted.
+- Numbers and charts about a member (activity calendar, active days, counts) are computed from what the member did. Never illustrate with a fixed pattern.
+- `Metric` is a value over a label with no frame; `EmptyBlock` has no border. A page section is a heading under one divider, not a card; do not nest framed blocks.
