@@ -110,6 +110,18 @@ pub enum SquadCommand {
         #[arg(long, default_value_t = DEFAULT_PORT)]
         web_port: u16,
     },
+    /// Run the MCP control plane over stdio for Claude Desktop, Cursor or
+    /// another MCP client (ADR-0095). Talks to the local bridge only.
+    Mcp {
+        /// Bridge origin. Defaults to http://<host>:<web-port>; loopback only.
+        #[arg(long)]
+        bridge: Option<String>,
+        #[arg(long, default_value_t = DEFAULT_PORT)]
+        web_port: u16,
+        /// server.mjs of the runtime whose control plane should run.
+        #[arg(long)]
+        server_path: Option<PathBuf>,
+    },
 }
 
 pub const DEFAULT_WEB_PORT: u16 = 19821;
@@ -227,6 +239,11 @@ async fn run_squad_command_with_paths_inner(
         } => serve(&paths, &config, server_path, dev, web_port).await,
         SquadCommand::ServeStatus { web_port } => serve_status(&paths, &config, web_port).await,
         SquadCommand::ServeStop { web_port } => serve_stop(&paths, &config, web_port).await,
+        SquadCommand::Mcp {
+            bridge,
+            web_port,
+            server_path,
+        } => mcp(&paths, &config, bridge, web_port, server_path),
     }
 }
 
@@ -268,6 +285,7 @@ fn command_name(command: &SquadCommand) -> &'static str {
         SquadCommand::Serve { .. } => "serve",
         SquadCommand::ServeStatus { .. } => "serve-status",
         SquadCommand::ServeStop { .. } => "serve-stop",
+        SquadCommand::Mcp { .. } => "mcp",
     }
 }
 
@@ -666,6 +684,65 @@ async fn serve(
         "Autohand Squad web server did not become ready. Logs: {}\n",
         paths.web_server_log.display()
     )))
+}
+
+/// `squad mcp`: hand the terminal to the bundled Node control plane. The script
+/// ships beside server.mjs in every runtime layout (source checkout, staged
+/// desktop runtime, portable archive), so it is resolved from the same place
+/// as the web server. The Node entry refuses a non-loopback bridge itself.
+fn mcp(
+    paths: &StatePaths,
+    config: &SquadConfig,
+    bridge: Option<String>,
+    web_port: u16,
+    server_path: Option<PathBuf>,
+) -> Result<CommandOutput> {
+    let server_path = locate_web_server(paths, server_path)?;
+    let server_dir = server_path.parent().unwrap_or_else(|| Path::new("."));
+    let script = server_dir
+        .join("server")
+        .join("control-plane")
+        .join("mcp-server.mjs");
+    if !script.exists() {
+        return Ok(CommandOutput::error(format!(
+            "The control plane entry was not found at {}. Reinstall Autohand Squad or run `bun run mcp` from the source checkout.\n",
+            script.display()
+        )));
+    }
+    let bridge = bridge.unwrap_or_else(|| format!("http://{}:{}", config.host, web_port));
+    let node_runtime = locate_node_runtime()?;
+    let mut command = non_bridge_command(&node_runtime);
+    command
+        .arg(&script)
+        .arg("--bridge")
+        .arg(&bridge)
+        .current_dir(server_dir)
+        .env("AUTOHAND_SQUAD_HOME", &paths.root)
+        .env("PATH", gui_path_env())
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    #[cfg(target_family = "unix")]
+    {
+        // exec never returns on success: the MCP client owns this process.
+        let error = command.exec();
+        Err(anyhow!(
+            "start {} {}: {error}",
+            node_runtime.display(),
+            script.display()
+        ))
+    }
+    #[cfg(not(target_family = "unix"))]
+    {
+        let status = command
+            .status()
+            .with_context(|| format!("start {} {}", node_runtime.display(), script.display()))?;
+        Ok(CommandOutput {
+            code: status.code().unwrap_or(1),
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
 }
 
 async fn serve_status(

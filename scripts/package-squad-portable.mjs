@@ -97,6 +97,7 @@ export async function packageSquadPortable(options = {}) {
     await assertDirectory(serverModules);
     await cp(serverModules, join(bundleRoot, 'server'), { recursive: true, dereference: true, preserveTimestamps: true });
     await assertFile(join(bundleRoot, 'server', 'harness', 'index.mjs'));
+    await assertFile(join(bundleRoot, 'server', 'control-plane', 'mcp-server.mjs'));
     const sharedRuntime = join(webRuntimeDir, 'src', 'lib');
     await assertDirectory(sharedRuntime);
     await cp(sharedRuntime, join(bundleRoot, 'src', 'lib'), { recursive: true, dereference: true, preserveTimestamps: true });
