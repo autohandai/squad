@@ -205,9 +205,20 @@ export function createRelaySync(ctx, { log = () => {}, fetchImpl = globalThis.fe
     return serialized(async () => {
       for (const channel of channels) if (channel?.id) remember(remoteChannels, channel);
       for (const message of messages) if (message?.id) remember(remoteMessages, message);
-      const local = await ctx.readChannelsState();
-      const { state, changed } = mergeChannelsState(local, { channels, messages });
-      if (changed.channels.length || changed.messages.length) await ctx.writeChannelsState(state);
+      let changed;
+      if (ctx.mutateChannelsState) {
+        await ctx.mutateChannelsState(local => {
+          const live = { channels: channels.filter(channel => !local.deletedChannelIds.includes(channel.id)), messages: messages.filter(message => !local.deletedChannelIds.includes(message.channelId)) };
+          const merged = mergeChannelsState(local, live);
+          changed = merged.changed;
+          Object.assign(local, merged.state);
+        });
+      } else {
+        const local = await ctx.readChannelsState();
+        const merged = mergeChannelsState(local, { channels, messages });
+        changed = merged.changed;
+        if (changed.channels.length || changed.messages.length) await ctx.writeChannelsState(merged.state);
+      }
       // Anything we just took from the relay is, by definition, already there.
       for (const channel of channels) if (channel?.id) pushedChannels.set(channel.id, stampOf(channel));
       for (const message of messages) if (message?.id) pushedMessages.set(message.id, stampOf(message));

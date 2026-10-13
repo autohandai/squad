@@ -242,6 +242,9 @@ jobs:
       - name: Fetch pinned Autohand Code CLI
         run: bun run cli:fetch
 
+      - name: Prepare pinned Computer Use component
+        run: bun run computer-use:fetch
+
       - name: Check Autohand SDK on native target
         run: bun run check:sdk
         env:
@@ -313,11 +316,18 @@ jobs:
           bundle_root="$smoke_root/$bundle_name"
           test -f "$bundle_root/server.mjs"
           test -f "$bundle_root/dist/index.html"
+          test -f "$bundle_root/vendor/computer-use/BUILD_INFO.json"
+          test -f "$bundle_root/vendor/computer-use/LICENSE-CUA.md"
           (cd "$bundle_root" && node -e "import('@autohandai/agent-sdk').then(({ AutohandSDK }) => { if (typeof AutohandSDK !== 'function') process.exit(1); })")
           if [[ "$RELEASE_OS" == "win32" ]]; then
+            test -f "$bundle_root/vendor/computer-use/cua-driver.exe"
             "$bundle_root/bin/squad.exe" --help
           else
+            test -f "$bundle_root/vendor/computer-use/cua-driver"
             "$bundle_root/bin/squad" --help
+          fi
+          if [[ "$RELEASE_OS" == "darwin" ]]; then
+            test -f "$bundle_root/vendor/computer-use/Squad Computer Use.app/Contents/MacOS/AutohandComputerUse"
           fi
 
       - name: Upload runtime artifacts
@@ -434,12 +444,6 @@ jobs:
           cp -R "${WEB_BUNDLE//\\//}/runtime/dist" dist
           test -f dist/index.html
 
-      - name: Stage runtime and sidecars
-        shell: bash
-        env:
-          AUTOHAND_SQUAD_RELEASE_VERSION: ${{ needs.setup.outputs.version }}
-        run: NODE_RUNTIME_PATH="$(node -p 'process.execPath')" bun run desktop:stage
-
       - name: Prepare Windows code signing
         if: matrix.os == 'win32'
         shell: pwsh
@@ -513,6 +517,16 @@ jobs:
           else
             echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
           fi
+
+      - name: Prepare pinned Computer Use component
+        shell: bash
+        run: AUTOHAND_CODESIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" bun run computer-use:fetch
+
+      - name: Stage runtime and sidecars
+        shell: bash
+        env:
+          AUTOHAND_SQUAD_RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+        run: AUTOHAND_CODESIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" NODE_RUNTIME_PATH="$(node -p 'process.execPath')" bun run desktop:stage
 
       - name: Build desktop bundles
         shell: bash

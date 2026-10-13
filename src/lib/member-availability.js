@@ -28,7 +28,7 @@ export function memberAvailability(member, copy = {}) {
     canWork: false,
     reason: "break",
     notice: declineNotice(member, copy),
-    reply: copy.memberOnBreakReply || "I'm on a break, so I'm not picking up new work. End my break and I'll get straight to it.",
+    reply: copy.memberOnBreakReply || "I'm on my break, so I'm not accepting new work or handoffs. Use /break off when you want me back.",
   };
 }
 

@@ -6,20 +6,34 @@ import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { profileWorkspace } from "./server/workspace-profile.mjs";
+import { desktopUpdateStatus, openDesktopTarget, RELEASES_URL, upgradeDesktop } from "./server/desktop-updates.mjs";
+import { readAppInfo } from "./server/app-info.mjs";
+import { bundledComputerClient, createComputerUse } from "./server/computer-use.mjs";
+import { createProductTelemetry, readProductTelemetryConfig } from "./server/product-telemetry.mjs";
+import { MemberAvailability } from "./server/members/availability.mjs";
+import { GoalManager } from "./server/goal-manager.mjs";
+import { ProjectObserver } from "./server/project-observer.mjs";
+import { createProjectObserverReview } from "./server/project-observer-review.mjs";
+import { cleanWorkResult, withWorkProgress } from "./server/work-progress.mjs";
 import { bridgeEvents, emitBridgeEvent } from "./server/events.mjs";
 import { handlePluginRoute, loadRoutePlugins } from "./server/routes/index.mjs";
 import { proxyJson, proxyStream, remoteRequestAuth, resolveRemote } from "./server/routes/remote.route.mjs";
 import { isRemoteTransport } from "./server/remote/auth.mjs";
 import { StringDecoder } from "node:string_decoder";
-import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { appendFile, chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { constants as fsConstants, createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFile, chmod, copyFile, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { arch, homedir, platform as osPlatform, release as osRelease, tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 import { listLocalSkills, localSkillRoots, readSkillFolder } from "./server/skills/local.mjs";
 import { startTracking } from "./server/workspace-git.mjs";
+import { channelError, createChannelsStore } from "./server/channels-store.mjs";
+import { createAgentChannelActions } from "./server/agent-channel-actions.mjs";
+import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
+import { memberProfileDefaults } from "./src/lib/member-profiles.js";
+import { CHAT_TURN_CEILING_MS } from "./src/lib/chat-timing.js";
 import {
   DEFAULT_HARNESS_ID,
   HarnessNotReadyError,
@@ -35,6 +49,10 @@ import {
   runExternalHarness,
   writeResumeId,
 } from "./server/harness/index.mjs";
+
+// Keep native human approval out of every agent/helper inherited environment.
+const initialNativeGrantKey = String(process.env.AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN || "");
+delete process.env.AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN;
 
 // Emit run.finished exactly once per run: a CLI child can fire "error" and
 // then "close", and the SDK/harness paths have a completion and a catch
@@ -221,7 +239,7 @@ function withRemoteDefaultWorkspace(req, payload) {
 }
 
 // Paths another machine may reach with a bearer token this bridge minted.
-const REMOTE_SERVED_PATHS = [/^\/api\/chat$/, /^\/api\/chat\/stream$/, /^\/api\/runs$/, /^\/api\/runs\/[^/]+$/, /^\/api\/runs\/[^/]+\/stop$/, /^\/api\/runtime$/, /^\/api\/members\/presence$/];
+const REMOTE_SERVED_PATHS = [/^\/api\/chat$/, /^\/api\/chat\/stream$/, /^\/api\/runs$/, /^\/api\/runs\/[^/]+$/, /^\/api\/runs\/[^/]+\/stop$/, /^\/api\/runtime$/, /^\/api\/members\/presence$/, /^\/api\/members\/[^/]+\/channel-access$/];
 function remoteServedPath(pathname) {
   return REMOTE_SERVED_PATHS.some((pattern) => pattern.test(pathname));
 }
@@ -241,6 +259,7 @@ const port = Number(args.get("port") || 19821);
 const rootDir = process.cwd();
 const isPackagedRuntime = Boolean(process.env.AUTOHAND_SQUAD_APP_STATE_DIR);
 const packageMetadata = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8"));
+const productTelemetry = createProductTelemetry({ config: readProductTelemetryConfig(rootDir), account: readRuntimeAccount, version: packageMetadata.version });
 const otel = new OtelLogger({
   resource: resourceFromEnv({
     serviceName: "autohand-squad-web",
@@ -311,6 +330,7 @@ const otelLogsDir = process.env.AUTOHAND_SQUAD_LOGS_DIR
   : join(appStateDir, "logs");
 const webOtelLogPath = join(otelLogsDir, "web.otlp.jsonl");
 const providerSettingsPath = join(appStateDir, "provider-settings.json");
+let desktopUpgradeRunning = false;
 const maxRunLogLines = 600;
 const childTerminationGraceMs = 2500;
 const autohandStateRoot = process.env.AUTOHAND_HOME
@@ -334,6 +354,142 @@ const squadDeviceIdPath = join(squadStateDir, "device-id");
 const feedbackBackupDir = join(squadStateDir, "feedback");
 const feedbackApiBaseUrl = (process.env.AUTOHAND_SQUAD_API_BASE_URL || process.env.AUTOHAND_API_URL || "https://api.autohand.ai").replace(/\/+$/, "");
 const runs = new Map();
+const memberAvailability = new MemberAvailability(squadStateDir);
+const activeChats = new Map();
+let nativeGrantKey = await readNativeComputerGrantKey();
+const computerClient = await bundledComputerClient(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR ? resolve(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR) : rootDir).catch(() => null);
+const computerUse = createComputerUse({ stateDir: squadStateDir, rootDir, bridgeUrl: `http://127.0.0.1:${port}`, nativeClient: computerClient, emit: emitBridgeEvent });
+const computerWorkRuntimes = new Map();
+
+async function readNativeComputerGrantKey() {
+  let file;
+  try {
+    file = await open(join(squadStateDir, "native-grant-token"), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0) | (fsConstants.O_NONBLOCK || 0));
+    const info = await file.stat();
+    if (!info.isFile() || info.nlink !== 1 || info.size !== 64 || (info.mode & 0o7777) !== 0o600 || (typeof process.getuid === "function" && info.uid !== process.getuid())) return "";
+    const value = await file.readFile("utf8");
+    if (!/^[a-fA-F0-9]{64}$/.test(value) || (initialNativeGrantKey && value !== initialNativeGrantKey)) return "";
+    return value;
+  } catch (error) {
+    return error.code === "ENOENT" && /^[a-fA-F0-9]{64}$/.test(initialNativeGrantKey) ? initialNativeGrantKey : "";
+  } finally { await file?.close(); }
+}
+
+async function authorizeComputerUseGrant(req, body) {
+  nativeGrantKey = await readNativeComputerGrantKey();
+  const received = req.headers["x-squad-native-grant"];
+  if (!nativeGrantKey || typeof received !== "string" || !/^[a-fA-F0-9]{64}$/.test(received) || !timingSafeEqual(Buffer.from(received), Buffer.from(nativeGrantKey))) return false;
+  if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => !["memberId", "scope"].includes(key)) || typeof body.memberId !== "string" || !["none", "observe", "control"].includes(body.scope)) return false;
+  const snapshot = await readOptionalJsonFile(liveStatusPath);
+  return Array.isArray(snapshot?.members) && snapshot.members.some((member) => member.id === body.memberId);
+}
+
+async function prepareComputerWork(agentRuntime, input) {
+  if (isUtilityAgent(agentRuntime.agentId) || !input._computerUseWorkId) return agentRuntime;
+  const grants = await readOptionalJsonFile(join(squadStateDir, "computer-use-grants.json"));
+  const scope = grants?.members?.[agentRuntime.agentId]?.scope;
+  if (!["observe", "control"].includes(scope)) return agentRuntime;
+  const session = await computerUse.createSession({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId });
+  const directory = join(agentRuntime.agentHome, "computer-use-configs");
+  const configPath = join(directory, `${session.id}.json`);
+  const runtime = { ...agentRuntime, configPath, computerUse: session };
+  computerWorkRuntimes.set(input._computerUseWorkId, runtime);
+  try {
+  const config = JSON.parse(await readFile(agentRuntime.configPath, "utf8"));
+  const existing = Array.isArray(config.mcp?.servers) ? config.mcp.servers : [];
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await writeSecretFile(configPath, JSON.stringify({ ...config, mcp: { ...config.mcp, enabled: true, servers: [...existing.filter((entry) => entry.name !== "autohand-computer-use"), session.mcpServer] } }, null, 2));
+  return runtime;
+  } catch (error) { await finishComputerWork(input._computerUseWorkId).catch(() => {}); throw error; }
+}
+
+async function finishComputerWork(workId) {
+  const runtime = computerWorkRuntimes.get(workId); if (!runtime) return null;
+  computerWorkRuntimes.delete(workId);
+  try {
+    await computerUse.closeSession(runtime.computerUse.id);
+    return { sessionId: runtime.computerUse.id, runId: workId, files: await computerUse.evidence(runtime.computerUse.id) };
+  } finally {
+    await Promise.allSettled([rm(runtime.configPath, { force: true }), ...(runtime.computerUse.externalConfigPath ? [rm(runtime.computerUse.externalConfigPath, { force: true })] : [])]);
+  }
+}
+
+function computerUseInstructions(runtime) {
+  if (isUtilityAgent(runtime?.agentId)) return "";
+  return runtime?.computerUse
+    ? "Built-in Computer Use is enabled for this work through Squad's autohand-computer-use MCP server. Discover apps/windows, use explicit pid and window_id, inspect fresh state before acting, and return saved screenshots/annotated action evidence. The proxy checks the human's current member grant and macOS consent on every call; stop and report any permission denial."
+    : "Squad has built-in Computer Use. It is not enabled for this work: ask the human to allow Observe or Control in this member's Permissions before operating apps or capturing their screens. Never infer a grant from this instruction or bypass the Squad proxy.";
+}
+
+bridgeEvents.on("run.finished", ({ runId }) => {
+  void finishComputerWork(runId).then((evidence) => { const run = runs.get(runId); if (run && evidence) run.computerUse = evidence; }).catch(() => {});
+});
+bridgeEvents.on("computer-use.evidence", (evidence) => {
+  const run = runs.get(evidence.runId);
+  if (run) run.computerUse = { sessionId: evidence.sessionId, runId: evidence.runId, files: evidence.files };
+});
+const goals = new GoalManager({
+  squadStateDir,
+  assertCanWork: async (payload) => {
+    projectObserver.deferMember(String(payload.agentId || payload.agent?.id || ""), "An explicit goal takes priority.");
+    await memberAvailability.assertCanWork(payload);
+  },
+  emit: emitBridgeEvent,
+  executeTurn: (payload, { signal, onEvent }) => executeChatTurn(payload, {
+    signal, stream: { send: onEvent }, startedAt: Date.now(),
+  }),
+});
+
+const observerRunStarts = new Map();
+let observerAccountTransition = false;
+const projectObserver = new ProjectObserver({
+  squadStateDir,
+  getRuntimeState: projectObserverRuntimeState,
+  review: createProjectObserverReview({ prepareAutohandRuntime: prepareProjectObserverRuntime }),
+  emit: emitBridgeEvent,
+});
+bridgeEvents.on("handoff.pending", event => {
+  for (const memberId of [event.fromMemberId, event.toMemberId, event.memberId].filter(Boolean)) projectObserver.deferMember(memberId, "A handoff takes priority.");
+});
+
+async function projectObserverRuntimeState(member) {
+  const [availability, snapshot, activeGoals, remote, queued, diskRuns] = await Promise.all([
+    memberAvailability.get(member.id, member), readOptionalJsonFile(liveStatusPath), goals.list(member.id),
+    resolveRemote({ squadStateDir }, member.id), readJsonDir(join(squadStateDir, "queue")), readJsonDir(join(squadStateDir, "runs")),
+  ]);
+  const idOf = (value) => String(value?.agentId || value?.agent_id || value?.memberId || "");
+  const diskBusy = [...queued, ...diskRuns].some(record => idOf(record) === member.id && ["pending", "queued", "launching", "running", "handoff-pending"].includes(record.status));
+  const visible = snapshot?.members?.find(record => record.id === member.id);
+  const jobs = (snapshot?.jobs || []).filter(record => idOf(record) === member.id && ["pending", "queued", "launching", "running", "handoff-pending"].includes(record.status));
+  const jobBusy = jobs.some(job => {
+    // A finished bridge run is stronger evidence than a stale browser row.
+    const held = runs.get(job.id) || diskRuns.find(run => run.id === job.id);
+    return !held || isLiveRun(held);
+  });
+  // Assignment participants and jobs omitted by the snapshot's 40-row cap
+  // still count as assigned work; a held run cannot clear another assignment.
+  const snapshotBusy = jobBusy || Boolean(visible?.working || visible?.queuedJobs);
+  return {
+    signedIn: !observerAccountTransition && readRuntimeAccount().signedIn,
+    onBreak: availability.onBreak,
+    status: visible?.status || member.status,
+    remote: Boolean(remote),
+    busy: Boolean(activeChats.get(member.id)?.size || observerRunStarts.get(member.id) || sdkSessions?.stats().sessions.some(session => session.agentId === member.id && session.busy) || [...runs.values()].some(run => run.agentId === member.id && isLiveRun(run)) || activeGoals.some(goal => goal.status === "running") || diskBusy || snapshotBusy),
+  };
+}
+
+function registerChat(memberId, controller) {
+  projectObserver.deferMember(memberId, "A conversation takes priority.");
+  const controllers = activeChats.get(memberId) || new Set();
+  controllers.add(controller); activeChats.set(memberId, controllers);
+  return () => { controllers.delete(controller); if (!controllers.size) activeChats.delete(memberId); };
+}
+function stopChats(memberId) {
+  projectObserver.deferMember(memberId, "The member was stopped or went on a break.");
+  const controllers = activeChats.get(memberId);
+  for (const controller of controllers || []) controller.abort();
+  return controllers?.size || 0;
+}
 let server = null;
 let shuttingDown = false;
 const skilledBaseUrl = "https://skilled.autohand.ai";
@@ -742,6 +898,7 @@ function readRuntimeAccount() {
     signedIn: squadSignedIn || userSignedIn,
     email: squadEmail || userEmail,
     name: String(profile.name || "").trim(),
+    userId: String(profile.id || profile.userId || "").trim() || undefined,
     avatar: String(profile.avatar || "").trim(),
     source: squadSignedIn ? "squad-runtime" : userSignedIn ? "autohand-cli" : "none",
   };
@@ -753,7 +910,12 @@ function readRuntimeAccount() {
 // `squad logout` is preferred (one code path with the desktop app); without
 // it the bridge clears the same files itself.
 async function signOutAccount() {
+  observerAccountTransition = true;
+  if (projectObserver.active) projectObserver.deferMember(projectObserver.active.memberId, "The account is signing out.");
+  try {
   const before = readRuntimeAccount();
+  for (const memberId of new Set((await goals.list()).filter((goal) => goal.status === "running").map((goal) => goal.agentId))) await goals.pauseForMember(memberId, "Account signed out. Resume after signing in.");
+  for (const memberId of activeChats.keys()) stopChats(memberId);
   let via = "bridge";
   const squadCli = locateSquadCliBinary();
   if (squadCli) {
@@ -774,9 +936,11 @@ async function signOutAccount() {
     }
   }
   if (sdkSessions) await sdkSessions.closeAll("signed out").catch(() => 0);
+  await Promise.allSettled([...computerWorkRuntimes.keys()].map(finishComputerWork));
   harnessLogins.cancel("autohand");
   logEvent(SEVERITY.INFO, "account signed out", { "event.name": "account.logout", "autohand.logout.via": via });
   return { via, previousEmail: before.email, account: readRuntimeAccount() };
+  } finally { observerAccountTransition = false; }
 }
 
 function clearAutohandAuthToken(configPath) {
@@ -1491,6 +1655,21 @@ async function installAgentSkills(agent, agentHome, agentId) {
   const skillsDir = join(agentHome, "skills");
   const displaySkillsDir = `.autohand/agents/${agentId}/skills`;
   await mkdir(skillsDir, { recursive: true });
+  // Removed skills must leave the runtime's active discovery directory. Keep
+  // authored bytes outside the agent home so re-enabling can restore them.
+  const disabledDir = join(isolatedAgentsDir, "disabled-skills", agentId);
+  const requested = new Set(requestedSkills);
+  for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || requested.has(entry.name) || !existsSync(join(skillsDir, entry.name, "SKILL.md"))) continue;
+    await mkdir(disabledDir, { recursive: true });
+    const target = join(disabledDir, entry.name);
+    if (existsSync(target)) throw new Error(`Cannot disable ${entry.name}: a retained copy already exists. Resolve the duplicate before retrying.`);
+    await rename(join(skillsDir, entry.name), target);
+  }
+  for (const id of requestedSkills) {
+    const retained = join(disabledDir, id);
+    if (existsSync(join(retained, "SKILL.md")) && !existsSync(join(skillsDir, id))) await rename(retained, join(skillsDir, id));
+  }
 
   if (!requestedSkills.length) {
     const emptyInstall = {
@@ -1527,6 +1706,11 @@ async function installAgentSkills(agent, agentHome, agentId) {
   };
 
   for (const skillId of requestedSkills) {
+    const presentPath = join(skillsDir, skillId, "SKILL.md");
+    if (existsSync(presentPath)) {
+      install.installed.push({ id: skillId, name: skillId, source: "member-home", status: "present", path: presentPath });
+      continue;
+    }
     const local = localById.get(skillId);
     if (local) {
       const targetDir = join(skillsDir, skillId);
@@ -2397,39 +2581,53 @@ function buildAgentProfileIndex(agent, files, profileDir, displayProfileDir) {
   return lines.join("\n");
 }
 
-async function writeAgentProfileDocs(agent, agentHome, agentId, workspace, skillInstall) {
+function planAgentProfileDocs(agent, agentHome, agentId, workspace, skillInstall) {
   const profileDir = join(agentHome, "profile");
   const displayProfileDir = `.autohand/agents/${agentId}/profile`;
-  await mkdir(profileDir, { recursive: true });
   const files = normalizeProfileFiles(agent, workspace, skillInstall);
-
-  for (const file of files) {
-    await writeFile(join(profileDir, file.fileName), `${file.content.trim()}\n`, "utf8");
-  }
-
   const agentsPath = join(agentHome, "AGENTS.md");
-  await writeFile(
-    agentsPath,
-    `${buildAgentProfileIndex(agent, files, profileDir, displayProfileDir)}\n`,
-    "utf8"
-  );
-
   return {
-    path: profileDir,
-    displayPath: displayProfileDir,
-    agentsPath,
-    displayAgentsPath: `.autohand/agents/${agentId}/AGENTS.md`,
-    files: files.map((file) => ({
-      section: file.section,
-      title: file.title,
-      fileName: file.fileName,
-      originalFileName: file.originalFileName,
-      source: file.source,
-      path: join(profileDir, file.fileName),
-      displayPath: `${displayProfileDir}/${file.fileName}`,
-      meaning: file.meaning,
-    })),
+    files,
+    index: `${buildAgentProfileIndex(agent, files, profileDir, displayProfileDir)}\n`,
+    profileDocs: {
+      path: profileDir,
+      displayPath: displayProfileDir,
+      agentsPath,
+      displayAgentsPath: `.autohand/agents/${agentId}/AGENTS.md`,
+      files: files.map((file) => ({
+        section: file.section,
+        title: file.title,
+        fileName: file.fileName,
+        originalFileName: file.originalFileName,
+        source: file.source,
+        path: join(profileDir, file.fileName),
+        displayPath: `${displayProfileDir}/${file.fileName}`,
+        meaning: file.meaning,
+      })),
+    },
   };
+}
+
+async function writeAgentProfileDocs(plan) {
+  await mkdir(plan.profileDocs.path, { recursive: true });
+  for (const file of plan.files) {
+    await writeFile(join(plan.profileDocs.path, file.fileName), `${file.content.trim()}\n`, "utf8");
+  }
+  await writeFile(plan.profileDocs.agentsPath, plan.index, "utf8");
+}
+
+async function readAgentRuntimeConfig(configPath, workspace) {
+  try {
+    const savedConfig = await readPersistentJson(configPath, undefined);
+    const config = savedConfig === undefined
+      ? await readPersistentJson(userConfigPath, defaultAgentConfig(workspace))
+      : savedConfig;
+    if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("Expected a JSON object.");
+    return config;
+  } catch (error) {
+    const reason = error instanceof SyntaxError ? "The file is not valid JSON." : error.code ? `Filesystem error: ${error.code}.` : error.message;
+    throw new Error(`Could not read the member runtime config. Restore a valid config.json, then retry. ${reason}`);
+  }
 }
 
 // Read the persisted Autohand auth block from a config file, if present.
@@ -2470,14 +2668,47 @@ function isUtilityAgent(agentId) {
   return utilityAgentIds.has(String(agentId || ""));
 }
 
+const agentRuntimeWrites = new Map();
+async function withSavedMember(payload) {
+  const id = sanitizeAgentId(payload.agent?.id || payload.agentId);
+  const saved = await readPersistentJson(join(isolatedAgentsDir, id, "profile.json"), null);
+  if (!saved) return payload;
+  if (typeof saved !== "object" || Array.isArray(saved)) throw new Error("The saved member profile is invalid. Restore it before retrying.");
+  return { ...payload, agent: { ...saved, ...(payload.agent || {}), id }, _memberDescriptionProvided: Boolean(payload.agent && typeof payload.agent === "object" && !Array.isArray(payload.agent)) };
+}
+
 async function ensureAgentRuntime(input, workspace) {
-  const describesAgent = Boolean(input.agent && typeof input.agent === "object" && !Array.isArray(input.agent));
-  const agent = describesAgent ? input.agent : {};
-  const agentId = sanitizeAgentId(agent.id || input.agentId);
+  const id = sanitizeAgentId(input.agent?.id || input.agentId);
+  const pending = (agentRuntimeWrites.get(id) || Promise.resolve()).catch(() => {}).then(() => ensureAgentRuntimeInner(input, workspace));
+  agentRuntimeWrites.set(id, pending);
+  try { return await pending; }
+  finally { if (agentRuntimeWrites.get(id) === pending) agentRuntimeWrites.delete(id); }
+}
+
+async function ensureAgentRuntimeInner(input, workspace) {
+  const describesAgent = input._memberDescriptionProvided !== false && Boolean(input.agent && typeof input.agent === "object" && !Array.isArray(input.agent));
+  const agentId = sanitizeAgentId(input.agent?.id || input.agentId);
   const agentHome = join(isolatedAgentsDir, agentId);
+  const profilePath = join(agentHome, "profile.json");
+  const saved = await readPersistentJson(profilePath, {});
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) throw new Error("The saved member profile is invalid. Restore it before retrying.");
+  // Older profiles stored file metadata rather than their authored content.
+  // Hydrate only this member's own profile directory before any regeneration.
+  const savedFiles = Array.isArray(saved.profileFiles) ? saved.profileFiles : [];
+  if (!savedFiles.length && Array.isArray(saved.profileDocs?.files)) {
+    for (const file of saved.profileDocs.files) {
+      if (!file?.fileName || basename(file.fileName) !== file.fileName) continue;
+      try { savedFiles.push({ ...file, content: await readFile(join(agentHome, "profile", file.fileName), "utf8") }); }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
+  }
+  const agent = memberProfileDefaults({ ...saved, ...(savedFiles.length ? { profileFiles: savedFiles } : {}), ...(input.agent && typeof input.agent === "object" && !Array.isArray(input.agent) ? input.agent : {}), id: agentId });
   const configPath = join(agentHome, "config.json");
   const displayConfigPath = `.autohand/agents/${agentId}/config.json`;
   const displayProfileDir = `.autohand/agents/${agentId}/profile`;
+  // Refuse damaged configuration before installing skills or rewriting any
+  // authored profile documents. Missing config inherits the user's defaults.
+  const config = await readAgentRuntimeConfig(configPath, workspace);
   await mkdir(agentHome, { recursive: true });
   await Promise.all([
     mkdir(join(agentHome, "sessions"), { recursive: true }),
@@ -2489,19 +2720,18 @@ async function ensureAgentRuntime(input, workspace) {
   const skillInstall = await installAgentSkills(agent, agentHome, agentId);
   const projects = normalizeAgentProjects(agent, workspace, true);
   const brainCard = normalizeBrainCard(agent, skillInstall);
-  const profileDocs = await writeAgentProfileDocs(agent, agentHome, agentId, workspace, skillInstall);
-  const resolvedProvider = await resolveProviderForAgent(agent);
-
-  if (!existsSync(configPath)) {
-    if (existsSync(userConfigPath)) {
-      await copyFile(userConfigPath, configPath);
-    } else {
-      await writeFile(configPath, JSON.stringify(defaultAgentConfig(workspace), null, 2), "utf8");
-    }
-  }
+  const profilePlan = planAgentProfileDocs(agent, agentHome, agentId, workspace, skillInstall);
+  const profileDocs = profilePlan.profileDocs;
+  const harnessAssignment = harnessAssignmentFromAgent(agent);
+  const externalHarness = isExternalHarness(harnessAssignment);
+  // Vendor CLIs authenticate and choose models in their own harness. Creating
+  // Squad's profile/workspace must not require an unrelated Autohand login.
+  const resolvedProvider = externalHarness ? {
+    provider: harnessAssignment.id, label: getAdapter(harnessAssignment).label,
+    model: String(input.model || harnessAssignment.model || ""), baseUrl: "", source: "harness",
+  } : await resolveProviderForAgent(agent);
 
   try {
-    const config = JSON.parse(await readFile(configPath, "utf8"));
     const permissionSettings = permissionSettingsFromAgent(agent);
     const normalizedPermissions = normalizeAgentPermissions(agent);
     const providerSpecificConfig = providerConfigForResolved(resolvedProvider);
@@ -2526,13 +2756,13 @@ async function ensureAgentRuntime(input, workspace) {
       // every time. Measured on this machine: 20s+ and a timeout with the
       // servers, 15.6s and a real answer without them.
       ...(isUtilityAgent(agentId) ? { mcp: { ...(config.mcp && typeof config.mcp === "object" ? config.mcp : {}), servers: [] } } : {}),
-      provider: resolvedProvider.provider,
+      ...(!externalHarness ? { provider: resolvedProvider.provider,
       [resolvedProvider.provider]: {
         ...(config[resolvedProvider.provider] && typeof config[resolvedProvider.provider] === "object"
           ? config[resolvedProvider.provider]
           : {}),
         ...providerSpecificConfig,
-      },
+      } } : {}),
       workspace: {
         ...(config.workspace && typeof config.workspace === "object" ? config.workspace : {}),
         defaultRoot: workspace,
@@ -2572,20 +2802,20 @@ async function ensureAgentRuntime(input, workspace) {
         : {}),
     };
     if (!syncedAuth) delete nextConfig.auth;
-    await writeSecretFile(configPath, JSON.stringify(nextConfig, null, 2));
-  } catch {
-    // If the copied config is not JSON, leave it untouched; Autohand will report the parse error.
+    await writePersistentJson(configPath, nextConfig);
+  } catch (error) {
+    throw new Error(`Could not save the member runtime config. Check its folder permissions, then retry. ${error.message}`);
   }
 
-  const profilePath = join(agentHome, "profile.json");
-  await writeFile(
+  await writeAgentProfileDocs(profilePlan);
+  await writePersistentJson(
     profilePath,
-    JSON.stringify(
       {
         id: agentId,
         staffId: agent.staffId || "",
         name: agent.name || "Squad member",
         role: agent.role || "",
+        employeeType: agent.employeeType || "",
         description: agent.description || "",
         instructions: agent.instructions || "",
         brainCard,
@@ -2598,16 +2828,14 @@ async function ensureAgentRuntime(input, workspace) {
         effectiveModel: publicResolvedProvider(resolvedProvider),
         harness: harnessAssignmentFromAgent(agent),
         projects,
+        profileFiles: agent.profileFiles || [],
+        memory: agent.memory || [],
         limits: {
           maxProjectsPerMember,
         },
         workspace,
         updatedAt: new Date().toISOString(),
-      },
-      null,
-      2
-    ),
-    "utf8"
+      }
   );
 
   // Reflects the auth that the spawned CLI will actually load (the agent config
@@ -2617,7 +2845,8 @@ async function ensureAgentRuntime(input, workspace) {
     autohandAuthUsable(readAutohandAuth(configPath)) ||
     autohandAuthUsable(readAutohandAuth(userConfigPath));
 
-  return {
+  return prepareComputerWork({
+    agent,
     agentId,
     agentHome,
     configPath,
@@ -2632,7 +2861,60 @@ async function ensureAgentRuntime(input, workspace) {
     resolvedProvider,
     authReady,
     harness: harnessAssignmentFromAgent(agent),
+  }, input);
+}
+
+function runtimeMemberInstructions(agentRuntime) {
+  const agent = agentRuntime.agent || {};
+  const persona = agent.profileFiles?.find(file => file.section === "persona")?.content || "";
+  const brain = agentRuntime.brainCard || {};
+  const policies = normalizeAgentPermissions(agent).builtInPolicies;
+  return [
+    "Autohand Squad runtime member contract",
+    `Member: ${agent.name || "Squad member"} (${agentRuntime.agentId})`,
+    `Role: ${agent.role || "Software engineering agent"}`,
+    agent.instructions ? `Operating instructions: ${String(agent.instructions).slice(0, 4000)}` : "",
+    persona ? `Personality:\n${String(persona).slice(0, 5000)}` : "",
+    ...brainCardFieldDefinitions.map(field => `${field.label}: ${String(brain[field.id] || "").slice(0, 1500)}`),
+    `Selected workspace: ${agentRuntime.workspace}`,
+    `Profile map: ${agentRuntime.profileDocs?.agentsPath || ""}`,
+    "Read only the relevant profile files when you need additional context or durable memory. Keep this member's sessions and memory isolated. Propose stable project facts for user review; never store secrets or transient logs as durable memory.",
+    `Installed profile skills: ${(agentRuntime.skillInstall?.installed || []).map(skill => skill.id).join(", ") || "none"}. Use only configured, installed skills relevant to the task.`,
+    agentRuntime.skillInstall?.failed?.length ? `Unavailable requested skills: ${agentRuntime.skillInstall.failed.map(skill => skill.id).join(", ")}. Do not claim these skills were loaded.` : "",
+    `Blocked tools: ${Object.entries(policies).filter(([, policy]) => policy === "block").map(([tool]) => tool).join(", ") || "none explicitly configured"}.`,
+    `Tools requiring approval: ${Object.entries(policies).filter(([, policy]) => policy === "ask").map(([tool]) => tool).join(", ") || "none explicitly configured"}.`,
+    "Current tool permissions govern execution even when a role describes a broader capability. Ask before crossing role or project boundaries, and hand off work to an existing teammate when appropriate. Report observed results and remaining blockers; never invent verification.",
+  ].filter(Boolean).join("\n");
+}
+
+function runtimeProfilePrompt(profile, agentRuntime) {
+  return [runtimeMemberInstructions(agentRuntime), profile].filter(Boolean).join("\n\n");
+}
+
+// Observation uses a separate, minimal configuration. It must never create
+// a member's warm session, install skills, or inherit Computer Use/MCP/hooks.
+async function prepareProjectObserverRuntime({ member }) {
+  if (observerAccountTransition || !readRuntimeAccount().signedIn) throw new Error("Sign in before observing assigned projects.");
+  const cliPath = resolveAutohandBinary();
+  if (!cliPath) throw new Error("The selected Autohand CLI is not installed.");
+  const selected = await resolveProviderForAgent(member);
+  const original = readJsonFileSync(userConfigPath) || {};
+  const auth = readAutohandAuth(userConfigPath);
+  const agentId = `squad-observer-${sanitizeAgentId(member.id)}`;
+  const agentHome = join(isolatedAgentsDir, "observers", sanitizeAgentId(member.id));
+  const configPath = join(agentHome, "config.json");
+  await mkdir(agentHome, { recursive: true });
+  const config = {
+    provider: selected.provider,
+    [selected.provider]: { ...(original[selected.provider] || {}), ...providerConfigForResolved(selected) },
+    ...(autohandAuthUsable(auth) ? { auth } : {}),
+    workspace: { defaultRoot: agentHome, projects: [] },
+    permissions: { mode: "restricted" },
+    mcp: { servers: [] }, hooks: { enabled: false }, memory: { enabled: false },
+    agent: { idleLogoutEnabled: false, projects: [], projectLimit: 1 },
   };
+  await writeSecretFile(configPath, JSON.stringify(config, null, 2));
+  return { cliPath, configPath, model: selected.model, envVars: { ...agentRuntimeEnvVars({ agentId, agentHome, configPath }), AUTOHAND_SQUAD_OBSERVATION: "1" } };
 }
 
 // Canvases (ADR-0023): a run or chat may carry `canvasDir`, the folder the
@@ -2650,10 +2932,11 @@ async function autohandArgs(input) {
   const mode = input.mode || "prompt";
   const workspace = await cleanWorkspace(input.workspace);
   const prompt = String(input.prompt || "").trim();
-  const profile = String(input.profile || "").trim().slice(0, 12000);
+  let profile = String(input.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(input, workspace);
-  const permissions = normalizeAgentPermissions(input.agent);
-  const associatedProjects = normalizeAgentProjects(input.agent);
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime)].filter(Boolean).join("\n\n");
+  const permissions = normalizeAgentPermissions(agentRuntime.agent);
+  const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const args = ["--path", workspace, "--config", agentRuntime.configPath];
   const displayArgs = ["--path", workspace, "--config", "<agent-config>"];
 
@@ -2719,6 +3002,8 @@ function agentRuntimeEnvVars(agentRuntime) {
     AUTOHAND_CONFIG: agentRuntime.configPath,
     AUTOHAND_CLIENT_NAME: autohandClientName(agentRuntime),
     AUTOHAND_NO_IDLE_LOGOUT: "1",
+    AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: "",
+    ...(agentRuntime.computerUse ? { AUTOHAND_SQUAD_COMPUTER_USE_SESSION: agentRuntime.computerUse.id } : {}),
   };
 }
 
@@ -2737,8 +3022,9 @@ function sdkTransportEnabled(input, mode) {
 }
 
 function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
-  const permissions = normalizeAgentPermissions(input.agent);
-  const associatedProjects = normalizeAgentProjects(input.agent);
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime)].filter(Boolean).join("\n\n");
+  const permissions = normalizeAgentPermissions(agentRuntime.agent);
+  const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const model = selectedModelForInput(input, permissions, agentRuntime);
   const addDir = [];
   const displayAddDir = [];
@@ -3601,6 +3887,9 @@ function runSummary(run) {
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     channel: run.channel || null,
+    reply: run.reply || "",
+    channelActions: run.channelActions || [],
+    computerUse: run.computerUse || null,
     contextPack: run.contextPack || null,
     contextLayers: finalizeContextLayers(run),
     evaluation: evaluateRun(run),
@@ -3616,6 +3905,13 @@ function isLiveRun(run) {
 // Returns true when something was actually stopped.
 async function stopRun(run, reason = "stopped") {
   let stopped = false;
+  // Mark and cancel before awaiting an adapter: its pending completion must
+  // not commit a channel action while Stop waits for the child to acknowledge.
+  run.status = "stopped";
+  if (run.abortController && !run.abortController.signal.aborted) {
+    run.abortController.abort();
+    stopped = true;
+  }
   const child = run.process;
   if (child && !childHasExited(child)) {
     try {
@@ -3638,11 +3934,6 @@ async function stopRun(run, reason = "stopped") {
       run.sdk = null;
     }
   }
-  if (run.abortController && !run.abortController.signal.aborted) {
-    run.abortController.abort();
-    stopped = true;
-  }
-  run.status = "stopped";
   run.finishedAt = new Date().toISOString();
   emitRunFinished(run);
   appendLog(run, "system", reason);
@@ -3650,7 +3941,10 @@ async function stopRun(run, reason = "stopped") {
 }
 
 async function stopManagedRuns(reason = "service stopped") {
+  projectObserver.stop();
   let stoppedRuns = 0;
+  for (const memberId of new Set((await goals.list()).filter((goal) => goal.status === "running").map((goal) => goal.agentId))) await goals.pauseForMember(memberId, reason);
+  for (const memberId of activeChats.keys()) stopChats(memberId);
   harnessLogins.cancelAll();
   if (sdkSessions) {
     stoppedRuns += await sdkSessions.closeAll(reason).catch(() => 0);
@@ -3659,12 +3953,15 @@ async function stopManagedRuns(reason = "service stopped") {
     if (!isLiveRun(run)) continue;
     if (await stopRun(run, reason)) stoppedRuns += 1;
   }
+  await Promise.allSettled([...computerWorkRuntimes.keys()].map(finishComputerWork));
   return { stoppedRuns };
 }
 
 function shutdownServer() {
   if (shuttingDown) return;
   shuttingDown = true;
+  computerUse.close();
+  projectObserver.stop();
   logEvent(SEVERITY.INFO, "bridge shutting down");
   void otel.close();
   setTimeout(() => {
@@ -3751,9 +4048,11 @@ function normalizeLiveStatusMember(item = {}) {
   const id = boundedString(item.id, "", 96);
   const name = boundedString(item.name, "Squad member", 80);
   if (!id || !name) return null;
+  const avatar = typeof item.avatar === "string" && item.avatar.length <= 131072 && (item.avatar.startsWith("/avatars/") || /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(item.avatar)) ? item.avatar : "";
   return {
     id,
     name,
+    avatar,
     role: nonEmptyString(boundedString(item.role, "", 80)),
     status: boundedString(item.status, "online", 32).toLowerCase(),
     working: Boolean(item.working),
@@ -3830,6 +4129,7 @@ async function writeLiveStatusSnapshot(input) {
   const snapshot = normalizeLiveStatusSnapshot(input);
   await mkdir(squadStateDir, { recursive: true });
   await writeFile(liveStatusPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+  for (const member of snapshot.members) if (member.working || member.queuedJobs) projectObserver.deferMember(member.id, "Assigned human work takes priority.");
   return snapshot;
 }
 
@@ -4411,6 +4711,8 @@ async function writeMemoryInboxState(input) {
 // per-channel membership, and threaded one-prompt dispatch. State lives in the
 // shared squad state dir so the daemon can surface the same channels.json in
 // queue/run telemetry after web reloads or daemon restarts.
+// History mirrors contain many messages, unlike an individual channel edit.
+const CHANNEL_HISTORY_MAX_BYTES = 16 * 1024 * 1024;
 function normalizeChannelVisibility(value) {
   return value === "private" ? "private" : "public";
 }
@@ -4430,6 +4732,8 @@ function normalizeChannel(item) {
     name: name.slice(0, 80),
     visibility: normalizeChannelVisibility(item.visibility),
     memberIds: normalizeChannelMemberIds(item.memberIds),
+    projects: Array.isArray(item.projects) ? item.projects.filter(project => project && String(project.path || "").trim()).map(project => ({ ...project, name: String(project.name || basename(project.path)), path: String(project.path).trim() })) : [],
+    section: String(item.section || "").trim(),
     creatorId: String(item.creatorId || "").trim(),
     // Self-judge / auto-mode execution control is opt-in per channel and
     // always defaults OFF; only an explicit true enables it.
@@ -4519,6 +4823,10 @@ function normalizeChannelsState(input) {
   const messages = normalizeChannelMessages(source.messages).filter((message) => channelIds.has(message.channelId));
   return {
     version: 1,
+    revision: Number.isSafeInteger(source.revision) && source.revision >= 0 ? source.revision : 0,
+    deletedChannelIds: normalizeChannelMemberIds(source.deletedChannelIds),
+    agentChannelAccess: source.agentChannelAccess && typeof source.agentChannelAccess === "object" && !Array.isArray(source.agentChannelAccess) ? source.agentChannelAccess : {},
+    agentChannelActions: Array.isArray(source.agentChannelActions) ? source.agentChannelActions : [],
     storage: "local-squad-state",
     path: channelsStatePath,
     updatedAt: String(source.updatedAt || new Date().toISOString()),
@@ -4528,20 +4836,11 @@ function normalizeChannelsState(input) {
   };
 }
 
-async function readChannelsState() {
-  const saved = await readOptionalJsonFile(channelsStatePath);
-  return normalizeChannelsState(saved || {});
-}
-
-async function writeChannelsState(input) {
-  const state = normalizeChannelsState(input);
-  state.updatedAt = new Date().toISOString();
-  await mkdir(squadStateDir, { recursive: true });
-  await writeFile(channelsStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  // The relay module pushes local changes on this event (docs/integration/relay.md).
-  emitBridgeEvent("channels.changed", { source: "bridge" });
-  return state;
-}
+const channelsStore = createChannelsStore({ filename: channelsStatePath, normalize: normalizeChannelsState, changed: () => emitBridgeEvent("channels.changed", { source: "bridge" }) });
+const readChannelsState = () => channelsStore.read();
+const writeChannelsState = input => channelsStore.replace(input);
+const mutateChannelsState = operation => channelsStore.mutate(operation);
+const agentChannelActions = createAgentChannelActions({ store: channelsStore, availability: memberAvailability, sanitizeId: sanitizeAgentId, run: payload => chatOnce(payload), reportError: error => console.error("Channel purpose queue:", error.message) });
 
 async function createChannel(payload) {
   const channel = normalizeChannel({
@@ -4550,17 +4849,21 @@ async function createChannel(payload) {
     createdAt: new Date().toISOString(),
   });
   if (!channel) throw new Error("channel name is required");
-  const state = await readChannelsState();
-  if (state.channels.some((item) => item.id === channel.id)) {
-    throw new Error(`channel ${channel.id} already exists`);
-  }
-  state.channels.push(channel);
-  await writeChannelsState(state);
-  return channel;
+  return mutateChannelsState(state => {
+    const sameId = state.channels.find(item => item.id === channel.id);
+    if (sameId) {
+      if (sameId.name.toLowerCase() === channel.name.toLowerCase()) return sameId;
+      throw channelError(`channel ${channel.id} already exists`, 409);
+    }
+    if (state.deletedChannelIds.includes(channel.id)) throw channelError('This channel was deleted. Create a new channel instead.', 409);
+    if (state.channels.some(item => item.name.toLowerCase() === channel.name.toLowerCase())) throw channelError(`A channel named ${channel.name} already exists. Open it or choose another name.`, 409);
+    state.channels.push(channel);
+    return channel;
+  });
 }
 
 async function updateChannel(channelId, patch) {
-  const state = await readChannelsState();
+  return mutateChannelsState(state => {
   const existing = state.channels.find((item) => item.id === channelId);
   if (!existing) throw new Error("channel not found");
   const source = patch && typeof patch === "object" ? patch : {};
@@ -4569,45 +4872,51 @@ async function updateChannel(channelId, patch) {
     ...(typeof source.name === "string" && source.name.trim() ? { name: source.name } : {}),
     ...(source.visibility !== undefined ? { visibility: source.visibility } : {}),
     ...(Array.isArray(source.memberIds) ? { memberIds: source.memberIds } : {}),
+    ...(Array.isArray(source.projects) ? { projects: source.projects } : {}),
+    ...(typeof source.section === "string" ? { section: source.section } : {}),
+    ...(source.git !== undefined ? { git: source.git } : {}),
+    ...(Array.isArray(source.events) ? { events: source.events } : {}),
     ...(source.autoModeDefault !== undefined ? { autoModeDefault: source.autoModeDefault === true } : {}),
     id: existing.id,
     creatorId: existing.creatorId,
     createdAt: existing.createdAt,
     updatedAt: new Date().toISOString(),
   });
+  if (state.channels.some(item => item.id !== channelId && item.name.toLowerCase() === next.name.toLowerCase())) throw channelError(`A channel named ${next.name} already exists.`, 409);
   state.channels = state.channels.map((item) => (item.id === channelId ? next : item));
-  await writeChannelsState(state);
   return next;
+  });
 }
 
 async function deleteChannel(channelId) {
-  const state = await readChannelsState();
+  return mutateChannelsState(state => {
   const existing = state.channels.find((item) => item.id === channelId);
   if (!existing) throw new Error("channel not found");
   state.channels = state.channels.filter((item) => item.id !== channelId);
   state.threads = state.threads.filter((item) => item.channelId !== channelId);
   state.messages = state.messages.filter((item) => item.channelId !== channelId);
-  await writeChannelsState(state);
+  state.deletedChannelIds.push(channelId);
   return existing;
+  });
 }
 
 async function updateChannelMembers(channelId, payload) {
-  const state = await readChannelsState();
+  return mutateChannelsState(state => {
   const existing = state.channels.find((item) => item.id === channelId);
   if (!existing) throw new Error("channel not found");
   const add = normalizeChannelMemberIds(payload?.add);
   const remove = new Set(normalizeChannelMemberIds(payload?.remove));
   const memberIds = Array.isArray(payload?.memberIds)
     ? normalizeChannelMemberIds(payload.memberIds)
-    : existing.memberIds.filter((id) => !remove.has(id)).concat(add.filter((id) => !existing.memberIds.includes(id)));
+    : normalizeChannelMemberIds(existing.memberIds.concat(add)).filter(id => !remove.has(id));
   const next = { ...existing, memberIds, updatedAt: new Date().toISOString() };
   state.channels = state.channels.map((item) => (item.id === channelId ? next : item));
-  await writeChannelsState(state);
   return next;
+  });
 }
 
 async function recordChannelThread(channelId, payload) {
-  const state = await readChannelsState();
+  return mutateChannelsState(state => {
   const channel = state.channels.find((item) => item.id === channelId);
   if (!channel) throw new Error("channel not found");
   const thread = normalizeChannelThread({ ...payload, channelId });
@@ -4619,8 +4928,8 @@ async function recordChannelThread(channelId, payload) {
     state.threads[index] = { ...state.threads[index], ...thread, updatedAt: new Date().toISOString() };
   }
   channel.updatedAt = new Date().toISOString();
-  await writeChannelsState(state);
   return thread;
+  });
 }
 
 // Extract the channel/thread contract from a chat or run payload. The payload
@@ -4651,7 +4960,7 @@ function channelContextFromPayload(payload) {
 async function recordChannelDispatch(channelContext, { prompt = "", agentId = "" } = {}) {
   if (!channelContext?.channelId || !channelContext.threadId) return;
   try {
-    const state = await readChannelsState();
+    await mutateChannelsState(state => {
     const channel = state.channels.find((item) => item.id === channelContext.channelId);
     if (!channel) return;
     const existing = state.threads.find((item) => item.id === channelContext.threadId);
@@ -4673,7 +4982,7 @@ async function recordChannelDispatch(channelContext, { prompt = "", agentId = ""
       );
     }
     channel.updatedAt = new Date().toISOString();
-    await writeChannelsState(state);
+    });
   } catch {
     // Channel bookkeeping is telemetry-grade; dispatch must not fail on it.
   }
@@ -5379,6 +5688,11 @@ function sdkTraceFromEvents(events, rawStdout = "", rawStderr = "") {
     if (!event || typeof event !== "object") continue;
     const timestamp = sdkEventTimestamp(event);
 
+    if (event.type === "plan_update") {
+      orderedEvents.push({ ...event, timestamp });
+      continue;
+    }
+
     if (event.type === "message_update") {
       if (event.thought) {
         const thought = {
@@ -5487,6 +5801,8 @@ function sdkReplyFromEvents(events, rawStdout = "") {
 function chatStreamEventFromSdkEvent(event) {
   const timestamp = sdkEventTimestamp(event);
 
+  if (event?.type === "plan_update") return { ...event, timestamp };
+
   if (event?.type === "message_update") {
     return {
       type: "message_delta",
@@ -5568,7 +5884,6 @@ function chatStreamEventFromSdkEvent(event) {
 // working, however long it takes; only silence means trouble. The timeout is
 // therefore an inactivity window that every event resets, under a hard
 // ceiling so a runaway turn still ends.
-const CHAT_TURN_CEILING_MS = 45 * 60 * 1000;
 
 async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEventTimeoutMs = 45000) {
   const events = [];
@@ -5702,13 +6017,17 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
 
   void (async () => {
     try {
-      const output = await collectSdkPrompt(sdk, prompt, 300000, (event) => appendSdkEventLog(run, event));
+      const output = await collectSdkPrompt(sdk, prompt, 300000, (event) => appendSdkEventLog(run, event), run.abortController.signal);
       if (run.status !== "stopped") {
+        run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
+        const reply = sdkReplyFromEvents(output.events, output.rawStdout);
+        const failure = replyFailure(output.events, reply);
+        if (failure) throw new Error(failure.message);
+        if (!await finishRunChannelActions(run, payload, reply, run.trace)) return;
         run.exitCode = 0;
         run.status = "completed";
         run.finishedAt = new Date().toISOString();
         emitRunFinished(run);
-        run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
         appendLog(run, "system", "SDK run completed");
         recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "sdk", status: run.status, trace: run.trace, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
       }
@@ -5728,7 +6047,7 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
   })();
 }
 
-function startCliRun(run, args, workspace, agentRuntime) {
+function startCliRun(run, args, workspace, agentRuntime, payload) {
   run.transport = "cli";
   const child = spawn(resolveAutohandBinary() || "autohand", args, {
     cwd: workspace,
@@ -5746,8 +6065,9 @@ function startCliRun(run, args, workspace, agentRuntime) {
   child.stderr.setEncoding("utf8");
   appendLog(run, "system", `started ${run.command}`);
 
-  child.stdout.on("data", (chunk) => appendLog(run, "stdout", chunk));
-  child.stderr.on("data", (chunk) => appendLog(run, "stderr", chunk));
+  let stdout = "", stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; appendLog(run, "stdout", chunk); });
+  child.stderr.on("data", (chunk) => { stderr += chunk; appendLog(run, "stderr", chunk); });
   child.on("error", (error) => {
     if (run.status === "stopped") return;
     run.status = "failed";
@@ -5755,19 +6075,42 @@ function startCliRun(run, args, workspace, agentRuntime) {
     emitRunFinished(run);
     appendLog(run, "system", error.message);
   });
-  child.on("close", (code) => {
+  child.on("close", async (code) => {
     run.exitCode = code;
     if (run.status === "stopped") {
       appendLog(run, "system", `stopped with code ${code}`);
       recordUsageTelemetry("usage.recorded", usageMetadata({ payload: { agentId: run.agentId }, agentRuntime, transport: "cli", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: new Date().toISOString() }));
       return;
     }
-    run.status = code === 0 ? "completed" : "failed";
+    // A spawn error also emits close. Keep its failure, and never process
+    // model actions from a failed process.
+    if (run.finishedEventAt) return;
+    try {
+      run.trace = await buildChatTrace({ agentHome: agentRuntime.agentHome, startedAt: Date.parse(run.startedAt), stdout, stderr, prompt: String(payload.prompt || ""), command: run.command, exitCode: code });
+      if (code === 0 && !await finishRunChannelActions(run, payload, formatChatReply(stdout, stderr, String(payload.prompt || "")), run.trace)) return;
+      if (run.status === "stopped") return;
+      run.status = code === 0 ? "completed" : "failed";
+    } catch (error) {
+      if (run.status === "stopped") return;
+      run.status = "failed";
+      run.exitCode = 1;
+      appendLog(run, "stderr", error.message || String(error));
+    }
     run.finishedAt = new Date().toISOString();
     emitRunFinished(run);
     appendLog(run, "system", `exited with code ${code}`);
     recordUsageTelemetry("usage.recorded", usageMetadata({ payload: { agentId: run.agentId }, agentRuntime, transport: "cli", status: run.status, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
   });
+}
+
+async function finishRunChannelActions(run, payload, reply, trace) {
+  if (run.status === "stopped" || run.abortController?.signal.aborted) return false;
+  const result = await agentChannelActions.finish(payload._channelActionContext, { reply, trace }, run.abortController?.signal);
+  if (run.status === "stopped" || run.abortController?.signal.aborted) return false;
+  run.reply = result.reply;
+  run.channelActions = result.channelActions || [];
+  for (const receipt of run.channelActions) appendLog(run, "squad", receipt.message);
+  return true;
 }
 
 async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeoutMs, startedAt }) {
@@ -5842,7 +6185,7 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     }
     throw error;
   } finally {
-    await lease?.release(healthy);
+    await lease?.release(healthy && !agentRuntime.computerUse);
   }
 }
 
@@ -5974,7 +6317,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     }
     throw error;
   } finally {
-    await lease?.release(healthy);
+    await lease?.release(healthy && !agentRuntime.computerUse);
   }
 }
 
@@ -5990,24 +6333,31 @@ function isAbortError(error) {
 // ---------------------------------------------------------------------------
 
 async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
-  const assignment = harnessAssignmentFromAgent(payload.agent);
-  const adapter = getAdapter(assignment);
   const workspace = await cleanWorkspace(payload.workspace);
   const prompt = String(payload.prompt || "").trim();
-  const profile = String(payload.profile || "").trim().slice(0, 12000);
+  let profile = String(payload.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(payload, workspace);
+  const assignment = harnessAssignmentFromAgent(agentRuntime.agent);
+  const adapter = getAdapter(assignment);
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime)].filter(Boolean).join("\n\n");
   const readiness = await assertHarnessReady(assignment, { context: harnessContextFor(assignment.id) });
-  const permissions = normalizeAgentPermissions(payload.agent);
+  const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const addDirs = [];
   if (agentRuntime.profileDocs?.path) addDirs.push(agentRuntime.profileDocs.path);
   if (canvasDirFor(payload)) addDirs.push(canvasDirFor(payload));
-  for (const project of normalizeAgentProjects(payload.agent)) {
+  for (const project of normalizeAgentProjects(agentRuntime.agent)) {
     if (project.path !== workspace) addDirs.push(project.path);
   }
   const model = String(payload.model || assignment.model || "").trim();
   const resumeId = payload.resumeSession === false ? "" : await readResumeId(agentRuntime.agentHome, adapter.id, workspace);
-  const build = (resume) =>
-    adapter.buildArgs({
+  let computerConfigPath = "";
+  if (agentRuntime.computerUse && adapter.id === "claude") {
+    computerConfigPath = join(agentRuntime.agentHome, "computer-use-configs", `${agentRuntime.computerUse.id}.claude.json`);
+    await writeSecretFile(computerConfigPath, JSON.stringify({ mcpServers: { "autohand-computer-use": { command: agentRuntime.computerUse.mcpServer.command, args: agentRuntime.computerUse.mcpServer.args, env: agentRuntime.computerUse.mcpServer.env } } }));
+    agentRuntime.computerUse.externalConfigPath = computerConfigPath;
+  }
+  const build = (resume) => {
+    const built = adapter.buildArgs({
       prompt: mode === "auto" ? `${prompt}\n\nWork autonomously until the task is complete, then summarise what changed.` : prompt,
       workspace,
       model,
@@ -6017,6 +6367,18 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
       addDirs,
       resumeId: resume,
     });
+    if (agentRuntime.computerUse && adapter.id === "claude") {
+      built.args.push("--mcp-config", computerConfigPath);
+      built.displayArgs.push("--mcp-config", "<squad-computer-use-config>");
+    } else if (agentRuntime.computerUse && adapter.id === "codex") {
+      const server = agentRuntime.computerUse.mcpServer;
+      const prefix = 'mcp_servers.autohand-computer-use';
+      const values = [`${prefix}.command=${JSON.stringify(server.command)}`, `${prefix}.args=${JSON.stringify(server.args)}`, `${prefix}.env={${Object.entries(server.env).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(",")}}`];
+      for (const value of values) built.args.unshift("-c", value);
+      built.displayArgs.unshift("-c", "<squad-computer-use-config>");
+    }
+    return built;
+  };
   return {
     assignment,
     adapter,
@@ -6033,6 +6395,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
     envVars: {
       AUTOHAND_SQUAD_MEMBER: agentRuntime.agentId,
       AUTOHAND_SQUAD_HARNESS: adapter.id,
+      AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: "",
     },
   };
 }
@@ -6041,7 +6404,7 @@ function externalCommandLabel(adapter, displayArgs) {
   return `${adapter.executableName} ${displayArgs.map(shellQuote).join(" ")}`;
 }
 
-async function executeExternalHarness(prepared, { timeoutMs, signal, onEvent }) {
+async function executeExternalHarness(prepared, { timeoutMs, inactivityMs = 0, signal, onEvent }) {
   const { adapter, executable, workspace, envVars, agentRuntime } = prepared;
   let attempt = prepared.build(prepared.resumeId);
   let output = await runExternalHarness({
@@ -6051,6 +6414,7 @@ async function executeExternalHarness(prepared, { timeoutMs, signal, onEvent }) 
     cwd: workspace,
     env: envVars,
     timeoutMs,
+    inactivityMs,
     signal,
     onEvent,
     terminate: terminateChildProcess,
@@ -6067,6 +6431,7 @@ async function executeExternalHarness(prepared, { timeoutMs, signal, onEvent }) 
       cwd: workspace,
       env: envVars,
       timeoutMs,
+      inactivityMs,
       signal,
       onEvent,
       terminate: terminateChildProcess,
@@ -6127,7 +6492,7 @@ async function chatOnceWithExternalHarness(payload) {
   const requestedTimeout = Number(payload.timeoutMs);
   const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, 15000), 600000) : 300000;
   const startedAt = Date.now();
-  const output = await executeExternalHarness(prepared, { timeoutMs, onEvent: () => {} });
+  const output = await executeExternalHarness(prepared, { timeoutMs: CHAT_TURN_CEILING_MS, inactivityMs: timeoutMs, onEvent: () => {} });
   const result = externalHarnessResult(prepared, output, { startedAt, payload });
   const status = output.error ? "failed" : "completed";
   recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime: { ...prepared.agentRuntime, effectiveModel: result.effectiveModel }, transport: prepared.adapter.id, status, trace: result.trace, command: output.command }));
@@ -6137,6 +6502,7 @@ async function chatOnceWithExternalHarness(payload) {
 
 async function streamChatWithExternalHarness(payload, { stream, signal, startedAt }) {
   const prepared = await prepareExternalHarness(payload);
+  await memberAvailability.assertCanWork(payload);
   if (!prepared.prompt) throw new Error("prompt is required");
   if (signal?.aborted) throw new Error("chat stopped by the user");
   const channelContext = channelContextFromPayload(payload);
@@ -6160,7 +6526,8 @@ async function streamChatWithExternalHarness(payload, { stream, signal, startedA
     timestamp: new Date().toISOString(),
   });
   const output = await executeExternalHarness(prepared, {
-    timeoutMs,
+    timeoutMs: CHAT_TURN_CEILING_MS,
+    inactivityMs: timeoutMs,
     signal,
     onEvent: (event) => stream.send("sdk", chatStreamEventFromSdkEvent(event)),
   });
@@ -6173,18 +6540,20 @@ async function streamChatWithExternalHarness(payload, { stream, signal, startedA
 }
 
 async function startExternalHarnessRun(payload) {
+  const id = payload._computerUseWorkId || randomUUID();
+  payload = { ...payload, _computerUseWorkId: id };
   const mode = payload.mode || "prompt";
   if (mode === "permissions") {
     throw new Error("Permission inspection is only available for Autohand members.");
   }
   const prepared = await prepareExternalHarness(payload, { mode });
+  await memberAvailability.assertCanWork(payload);
   if (!prepared.prompt) throw new Error("prompt is required");
   const { adapter, workspace, agentRuntime } = prepared;
   const contextPack = generateContextPack(mode, payload, agentRuntime, workspace);
   const layerPayload = contextPack
     ? { ...payload, contextPack: { id: contextPack.id, taskId: contextPack.taskId, summary: contextPack.summary } }
     : payload;
-  const id = randomUUID();
   const channelContext = channelContextFromPayload(payload);
   const initialArgs = prepared.build(prepared.resumeId);
   const run = {
@@ -6204,6 +6573,7 @@ async function startExternalHarnessRun(payload) {
     profileDocs: agentRuntime.profileDocs,
     brainCard: agentRuntime.brainCard,
     transport: adapter.id,
+    computerUse: agentRuntime.computerUse ? { sessionId: agentRuntime.computerUse.id, runId: id, files: [] } : null,
     harness: adapter.id,
     harnessVersion: prepared.readiness.version || "",
     command: externalCommandLabel(adapter, initialArgs.displayArgs),
@@ -6233,13 +6603,14 @@ async function startExternalHarnessRun(payload) {
       });
       run.command = output.command;
       if (run.status !== "stopped") {
+        run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
+        run.trace.harness = adapter.id;
+        run.trace.sessionId = output.resumeId || "";
+        if (!output.error && !await finishRunChannelActions(run, payload, sdkReplyFromEvents(output.events, ""), run.trace)) return;
         run.exitCode = output.exitCode;
         run.status = output.error ? "failed" : "completed";
         run.finishedAt = new Date().toISOString();
         emitRunFinished(run);
-        run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
-        run.trace.harness = adapter.id;
-        run.trace.sessionId = output.resumeId || "";
         if (output.error) appendLog(run, "stderr", output.error);
         appendLog(run, "system", `${adapter.label} run ${run.status}`);
         recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime: { ...agentRuntime, effectiveModel: run.effectiveModel }, transport: adapter.id, status: run.status, trace: run.trace, command: run.command, startedAt: run.startedAt, completedAt: run.finishedAt }));
@@ -6260,10 +6631,29 @@ async function startExternalHarnessRun(payload) {
 }
 
 async function startRun(payload) {
+  const id = randomUUID();
+  payload = { ...await withSavedMember(payload), _computerUseWorkId: id };
+  payload._channelActionContext = await agentChannelActions.begin({ ...payload, requestId: payload.requestId || `run-${id}` });
+  try { return await startRunInner(payload); }
+  catch (error) { await finishComputerWork(id).catch(() => {}); throw error; }
+}
+
+async function startRunInner(payload) {
+  const memberId = String(payload.agentId || payload.agent?.id || "");
+  projectObserver.deferMember(memberId, "An assigned run takes priority.");
+  observerRunStarts.set(memberId, (observerRunStarts.get(memberId) || 0) + 1);
+  try { return await startPreparedRun(payload); }
+  finally { const remaining = observerRunStarts.get(memberId) - 1; if (remaining > 0) observerRunStarts.set(memberId, remaining); else observerRunStarts.delete(memberId); }
+}
+
+async function startPreparedRun(payload) {
+  const id = payload._computerUseWorkId;
+  await memberAvailability.assertCanWork(payload);
   if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {
     return startExternalHarnessRun(payload);
   }
   const { args, displayArgs, workspace, prompt, mode, agentRuntime } = await autohandArgs(payload);
+  await memberAvailability.assertCanWork(payload);
   if (!prompt && mode !== "permissions") {
     throw new Error("prompt is required");
   }
@@ -6278,7 +6668,6 @@ async function startRun(payload) {
     ? { ...payload, contextPack: { id: contextPack.id, taskId: contextPack.taskId, summary: contextPack.summary } }
     : payload;
 
-  const id = randomUUID();
   const channelContext = channelContextFromPayload(payload);
   const run = {
     id,
@@ -6301,6 +6690,7 @@ async function startRun(payload) {
     profileDocs: agentRuntime.profileDocs,
     brainCard: agentRuntime.brainCard,
     transport: "cli",
+    computerUse: agentRuntime.computerUse ? { sessionId: agentRuntime.computerUse.id, runId: id, files: [] } : null,
     command: `autohand ${displayArgs.map(shellQuote).join(" ")}`,
     logPath: join(runLogsDir, `${id}.otlp.jsonl`),
     status: "running",
@@ -6310,6 +6700,7 @@ async function startRun(payload) {
     contextPack,
     contextLayers: assembleContextLayers(mode, layerPayload, agentRuntime),
     logs: [],
+    abortController: new AbortController(),
   };
   runs.set(id, run);
 
@@ -6346,145 +6737,17 @@ async function startRun(payload) {
     appendLog(run, "system", `SDK transport not used for ${mode} mode; using direct CLI transport`);
   }
 
-  startCliRun(run, args, workspace, agentRuntime);
+  startCliRun(run, args, workspace, agentRuntime, payload);
 
   return runSummary(run);
 }
 
 async function chatOnce(payload) {
-  if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {
-    return chatOnceWithExternalHarness(payload);
-  }
-  const { args, displayArgs, workspace, prompt, agentRuntime } = await autohandArgs({
-    ...payload,
-    mode: "prompt",
-    dryRun: false,
-  });
-  if (!prompt) {
-    throw new Error("prompt is required");
-  }
-  assertAutohandAuth(agentRuntime);
-  const channelContext = channelContextFromPayload(payload);
-  if (channelContext) {
-    await recordChannelDispatch(channelContext, { prompt, agentId: payload.agentId || agentRuntime.agentId });
-  }
-
-  const requestedTimeout = Number(payload.timeoutMs);
-  const timeoutMs = Number.isFinite(requestedTimeout)
-    ? Math.min(Math.max(requestedTimeout, 15000), 300000)
-    : 180000;
-  const command = `autohand ${displayArgs.map(shellQuote).join(" ")}`;
-  const startedAt = Date.now();
-
-  const sdkPayload = { ...payload, mode: "prompt", dryRun: false };
-  if (sdkTransportEnabled(sdkPayload, "prompt")) {
-    try {
-      return await chatOnceWithSdk(sdkPayload, { workspace, prompt, agentRuntime, timeoutMs, startedAt });
-    } catch (error) {
-      if (!(error instanceof SdkBridgeStartupError)) {
-        throw error;
-      }
-    }
-  }
-
-  const output = await new Promise((resolve, reject) => {
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const child = spawn(resolveAutohandBinary() || "autohand", args, {
-      cwd: workspace,
-      env: {
-        ...process.env,
-        AUTOHAND_HOME: agentRuntime.agentHome,
-        AUTOHAND_CONFIG: agentRuntime.configPath,
-        AUTOHAND_CLIENT_NAME: `autohand-squad-${agentRuntime.agentId}`,
-        AUTOHAND_NO_IDLE_LOGOUT: "1",
-        FORCE_COLOR: "0",
-      },
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-
-    function finish(error, result) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(result);
-    }
-
-    function stopChildWithError(message) {
-      stderr += `${stderr.endsWith("\n") || !stderr ? "" : "\n"}[Autohand Squad] ${message}\n`;
-      terminateChildProcess(child);
-      finish(null, {
-        exitCode: null,
-        stdout,
-        stderr,
-        error: message,
-      });
-    }
-
-    const timer = setTimeout(() => {
-      stopChildWithError("chat timed out waiting for Autohand");
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", (error) => finish(error));
-    child.on("close", (exitCode) => finish(null, { exitCode, stdout, stderr }));
-  });
-
-  const reply = formatChatReply(output.stdout, output.stderr, prompt);
-  const trace = await buildChatTrace({
-    agentHome: agentRuntime.agentHome,
-    startedAt,
-    stdout: output.stdout,
-    stderr: output.stderr,
-    prompt,
-    command,
-    exitCode: output.exitCode,
-  });
-  const completedAt = Date.now();
-  trace.startedAt = new Date(startedAt).toISOString();
-  trace.completedAt = new Date(completedAt).toISOString();
-  trace.durationMs = completedAt - startedAt;
-  trace.transport = "cli";
-  const result = {
-    reply: reply || "Autohand returned no chat text.",
-    trace,
-    workspace,
-    command,
-    transport: "cli",
-    startedAt: trace.startedAt,
-    completedAt: trace.completedAt,
-    durationMs: trace.durationMs,
-    configPath: agentRuntime.configPath,
-    displayConfigPath: agentRuntime.displayConfigPath,
-    agentHome: agentRuntime.agentHome,
-    skillInstall: agentRuntime.skillInstall,
-    profileDocs: agentRuntime.profileDocs,
-    brainCard: agentRuntime.brainCard,
-    effectiveModel: agentRuntime.effectiveModel,
-    channel: channelContext,
-    contextLayers: chatContextLayers(payload, agentRuntime, trace),
-  };
-  if (output.error || output.exitCode !== 0) {
-    recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "cli", status: "failed", trace, command }));
-    throw new ChatRuntimeError(output.error || reply || `Autohand exited with code ${output.exitCode}`, result);
-  }
-
-  recordUsageTelemetry("usage.recorded", usageMetadata({ payload, agentRuntime, transport: "cli", status: "completed", trace, command }));
-  return result;
+  const controller = new AbortController();
+  const unregister = registerChat(String(payload.agentId || payload.agent?.id || ''), controller);
+  try {
+    return await executeChatTurn(payload, { stream: { send() {} }, signal: controller.signal, startedAt: Date.now() });
+  } finally { unregister(); }
 }
 
 async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal }) {
@@ -6626,83 +6889,106 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
 // Resolves with `{ status, preview }` once the stream has ended: "completed"
 // with the reply's first line, or "failed" with the error message, so the
 // route can emit chat.finished with an honest status.
+async function executeChatTurn(payload, { stream, signal, startedAt = Date.now() }) {
+  const memberId = String(payload.agentId || payload.agent?.id || "");
+  if (payload.collaboration?.role === "receiver" && (
+    (activeChats.get(memberId)?.size || 0) > 1 ||
+    sdkSessions?.stats().sessions.some(session => session.agentId === memberId && session.busy) ||
+    [...runs.values()].some(run => run.agentId === memberId && isLiveRun(run))
+  )) {
+    const result = { declined: "busy", reply: `${payload.agent?.name || "The receiving member"} is already working on another request. Retry this checkpoint after that request finishes.`, workspace: payload.workspace || "", completedAt: new Date().toISOString(), durationMs: Date.now() - startedAt };
+    stream.send("done", result);
+    return result;
+  }
+  payload = await withSavedMember(payload);
+  const workId = randomUUID();
+  const actionContext = await agentChannelActions.begin(payload);
+  const originalStream = stream;
+  const liveEvidence = (data) => { if (data.runId === workId) originalStream.send("computer-use", { sessionId: data.sessionId, runId: workId, files: data.files }); };
+  bridgeEvents.on("computer-use.evidence", liveEvidence);
+  const delayedDone = { send(event, data) { if (event !== "done") originalStream.send(event, data); } };
+  try {
+    const result = await executeChatTurnInner({ ...payload, _computerUseWorkId: workId }, { stream: delayedDone, signal, startedAt });
+    const evidence = await finishComputerWork(workId);
+    const completed = await agentChannelActions.finish(actionContext, { ...cleanWorkResult(result), ...(evidence ? { computerUse: evidence } : {}) }, signal);
+    originalStream.send("done", completed);
+    return completed;
+  } finally {
+    await finishComputerWork(workId).catch(() => {});
+    bridgeEvents.off("computer-use.evidence", liveEvidence);
+  }
+}
+
+async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.now() }) {
+  if (signal?.aborted) throw new Error("chat stopped by the user");
+  await memberAvailability.assertCanWork(payload);
+  stream = withWorkProgress(stream);
+  let result;
+  if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {
+    result = await streamChatWithExternalHarness(payload, { stream, signal, startedAt });
+    return cleanWorkResult(result);
+  }
+  const { args, displayArgs, workspace, prompt, agentRuntime } = await autohandArgs({ ...payload, mode: "prompt", dryRun: false });
+  if (!prompt) throw new Error("prompt is required");
+  assertAutohandAuth(agentRuntime);
+  if (signal?.aborted) throw new Error("chat stopped by the user");
+  const channelContext = channelContextFromPayload(payload);
+  if (channelContext) await recordChannelDispatch(channelContext, { prompt, agentId: payload.agentId || agentRuntime.agentId });
+  const requestedTimeout = Number(payload.timeoutMs);
+  const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, 15000), 300000) : 180000;
+  stream.send("start", { startedAt: new Date(startedAt).toISOString(), workspace, effectiveModel: agentRuntime.effectiveModel, channel: channelContext });
+  const sdkPayload = { ...payload, mode: "prompt", dryRun: false };
+  if (sdkTransportEnabled(sdkPayload, "prompt")) {
+    try {
+      result = await streamChatWithSdk(sdkPayload, { workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal });
+      return cleanWorkResult(result);
+    } catch (error) {
+      if (!(error instanceof SdkBridgeStartupError)) throw error;
+      stream.send("sdk", { type: "status", status: "cli_fallback", label: "SDK bridge was unavailable; using CLI transport...", timestamp: new Date().toISOString() });
+    }
+  }
+  result = await streamChatWithCli({ payload, args, displayArgs, workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal });
+  return cleanWorkResult(result);
+}
+
 async function streamChat(payload, res) {
   const stream = startEventStream(res);
   const startedAt = Date.now();
-  const abortController = new AbortController();
+  const controller = new AbortController();
+  const unregister = registerChat(String(payload.agentId || payload.agent?.id || ''), controller);
   let streamOpen = true;
-  const abortStream = () => {
-    if (streamOpen && !abortController.signal.aborted) abortController.abort();
-  };
+  const abortStream = () => { if (streamOpen && !controller.signal.aborted) controller.abort(); };
   res.on("close", abortStream);
-
-  const outcome = (result) => ({ status: "completed", preview: String(result?.reply || "").slice(0, 140) });
   try {
-    if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {
-      return outcome(await streamChatWithExternalHarness(payload, { stream, signal: abortController.signal, startedAt }));
-    }
-    const { args, displayArgs, workspace, prompt, agentRuntime } = await autohandArgs({
-      ...payload,
-      mode: "prompt",
-      dryRun: false,
-    });
-    if (!prompt) {
-      throw new Error("prompt is required");
-    }
-    assertAutohandAuth(agentRuntime);
-    if (abortController.signal.aborted) {
-      throw new Error("chat stopped by the user");
-    }
-
-    const channelContext = channelContextFromPayload(payload);
-    if (channelContext) {
-      await recordChannelDispatch(channelContext, { prompt, agentId: payload.agentId || agentRuntime.agentId });
-    }
-
-    const requestedTimeout = Number(payload.timeoutMs);
-    const timeoutMs = Number.isFinite(requestedTimeout)
-      ? Math.min(Math.max(requestedTimeout, 15000), 300000)
-      : 180000;
-    stream.send("start", {
-      startedAt: new Date(startedAt).toISOString(),
-      workspace,
-      effectiveModel: agentRuntime.effectiveModel,
-      channel: channelContext,
-    });
-
-    const sdkPayload = { ...payload, mode: "prompt", dryRun: false };
-    if (sdkTransportEnabled(sdkPayload, "prompt")) {
-      try {
-        return outcome(await streamChatWithSdk(sdkPayload, { workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal: abortController.signal }));
-      } catch (error) {
-        if (!(error instanceof SdkBridgeStartupError)) {
-          throw error;
-        }
-        stream.send("sdk", {
-          type: "status",
-          status: "cli_fallback",
-          label: "SDK bridge was unavailable; using CLI transport...",
-          timestamp: new Date().toISOString(),
-        });
-      }
-    }
-
-    return outcome(await streamChatWithCli({ payload, args, displayArgs, workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal: abortController.signal }));
+    const result = await executeChatTurn(payload, { stream, signal: controller.signal, startedAt });
+    return { status: "completed", preview: String(result?.reply || "").slice(0, 140) };
   } catch (error) {
-    const completedAt = Date.now();
     const message = error instanceof Error ? error.message : String(error);
-    stream.send("error", {
-      error: message,
-      completedAt: new Date(completedAt).toISOString(),
-      durationMs: completedAt - startedAt,
-      ...(error instanceof ChatRuntimeError && error.details ? error.details : {}),
-    });
+    stream.send("error", { error: message, completedAt: new Date().toISOString(), durationMs: Date.now() - startedAt,
+      ...(error instanceof ChatRuntimeError && error.details ? cleanWorkResult(error.details) : {}) });
     return { status: "failed", preview: message.slice(0, 140) };
   } finally {
-    streamOpen = false;
-    res.off("close", abortStream);
-    stream.end();
+    streamOpen = false; res.off("close", abortStream); unregister(); stream.end();
   }
+}
+
+async function streamGoal(payload, res) {
+  // Start only after all request validation. A disconnected browser detaches
+  // this listener; it does not cancel the persisted pursuit.
+  const goal = await goals.start(payload);
+  const stream = startEventStream(res);
+  return new Promise((resolve) => {
+    let detached = false;
+    let unsubscribe = () => {};
+    const detach = () => { if (detached) return; detached = true; unsubscribe(); res.off("close", detach); resolve(); };
+    unsubscribe = goals.subscribe(goal.id, ({ event, data }) => {
+      if (detached) return;
+      stream.send(event, data);
+      if (event === "done") { stream.end(); detach(); }
+    });
+    res.on("close", detach);
+    stream.send("goal", goal);
+  });
 }
 
 function shellQuote(value) {
@@ -6777,6 +7063,12 @@ function routeContext() {
       await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, "utf8");
     },
     runs,
+    goals,
+    projectObserver,
+    availability: memberAvailability,
+    computerUse,
+    authorizeComputerUseGrant,
+    stopChats,
     runSummary,
     isLiveRun,
     get sdkSessions() {
@@ -6784,6 +7076,8 @@ function routeContext() {
     },
     readChannelsState,
     writeChannelsState,
+    mutateChannelsState,
+    agentChannelActions,
     startRun,
     events: bridgeEvents,
     emit: emitBridgeEvent,
@@ -6842,6 +7136,10 @@ async function handleApi(req, res, url) {
       }
       const workspace = await cleanWorkspace(String(payload.workspace || "") || getDefaultWorkspace());
       const agentRuntime = await ensureAgentRuntime({ ...payload, agentId }, workspace);
+      if (isExternalHarness(agentRuntime.harness)) {
+        json(res, 202, { success: true, data: { agentId, warmed: false, reason: "external_harness", harness: agentRuntime.harness.id } });
+        return true;
+      }
       const profile = String(payload.profile || "").trim().slice(0, 12000);
       const context = sdkRuntimeContext({ ...payload, agentId }, workspace, profile, agentRuntime);
       // Answer immediately: warming is best effort and must never make the
@@ -7061,12 +7359,23 @@ async function handleApi(req, res, url) {
     return true;
   }
 
+  // Merge cached data without replacing another window's channels. Explicit
+  // DELETE tombstones prevent old caches reviving deleted channels.
+  if (url.pathname === "/api/channels/sync" && req.method === "PUT") {
+    try {
+      json(res, 200, { success: true, data: await channelsStore.sync(await readBody(req, CHANNEL_HISTORY_MAX_BYTES)) });
+    } catch (error) {
+      json(res, error.status || 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
   if (url.pathname === "/api/channels" && req.method === "POST") {
     try {
       const payload = await readBody(req);
       json(res, 201, { success: true, data: await createChannel(payload) });
     } catch (error) {
-      json(res, 400, { success: false, error: error.message });
+      json(res, error.status || 400, { success: false, error: error.message });
     }
     return true;
   }
@@ -7075,10 +7384,10 @@ async function handleApi(req, res, url) {
   // the client PUTs its full channel/thread state after local changes.
   if (url.pathname === "/api/channels" && req.method === "PUT") {
     try {
-      const payload = await readBody(req);
+      const payload = await readBody(req, CHANNEL_HISTORY_MAX_BYTES);
       json(res, 200, { success: true, data: await writeChannelsState(payload) });
     } catch (error) {
-      json(res, 400, { success: false, error: error.message });
+      json(res, error.status || 400, { success: false, error: error.message });
     }
     return true;
   }
@@ -7089,7 +7398,7 @@ async function handleApi(req, res, url) {
       const payload = await readBody(req);
       json(res, 200, { success: true, data: await updateChannel(decodeURIComponent(channelMatch[1]), payload) });
     } catch (error) {
-      json(res, error.message === "channel not found" ? 404 : 400, { success: false, error: error.message });
+      json(res, error.status || (error.message === "channel not found" ? 404 : 400), { success: false, error: error.message });
     }
     return true;
   }
@@ -7204,15 +7513,27 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/chat" && req.method === "POST") {
     try {
       const payload = withRemoteDefaultWorkspace(req, await readBody(req));
+      await memberAvailability.assertCanWork(payload);
       const remote = await resolveRemote(routeContext(), payload.agentId, { req });
+      const pursuingGoal = payload.mode === "goal" || payload.goal === true;
+      if (remote && pursuingGoal) throw Object.assign(new Error("Persistent goals for remote members are not supported by this bridge. Start the goal on the member's own machine."), { status: 409 });
       if (remote) {
         await proxyChatOnce(remote, payload, res);
+        return true;
+      }
+      if (pursuingGoal) {
+        const goal = await goals.start(payload);
+        json(res, 201, { success: true, data: { reply: "Goal started.", goal, goalId: goal.id } });
         return true;
       }
       const reply = await chatOnce(payload);
       emitBridgeEvent("chat.finished", { memberId: String(payload.agentId || ""), status: "completed", channelId: String(payload.channelId || payload.channel?.id || ""), preview: String(reply?.reply || reply?.output || "").slice(0, 140) });
       json(res, 200, { success: true, data: reply });
     } catch (error) {
+      if (error.reason === "break") {
+        json(res, 200, { success: true, data: { reply: error.reply, declined: true, reason: "break", agentId: error.memberId } });
+        return true;
+      }
       emitBridgeEvent("chat.finished", { memberId: "", status: "failed", preview: String(error?.message || "").slice(0, 140) });
       // Runtime failures carry the partial reply and trace exactly like the
       // streaming route's error event; a 502 marks the harness, not the caller.
@@ -7220,7 +7541,7 @@ async function handleApi(req, res, url) {
       json(res, status, {
         success: false,
         error: error.message,
-        ...(error instanceof ChatRuntimeError && error.details ? { data: error.details } : {}),
+        ...(error instanceof ChatRuntimeError && error.details ? { data: cleanWorkResult(error.details) } : {}),
         ...(error instanceof HarnessNotReadyError ? { harness: publicReadiness(error.readiness) } : {}),
       });
     }
@@ -7230,11 +7551,15 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/chat/stream" && req.method === "POST") {
     try {
       const payload = withRemoteDefaultWorkspace(req, await readBody(req));
+      await memberAvailability.assertCanWork(payload);
       const remote = await resolveRemote(routeContext(), payload.agentId, { req });
+      const pursuingGoal = payload.mode === "goal" || payload.goal === true;
+      if (remote && pursuingGoal) throw Object.assign(new Error("Persistent goals for remote members are not supported by this bridge. Start the goal on the member's own machine."), { status: 409 });
       if (remote) {
         await proxyChatStream(remote, payload, res);
         return true;
       }
+      if (pursuingGoal) { await streamGoal(payload, res); return true; }
       const outcome = await streamChat(payload, res);
       emitBridgeEvent("chat.finished", {
         memberId: String(payload.agentId || ""),
@@ -7244,8 +7569,14 @@ async function handleApi(req, res, url) {
         preview: String(outcome?.preview || ""),
       });
     } catch (error) {
+      if (error.reason === "break") {
+        const stream = startEventStream(res);
+        stream.send("done", { reply: error.reply, declined: true, reason: "break", agentId: error.memberId });
+        stream.end();
+        return true;
+      }
       emitBridgeEvent("chat.finished", { memberId: "", status: "failed", preview: String(error?.message || "").slice(0, 140) });
-      json(res, 400, { success: false, error: error.message });
+      json(res, error.status || 400, { success: false, error: error.message });
     }
     return true;
   }
@@ -7295,6 +7626,7 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/runs" && req.method === "POST") {
     try {
       const payload = withRemoteDefaultWorkspace(req, await readBody(req));
+      await memberAvailability.assertCanWork(payload);
       const remote = await resolveRemote(routeContext(), payload.agentId, { req });
       if (remote) {
         await proxyRunStart(remote, payload, res);
@@ -7302,7 +7634,7 @@ async function handleApi(req, res, url) {
       }
       json(res, 201, { success: true, data: await startRun(payload) });
     } catch (error) {
-      json(res, 400, { success: false, error: error.message });
+      json(res, error.status || 400, { success: false, error: error.message, ...(error.reason === "break" ? { reply: error.reply, declined: true, reason: "break" } : {}) });
     }
     return true;
   }
@@ -7435,46 +7767,55 @@ async function handleApi(req, res, url) {
     return true;
   }
 
-  // Update status from the daemon's GitHub Releases check. `?refresh=1` asks
-  // the running daemon to check now; otherwise the last snapshot is returned.
+  if (url.pathname === "/api/app-info" && req.method === "GET") {
+    const data = await readAppInfo({ rootDir });
+    json(res, 200, { success: true, data });
+    return true;
+  }
+  if (url.pathname === "/api/product-telemetry" && req.method === "POST") {
+    const payload = await readBody(req, 4096);
+    void productTelemetry.capture(payload, { dnt: req.headers.dnt === "1" || req.headers["sec-gpc"] === "1" });
+    json(res, 200, { success: true, data: { accepted: true, configured: productTelemetry.enabled } });
+    return true;
+  }
+
+  // Fresh repository checks and verified installer downloads stay on the
+  // local bridge; the client cannot supply a URL, path or command.
   if (url.pathname === "/api/updates" && req.method === "GET") {
-    try {
-      const daemonRecord = await readOptionalJsonFile(join(squadStateDir, "daemon.json"));
-      let snapshot = await readOptionalJsonFile(join(squadStateDir, "update.json"));
-      let daemonReachable = false;
-      if (daemonRecord?.url) {
-        const base = String(daemonRecord.url).replace(/\/+$/, "");
-        try {
-          const health = await fetchWithTimeout(`${base}/health`, {}, 3000);
-          daemonReachable = health.ok;
-        } catch {
-          daemonReachable = false;
-        }
-        if (daemonReachable && (url.searchParams.get("refresh") === "1" || !snapshot)) {
-          try {
-            const response = await fetchWithTimeout(`${base}/updates/check`, { method: "POST" }, 30000);
-            if (response.ok) {
-              const body = await response.json();
-              if (body && typeof body === "object") snapshot = body.data || body;
-            }
-          } catch {
-            // Keep the last written snapshot.
-          }
-        }
-      }
-      json(res, 200, {
-        success: true,
-        data: {
-          daemonReachable,
-          appVersion: packageMetadata.version || "",
-          repository: "autohandai/squad",
-          releasesUrl: "https://github.com/autohandai/squad/releases",
-          snapshot: snapshot || null,
-        },
-      });
-    } catch (error) {
-      json(res, 500, { success: false, error: error.message });
+    const data = await desktopUpdateStatus({
+      squadStateDir,
+      appVersion: packageMetadata.version || "",
+      refresh: url.searchParams.get("refresh") === "1",
+    });
+    json(res, 200, { success: true, data });
+    return true;
+  }
+
+  if (url.pathname === "/api/updates/upgrade" && req.method === "POST") {
+    if (desktopUpgradeRunning) {
+      json(res, 409, { success: false, error: "An installer download is already in progress." });
+      return true;
     }
+    desktopUpgradeRunning = true;
+    try {
+      const data = await upgradeDesktop({
+        appStateDir,
+        checkFresh: () => desktopUpdateStatus({
+          squadStateDir,
+          appVersion: packageMetadata.version || "",
+          refresh: true,
+        }),
+      });
+      json(res, 200, { success: true, data });
+    } finally {
+      desktopUpgradeRunning = false;
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/updates/releases" && req.method === "POST") {
+    await openDesktopTarget(RELEASES_URL);
+    json(res, 200, { success: true, data: { opened: true, url: RELEASES_URL } });
     return true;
   }
 
@@ -7673,6 +8014,7 @@ server = createServer(async (req, res) => {
 server.listen(port, host, () => {
   console.log(`autohandSWE listening on http://${host}:${port}`);
   loadRoutePlugins(routeContext(), { log: console.log }).catch((error) => console.error(`route plug-ins failed: ${error?.message || error}`));
+  projectObserver.start().catch(error => console.error(`project observer could not start: ${error.message}`));
   logEvent(SEVERITY.INFO, `bridge listening on http://${host}:${port}`, {
     "server.address": host,
     "server.port": port,

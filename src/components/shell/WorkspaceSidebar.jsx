@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Bot, ChevronDown, ChevronRight, Hash, Inbox, Lock, Monitor, PanelLeft, Plus, Search } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Plus, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -99,7 +99,7 @@ function SectionHeader({ label, expanded, onToggle, action }) {
 }
 
 /**
- * Buzz-style workspace sidebar: search, Inbox, Agents, grouped channel
+ * Workspace sidebar: search, Needs you, Squad, grouped channel
  * sections, direct messages (members), account footer. Purely presentational;
  * all data and navigation come from props so App.jsx stays the source of truth.
  */
@@ -112,7 +112,6 @@ export function WorkspaceSidebar({
   unreadChannelIds = new Set(),
   unreadCountByAgent = new Map(),
   inboxCount = 0,
-  workCount = 0,
   presenceFor,
   renderAvatar,
   onNavigate = {},
@@ -183,8 +182,8 @@ export function WorkspaceSidebar({
         <nav className="flex flex-col gap-0.5" aria-label="Workspace">
           <NavRow
             icon={Inbox}
-            label={copy.inbox || "Inbox"}
-            active={active.kind === "inbox"}
+            label={copy.needsYou || "Needs you"}
+            active={active.kind === "work"}
             onClick={onNavigate.inbox}
             trailing={<UnreadCount count={inboxCount} />}
           />
@@ -194,17 +193,6 @@ export function WorkspaceSidebar({
             active={active.kind === "agents"}
             onClick={onNavigate.agents}
             trailing={<span className="text-xs text-muted-foreground">{visibleAgents.length}</span>}
-          />
-          {/* Work lists what the whole squad is doing and had no row here at
-              all, so the only ways in were the command palette, the account
-              menu and a link out of the Inbox. A primary surface needs a
-              permanent place to stand. */}
-          <NavRow
-            icon={Monitor}
-            label={copy.work || "Work"}
-            active={active.kind === "work"}
-            onClick={onNavigate.missionControl}
-            trailing={workCount ? <span className="text-xs text-muted-foreground">{workCount}</span> : null}
           />
         </nav>
 

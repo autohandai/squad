@@ -4,6 +4,8 @@ import { join } from "node:path";
 const root = process.cwd();
 const files = {
   app: readFileSync(join(root, "src", "App.jsx"), "utf8"),
+  firstRun: readFileSync(join(root, "src", "components", "onboarding", "FirstRun.jsx"), "utf8"),
+  signIn: readFileSync(join(root, "src", "components", "account", "SignInGate.jsx"), "utf8"),
   server: readFileSync(join(root, "server.mjs"), "utf8"),
   design: readFileSync(join(root, "DESIGN.md"), "utf8"),
   readme: readFileSync(join(root, "README.md"), "utf8"),
@@ -34,37 +36,35 @@ const checks = [
   {
     name: "onboarding page render branch",
     file: "src/App.jsx",
-    pass: /const isOnboarding = routePath === ONBOARDING_ROUTE;[\s\S]*<OnboardingPage/.test(files.app),
+    pass: /const isOnboarding = routePath === ONBOARDING_ROUTE;[\s\S]*<FirstRun/.test(files.app),
   },
   {
-    name: "welcome page explains product and setup steps",
-    file: "src/App.jsx",
+    name: "welcome page explains folder, teammate and conversation steps",
+    file: "FirstRun.jsx",
     pass:
-      /Welcome to Autohand Squad/.test(files.app) &&
-      /Set up the squad before the first run\./.test(files.app) &&
-      /Runtime/.test(files.app) &&
-      /Account/.test(files.app) &&
-      /LLM provider/.test(files.app) &&
-      /Workspace/.test(files.app) &&
-      /First squad member/.test(files.app),
+      /Point at a folder/.test(files.firstRun) && /Meet your first teammate/.test(files.firstRun) &&
+      /Start talking/.test(files.firstRun) && /signedIn/.test(files.firstRun) &&
+      /runtimeReady/.test(files.firstRun) && /providerReady/.test(files.firstRun),
   },
   {
     name: "account setup delegates to existing runtime login",
     file: "src/App.jsx",
-    pass: /api\("\/api\/setup\/login", \{ method: "POST" \}\)/.test(files.app) && /Open browser login/.test(files.app),
+    pass: /api\("\/api\/setup\/login", \{ method: "POST" \}\)/.test(files.app) &&
+      /onRequestLogin={requestAccountLogin}/.test(files.app) && /startLogin\(\)/.test(files.signIn),
   },
   {
     name: "provider setup routes to Settings provider surface",
     file: "src/App.jsx",
-    pass: /function openProviderSettings\(\)[\s\S]*navigate\("\/settings\?section=providers"\)/.test(files.app) && /providerSettings/.test(files.app),
+    pass: /onOpenProviders={\(\) => navigate\("\/settings\?section=providers"\)}/.test(files.app) && /providerSettings/.test(files.app),
   },
   {
     name: "workspace selection and first member creation are connected",
     file: "src/App.jsx",
     pass:
       /selectedWorkspace/.test(files.app) &&
-      /workspaceOptions\(workspaces, selectedWorkspace, runtime\)/.test(files.app) &&
-      /routeWithParams\(`\$\{MEMBER_ROUTE_PREFIX\}\/new`, \{ workspace: selectedWorkspace \|\| null \}\)/.test(files.app),
+      /api\("\/api\/workspaces\/profile"/.test(files.firstRun) &&
+      /onStart={startFirstConversation}/.test(files.app) && /firstPromptFor/.test(files.firstRun) &&
+      /async function startFirstConversation[\s\S]*await createAgent/.test(files.app),
   },
   {
     name: "skip and finish persist setup state and route to product",
@@ -76,7 +76,8 @@ const checks = [
   {
     name: "setup can be resumed from app shell",
     file: "src/App.jsx",
-    pass: /label="Setup guide"[\s\S]*choose\(onOnboarding\)/.test(files.app),
+    pass: /id: "setup"[\s\S]*label: copy.setupGuide/.test(files.app) &&
+      /onClick={onOnboarding}/.test(files.app),
   },
   {
     name: "runtime exposes account state without token",
@@ -97,7 +98,7 @@ const checks = [
   {
     name: "design contract documents first-run onboarding",
     file: "DESIGN.md",
-    pass: /## First-Run Onboarding[\s\S]*\/welcome[\s\S]*tray\/browser auth[\s\S]*\/api\/provider-settings/.test(files.design),
+    pass: /## First-Run Onboarding[\s\S]*\/welcome[\s\S]*three moments[\s\S]*runtime's device flow[\s\S]*Settings/.test(files.design),
   },
   {
     name: "user docs describe first-run route and clean-state test",

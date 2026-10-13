@@ -15,6 +15,9 @@ import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
+import { stageAppInfo } from './stage-app-info.mjs';
+import { stageProductTelemetry } from './stage-product-telemetry.mjs';
+import { stageComputerUse } from './stage-computer-use.mjs';
 
 const rootDir = process.cwd();
 const tauriDir = join(rootDir, 'src-tauri');
@@ -91,7 +94,14 @@ async function stageRuntime() {
   await copyFile(cliSource, join(cliDestination, cliName));
   if (!isWindows) await chmod(join(cliDestination, cliName), 0o755);
   await copyFile(join(vendorDir, 'BUILD_INFO.json'), join(cliDestination, 'BUILD_INFO.json'));
-  await writeFile(join(runtimeDir, 'DESKTOP_RUNTIME.json'), `${JSON.stringify({ stagedAt: new Date().toISOString(), triple, appVersion: appPackage.version, cliVersion: info.version, node: process.version }, null, 2)}\n`);
+  const selectedNode = process.env.NODE_RUNTIME_PATH ? resolve(process.env.NODE_RUNTIME_PATH) : process.execPath;
+  const nodeProbe = spawnSync(selectedNode, ['--version'], { encoding: 'utf8' });
+  if (nodeProbe.status !== 0 || !/^v\d+\.\d+\.\d+$/.test(nodeProbe.stdout.trim())) throw new Error('The selected desktop Node runtime did not report its version.');
+  const selectedNodeVersion = nodeProbe.stdout.trim();
+  await writeFile(join(runtimeDir, 'DESKTOP_RUNTIME.json'), `${JSON.stringify({ stagedAt: new Date().toISOString(), triple, appVersion: appPackage.version, cliVersion: info.version, node: selectedNodeVersion }, null, 2)}\n`);
+  await stageComputerUse({ rootDir, runtimeDir, hostPath: process.env.AUTOHAND_SQUAD_COMPUTER_USE_HOST || join(rootDir, 'vendor', 'computer-use', 'Squad Computer Use.app') });
+  await stageAppInfo({ rootDir, runtimeDir, nodeVersion: selectedNodeVersion });
+  await stageProductTelemetry({ rootDir, runtimeDir });
   console.log(`Staged runtime for ${triple} (CLI ${info.version}).`);
 }
 

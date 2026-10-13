@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { brainCardFields } from "../src/lib/brain-card.js";
 import {
   MEMBER_DESIGNER_ID,
+  editDraftRole,
   DRAFT_FIELDS,
   draftFromDescription,
   draftInstruction,
@@ -20,6 +21,26 @@ import {
 } from "../src/lib/member-draft.js";
 
 // --- the deterministic fallback -------------------------------------------
+
+{
+  const input = { role: 'Data Engineer', instructions: 'Act as Data Engineer.\nKeep the authored business brief.', profileFiles: [{ content: 'AUTHORED_PERSONALITY' }] };
+  const edited = editDraftRole(input, 'GTM APAC Leader');
+  assert.equal(edited.instructions, 'Act as GTM APAC Leader.\nKeep the authored business brief.');
+  assert.deepEqual(edited.profileFiles, input.profileFiles);
+  assert.equal(input.role, 'Data Engineer');
+  assert.equal(editDraftRole({ role: 'Data Engineer', instructions: 'AUTHORED: research the commercial pipeline.' }, 'GTM APAC Leader').instructions, 'AUTHORED: research the commercial pipeline.');
+}
+
+{
+  const brief = "Build and lead Autohand AI's go to market across APAC. This person is an experienced GTM operator who combines regional market knowledge, enterprise sales, developer relations, partnerships, and demand generation. They build a pipeline from scratch and turn early traction into repeatable revenue.";
+  const draft = draftFromDescription(brief);
+  assert.equal(draft.role, "GTM APAC Leader", 'A commercial pipeline must not become a Data Engineer');
+  assert.ok(draft.skills.includes('go-to-market strategy'));
+  assert.equal(draft.brainCard.purpose, draft.description);
+  assert.equal(draftFromDescription('Lead the go-to-market strategy and build a sales pipeline').role, 'GTM Leader');
+  assert.equal(draftFromDescription('GTM APAC Leader, owns our commercial pipeline').role, 'GTM APAC Leader');
+  assert.equal(draftFromDescription('Build an ETL pipeline for our sales data warehouse').role, 'Data Engineer', 'Technical sales-data work remains engineering');
+}
 
 {
   const draft = draftFromDescription("Someone who reviews my Terraform and keeps the AWS bill down");

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-squad-set-attention-badge"
+description = "Enables the squad_set_attention_badge command without any pre-configured scope."
+commands.allow = ["squad_set_attention_badge"]
+
+[[permission]]
+identifier = "deny-squad-set-attention-badge"
+description = "Denies the squad_set_attention_badge command without any pre-configured scope."
+commands.deny = ["squad_set_attention_badge"]

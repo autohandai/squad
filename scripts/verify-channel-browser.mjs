@@ -172,18 +172,23 @@ function injectedChannelHarness() {
       status,
       headers: { "content-type": "application/json; charset=utf-8" },
     });
-  const sseResponse = (events) => {
+  const activeChats = new Map();
+  const heldReplies = [];
+  window.__releaseHeldChannelReplies = () => heldReplies.splice(0).forEach(resolve => resolve());
+  const sseResponse = (events, onComplete) => {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
         controller.enqueue(encoder.encode(": connected\n\n"));
         for (const event of events) {
           if (event.delayMs) await new Promise((resolve) => setTimeout(resolve, event.delayMs));
-          const { delayMs, ...payload } = event;
+          if (event.hold) await new Promise(resolve => heldReplies.push(resolve));
+          const { delayMs, hold, ...payload } = event;
           controller.enqueue(encoder.encode(`event: ${payload.event}\n`));
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload.data)}\n\n`));
         }
         controller.close();
+        onComplete?.();
       },
     });
     return new Response(stream, { headers: { "content-type": "text/event-stream; charset=utf-8" } });
@@ -210,6 +215,15 @@ function injectedChannelHarness() {
       return jsonResponse([{ label: "pieshop", name: "pieshop", path: "__WORKSPACE__", depth: 1, kind: "project", launchable: true }]);
     }
     if (url.pathname === "/api/runs") return jsonResponse([]);
+    if (url.pathname === "/api/members/presence") {
+      const presence = Object.fromEntries(agents.map(agent => [agent.id, {
+        state: activeChats.get(agent.id) ? 'working' : 'online',
+        activeRuns: activeChats.get(agent.id) || 0,
+        sessionIdleMs: 0,
+        since: new Date().toISOString(),
+      }]));
+      return jsonResponse({ at: new Date().toISOString(), presence });
+    }
     if (url.pathname === "/api/provider-settings") {
       return jsonResponse({
         version: 1,
@@ -220,14 +234,36 @@ function injectedChannelHarness() {
     }
     if (url.pathname === "/api/memory-inbox") return jsonResponse({ items: [] });
     if (url.pathname === "/api/status/snapshot") return jsonResponse({ ok: true });
-    if (url.pathname === "/api/channels" && options.method === "PUT") {
+    if ((url.pathname === "/api/channels" || url.pathname === "/api/channels/sync") && options.method === "PUT") {
       window.__channelState = JSON.parse(String(options.body || "{}"));
       return jsonResponse(window.__channelState);
+    }
+    if (url.pathname === "/api/channels" && options.method === "POST") {
+      const draft = JSON.parse(options.body);
+      const now = new Date().toISOString();
+      const channel = { ...draft, createdAt: now, updatedAt: now };
+      window.__channelState.channels.push(channel);
+      return jsonResponse(channel);
+    }
+    const channelMutation = url.pathname.match(/^\/api\/channels\/([^/]+)(\/members)?$/);
+    if (channelMutation) {
+      const channel = window.__channelState.channels.find(item => item.id === decodeURIComponent(channelMutation[1]));
+      if (!channel) return new Response(JSON.stringify({ success: false, error: "channel not found" }), { status: 404 });
+      if (options.method === "DELETE") window.__channelState.channels = window.__channelState.channels.filter(item => item.id !== channel.id);
+      else {
+        const patch = JSON.parse(options.body || '{}');
+        if (channelMutation[2]) channel.memberIds = [...new Set([...channel.memberIds, ...(patch.add || [])])].filter(id => !(patch.remove || []).includes(id));
+        else Object.assign(channel, patch);
+        channel.updatedAt = new Date().toISOString();
+      }
+      return jsonResponse(channel);
     }
     if (url.pathname === "/api/channels") return jsonResponse(window.__channelState);
     if (url.pathname === "/api/chat/stream") {
       const body = JSON.parse(String(options.body || "{}"));
       window.__channelRequests.push(body);
+      activeChats.set(body.agentId, (activeChats.get(body.agentId) || 0) + 1);
+      const holdReply = window.__channelRequests.length > 1 && window.__channelRequests.length <= 3;
       const reply = body.agentId === "aroha_frontend"
         ? "Aroha: I will build the static pie shop site structure and responsive sections for the New Zealand market."
         : "Tane: I will supply local pie shop messaging, menu framing, and user-facing launch guidance.";
@@ -237,6 +273,7 @@ function injectedChannelHarness() {
         { event: "sdk", data: { type: "message_delta", delta: reply, timestamp: new Date().toISOString() } },
         {
           event: "done",
+          hold: holdReply,
           data: {
             reply: JSON.stringify({ answer: reply, sdk: { hidden: true } }),
             trace: { steps: [], thoughts: [], toolCalls: [], toolResults: [], messages: [], events: [], raw: { stdout: reply, stderr: "" } },
@@ -248,7 +285,7 @@ function injectedChannelHarness() {
             durationMs: 1,
           },
         },
-      ]);
+      ], () => activeChats.set(body.agentId, Math.max(0, (activeChats.get(body.agentId) || 1) - 1)));
     }
     return originalFetch(input, options);
   };
@@ -276,7 +313,7 @@ async function evaluate(cdp, expression, options = {}) {
     returnByValue: true,
   });
   if (result.exceptionDetails) {
-    throw new Error(result.exceptionDetails.text || "Runtime evaluation failed");
+    throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "Runtime evaluation failed");
   }
   return result.result?.value;
 }
@@ -286,12 +323,14 @@ async function main() {
   if (!chrome) throw new Error("Google Chrome or Chromium was not found.");
 
   const profileDir = await mkdtemp(join(tmpdir(), "autohand-channel-verify-"));
+  const serverStateDir = await mkdtemp(join(tmpdir(), "autohand-channel-fixture-state-"));
   const serverOutput = [];
   const chromeOutput = [];
   const server = process.env.AUTOHAND_VERIFY_BASE_URL
     ? null
     : spawn("node", ["server.mjs", "--dev", "--host", "127.0.0.1", "--port", String(appPort)], {
       cwd: rootDir,
+      env: { ...process.env, AUTOHAND_HOME: join(serverStateDir, "autohand"), AUTOHAND_SQUAD_HOME: join(serverStateDir, "squad"), AUTOHAND_SQUAD_APP_STATE_DIR: join(serverStateDir, "app"), AUTOHAND_USER_CONFIG_PATH: join(serverStateDir, "config.json") },
       stdio: ["ignore", "pipe", "pipe"],
     });
   server?.stdout.on("data", (chunk) => serverOutput.push(String(chunk)));
@@ -461,13 +500,13 @@ async function main() {
 
     await evaluate(cdp, `
       (() => {
-        const textarea = Array.from(document.querySelectorAll('textarea')).find((item) => item.placeholder.includes('@here'));
+        const textarea = document.querySelector('main textarea[placeholder^="Message #"]');
         const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
         setValue.call(textarea, 'Hey @Aroha, sketch the homepage structure first.');
         textarea.dispatchEvent(new Event('input', { bubbles: true }));
-        textarea.parentElement.querySelector('button').click();
       })()
     `);
+    await evaluate(cdp, `document.querySelector('main button[aria-label="Send"]').click()`);
 
     let lastTargetedProbe = null;
     const targetedDispatch = await waitFor(() => evaluate(cdp, `
@@ -499,11 +538,13 @@ async function main() {
       throw error;
     });
 
+    await evaluate(cdp, `document.querySelector('main header button[aria-label="Settings"]').click()`);
+    await waitFor(() => evaluate(cdp, `Boolean(document.querySelector('[id^="auto-mode-"]'))`), { label: "channel settings switch" });
     await evaluate(cdp, `
       (() => {
         const channels = JSON.parse(localStorage.getItem('autohandSquad.v1.channels') || '[]');
         const channel = channels.find((item) => item.name === ${JSON.stringify(verifyChannelName)});
-        document.querySelector('#auto-mode-' + channel.id)?.click();
+        document.querySelector('#auto-mode-' + channel.id).click();
       })()
     `);
 
@@ -514,7 +555,7 @@ async function main() {
         const channel = channels.find((item) => item.name === ${JSON.stringify(verifyChannelName)});
         const main = document.querySelector('main')?.innerText || '';
         lastAutoModeProbe = {
-          ok: Boolean(channel?.autoModeDefault === true && main.includes('Auto mode on')),
+          ok: Boolean(channel?.autoModeDefault === true && document.querySelector('#auto-mode-' + channel.id)?.getAttribute('aria-checked') === 'true'),
           channel,
           main: main.slice(0, 1600),
         };
@@ -529,36 +570,48 @@ async function main() {
       throw error;
     });
 
+    await evaluate(cdp, `document.querySelector('main header button[aria-label="Settings"]').click()`);
+
     await evaluate(cdp, `
       (() => {
-        const textarea = Array.from(document.querySelectorAll('textarea')).find((item) => item.placeholder.includes('@here'));
+        const textarea = document.querySelector('main textarea[placeholder^="Message #"]');
         const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
         setValue.call(textarea, '@here Build a simple static pie shop website for the New Zealand market and tell the user what to do next.');
         textarea.dispatchEvent(new Event('input', { bubbles: true }));
-        textarea.parentElement.querySelector('button').click();
       })()
     `);
+    await evaluate(cdp, `document.querySelector('main button[aria-label="Send"]').click()`);
 
+    let lastPresenceProbe;
     const busyPresence = await waitFor(() => evaluate(cdp, `
       (() => {
         const labels = Array.from(document.querySelectorAll('aside button[aria-label]'))
           .map((item) => item.getAttribute('aria-label') || '');
         const sidebar = document.querySelector('aside')?.innerText || '';
         const busyLabels = labels.filter((label) => (
-          (label.includes('Aroha') || label.includes('Tane')) && label.includes('Busy')
+          (label.includes('Aroha') || label.includes('Tane')) && label.includes('Working')
         ));
         return {
-          ok: busyLabels.length >= 2 || (sidebar.includes('Aroha') && sidebar.includes('Tane') && sidebar.includes('Busy')),
+          ok: busyLabels.length >= 2,
           busyLabels,
           labels,
           sidebar: sidebar.slice(0, 1600),
+          requests: window.__channelRequests.map(item => ({agentId:item.agentId, channelId:item.channelId})),
+          composer: document.querySelector('main textarea')?.value,
+          main: document.querySelector('main')?.innerText.slice(-1800),
         };
       })()
-    `).then((value) => value?.ok ? value : null), {
-      timeoutMs: 6000,
+    `).then((value) => { lastPresenceProbe = value; return value?.ok ? value : null; }), {
+      timeoutMs: 15000,
       intervalMs: 100,
       label: "channel members busy presence",
+    }).catch(async (error) => {
+      console.error(JSON.stringify({ lastPresenceProbe }, null, 2));
+      const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(rootDir, '.codex-artifacts', 'channels-presence-failure.png'), Buffer.from(shot.data, 'base64'));
+      throw error;
     });
+    await evaluate(cdp, `window.__releaseHeldChannelReplies()`);
 
     const verification = await waitFor(() => evaluate(cdp, `
       (() => {
@@ -625,82 +678,35 @@ async function main() {
     if (!verification.requestSummary.every((request) => (
       request.profileHasChannelContext &&
       (request.prompt.includes('@Aroha') ? request.memberIds.length === 1 : request.memberIds.length === 2) &&
-      request.transport === "cli" &&
+      request.transport === undefined &&
       request.timeoutMs === 300000 &&
       request.agentModelAssignment === "inherit" &&
       (request.prompt.includes('@Aroha') ? request.autoModeDefault === false : request.autoModeDefault === true) &&
       (request.prompt.includes('@Aroha') ? request.selfJudge === false : request.selfJudge === true)
     ))) {
-      throw new Error("Channel dispatch requests did not carry the expected CLI, channel context, and auto-mode-off contract.");
+      console.error(JSON.stringify({ requestSummary: verification.requestSummary }, null, 2));
+      throw new Error("Channel dispatch must keep the bridge's SDK/CLI selection and carry channel context, model assignment and auto-mode settings (ADR-0030).");
     }
 
-    const collapsedThreadProbe = await waitFor(() => evaluate(cdp, `
+    const inlineThreadProbe = await waitFor(() => evaluate(cdp, `
       (() => {
         const main = document.querySelector('main')?.innerText || '';
-        const replyButtons = Array.from(document.querySelectorAll('button[aria-expanded="false"]'))
-          .filter((button) => /reply|replies/i.test(button.textContent || ''));
-        const avatarNodes = Array.from(document.querySelectorAll('main [data-slot="avatar"], main [data-slot="avatar-fallback"], main [data-slot="avatar-image"]'));
-        return {
-          ok: Boolean(replyButtons.length >= 2 && avatarNodes.length >= 3 && main.includes('Auto mode on')),
-          replyButtons: replyButtons.map((button) => button.textContent),
-          avatarCount: avatarNodes.length,
-          main: main.slice(0, 2200),
-        };
+        const messages = JSON.parse(localStorage.getItem('autohandSquad.v1.channelMessages') || '{}');
+        const replies = (messages[${JSON.stringify(verification.channel.id)}] || []).filter(message => message.role === 'agent');
+        const visibleReplies = replies.filter(message => document.querySelector('[data-message-id="' + message.id + '"]')?.closest('article')?.classList.contains('ml-6'));
+        const avatarCount = document.querySelectorAll('main [data-slot="avatar"]').length;
+        return { ok: visibleReplies.length === 3 && main.includes('Aroha and Tane replied') && avatarCount >= 4, replyCount: visibleReplies.length, avatarCount };
       })()
-    `).then((value) => value?.ok ? value : null), {
-      timeoutMs: 6000,
-      intervalMs: 100,
-      label: "collapsed slack-like thread previews",
-    });
+    `).then(value => value?.ok ? value : null), { label: 'inline threaded replies and participants' });
+    await evaluate(cdp, `document.querySelector('main button[aria-label="Reply in thread"]').click()`);
+    await waitFor(() => evaluate(cdp, `document.querySelector('main')?.textContent.includes('Replying to')`), { label: 'thread follow-up selection' });
+    await evaluate(cdp, `(() => { const input = document.querySelector('main textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Unsent thread follow-up'); input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+    await evaluate(cdp, `[...document.querySelectorAll('main button')].find(button => button.innerText.trim() === 'Cancel').click()`);
+    const cancelledThreadProbe = await waitFor(() => evaluate(cdp, `({ ok: !document.querySelector('main')?.textContent.includes('Replying to') && document.querySelector('main textarea')?.value === 'Unsent thread follow-up' })`).then(value => value?.ok ? value : null), { label: 'cancel thread selection preserves draft' });
+    await evaluate(cdp, `(() => { const input = document.querySelector('main textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ''); input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
 
-    await evaluate(cdp, `
-      (() => {
-        const button = Array.from(document.querySelectorAll('button[aria-expanded="false"]'))
-          .find((item) => /2 replies/.test(item.textContent || ''));
-        button?.click();
-      })()
-    `);
-    const expandedThreadProbe = await waitFor(() => evaluate(cdp, `
-      (() => {
-        const main = document.querySelector('main')?.innerText || '';
-        const expanded = Array.from(document.querySelectorAll('button[aria-expanded="true"]'))
-          .some((item) => /2 replies/.test(item.textContent || ''));
-        const hasReplies = main.includes('Aroha: I will build') && main.includes('Tane: I will supply');
-        const avatarNodes = Array.from(document.querySelectorAll('main [data-slot="avatar"], main [data-slot="avatar-fallback"], main [data-slot="avatar-image"]'));
-        return { ok: Boolean(expanded && hasReplies && avatarNodes.length >= 4), expanded, hasReplies, avatarCount: avatarNodes.length, main: main.slice(0, 2600) };
-      })()
-    `).then((value) => value?.ok ? value : null), {
-      timeoutMs: 6000,
-      intervalMs: 100,
-      label: "expanded slack-like thread replies",
-    });
-    if (!expandedThreadProbe?.ok) {
-      throw new Error(`Slack-like thread did not expand with replies and avatars: ${JSON.stringify(expandedThreadProbe).slice(0, 1200)}`);
-    }
-
-    await evaluate(cdp, `
-      (() => {
-        const button = Array.from(document.querySelectorAll('button[aria-expanded="true"]'))
-          .find((item) => /2 replies/.test(item.textContent || ''));
-        button?.click();
-      })()
-    `);
-    const recollapsedThreadProbe = await waitFor(() => evaluate(cdp, `
-      (() => {
-        const stillExpanded = Array.from(document.querySelectorAll('button[aria-expanded="true"]'))
-          .some((item) => /2 replies/.test(item.textContent || ''));
-        const main = document.querySelector('main')?.innerText || '';
-        return { ok: !stillExpanded, stillExpanded, main: main.slice(0, 2200) };
-      })()
-    `).then((value) => value?.ok ? value : null), {
-      timeoutMs: 6000,
-      intervalMs: 100,
-      label: "recollapsed slack-like thread replies",
-    });
-    if (!recollapsedThreadProbe?.ok) {
-      throw new Error(`Slack-like thread did not collapse: ${JSON.stringify(recollapsedThreadProbe).slice(0, 1200)}`);
-    }
-
+    await evaluate(cdp, `document.querySelector('main header button[aria-label="Settings"]').click()`);
+    await waitFor(() => evaluate(cdp, `[...document.querySelectorAll('button')].some(item => item.textContent.includes('Export markdown'))`), { label: "channel export action" });
     await evaluate(cdp, `
       (() => {
         const button = Array.from(document.querySelectorAll('button')).find((item) => item.textContent.includes('Export markdown'));
@@ -779,6 +785,7 @@ async function main() {
     });
 
     if (screenshotPath) {
+      await waitFor(() => evaluate(cdp, `!document.getElementById('boot')`), { label: 'startup overlay removed' });
       await mkdir(join(screenshotPath, ".."), { recursive: true }).catch(() => {});
       const screenshot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
       await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
@@ -802,11 +809,7 @@ async function main() {
         filename: markdownExport.filename,
         bytes: markdownExport.text.length,
       },
-      slackThreads: {
-        collapsedPreviewButtons: collapsedThreadProbe.replyButtons.length,
-        expandedAvatarCount: expandedThreadProbe.avatarCount,
-        recollapsed: recollapsedThreadProbe.ok,
-      },
+      inlineThreads: { replyCount: inlineThreadProbe.replyCount, avatarCount: inlineThreadProbe.avatarCount, cancelledSelectionPreservesDraft: cancelledThreadProbe.ok },
       persistedThreadFallback: missingMessageThread.ok,
       screenshotPath,
       url: `${baseUrl}/channels/${verification.channel.id}`,
@@ -814,6 +817,7 @@ async function main() {
     cdp.close();
   } finally {
     server?.kill("SIGTERM");
+    await rm(serverStateDir, { recursive: true, force: true }).catch(() => {});
     if (!keepChrome) {
       chromeProcess.kill("SIGTERM");
       await rm(profileDir, { recursive: true, force: true }).catch(() => {});

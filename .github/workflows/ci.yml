@@ -56,6 +56,28 @@ jobs:
       - name: Check web server syntax
         run: bun run check:server
 
+      - name: Check attention and verified desktop upgrades
+        run: |
+          bun run check:work-attention
+          bun run check:desktop-updates
+          bun run check:app-info
+
+      - name: Check durable goals, progress, telemetry and native notification controls
+        run: |
+          bun run check:goal-lifecycle
+          bun run check:goal-bridge
+          bun run check:task-progress
+          bun run check:chat-recovery
+          bun run check:product-telemetry
+          bun run check:shared-conversations
+          bun run check:native-notifications
+          bun run check:attention-badge
+          bun run check:project-observer
+          bun run check:project-observer-bridge
+          bun run check:computer-use
+          bun run check:computer-use-ui
+          bun run check:computer-use-bridge
+
       - name: Check OpenTelemetry log format
         run: bun run check:otel
 
@@ -212,6 +234,9 @@ jobs:
       - name: Fetch pinned Autohand Code CLI
         run: bun run cli:fetch
 
+      - name: Prepare pinned Computer Use component
+        run: bun run computer-use:fetch
+
       - name: Download web build
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -321,6 +346,9 @@ jobs:
 
       - name: Fetch pinned Autohand Code CLI
         run: bun run cli:fetch
+
+      - name: Prepare pinned Computer Use component
+        run: bun run computer-use:fetch
 
       - name: Package release manifest
         shell: bash

@@ -164,7 +164,13 @@ function runCommand(spawn, command, args, { timeoutMs = WAIT_LIMIT_MS } = {}) {
 export async function postNativeNotification(notification, options) {
   try {
     const { title, body, url } = notification && typeof notification === "object" ? notification : {};
-    const { platform = process.platform, spawn = nodeSpawn, hasCommand, timeoutMs } = options && typeof options === "object" ? options : {};
+    const { platform = process.platform, spawn = nodeSpawn, hasCommand, timeoutMs, env = process.env } = options && typeof options === "object" ? options : {};
+    // The installed macOS app owns permission, branding and click callbacks.
+    // Its native worker reads this event from the persistent bridge feed.
+    // Queued does not claim the OS accepted or displayed a notification.
+    if (platform === "darwin" && env.AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS === "macos") {
+      return { posted: false, queued: true, method: "desktop-pending" };
+    }
     const payload = {
       title: sanitizeText(title, TITLE_LIMIT),
       body: sanitizeText(body, BODY_LIMIT),

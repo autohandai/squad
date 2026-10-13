@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {getAttentionBadgeClient} from '../src/lib/attention-badge.js';
+const ua='AutohandSquadDesktop/0.1.5 (macos; aarch64)';
+for(const userAgent of ['Mozilla/5.0','AutohandSquadQuickChat/0.1.5 (macos)','AutohandSquadDesktop/0.1.5 (windows; x64)'])assert.equal(getAttentionBadgeClient({userAgent,invoke:async()=>{throw Error('must not run');}}),null);
+const calls=[];let finish;
+const client=getAttentionBadgeClient({userAgent:ua,invoke:(command,{count})=>{calls.push({command,count});return new Promise(resolve=>{finish=()=>resolve({supported:true,count});});}});
+const first=client.setCount(3);client.setCount(8);client.setCount(2);assert.equal(calls.length,1);finish();await new Promise(r=>setTimeout(r,0));assert.deepEqual(calls.map(c=>c.count),[3,2]);finish();await first;await client.setCount(2);assert.equal(calls.length,2);
+const clear=client.setCount(0);finish();await clear;assert.equal(calls.at(-1).count,0);
+await assert.rejects(client.setCount(-1));await assert.rejects(client.setCount(1.5));
+let failed=true;const retry=getAttentionBadgeClient({userAgent:ua,invoke:async(_,{count})=>{if(failed){failed=false;throw Error('native failure');}return{supported:true,count};}});await assert.rejects(retry.setCount(7));await retry.setCount(7);
+assert(calls.every(c=>c.command==='squad_set_attention_badge'));
+console.log('Attention badge passed: main-only client, latest-count coalescing, zero clear, dedupe, invalid values and retry after native failure. Native commands mocked.');

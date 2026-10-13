@@ -10,7 +10,55 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-13
+
+Local review candidate; GitHub publication is pending user confirmation.
+
+### Changed
+
+- Member chat has one workspace picker. It shows the active folder, lets you switch assigned folders or choose another folder directly, and remembers the choice when you reopen the chat.
+- Claude Code and Codex chat replies continue while reporting progress, with a five-minute silence limit and a separate 45-minute maximum runtime. Channel replies use the same runtime ceiling.
+
+### Fixed
+
+- Long replies show readable durations such as “1 hour 35 min”. Large work details no longer hide the final answer or timeout and leave its timer running; failures show their cause and Retry.
+- Full channel history can use a compressed local cache when device storage is full, preserving messages and making room for new member drafts and saved teammates.
+- Describing a GTM or APAC market leader no longer becomes a Data Engineer because the brief mentions a sales pipeline. Custom role titles can be corrected before creation.
+- Larger channel histories can be saved without hitting the individual-request size limit. Damaged saved history explains the recovery step and remains preserved.
+- Quick chat on macOS no longer scrolls its whole window out of view when a goal checklist has completed items; the goal controls stay pinned above the composer.
+- A goal restored from the bridge after reopening lands where it happened in the conversation instead of becoming the newest message, so Needs you previews the latest reply.
+- Channel history left with a stray closing brace by an earlier version now opens again on its own: the original file is kept beside the repaired one. Other damage still blocks saving with an explanation, and channel approvals and live updates keep working instead of disappearing until restart.
+- Retry checkpoint and Retry on a returned handoff error now run the saved recipient and return its result, including after restart, without rerunning completed implementation or QA. Parallel mentions share one task; busy teammates decline additional handoffs with an explicit retry path.
+- Portable archives include shared workflow and member-profile runtime modules, preventing missing-module failures.
+- Interrupted handoffs show a blocked checkpoint after app/bridge restart, keeping their context and history instead of continuing to appear active.
+- A teammate's delegated QA and review stay connected to the original task. The initiating conversation receives the awaited verdict, and the task stays active until its handoffs finish.
+- New member saves wait for preparation, keep your draft and custom personality after failure or refresh, and recover a lost response without creating another teammate. Creating someone else during setup now finishes setup and drafts the first conversation.
+- Damaged or unwritable member config explains the failure and preserves the saved personality instead of reporting successful preparation.
+- Teammates keep their personality, purpose, tools, and chosen harness when warmed or reopened. Built-in role instructions reach the agent runtime directly; deselected skills stop being discoverable and can be restored without losing their files.
+- Teammates can organise work into channels within their permissions. Approval requests survive restart, revoked permissions take effect before creation, and a saved purpose reaches its teammates without duplicate prompts on retry.
+- Background runs use the same channel permissions and proposals as chat. Failed SDK runs show failure, Stop prevents late channel creation, and channel purposes show the teammate who opened them.
+- Saved channel threads remain visible when their messages are unavailable on this device, with a clear explanation of the missing content.
+- First-run setup keeps your chosen teammate and name after refresh. Invalid folders and unavailable prerequisites block Start; failed preparation explains the error and can be retried without losing your choices or creating another member.
+- Creating channels works repeatedly from the sidebar. Failed saves retain the draft and explain how to retry; successful creation waits for persistence.
+- Channel project folders and sidebar sections survive reloads. Concurrent changes use atomic writes, repeated submissions reuse the channel, and stale caches cannot revive a deleted channel.
+
 ### Added
+- Channel proposals show the purpose and invited teammates with Approve and Decline controls. Failed decisions explain how to retry.
+- Channel settings let you change the channel name, visibility, and sidebar section, with failed edits kept for retry.
+- **Needs you in the Dock**: the macOS app icon shows the same attention count as the sidebar, clearing when there is nothing waiting.
+- **Proactive project observation**: idle members check assigned folders and send concrete improvement suggestions with file evidence. Checks pause for active work and breaks, with daily review limits and an off switch in Self-improvement.
+- Autohand providers that cannot authorize background model review continue with local TODO/FIXME checks, labeled with file and line evidence, without sending project code to a provider.
+- **Built-in Computer Use**: a bundled engine and permission host let permitted members inspect and control apps, retaining screenshots and action annotations as work evidence.
+- **Quick chat on macOS**: choose a teammate from the menu bar, or press ⌘⇧K, to open one small chat popover beside the status-bar icon. A horizontal avatar carousel with live presence and a simple message field keep it focused; switching members preserves drafts.
+- **Native macOS notifications**: allow notifications for Squad, send a test, and open the relevant conversation from a notification.
+- **About Squad**: a dedicated window with version, source commit, build details, and the installed app executable checksum, plus Policies, Changelog, and Third-party licenses windows.
+- **Update available** appears above your account with Download when a newer release is available. Manual checks remain in the native menu, About, and Settings.
+- **Task progress in DMs** shows the member's reported checklist as they work, crossing off completed items and giving a concise final update.
+- **Goals across harnesses**: use `/goal <objective>` with Autohand Code, Codex, or Claude Code, and pause, resume, inspect, or cancel it without losing the goal when navigating.
+- **Real breaks**: `/break` stops ongoing work and declines new requests and handoffs; `/break off` returns the member without automatically restarting a goal.
+- **Product usage telemetry** records signed-in sessions, member creation and use, and feature actions through the shared PostHog setup.
+- **Upgrade from Settings**: check our GitHub releases and open a verified installer for your computer, with clear download, failure, and installation states.
+- **Member preview**: click a teammate’s name or photo in a DM to see their role, live status, and details in a small card, with a direct link to their profile.
 - **Workflows in channels**: automations that trigger on a message, a
   reaction, a schedule, or a webhook, run their steps through squad members,
   and pause at approval gates you clear with a button or an emoji.
@@ -53,20 +101,21 @@ list to the section for that version.
   decline work in its own voice, opening its chat leads with what changed
   since your last visit, and a chief-of-staff pass proposes skills and rules
   it needs (ADR-0027, ADR-0028, ADR-0029).
-- **Work in the sidebar**: the surface listing what every member is doing now
-  has a permanent row beside Inbox and Agents (ADR-0037).
-- **Replies in the Inbox**: a member answering you in a direct message reaches
-  the surface named for what needs you.
 - **Boot screen**: the window paints the mark and one line before the bundle
   parses, then real start-up checks replace it (ADR-0033).
 
 ### Changed
-- **Mission Control is now Work.** The old name promised a command centre for
-  what is a roster of who is on what. The page drops its display headline,
-  metric tiles, card grid, five-column table and status glossary for one
-  column of divider rows (ADR-0037).
+- **Needs you** combines Inbox and Work into one place, with Needs you, In progress, and All work filters. Decisions and blockers come first, followed by unread replies and channel updates.
 
 ### Fixed
+- The status-bar menu says **About**. Members without a photo show a profile placeholder icon.
+- Quick Chat no longer repeats the main startup checklist or full DM controls. Interrupted replies remove the old thinking placeholder and show one inline Retry state.
+- Interrupted requests no longer keep spinning after a restart; their history and unfinished task states remain, with a clear retry message.
+- The sign-in screen includes the Squad logo and fills the window without a lower gray bar. Account authorization identifies Squad through the shared device sign-in contract.
+- Local Mac builds sign the complete app bundle so notification permission can recognize Squad.
+- Failed update checks no longer claim the app is up to date. Installer selection matches your platform and verifies the release checksum; Windows runtime executables are excluded.
+- Opening a member profile keeps the top-left logo below the window controls.
+- The attention count includes waiting approvals; marking updates read clears DM and channel unread state while keeping unresolved decisions visible. Handoff reviews open the selected task.
 - Route plug-ins could load twice on a cold bridge, which made every feature
   handle each event twice (duplicate notifications and audit rows).
 - Tailwind only scanned four component directories, so styles used by newer

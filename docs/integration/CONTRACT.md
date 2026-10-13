@@ -7,6 +7,32 @@ How a feature plugs into Autohand Squad without editing the two monoliths
 
 ## Repository shape
 
+Member profiles use the shared existing catalog in `src/lib/member-profiles.js`
+(ADR-0076). Bridge provisioning resolves saved data and explicit customizations
+before applying absent role defaults. Warm/chat/run routing retains the saved
+harness; SDK, CLI and external prompts receive the resolved role contract.
+Explicit `skills: []` removes discoverable skills while retaining their files
+outside the member home. Installation failures remain explicit unavailable
+capabilities. Do not reconstruct personality solely from browser prompt text.
+Validate runtime config before mutating profile documents; config read/write
+failure must fail provisioning and preserve the last confirmed personality.
+Member creation callers await provisioning before publishing or completing
+setup; retries retain a stable identity and the editable draft (ADR-0077).
+Reply-mention delegation retains incoming parent task context and waits for
+child results before returning to its source (ADR-0078). Append handoffs against
+current task state, preserve sibling results, and do not mark a parent complete
+while accepted/pending handoffs remain. Browser promises are not durable workers.
+On a new bridge epoch, reconcile accepted ordinary handoffs with
+`recoverInterruptedHandoffs`: retain evidence, block interrupted work and do not
+redispatch. Pending decisions and durable goals keep their separate contracts
+(ADR-0079).
+
+Tracked run completion uses the same bridge-owned channel-action manager as
+chat. Run summaries add `reply` and `channelActions`; `run.finished` follows
+their durable completion. A stopped or failed run must not execute action text.
+Purpose prompts retain the originating member ID even though their thread role
+is a prompt; render that member rather than substituting the signed-in account.
+
 | Path | What lives there |
 | --- | --- |
 | `server.mjs` | Node bridge on 127.0.0.1:19821. Do not edit from a module. |
@@ -65,6 +91,8 @@ Route paths are matched with plain string comparison or a `RegExp` on
 | `runs` | `Map<id, run>` | live and recent runs; `ctx.runSummary(run)` gives the public shape; `ctx.isLiveRun(run)` |
 | `sdkSessions` | object or null | warm session pool; `stats()` → `{ active, busy, sessions: [{ key, agentId, workspace, busy, idleMs, ... }] }`, `reset(agentId, reason)`, `closeAll(reason)` |
 | `readChannelsState()` / `writeChannelsState(state)` | async fn | `channels.json` (`{ version, channels: [...] }`); channels carry `id, name, memberIds, projects, ...` and may gain new fields |
+| `mutateChannelsState(operation)` | async fn | Runs the callback against fresh channel state inside the shared mutation queue, then commits atomically. Use for read-modify-write changes; snapshot replacement checks a supplied `revision`. |
+| `agentChannelActions` | object | Shared turn completion handler and durable proposal decisions (ADR-0075). `agentChannelAccess` and `agentChannelActions` in channel state are bridge-owned; browser snapshots cannot grant, erase or forge them. |
 | `startRun(payload)` | async fn | start a member run (same payload as `POST /api/runs`) |
 | `events` | EventEmitter | `bridgeEvents`; also `ctx.emit(name, payload)` |
 | `getRuntime()` | fn | the `/api/runtime` snapshot (account, versions, paths) |
@@ -114,3 +142,5 @@ State exactly: which routes exist; which events you subscribe to or need
 emitted; which components to render where (route, section, props); which
 `App.jsx` state or handlers the props map to; what `package.json` scripts
 to add; what to add to `DESIGN.md`. Keep it under a page.
+
+Explicit checkpoint retry retains the receiving request ID and current permissions, guards rapid clicks, and reuses saved successful ancestor output after child completion (ADR-0080). Parallel mentions share a parent; busy recipients are declined before model execution in the app and bridge. Arbitrary tool effects remain inspect-before-retry; legacy dependency graphs and cross-window task conflict resolution are not promised. Portable archives include staged `src/lib` for actual bridge imports (ADR-0081).

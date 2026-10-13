@@ -11,15 +11,18 @@ approval gates (issue #28, ADR-0021). Module files:
 | `src/components/channels/WorkflowRunMessage.jsx` | `WorkflowTag` for workflow posts; approval row. |
 | `scripts/check-workflows.mjs` | `bun run check:workflows` |
 
-## package.json
+## Runtime and verification
 
-Add `"check:workflows": "node scripts/check-workflows.mjs"` and append
-`&& bun run check:workflows` to `ci`.
+`check:workflows` runs in CI. `check:workflow-recovery` additionally drives the
+real bridge and disk across restarts, retaining webhook payloads, approval gates,
+pending app dispatch and completed records. Step completion is controlled; it
+is not provider execution or running-step crash-resume proof.
 
-`scripts/stage-desktop.mjs` copies `server/` and `dist/` only; the route
-imports `../../src/lib/workflows.js`, so add `src/lib/workflows.js` to the
-runtime copy (keep the `src/lib/` path) or the plug-in fails to load in the
-packaged desktop app.
+Both desktop staging and portable packaging include `src/lib` at its existing
+relative path. The archive regression imports the actual extracted workflow
+route and member profiles (ADR-0081). App-dispatched steps need the app open;
+bridge-dispatched steps name a workspace. Missed ticks and arbitrary external
+HTTP effects are not automatically replayed after a crash.
 
 ## Storage
 

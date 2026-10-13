@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-squad-setup-computer-use"
+description = "Enables the squad_setup_computer_use command without any pre-configured scope."
+commands.allow = ["squad_setup_computer_use"]
+
+[[permission]]
+identifier = "deny-squad-setup-computer-use"
+description = "Denies the squad_setup_computer_use command without any pre-configured scope."
+commands.deny = ["squad_setup_computer_use"]

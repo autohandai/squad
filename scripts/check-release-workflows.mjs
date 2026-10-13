@@ -39,6 +39,23 @@ const installerPackager = readFileSync(new URL('./package-squad-installers.mjs',
 const runtimePackagingCheck = fileURLToPath(new URL('./check-release-runtime-packaging.mjs', import.meta.url));
 
 execFileSync(process.execPath, [runtimePackagingCheck], { stdio: 'inherit' });
+execFileSync(process.execPath, [fileURLToPath(new URL('./check-computer-use-portable.mjs', import.meta.url))], { stdio: 'inherit' });
+
+for (const [workflow, jobs] of [[releaseWorkflow, ['runtime-artifacts', 'desktop']], [ciWorkflow, ['desktop', 'release-dry-run']]]) {
+  for (const job of jobs) {
+    const body = workflow.split(`\n  ${job}:\n`)[1]?.split(/\n  [\w-]+:\n/)[0] || '';
+    assertIncludes(body, 'bun run computer-use:fetch', `${job} prepares the pinned Computer Use component`);
+    const fetchAt = body.indexOf('bun run computer-use:fetch');
+    const stageAt = body.indexOf('bun run desktop:stage');
+    const portableAt = body.indexOf('bun run release:portable');
+    if ((stageAt >= 0 && fetchAt > stageAt) || (portableAt >= 0 && fetchAt > portableAt)) throw new Error(`${job} packages Computer Use before preparing it`);
+  }
+}
+const webReleaseJob = releaseWorkflow.split('\n  web-bundle:\n')[1].split(/\n  [\w-]+:\n/)[0];
+assertNotIncludes(webReleaseJob, 'computer-use:fetch', 'The architecture-neutral web input does not need a native Computer Use engine');
+const desktopReleaseJob = releaseWorkflow.split('\n  desktop:\n')[1].split(/\n  [\w-]+:\n/)[0];
+if (desktopReleaseJob.indexOf('name: Prepare macOS code signing') > desktopReleaseJob.indexOf('name: Prepare pinned Computer Use component')) throw new Error('Prepare the macOS identity before building/staging the Computer Use host');
+assertIncludes(portablePackager, 'stageComputerUse', 'Portable archive stages the same verified Computer Use component');
 
 assertEqual(
   resolve({

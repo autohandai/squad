@@ -19,6 +19,22 @@ const STOP_PATH = /^\/api\/members\/([^/]+)\/stop$/;
 const STOP_BUDGET_MS = 1500;
 
 export async function handle(req, res, url, ctx) {
+  if (url.pathname === "/api/members/breaks" && req.method === "GET") {
+    ctx.json(res, 200, { success: true, data: await ctx.availability.list() });
+    return true;
+  }
+  const breakMatch = url.pathname.match(/^\/api\/members\/([^/]+)\/break$/);
+  if (breakMatch && req.method === "POST") {
+    try {
+      const memberId = decodeURIComponent(breakMatch[1]).trim();
+      const body = await ctx.readBody(req);
+      const record = await ctx.availability.set(memberId, body.active);
+      const stopped = body.active ? await stopMember(ctx, memberId, { reason: "Member is on a break." }) : {};
+      ctx.emit?.("member.availability", { memberId, ...record });
+      ctx.json(res, 200, { success: true, data: { ...stopped, ...record } });
+    } catch (error) { ctx.json(res, error.status || 400, { success: false, error: error.message }); }
+    return true;
+  }
   if (url.pathname === "/api/members/presence" && req.method === "GET") {
     ctx.json(res, 200, { success: true, data: await presenceSnapshot(ctx) });
     return true;
@@ -109,6 +125,8 @@ function appendRunLog(run, line) {
  */
 export async function stopMember(ctx, memberId, { reason = "stopped by user" } = {}) {
   const startedAt = Date.now();
+  const pausedGoals = await ctx.goals?.pauseForMember(memberId, reason) || [];
+  const stoppedChats = ctx.stopChats?.(memberId) || 0;
   const closedSessions = ctx.sdkSessions
     ? await withBudget(Promise.resolve(ctx.sdkSessions.reset(memberId, reason)), 0)
     : 0;
@@ -139,7 +157,7 @@ export async function stopMember(ctx, memberId, { reason = "stopped by user" } =
   }
   if (pending.length) await withBudget(Promise.allSettled(pending), null);
 
-  const result = { memberId, closedSessions: Number(closedSessions) || 0, stoppedRuns: stoppedRuns.length, runIds: stoppedRuns };
+  const result = { memberId, closedSessions: Number(closedSessions) || 0, stoppedRuns: stoppedRuns.length, runIds: stoppedRuns, pausedGoals, stoppedChats };
   ctx.emit?.("member.stopped", { memberId, closedSessions: result.closedSessions, stoppedRuns: result.stoppedRuns });
   ctx.logEvent?.(ctx.SEVERITY?.INFO ?? 9, "member stopped", {
     "member.id": memberId,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Inbox, LayoutGrid, Settings } from "lucide-react";
+import { Bot, Inbox, Settings } from "lucide-react";
 
 import { CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { SearchResults } from "@/components/search/SearchResults";
@@ -173,12 +173,11 @@ export function SearchCommand({
   const counts = useMemo(() => typeCounts(results), [results]);
 
   const pages = [
-    { id: "inbox", label: copy.inbox || "Inbox", icon: Inbox, value: "page inbox", go: onNavigate.inbox },
+    { id: "work", label: copy.needsYou || "Needs you", icon: Inbox, value: "page needs you inbox work mission control squad board attention activity", go: onNavigate.missionControl },
     { id: "agents", label: copy.squad || "Squad", icon: Bot, value: "page squad agents directory members team", go: onNavigate.agents },
-    { id: "mission-control", label: "Work", icon: LayoutGrid, value: "page work mission control squad board", go: onNavigate.missionControl },
     { id: "settings", label: copy.settings || "Settings", icon: Settings, value: "page settings", go: onNavigate.settings },
   ];
-  const pageMatches = searching ? pages.filter((page) => page.label.toLowerCase().includes(trimmed.toLowerCase())) : pages;
+  const pageMatches = searching ? pages.filter((page) => `${page.label} ${page.value}`.toLowerCase().includes(trimmed.toLowerCase())) : pages;
 
   function go(action) {
     onOpenChange?.(false);

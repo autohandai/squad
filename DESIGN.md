@@ -13,7 +13,7 @@
 - While a chat reply is running, the composer should keep a clear stop control and accept additional follow-ups into an editable queue shown directly above the input.
 - The composer is a single calm bordered field on the page background (no nested card, heavy drop shadow, or glassy blur); use a subtle focus-within border rather than elevation.
 - Do not open a conversation with a boxed status/metric dashboard. Show the member's purpose as quiet text and surface mode/status/workspace as a subtle inline meta line, not bordered metric cards.
-- Keep Mission Control out of the primary sidebar; expose it from the Settings/account menu and Settings page while preserving direct routes and tray deep links.
+- Needs you is the primary destination for human attention and squad work. Preserve older Mission Control and Inbox routes as aliases; do not expose a second disconnected work destination.
 - Keep the tray/menu-bar menu action-focused. The only status block is the compact account/usage summary described under Desktop Shell; do not add further disabled summary lines when the same live details are available in submenus or app views.
 
 ## Squad Directory (landing surface)
@@ -29,7 +29,11 @@
 - Opening `/` routes to `/welcome` until the user is signed in and completes or skips setup; completed or skipped users land on their first member's chat (finish) or the directory (skip).
 - Onboarding is three moments in one calm column: **Point at a folder** (native picker plus recent workspaces), **Meet your first teammate** (three roles ranked from the folder profile, best fit preselected, name prefilled), **Start talking** (creates the member and opens the chat with the first message drafted). No checklist, no percentage bar; the current moment is the progress.
 - Readiness is silent while green. A blocked prerequisite (not signed in, runtime down, no provider) is one sentence with one action above the current moment. Sign-in stays delegated to the runtime's device flow; provider setup deep-links to Settings and is never duplicated here.
-- Skip is available once signed in; persisted state stays lightweight (status, selected workspace, member readiness, last step).
+- Skip is available once signed in; persisted state stays lightweight (status, selected workspace, selected role, name, provisioning identity, member readiness, last step). Refresh restores the current moment and its inputs.
+- Start requires a validated folder, account, runtime and provider. Failed checks offer an inline retry; failed provisioning keeps the form and its choices. Setup completes only after the bridge provisions the member.
+- Every New member path waits for preparation before adding the teammate. Keep one folder-scoped draft and identity across refresh/retry, including handwritten personality and brain edits; show inline preparation/error text and clear the draft on success or Cancel. “Create someone else” completes setup and drafts the first conversation after the same confirmed save.
+- Custom member titles stay editable beside the name. Preserve the requested business or technical job; a detailed brief must not silently force an unrelated built-in role.
+- Large saved history must not prevent a new member draft from being saved. Preserve complete cached history when relieving local-storage pressure; do not silently truncate conversations.
 
 ## Settings
 
@@ -38,13 +42,22 @@
 - Toggles and choices are divider rows, never bordered or tinted boxes. A selected choice shows a check mark and a stronger label, not a filled background. No icons in section headers.
 - Copy avoids repeating a word three times in view: the section is "Appearance", its first row is "Mode"; the "Language" section's row is "Display language".
 - Notifications is one switch row per event kind and a ghost Send test notification button.
+- Updates report a successful repository check, its time, or an actionable failure. Never call an unknown or failed check up to date. Upgrade downloads and verifies the native installer, opens it, and explains that the user finishes installation and reopens the app.
+- A verified newer release appears directly above the account footer with a Download action, progress, and an actionable failure. Keep manual Check for upgrades in the native app menu, About, and Settings; do not add a permanent account-menu item. About opens a separate, reusable native window; Policies, Changelog, and Third-party licenses open their own readable document windows. Build identity distinguishes source commit, local changes, and the actual installed desktop executable SHA-256.
 
 ## Squad Channels
+
+- Damaged saved channel history must explain the recovery action and preserve the file; never disguise it as an empty workspace or expose a raw JSON parser error.
+- Agent-created purpose prompts show the originating member's name and avatar, including after restart; their prompt role must not make them appear authored by the human.
 
 - Channels live inside the primary Squad sidebar as a collapsible category under the main navigation, not as a second navigation sidebar.
 - The expanded channel category shows channel rows inline with the rest of the sidebar and exposes channel creation from the same area.
 - Channel detail pages should use the main canvas for the active channel, member controls, threads, and composer; avoid adding another left rail or boxed dashboard around channel navigation.
 - Channel creation and member assignment should stay reachable from both the sidebar category and an empty channel state.
+- Channel creation closes and navigates only after the bridge saves it. Failed mutations retain input and show an actionable inline error; duplicate submissions cannot create a second channel.
+- Channel name, visibility and sidebar section are a compact form in the existing settings popover, with one Save channel action and retained failed edits.
+- Agent channel proposals are plain divider-separated approval rows showing the proposing member, channel purpose and recipients. Approve/Decline wait for bridge confirmation, show failed decisions inline, and remain in Needs you until resolved.
+- Saved thread metadata remains visible when its messages are missing. Show the stored title and recorded reply count with a plain missing-content explanation; never invent a member reply.
 - Channel composers should match the normal chat mention autocomplete behavior for `@here` and member handles, including keyboard selection. Channel loading placeholders should say the member is typing rather than thinking.
 - A Canvas tab sits beside the stream as an underlined text tab (Messages | Canvas in the channel header; the member chat reaches the same view from a header icon). The canvas is title, editor, and a 224px revision rail separated by one divider; member edits are a bold rail row with a dot, and the diff colours only the changed lines (soft green / soft rose), never the page. `@canvas:slug` in either composer attaches the canvas to the message.
 - Workflows live in the channel settings popover as a divider list (name, trigger summary, enabled switch) with a right-side drawer editor; a run appears in the stream as ordinary member messages carrying a small workflow tag, and an approval gate is one divider row with Approve, Decline and the emoji hint — no banners, no cards.
@@ -58,22 +71,26 @@
 ## Harness Identity And Desktop Shell
 
 - Treat a member's personality, execution harness, model, and permission level as separate choices. Changing between Autohand Code, Codex, and Claude Code must not rewrite the member's brain card.
+- Warm, resumed, and agent-only turns retain the saved role, personality, harness and permission choices. Runtime skill summaries name installed selected skills and explain unavailable ones; removing a skill removes it from discovery while preserving its authored files for restoration.
 - Add harness selection as one concise **Runs with** field during member creation and a dedicated Harness section on the member profile. Prefer a restrained list/select and inline readiness text over large vendor cards.
 - Show harness readiness as plain states such as Ready, Setup required, Not detected, or Unsupported version, with one direct setup action. Never silently fall back to a different harness when the assigned harness is unavailable.
 - Keep harness identity visible but quiet in member metadata, launch preflight, active work, evidence, and handoffs. Do not add another row of boxed metrics or colorful status panels.
 - The installable desktop product should open and focus its own native app window. Tray/menu actions should focus or route that window; browser opening remains a developer/headless fallback rather than the primary installed experience.
 - The desktop window uses the overlay title bar: the page extends under the traffic lights and the sidebar carries the inset (`html[data-shell="desktop"]`), so the vibrancy layer, never another app's window, shows through the top strip.
-- The desktop app owns a native menu bar (File › New › Agent / Channel, Edit, View › Inbox / Agents / Channels / Mission Control / Search / Toggle Sidebar, Window). Menu items dispatch one `autohand-squad:menu` DOM event (`src/lib/desktop-menu.js`); the web app maps actions to its existing navigation, so menus never encode routes.
-- The tray menu opens with a compact, quiet status block (disabled lines): "Signed in as …", the plan name, one gauge line per metered usage window ("5 h  ▰▰▱▱▱▱▱▱▱▱   2% · resets in 4h 52m"), and the squad line while services run. Then the actions: Open, Mission Control, Members ▸, Refresh usage; Sign out / Sign in… (never both), Check for updates…, Launch at Login; Start / Stop / Restart services, Open logs folder, Settings…, Report a bug, Give feedback, About; Quit. Labels are short verbs; the tray icon already names the app.
+- Every sidebar variant, including member profiles and collapsed rails, owns the same desktop traffic-light inset exactly once. The logo uses the same brand size and header spacing across routes; profile navigation must not move it into the native controls.
+- The desktop app owns a native menu bar (File › New › Agent / Channel, Edit, View › Needs you / Agents / Channels / Search / Toggle Sidebar, Window). Menu items dispatch one `autohand-squad:menu` DOM event (`src/lib/desktop-menu.js`); the web app maps actions to its existing navigation, so menus never encode routes.
+- The tray menu opens with a compact, quiet status block (disabled lines): "Signed in as …", the plan name, one gauge line per metered usage window ("5 h  ▰▰▱▱▱▱▱▱▱▱   2% · resets in 4h 52m"), and the squad line while services run. Then the actions: Open, Needs you, Members ▸, Refresh usage; Sign out / Sign in… (never both), Check for updates…, Launch at Login; Start / Stop / Restart services, Open logs folder, Settings…, Report a bug, Give feedback, About; Quit. Labels are short verbs; the tray icon already names the app.
 - Sign-in state in the tray follows the account the bridge reports (Squad session or the Autohand CLI session), never only the daemon's in-memory account.
+- On macOS, Members in the menu bar opens one reusable 380×520 Quick Chat popover beside the status-bar icon, without a separate title bar. Window → Quick chat and ⌘⇧K reach the same popover. One horizontal portrait carousel shows true presence dots and the selected member's quiet name/role/status line; arrow controls appear only when it overflows, with drag, horizontal scrolling, and keyboard selection. Conversation and one restrained shadcn InputGroup composer follow, with an Enter hint and Send/Stop; no dropdown, second identity header, portrait grid, harness/settings toolbar, or workspace controls. Switching members preserves drafts and the main app route. Escape or outside focus dismisses it without stopping work. Quick Chat waits with one connection line, never the main startup checklist.
+- macOS notifications belong to the installed Squad app, with explicit permission controls and a real OS submission result. Keep queueing, OS acceptance, and visible banner display distinct; Focus mode and the user's system settings control display. Clicking opens the originating local conversation or attention view.
 - The account footer and menu show the signed-in Autohand account (name, email, initials or avatar) reported by the bridge; never a hardcoded person or plan. "Sign out" is real: it clears the session shared with the Autohand CLI and returns to the sign-in gate.
 - Bug reports and feedback live in the account menu, not in a floating button; nothing may float over the composer's send control.
-- Inbox: "Mark all read" clears unread channels and acknowledges handoffs and memory proposals up to that moment, so the badge drops to zero while pending proposals stay listed for a decision.
+- Needs you: "Mark updates read" clears unread direct messages and channels. Unresolved approvals, handoffs, memory proposals, and blocked work stay visible and counted until resolved; reading never decides them.
 - Native startup and recovery states should use the same calm app surface: concise progress, an actionable error, Restart Service, and Open Logs. Do not leave users in a blank webview or redirect them to a raw local server page.
 
 ## Squad
 
-- **Squad** is the roster: who is on the team and every control that changes it. **Work** is the log: what the squad is doing and what is blocked. Neither page repeats the other's content.
+- **Squad** is the roster: who is on the team and every control that changes it. **Needs you** holds human decisions, unread updates, and the squad work log. Neither page repeats the other's content.
 - It uses the Work page's grammar exactly: an 896px column, an 18px title with one sentence naming only what is true now, one divider control row of text toggles, then divider rows of people. No state box, no segmented bar, no column header, no second layout below a breakpoint.
 - A member row carries the name, the role, the one line naming the current commitment, then a dot-and-word availability control with the workspace beside it. Row actions appear on hover.
 - The surface is called Squad in the sidebar and in the heading. The create button says "New member", so the word is not said three times in one view.
@@ -81,24 +98,28 @@
 ## Workspace Shell (Buzz-style)
 
 - Presence dots have five states: accent and breathing while working, green online, amber idle, grey offline, and a dotted ring when the bridge is unreachable. Only working animates. Stop sits with the chat header actions and on the profile, confirming in a small popover.
-- The primary sidebar is a Slack-like workspace rail: a **Search everything** control (⌘K / Ctrl K), Inbox, Agents, channel sections grouped by the channel's `section` (default "Channels"), then **Direct messages** listing members with presence dots and unread counts, and the account footer. No cards, no tinted panels; unread state is a bold row plus a small dot or count.
+- The primary sidebar is a Slack-like workspace rail: a **Search everything** control (⌘K / Ctrl K), Needs you, Squad, channel sections grouped by the channel's `section` (default "Channels"), then **Direct messages** listing members with presence dots and unread counts, and the account footer. No cards, no tinted panels; unread state is a bold row plus a small dot or count.
 - Channel pages are flat, chronological streams: a `# name` header with member count and a settings popover, day separators, a red **New** divider at the last-read boundary, author + time, mention chips for targeted members, emoji reactions with counts, and quick actions on hover. Thread replies render inline under their root with a subtle indent instead of a stacked thread block.
 - The composer is one calm bordered field with @ / attach / emoji / format on the left and a round send button on the right; Enter sends, Shift+Enter breaks a line, and `@` opens a keyboard-navigable mention picker.
 - Presence is one living line under the composer, not placeholder rows: stacked avatars, then "Iris is thinking…", "Iris and Noah are typing…", "Iris, Noah and 2 others are running tools…", with three breathing dots. A reply enters the stream only once it has text. The line renders nothing when nobody is active and never shifts layout.
 - Squad recruiting notices ("Kai wants to join #client-abc — DevOps engineer. Kai can help with the Dockerfile and CI in api; nobody in the channel covers that yet.") sit above the composer as a divider-separated row with Add and Not now. They are visible to the user only, never sent to members, and never counted as unread.
-- Inbox is a single divider-separated list (unread channels, handoffs waiting, memory proposals) that links back to the surface owning each item.
+- Needs you is the single destination for decisions, updates, and work. Its default filter orders approvals, handoffs, blocked or failed work, memory proposals, unread replies, and unread channels; show only populated groups. Each row names its action and opens the surface owning it.
 - Search results are grouped by type under a quiet filter row (toggle chips, no pills); rows are icon + title + muted snippet with the hit in semibold, no highlight colour; ↑/↓/Enter navigate; an empty query lists recent searches.
 - A bell beside the search control carries a small dot while notifications are unread; its popover is a divider list (title, one-line body, relative time) with Mark all read. Native notifications are posted by the bridge, never while the conversation is on screen.
 - Providers in Settings are a divider-separated list, expanded one at a time. An account-backed provider (Autohand AI) shows its status as one sentence ("Signed in as …; an API key is optional"), a model select fed by the catalog, and a managed base URL placeholder; it never asks for a key it does not need.
 - The **Runs with** control is one select plus one readiness sentence; advanced fields (model override, executable path, Test harness) sit behind a text disclosure. The profile shows Harness as a text summary row beside Model, never as vendor cards.
 
-## Work
+## Needs you
 
-- **Work** sits in the sidebar beside Inbox and Agents, with a count of tracked tasks. A primary surface needs a permanent place to stand; this one was reachable only from the command palette, the account menu and links out of the Inbox.
-- The surface that lists what the squad is doing is called **Work**, not Mission Control. The old name promised a command centre and the page is a roster of who is on what.
+- **Needs you** combines the former Inbox and Work into one sidebar destination. Its badge counts unresolved decisions, unique blocked or failed work records, permission warnings, and unread conversations; it is not a total-task counter.
+- Use one column and three underlined text filters: **Needs you**, **In progress**, **All work**. Start with Needs you, preserve the chosen filter, and let explicit task/run links open their record even when the saved filter would hide it.
+- The page lives at `/work`; old `/inbox` and `/mission-control` links remain valid. Search retains Inbox, Work, and Mission Control as aliases.
+- A pending handoff is one decision row, not a second work row in the same filter. Keep record evidence, replay, recipe launch, runtime recovery, and evaluation filters available in the combined surface.
+- Delegated QA/review retains its original task, request and workspace. Keep the parent active until its handoffs resolve; return the reviewed result to the initiating conversation and completed ownership to the origin. Partial text, a stopped recipient or a failed review cannot be presented as completed work.
+- After restart, accepted browser-owned handoffs from the previous bridge process show a blocked checkpoint with saved context and interruption evidence. Restore their history without silently dispatching another request; preserve current-process work, pending decisions and completed records.
 - It opens with the page title and one sentence naming only what is true right now ("2 working · 3 blocked"), never a row of metric tiles. A quiet squad reads as quiet rather than as four zeroes.
 - Members and work records are both divider rows in one column, with the same grammar: what it is, one line of detail, then a dot-and-word status with the workspace and any marks beside it. No card grid, no five-column table, no tinted status chips.
-- A selected record is marked with a quiet left border, never a filled background, because a tinted block on one row of a divider list is the only thing that reads as a card.
+- Record details open only after a record is selected; evaluation counts describe the current work filter. A selected record is marked with a quiet left border, never a filled background, because a tinted block on one row of a divider list is the only thing that reads as a card.
 - Filters are text toggles on a divider row, underlined when active. They are one choice with several values, not several buttons.
 - Status meanings are documentation and do not live on the page.
 - The page uses the repo's own tokens. It used to hard-code a light palette and force it in dark mode, so the whole surface rendered white inside a dark app.
@@ -112,13 +133,20 @@
 
 ## Agent Chat
 
-- The header is one row: avatar, name (opens the profile preview), role, and a meta line with a live status dot (Online / Working), workspace, model, and a **Runs with** chip that opens the engine switcher. Actions on the right are **New chat** plus icon buttons for automation, tasks, and runs.
+- Actual reported plan items form a quiet inline checklist while work runs. Cross out only explicitly completed items; tool activity does not invent a plan or imply completion. Final updates state the outcome and remaining work concisely.
+- `/goal <objective>` pursues a durable goal using the member's selected harness. Show state, turn and time limits, and Pause, Resume, Cancel. Navigation does not stop the worker; restarting pauses it until an explicit resume. A normal harness exit alone cannot mark a goal complete.
+- `/break` pauses ongoing work and declines new requests and handoffs in the member's voice. `/break off` makes the member available; it does not silently resume a goal. Resolve mentioned identities before deciding whether they can accept work.
+- The sign-in gate carries the actual Squad logo and fills the desktop viewport, including its drag area. Device authorization must identify the requesting product as Squad through the shared stored identity contract.
+- The header is one row: avatar and name share one keyboard-accessible trigger for a compact anchored profile popover (name, role, live status, purpose, workspace, model, harness, and View profile), role, and a meta line with a live status dot (Online / Working), workspace, model, and a **Runs with** chip that opens the engine switcher. Actions on the right are **New chat** plus icon buttons for automation, tasks, and runs.
 - Messages sit in a 48rem column. User messages are quiet right-aligned bubbles (muted background, no border) with the time on hover. Member messages are avatar + name + time + a small live indicator while working; the answer is prose at 15px/1.75. No badges, no cards.
 - While working, one line shows the current stage with a small spinner. Work details are a text disclosure with a summary (steps · tools · duration); raw diagnostic output stays behind the chat setting.
+- Elapsed time uses human units: `1 min 35 sec`, then `1 hour 35 min` for longer work. A terminal reply stops its timer and working indicator immediately. A timeout states whether it stopped for silence or the maximum runtime and offers Retry. If final diagnostics exceed the shared-message limit, keep the received activity and explain that final work details were limited.
 - Work details is a semantic activity feed: one divider row per action that updates in place, reads folded into a "read 12 files" row, edits and shell commands in mono, failures in the destructive colour with their detail open, and a text Raw toggle for the unprocessed trace. The Execution panel's run output uses the same feed.
 - A failed answer is an inline destructive note with the cause, a **Retry** button, and a sign-in hint when the cause is authentication.
-- The composer is one rounded bordered field over a soft gradient; workspace, add, settings, and terminal sit left, queue and the round send/stop button right. Enter sends, Shift+Enter breaks a line, `@` mentions members.
+- The composer is one rounded bordered field over a soft gradient; workspace, settings, and terminal sit left, queue and the round send/stop button right. Enter sends, Shift+Enter breaks a line, `@` mentions members.
 - The empty state introduces the member ("Hi, I'm Eva.") with role and description, then a divider list of suggested asks.
+- Each member chat has one workspace picker showing its active working folder. Selecting an assigned folder or choosing another folder saves that member’s primary workspace immediately. Keep the full path visible in the picker; show assigned folders, rather than the machine’s entire repository inventory, and do not expose a separate Add workspace control.
+- A member with no usable photo shows a neutral generic profile icon, including the native menu; do not leave a blank image slot or substitute an initial.
 - Member avatars are the bird portrait set under `public/avatars/birds`: square, soft 3D, lilac gradient background, one role hint per bird. Role portraits are legacy; do not add new ones.
 - The composer's picker is one quiet popover for `@`, `/`, and `$`: icon, token, and a muted detail column; the selected row uses the accent background. Presence on member rows is a small dot (green online, primary pulsing while working, muted idle).
 - Terminal output and app notes (from `!` and `/`) render as ordinary member rows authored by "Terminal" or "Squad", never as system banners.
@@ -163,3 +191,13 @@
 ## Maintenance
 
 - When a durable user UI preference emerges, update this file in the same change so future UI work reflects it.
+
+- Idle project observation delivers concrete, evidence-backed suggestions in the member’s ordinary DM. Keep its on/off control in Self-improvement; report paused, unsupported, and failed checks honestly. A suggestion is not completed work.
+- The macOS Dock badge uses the same unresolved attention count as Needs you and clears at zero or sign-out. Compact chats cannot overwrite that count.
+- Computer Use is a member capability in Permissions, with separate observe/control access and explicit native confirmation. Screenshots and action annotations belong with the work as ordinary evidence attachments.
+
+- Computer Use setup is an explicit action; macOS Accessibility and Screen Recording permission do not grant a member access. Recover evidence by its exact work session and keep another member’s screenshots out of the conversation.
+
+- Squad’s Computer Use permission host has its own product identity and System Settings entry. It must not share permission identity with another Autohand product whose signer or lifecycle differs.
+
+- A handoff retry executes the saved receiving checkpoint explicitly; retain completed source work, attempt history and final result return. Busy recipients decline without hidden queueing. Every @mention dispatches immediately; ordered delegation mentions only the next recipient.

@@ -51,6 +51,7 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
       ["delegate_task", "ask"],
       ["delegate_parallel", "ask"],
       ["create_team", "ask"],
+      ["squad_create_channel", "ask"],
       ["add_teammate", "ask"],
       ["team_status", "allow"],
       ["send_team_message", "ask"],

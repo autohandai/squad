@@ -79,6 +79,16 @@
       <p id="boot-status">Waking the squad…</p>
     </div>
     <div id="root"></div>
+    <script>
+      // The menu-bar popover attaches to an existing Squad runtime. It does
+      // not launch a second squad or repeat the main-window startup surface.
+      if (location.pathname === "/quick-chat") {
+        document.getElementById("boot-mark").remove();
+        document.getElementById("boot-name").remove();
+        document.getElementById("boot-status").textContent = "Connecting to Squad…";
+        document.getElementById("boot").dataset.compact = "true";
+      }
+    </script>
     <script type="module" src="/src/App.jsx"></script>
   </body>
 </html>

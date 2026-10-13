@@ -88,11 +88,21 @@ function normalizeBinding(input) {
   };
 }
 
-// Mirror the binding and events into channels.json without going through
-// writeChannelsState (which would normalize the extra fields away).
+// Share the real bridge's mutation queue; keep embedded contexts compatible.
 async function mirrorIntoChannel(ctx, channelId, { git, events }) {
   const path = join(ctx.squadStateDir, "channels.json");
   try {
+    if (ctx.mutateChannelsState) {
+      return await ctx.mutateChannelsState(state => {
+        const channel = state.channels.find(item => item.id === channelId);
+        if (!channel) return false;
+        if (git === null) delete channel.git;
+        else if (git) channel.git = { repoPath: git.repoPath, remote: git.remote, branch: git.branch, boundAt: git.boundAt };
+        if (events) channel.events = events;
+        channel.updatedAt = new Date().toISOString();
+        return true;
+      });
+    }
     const raw = await ctx.readOptionalJsonFile(path);
     if (!raw) return false;
     const channels = Array.isArray(raw) ? raw : Array.isArray(raw.channels) ? raw.channels : null;

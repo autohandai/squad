@@ -20,13 +20,18 @@ use autohand_squad_runtime::desktop_tray::{
 };
 use autohand_squad_runtime::gui_bootstrap::{run_desktop_bootstrap_with, BootstrapOutcome};
 use autohand_squad_runtime::ui::{
-    about_route_for_paths, default_paths, feedback_route_for_paths, run_tray_action, TrayAction,
+    default_paths, feedback_route_for_paths, run_tray_action, TrayAction,
 };
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-#[cfg(target_os = "macos")]
-use tauri::menu::AboutMetadata;
+mod info_windows;
+use info_windows::{info_navigation_handler, open_info_window, InfoPage};
+mod computer_use_grant;
+mod computer_use_setup;
+mod dock_badge;
+mod native_notifications;
+mod quick_chat;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
@@ -58,11 +63,21 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 fn main() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            computer_use_setup::squad_setup_computer_use,
+            computer_use_grant::squad_confirm_computer_use,
+            computer_use_grant::squad_revoke_computer_use,
+            dock_badge::squad_set_attention_badge,
+            native_notifications::squad_notification_permission,
+            native_notifications::squad_notification_test,
+            native_notifications::squad_notification_settings
+        ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            computer_use_grant::prepare_bridge_secret()?;
             point_runtime_at_bundle(app.handle());
             let shell = Arc::new(Shell {
                 app_url: Mutex::new(None),
@@ -71,6 +86,8 @@ fn main() {
                 usage: Mutex::new(UsageCache::default()),
             });
             app.manage(shell.clone());
+            #[cfg(target_os = "macos")]
+            native_notifications::install(app.handle(), shell.clone());
 
             // The web app detects this user agent and switches to the desktop
             // treatment: transparent chrome behind the sidebar, drag regions,
@@ -88,6 +105,7 @@ fn main() {
                     .inner_size(1280.0, 840.0)
                     .min_inner_size(960.0, 640.0)
                     .user_agent(&user_agent)
+                    .on_navigation(info_navigation_handler(app.handle(), shell.clone(), false))
                     .center();
             #[cfg(target_os = "macos")]
             {
@@ -102,7 +120,9 @@ fn main() {
             let window = builder.build()?;
             #[cfg(target_os = "macos")]
             {
-                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+                use window_vibrancy::{
+                    apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
+                };
                 let _ = apply_vibrancy(
                     &window,
                     NSVisualEffectMaterial::Sidebar,
@@ -128,13 +148,21 @@ fn main() {
                 let overrides = PartialSquadConfig::default();
                 match run_desktop_bootstrap_with(&shell.runtime, &paths, &overrides, false) {
                     Ok(BootstrapOutcome::Ready { url }) => {
+                        computer_use_grant::clear_bridge_secret_env();
                         *lock(&shell.app_url) = Some(url.clone());
                         if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
                             if let Ok(target) = url.parse() {
                                 let _ = window.navigate(target);
                             }
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            // Bootstrap fills the existing main window. It
+                            // must not reopen a window the person already hid
+                            // or steal focus from their menu-bar conversation.
+                            let quick_visible = handle
+                                .get_webview_window(quick_chat::QUICK_CHAT_WINDOW)
+                                .is_some_and(|quick| quick.is_visible().unwrap_or(false));
+                            if window.is_visible().unwrap_or(false) && !quick_visible {
+                                let _ = window.set_focus();
+                            }
                         }
                         start_tray_refresh(handle, shell);
                     }
@@ -156,6 +184,7 @@ fn main() {
             }
         })
         .on_window_event(|window, event| {
+            quick_chat::handle_window_event(window, event);
             // Closing the window keeps the squad running in the tray, like a
             // chat app; Quit in the tray stops the services.
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -174,6 +203,8 @@ fn main() {
 /// The runtime crate already honours these variables, so pointing them at the
 /// bundle keeps a source checkout and the installed app on one code path.
 fn point_runtime_at_bundle(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    std::env::set_var("AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS", "macos");
     if let Ok(resource_dir) = app.path().resource_dir() {
         let server = resource_dir.join("runtime").join("server.mjs");
         if server.exists() && std::env::var_os("AUTOHAND_SQUAD_WEB_SERVER").is_none() {
@@ -183,9 +214,9 @@ fn point_runtime_at_bundle(app: &AppHandle) {
     // This process is the desktop controller: the runtime skips the legacy
     // tray binary and records this pid as the running controller.
     if let Ok(exe) = std::env::current_exe() {
-        if std::env::var_os(DESKTOP_SHELL_ENV).is_none() {
-            std::env::set_var(DESKTOP_SHELL_ENV, &exe);
-        }
+        // This running shell is authoritative even if the launch environment
+        // inherited an obsolete development shell path.
+        std::env::set_var(DESKTOP_SHELL_ENV, &exe);
     }
     if let Some(exe_dir) = std::env::current_exe()
         .ok()
@@ -235,7 +266,11 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         app,
         "File",
         true,
-        &[&new_menu, &PredefinedMenuItem::separator(app)?, &PredefinedMenuItem::close_window(app, Some("Close Window"))?],
+        &[
+            &new_menu,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, Some("Close Window"))?,
+        ],
     )?;
 
     let edit_menu = Submenu::with_items(
@@ -253,10 +288,9 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         ],
     )?;
 
-    let inbox = item("inbox", "Inbox", Some("CmdOrCtrl+1"))?;
+    let inbox = item("inbox", "Needs you", Some("CmdOrCtrl+1"))?;
     let agents = item("agents", "Agents", Some("CmdOrCtrl+2"))?;
     let channels = item("channels", "Channels", Some("CmdOrCtrl+3"))?;
-    let mission_control = item("mission-control", "Mission Control", Some("CmdOrCtrl+Shift+M"))?;
     // ⌘K and ⌘B are handled by the page itself (they work in the browser
     // too); giving the menu the same accelerators would risk firing twice.
     let search = item("search", "Search Everything…", None)?;
@@ -269,7 +303,6 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &inbox,
             &agents,
             &channels,
-            &mission_control,
             &PredefinedMenuItem::separator(app)?,
             &search,
             &toggle_sidebar,
@@ -278,38 +311,35 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         ],
     )?;
 
-    let window_menu = Submenu::with_items(
-        app,
-        "Window",
-        true,
-        &[
-            &PredefinedMenuItem::minimize(app, None)?,
-            &PredefinedMenuItem::maximize(app, Some("Zoom"))?,
-            &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::close_window(app, None)?,
-        ],
-    )?;
+    let minimize = PredefinedMenuItem::minimize(app, None)?;
+    let maximize = PredefinedMenuItem::maximize(app, Some("Zoom"))?;
+    let window_separator = PredefinedMenuItem::separator(app)?;
+    let close = PredefinedMenuItem::close_window(app, None)?;
+    let mut window_items: Vec<&dyn IsMenuItem<Wry>> =
+        vec![&minimize, &maximize, &window_separator, &close];
+    #[cfg(target_os = "macos")]
+    let quick_chat = item("quick-chat", "Quick chat…", Some("CmdOrCtrl+Shift+K"))?;
+    #[cfg(target_os = "macos")]
+    let quick_chat_separator = PredefinedMenuItem::separator(app)?;
+    #[cfg(target_os = "macos")]
+    window_items.extend([&quick_chat_separator as &dyn IsMenuItem<Wry>, &quick_chat]);
+    let window_menu = Submenu::with_items(app, "Window", true, &window_items)?;
 
     let mut items: Vec<&dyn IsMenuItem<Wry>> = Vec::new();
+    let about = item("about", "About Autohand Squad", None)?;
+    let check_upgrades = item("check-upgrades", "Check for upgrades…", None)?;
+    let settings = item("settings", "Settings…", Some("CmdOrCtrl+,"))?;
     #[cfg(target_os = "macos")]
     let app_menu = {
-        let settings = item("settings", "Settings…", Some("CmdOrCtrl+,"))?;
         Submenu::with_items(
             app,
             "Autohand Squad",
             true,
             &[
-                &PredefinedMenuItem::about(
-                    app,
-                    Some("About Autohand Squad"),
-                    Some(AboutMetadata {
-                        name: Some("Autohand Squad".into()),
-                        version: Some(env!("CARGO_PKG_VERSION").into()),
-                        ..Default::default()
-                    }),
-                )?,
+                &about,
                 &PredefinedMenuItem::separator(app)?,
                 &settings,
+                &check_upgrades,
                 &PredefinedMenuItem::separator(app)?,
                 &PredefinedMenuItem::services(app, None)?,
                 &PredefinedMenuItem::separator(app)?,
@@ -327,11 +357,28 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     items.push(&edit_menu);
     items.push(&view_menu);
     items.push(&window_menu);
+    #[cfg(not(target_os = "macos"))]
+    let help_menu = Submenu::with_items(app, "Help", true, &[&about, &settings, &check_upgrades])?;
+    #[cfg(not(target_os = "macos"))]
+    items.push(&help_menu);
     Menu::with_items(app, &items)
 }
 
 /// Menu selections reach the page as one DOM event; the web app routes them.
 fn dispatch_menu_action(app: &AppHandle, action: &str) {
+    #[cfg(target_os = "macos")]
+    if action == "quick-chat" {
+        let shell = app.state::<Arc<Shell>>().inner().clone();
+        quick_chat::open_quick_chat_picker(app, shell);
+        return;
+    }
+    if action == "about" {
+        let shell = app.state::<Arc<Shell>>();
+        if let Err(error) = open_info_window(app, &shell, InfoPage::About) {
+            eprintln!("about window failed: {error}");
+        }
+        return;
+    }
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         let _ = window.show();
         let _ = window.set_focus();
@@ -362,6 +409,21 @@ fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
     // coloured app icon is the convention.
     #[cfg(target_os = "macos")]
     {
+        let quick_shell = shell.clone();
+        builder = builder
+            .show_menu_on_left_click(false)
+            .on_tray_icon_event(move |tray, event| {
+                if matches!(
+                    event,
+                    tauri::tray::TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Left,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    }
+                ) {
+                    quick_chat::open_quick_chat_picker(tray.app_handle(), quick_shell.clone());
+                }
+            });
         match tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png")) {
             Ok(template) => {
                 builder = builder.icon(template).icon_as_template(true);
@@ -408,12 +470,35 @@ fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wr
     owned.push(Box::new(PredefinedMenuItem::separator(app)?));
 
     owned.push(Box::new(action("open", "Open Autohand Squad", true)?));
-    owned.push(Box::new(action("mission-control", "Mission Control", true)?));
+    owned.push(Box::new(action("mission-control", "Needs you", true)?));
     if !model.members.is_empty() {
+        #[cfg(target_os = "macos")]
+        let icons = quick_chat::member_icons(app, app.state::<Arc<Shell>>().inner());
         let members = model
             .members
             .iter()
-            .map(|member| action(&format!("member:{}", member.id), &member.label, true))
+            .map(|member| {
+                #[cfg(target_os = "macos")]
+                {
+                    tauri::menu::IconMenuItem::with_id(
+                        app,
+                        format!("member:{}", member.id),
+                        &member.label,
+                        true,
+                        Some(
+                            icons
+                                .get(&member.id)
+                                .cloned()
+                                .unwrap_or_else(quick_chat::placeholder_icon),
+                        ),
+                        None::<&str>,
+                    )
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    action(&format!("member:{}", member.id), &member.label, true)
+                }
+            })
             .collect::<tauri::Result<Vec<_>>>()?;
         let refs: Vec<&dyn IsMenuItem<Wry>> = members
             .iter()
@@ -421,7 +506,11 @@ fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wr
             .collect();
         owned.push(Box::new(Submenu::with_items(app, "Members", true, &refs)?));
     }
-    owned.push(Box::new(action("refresh", "Refresh usage", model.signed_in)?));
+    owned.push(Box::new(action(
+        "refresh",
+        "Refresh usage",
+        model.signed_in,
+    )?));
     owned.push(Box::new(PredefinedMenuItem::separator(app)?));
 
     if model.signed_in {
@@ -429,7 +518,7 @@ fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wr
     } else {
         owned.push(Box::new(action("login", "Sign in…", true)?));
     }
-    owned.push(Box::new(action("update", "Check for updates…", true)?));
+    owned.push(Box::new(action("update", "Check for upgrades…", true)?));
     owned.push(Box::new(CheckMenuItem::with_id(
         app,
         "launch-at-login",
@@ -440,14 +529,26 @@ fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wr
     )?));
     owned.push(Box::new(PredefinedMenuItem::separator(app)?));
 
-    owned.push(Box::new(action("start", "Start services", !model.daemon_running)?));
-    owned.push(Box::new(action("stop", "Stop services", model.daemon_running)?));
-    owned.push(Box::new(action("restart", "Restart services", model.daemon_running)?));
+    owned.push(Box::new(action(
+        "start",
+        "Start services",
+        !model.daemon_running,
+    )?));
+    owned.push(Box::new(action(
+        "stop",
+        "Stop services",
+        model.daemon_running,
+    )?));
+    owned.push(Box::new(action(
+        "restart",
+        "Restart services",
+        model.daemon_running,
+    )?));
     owned.push(Box::new(action("logs", "Open logs folder", true)?));
     owned.push(Box::new(action("settings", "Settings…", true)?));
     owned.push(Box::new(action("report-bug", "Report a bug", true)?));
     owned.push(Box::new(action("give-feedback", "Give feedback", true)?));
-    owned.push(Box::new(action("about", "About Autohand Squad", true)?));
+    owned.push(Box::new(action("about", "About", true)?));
     owned.push(Box::new(PredefinedMenuItem::separator(app)?));
     owned.push(Box::new(action("quit", "Quit", true)?));
 
@@ -459,13 +560,20 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
     let paths = default_paths();
     match id {
         "open" => focus_main_window(handle),
-        "mission-control" => navigate_app(handle, &shell, "/mission-control"),
+        "mission-control" => navigate_app(handle, &shell, "/work"),
         "settings" => navigate_app(handle, &shell, "/settings"),
         "report-bug" => navigate_app(handle, &shell, &feedback_route_for_paths(&paths, "bug")),
-        "give-feedback" => {
-            navigate_app(handle, &shell, &feedback_route_for_paths(&paths, "feedback"))
+        "give-feedback" => navigate_app(
+            handle,
+            &shell,
+            &feedback_route_for_paths(&paths, "feedback"),
+        ),
+        "about" => {
+            if let Err(error) = open_info_window(handle, &shell, InfoPage::About) {
+                eprintln!("about window failed: {error}");
+            }
         }
-        "about" => navigate_app(handle, &shell, &about_route_for_paths(&paths)),
+        "update" => dispatch_menu_action(handle, "check-upgrades"),
         "logs" => {
             let _ = tauri_plugin_opener::open_path(
                 paths.root.to_string_lossy().to_string(),
@@ -473,11 +581,10 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
             );
         }
         "refresh" => refresh_tray(handle.clone(), shell, true),
-        "login" | "logout" | "update" | "start" | "stop" | "restart" | "launch-at-login" => {
+        "login" | "logout" | "start" | "stop" | "restart" | "launch-at-login" => {
             let action = match id {
                 "login" => TrayAction::Login,
                 "logout" => TrayAction::Logout,
-                "update" => TrayAction::UpdateSquad,
                 "start" => TrayAction::StartService,
                 "stop" => TrayAction::StopService,
                 "restart" => TrayAction::RestartService,
@@ -501,7 +608,6 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
                             let _ = window.eval("window.location.reload()");
                         }
                     }
-                    "update" => navigate_app(&handle, &shell, "/settings?section=updates"),
                     _ => {}
                 }
                 refresh_tray(handle, shell, matches!(id.as_str(), "login" | "logout"));
@@ -521,16 +627,30 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
         }
         other => {
             if let Some(member_id) = other.strip_prefix("member:") {
-                let encoded: String = member_id
-                    .bytes()
-                    .map(|byte| match byte {
-                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                            (byte as char).to_string()
-                        }
-                        _ => format!("%{byte:02X}"),
-                    })
-                    .collect();
-                navigate_app(handle, &shell, &format!("/conversations/new?member={encoded}"));
+                #[cfg(target_os = "macos")]
+                {
+                    if let Err(error) = quick_chat::open_quick_chat(handle, &shell, member_id) {
+                        eprintln!("quick chat failed: {error}");
+                    }
+                    return;
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let encoded: String = member_id
+                        .bytes()
+                        .map(|byte| match byte {
+                            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                                (byte as char).to_string()
+                            }
+                            _ => format!("%{byte:02X}"),
+                        })
+                        .collect();
+                    navigate_app(
+                        handle,
+                        &shell,
+                        &format!("/conversations/new?member={encoded}"),
+                    );
+                }
             }
         }
     }

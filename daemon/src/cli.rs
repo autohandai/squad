@@ -22,6 +22,14 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
 
+/// Only the Node bridge receives the private native pairing environment. Every
+/// other runtime helper and sidecar must drop it before process creation.
+pub(crate) fn non_bridge_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    command.env_remove("AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN");
+    command
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "squad")]
 #[command(about = "Standalone Autohand Squad runtime launcher")]
@@ -922,7 +930,7 @@ fn is_squad_web_runtime(value: &serde_json::Value) -> bool {
 fn terminate_squad_member_processes() -> Result<usize> {
     #[cfg(target_family = "unix")]
     {
-        let output = Command::new("ps")
+        let output = non_bridge_command("ps")
             .args(["-axo", "pid=,command="])
             .output()
             .context("list Squad member processes")?;
@@ -938,7 +946,7 @@ fn terminate_squad_member_processes() -> Result<usize> {
 
     #[cfg(target_os = "windows")]
     {
-        let mut command = Command::new("powershell");
+        let mut command = non_bridge_command("powershell");
         command.args([
             "-NoProfile",
             "-Command",
@@ -965,7 +973,7 @@ fn terminate_squad_member_processes() -> Result<usize> {
 fn terminate_associated_squad_processes() -> Result<usize> {
     #[cfg(target_family = "unix")]
     {
-        let output = Command::new("ps")
+        let output = non_bridge_command("ps")
             .args(["-axo", "pid=,command="])
             .output()
             .context("list Autohand Squad processes")?;
@@ -981,7 +989,7 @@ fn terminate_associated_squad_processes() -> Result<usize> {
 
     #[cfg(target_os = "windows")]
     {
-        let mut command = Command::new("powershell");
+        let mut command = non_bridge_command("powershell");
         command.args([
             "-NoProfile",
             "-Command",
@@ -1106,7 +1114,7 @@ fn listener_pids_for_port(web_port: u16) -> Vec<u32> {
     #[cfg(target_family = "unix")]
     {
         let port_filter = format!("-iTCP:{web_port}");
-        Command::new("lsof")
+        non_bridge_command("lsof")
             .args(["-nP", &port_filter, "-sTCP:LISTEN", "-t"])
             .output()
             .ok()
@@ -1123,7 +1131,7 @@ fn listener_pids_for_port(web_port: u16) -> Vec<u32> {
 fn process_command(pid: u32) -> Option<String> {
     #[cfg(target_family = "unix")]
     {
-        Command::new("ps")
+        non_bridge_command("ps")
             .args(["-p", &pid.to_string(), "-o", "command="])
             .output()
             .ok()
@@ -1624,7 +1632,7 @@ fn spawn_daemon(paths: &StatePaths, config: &SquadConfig, daemon: &Path) -> Resu
         .open(&paths.server_log)
         .with_context(|| format!("open {}", paths.server_log.display()))?;
     let err = log.try_clone()?;
-    let mut command = Command::new(daemon);
+    let mut command = non_bridge_command(daemon);
     command
         .arg("--host")
         .arg(&config.host)
@@ -1675,7 +1683,7 @@ fn spawn_analytics(
         .open(&paths.analytics_log)
         .with_context(|| format!("open {}", paths.analytics_log.display()))?;
     let err = log.try_clone()?;
-    let mut command = Command::new(analytics);
+    let mut command = non_bridge_command(analytics);
     command
         .arg("--host")
         .arg(&config.host)
@@ -1715,7 +1723,7 @@ fn spawn_tray(
         .open(&paths.tray_log)
         .with_context(|| format!("open {}", paths.tray_log.display()))?;
     let err = log.try_clone()?;
-    let mut command = Command::new(&tray);
+    let mut command = non_bridge_command(&tray);
     command
         .arg("--host")
         .arg(&daemon_config.host)
@@ -1851,7 +1859,7 @@ fn terminate_process(pid: u32) -> bool {
 
     #[cfg(target_family = "unix")]
     {
-        let signaled = Command::new("kill")
+        let signaled = non_bridge_command("kill")
             .arg(pid.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1864,7 +1872,7 @@ fn terminate_process(pid: u32) -> bool {
         if wait_for_process_exit(pid, 20) {
             return true;
         }
-        let killed = Command::new("kill")
+        let killed = non_bridge_command("kill")
             .args(["-KILL", &pid.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1876,7 +1884,7 @@ fn terminate_process(pid: u32) -> bool {
 
     #[cfg(target_os = "windows")]
     {
-        let mut command = Command::new("taskkill");
+        let mut command = non_bridge_command("taskkill");
         command.args(["/PID", &pid.to_string(), "/T", "/F"]);
         detach_background(&mut command);
         command
@@ -1910,7 +1918,7 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
 
     #[cfg(target_family = "unix")]
     {
-        Command::new("kill")
+        non_bridge_command("kill")
             .arg("-0")
             .arg(pid.to_string())
             .stdout(Stdio::null())
@@ -1922,7 +1930,7 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
 
     #[cfg(target_os = "windows")]
     {
-        let mut command = Command::new("tasklist");
+        let mut command = non_bridge_command("tasklist");
         command.args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]);
         detach_background(&mut command);
         command
@@ -1949,14 +1957,14 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
 pub(crate) fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     let mut command = {
-        let mut command = Command::new("open");
+        let mut command = non_bridge_command("open");
         command.arg(url);
         command
     };
 
     #[cfg(target_os = "linux")]
     let mut command = {
-        let mut command = Command::new("xdg-open");
+        let mut command = non_bridge_command("xdg-open");
         command.arg(url);
         command
     };
@@ -1966,7 +1974,7 @@ pub(crate) fn open_url(url: &str) -> Result<()> {
         use std::os::windows::process::CommandExt;
 
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let mut command = Command::new("cmd");
+        let mut command = non_bridge_command("cmd");
         command.args(["/C", "start", "", url]);
         command.creation_flags(CREATE_NO_WINDOW);
         command
@@ -1994,6 +2002,42 @@ mod tests {
     use crate::state::StatePaths;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(target_family = "unix")]
+    #[test]
+    fn non_bridge_helpers_cannot_inherit_native_consent_token() {
+        if std::env::var_os("SQUAD_NATIVE_ENV_TEST_CHILD").is_none() {
+            // Re-enter just this test with a fixture credential in the parent
+            // environment; do not mutate global env in the parallel test run.
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "cli::tests::non_bridge_helpers_cannot_inherit_native_consent_token",
+                ])
+                .env("AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN", "test-fixture-only")
+                .env("SQUAD_NATIVE_ENV_TEST_CHILD", "1")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        assert_eq!(
+            std::env::var("AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN").unwrap(),
+            "test-fixture-only"
+        );
+        let mut command = non_bridge_command("sh");
+        // A process's environment may contain the native token; the helper's
+        // explicit removal must survive other ordinary env configuration.
+        command
+            .args(["-c", "test -z \"${AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN+x}\""])
+            .env("SQUAD_ENV_FIXTURE", "present");
+        assert!(command
+            .get_envs()
+            .any(|(name, value)| name == "AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN" && value.is_none()));
+        assert!(command.status().unwrap().success());
+    }
 
     fn temp_state_paths() -> StatePaths {
         let nonce = SystemTime::now()

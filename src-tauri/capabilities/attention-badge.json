@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "attention-badge",
+  "description": "Squad's main window alone may update its macOS Dock attention count. Rust requires the exact active bridge origin and a bounded count.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"]
+  },
+  "permissions": ["allow-squad-set-attention-badge"]
+}

@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -109,7 +108,7 @@ pub async fn download_and_verify_artifact(
 }
 
 fn curl_get(url: &str) -> Result<Vec<u8>> {
-    let output = Command::new("curl")
+    let output = crate::cli::non_bridge_command("curl")
         .args([
             "--fail",
             "--silent",
@@ -385,6 +384,7 @@ pub fn version_from_tag(tag: &str) -> String {
 pub fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
     fn split(version: &str) -> (Vec<u64>, String) {
         let version = version.trim().trim_start_matches('v');
+        let version = version.split('+').next().unwrap_or(version);
         let (core, pre) = match version.split_once('-') {
             Some((core, pre)) => (core, pre.to_string()),
             None => (version, String::new()),
@@ -414,7 +414,32 @@ pub fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
         (true, true) => std::cmp::Ordering::Equal,
         (true, false) => std::cmp::Ordering::Greater,
         (false, true) => std::cmp::Ordering::Less,
-        (false, false) => left_pre.cmp(&right_pre),
+        (false, false) => {
+            let mut left_parts = left_pre.split('.');
+            let mut right_parts = right_pre.split('.');
+            loop {
+                match (left_parts.next(), right_parts.next()) {
+                    (None, None) => return std::cmp::Ordering::Equal,
+                    (None, Some(_)) => return std::cmp::Ordering::Less,
+                    (Some(_), None) => return std::cmp::Ordering::Greater,
+                    (Some(left), Some(right)) => {
+                        let numeric_left = left.bytes().all(|byte| byte.is_ascii_digit());
+                        let numeric_right = right.bytes().all(|byte| byte.is_ascii_digit());
+                        let order = match (numeric_left, numeric_right) {
+                            (true, true) => {
+                                left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+                            }
+                            (true, false) => std::cmp::Ordering::Less,
+                            (false, true) => std::cmp::Ordering::Greater,
+                            (false, false) => left.cmp(right),
+                        };
+                        if !order.is_eq() {
+                            return order;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -451,8 +476,16 @@ fn classify_asset(name: &str) -> Option<(&'static str, &'static str, &'static st
     };
     let component = if lower.ends_with(".dmg") {
         "dmg"
-    } else if lower.ends_with(".exe") {
+    } else if lower.starts_with("autohand-squad-")
+        && lower.contains("-windows-")
+        && lower.ends_with("-setup.exe")
+    {
         "installer"
+    } else if lower.starts_with("autohand-squad-")
+        && lower.contains("-windows-")
+        && lower.ends_with(".msi")
+    {
+        "msi"
     } else if lower.ends_with(".deb") {
         "deb"
     } else if lower.ends_with(".appimage") {
@@ -471,9 +504,66 @@ fn parse_checksums(text: &str) -> std::collections::HashMap<String, String> {
             let mut parts = line.split_whitespace();
             let digest = parts.next()?;
             let name = parts.next()?.trim_start_matches('*');
-            (digest.len() == 64).then(|| (name.to_string(), digest.to_ascii_lowercase()))
+            valid_sha256(digest).then(|| (name.to_string(), digest.to_ascii_lowercase()))
         })
         .collect()
+}
+
+fn valid_sha256(digest: &str) -> bool {
+    digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Prefer the native app installer, never one of the standalone runtime
+/// executables. Only verified downloads can be offered for an app upgrade.
+pub fn select_desktop_installer(manifest: &ReleaseManifest) -> Option<ReleaseArtifact> {
+    select_desktop_installer_for(manifest, target_os(), target_arch())
+}
+
+fn select_desktop_installer_for(
+    manifest: &ReleaseManifest,
+    os: &str,
+    arch: &str,
+) -> Option<ReleaseArtifact> {
+    manifest
+        .artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.os == os && artifact.arch == arch && valid_sha256(&artifact.sha256)
+        })
+        .filter_map(|artifact| {
+            let name = artifact.binary_name.as_deref()?;
+            if !name.to_ascii_lowercase().starts_with(&format!(
+                "autohand-squad-{}-",
+                manifest.latest_allowed_version.to_ascii_lowercase()
+            )) {
+                return None;
+            }
+            let (asset_os, asset_arch, component) = classify_asset(name)?;
+            if asset_os != os
+                || asset_arch != arch
+                || artifact.component.as_deref() != Some(component)
+            {
+                return None;
+            }
+            let priority = match (os, component) {
+                ("macos", "dmg") | ("windows", "installer") | ("linux", "deb") => 0,
+                ("windows", "msi") | ("linux", "appimage") => 1,
+                _ => return None,
+            };
+            Some((priority, artifact))
+        })
+        .min_by_key(|(priority, _)| *priority)
+        .map(|(_, artifact)| artifact.clone())
+}
+
+fn github_asset_matches_release(repository: &str, tag: &str, asset: &GithubAsset) -> bool {
+    // Official packaging emits URL-safe names; accepting an unrelated asset
+    // URL would make its checksum insufficient to establish the release source.
+    let expected = format!(
+        "https://github.com/{repository}/releases/download/{tag}/{}",
+        asset.name
+    );
+    asset.browser_download_url == expected
 }
 
 /// Fetch the latest release for a channel from GitHub and express it as the
@@ -481,6 +571,8 @@ fn parse_checksums(text: &str) -> std::collections::HashMap<String, String> {
 pub async fn fetch_github_release(repository: &str, channel: &str) -> Result<GithubReleaseSummary> {
     let client = reqwest::Client::builder()
         .user_agent(format!("autohand-squad/{}", crate::VERSION))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(12))
         .build()?;
     let url = format!("https://api.github.com/repos/{repository}/releases?per_page=30");
     let response = client
@@ -500,11 +592,10 @@ pub async fn fetch_github_release(repository: &str, channel: &str) -> Result<Git
         .find(|release| release_matches_channel(release, channel))
         .ok_or_else(|| anyhow!("no {channel} release published for {repository}"))?;
 
-    let checksums = match release
-        .assets
-        .iter()
-        .find(|asset| asset.name.eq_ignore_ascii_case("checksums.txt"))
-    {
+    let checksums = match release.assets.iter().find(|asset| {
+        asset.name.eq_ignore_ascii_case("checksums.txt")
+            && github_asset_matches_release(repository, &release.tag_name, asset)
+    }) {
         Some(asset) => client
             .get(&asset.browser_download_url)
             .send()
@@ -522,7 +613,9 @@ pub async fn fetch_github_release(repository: &str, channel: &str) -> Result<Git
     let artifacts = release
         .assets
         .iter()
-        .filter(|asset| asset.size > 0)
+        .filter(|asset| {
+            asset.size > 0 && github_asset_matches_release(repository, &release.tag_name, asset)
+        })
         .filter_map(|asset| {
             let (os, arch, component) = classify_asset(&asset.name)?;
             Some(ReleaseArtifact {
@@ -569,6 +662,10 @@ mod github_tests {
         assert_eq!(compare_versions("v1.0.0", "1.0.0"), Equal);
         assert_eq!(compare_versions("1.0.0-beta.1", "1.0.0"), Less);
         assert_eq!(compare_versions("1.2.0", "1.1.9"), Greater);
+        assert_eq!(compare_versions("1.0.0-beta.10", "1.0.0-beta.2"), Greater);
+        assert_eq!(compare_versions("1.0.0-beta.2.1", "1.0.0-beta.2"), Greater);
+        assert_eq!(compare_versions("1.0.0-2", "1.0.0-beta"), Less);
+        assert_eq!(compare_versions("1.0.0+new", "1.0.0+old"), Equal);
     }
 
     #[test]
@@ -578,8 +675,18 @@ mod github_tests {
             Some(("macos", "aarch64", "dmg"))
         );
         assert_eq!(
-            classify_asset("Autohand Squad_0.1.0_x64-setup.exe"),
+            classify_asset("autohand-squad-0.1.4-windows-x64-setup.exe"),
             Some(("windows", "x86_64", "installer"))
+        );
+        assert_eq!(
+            classify_asset("autohand-squad-daemon-windows-x64.exe"),
+            None
+        );
+        assert_eq!(classify_asset("squad-windows-x64.exe"), None);
+        assert_eq!(classify_asset("autohand-squad-tray-windows-x64.exe"), None);
+        assert_eq!(
+            classify_asset("autohand-squad-0.1.4-windows-x64.msi"),
+            Some(("windows", "x86_64", "msi"))
         );
         assert_eq!(
             classify_asset("autohand-squad-0.1.4-linux-x64.AppImage"),
@@ -595,5 +702,109 @@ mod github_tests {
 ");
         assert_eq!(parsed.len(), 1);
         assert!(parsed.contains_key("autohand-squad-0.1.4-macos-arm64.dmg"));
+        assert!(parse_checksums(&format!("{}  installer.dmg", "z".repeat(64))).is_empty());
+    }
+
+    #[test]
+    fn desktop_upgrade_selects_verified_native_installer_instead_of_runtime() {
+        let artifact = |name: &str, os: &str, arch: &str, component: &str| ReleaseArtifact {
+            os: os.to_string(),
+            arch: arch.to_string(),
+            component: Some(component.to_string()),
+            binary_name: Some(name.to_string()),
+            url: format!("https://github.com/autohandai/squad/releases/download/v0.1.6/{name}"),
+            sha256: "a".repeat(64),
+            signature: None,
+            public_key: None,
+        };
+        let manifest = ReleaseManifest {
+            latest_allowed_version: "0.1.6".to_string(),
+            channel: "stable".to_string(),
+            artifacts: vec![
+                artifact(
+                    "autohand-squad-daemon-windows-x64.exe",
+                    "windows",
+                    "x86_64",
+                    "installer",
+                ),
+                artifact(
+                    "autohand-squad-0.1.6-windows-x64.msi",
+                    "windows",
+                    "x86_64",
+                    "msi",
+                ),
+                artifact(
+                    "autohand-squad-0.1.6-windows-x64-setup.exe",
+                    "windows",
+                    "x86_64",
+                    "installer",
+                ),
+                artifact(
+                    "autohand-squad-0.1.6-macos-arm64.dmg",
+                    "macos",
+                    "aarch64",
+                    "dmg",
+                ),
+                artifact(
+                    "autohand-squad-0.1.6-linux-x64.AppImage",
+                    "linux",
+                    "x86_64",
+                    "appimage",
+                ),
+                artifact(
+                    "autohand-squad-0.1.6-linux-x64.deb",
+                    "linux",
+                    "x86_64",
+                    "deb",
+                ),
+            ],
+        };
+        for (os, arch, suffix) in [
+            ("windows", "x86_64", "-setup.exe"),
+            ("macos", "aarch64", ".dmg"),
+            ("linux", "x86_64", ".deb"),
+        ] {
+            let selected = select_desktop_installer_for(&manifest, os, arch).unwrap();
+            assert!(selected.binary_name.unwrap().ends_with(suffix));
+        }
+        assert!(select_desktop_installer_for(&manifest, "windows", "aarch64").is_none());
+        let mut unverified = manifest.clone();
+        for artifact in &mut unverified.artifacts {
+            artifact.sha256.clear();
+        }
+        assert!(select_desktop_installer_for(&unverified, "windows", "x86_64").is_none());
+    }
+
+    #[test]
+    fn release_assets_cannot_redirect_upgrade_to_another_repository_or_origin() {
+        let mut asset = GithubAsset {
+            name: "autohand-squad-0.1.6-macos-arm64.dmg".to_string(),
+            browser_download_url: "https://github.com/autohandai/squad/releases/download/v0.1.6/autohand-squad-0.1.6-macos-arm64.dmg".to_string(),
+            size: 100,
+        };
+        assert!(github_asset_matches_release(
+            "autohandai/squad",
+            "v0.1.6",
+            &asset
+        ));
+        assert!(!github_asset_matches_release(
+            "autohandai/squad",
+            "v0.1.7",
+            &asset
+        ));
+        asset.browser_download_url = asset
+            .browser_download_url
+            .replace("autohandai/squad", "other/repository");
+        assert!(!github_asset_matches_release(
+            "autohandai/squad",
+            "v0.1.6",
+            &asset
+        ));
+        asset.browser_download_url = "https://example.test/installer.dmg".to_string();
+        assert!(!github_asset_matches_release(
+            "autohandai/squad",
+            "v0.1.6",
+            &asset
+        ));
     }
 }

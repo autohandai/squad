@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "bridge-window",
-  "description": "The main window loads the local bridge over HTTP. Only window-chrome commands are exposed so the web app can drag the window from its title areas.",
+  "description": "Main and compact chat load the local bridge. Window-chrome permissions support normal controls; custom notification commands additionally validate the active bridge origin and window label in Rust.",
   "windows": [
-    "main"
+    "main",
+    "quick-chat"
   ],
   "remote": {
     "urls": [

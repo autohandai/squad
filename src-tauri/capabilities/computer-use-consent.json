@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "computer-use-consent",
+  "description": "Only Squad's main window may ask for native human Computer Use consent or revoke its member grant; native checks require the exact live bridge origin.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"] },
+  "permissions": ["allow-squad-confirm-computer-use", "allow-squad-revoke-computer-use", "allow-squad-setup-computer-use"]
+}

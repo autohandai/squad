@@ -8,6 +8,7 @@ import * as autohand from "./autohand.mjs";
 import * as codex from "./codex.mjs";
 import * as claude from "./claude.mjs";
 import { guiSafeEnv } from "./discovery.mjs";
+import { formatDuration } from "../../src/lib/duration.js";
 
 export const DEFAULT_HARNESS_ID = "autohand";
 export const HARNESS_SCHEMA_VERSION = 1;
@@ -202,6 +203,7 @@ export function runExternalHarness({
   cwd,
   env = {},
   timeoutMs = 300000,
+  inactivityMs = 0,
   firstEventTimeoutMs = 60000,
   signal,
   onEvent = () => {},
@@ -214,6 +216,7 @@ export function runExternalHarness({
     let pending = "";
     let settled = false;
     let timedOut = false;
+    let timeoutKind = '';
     let stopped = false;
     let stalled = false;
     let sawEvent = false;
@@ -238,8 +241,20 @@ export function runExternalHarness({
 
     const timer = setTimeout(() => {
       timedOut = true;
+      timeoutKind = 'runtime';
       stopChild();
     }, timeoutMs);
+    let inactivityTimer = null;
+    const armInactivity = () => {
+      if (!(inactivityMs > 0) || settled || timedOut || stopped || stalled) return;
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => {
+        timedOut = true;
+        timeoutKind = 'inactivity';
+        stopChild();
+      }, inactivityMs);
+    };
+    armInactivity();
     let firstEventTimer = setTimeout(() => {
       if (!sawEvent) {
         stalled = true;
@@ -254,6 +269,7 @@ export function runExternalHarness({
         return;
       }
       sawEvent = true;
+      armInactivity();
       if (firstEventTimer) {
         clearTimeout(firstEventTimer);
         firstEventTimer = null;
@@ -292,6 +308,7 @@ export function runExternalHarness({
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (inactivityTimer) clearTimeout(inactivityTimer);
       if (firstEventTimer) clearTimeout(firstEventTimer);
       if (abortHandler && signal) signal.removeEventListener("abort", abortHandler);
       if (pending.trim()) handleLine(pending);
@@ -300,9 +317,11 @@ export function runExternalHarness({
         return;
       }
       let failure = "";
-      if (timedOut) failure = `${adapter.label} timed out after ${Math.round(timeoutMs / 1000)} s`;
+      if (timedOut) failure = timeoutKind === 'inactivity'
+        ? `${adapter.label} stopped after ${formatDuration(inactivityMs)} without activity. Retry to continue.`
+        : `${adapter.label} stopped after ${formatDuration(timeoutMs)} (maximum runtime). Retry to continue.`;
       else if (stopped) failure = "chat stopped by the user";
-      else if (stalled) failure = `${adapter.label} produced no events within ${Math.round(firstEventTimeoutMs / 1000)} s`;
+      else if (stalled) failure = `${adapter.label} produced no events within ${formatDuration(firstEventTimeoutMs)}. Check its sign-in and retry.`;
       else {
         const errorEvent = events.find((event) => event.type === "error");
         if (errorEvent) failure = String(errorEvent.message || "");
@@ -316,6 +335,7 @@ export function runExternalHarness({
         resumeId: adapter.resumeIdFrom(state),
         error: failure,
         timedOut,
+        timeoutKind,
         stopped,
         stalled,
       });

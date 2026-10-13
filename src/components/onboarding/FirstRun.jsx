@@ -42,47 +42,66 @@ export function FirstRun({
   const [profileBusy, setProfileBusy] = useState(false);
   const [pickBusy, setPickBusy] = useState(false);
   const [folderError, setFolderError] = useState("");
+  const [validatedFolder, setValidatedFolder] = useState("");
+  const [profileAttempt, setProfileAttempt] = useState(0);
   const [tracking, setTracking] = useState(false);
   const [trackError, setTrackError] = useState("");
-  const [roleId, setRoleId] = useState("");
-  const [name, setName] = useState("");
+  const [roleId, setRoleId] = useState(onboardingState?.selectedRoleId || "");
+  const [name, setName] = useState(onboardingState?.memberName || "");
   const [starting, setStarting] = useState(false);
-  const nameTouched = useRef(false);
+  const [startError, setStartError] = useState("");
+  const startingRef = useRef(false);
+  const nameTouched = useRef(onboardingState?.nameTouched === true);
 
   const signedIn = runtime?.account?.signedIn === true;
   const runtimeReady = runtime?.available === true;
-  const moment = !folder ? "folder" : !roleId ? "teammate" : "talk";
 
   // Profile the folder whenever it changes; the sentence it yields drives the
   // role suggestions.
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    setValidatedFolder("");
+    setProfile(null);
     if (!folder) {
-      setProfile(null);
+      clearTimeout(timer);
+      setProfileBusy(false);
       return undefined;
     }
     setProfileBusy(true);
     setFolderError("");
-    api("/api/workspaces/profile", { method: "POST", body: JSON.stringify({ path: folder }) })
+    api("/api/workspaces/profile", { method: "POST", signal: controller.signal, body: JSON.stringify({ path: folder }) })
       .then((data) => {
-        if (!cancelled) setProfile(data || null);
+        if (!data?.path) throw new Error("Could not validate that folder. Choose a folder and try again.");
+        if (!cancelled) {
+          setProfile(data);
+          setValidatedFolder(folder);
+        }
       })
       .catch((error) => {
         if (!cancelled) {
           setProfile(null);
-          setFolderError(error?.message || "Could not read that folder.");
+          setFolderError(controller.signal.aborted ? "Reading that folder timed out. Try again." : error?.message || "Could not read that folder.");
         }
       })
       .finally(() => {
+        clearTimeout(timer);
         if (!cancelled) setProfileBusy(false);
       });
     return () => {
       cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
     };
-  }, [folder, api]);
+  }, [folder, api, profileAttempt]);
 
   const suggestions = useMemo(() => suggestRoles(profile, roleTemplates, 3), [profile, roleTemplates]);
-  const selected = suggestions.find((item) => item.template.id === roleId) || null;
+  const selected = suggestions.find((item) => item.template.id === roleId)
+    || (roleTemplates.find((template) => template.id === roleId) ? { template: roleTemplates.find((template) => template.id === roleId) } : null);
+  const moment = !folder ? "folder" : !selected ? "teammate" : "talk";
+  const folderReady = Boolean(folder && validatedFolder === folder && profile && !profileBusy && !folderError);
+  const canStart = Boolean(selected && folderReady && signedIn && runtimeReady && providerReady && name.trim());
 
   // A folder that is not a repository is a folder where a member's work
   // cannot be undone. Offer the one action that fixes that, at the moment the
@@ -105,7 +124,11 @@ export function FirstRun({
     const next = String(path || "").trim();
     setFolder(next);
     setRoleId("");
-    updateOnboardingState?.({ selectedWorkspace: next, lastStep: next ? "teammate" : "folder" });
+    setValidatedFolder("");
+    setStartError("");
+    setFolderError("");
+    setTrackError("");
+    updateOnboardingState?.({ selectedWorkspace: next, selectedRoleId: "", lastStep: next ? "teammate" : "folder" });
   }
 
   async function pickFolder() {
@@ -113,8 +136,8 @@ export function FirstRun({
     try {
       const picked = await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: "Choose the folder your first teammate will work in" }) });
       if (picked?.path) chooseFolder(picked.path);
-    } catch {
-      // Cancelled or unavailable: the recent list still works.
+    } catch (error) {
+      setFolderError(error?.message || "Could not open the folder picker. Try again or choose a recent folder.");
     } finally {
       setPickBusy(false);
     }
@@ -122,13 +145,17 @@ export function FirstRun({
 
   function chooseRole(template) {
     setRoleId(template.id);
-    if (!nameTouched.current) setName(template.defaultName || defaultNameFor(template));
-    updateOnboardingState?.({ lastStep: "talk" });
+    const nextName = nameTouched.current ? name : template.defaultName || defaultNameFor(template);
+    setName(nextName);
+    setStartError("");
+    updateOnboardingState?.({ selectedRoleId: template.id, memberName: nextName, nameTouched: nameTouched.current, lastStep: "talk" });
   }
 
   async function start() {
-    if (!selected || starting) return;
+    if (!canStart || startingRef.current) return;
+    startingRef.current = true;
     setStarting(true);
+    setStartError("");
     try {
       await onStart?.({
         template: selected.template,
@@ -137,7 +164,10 @@ export function FirstRun({
         profile,
         prompt: firstPromptFor(selected.template.title, profile?.name || basename(folder), profile?.summary || ""),
       });
+    } catch (error) {
+      setStartError(error?.message || "Could not prepare your teammate. Try again.");
     } finally {
+      startingRef.current = false;
       setStarting(false);
     }
   }
@@ -147,6 +177,13 @@ export function FirstRun({
   if (!signedIn) blockers.push({ text: "Sign in with your Autohand account to give your teammates a brain.", action: "Sign in", onAction: onRequestLogin, secondary: onRefreshAccount ? { label: "Refresh", onAction: onRefreshAccount } : null, note: loginRequestStatus });
   if (signedIn && !runtimeReady) blockers.push({ text: "The local Autohand runtime is not answering yet.", action: "Retry", onAction: onRefreshAccount });
   if (signedIn && runtimeReady && !providerReady) blockers.push({ text: "No model provider is configured. Autohand AI works with your account.", action: "Open providers", onAction: onOpenProviders });
+
+  const folderFeedback = folderError ? (
+    <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+      <span role="alert" className="text-destructive">{folderError}</span>
+      {folder ? <Button variant="ghost" size="sm" onClick={() => { setProfileBusy(true); setProfileAttempt((current) => current + 1); }}>Retry folder</Button> : null}
+    </div>
+  ) : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -205,6 +242,7 @@ export function FirstRun({
                 </Button>
               ) : null}
             </div>
+            {folderFeedback}
             {recent.length ? (
               <div className="mt-8">
                 <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Recent</div>
@@ -230,12 +268,14 @@ export function FirstRun({
             </button>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">Meet your first teammate.</h1>
             <p className="mt-3 min-h-6 text-base text-muted-foreground">
-              {profileBusy ? "Looking at the folder…" : folderError || profile?.summary || "A project."}
+              {profileBusy ? "Looking at the folder…" : profile?.summary || "Choose a readable project folder to continue."}
             </p>
+            {folderFeedback}
+            {roleId && !selected ? <p role="alert" className="mt-3 text-sm text-muted-foreground">Your previously selected role is no longer available. Choose a teammate to continue.</p> : null}
             {/* Version control, said once, where the folder is chosen. A
                 tracked folder says who commits will be from; an untracked one
                 offers to become tracked. Neither blocks going on. */}
-            {!profileBusy && profile?.git?.available !== false ? (
+            {folderReady && profile?.git?.available !== false ? (
               <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
                 {profile?.git?.tracked ? (
                   <span>
@@ -278,7 +318,7 @@ export function FirstRun({
               </ul>
             ) : null}
             <div className="mt-6">
-              <Button variant="ghost" size="sm" onClick={() => onCreateSomeoneElse?.(folder)}>
+              <Button variant="ghost" size="sm" disabled={!folderReady || starting} onClick={() => onCreateSomeoneElse?.(folder)}>
                 Create someone else…
               </Button>
             </div>
@@ -287,7 +327,7 @@ export function FirstRun({
 
         {moment === "talk" && selected ? (
           <section className="mt-10">
-            <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setRoleId("")}>
+            <button type="button" disabled={starting} className="text-xs text-muted-foreground hover:text-foreground" onClick={() => { setRoleId(""); setStartError(""); updateOnboardingState?.({ selectedRoleId: "", lastStep: "teammate" }); }}>
               ← {selected.template.title}
             </button>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">Start talking.</h1>
@@ -299,9 +339,11 @@ export function FirstRun({
                   id="first-run-name"
                   className="mt-1 max-w-xs"
                   value={name}
+                  disabled={starting}
                   onChange={(event) => {
                     nameTouched.current = true;
                     setName(event.target.value);
+                    updateOnboardingState?.({ memberName: event.target.value, nameTouched: true });
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") start();
@@ -312,21 +354,23 @@ export function FirstRun({
                 </div>
               </div>
             </div>
+            {profileBusy ? <p className="mt-3 text-sm text-muted-foreground">Looking at the folder…</p> : folderFeedback}
             <p className="mt-6 text-sm text-muted-foreground">
               Your first message is drafted so you can just press send: “{firstPromptFor(selected.template.title, profile?.name || basename(folder), profile?.summary || "")}”
             </p>
             <div className="mt-6 flex items-center gap-3">
-              <Button onClick={start} disabled={starting || !signedIn || !name.trim()}>
+              <Button onClick={start} disabled={starting || !canStart}>
                 {starting ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null}
                 Start the conversation
               </Button>
             </div>
+            {startError ? <p role="alert" className="mt-3 text-sm text-destructive">{startError}</p> : null}
           </section>
         ) : null}
 
         <footer className="mt-14 flex items-center justify-between border-t border-border/70 pt-4 text-xs text-muted-foreground">
-          <span>You can come back to this from the account menu.</span>
-          <Button variant="ghost" size="sm" onClick={onSkip} disabled={!signedIn}>
+          <span>Your choices are saved. You can return from Settings.</span>
+          <Button variant="ghost" size="sm" onClick={onSkip} disabled={!signedIn || starting}>
             Skip for now
           </Button>
         </footer>

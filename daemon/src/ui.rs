@@ -16,7 +16,6 @@ use crate::state::{default_state_paths, read_daemon_record, read_tray_record, St
 use crate::telemetry::ui_event;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -711,21 +710,21 @@ fn linux_status_notifier_available() -> bool {
 fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     let mut command = {
-        let mut command = Command::new("open");
+        let mut command = crate::cli::non_bridge_command("open");
         command.arg(url);
         command
     };
 
     #[cfg(target_os = "linux")]
     let mut command = {
-        let mut command = Command::new("xdg-open");
+        let mut command = crate::cli::non_bridge_command("xdg-open");
         command.arg(url);
         command
     };
 
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = Command::new("cmd");
+        let mut command = crate::cli::non_bridge_command("cmd");
         command.args(["/C", "start", "", url]);
         command
     };

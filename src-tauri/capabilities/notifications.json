@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "native-notifications",
+  "description": "Three fixed macOS notification actions from Squad's main or quick-chat window. Rust also checks the active bridge origin and window label for every call.",
+  "windows": ["main", "quick-chat"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"]
+  },
+  "permissions": [
+    "allow-squad-notification-permission",
+    "allow-squad-notification-test",
+    "allow-squad-notification-settings"
+  ]
+}

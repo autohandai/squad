@@ -260,7 +260,9 @@ export function parseLine(line, state) {
     return [{ type: "tool_update", toolId: "codex-warning", toolName: "Codex", output: String(item.message || ""), stream: "stderr", timestamp }];
   }
   if (item.type === "todo_list") {
-    return [{ type: "status", status: "todo_list", timestamp }];
+    return [{ type: "plan_update", source: "codex", plan: (item.items || []).map((todo) => ({
+      step: String(todo.text || ""), status: todo.completed ? "completed" : "pending",
+    })), timestamp }];
   }
   const toolName = itemToolName(item);
   if (type === "item.started") {

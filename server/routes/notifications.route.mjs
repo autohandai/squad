@@ -54,6 +54,7 @@ function publicItem(item) {
     status: item.status || "",
     read: Boolean(item.read),
     native: item.native || null,
+    suppressed: Boolean(item.suppressed),
   };
 }
 
@@ -61,7 +62,7 @@ function publicItem(item) {
  * Build a plug-in instance. `postNative` is injectable so the check can run
  * the whole route without touching the OS.
  */
-export function createNotificationsPlugin({ postNative = postNativeNotification } = {}) {
+export function createNotificationsPlugin({ postNative = postNativeNotification, nativeOwner = process.platform === "darwin" && process.env.AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS === "macos", now = Date.now } = {}) {
   const state = {
     settings: { ...DEFAULT_NOTIFICATION_SETTINGS },
     items: [], // newest first
@@ -74,6 +75,16 @@ export function createNotificationsPlugin({ postNative = postNativeNotification 
   let writeChain = Promise.resolve();
   let nameCache = { at: 0, memberNames: {}, channelNames: {} };
   const listeners = [];
+  const focusedWindows = new Map();
+  function currentFocusedRoutes() {
+    const time = now();
+    for (const [windowId, value] of focusedWindows) {
+      if (time - value.at > 30_000) focusedWindows.delete(windowId);
+    }
+    const values = [...focusedWindows.values()];
+    state.focusedRoute = values.at(-1)?.route || "";
+    return values.map((value) => value.route);
+  }
 
   function log(severity, message, attributes = {}) {
     try {
@@ -127,7 +138,12 @@ export function createNotificationsPlugin({ postNative = postNativeNotification 
 
   async function onEvent(event) {
     try {
-      const decision = shouldNotify(event, state.settings, { focusedRoute: state.focusedRoute });
+      const routes = currentFocusedRoutes();
+      let decision = shouldNotify(event, state.settings, { focusedRoute: "" });
+      if (decision.notify) {
+        const visible = routes.map((focusedRoute) => shouldNotify(event, state.settings, { focusedRoute })).find((candidate) => candidate.reason === "focused");
+        if (visible) decision = visible;
+      }
       if (decision.reason === "ignored" || decision.reason === "disabled") return null;
       const names = await loadNames();
       const copy = notificationFor(event, { appUrl: state.appUrl, ...names });
@@ -151,7 +167,7 @@ export function createNotificationsPlugin({ postNative = postNativeNotification 
       if (state.items.length > FEED_LIMIT) state.items.length = FEED_LIMIT;
       if (decision.notify) {
         item.native = await postNative({ title: copy.title, body: copy.body, url: copy.url });
-        if (!item.native?.posted) {
+        if (!item.native?.posted && !item.native?.queued) {
           log(ctx?.SEVERITY?.WARN ?? 13, `notifications: native post failed (${item.native?.method}): ${item.native?.error || "unknown"}`, { "notification.kind": item.kind });
         }
       }
@@ -219,12 +235,21 @@ export function createNotificationsPlugin({ postNative = postNativeNotification 
     }
     if (path === "/api/notifications/focus" && method === "POST") {
       const body = await context.readBody(req);
-      state.focusedRoute = typeof body?.route === "string" ? body.route.trim().slice(0, 512) : "";
+      const windowId = body?.windowId || "main";
+      if (!["main", "quick-chat"].includes(windowId)) {
+        json(res, 400, { success: false, error: "Unknown Squad window." });
+        return true;
+      }
+      const route = typeof body?.route === "string" ? body.route.trim().slice(0, 512) : "";
+      focusedWindows.delete(windowId);
+      if (route) focusedWindows.set(windowId, { route, at: now() });
+      currentFocusedRoutes();
       rememberAppUrl(req);
       json(res, 200, { success: true, data: { focusedRoute: state.focusedRoute } });
       return true;
     }
     if (path === "/api/notifications" && method === "GET") {
+      currentFocusedRoutes();
       const since = parseSince(url.searchParams.get("since"));
       const items = state.items.filter((item) => !since || Date.parse(item.at) > since).map(publicItem);
       json(res, 200, { success: true, data: { items, unread: unreadCount(), lastReadAt: state.lastReadAt, focusedRoute: state.focusedRoute } });
@@ -239,6 +264,26 @@ export function createNotificationsPlugin({ postNative = postNativeNotification 
       if (!ids) state.lastReadAt = new Date().toISOString();
       await persist();
       json(res, 200, { success: true, data: { unread: unreadCount(), lastReadAt: state.lastReadAt } });
+      return true;
+    }
+    if (path === "/api/notifications/native-delivery" && method === "POST") {
+      if (!nativeOwner) {
+        json(res, 409, { success: false, error: "The macOS desktop app is not the active notification owner." });
+        return true;
+      }
+      const body = await context.readBody(req);
+      const item = state.items.find((item) => item.id === body?.id);
+      if (!item || item.native?.method !== "desktop-pending" || typeof body?.posted !== "boolean") {
+        json(res, 400, { success: false, error: "No pending desktop notification matches this result." });
+        return true;
+      }
+      item.native = {
+        posted: body.posted,
+        method: "macos-user-notifications",
+        ...(body.posted ? {} : { error: String(body.error || "macOS rejected notification submission").slice(0, 500) }),
+      };
+      await persist();
+      json(res, 200, { success: true, data: { native: item.native } });
       return true;
     }
     if (path === "/api/notifications/test" && method === "POST") {

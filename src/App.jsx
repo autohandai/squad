@@ -1,14 +1,18 @@
 import React, { createContext, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-
+import { useProjectObserver } from "@/lib/use-project-observer";
 import { onDesktopMenu } from "@/lib/desktop-menu";
 import { FirstRun } from "@/components/onboarding/FirstRun";
+import { ChannelDetailsSettings } from "@/components/channels/ChannelDetailsSettings";
+import { AgentChannelProposals } from "@/components/channels/AgentChannelProposals";
+import { AppInformation } from "@/components/app-info/AppInformation";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
-import { NEED_HELP, joinList, proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
+import { NEED_HELP, firstPromptFor, joinList, proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
 import { DEFAULT_SKIN_ID, SKINS, SKIN_VAR_DEFAULTS, isSkinId, memberAvatar, skinById, surfaceForSkin } from "@/lib/skins";
 import { blobForMember, blobSvg } from "@/lib/blob-avatar";
 import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
+import { channelTranscript } from "@/lib/channel-transcript";
 import { PresenceDot, PresenceLabel } from "@/components/members/PresenceDot";
 import { StopMemberButton } from "@/components/members/StopMemberButton";
 import { createRoot } from "react-dom/client";
@@ -66,6 +70,7 @@ import {
   Hash,
   Lock,
   History,
+  Inbox,
   KeyRound,
   Languages,
   LayoutList,
@@ -186,6 +191,7 @@ import {
   FieldTitle,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupText, InputGroupTextarea } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
 // `Command` is already a lucide icon in this file, so the primitive is aliased.
 import { Command as CommandRoot, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -265,7 +271,8 @@ import { MessageComposer } from "@/components/channels/MessageComposer";
 import { MediaAttachment } from "@/components/channels/MediaAttachment";
 import { AnchorChip } from "@/components/channels/AnchorChip";
 import { anchorsFromDraft, appendAnchorToken, frameKey, frameUrl, messageMediaContext, parseAnchorTokens, removeAnchorToken } from "@/lib/anchors";
-import { InboxPage } from "@/components/inbox/InboxPage";
+import { NeedsYouList } from "@/components/inbox/InboxPage";
+import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, workRowsInProgress, workAttentionCount } from "@/lib/work-attention";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
@@ -277,7 +284,9 @@ import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/membe
 import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
 import { applyProposal, normalizeMemoryEntries, proposalSummary, reviewMember } from "@/lib/chief-of-staff";
 import { takeTable } from "@/lib/markdown-table";
-import { MEMBER_DESIGNER_ID } from "@/lib/member-draft";
+import { MEMBER_DESIGNER_ID, editDraftRole } from "@/lib/member-draft";
+import { parseLocalJson, writeLocalJson, compactChannelMessagesCache, isStorageQuotaError } from "@/lib/local-cache";
+import { MemberWorkspacePicker } from "@/components/chat/MemberWorkspacePicker";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
@@ -285,6 +294,23 @@ import { introductionFor } from "@/lib/member-introduction";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
+import { AgentTaskChecklist, AgentWorkUpdate } from "@/components/chat/AgentTaskChecklist";
+import { MemberGoalControls } from "@/components/chat/MemberGoalControls";
+import { QuickChatMemberPicker, quickChatMemberSelection } from "@/components/chat/QuickChatMemberPicker";
+import { ComputerUsePermissions } from "@/components/computer-use/ComputerUsePermissions";
+import { ComputerUseEvidence } from "@/components/computer-use/ComputerUseEvidence";
+import { useComputerUseEvidence } from "@/components/computer-use/useComputerUseEvidence";
+import { evidenceForMessage } from "@/components/computer-use/model";
+import { goalMessagePatch, goalProgress, isGoalRunning, latestMemberGoal, reconcileGoalMessages } from "@/lib/member-goals";
+import { taskProgressFromMessage } from "@/lib/task-progress";
+import { SidebarUpdateNotice } from "@/components/account/SidebarUpdateNotice";
+import { identifySquadTelemetry, recordSignInStarted, recordMemberCreated, recordMemberUsed, recordFeatureUsed } from "@/lib/product-telemetry";
+import { getNativeNotificationClient } from "@/lib/native-notifications";
+import { applySharedConversationEvent, conversationEventForSharing } from "@/lib/shared-conversations";
+import { formatDuration } from "@/lib/duration";
+import { CHAT_STREAM_CEILING_MS } from "@/lib/chat-timing";
+import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs } from "@/lib/chat-recovery";
+import { getAttentionBadgeClient } from "@/lib/attention-badge";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { CanvasList } from "@/components/canvases/CanvasList";
 import { CanvasPanel } from "@/components/canvases/CanvasPanel";
@@ -364,6 +390,7 @@ const STORAGE_KEYS = {
   messages: "autohandSquad.v1.messages",
   sidebarCollapsed: "autohandSquad.v1.sidebarCollapsed",
   onboarding: "autohandSquad.v1.onboarding",
+  memberCreation: "autohandSquad.v1.memberCreation",
   tasks: "autohandSquad.v1.tasks",
   theme: "autohandSquad.v1.theme",
   skin: "autohandSquad.v1.skin",
@@ -391,7 +418,7 @@ function accountProfileFor(account) {
 
 // Account identity and account-level actions for the sidebar footer and menu,
 // so they do not travel through six layers of sidebar props.
-const AccountContext = createContext({ profile: ACCOUNT_PROFILE, signOut: null, signingOut: false, openFeedback: null });
+const AccountContext = createContext({ profile: ACCOUNT_PROFILE, signOut: null, signingOut: false, openFeedback: null, openAppInfo: null, checkForUpgrades: null });
 
 // Live member presence from the bridge (ADR-0016): who is working, idle,
 // online, offline, or unknown when the bridge is unreachable. Read with
@@ -413,13 +440,14 @@ const DESIGN_WAIT_GATE_MS = 240;
 // legible, never a blink.
 const DESIGN_WAIT_HOLD_MS = 400;
 const DESIGN_WAIT_PROMISE_MS = 18_000;
-const DEFAULT_IMPROVEMENT_SETTINGS = Object.freeze({ enabled: true, applyAutomatically: true });
+const DEFAULT_IMPROVEMENT_SETTINGS = Object.freeze({ enabled: true, applyAutomatically: true, observeAssignedProjects: true });
 
 function normalizeImprovementSettings(value) {
   const source = value && typeof value === "object" ? value : {};
   return {
     enabled: source.enabled !== false,
     applyAutomatically: source.applyAutomatically !== false,
+    observeAssignedProjects: source.observeAssignedProjects !== false,
   };
 }
 
@@ -1212,7 +1240,8 @@ const THEME_PRESET_MAP = THEME_SURFACES.reduce((map, surface) => {
   return map;
 }, {});
 
-const MISSION_CONTROL_ROUTE = "/mission-control";
+const MISSION_CONTROL_ROUTE = "/work";
+const LEGACY_WORK_ROUTE = "/mission-control";
 const SQUAD_DIRECTORY_ROUTE = "/squad";
 const CHANNELS_ROUTE = "/channels";
 const INBOX_ROUTE = "/inbox";
@@ -1221,14 +1250,17 @@ const SEARCH_SHORTCUT_LABEL =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘K" : "Ctrl K";
 
 function inboxPath() {
-  return INBOX_ROUTE;
+  return missionControlPath({ view: "needs-you" });
+}
+
+function isWorkRoute(route) {
+  return [MISSION_CONTROL_ROUTE, LEGACY_WORK_ROUTE, INBOX_ROUTE].includes(String(route || "").split("?")[0]);
 }
 
 function sidebarActiveTarget(route, activeAgent) {
   const [path, query = ""] = String(route || "").split("?");
-  if (path === INBOX_ROUTE) return { kind: "inbox", id: "" };
+  if (isWorkRoute(path)) return { kind: "work", id: "" };
   if (path === SQUAD_DIRECTORY_ROUTE || path === AGENTS_ROUTE) return { kind: "agents", id: "" };
-  if (path === MISSION_CONTROL_ROUTE) return { kind: "work", id: "" };
   if (path.startsWith(CHANNELS_ROUTE)) return { kind: "channel", id: channelIdFromRoute(route) };
   if (path === "/conversations/new") {
     const member = new URLSearchParams(query).get("member") || activeAgent?.id || "";
@@ -1304,7 +1336,7 @@ async function attachChannelFiles(files, { setDraft, addAttachment, onError, cop
 // write must never unmount the app; the in-memory state stays authoritative.
 function persistLocal(key, value) {
   try {
-    window.localStorage.setItem(key, JSON.stringify(value));
+    writeLocalJson(window.localStorage, key, value, STORAGE_KEYS.channelMessages);
   } catch (error) {
     if (!persistLocal.warned) {
       persistLocal.warned = true;
@@ -2554,7 +2586,7 @@ function readLocalStorage(keys) {
 function readStored(keys, fallback) {
   try {
     const raw = readLocalStorage(keys);
-    return raw ? JSON.parse(raw) : fallback;
+    return raw ? parseLocalJson(raw) : fallback;
   } catch {
     return fallback;
   }
@@ -2562,6 +2594,7 @@ function readStored(keys, fallback) {
 
 function normalizeOnboardingState(value) {
   const source = value && typeof value === "object" ? value : {};
+  const savedMemberId = normalizeSquadMemberId(source.memberId);
   const status = [ONBOARDING_STATUS_ACTIVE, ONBOARDING_STATUS_COMPLETED, ONBOARDING_STATUS_SKIPPED].includes(source.status)
     ? source.status
     : ONBOARDING_STATUS_ACTIVE;
@@ -2569,6 +2602,10 @@ function normalizeOnboardingState(value) {
     version: ONBOARDING_VERSION,
     status,
     selectedWorkspace: String(source.selectedWorkspace || "").trim(),
+    selectedRoleId: String(source.selectedRoleId || "").trim(),
+    memberName: String(source.memberName || ""),
+    nameTouched: source.nameTouched === true,
+    memberId: /^asq_[a-z0-9_-]+$/.test(savedMemberId) ? savedMemberId : "",
     memberReady: source.memberReady === true,
     lastStep: String(source.lastStep || "welcome").trim() || "welcome",
     updatedAt: source.updatedAt || "",
@@ -3234,6 +3271,7 @@ function normalizeChannelCopy(channel) {
     visibility: channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? CHANNEL_VISIBILITY_PRIVATE : CHANNEL_VISIBILITY_PUBLIC,
     memberIds,
     projects: normalizeChannelProjects(channel.projects),
+    section: String(channel.section || "").trim(),
     creatorId: String(channel.creatorId || "").trim(),
     autoModeDefault: channel.autoModeDefault === true,
     // Owned by the git route plug-in (docs/integration/git.md). Kept verbatim
@@ -3468,7 +3506,7 @@ function formatMarkdownTimestamp(message, locale = DEFAULT_LOCALE) {
 }
 
 function channelMessageAuthor(message, agents = [], userName = "You") {
-  if (message?.role === "user") return userName;
+  if (message?.role === "user" && !message?.agentId) return userName;
   const agent = agents.find((item) => item.id === message?.agentId);
   return agent?.name || message?.authorName || "Squad member";
 }
@@ -4378,6 +4416,7 @@ function buildLiveStatusSnapshot({ agents = [], tasks = [], runs = [], automatio
     return {
       id,
       name: snapshotString(agent?.name, "Squad member"),
+      avatar: typeof agent?.avatar === "string" && (agent.avatar.startsWith("/avatars/") || /^data:image\/(png|jpeg|webp);base64,/.test(agent.avatar)) ? agent.avatar : "",
       role: snapshotString(agent?.role) || null,
       status: String(agent?.status || "online").toLowerCase(),
       working: workingAgentIds.has(id),
@@ -4544,6 +4583,10 @@ function App() {
     return mergeSeedAgents(storedAgents, initialAgents, Array.isArray(removed) ? removed : []).map(normalizeAgentCopy);
   });
   const [tasks, setTasks] = useState(() => normalizeTasksCopy(mergeSeedTasks(readStored(storageKeysFor("tasks"), initialTasks))));
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const handoffRetriesRef = useRef(new Set());
+  const chatMembersRef = useRef(new Map());
   const [automations, setAutomations] = useState(() => {
     const storedAutomations = readStored(storageKeysFor("automations"), initialAutomations);
     return (Array.isArray(storedAutomations) ? storedAutomations : initialAutomations).map((automation) =>
@@ -4555,6 +4598,33 @@ function App() {
       readStored(storageKeysFor("messages"), { [initialAgents[0].id]: initialMessages(initialAgents[0].name) })
     )
   );
+  const memberAccessWritesRef = useRef(new Map());
+  const membersRef = useRef(agents);
+  membersRef.current = agents;
+  const sharedConversationChannelRef = useRef(null);
+  const [memberGoals, setMemberGoals] = useState([]);
+  const [memberGoalsError, setMemberGoalsError] = useState("");
+  useEffect(() => {
+    const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel("autohand-squad-conversations-v1") : null;
+    sharedConversationChannelRef.current = channel;
+    if (channel) channel.onmessage = ({ data }) => {
+      if (data?.type === "member.patch" && typeof data.memberId === "string" && data.patch && typeof data.patch === "object") {
+        setAgents((current) => current.map((member) => member.id === data.memberId ? { ...member, ...data.patch } : member));
+      } else {
+        const member = membersRef.current.find((item) => item.id === data?.memberId);
+        setMessagesByAgent((current) => applySharedConversationEvent(current, { ...data, conversationStartedAt: member?.conversationStartedAt }));
+      }
+    };
+    const onStorage = (event) => {
+      if (event.key !== STORAGE_KEYS.agents || !event.newValue) return;
+      try {
+        const incoming = JSON.parse(event.newValue);
+        if (Array.isArray(incoming)) setAgents((current) => JSON.stringify(current) === event.newValue ? current : incoming.map(normalizeAgentCopy));
+      } catch { /* A malformed stored roster does not replace the current one. */ }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => { channel?.close(); sharedConversationChannelRef.current = null; window.removeEventListener("storage", onStorage); };
+  }, []);
   const [memoryInbox, setMemoryInbox] = useState(() =>
     mergeSeedMemoryInbox(readStored(storageKeysFor("memoryInbox"), initialMemoryInbox))
   );
@@ -4612,16 +4682,44 @@ function App() {
   // Update status from the daemon's GitHub Releases check.
   const [updates, setUpdates] = useState(null);
   const [updatesChecking, setUpdatesChecking] = useState(false);
+  const [updatesError, setUpdatesError] = useState("");
+  const [updatesUpgrading, setUpdatesUpgrading] = useState(false);
+  const [updatesUpgradeResult, setUpdatesUpgradeResult] = useState(null);
   async function refreshUpdates(refresh = false) {
+    if (refresh) recordFeatureUsed("updates", "check");
     setUpdatesChecking(true);
+    setUpdatesError("");
     try {
       const data = await api(`/api/updates${refresh ? "?refresh=1" : ""}`);
       setUpdates(data);
       return data;
-    } catch {
+    } catch (error) {
+      setUpdatesError(error.message || "Could not check the repository for upgrades.");
       return null;
     } finally {
       setUpdatesChecking(false);
+    }
+  }
+  async function upgradeApp() {
+    recordFeatureUsed("updates", "upgrade");
+    setUpdatesUpgrading(true);
+    setUpdatesError("");
+    setUpdatesUpgradeResult(null);
+    try {
+      const data = await api("/api/updates/upgrade", { method: "POST" });
+      setUpdatesUpgradeResult(data);
+    } catch (error) {
+      setUpdatesError(error.message || "The installer could not be downloaded or opened.");
+    } finally {
+      setUpdatesUpgrading(false);
+    }
+  }
+  async function openReleasePage() {
+    setUpdatesError("");
+    try {
+      await api("/api/updates/releases", { method: "POST" });
+    } catch (error) {
+      setUpdatesError(error.message || "Could not open the releases page.");
     }
   }
   useEffect(() => {
@@ -4638,6 +4736,8 @@ function App() {
   // stop counting in the badge.
   const [inboxReadAt, setInboxReadAt] = useState(() => readStored(storageKeysFor("inboxReadAt"), ""));
   const [createChannelRequest, setCreateChannelRequest] = useState(0);
+  const [channelOperationError, setChannelOperationError] = useState("");
+  const [agentChannelActions, setAgentChannelActions] = useState([]);
   // Squad recruiting (ADR-0015): folder profiles by path for this session and
   // the user's decisions on proposals (accepted / dismissed), keyed by
   // channel + member + project signature.
@@ -4651,6 +4751,31 @@ function App() {
     [localePreference, systemLanguages]
   );
   const localeCopy = useMemo(() => getLocaleCopy(localeResolution.locale), [localeResolution.locale]);
+  useEffect(() => { identifySquadTelemetry(runtime?.account); }, [runtime?.account]);
+  useEffect(() => {
+    if (runtime?.serverStartedAt) {
+      setMessagesByAgent((current) => recoverInterruptedChats(current, runtime.serverStartedAt));
+      setTasks((current) => recoverInterruptedHandoffs(current, runtime.serverStartedAt));
+    }
+  }, [runtime?.serverStartedAt]);
+  useEffect(() => {
+    const recovered = recoverCompletedHandoffParents(tasks);
+    if (recovered.tasks === tasks) return;
+    setTasks(recovered.tasks);
+    for (const result of recovered.returns) appendMessage(result.fromAgentId, {
+      id: `${result.handoffId}-recovered-result`, role: "agent", status: "handoff",
+      body: `${agents.find(member => member.id === result.toAgentId)?.name || "The receiving member"} came back with:\n\n${result.result}`,
+      completedAt: new Date().toISOString(),
+    });
+  }, [tasks]);
+  useEffect(() => {
+    const path = route.split("?")[0];
+    const feature = path === "/work" || path === "/inbox" || path === "/mission-control" ? "needs_you"
+      : path === "/squad" ? "squad" : path.startsWith("/settings") ? "settings"
+        : path.startsWith("/channels") ? "channels" : path.startsWith("/squad-members/new") ? "member_creation"
+          : path.startsWith("/squad-members/") ? path.endsWith("/chat") ? "dm" : "member_profile" : "";
+    if (feature) recordFeatureUsed(feature, "open");
+  }, [route]);
   const activeSkin = skinById(skinId);
   // A skin whose whole point is being light has nothing to show in the dark, so
   // it names its surface; the default skin names none and follows the user.
@@ -4668,6 +4793,17 @@ function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  useEffect(() => {
+    if (!route.startsWith("/quick-chat") || !/AutohandSquadQuickChat\//.test(navigator.userAgent)) return;
+    const dismiss = (event) => {
+      if (event.key !== "Escape" || event.defaultPrevented || document.querySelector('[data-slot="popover-content"][data-state="open"]')) return;
+      event.preventDefault();
+      window.location.assign("/quick-chat-dismiss");
+    };
+    window.addEventListener("keydown", dismiss);
+    return () => window.removeEventListener("keydown", dismiss);
+  }, [route]);
 
   // Opening Autohand Squad (the daemon opens the app at "/") should land on
   // first-run setup until the user completes or skips it. Public beta access is
@@ -5045,15 +5181,15 @@ function App() {
   // the same channels.json in queue/run telemetry across reloads and restarts.
   useEffect(() => {
     if (!channelsBridgeReady) return;
-    api("/api/channels", {
+    api("/api/channels/sync", {
       method: "PUT",
       body: JSON.stringify({
         channels,
         threads: Object.values(channelThreads).flat(),
         messages: Object.values(messagesByChannel).flat(),
       }),
-    }).catch(() => {
-      // Browser storage remains the fallback if the local Squad bridge is unavailable.
+    }).catch((error) => {
+      setChannelOperationError(`Channel changes could not be saved: ${error.message}. Reconnect and try again.`);
     });
   }, [channels, channelThreads, messagesByChannel, channelsBridgeReady]);
 
@@ -5085,20 +5221,24 @@ function App() {
   // conversation it concerns is on screen. An empty route means nothing is
   // focused (window hidden or blurred), so the bridge still notifies then.
   useEffect(() => {
+    const windowId = /AutohandSquadQuickChat\//.test(navigator.userAgent) ? "quick-chat" : "main";
+    const actualRoute = () => route.startsWith("/quick-chat") ? memberChatPath(new URLSearchParams(route.split("?")[1] || "").get("member")) : routeWithoutModalParams(route);
     const report = (value) =>
-      api("/api/notifications/focus", { method: "POST", body: JSON.stringify({ route: value }) }).catch(() => {});
-    const visibleRoute = () => (document.visibilityState === "visible" ? routeWithoutModalParams(route) : "");
+      api("/api/notifications/focus", { method: "POST", body: JSON.stringify({ route: value, windowId }) }).catch(() => {});
+    const visibleRoute = () => (document.visibilityState === "visible" && document.hasFocus() ? actualRoute() : "");
     report(visibleRoute());
     const onVisibility = () => report(visibleRoute());
-    const onFocus = () => report(routeWithoutModalParams(route));
+    const onFocus = () => report(actualRoute());
     const onBlur = () => report("");
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onFocus);
     window.addEventListener("blur", onBlur);
+    const heartbeat = window.setInterval(() => report(visibleRoute()), 15_000);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("blur", onBlur);
+      window.clearInterval(heartbeat);
     };
   }, [route]);
 
@@ -5163,6 +5303,8 @@ function App() {
   }
 
   function sendTestNotification() {
+    const native = getNativeNotificationClient();
+    if (native) return native.test({ requestPermission: true });
     return api("/api/notifications/test", { method: "POST", body: "{}" });
   }
 
@@ -5224,7 +5366,7 @@ function App() {
     return String(params.get("handoff") || "");
   }, [route]);
   useEffect(() => {
-    if (!requestedHandoffId || route.split("?")[0] !== INBOX_ROUTE) return;
+    if (!requestedHandoffId || !isWorkRoute(route)) return;
     const index = inboxHandoffs.findIndex((item) => (item.task?.handoffs || []).some((handoff) => handoff.id === requestedHandoffId));
     if (index >= 0) {
       const heading = localeCopy.inboxHandoffs || "Handoffs waiting";
@@ -5275,14 +5417,21 @@ function App() {
   // delete behind a confirmation (ADR-0027).
   const [pendingMemberDelete, setPendingMemberDelete] = useState(null);
   async function toggleMemberBreak(agent) {
-    if (isOnBreak(agent)) {
-      updateAgent(agent.id, endBreak());
-      return;
+    try {
+      await setMemberBreak(agent.id, !isOnBreak(agent));
+    } catch (error) {
+      appendMessage(agent.id, { id: `break-error-${Date.now()}`, role: "agent", authorName: "Squad", body: `Could not change the break: ${error.message}`, status: "complete", local: true });
     }
-    // Stop first: a break means the member is not working, so nothing should
-    // still be running when the status flips.
-    await stopMember(agent.id).catch(() => {});
-    updateAgent(agent.id, beginBreak(agent));
+  }
+
+  async function setMemberBreak(agentId, active) {
+    await api(`/api/members/${encodeURIComponent(agentId)}/break`, {
+      method: "POST", body: JSON.stringify({ active }),
+    });
+    const member = membersRef.current.find((item) => item.id === agentId);
+    updateAgent(agentId, active ? beginBreak(member) : endBreak());
+    if (active) await stopMember(agentId);
+    await refreshMemberGoals();
   }
   const renderMemberMenu = useCallback(
     (agent) => (
@@ -5461,6 +5610,7 @@ function App() {
       try {
         const data = await api("/api/channels");
         if (!cancelled && Array.isArray(data?.channels)) {
+          setAgentChannelActions(Array.isArray(data.agentChannelActions) ? data.agentChannelActions : []);
           setChannels((current) => {
             const byId = new Map(current.map((channel) => [channel.id, channel]));
             for (const record of data.channels.map(normalizeChannelCopy).filter(Boolean)) {
@@ -5471,7 +5621,8 @@ function App() {
                 byId.set(record.id, record);
               }
             }
-            return mergeSeedChannels(Array.from(byId.values()));
+            const deleted = new Set(data.deletedChannelIds || []);
+            return mergeSeedChannels(Array.from(byId.values())).filter(channel => !deleted.has(channel.id));
           });
           if (Array.isArray(data.threads) && data.threads.length) {
             setChannelThreads((current) => {
@@ -5526,12 +5677,29 @@ function App() {
       }
     }
   }, []);
+  const channelPurposeRunning = agentChannelActions.some(action => action.deliveries?.some(delivery => ["queued", "running"].includes(delivery.status)));
+  useEffect(() => {
+    if (!channelPurposeRunning) return undefined;
+    const timer = window.setInterval(() => { void reloadChannelsFromBridge(); }, 750);
+    return () => window.clearInterval(timer);
+  }, [channelPurposeRunning, reloadChannelsFromBridge]);
+
+  async function decideChannelProposal(id, decision) {
+    await api(`/api/channel-actions/${encodeURIComponent(id)}/${decision}`, { method: "POST", body: "{}" });
+    await reloadChannelsFromBridge();
+  }
+
   useEffect(() => {
     cancelChannelLoadRef.current = false;
     void reloadChannelsFromBridge();
     return () => {
       cancelChannelLoadRef.current = true;
     };
+  }, [reloadChannelsFromBridge]);
+  useEffect(() => {
+    const source = new EventSource("/api/channels/events");
+    source.addEventListener("changed", () => { void reloadChannelsFromBridge(); });
+    return () => source.close();
   }, [reloadChannelsFromBridge]);
 
   useEffect(() => {
@@ -5684,6 +5852,55 @@ function App() {
     await loadPresence();
     return result;
   }
+  const refreshMemberGoals = useCallback(async () => {
+    try {
+      const data = await api("/api/goals");
+      const goals = Array.isArray(data) ? data : data?.goals || [];
+      setMemberGoals(goals);
+      setMemberGoalsError("");
+      setMessagesByAgent((current) => reconcileGoalMessages(current, goals, membersRef.current, localeResolution.locale));
+      return goals;
+    } catch (error) {
+      setMemberGoalsError("Goal updates are unavailable. Check the local runtime.");
+      throw error;
+    }
+  }, [localeResolution.locale]);
+  useEffect(() => {
+    let cancelled = false;
+    let pending = false;
+    async function pollMemberWork() {
+      if (cancelled || pending) return;
+      pending = true;
+      await Promise.allSettled([
+        refreshMemberGoals(),
+        api("/api/members/breaks").then((records) => {
+          if (cancelled) return;
+          setAgents((current) => {
+            let changed = false;
+            const next = current.map((member) => {
+              const record = records?.[member.id];
+              if (!record || typeof record.onBreak !== "boolean") return member;
+              const onBreak = isOnBreak(member);
+              if (onBreak === record.onBreak) return member;
+              changed = true;
+              return { ...member, ...(record.onBreak ? { status: "paused", breakStartedAt: record.breakStartedAt || "" } : endBreak()) };
+            });
+            return changed ? next : current;
+          });
+        }),
+      ]);
+      pending = false;
+    }
+    void pollMemberWork();
+    const timer = window.setInterval(pollMemberWork, 2500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [refreshMemberGoals]);
+
+  async function controlMemberGoal(action, goal) {
+    const updated = await api(`/api/goals/${encodeURIComponent(goal.id)}/${action}`, { method: "POST" });
+    await refreshMemberGoals();
+    return updated;
+  }
   const remoteMembersContextValue = useMemo(
     () => ({ remoteByMember, refreshRemoteMembers }),
     [remoteByMember, refreshRemoteMembers]
@@ -5821,6 +6038,16 @@ function App() {
   useEffect(() => {
     persistLocal(STORAGE_KEYS.improvement, normalizeImprovementSettings(improvementSettings));
   }, [improvementSettings]);
+  const observerMembers = useMemo(() => agents.map(agent => ({ ...agentLaunchPayload(agent, agent.workspace), status: agent.status, profile: buildAgentProfile(agent, agent.workspace) })), [agents]);
+  const projectObserver = useProjectObserver({
+    api, members: observerMembers, enabled: improvementSettings.observeAssignedProjects,
+    ready: bridgeAnswered && !runtime?.bridgeUnavailable, signedIn: runtime?.account?.signedIn === true,
+    compact: route.split("?")[0] === "/quick-chat",
+    onNotice: notice => {
+      if (!notice?.memberId || !notice?.id || !notice?.body) return;
+      appendMessage(notice.memberId, { id: notice.id, role: "agent", body: notice.body, status: "complete", projectObservation: true, startedAt: notice.createdAt, completedAt: notice.createdAt, time: new Date(notice.createdAt).toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }) });
+    },
+  });
   const [memberBriefing, setMemberBriefing] = useState({ memberId: "", lines: [] });
   const activeMemberId = activeAgent?.id || "";
   const onMemberChat = String(route).startsWith("/conversations/new");
@@ -5871,7 +6098,7 @@ function App() {
     const warmWorkspace = normalizeSquadWorkspacePath(agent.workspace || fallbackWorkspace, runtime);
     api("/api/chat/warm", {
       method: "POST",
-      body: JSON.stringify({ agentId: activeMemberId, workspace: warmWorkspace, agent: agentLaunchPayload(agent, warmWorkspace) }),
+      body: JSON.stringify({ agentId: activeMemberId, workspace: warmWorkspace, agent: channelActionMember(agent, warmWorkspace), profile: [buildAgentProfile(agent, warmWorkspace), buildTeammateContext(agent, agents)].filter(Boolean).join("\n\n") }),
     }).catch(() => {});
     // Once per member per open: warming twice buys nothing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -5901,7 +6128,7 @@ function App() {
   }, [route]);
   const settingsSection = useMemo(() => {
     const params = new URLSearchParams(route.split("?")[1] || "");
-    const section = params.get("section") || "";
+    const section = params.get("section") || route.split("?")[0].match(/^\/settings\/([^/]+)$/)?.[1] || "";
     return SETTINGS_SECTION_IDS.includes(section) ? section : "";
   }, [route]);
 
@@ -6010,9 +6237,16 @@ function App() {
         }),
     [channels, unreadChannelIds, messagesByChannel]
   );
-  const inboxReadMs = Date.parse(inboxReadAt || "") || 0;
-  const inboxNewItems = (items) => items.filter((item) => (Date.parse(item.at || "") || 0) >= inboxReadMs).length;
-  const inboxCount = inboxReplies.length + inboxUnreadChannels.length + inboxNewItems(inboxHandoffs) + inboxNewItems(inboxMemory);
+  const attentionWorkRows = useMemo(() => buildMissionRows({ agents, tasks, runs, runtime, workspaces }), [agents, tasks, runs, runtime, workspaces]);
+  const inboxCount = workAttentionCount({ replies: inboxReplies, unreadChannels: inboxUnreadChannels, approvals: inboxApprovals, handoffs: inboxHandoffs, memoryProposals: inboxMemory, rows: attentionWorkRows }) + (sidebarCounts.permissionWarnings || 0) + agentChannelActions.filter(action => action.status === "proposed").length;
+  const attentionBadge = useMemo(() => getAttentionBadgeClient(), []);
+  useEffect(() => {
+    if (!attentionBadge || !bridgeAnswered || runtime?.bridgeUnavailable) return;
+    void attentionBadge.setCount(runtime?.account?.signedIn ? inboxCount : 0).catch(() => {
+      // Keep chat and the authoritative Needs you list working if macOS rejects
+      // a badge. A later count/account update can retry the native operation.
+    });
+  }, [attentionBadge, bridgeAnswered, runtime?.bridgeUnavailable, runtime?.account?.signedIn, inboxCount]);
 
   const accountProfile = useMemo(() => accountProfileFor(runtime?.account), [runtime?.account]);
   async function signOut() {
@@ -6028,10 +6262,10 @@ function App() {
     }
   }
   const accountContextValue = useMemo(
-    () => ({ profile: accountProfile, signOut, signingOut, openFeedback }),
+    () => ({ profile: accountProfile, signOut, signingOut, openFeedback, openAppInfo, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult, upgradeApp, openReleasePage }),
     // signOut / openFeedback are stable closures over state setters and route.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accountProfile, signingOut, route]
+    [accountProfile, signingOut, route, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult]
   );
 
   // Native menu bar (desktop shell): File › New › Agent / Channel, View › ….
@@ -6046,7 +6280,7 @@ function App() {
         setCreateChannelRequest((count) => count + 1);
         break;
       case "inbox":
-        navigate(INBOX_ROUTE);
+        navigate(inboxPath());
         break;
       case "agents":
         navigate(SQUAD_DIRECTORY_ROUTE);
@@ -6059,6 +6293,9 @@ function App() {
         break;
       case "settings":
         openSettings();
+        break;
+      case "check-upgrades":
+        checkForUpgrades();
         break;
       case "search":
         setSearchOpen(true);
@@ -6078,9 +6315,30 @@ function App() {
     setMobileSidebarOpen(false);
   }
 
-  function openSettings() {
-    navigate("/settings");
+  function openSettings(section) {
+    navigate(section === "updates" ? "/settings/updates" : "/settings");
   }
+
+  function checkForUpgrades() {
+    navigate("/settings?section=updates");
+    void refreshUpdates(true);
+  }
+
+  function openAppInfo(page = "about") {
+    if (!["about", "policies", "changelog", "licenses"].includes(page)) return;
+    window.location.assign(`/app-info/${page}?window=1`);
+  }
+
+  useEffect(() => {
+    const { path, params } = splitRoute(route);
+    if (!path.startsWith("/settings") || params.get("check") !== "1") return;
+    const target = routeWithParams(route, { check: null });
+    window.history.replaceState({}, "", target);
+    setRoute(target);
+    void refreshUpdates(true);
+    // An explicit link check is consumed once, including on browser fallback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route]);
 
   function openAnalytics() {
     navigate("/usage");
@@ -6140,8 +6398,9 @@ function App() {
   // first message.
   async function startFirstConversation({ template, name, folder, prompt }) {
     const workspace = normalizeSquadWorkspacePath(folder || fallbackWorkspace, runtime);
-    updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete", selectedWorkspace: workspace, memberReady: true });
-    await createAgent(
+    const memberId = onboardingIsIncomplete(onboardingState) && onboardingState.memberId ? onboardingState.memberId : createSquadMemberId();
+    updateOnboardingState({ status: ONBOARDING_STATUS_ACTIVE, lastStep: "talk", selectedWorkspace: workspace, memberId });
+    const agent = await createAgent(
       {
         employeeType: template.id,
         name,
@@ -6156,8 +6415,10 @@ function App() {
         brainCard: normalizeBrainCard(template.brainCard, template),
         harness: normalizeHarnessAssignmentCopy(null),
       },
-      { prompt }
+      { id: memberId, prompt, requireProvision: true, navigate: false }
     );
+    updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete", memberReady: true });
+    navigate(routeWithParams(memberChatPath(agent.id), { prompt: prompt || null }));
   }
 
   function finishOnboarding() {
@@ -6186,26 +6447,52 @@ function App() {
     navigate(routeWithoutModalParams(route));
   }
 
-  function closeAbout() {
-    navigate(routeWithoutModalParams(route));
-  }
+  useEffect(() => {
+    if (!aboutOpenFromRoute(route)) return;
+    const target = routeWithoutModalParams(route);
+    window.history.replaceState({}, "", target);
+    setRoute(target);
+    openAppInfo("about");
+  }, [route]);
 
   function updateAgent(agentId, patch) {
-    setAgents((current) =>
-      current.map((agent) => {
+    const publish = () => {
+      sharedConversationChannelRef.current?.postMessage({ type: "member.patch", memberId: agentId, patch, at: new Date().toISOString() });
+      setAgents(current => current.map(agent => {
         if (agent.id !== agentId) return agent;
-        // A gained skill or a new memory is the part of a member's history a
-        // person cannot see anywhere else, so it goes on the record and shows
-        // up in the next briefing (ADR-0028).
         recordSkillAndMemoryChanges(agent, patch);
         return { ...agent, ...patch };
-      })
-    );
+      }));
+    };
+    const accessChanged = ["permissions", "projects", "workspace", "name", "instructions", "brainCard", "harness", "skills", "modelAssignment", "role"].some(key => key in patch);
+    if (!accessChanged) { publish(); return Promise.resolve(); }
+    const previous = memberAccessWritesRef.current.get(agentId);
+    const entry = { member: previous?.member, promise: null };
+    entry.promise = (previous?.promise || Promise.resolve()).catch(() => {}).then(async () => {
+      const current = previous?.member || membersRef.current.find(member => member.id === agentId);
+      if (!current) throw new Error("This teammate is no longer available.");
+      const next = { ...current, ...patch };
+      await api(`/api/members/${encodeURIComponent(agentId)}/channel-access`, { method: "PUT", body: JSON.stringify({ agent: channelActionMember(next), profile: buildAgentProfile(next, next.workspace) }) });
+      entry.member = next;
+      publish();
+    }).catch(error => {
+      setChannelOperationError(`Could not save ${membersRef.current.find(member => member.id === agentId)?.name || "teammate"} settings: ${error.message}`);
+      return { error: error.message };
+    });
+    memberAccessWritesRef.current.set(agentId, entry);
+    return entry.promise;
   }
 
-  function deleteAgent(agentId) {
+  async function deleteAgent(agentId) {
     const normalized = normalizeSquadMemberId(agentId);
     if (!normalized) return;
+    try {
+      await memberAccessWritesRef.current.get(agentId)?.promise;
+      await api(`/api/members/${encodeURIComponent(agentId)}/channel-access`, { method: "PUT", body: JSON.stringify({ removed: true }) });
+    } catch (error) {
+      setChannelOperationError(`Could not remove this teammate: ${error.message}`);
+      return;
+    }
     // Running work stops before the member disappears (ADR-0016).
     stopMember(agentId).catch(() => {});
     setAgents((current) => current.filter((agent) => normalizeSquadMemberId(agent.id) !== normalized));
@@ -6335,10 +6622,12 @@ function App() {
   }
 
   function appendMessage(agentId, message) {
+    const event = { type: "message.append", memberId: agentId, at: new Date().toISOString(), message, conversationStartedAt: membersRef.current.find((item) => item.id === agentId)?.conversationStartedAt };
+    sharedConversationChannelRef.current?.postMessage(event);
     setMessagesByAgent((current) => {
       const messageAgent = agents.find((item) => item.id === agentId) || activeAgent;
       const existing = current[agentId] || initialMessages(messageAgent?.name || "Squad member");
-      return { ...current, [agentId]: [...existing, message] };
+      return applySharedConversationEvent({ ...current, [agentId]: existing }, event);
     });
   }
 
@@ -6413,58 +6702,70 @@ function App() {
   }, [improvementSettings.enabled, reviewMembers]);
 
   function updateMessage(agentId, messageId, patch) {
-    setMessagesByAgent((current) => {
-      const existing = current[agentId] || [];
-      return {
-        ...current,
-        [agentId]: existing.map((message) =>
-          message.id === messageId ? { ...message, ...patch } : message
-        ),
-      };
-    });
+    const event = { type: "message.patch", memberId: agentId, messageId, patch, at: new Date().toISOString(), conversationStartedAt: membersRef.current.find((item) => item.id === agentId)?.conversationStartedAt };
+    sharedConversationChannelRef.current?.postMessage(conversationEventForSharing(event));
+    setMessagesByAgent((current) => applySharedConversationEvent(current, event));
   }
 
-  function startNewConversation(agentId) {
+  async function startNewConversation(agentId, { preserveRoute = false } = {}) {
     const agent = agents.find((item) => item.id === agentId) || activeAgent;
     if (!agent) return;
+    try {
+      for (const goal of memberGoals.filter((item) => item.agentId === agentId && isGoalRunning(item))) {
+        await controlMemberGoal("pause", goal);
+      }
+    } catch (error) {
+      appendMessage(agent.id, { id: `new-chat-error-${Date.now()}`, role: "agent", authorName: "Squad", body: `Could not start a new chat: ${error.message || "the active goal could not be paused"}`, status: "error" });
+      return;
+    }
     const timestamp = new Date().toISOString();
     // Drop the warm CLI session so the next message starts a clean context.
     api("/api/chat/reset", { method: "POST", body: JSON.stringify({ agentId: agent.id }) }).catch(() => {});
-    setMessagesByAgent((current) => ({
-      ...current,
-      [agent.id]: initialMessages(agent.name),
-    }));
-    updateAgent(agent.id, { lastConversationAt: timestamp, updatedAt: timestamp });
-    navigate(memberChatPath(agent.id));
+    const event = { type: "messages.reset", memberId: agent.id, at: timestamp, cutoff: timestamp, messages: initialMessages(agent.name) };
+    sharedConversationChannelRef.current?.postMessage(event);
+    setMessagesByAgent((current) => applySharedConversationEvent(current, event));
+    updateAgent(agent.id, { lastConversationAt: timestamp, conversationStartedAt: timestamp, updatedAt: timestamp });
+    if (!preserveRoute) navigate(memberChatPath(agent.id));
   }
 
   // A member's reply can delegate to teammates by @mentioning them; each
   // mention becomes a handoff whose receiver starts immediately, bounded by
   // hop count so two members cannot ping-pong.
-  function delegateFromReply(agent, replyText, { workspace, hop = 0, launch = {} } = {}) {
-    if (hop >= DM_DELEGATION_MAX_HOPS) return;
+  async function delegateFromReply(agent, replyText, { workspace, hop = 0, launch = {} } = {}) {
+    if (hop >= DM_DELEGATION_MAX_HOPS) return [];
     const targets = mentionedSquadMembers(replyText, agents, agent.id).filter(
       (target) => target.id !== launch?.collaboration?.sourceAgentId && target.status !== "offline"
     );
+    const originalPrompt = launch.collaboration?.originalPrompt || launch.prompt || replyText;
+    const deliveries = [];
+    let parentTask = launch.collaboration?.task;
+    const incomingId = launch.collaboration?.handoff?.id;
+    if (incomingId && targets.length) setTasks(current => current.map(task => task.id === parentTask?.id ? { ...task, handoffs: task.handoffs.map(handoff => handoff.id === incomingId ? { ...handoff, ownReply: replyText, ownCompletedAt: new Date().toISOString(), waitingForChildren: true } : handoff) } : task));
     for (const target of targets.slice(0, 3)) {
       const handoffResult = createHandoff(
-        { type: "chat-mention", sourceAgentId: agent.id, workspace, autoAccept: true },
+        { type: "chat-mention", sourceAgentId: agent.id, task: parentTask, workspace, autoAccept: true, parentHandoffId: incomingId, originalPrompt, hop: hop + 1 },
         {
           targetAgentId: target.id,
           title: `Delegated by ${agent.name}`,
           reason: `${agent.name} asked for ${target.role || "help"}`,
-          requiredContext: replyText.slice(0, 4000),
+          requiredContext: [
+            `Original request: ${String(originalPrompt).slice(0, 1200)}`,
+            launch.collaboration?.handoff?.requiredContext ? `Earlier handoff: ${launch.collaboration.handoff.requiredContext.slice(0, 1200)}` : "",
+            `${agent.name} replied: ${replyText.slice(0, 1600)}`,
+          ].filter(Boolean).join("\n\n").slice(0, 4000),
           expectedOutput: "Do the part that belongs to your role and report the result back so it can be brought to the user.",
           sourceEvidence: workspace ? workspaceLabel(workspace, workspaces) : "",
         }
       );
       if (!handoffResult?.targetAgentId) continue;
-      const receiverPrompt = buildCollaborationRecipientPrompt(handoffResult, replyText, workspaces);
-      void Promise.resolve(
+      parentTask = handoffResult.task;
+      const receiverPrompt = buildCollaborationRecipientPrompt(handoffResult, originalPrompt, workspaces);
+      deliveries.push(Promise.resolve(
         sendChat(target.id, {
           prompt: receiverPrompt,
           workspace: handoffResult.workspace || workspace,
           hop: hop + 1,
+          requestId: handoffResult.handoff.requestId,
           collaboration: {
             role: "receiver",
             sourceAgentId: agent.id,
@@ -6472,49 +6773,21 @@ function App() {
             task: handoffResult.task || null,
             handoff: handoffResult.handoff || null,
             workspace: handoffResult.workspace || workspace,
-            originalPrompt: replyText,
+            originalPrompt,
           },
         })
       )
-        .then((result) => recordCollaborationResult(handoffResult, result || {}))
-        .catch((error) => recordCollaborationResult(handoffResult, { error: error?.message || "Receiving member could not complete the delegation." }));
+        .then((result) => {
+          recordCollaborationResult(handoffResult, result || {});
+          return { member: target.name, ...result };
+        })
+        .catch((error) => {
+          const result = { error: error?.message || "Receiving member could not complete the delegation." };
+          recordCollaborationResult(handoffResult, result);
+          return { member: target.name, ...result };
+        }));
     }
-  }
-
-  // `SQUAD_ACTION` lines: today only create_channel. The user is always a
-  // member; the purpose is posted as the channel's first prompt.
-  function applySquadActions(agent, actions = [], { workspace } = {}) {
-    for (const action of actions) {
-      if (action?.type !== "create_channel") continue;
-      const name = String(action.name || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
-      if (!name) continue;
-      const wanted = Array.isArray(action.members) ? action.members.map((item) => String(item || "").replace(/^@/, "").toLowerCase()) : [];
-      const memberIds = Array.from(
-        new Set([
-          agent.id,
-          ...agents.filter((item) => wanted.includes(String(item.name || "").toLowerCase()) || wanted.includes(mentionTokenForAgent(item).toLowerCase())).map((item) => item.id),
-        ])
-      );
-      const existing = channels.find((item) => item.name === name);
-      const channel = existing || createChannel({ name, visibility: CHANNEL_VISIBILITY_PUBLIC, memberIds, projects: workspace ? [{ name: basenameOf(workspace), path: workspace }] : [] }, { navigateTo: false, creatorId: agent.id });
-      if (!channel) continue;
-      const others = memberIds.filter((id) => id !== agent.id).map((id) => agents.find((item) => item.id === id)?.name).filter(Boolean);
-      appendMessage(agent.id, {
-        id: `channel-note-${Date.now().toString(36)}`,
-        role: "agent",
-        authorName: "Squad",
-        body: `${agent.name} ${existing ? "is using" : "created"} #${channel.name}${others.length ? ` with ${others.join(", ")}` : ""} and invited you. [Open #${channel.name}](${channelsPath(channel.id)})`,
-        time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
-        status: "complete",
-        local: true,
-      });
-      const purpose = String(action.purpose || "").trim();
-      if (purpose && !existing) {
-        window.setTimeout(() => {
-          void sendChannelPrompt(channel.id, { prompt: `${agent.name} opened this channel: ${purpose}` });
-        }, 50);
-      }
-    }
+    return Promise.all(deliveries);
   }
 
   async function sendChat(agentId, launch) {
@@ -6527,12 +6800,18 @@ function App() {
     const selectedWorkspace = normalizeSquadWorkspacePath(launch.workspace || fallbackWorkspace, runtime);
     if (!prompt) return;
 
-    const id = `chat-${Date.now().toString(36)}`;
+    if (launch.collaboration?.role === "receiver" && chatMembersRef.current.get(agentId)) {
+      return { declined: "busy", reply: `${agent.name} is already working on another request. Retry this checkpoint after that request finishes.` };
+    }
+
+    const id = `chat-${crypto.randomUUID()}`;
+    const requestId = launch.requestId || (launch.collaboration?.role === "receiver" ? launch.collaboration.handoff?.requestId || launch.collaboration.handoff?.id : "") || id;
+    const checkpoint = launch.collaboration?.role === "receiver" ? { handoffId: launch.collaboration.handoff?.id, taskId: launch.collaboration.task?.id } : {};
     const collaborationContext = buildCollaborationProfileContext(launch.collaboration, agents, workspaces);
     const teamContext = buildTeammateContext(agent, agents, { hop: Number(launch.hop) || 0 });
     const profile = [buildAgentProfile(agent, selectedWorkspace), teamContext, collaborationContext].filter(Boolean).join("\n\n");
     touchAgent(agentId, startedAt);
-    appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time });
+    appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time, startedAt, requestId, ...checkpoint });
 
     // A member on a break declines rather than silently queueing the work.
     const availability = memberAvailability(agent, localeCopy);
@@ -6547,7 +6826,7 @@ function App() {
         startedAt,
         completedAt: startedAt,
       });
-      return;
+      return { declined: availability.reason, reply: availability.reply };
     }
 
     appendMessage(agentId, {
@@ -6557,22 +6836,27 @@ function App() {
       status: "loading",
       time,
       startedAt,
+      requestId,
+      ...checkpoint,
     });
 
-    const canvasAttachment = await attachCanvasMentions(prompt, launch.canvases);
+    let canvasAttachment = { prompt };
     // The briefing rides on the first message of a fresh conversation, not on
     // the system prompt: the warm session pool keys on the system prompt, so
     // a briefing that changes with every visit would cold-start every chat
     // (ADR-0028, and the 42 s cold start measured in ADR-0030).
     const openingBriefing = (messagesByAgent[agentId] || []).length === 0 ? briefingContext(briefingForActiveMember) : "";
     const payload = {
+      requestId,
+      squadMembers: agents.map(member => channelActionMember(member)),
       agentId,
+      mode: launch.mode === "goal" ? "goal" : "prompt",
       prompt: [openingBriefing, canvasAttachment.prompt].filter(Boolean).join("\n\n"),
       workspace: selectedWorkspace,
       policy: launch.policy,
       model: launch.model,
       profile,
-      agent: agentLaunchPayload(agent, selectedWorkspace),
+      agent: channelActionMember(agent, selectedWorkspace),
       collaboration: launch.collaboration || null,
       ...(canvasAttachment.canvasId ? { canvasId: canvasAttachment.canvasId, canvasDir: canvasAttachment.canvasDir } : {}),
     };
@@ -6582,8 +6866,19 @@ function App() {
     let streamError = null;
     let completed = false;
     let finalResult = null;
+    let usageRecorded = false;
+    const recordUsage = () => {
+      if (usageRecorded) return;
+      usageRecorded = true;
+      recordMemberUsed(agent, launch.mode === "goal" ? "goal" : "dm");
+      recordFeatureUsed(launch.mode === "goal" ? "goal" : "dm", launch.mode === "goal" ? "start" : "send");
+    };
 
+    chatMembersRef.current.set(agentId, (chatMembersRef.current.get(agentId) || 0) + 1);
     try {
+      canvasAttachment = await attachCanvasMentions(prompt, launch.canvases);
+      payload.prompt = [openingBriefing, canvasAttachment.prompt].filter(Boolean).join("\n\n");
+      if (canvasAttachment.canvasId) Object.assign(payload, { canvasId: canvasAttachment.canvasId, canvasDir: canvasAttachment.canvasDir });
       await streamApi(
         "/api/chat/stream",
         {
@@ -6608,7 +6903,24 @@ function App() {
             return;
           }
 
+          if (event === "goal" && data?.id) {
+            if (data.status === "running") recordUsage();
+            const patch = goalMessagePatch(data);
+            updateMessage(agentId, `${id}-a`, { ...patch, ...(isGoalRunning(data) && streamedAnswer ? { body: streamedAnswer } : {}) });
+            setMemberGoals((current) => [data, ...current.filter((goal) => goal.id !== data.id)]);
+            return;
+          }
+          if (event === "progress") {
+            updateMessage(agentId, `${id}-a`, { progress: data });
+            return;
+          }
+          if (event === "computer-use" && data?.sessionId) {
+            updateMessage(agentId, `${id}-a`, { computerUse: data });
+            return;
+          }
+
           if (event === "sdk") {
+            if (data.type !== "error") recordUsage();
             if (data.type === "message_delta" && data.delta) {
               streamedAnswer = `${streamedAnswer}${data.delta}`;
             } else if (data.type === "message_end" && data.content) {
@@ -6630,6 +6942,7 @@ function App() {
           }
 
           if (event === "done") {
+            if (!data.declined) recordUsage();
             completed = true;
             const replyTime = new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" });
             const completedAt = new Date().toISOString();
@@ -6644,9 +6957,12 @@ function App() {
               durationMs: Number.isFinite(serverDurationMs) ? serverDurationMs : Math.round(performance.now() - requestStartedAt),
               transport: data.transport || "",
               effectiveModel: data.effectiveModel,
+              goal: data.goal || null,
+              progress: data.progress || (data.goal ? goalProgress(data.goal) : null),
+              declined: data.declined ? data.reason || "break" : "",
+              computerUse: data.computerUse || null,
             };
-            const parsedActions = parseSquadActions(finalResult.reply);
-            if (parsedActions.actions.length) finalResult.reply = parsedActions.text || finalResult.reply;
+            void reloadChannelsFromBridge();
             updateMessage(agentId, `${id}-a`, {
               body: finalResult.reply,
               trace: finalResult.trace,
@@ -6661,11 +6977,11 @@ function App() {
               transport: finalResult.transport,
               effectiveModel: finalResult.effectiveModel,
               activityLabel: "",
+              ...(finalResult.goal ? goalMessagePatch(finalResult.goal) : {}),
+              ...(finalResult.progress ? { progress: finalResult.progress } : {}),
+              ...(finalResult.computerUse ? { computerUse: finalResult.computerUse } : {}),
+              declined: finalResult.declined,
             });
-            window.setTimeout(() => {
-              applySquadActions(agent, parsedActions.actions, { workspace: finalResult.workspace || selectedWorkspace });
-              delegateFromReply(agent, finalResult.reply, { workspace: finalResult.workspace || selectedWorkspace, hop: Number(launch.hop) || 0, launch });
-            }, 0);
             return;
           }
 
@@ -6697,6 +7013,16 @@ function App() {
           status: "complete",
         });
       }
+      if (completed && !launch.signal?.aborted && !finalResult.declined && (!finalResult.goal || finalResult.goal.status === "completed")) {
+        const delegated = await delegateFromReply(agent, finalResult.reply, { workspace: finalResult.workspace || selectedWorkspace, hop: Number(launch.hop) || 0, launch });
+        if (delegated.length) {
+          finalResult = {
+            ...finalResult,
+            reply: [finalResult.reply, ...delegated.map(result => `${result.member} returned:\n${result.reply || result.error || "No final reply was returned."}`)].join("\n\n"),
+            ...(delegated.some(result => result.error || result.declined || result.stopped) ? { error: delegated.filter(result => result.error || result.declined || result.stopped).map(result => result.error || `${result.member} did not complete the handoff.`).join(" ") } : {}),
+          };
+        }
+      }
       return finalResult;
     } catch (error) {
       const completedAt = new Date().toISOString();
@@ -6727,6 +7053,8 @@ function App() {
         durationMs: Math.round(performance.now() - requestStartedAt),
       };
     } finally {
+      const remaining = (chatMembersRef.current.get(agentId) || 1) - 1;
+      if (remaining) chatMembersRef.current.set(agentId, remaining); else chatMembersRef.current.delete(agentId);
       recordObservedEdits(agentId, liveEvents, { messageId: `${id}-a`, workspace: selectedWorkspace });
       // Learn from the task it just finished, not hours later (ADR-0029).
       void reviewMembers({ memberId: agentId, force: true });
@@ -6750,53 +7078,41 @@ function App() {
     }));
   }
 
-  function createChannel(draft, { navigateTo = true, creatorId = "user" } = {}) {
-    const timestamp = new Date().toISOString();
-    const channel = normalizeChannelCopy({
-      id: `channel_${Date.now().toString(36)}`,
-      name: draft.name,
-      visibility: draft.visibility,
-      memberIds: draft.memberIds,
-      projects: draft.projects,
-      creatorId,
-      autoModeDefault: draft.autoModeDefault === true,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-    if (!channel) return null;
-    setChannels((current) => [...current, channel]);
+  async function createChannel(draft, { navigateTo = true, creatorId = "user" } = {}) {
+    const channel = normalizeChannelCopy(await api("/api/channels", {
+      method: "POST", body: JSON.stringify({ ...draft, id: draft.id || `channel-${crypto.randomUUID()}`, creatorId }),
+    }));
+    if (!channel) throw new Error("The bridge did not return a valid channel. Try again.");
+    setChannels((current) => [...current.filter(item => item.id !== channel.id), channel]);
+    setChannelOperationError("");
     if (navigateTo) navigate(channelsPath(channel.id));
     return channel;
   }
 
-  function updateChannel(channelId, patch) {
-    const timestamp = new Date().toISOString();
-    setChannels((current) =>
-      current.map((channel) =>
-        channel.id === channelId
-          ? normalizeChannelCopy({
-              ...channel,
-              ...patch,
-              id: channel.id,
-              creatorId: channel.creatorId,
-              createdAt: channel.createdAt,
-              updatedAt: timestamp,
-            }) || channel
-          : channel
-      )
-    );
+  async function updateChannel(channelId, patch) {
+    try {
+      const next = normalizeChannelCopy(await api(`/api/channels/${encodeURIComponent(channelId)}`, { method: "PATCH", body: JSON.stringify(patch) }));
+      setChannels(current => current.map(channel => channel.id === channelId ? next || channel : channel));
+      setChannelOperationError("");
+      return next;
+    } catch (error) { setChannelOperationError(`Channel changes could not be saved: ${error.message}. Try the action again.`); return null; }
   }
 
-  function toggleChannelMember(channelId, memberId) {
+  async function toggleChannelMember(channelId, memberId) {
     const channel = channels.find((item) => item.id === channelId);
     if (!channel) return;
-    const memberIds = channel.memberIds.includes(memberId)
-      ? channel.memberIds.filter((id) => id !== memberId)
-      : [...channel.memberIds, memberId];
-    updateChannel(channelId, { memberIds });
+    try {
+      const next = normalizeChannelCopy(await api(`/api/channels/${encodeURIComponent(channelId)}/members`, { method: "POST", body: JSON.stringify(channel.memberIds.includes(memberId) ? { remove: [memberId] } : { add: [memberId] }) }));
+      setChannels(current => current.map(item => item.id === channelId ? next || item : item));
+      setChannelOperationError("");
+      return next;
+    } catch (error) { setChannelOperationError(`Membership could not be saved: ${error.message}. Try the action again.`); return null; }
   }
 
-  function deleteChannel(channelId) {
+  async function deleteChannel(channelId) {
+    try { await api(`/api/channels/${encodeURIComponent(channelId)}`, { method: "DELETE" }); }
+    catch (error) { setChannelOperationError(`Channel could not be deleted: ${error.message}. Try again.`); return; }
+    setChannelOperationError("");
     removeSearchDocs([`channel:${channelId}`]).catch(() => {});
     setChannels((current) => current.filter((channel) => channel.id !== channelId));
     setChannelThreads((current) => {
@@ -6924,6 +7240,8 @@ function App() {
       .join("\n\n");
     const canvasAttachment = await attachCanvasMentions(prompt, canvases);
     const payload = {
+      requestId: messageId,
+      squadMembers: agents.map(member => channelActionMember(member)),
       agentId: agent.id,
       prompt: canvasAttachment.prompt,
       workspace: selectedWorkspace,
@@ -6935,7 +7253,7 @@ function App() {
       // back to the CLI when the SDK cannot start (ADR-0030).
       timeoutMs: 300000,
       profile,
-      agent: withChannelProjects(agentLaunchPayload(agent, selectedWorkspace), channelProjects),
+      agent: withChannelProjects(channelActionMember(agent, selectedWorkspace), channelProjects),
       channelId: channel.id,
       threadId,
       parentMessageId,
@@ -6971,8 +7289,15 @@ function App() {
     let finalReplyText = "";
     let settledStep = null;
     let liveEvents = [];
+    let channelUsageRecorded = false;
+    const recordChannelUsage = () => {
+      if (channelUsageRecorded) return;
+      channelUsageRecorded = true;
+      recordMemberUsed(agent, "channel");
+      recordFeatureUsed("channels", "send");
+    };
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 305000);
+    const timeout = window.setTimeout(() => controller.abort(), CHAT_STREAM_CEILING_MS);
     try {
       await streamApi(
         "/api/chat/stream",
@@ -6995,6 +7320,7 @@ function App() {
             return;
           }
           if (event === "sdk") {
+            recordChannelUsage();
             if (data.type === "message_delta" && data.delta) {
               streamedAnswer = `${streamedAnswer}${data.delta}`;
             } else if (data.type === "message_end" && data.content) {
@@ -7014,6 +7340,8 @@ function App() {
             return;
           }
           if (event === "done") {
+            void reloadChannelsFromBridge();
+            if (!data.declined) recordChannelUsage();
             completed = true;
             const completedAt = new Date().toISOString();
             const replyText = humanReadableReplyText(data.reply || streamedAnswer, data.trace, `${agent.name} returned no chat text.`);
@@ -7088,7 +7416,7 @@ function App() {
       const completedAt = new Date().toISOString();
       const details = error?.details || {};
       const message = isAbortError(error)
-        ? `${agent.name} could not answer: channel reply timed out waiting for its Autohand CLI.`
+        ? `${agent.name} could not answer: the channel reply exceeded its maximum runtime. Retry to continue.`
         : `${agent.name} could not answer: ${error.message}`;
       updateChannelMessage(channel.id, messageId, {
         body: message,
@@ -7606,7 +7934,7 @@ function App() {
   }, [channelsBridgeReady]);
 
   async function createAgent(draft, options = {}) {
-    const id = createSquadMemberId();
+    const id = options.id || createSquadMemberId();
     const timestamp = new Date().toISOString();
     const skills = normalizeSkillList(draft.skills);
     const workspace = normalizeSquadWorkspacePath(draft.workspace || fallbackWorkspace, runtime);
@@ -7646,30 +7974,37 @@ function App() {
       ...baseAgent,
       profileFiles: buildAgentProfileFiles({ ...baseAgent, profileFiles: draft.profileFiles }),
     };
-    setAgents((current) => [...current, agent]);
-    // A new member opens by saying what it is going to do, composed from its
-    // own configuration so it cannot promise something it is not set up for
-    // (ADR-0034). The old seed was a status line about isolated config.
-    setMessagesByAgent((current) => ({
-      ...current,
-      [id]: [
-        {
-          id: `intro-${id}`,
-          role: "agent",
-          body: introductionFor(agent, localeCopy),
-          status: "complete",
-          introduction: true,
-          time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
-          startedAt: timestamp,
-          completedAt: timestamp,
-        },
-      ],
-    }));
-    navigate(routeWithParams(memberChatPath(id), { prompt: options.prompt || null }));
+    function publishAgent(created) {
+      setAgents((current) => current.some((item) => item.id === id)
+        ? current.map((item) => item.id === id ? created : item)
+        : [...current, created]);
+      recordMemberCreated(created);
+      // A new member describes its own configuration (ADR-0034).
+      setMessagesByAgent((current) => ({
+        ...current,
+        [id]: current[id]?.length ? current[id] : [
+          {
+            id: `intro-${id}`,
+            role: "agent",
+            body: introductionFor(created, localeCopy),
+            status: "complete",
+            introduction: true,
+            time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
+            startedAt: timestamp,
+            completedAt: timestamp,
+          },
+        ],
+      }));
+      if (options.completeOnboarding) updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete", selectedWorkspace: workspace, selectedRoleId: agent.employeeType, memberName: agent.name, memberId: id, memberReady: true });
+      if (options.navigate !== false) navigate(routeWithParams(memberChatPath(id), { prompt: options.prompt || null }));
+    }
 
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 120000);
     try {
       const provision = await api("/api/agents/provision", {
         method: "POST",
+        signal: controller.signal,
         body: JSON.stringify({
           agentId: id,
           workspace: agent.workspace,
@@ -7678,11 +8013,13 @@ function App() {
         }),
       });
       const provisionedAt = new Date().toISOString();
-      updateAgent(id, {
+      const provisionedAgent = {
+        ...agent,
         skillInstall: { ...provision.skillInstall, status: provision.skillInstall?.failed?.length ? "partial" : "installed" },
         profileDocs: provision.profileDocs,
         updatedAt: provisionedAt,
-      });
+      };
+      publishAgent(provisionedAgent);
       // Provisioning outcomes are not memory proposals. A proposal is a
       // candidate fact the person accepts or rejects into a member's memory;
       // "skill X installed" and "skill X was not in the catalog" are results,
@@ -7692,20 +8029,11 @@ function App() {
       // on the member as `skillInstall` and read back on its Skills page as
       // installed / install failed, which is where someone looking for them
       // would look.
+      return provisionedAgent;
     } catch (error) {
-      const failedAt = new Date().toISOString();
-      updateAgent(id, {
-        skillInstall: {
-          source: AUTOHAND_SKILLS_REGISTRY_URL,
-          requested: skills,
-          installed: [],
-          failed: [{ id: "provision", reason: error.message }],
-          status: "failed",
-        },
-        updatedAt: failedAt,
-      });
-      // Same reasoning as above: a provisioning failure is an outcome, and it
-      // is already on the member as skillInstall.status "failed".
+      throw new Error(controller.signal.aborted ? "Preparing your teammate timed out. Your choices are saved; try again." : error.message || "Could not prepare your teammate. Try again.");
+    } finally {
+      if (timer !== null) window.clearTimeout(timer);
     }
   }
 
@@ -7713,6 +8041,11 @@ function App() {
     const agent = agents.find((item) => item.id === agentId) || activeAgent;
     const now = new Date();
     const time = now.toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" });
+    const availability = memberAvailability(agent, localeCopy);
+    if (!availability.canWork) {
+      appendMessage(agentId, { id: `run-declined-${Date.now()}`, role: "agent", body: availability.reply, status: "complete", declined: "break", time });
+      return;
+    }
     const prompt = String(launch.prompt || "").trim();
     const selectedWorkspace = normalizeSquadWorkspacePath(launch.workspace || fallbackWorkspace, runtime);
     const taskId = `task-${Date.now().toString().slice(-5)}`;
@@ -7988,18 +8321,20 @@ function App() {
     );
     const targetAgentId = normalizeSquadMemberId(draft.targetAgentId);
     const sourceAgent = agents.find((agent) => agent.id === sourceAgentId) || activeAgent;
-    const targetAgent = agents.find((agent) => agent.id === targetAgentId);
+    const targetAgent = membersRef.current.find((agent) => agent.id === targetAgentId);
     if (!targetAgent || !targetAgentId || targetAgentId === sourceAgentId) return;
+    if (declineBreakHandoff(targetAgent, sourceAgentId)) return;
     const autoAccept = source?.autoAccept === true || source?.type === "chat-mention";
 
     const baseTask = normalizeTaskCopy(
       sourceTask || {
-        id: `task-handoff-${Date.now().toString(36)}`,
+        id: `task-handoff-${crypto.randomUUID()}`,
         title: sourceRun?.title || draft.title || "Handoff from run",
         agentId: sourceAgentId,
         currentOwnerId: sourceAgentId,
         originAgentId: sourceAgentId,
-        project: workspaceLabel(sourceRun?.workspace || fallbackWorkspace, workspaces),
+        project: workspaceLabel(source?.workspace || sourceRun?.workspace || fallbackWorkspace, workspaces),
+        workspace: source?.workspace || sourceRun?.workspace || fallbackWorkspace,
         status: sourceRun?.status === "failed" ? "failed" : "running",
         source: sourceRun ? "run-handoff" : "conversation",
         createdAt: sourceRun?.startedAt || timestamp,
@@ -8008,9 +8343,13 @@ function App() {
         runtimeId: sourceRun?.id || null,
       }
     );
-    const handoffId = `handoff-${Date.now().toString(36)}`;
+    const handoffId = `handoff-${crypto.randomUUID()}`;
     const handoff = {
       id: handoffId,
+      requestId: handoffId,
+      parentHandoffId: source?.parentHandoffId || "",
+      originalPrompt: source?.originalPrompt || "",
+      hop: Number(source?.hop) || 1,
       fromAgentId: sourceAgentId,
       toAgentId: targetAgentId,
       status: autoAccept ? "accepted" : "pending",
@@ -8067,7 +8406,7 @@ function App() {
         ...(reroutedHandoffId
           ? [
               {
-                id: `timeline-${Date.now().toString(36)}-reroute`,
+                id: `timeline-${handoffId}-reroute`,
                 type: "handoff.rerouted",
                 evidenceType: "handoff",
                 at: timestamp,
@@ -8078,7 +8417,7 @@ function App() {
             ]
           : []),
         {
-          id: `timeline-${Date.now().toString(36)}-handoff`,
+          id: `timeline-${handoffId}-created`,
           type: "handoff.created",
           evidenceType: "handoff",
           at: timestamp,
@@ -8091,7 +8430,7 @@ function App() {
         ...(autoAccept
           ? [
               {
-                id: `timeline-${Date.now().toString(36)}-accepted`,
+                id: `timeline-${handoffId}-accepted`,
                 type: "handoff.accepted",
                 evidenceType: "handoff",
                 at: timestamp,
@@ -8106,9 +8445,18 @@ function App() {
     };
 
     setTasks((current) => {
-      const taskExists = current.some((task) => task.id === nextTask.id);
-      if (!taskExists) return [nextTask, ...current];
-      return current.map((task) => (task.id === nextTask.id ? nextTask : task));
+      const existing = current.find((task) => task.id === nextTask.id);
+      if (!existing) return [nextTask, ...current];
+      // Concurrent recipients can delegate from older snapshots of the same
+      // parent. Append this handoff to current state, retaining sibling results.
+      const merged = {
+        ...existing, ...nextTask,
+        status: (existing.handoffs || []).some(item => item.status === "failed") ? "blocked" : nextTask.status,
+        handoffs: [...(existing.handoffs || []).map(item => reroutedHandoffId && item.id === reroutedHandoffId ? { ...item, status: "rerouted", updatedAt: timestamp } : item), handoff],
+        assignments: [...(existing.assignments || []), assignment],
+        timeline: [...(existing.timeline || []), ...nextTask.timeline.slice(priorTimeline.length)],
+      };
+      return current.map((task) => task.id === nextTask.id ? merged : task);
     });
     const time = new Date(timestamp).toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" });
     appendMessage(targetAgentId, {
@@ -8231,54 +8579,59 @@ function App() {
     );
   }
 
-  function retryHandoff(task, handoff) {
-    if (!task || !handoff) return;
-    const retryMode = resolveHandoffRetryMode(handoffSettings, runtime);
-    if (retryMode !== "checkpoint") return;
+  async function retryHandoff(task, handoff) {
+    if (!task || !handoff || resolveHandoffRetryMode(handoffSettings, runtime) !== "checkpoint" || handoffRetriesRef.current.has(handoff.id)) return;
+    const saved = tasksRef.current.find(item => item.id === task.id);
+    let checkpoint = saved?.handoffs?.find(item => item.id === handoff.id);
+    if (!checkpoint || checkpoint.status !== "failed" || saved.status === "cancelled") return;
+    const visited = new Set();
+    while (checkpoint.waitingForChildren && checkpoint.ownCompletedAt) {
+      if (visited.has(checkpoint.id)) return;
+      visited.add(checkpoint.id);
+      const failedChild = [...saved.handoffs].reverse().find(child => child.parentHandoffId === checkpoint.id && child.status === "failed");
+      if (!failedChild) break;
+      checkpoint = failedChild;
+    }
+    if (handoffRetriesRef.current.has(checkpoint.id)) return;
+    const targetAgent = membersRef.current.find(member => member.id === checkpoint.toAgentId);
+    if (!targetAgent || declineBreakHandoff(targetAgent, checkpoint.fromAgentId)) return;
+    // A parent with a confirmed own result must recover its children first,
+    // otherwise retry would repeat already completed implementation or QA.
+    if (checkpoint.waitingForChildren && checkpoint.ownCompletedAt && saved.handoffs.some(child => child.parentHandoffId === checkpoint.id && child.status !== "completed")) {
+      markHandoffFailed(saved, checkpoint, "Retry the failed receiving checkpoint first. The completed source execution has been preserved.");
+      return;
+    }
+    handoffRetriesRef.current.add(checkpoint.id);
     const timestamp = new Date().toISOString();
-    const targetAgent = agents.find((agent) => agent.id === handoff.toAgentId);
-    const sourceAgent = agents.find((agent) => agent.id === handoff.fromAgentId);
-    const attempt = (Number(handoff.attempt) || 1) + 1;
-    const retriedHandoff = { ...handoff, status: "pending", attempt, updatedAt: timestamp };
-    setTasks((current) =>
-      current.map((item) =>
-        item.id === task.id
-          ? {
-              ...item,
-              agentId: handoff.toAgentId,
-              currentOwnerId: handoff.toAgentId,
-              status: "handoff-pending",
-              updatedAt: timestamp,
-              summary: `Retrying checkpoint handoff to ${targetAgent?.name || "target squad member"} (attempt ${attempt}).`,
-              handoffs: item.handoffs.map((record) => (record.id === handoff.id ? retriedHandoff : record)),
-              assignments: item.assignments.map((assignment) =>
-                assignment.handoffId === handoff.id ? { ...assignment, status: "pending", attempt, updatedAt: timestamp } : assignment
-              ),
-              timeline: [
-                ...(item.timeline || []),
-                {
-                  id: `timeline-${Date.now().toString(36)}-retry`,
-                  type: "handoff.retried",
-                  evidenceType: "handoff",
-                  at: timestamp,
-                  actorAgentId: handoff.fromAgentId,
-                  targetAgentId: handoff.toAgentId,
-                  handoffId: handoff.id,
-                  summary: `Retried failed checkpoint for ${targetAgent?.name || "target"} with preserved context.`,
-                },
-              ],
-            }
-          : item
-      )
-    );
-    appendMessage(handoff.toAgentId, {
-      id: `${handoff.id}-retry-${attempt}`,
-      role: "agent",
-      body: `${handoffContextText(retriedHandoff, task, sourceAgent, targetAgent)}\n\nFailure reason from previous attempt: ${handoff.failureReason || "not recorded"}`,
-      time: new Date(timestamp).toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
-      status: "handoff",
-    });
-    touchAgent(handoff.toAgentId, timestamp);
+    const sourceAgent = membersRef.current.find(member => member.id === checkpoint.fromAgentId);
+    const attempt = (Number(checkpoint.attempt) || 1) + 1;
+    const retried = { ...checkpoint, status: "accepted", attempt, acceptedAt: timestamp, updatedAt: timestamp, requestId: checkpoint.requestId || checkpoint.id, failureReason: "", interrupted: false };
+    const handoffResult = { task: saved, handoff: retried, sourceAgent, targetAgent, sourceAgentId: checkpoint.fromAgentId, targetAgentId: checkpoint.toAgentId, workspace: saved.workspace || targetAgent.workspace || fallbackWorkspace };
+    setTasks(current => current.map(item => item.id === saved.id ? { ...item, status: "running", currentOwnerId: targetAgent.id, agentId: targetAgent.id, updatedAt: timestamp,
+      summary: `Retrying the saved checkpoint with ${targetAgent.name} (attempt ${attempt}).`,
+      handoffs: item.handoffs.map(record => record.id === checkpoint.id ? retried : record),
+      assignments: item.assignments.map(record => record.handoffId === checkpoint.id ? { ...record, status: "running", attempt, updatedAt: timestamp } : record),
+      timeline: [...(item.timeline || []), { id: `retry-${checkpoint.id}-${attempt}`, type: "handoff.retried", evidenceType: "handoff", handoffId: checkpoint.id, at: timestamp, actorAgentId: checkpoint.fromAgentId, targetAgentId: checkpoint.toAgentId, summary: "Explicitly retried the saved recipient checkpoint; completed source work was retained." }],
+    } : item));
+    try {
+      const prompt = buildCollaborationRecipientPrompt(handoffResult, checkpoint.originalPrompt || saved.title, workspaces) + "\n\nPrevious attempt: " + (checkpoint.failureReason || "interrupted") + "\nReview existing files and saved evidence before making changes; do not repeat effects that are already complete.";
+      const result = await sendChat(targetAgent.id, { prompt, workspace: handoffResult.workspace, requestId: retried.requestId, hop: checkpoint.hop || 1,
+        collaboration: { role: "receiver", sourceAgentId: checkpoint.fromAgentId, targetAgentId: targetAgent.id, task: saved, handoff: retried, workspace: handoffResult.workspace, originalPrompt: checkpoint.originalPrompt || saved.title },
+      });
+      recordCollaborationResult(handoffResult, result || { error: "No final checkpoint result was returned." });
+    } catch (error) { markHandoffFailed(saved, retried, error.message || "Checkpoint retry failed."); }
+    finally { handoffRetriesRef.current.delete(checkpoint.id); }
+  }
+
+  function declineBreakHandoff(targetAgent, sourceAgentId) {
+    const availability = memberAvailability(targetAgent, localeCopy);
+    if (availability.canWork) return false;
+    const timestamp = new Date().toISOString();
+    const message = { id: `handoff-declined-${Date.now()}-${targetAgent.id}`, role: "agent", body: availability.reply, status: "complete", declined: "break", startedAt: timestamp, completedAt: timestamp, time: new Date(timestamp).toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }) };
+    appendMessage(targetAgent.id, message);
+    if (sourceAgentId && sourceAgentId !== targetAgent.id) appendMessage(sourceAgentId, { ...message, id: `${message.id}-source`, authorName: targetAgent.name });
+    recordFeatureUsed("handoff", "decline");
+    return true;
   }
 
   function recordCollaborationResult(handoffResult, result) {
@@ -8288,38 +8641,49 @@ function App() {
     const targetAgentId = normalizeSquadMemberId(handoffResult.targetAgentId || handoffResult.handoff.toAgentId);
     const sourceAgent = agents.find((agent) => agent.id === sourceAgentId) || handoffResult.sourceAgent;
     const targetAgent = agents.find((agent) => agent.id === targetAgentId) || handoffResult.targetAgent;
-    const hasError = Boolean(result?.error) && !result?.reply;
+    if (result?.declined) {
+      const reply = String(result.reply || "I'm on my break, so I'm not accepting new work or handoffs.");
+      setTasks((current) => current.map((task) => {
+        if (task.id !== handoffResult.task?.id) return task;
+        return {
+          ...task,
+          ...(task.currentOwnerId === targetAgentId ? { agentId: sourceAgentId, currentOwnerId: sourceAgentId, status: "blocked", summary: reply } : {}),
+          updatedAt: timestamp,
+          handoffs: (task.handoffs || []).map((handoff) => handoff.id === handoffResult.handoff.id ? { ...handoff, status: "failed", failureReason: reply, completedAt: "", updatedAt: timestamp } : handoff),
+          assignments: (task.assignments || []).map((assignment) => assignment.handoffId === handoffResult.handoff.id ? { ...assignment, status: "failed", failureReason: reply, result: "", updatedAt: timestamp } : assignment),
+        };
+      }));
+      appendMessage(sourceAgentId, { id: `${handoffResult.handoff.id}-declined`, role: "agent", authorName: targetAgent?.name || "Receiving member", body: reply, status: "complete", declined: result.declined, completedAt: timestamp });
+      return;
+    }
+    const hasError = Boolean(result?.error || result?.stopped);
+    const failureReason = result?.error || "The recipient stopped before completion.";
     const reply = String(result?.reply || "").trim();
     const summary = hasError
-      ? `${targetAgent?.name || "Receiving member"} could not complete the handoff: ${result.error}`
+      ? `${targetAgent?.name || "Receiving member"} could not complete the handoff: ${failureReason}`
       : `${targetAgent?.name || "Receiving member"} replied to the handoff.`;
 
     setTasks((current) =>
       current.map((task) => {
         if (task.id !== handoffResult.task?.id) return task;
         const isChatMention = handoffResult.handoff.channel === "chat-mention";
+        const handoffs = (task.handoffs || []).map(handoff => handoff.id === handoffResult.handoff.id ? { ...handoff, status: hasError ? "failed" : "completed", result: reply, failureReason: hasError ? failureReason : "", completedAt: hasError ? "" : timestamp, updatedAt: timestamp } : handoff);
+        const remaining = handoffs.some(handoff => ["accepted", "pending"].includes(handoff.status));
+        const failed = handoffs.some(handoff => handoff.status === "failed");
+        const status = isChatMention ? failed ? "blocked" : remaining ? "running" : "completed" : hasError ? "blocked" : task.status;
         return {
           ...task,
-          status: hasError ? "blocked" : isChatMention ? "completed" : task.status,
+          status,
+          ...(isChatMention && status === "completed" ? { agentId: task.originAgentId || sourceAgentId, currentOwnerId: task.originAgentId || sourceAgentId } : {}),
           summary: hasError ? summary : reply.slice(0, 240) || summary,
           updatedAt: timestamp,
-          handoffs: (Array.isArray(task.handoffs) ? task.handoffs : []).map((handoff) =>
-            handoff.id === handoffResult.handoff.id
-              ? {
-                  ...handoff,
-                  status: hasError ? "failed" : "completed",
-                  failureReason: hasError ? result.error : "",
-                  completedAt: hasError ? "" : timestamp,
-                  updatedAt: timestamp,
-                }
-              : handoff
-          ),
+          handoffs,
           assignments: (Array.isArray(task.assignments) ? task.assignments : []).map((assignment) =>
             assignment.handoffId === handoffResult.handoff.id
               ? {
                   ...assignment,
                   status: hasError ? "failed" : "completed",
-                  failureReason: hasError ? result.error : "",
+                  failureReason: hasError ? failureReason : "",
                   result: reply,
                   updatedAt: timestamp,
                 }
@@ -8337,7 +8701,7 @@ function App() {
               handoffId: handoffResult.handoff.id,
               summary,
               content: reply,
-              unresolvedRisks: hasError ? [result.error] : [],
+              unresolvedRisks: hasError ? [failureReason] : [],
             },
           ],
         };
@@ -8345,10 +8709,13 @@ function App() {
     );
 
     appendMessage(sourceAgentId, {
-      id: `${handoffResult.handoff.id}-result`,
+      id: `${handoffResult.handoff.id}${handoffResult.handoff.attempt > 1 ? `-retry-${handoffResult.handoff.attempt}` : ""}-result`,
       role: "agent",
+      handoffId: handoffResult.handoff.id,
+      taskId: handoffResult.task?.id,
+      requestId: handoffResult.handoff.requestId || handoffResult.handoff.id,
       body: hasError
-        ? `${targetAgent?.name || "The receiving member"} could not finish the handoff: ${result.error}`
+        ? `${targetAgent?.name || "The receiving member"} could not finish the handoff: ${failureReason}`
         : `${targetAgent?.name || "The receiving member"} came back with:\n\n${reply || "No response text was returned."}`,
       time: new Date(timestamp).toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
       status: hasError ? "error" : "handoff",
@@ -8412,15 +8779,13 @@ function App() {
   const isProfile = isMemberProfileRoute(route);
   const isCreate = isCreateMemberRoute(route);
   const isExtensions = routePath.startsWith("/extensions");
-  const isMissionControl = routePath === MISSION_CONTROL_ROUTE;
+  const isMissionControl = isWorkRoute(routePath);
   const isSquadDirectory = routePath === SQUAD_DIRECTORY_ROUTE || routePath === AGENTS_ROUTE;
-  const isInbox = routePath === INBOX_ROUTE;
   const isChannels = routePath === CHANNELS_ROUTE || routePath.startsWith(`${CHANNELS_ROUTE}/`);
   const isOnboarding = routePath === ONBOARDING_ROUTE;
   const isAnalytics = routePath === "/usage" || routePath.startsWith("/settings/analytics");
   const isSettings = routePath === "/settings" || routePath.startsWith("/settings/");
   const feedbackKind = feedbackKindFromRoute(route);
-  const aboutOpen = aboutOpenFromRoute(route);
 
   // Account gate: the squad runs on the user's Autohand account, so the
   // workspace opens only for a signed-in account. Until the runtime has
@@ -8431,7 +8796,7 @@ function App() {
       <SignInGate
         account={runtime.account}
         bridgeUnavailable={runtime.bridgeUnavailable === true}
-        startLogin={() => api("/api/harnesses/login", { method: "POST", body: JSON.stringify({ id: "autohand" }) })}
+        startLogin={() => { recordSignInStarted(); return api("/api/harnesses/login", { method: "POST", body: JSON.stringify({ id: "autohand" }) }); }}
         loginStatus={() => api("/api/harnesses/login?id=autohand")}
         refreshAccount={refreshRuntime}
       />
@@ -8440,6 +8805,10 @@ function App() {
 
   // Until the bridge has answered once, show what is actually being waited
   // on rather than an empty shell. Every row is a real check (ADR-0033).
+  if (!bridgeAnswered && routePath === "/quick-chat") {
+    return <div className="flex h-[100svh] items-center justify-center bg-background text-sm text-muted-foreground" role="status">Connecting to Squad…</div>;
+  }
+
   if (!bridgeAnswered) {
     return (
       <BootChecks
@@ -8458,6 +8827,40 @@ function App() {
           { id: "bridge", label: localeCopy.bootBridge || "Starting the local bridge", state: "waiting" },
         ]}
       />
+    );
+  }
+
+  if (routePath === "/quick-chat") {
+    const requested = new URLSearchParams(route.split("?")[1] || "").get("member");
+    const member = quickChatMemberSelection(agents, requested, entryFor);
+    const quickNavigate = (path) => path.startsWith("/quick-chat") ? navigate(path) : window.location.assign(path);
+    return (
+      <AccountContext.Provider value={accountContextValue}>
+      <SkinContext.Provider value={activeSkin}>
+      <PresenceContext.Provider value={presenceContextValue}>
+      <RemoteMembersContext.Provider value={remoteMembersContextValue}>
+      <TooltipProvider>
+        <div className="flex h-[100svh] min-h-0 flex-col bg-background text-foreground" data-testid="mac-quick-chat">
+          <QuickChatMemberPicker members={agents} activeMemberId={member?.id} entryFor={entryFor} copy={localeCopy} onSelect={(id) => navigate(`/quick-chat?member=${encodeURIComponent(id)}`)} renderAvatar={(item, className) => <AgentAvatar agent={item} className={className} />} />
+          {member ? <Conversation
+            compact agent={member} agents={agents} messages={messagesByAgent[member.id] || []}
+            runtime={runtime} workspaces={workspaces} runs={runs.filter((run) => run.agentId === member.id)} providerSettings={providerSettings}
+            locale={localeResolution.locale} copy={localeCopy} onStart={startAutohand} onChat={sendChat}
+            onLocalMessage={appendMessage} onNewConversation={(id) => startNewConversation(id, { preserveRoute: true })}
+            goals={memberGoals.filter((goal) => goal.agentId === member.id)} goalsError={memberGoalsError} onGoalAction={controlMemberGoal} onMemberBreak={setMemberBreak}
+            openTerminal={openTerminal} navigate={quickNavigate} taskPanelOpen={taskPanelOpen} setTaskPanelOpen={setTaskPanelOpen}
+            tasks={tasks.filter((task) => taskBelongsToAgent(task, member.id))} automations={automations.filter((item) => automationBelongsToAgent(item, member.id))}
+            setAutomations={setAutomations} runAutomation={runAutomation} updateAgent={updateAgent} chatSettings={chatSettings}
+            harnesses={harnesses} harnessesLoading={harnessesLoading} onRefreshHarnesses={() => refreshHarnesses(true)}
+            handoffRetryMode={resolveHandoffRetryMode(handoffSettings, runtime)} onCreateHandoff={createHandoff} onCollaborationResult={recordCollaborationResult}
+            onCancelHandoff={cancelHandoff} onFailHandoff={markHandoffFailed} onRetryHandoff={retryHandoff}
+          /> : <p className="px-4 py-6 text-sm text-muted-foreground">Add a member in Squad to start chatting.</p>}
+        </div>
+      </TooltipProvider>
+      </RemoteMembersContext.Provider>
+      </PresenceContext.Provider>
+      </SkinContext.Provider>
+      </AccountContext.Provider>
     );
   }
 
@@ -8527,7 +8930,7 @@ function App() {
             theme={theme}
             locale={localeResolution.locale}
             copy={localeCopy}
-            onSettings={() => openSettings()}
+            onSettings={(section) => openSettings(section)}
             onMissionControl={() => navigate(missionControlPath())}
             onOnboarding={openOnboarding}
             onAnalytics={openAnalytics}
@@ -8543,13 +8946,15 @@ function App() {
             onCollapsedChange={setDesktopSidebarCollapsed}
           />
           <main className="app-main min-w-0">
+            {channelOperationError ? <div role="alert" className="px-6 py-3 text-sm text-destructive">{channelOperationError}</div> : null}
+            <AgentChannelProposals proposals={agentChannelActions.filter(action => action.status === "proposed")} members={agents} onDecision={decideChannelProposal} />
             <MobileTopbar
               activeAgent={activeAgent}
               showsMember={sidebarActiveTarget(route, activeAgent).kind === "member"}
               theme={theme}
               copy={localeCopy}
               onMenu={() => setMobileSidebarOpen(true)}
-              onSettings={() => openSettings()}
+              onSettings={(section) => openSettings(section)}
               onMissionControl={() => navigate(missionControlPath())}
               onOnboarding={openOnboarding}
               onAnalytics={openAnalytics}
@@ -8589,29 +8994,6 @@ function App() {
               />
             ) : isAnalytics ? (
               <SettingsAnalyticsPage locale={localeResolution.locale} copy={localeCopy} />
-            ) : isInbox ? (
-              <InboxPage
-                replies={inboxReplies}
-                unreadChannels={inboxUnreadChannels}
-                handoffs={inboxHandoffs}
-                approvals={inboxApprovals}
-                memoryProposals={inboxMemory}
-                copy={localeCopy}
-                timeLabel={(value) => (value ? formatRelativeTime(value, localeResolution.locale) : "")}
-                navigate={{
-                  channel: (channelId) => navigate(channelsPath(channelId)),
-                  member: (agentId) => navigate(memberChatPath(agentId)),
-                  task: (item) => navigate(missionControlPath()),
-                  memory: (item) => navigate(memberProfilePath(item.item?.ownerAgentId || item.item?.agentId || agents[0]?.id, "memory")),
-                  approval: (item) =>
-                    navigate(item.messageId ? `${channelsPath(item.channelId)}?message=${encodeURIComponent(item.messageId)}` : channelsPath(item.channelId)),
-                }}
-                onMarkAllRead={() => {
-                  const now = new Date().toISOString();
-                  setChannelReads((current) => ({ ...current, ...Object.fromEntries(channels.map((channel) => [channel.id, now])) }));
-                  setInboxReadAt(now);
-                }}
-              />
             ) : isSquadDirectory ? (
               <SquadDirectoryPage
                 channelMessages={relayStatus?.connected ? Object.values(messagesByChannel).flat() : EMPTY_LIST}
@@ -8667,6 +9049,21 @@ function App() {
               />
             ) : isMissionControl ? (
               <MissionControlPage
+                attention={{ replies: inboxReplies, unreadChannels: inboxUnreadChannels, handoffs: inboxHandoffs, approvals: inboxApprovals, memoryProposals: inboxMemory }}
+                attentionCount={inboxCount}
+                attentionNavigate={{
+                  channel: (channelId) => navigate(channelsPath(channelId)),
+                  member: (agentId) => navigate(memberChatPath(agentId)),
+                  task: (item) => navigate(missionControlPath({ task: item.task?.id })),
+                  memory: (item) => navigate(memberProfilePath(item.item?.ownerAgentId || item.item?.agentId || agents[0]?.id, "memory")),
+                  approval: (item) => navigate(item.messageId ? `${channelsPath(item.channelId)}?message=${encodeURIComponent(item.messageId)}` : channelsPath(item.channelId)),
+                }}
+                onMarkUpdatesRead={() => {
+                  const now = new Date().toISOString();
+                  setChannelReads((current) => ({ ...current, ...Object.fromEntries(channels.map((channel) => [channel.id, now])) }));
+                  setAgentReads((current) => ({ ...current, ...Object.fromEntries(agents.map((agent) => [agent.id, now])) }));
+                  setInboxReadAt(now);
+                }}
                 agents={agents}
                 tasks={tasks}
                 runs={runs}
@@ -8689,7 +9086,12 @@ function App() {
                 onOnboarding={openOnboarding}
                 updates={updates}
                 updatesChecking={updatesChecking}
+                updatesError={updatesError}
+                updatesUpgrading={updatesUpgrading}
+                updatesUpgradeResult={updatesUpgradeResult}
                 onCheckUpdates={() => refreshUpdates(true)}
+                onUpgradeApp={upgradeApp}
+                onOpenReleases={openReleasePage}
                 themePreference={themePreference}
                 activeSkin={activeSkin}
                 onSkinChange={setSkinId}
@@ -8715,6 +9117,7 @@ function App() {
                 onNotificationSettingsChange={updateNotificationSettings}
                 onTestNotification={sendTestNotification}
                 onRebuildSearchIndex={rebuildSearchIndex}
+                projectObserver={projectObserver}
                 improvementSettings={improvementSettings}
                 onImprovementSettingsChange={setImprovementSettings}
                 relayConfig={relayConfig}
@@ -8729,9 +9132,11 @@ function App() {
               />
             ) : isCreate ? (
               <CreateAgent
+                key={requestedWorkspace || fallbackWorkspace || "member-creation"}
                 copy={localeCopy}
-                onCreate={createAgent}
-                onCancel={() => navigate("/conversations/new")}
+                existingMemberIds={agents.map(agent => agent.id)}
+                onCreate={(draft, options) => createAgent(draft, { ...options, ...(onboardingIsIncomplete(onboardingState) ? { completeOnboarding: true, prompt: firstPromptFor(draft.role, workspaceLabel(draft.workspace, workspaces), draft.description) } : {}) })}
+                onCancel={() => navigate(onboardingIsIncomplete(onboardingState) ? "/welcome" : "/conversations/new")}
                 defaultWorkspace={requestedWorkspace || fallbackWorkspace}
                 workspaceRoot={runtime?.workspaceRoot}
                 harnesses={harnesses}
@@ -8785,6 +9190,10 @@ function App() {
                 copy={localeCopy}
                 onStart={startAutohand}
                 onChat={sendChat}
+                goals={memberGoals.filter((goal) => goal.agentId === activeAgent?.id)}
+                goalsError={memberGoalsError}
+                onGoalAction={controlMemberGoal}
+                onMemberBreak={setMemberBreak}
                 onLocalMessage={appendMessage}
                 onNewConversation={startNewConversation}
                 harnesses={harnesses}
@@ -8827,14 +9236,6 @@ function App() {
           </main>
         </div>
 
-        <AboutDialog
-          open={aboutOpen}
-          runtime={runtime}
-          onOpenChange={(open) => {
-            if (!open) closeAbout();
-          }}
-          onGiveFeedback={() => openFeedback("feedback")}
-        />
         <FeedbackDialog
           kind={feedbackKind || "feedback"}
           open={Boolean(feedbackKind)}
@@ -8888,7 +9289,7 @@ function App() {
               theme={theme}
               locale={localeResolution.locale}
               copy={localeCopy}
-              onSettings={() => openSettings()}
+              onSettings={(section) => openSettings(section)}
               onMissionControl={() => {
                 setMobileSidebarOpen(false);
                 navigate(missionControlPath());
@@ -9143,7 +9544,7 @@ function ChannelUserAvatar({ className }) {
 }
 
 function ChannelMessageAvatar({ message, agents = [], className }) {
-  if (message?.role === "user") return <ChannelUserAvatar className={className} />;
+  if (message?.role === "user" && !message?.agentId) return <ChannelUserAvatar className={className} />;
   if (message?.role === "system" && message?.workflowRunId) {
     return (
       <Avatar className={cn("size-8 rounded-md border border-border/70 bg-muted", className)}>
@@ -9166,7 +9567,7 @@ function ChannelMessageAvatar({ message, agents = [], className }) {
 }
 
 function channelMessageAuthorName(message, agents = [], userName = ACCOUNT_PROFILE.name) {
-  if (message?.role === "user") return userName;
+  if (message?.role === "user" && !message?.agentId) return userName;
   const agent = agents.find((item) => item.id === message?.agentId);
   return agent?.name || message?.authorName || "Squad member";
 }
@@ -9521,8 +9922,11 @@ function ChannelsPage({
   const channelMessages = channel ? messagesByChannel[channel.id] || [] : [];
   // Repository rows sit in the stream in time order beside the messages.
   const streamWithGitEvents = useMemo(
-    () => (channel?.events?.length ? mergeEventsIntoStream(channelMessages, channel.events) : channelMessages),
-    [channelMessages, channel?.events]
+    () => {
+      const transcript = channelTranscript(channelMessages, threads, channel?.id);
+      return channel?.events?.length ? mergeEventsIntoStream(transcript, channel.events) : transcript;
+    },
+    [channelMessages, threads, channel?.events, channel?.id]
   );
   const members = channel
     ? channel.memberIds.map((memberId) => agents.find((agent) => agent.id === memberId)).filter(Boolean)
@@ -9863,7 +10267,7 @@ function ChannelsPage({
             <span className="flex-1" />
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-pressed={manageMembersOpen} onClick={() => setManageMembersOpen((open) => !open)}>
+                <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-label={copy.manageChannelMembers} aria-pressed={manageMembersOpen} onClick={() => setManageMembersOpen((open) => !open)}>
                   <Users className="size-4" />
                   {formatLocalizedNumber(channel.memberIds.length, locale)}
                 </Button>
@@ -9889,6 +10293,8 @@ function ChannelsPage({
               </PopoverTrigger>
               <PopoverContent align="end" className="w-72 max-h-[min(34rem,calc(100vh-6rem))] overflow-y-auto overscroll-contain p-3">
                 <div className="flex flex-col gap-3">
+                  <ChannelDetailsSettings key={channel.id} channel={channel} onSave={patch => onUpdateChannel?.(channel.id, patch)} />
+                  <Separator />
                   <label className="flex items-center justify-between gap-3 text-sm" htmlFor={`auto-mode-${channel.id}`}>
                     <span>
                       <span className="block font-medium">{copy.channelAutoMode}</span>
@@ -10580,17 +10986,6 @@ function durationFromMessage(message) {
   return null;
 }
 
-function formatDuration(ms) {
-  const value = Number(ms);
-  if (!Number.isFinite(value) || value < 0) return "";
-  if (value < 1000) return `${Math.max(1, Math.round(value))} ms`;
-  if (value < 10000) return `${(value / 1000).toFixed(1)}s`;
-  if (value < 60000) return `${Math.round(value / 1000)}s`;
-  const minutes = Math.floor(value / 60000);
-  const seconds = Math.round((value % 60000) / 1000);
-  return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
-}
-
 function useElapsedMs(startedAt, active) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -10899,6 +11294,9 @@ function buildAgentProfile(agent, workspace) {
     "The profile skills are installed from the curated Autohand Skills repository. Activate and use the relevant installed skills when they match the user's request.",
     "When the user sends a message in Autohand Squad, answer as this configured CLI instance and keep all work scoped to the selected folder unless the user explicitly changes it.",
     "Answer like a colleague in a chat channel, not like a document. One to three short sentences is the default: say the thing and stop.",
+    "For work requests, maintain a short checklist of concrete tasks with todo_write (Autohand Code), TodoWrite (Claude Code), or update_plan (Codex), when available. Update it as work advances; mark completed only after the work and checks are done, and preserve pending or blocked items honestly.",
+    'If no planning tool is available, send a private progress update at the start and when task status changes: <squad_progress>{"items":[{"id":"stable-task-id","title":"Concrete task","status":"pending|in_progress|completed|failed|cancelled"}],"summary":"Concise outcome or remaining work"}</squad_progress>. Use valid JSON, concrete stable task IDs, and only observed task states. The app displays this checklist separately; keep the visible final answer concise.',
+    "When work ends, state what changed, what was checked, and any remaining blocker in one to three concise sentences. No celebratory claims, marketing language, or invented verification.",
     "Write more only when the role, the brain card, this member's memory or the task itself calls for it - a review that has to list its findings, a plan that has to name its steps, an answer that would be wrong if it were shorter. Length is a cost to justify, never the default.",
     "Do not open with a greeting or by announcing your own name and role; the channel already shows both. Do not restate the question, do not narrate what you are about to do, and do not close by offering a menu of things you could do instead - ask one direct question or say nothing.",
     "Do not report repository or workspace status that nobody asked for. If it matters to the answer, one clause is enough.",
@@ -10996,10 +11394,11 @@ function mentionedChannelProjects(text, channel) {
 
 // Maximum member-to-member delegation depth from a direct chat.
 const DM_DELEGATION_MAX_HOPS = 2;
+const CHANNEL_ACTION_INSTRUCTION = 'To propose a shared channel, include one line exactly like: SQUAD_ACTION: {"type":"create_channel","name":"project-name","members":["Noah","Eva"],"purpose":"one sentence"}. Use existing teammates and an assigned workspace. The bridge checks squad_create_channel: ask requires user approval, block refuses, allow creates. Never claim creation before bridge confirmation.';
 
 function buildTeammateContext(agent, agents = [], { hop = 0 } = {}) {
   const teammates = agents.filter((item) => item.id !== agent.id && item.status !== "offline");
-  if (!teammates.length) return "";
+  if (!teammates.length) return CHANNEL_ACTION_INSTRUCTION;
   // Deliberately durable: this text is the SDK's system prompt, and the warm
   // session pool keys on it. A teammate's presence label changes whenever any
   // run starts or stops, so including it changed the key between messages and
@@ -11012,29 +11411,18 @@ function buildTeammateContext(agent, agents = [], { hop = 0 } = {}) {
     "Squad teammates available right now:",
     roster.join("\n"),
     canDelegate
-      ? "Delegate parts of the job that belong to a teammate's role (security review, QA, tests, design, deployment) by @mentioning them by name in your reply with a clear ask. They receive your message as a handoff, do the work, and report back to you; the user sees both sides. Mention a teammate only when their role is needed."
+      ? "Delegate parts of the job that belong to a teammate's role (security review, QA, tests, design, deployment) by @mentioning them by name in your reply with a clear ask. EVERY @mention starts that teammate immediately and parallel mentions start together. For ordered implementation, QA, then review, mention only the next teammate; describe later teammates by plain name without @. They receive your message as a handoff, do the work, and report back to you; the user sees both sides. Mention a teammate only when their role is needed now."
       : "You are already working on a delegated task; finish it yourself and do not delegate further.",
-    'To open a shared channel for a project, include one line exactly like: SQUAD_ACTION: {"type":"create_channel","name":"project-name","members":["Noah","Eva"],"purpose":"one sentence"} — the user is always invited and the members get the purpose as their first prompt.',
+    CHANNEL_ACTION_INSTRUCTION,
   ].join("\n");
 }
 
-/** `SQUAD_ACTION: {...}` lines a member may include in a reply. */
-function parseSquadActions(text) {
-  const actions = [];
-  const cleaned = [];
-  for (const line of String(text || "").split("\n")) {
-    const match = line.match(/^\s*SQUAD_ACTION:\s*(\{.*\})\s*$/);
-    if (!match) {
-      cleaned.push(line);
-      continue;
-    }
-    try {
-      actions.push(JSON.parse(match[1]));
-    } catch {
-      cleaned.push(line);
-    }
-  }
-  return { actions, text: cleaned.join("\n").trim() };
+function channelActionMember(agent, workspace = agent.workspace) {
+  return {
+    ...agentLaunchPayload(agent, workspace),
+    squadProfile: buildAgentProfile(agent, workspace),
+    channelPoliciesByWorkspace: Object.fromEntries(normalizeAgentProjects(agent.projects, agent.workspace).map(project => [project.path, resolveAgentPermissionsForWorkspace(agent, project.path).builtInPolicies.squad_create_channel || "ask"])),
+  };
 }
 
 function withChannelProjects(launchPayload, channelProjects = []) {
@@ -11073,6 +11461,7 @@ function buildChannelProfileContext(channel, agent, agents = [], { autoMode, sel
   const targeted = targetMemberIds.length > 0 && targetMemberIds.length < (channel.memberIds || []).length;
   return [
     "Autohand Squad channel context",
+    CHANNEL_ACTION_INSTRUCTION,
     `Channel: #${channel.name} (${channel.visibility})`,
     threadId ? `Thread: ${threadId}` : "",
     roster.length ? `Channel members:\n${roster.join("\n")}` : "",
@@ -11186,17 +11575,22 @@ function ChannelCreateDialog({
   const [draftVisibility, setDraftVisibility] = useState(CHANNEL_VISIBILITY_PUBLIC);
   const [draftMemberIds, setDraftMemberIds] = useState([]);
   const [draftAutoMode, setDraftAutoMode] = useState(false);
-  const [closedAfterSubmit, setClosedAfterSubmit] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const submittingRef = useRef(false);
+  const requestIdRef = useRef("");
 
   function resetDraft() {
     setDraftName("");
     setDraftVisibility(CHANNEL_VISIBILITY_PUBLIC);
     setDraftMemberIds([]);
     setDraftAutoMode(false);
+    setCreateError("");
+    requestIdRef.current = "";
   }
 
   function setOpen(nextOpen) {
-    if (nextOpen) setClosedAfterSubmit(false);
+    if (submittingRef.current) return;
     onOpenChange?.(nextOpen);
     if (!nextOpen) resetDraft();
   }
@@ -11207,23 +11601,31 @@ function ChannelCreateDialog({
     );
   }
 
-  function submitCreate(event) {
+  async function submitCreate(event) {
     event.preventDefault();
     const name = draftName.trim();
-    if (!name) return;
-    setClosedAfterSubmit(true);
-    onCreateChannel?.({
+    if (!name || submittingRef.current) return;
+    submittingRef.current = true;
+    setCreating(true);
+    setCreateError("");
+    requestIdRef.current ||= `channel-${crypto.randomUUID()}`;
+    try {
+      await onCreateChannel?.({
+      id: requestIdRef.current,
       name,
       visibility: draftVisibility,
       memberIds: draftMemberIds,
       autoModeDefault: draftAutoMode === true,
     });
-    onOpenChange?.(false);
-    resetDraft();
+      onOpenChange?.(false);
+      resetDraft();
+    } catch (error) {
+      setCreateError(error.message || "Could not create this channel. Try again.");
+    } finally { submittingRef.current = false; setCreating(false); }
   }
 
   return (
-    <Dialog open={open && !closedAfterSubmit} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-[440px]">
         <form onSubmit={submitCreate} className="flex flex-col gap-5">
           <DialogHeader>
@@ -11238,6 +11640,7 @@ function ChannelCreateDialog({
               value={draftName}
               placeholder={copy.channelNamePlaceholder}
               autoFocus
+              disabled={creating}
               onChange={(event) => setDraftName(event.target.value)}
             />
           </div>
@@ -11310,8 +11713,9 @@ function ChannelCreateDialog({
           </div>
 
           <DialogFooter>
-            <Button type="submit" disabled={!draftName.trim()}>
-              {copy.createChannel}
+            {createError ? <p role="alert" className="text-sm text-destructive">{createError}</p> : null}
+            <Button type="submit" disabled={creating || !draftName.trim()}>
+              {creating ? "Creating…" : copy.createChannel}
             </Button>
           </DialogFooter>
         </form>
@@ -11429,6 +11833,7 @@ function CollapsedSidebarRail({
   messagesByAgent = {},
   messagesByChannel = {},
   channelCount = 0,
+  inboxCount = 0,
   locale = DEFAULT_LOCALE,
   copy = getLocaleCopy(DEFAULT_LOCALE),
   sidebarCounts = EMPTY_MISSION_COUNTS,
@@ -11443,7 +11848,7 @@ function CollapsedSidebarRail({
   const memberId = activeAgent?.id || visibleAgents[0]?.id;
   const isCreatingMember = isCreateMemberRoute(route);
   const isMemberProfile = isMemberProfileRoute(route);
-  const isMissionControl = route.split("?")[0] === MISSION_CONTROL_ROUTE;
+  const isMissionControl = isWorkRoute(route);
   const isSquadDirectory = route.split("?")[0] === SQUAD_DIRECTORY_ROUTE;
   const isChannelsRoute = route.split("?")[0].startsWith(CHANNELS_ROUTE);
 
@@ -11466,7 +11871,7 @@ function CollapsedSidebarRail({
   }
 
   return (
-    <div className="flex h-full min-h-screen w-[72px] flex-col items-center bg-card/95 px-2 py-3.5 text-card-foreground dark:bg-card">
+    <div className="app-sidebar flex h-full min-h-screen w-[72px] flex-col items-center bg-card/95 px-2 py-3.5 text-card-foreground dark:bg-card">
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -11515,6 +11920,30 @@ function CollapsedSidebarRail({
             </Button>
           </TooltipTrigger>
           <TooltipContent>{copy.createSquadMember}</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "relative size-9 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4",
+                isMissionControl && "bg-accent text-foreground"
+              )}
+              onClick={() => navigate(missionControlPath())}
+              aria-label={`${copy.needsYou || "Needs you"}${inboxCount ? `, ${inboxCount} waiting` : ""}`}
+              aria-current={isMissionControl ? "page" : undefined}
+            >
+              <Inbox className="size-4" />
+              {inboxCount > 0 ? (
+                <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-foreground px-1 text-[9px] font-semibold text-background">
+                  {inboxCount > 99 ? "99+" : inboxCount}
+                </span>
+              ) : null}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{copy.needsYou || "Needs you"}</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -11618,7 +12047,7 @@ function CollapsedSidebarRail({
 
 function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onExpand }) {
   return (
-    <div className="flex h-full min-h-screen w-[72px] flex-col items-center bg-card/95 px-2 py-3.5 text-card-foreground dark:bg-card">
+    <div className="app-sidebar flex h-full min-h-screen w-[72px] flex-col items-center bg-card/95 px-2 py-3.5 text-card-foreground dark:bg-card">
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -11765,7 +12194,7 @@ function SidebarContent({
   const isCreatingMember = isCreateMemberRoute(route);
   const isMemberProfile = isMemberProfileRoute(route);
   const routePath = route.split("?")[0];
-  const isMissionControl = routePath === MISSION_CONTROL_ROUTE;
+  const isMissionControl = isWorkRoute(routePath);
   const isSquadDirectory = routePath === SQUAD_DIRECTORY_ROUTE;
   const isChannelsRoute = routePath.startsWith(CHANNELS_ROUTE);
   const activeChannelId = channelIdFromRoute(route);
@@ -11821,7 +12250,6 @@ function SidebarContent({
       unreadChannelIds={unreadChannelIds}
       unreadCountByAgent={unreadCountByAgent}
       inboxCount={inboxCount}
-      workCount={sidebarCounts?.tasks || 0}
       presenceFor={(agent) => {
         const meta = presenceMeta(entryForPresence(agent).state, copy);
         return { ...meta, className: meta.dotClassName };
@@ -11829,7 +12257,7 @@ function SidebarContent({
       renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
       onNavigate={{
         search: onSearch,
-        inbox: () => navigate(inboxPath()),
+        inbox: () => navigate(missionControlPath()),
         agents: () => navigate(squadDirectoryPath()),
         channel: (channelId) => navigate(channelsPath(channelId)),
         member: (targetId) => navigate(memberChatPath(targetId)),
@@ -11860,21 +12288,20 @@ function SidebarContent({
 
 function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onCollapse, updateAvailable = false }) {
   return (
-    <div className="flex h-full min-h-screen flex-col bg-background">
-      <div className="flex h-14 items-center gap-2 px-4">
+    <div className="app-sidebar flex h-full min-h-screen flex-col bg-card/70">
+      <div className="flex h-14 shrink-0 items-center gap-2 px-3" data-tauri-drag-region="deep">
         <Button
           variant="ghost"
           className="h-10 min-w-0 justify-start gap-2 px-1 hover:bg-transparent"
           onClick={() => navigate(squadDirectoryPath())}
           aria-label="Open Autohand Squad"
         >
-          <BrandMark theme={theme} className="size-9" />
+          <BrandMark theme={theme} className="size-8" />
           <span className="truncate text-base font-bold">Autohand Squad</span>
         </Button>
-        <Badge variant="secondary" className="ml-1 rounded-sm bg-primary/15 px-1.5 text-[10px] text-primary">Beta</Badge>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col px-2 pb-4 pt-2">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-4 pt-2">
         <div className="mb-4 flex items-center justify-between gap-2">
           <Button
             variant="ghost"
@@ -11933,37 +12360,44 @@ function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCop
   );
 }
 
-function SettingsUpdatesPanel({ updates, checking = false, onCheck }) {
+function SettingsUpdatesPanel({ updates, checking = false, error = "", upgrading = false, upgradeResult = null, onCheck, onUpgrade, onOpenReleases }) {
   const snapshot = updates?.snapshot || null;
   const current = updates?.appVersion || snapshot?.currentVersion || "";
   const latest = snapshot?.latestAllowedVersion || "";
-  const available = snapshot?.updateAvailable === true;
+  const status = updates?.status || (snapshot?.success === true && snapshot?.checkedAt ? snapshot.updateAvailable ? "available" : "up-to-date" : "never-checked");
+  const available = status === "available";
+  const verifiedDownload = available && snapshot?.source === "github:autohandai/squad" && snapshot?.downloadUrl && snapshot?.downloadName && /^[a-f0-9]{64}$/i.test(snapshot?.downloadSha256 || "");
   const checkedAt = snapshot?.checkedAt ? String(snapshot.checkedAt).replace(/^unix-ms:/, "") : "";
   const checkedLabel = checkedAt && /^\d+$/.test(checkedAt) ? new Date(Number(checkedAt)).toLocaleString() : checkedAt;
+  const title = checking ? "Checking for upgrades…" : error ? "Update action failed" : status === "offline" ? "Update service is offline" : status === "check-failed" ? "Could not check for upgrades" : available ? `Version ${latest} is available` : status === "up-to-date" ? "You're up to date" : "Not checked yet";
+  const checkError = error || updates?.checkError || snapshot?.error;
+
   return (
     <div className="divide-y divide-border/65">
       <div className="grid gap-3 px-2 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
         <div className="min-w-0">
-          <div className="font-medium">{available ? `Update to ${latest}` : "You're up to date"}</div>
+          <div className="font-medium" role="status" aria-live="polite">{title}</div>
           <p className="mt-1 text-sm text-muted-foreground">
             Installed {current || "unknown"}
-            {latest ? ` · latest ${snapshot.channel || "stable"} release ${latest}` : ""}
+            {latest ? ` · ${available || status === "up-to-date" ? "latest" : "last known"} ${snapshot.channel || "stable"} release ${latest}` : ""}
             {checkedLabel ? ` · checked ${checkedLabel}` : ""}
-            {updates && !updates.daemonReachable ? " · the local daemon is not running, so this is the last saved check" : ""}
           </p>
-          {snapshot?.error ? <p className="mt-1 text-sm text-destructive">{snapshot.error}</p> : null}
+          {status === "offline" ? <p className="mt-2 text-sm text-muted-foreground">Start the local Squad service, then check again. A saved check cannot be used to upgrade.</p> : null}
+          {checkError ? <p className="mt-2 text-sm text-destructive" role="alert">{checkError}</p> : null}
+          {available && !verifiedDownload ? <p className="mt-2 text-sm text-muted-foreground">This release has no verified installer for this computer. Open releases to choose a download.</p> : null}
+          {upgrading ? <p className="mt-2 text-sm text-muted-foreground" role="status">Checking the release, downloading and verifying the installer…</p> : null}
+          {upgradeResult?.message ? <p className="mt-2 text-sm text-muted-foreground" role="status">{upgradeResult.message}</p> : null}
         </div>
-        <div className="flex items-center gap-2">
-          {available && (snapshot.downloadUrl || snapshot.releaseUrl) ? (
-            <Button asChild size="sm">
-              <a href={snapshot.downloadUrl || snapshot.releaseUrl} target="_blank" rel="noreferrer">
-                Download {latest}
-              </a>
+        <div className="flex flex-wrap items-center gap-2">
+          {verifiedDownload ? (
+            <Button type="button" size="sm" onClick={onUpgrade} disabled={checking || upgrading}>
+              {upgrading ? <Spinner /> : <ArrowUpRight data-icon="inline-start" />}
+              {upgrading ? "Preparing upgrade…" : `Upgrade to ${latest}`}
             </Button>
           ) : null}
-          <Button type="button" variant="outline" size="sm" onClick={onCheck} disabled={checking}>
+          <Button type="button" variant="outline" size="sm" onClick={onCheck} disabled={checking || upgrading}>
             {checking ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
-            Check for updates
+            Check for upgrades
           </Button>
         </div>
       </div>
@@ -11975,23 +12409,19 @@ function SettingsUpdatesPanel({ updates, checking = false, onCheck }) {
           </div>
         </div>
       ) : null}
-      <div className="px-2 py-4 text-sm text-muted-foreground">
-        Releases: <a className="text-primary underline underline-offset-4" href={updates?.releasesUrl || "https://github.com/autohandai/squad/releases"} target="_blank" rel="noreferrer">github.com/autohandai/squad/releases</a>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-4">
+        <p className="text-sm text-muted-foreground">Releases from github.com/autohandai/squad. The installer opens after verification; you finish installation when your work is ready.</p>
+        <Button type="button" variant="ghost" size="sm" onClick={onOpenReleases} disabled={upgrading}>Open releases</Button>
       </div>
     </div>
   );
 }
 
 function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onMissionControl, onOnboarding, onAnalytics, updateAvailable = false }) {
-  const { profile } = useContext(AccountContext);
+  const { profile, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult, upgradeApp, openReleasePage } = useContext(AccountContext);
   return (
     <div className="border-t p-4">
-      {updateAvailable ? (
-        <Button variant="outline" className="mb-3 h-9 w-full justify-center rounded-full border-border/70 bg-transparent" onClick={onSettings}>
-          <CircleDot className="text-chart-3" data-icon="inline-start" />
-          {copy.restartToUpdate}
-        </Button>
-      ) : null}
+      <SidebarUpdateNotice updates={updates} checking={updatesChecking} upgrading={updatesUpgrading} error={updatesError} upgradeResult={updatesUpgradeResult} onDownload={upgradeApp} onOpenReleases={openReleasePage} />
       {/* The gap belongs to the update button, not to the account row: carried
           on the row it was 12px of dead space in the normal case, and it made
           the footer top-heavy - 29px above the name against 16px below. */}
@@ -12016,7 +12446,7 @@ function AccountMenuButton({
   placement = "top-end",
   triggerClassName,
 }) {
-  const { profile, signOut, signingOut, openFeedback } = useContext(AccountContext);
+  const { profile, signOut, signingOut, openFeedback, openAppInfo, checkForUpgrades } = useContext(AccountContext);
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
   const menuPosition =
@@ -12090,9 +12520,10 @@ function AccountMenuButton({
             </div>
           </div>
           <div className="my-1 border-t border-border/70" />
-          <AccountMenuItem icon={Monitor} label={copy.work || "Work"} onClick={() => choose(onMissionControl)} hasChevron />
+          <AccountMenuItem icon={Monitor} label={copy.needsYou || "Needs you"} onClick={() => choose(onMissionControl)} hasChevron />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} hasChevron />
           <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} hasChevron />
+          {openAppInfo ? <AccountMenuItem icon={BookOpen} label={copy.aboutSquad || "About Autohand Squad"} onClick={() => choose(() => openAppInfo("about"))} /> : null}
           {openFeedback ? (
             <>
               <div className="my-1 border-t border-border/70" />
@@ -12246,7 +12677,7 @@ function mentionedSquadMembers(text, agents = [], activeAgentId = "") {
   );
   if (!tokens.size) return [];
   return agents.filter((agent) => {
-    if (agent.id === activeAgentId || agent.status !== "online") return false;
+    if (agent.id === activeAgentId || agent.status === "offline") return false;
     const names = [
       agent.id,
       agent.employeeId,
@@ -12429,7 +12860,6 @@ function CanvasWorkspace({ ownerType, ownerId, canvases = [], activeCanvasId = "
 
 function AgentAvatar({ agent, large = false, className }) {
   const skin = useContext(SkinContext);
-  const initial = agent?.name?.slice(0, 1).toUpperCase() || "S";
   const face = memberAvatar(agent, skin);
   // A blob is drawn, not fetched: no border and no fill behind it, because the
   // eyes are holes and whatever is behind the avatar shows through them.
@@ -12443,7 +12873,7 @@ function AgentAvatar({ agent, large = false, className }) {
     );
   }
   return (
-    <Avatar className={cn("rounded-full border border-border/70 bg-muted", large ? "size-24" : "size-8", className)}>
+    <Avatar key={`${agent?.id}:${face.src || "placeholder"}`} className={cn("rounded-full border border-border/70 bg-muted", large ? "size-24" : "size-8", className)}>
       {face.src ? (
         <AvatarImage
           src={face.src}
@@ -12458,7 +12888,7 @@ function AgentAvatar({ agent, large = false, className }) {
         />
       ) : null}
       <AvatarFallback className="rounded-full bg-primary/12 text-primary">
-        <span className={cn("font-extrabold", large ? "text-2xl" : "text-sm")}>{initial}</span>
+        <CircleUserRound className={large ? "size-12" : "size-5"} aria-hidden="true" />
       </AvatarFallback>
     </Avatar>
   );
@@ -12515,6 +12945,7 @@ function ConversationWelcome({ agent, copy, onPrompt, briefing = null }) {
 }
 
 function Conversation({
+  compact = false,
   agent,
   agents = [],
   messages = [],
@@ -12528,6 +12959,10 @@ function Conversation({
   copy = getLocaleCopy(DEFAULT_LOCALE),
   onStart,
   onChat,
+  goals = [],
+  goalsError = "",
+  onGoalAction,
+  onMemberBreak,
   onNewConversation,
   openTerminal,
   navigate,
@@ -12575,8 +13010,15 @@ function Conversation({
   const [policy, setPolicy] = useState(defaultLaunch.policy);
   const [model, setModel] = useState(defaultLaunch.model || "");
   const [dryRun, setDryRun] = useState(defaultLaunch.dryRun);
-  const [workspaceDraft, setWorkspaceDraft] = useState("");
-  const [workspaceError, setWorkspaceError] = useState("");
+  // The compact chooser reuses this conversation to retain per-member drafts.
+  // Execution settings still belong to the newly selected member.
+  useEffect(() => {
+    setWorkspace(defaultWorkspace);
+    setMode(defaultLaunch.mode);
+    setPolicy(defaultLaunch.policy);
+    setModel(defaultLaunch.model || "");
+    setDryRun(defaultLaunch.dryRun);
+  }, [agent.id]);
   const [panelTab, setPanelTab] = useState("runs");
   const [focusRunId, setFocusRunId] = useState("");
   useEffect(() => {
@@ -12585,7 +13027,6 @@ function Conversation({
     setFocusRunId(initialPanel.runId || "");
     onInitialPanelConsumed?.();
   }, [initialPanel]);
-  const [profilePreviewOpen, setProfilePreviewOpen] = useState(false);
   const [automationFormOpen, setAutomationFormOpen] = useState(false);
   // Canvases (ADR-0023): this member's documents, shown instead of the stream
   // while the Canvas view is on; the composer stays so `@canvas:` still works.
@@ -12612,6 +13053,9 @@ function Conversation({
   const [packPreviewLoading, setPackPreviewLoading] = useState(false);
   const [packPreviewError, setPackPreviewError] = useState("");
   const [chatSendingByAgent, setChatSendingByAgent] = useState({});
+  const [goalActionBusy, setGoalActionBusy] = useState(false);
+  const [goalActionError, setGoalActionError] = useState("");
+  const currentGoal = latestMemberGoal(goals, agent.id);
   const [queuedFollowupsByAgent, setQueuedFollowupsByAgent] = useState({});
   const chatSendingRef = useRef({});
   const queuedFollowupsRef = useRef({});
@@ -12632,7 +13076,7 @@ function Conversation({
     onInitialPromptConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPrompt, agent?.id]);
-  const chatSending = chatSendingByAgent[agent.id] === true;
+  const chatSending = chatSendingByAgent[agent.id] === true || isGoalRunning(currentGoal);
   // The live label the stream last reported, so the composer can say what the
   // member is doing rather than leaving the person watching a still page.
   const liveActivityLabel = useMemo(() => {
@@ -12653,29 +13097,14 @@ function Conversation({
     [deferredPrompt, agent]
   );
   const latestRun = runs[0];
-  const workspaceChoices = workspaceOptions(workspaces, workspace, runtime);
   const maxProjects = configuredProjectLimit(runtime);
   const projects = useMemo(
     () => normalizeAgentProjects(agent.projects, agent.workspace, workspaces, maxProjects),
     [agent.projects, agent.workspace, maxProjects, workspaces]
   );
-  const projectPathKey = projects.map((project) => project.path).join("\n");
-  const projectPaths = useMemo(() => new Set(projects.map((project) => project.path)), [projectPathKey]);
-  const addWorkspaceChoices = useMemo(
-    () =>
-      workspaceOptions(workspaces, workspaceDraft, runtime).filter(
-        (item) => !projectPaths.has(normalizeSquadWorkspacePath(item.path, runtime))
-      ),
-    [projectPathKey, projectPaths, runtime, workspaceDraft, workspaces]
-  );
-  const normalizedWorkspaceDraft = normalizeSquadWorkspacePath(workspaceDraft, runtime);
-  const selectedAddWorkspaceValue = addWorkspaceChoices.some((item) => item.path === normalizedWorkspaceDraft)
-    ? normalizedWorkspaceDraft
-    : undefined;
-  const atProjectLimit = projects.length >= maxProjects;
-  const duplicateWorkspace = Boolean(normalizedWorkspaceDraft && projectPaths.has(normalizedWorkspaceDraft));
-  const blockedWorkspaceDraft = Boolean(normalizedWorkspaceDraft && isBlockedWorkspace(normalizedWorkspaceDraft, runtime));
-  const canAddWorkspace = Boolean(normalizedWorkspaceDraft) && !atProjectLimit && !duplicateWorkspace && !blockedWorkspaceDraft;
+  const memberWorkspaceChoices = normalizeAgentProjects([{ path: workspace }, ...projects], "", workspaces, maxProjects)
+    .filter(project => !isBlockedWorkspace(project.path, runtime))
+    .map(project => ({ path: project.path, label: project.name || workspaceName(project.path) }));
   const blockedWorkspace = isBlockedWorkspace(workspace, runtime);
   const launchPermissions = resolveAgentPermissionsForWorkspace(agent, workspace);
   const launchWarnings = useMemo(
@@ -12791,6 +13220,8 @@ function Conversation({
   );
   const hasConversationMessages = visibleMessages.length > 0;
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
+  const computerEvidenceSessions = useComputerUseEvidence(agent.id, chatSending, api);
+  const computerEvidenceByMessage = useMemo(() => new Map(visibleMessages.map((message) => [message.id, evidenceForMessage(message, computerEvidenceSessions)])), [visibleMessages, computerEvidenceSessions]);
   // Stable message objects so memoized rows skip re-rendering while typing.
   const localizedMessages = useMemo(() => visibleMessages.map((message) => localizedMessage(message, agent, copy)), [visibleMessages, agent, copy]);
   useEffect(() => {
@@ -12847,9 +13278,6 @@ function Conversation({
     setMentionIndex(0);
   }, [mentionQuery, mentionItems.length]);
 
-  useEffect(() => {
-    setWorkspaceError("");
-  }, [agent.id, workspaceDraft]);
 
   // Follow the conversation without fighting the reader. A streamed reply
   // changes `body` on every delta; smooth-scrolling each time restarts a glide
@@ -13090,7 +13518,7 @@ function Conversation({
     setActiveChatSending(targetAgentId, true);
 
     try {
-      const handoffResult = createMentionHandoff(submittedPrompt);
+      const handoffResult = nextItem.mode === "goal" || nextItem.retry ? null : createMentionHandoff(submittedPrompt);
       const sourceLaunch = handoffResult
         ? {
             ...nextItem,
@@ -13103,6 +13531,8 @@ function Conversation({
           workspace: sourceLaunch.workspace || workspace,
           policy: sourceLaunch.policy || policy,
           model: sourceLaunch.model || model,
+          mode: sourceLaunch.mode,
+          requestId: sourceLaunch.requestId,
           collaboration: sourceLaunch.collaboration,
           canvases: targetAgentId === agent.id ? canvases : [],
           signal: controller.signal,
@@ -13186,7 +13616,41 @@ function Conversation({
   }, [agent.id, model, policy, workspace]);
 
   function stopActiveChat() {
+    if (isGoalRunning(currentGoal)) void runGoalAction("pause", currentGoal);
     activeChatControllerRef.current[agent.id]?.abort();
+  }
+
+  async function runGoalAction(action, goal = currentGoal) {
+    if (!goal || !onGoalAction || goalActionBusy) return;
+    setGoalActionBusy(true);
+    setGoalActionError("");
+    try {
+      await onGoalAction(action, goal);
+      recordFeatureUsed("goal", action === "cancel" ? "stop" : action);
+    } catch (error) {
+      setGoalActionError(`Could not ${action} the goal: ${error.message}`);
+    } finally {
+      setGoalActionBusy(false);
+    }
+  }
+
+  async function runBreakCommand(args) {
+    if (args && !["off", "end", "resume"].includes(args.toLowerCase())) {
+      postLocalNote("Use /break to pause work and new handoffs, or /break off to return.");
+      return;
+    }
+    const active = !args;
+    try {
+      await onMemberBreak?.(agent.id, active);
+      if (active) {
+        activeChatControllerRef.current[agent.id]?.abort();
+        setQueuedFollowupItems(agent.id, []);
+      }
+      recordFeatureUsed("break", active ? "pause" : "resume");
+      onLocalMessage?.(agent.id, { id: `break-${Date.now()}`, role: "agent", body: active ? "I'm on my break, so I'm not accepting new work or handoffs. Use /break off when you want me back." : "I'm back and ready for work. Use /goal resume to continue a paused goal.", status: "complete", local: true, time: new Date().toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) });
+    } catch (error) {
+      postLocalNote(`Could not change the break: ${error.message}`);
+    }
   }
 
   // Re-send the user message that produced a failed answer. The handler is
@@ -13195,10 +13659,17 @@ function Conversation({
   const retryMessage = useCallback((message) => retryMessageRef.current?.(message), []);
   retryMessageRef.current = function retryMessageNow(message) {
     if (chatSendingRef.current[agent.id]) return;
+    if (message.handoffId) {
+      const task = tasks.find(item => item.id === message.taskId);
+      const handoff = task?.handoffs?.find(item => item.id === message.handoffId);
+      if (handoff?.status === "failed") onRetryHandoff?.(task, handoff);
+      else postLocalNote(handoff ? `This checkpoint is ${handoff.status}. Check its latest result in the task history.` : "This checkpoint is no longer in the task history. Start a new request to continue.");
+      return;
+    }
     const index = visibleMessages.findIndex((item) => item.id === message.id);
     const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
     if (!previousUser?.body) return;
-    sendPromptNow({ prompt: previousUser.body, workspace, policy, model }, { agentId: agent.id });
+    sendPromptNow({ prompt: previousUser.body, workspace, policy, model, retry: true, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
   };
 
   function postLocalNote(body, status = "note") {
@@ -13231,6 +13702,24 @@ function Conversation({
   function handleSlashCommand(command) {
     const harnessId = harnessForAgent(agent).id;
     switch (command.name) {
+      case "break":
+        void runBreakCommand(command.args);
+        return true;
+      case "goal": {
+        const action = command.args.toLowerCase();
+        if (!action || action === "status") {
+          postLocalNote(currentGoal ? `Goal ${currentGoal.status}: ${currentGoal.prompt}\n${currentGoal.summary || currentGoal.pauseReason || ""}`.trim() : "Use /goal <objective> to start, then /goal pause, resume, status, or cancel.");
+        } else if (["pause", "resume", "cancel"].includes(action)) {
+          if (!currentGoal) postLocalNote("This member has no goal yet. Use /goal <objective> to start one.");
+          else if (action === "resume" && isOnBreak(agent)) postLocalNote("End my break with /break off before resuming the goal.");
+          else void runGoalAction(action);
+        } else if (chatSending) {
+          postLocalNote("This member is already working. Pause or cancel the current goal before starting another.");
+        } else {
+          sendPromptNow({ prompt: expandSkillMentions(command.args, installedSkillNames), workspace, policy, model, mode: "goal" }, { agentId: agent.id, restorePromptOnError: true });
+        }
+        return true;
+      }
       case "new":
         startFreshChat();
         return true;
@@ -13286,18 +13775,24 @@ function Conversation({
 
   function submit(event) {
     event.preventDefault();
-    if (blockedWorkspace) return;
     const submittedPrompt = livePrompt();
     if (!submittedPrompt) return;
+    const slash = slashCommandFrom(submittedPrompt);
+    const isControlCommand = slash && (slash.name === "break" || (slash.name === "goal" && ["", "status", "pause", "resume", "cancel"].includes(slash.args.toLowerCase())));
+    if (blockedWorkspace && !isControlCommand) return;
     setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
     setMentionState(null);
     if (isShellPrompt(submittedPrompt)) {
       void runShellCommand(shellCommandFrom(submittedPrompt));
       return;
     }
-    const slash = slashCommandFrom(submittedPrompt);
     if (slash && handleSlashCommand(slash)) return;
     const expandedPrompt = expandSkillMentions(submittedPrompt, installedSkillNames);
+    if (isGoalRunning(currentGoal)) {
+      postLocalNote("A goal is running. Use /goal pause before sending a separate request.");
+      setPromptByAgent((current) => ({ ...current, [agent.id]: submittedPrompt }));
+      return;
+    }
     if (chatSendingRef.current[agent.id]) {
       queuePrompt(expandedPrompt);
       return;
@@ -13379,65 +13874,97 @@ function Conversation({
     window.requestAnimationFrame(() => promptRef.current?.focus());
   }
 
-  function addWorkspaceFromComposer() {
-    if (!updateAgent) {
-      setWorkspaceError("Workspace editing is unavailable.");
-      return;
-    }
-    if (atProjectLimit) {
-      setWorkspaceError("Workspace limit reached (" + maxProjects + ").");
-      return;
-    }
-    if (!normalizedWorkspaceDraft) {
-      setWorkspaceError(copy.selectWorkspace || "Select workspace");
-      return;
-    }
-    if (blockedWorkspaceDraft) {
-      setWorkspaceError(copy.chooseProjectFolder || "Choose a project folder or git repo.");
-      return;
-    }
-    if (duplicateWorkspace) {
-      setWorkspaceError("Workspace already added.");
-      return;
-    }
-
-    const project = projectRecordFromPath({ path: normalizedWorkspaceDraft, addedAt: new Date().toISOString() }, workspaces);
-    if (!project) {
-      setWorkspaceError("Workspace path is not valid.");
-      return;
-    }
-
-    const nextProjects = [...projects, project].slice(0, maxProjects);
-    updateAgent(agent.id, {
+  async function chooseMemberWorkspace(path) {
+    if (!updateAgent) throw new Error("Workspace editing is unavailable.");
+    const normalized = normalizeSquadWorkspacePath(path, runtime);
+    if (!normalized || isBlockedWorkspace(normalized, runtime)) throw new Error(copy.chooseProjectFolder || "Choose a project folder.");
+    const known = projects.some(project => project.path === normalized);
+    if (!known && projects.length >= maxProjects) throw new Error(`Workspace limit reached (${maxProjects}). Remove an unused folder in the member profile first.`);
+    // Validate existence on the bridge before changing the member or composer.
+    const profile = await api("/api/workspaces/profile", { method: "POST", body: JSON.stringify({ path: normalized }) });
+    const selected = profile.path || normalized;
+    const nextProjects = known ? projects : [...projects, projectRecordFromPath({ path: selected, addedAt: new Date().toISOString() }, workspaces)];
+    const result = await updateAgent(agent.id, {
       projects: nextProjects,
-      workspace: project.path,
+      workspace: selected,
       stats: { ...(agent.stats || {}), projects: nextProjects.length },
       updatedAt: new Date().toISOString(),
     });
-    setWorkspace(project.path);
-    setWorkspaceDraft("");
-    setWorkspaceError("");
+    if (result?.error) throw new Error(result.error);
+    setWorkspace(selected);
     window.requestAnimationFrame(() => promptRef.current?.focus());
   }
 
+  async function browseMemberWorkspace() {
+    const picked = await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: `Choose ${agent.name}’s working folder`, start: workspace }) });
+    return picked?.path;
+  }
+
+  if (compact) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col bg-background" data-testid="quick-chat-conversation">
+        {currentGoal ? <div className="shrink-0 px-3"><MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /></div> : null}
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-4 px-3 py-3">
+            {hasConversationMessages ? localizedMessages.map((message) => (
+              <SquadMessage key={message.id} compact agent={agent} message={message} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} />
+            )) : <p className="py-3 text-sm text-muted-foreground">Send a message to {agent.name}.</p>}
+            <div ref={messagesEndRef} aria-hidden="true" />
+          </div>
+        </ScrollArea>
+        <form className="shrink-0 p-3 pt-2" onSubmit={submit} data-testid="quick-chat-composer">
+          {queuedFollowups.length ? <QueuedFollowups items={queuedFollowups} copy={copy} onChange={updateQueuedFollowupPrompt} onRemove={removeQueuedFollowup} onSendNow={steerQueuedFollowup} /> : null}
+          {blockedWorkspace ? <p className="mb-2 text-xs text-destructive">Choose a project folder for {agent.name} in Squad before sending work.</p> : null}
+          {launchWarnings.length ? <p className="mb-2 text-xs text-muted-foreground">{launchWarnings.map((warning) => warning.detail).join(" ")}</p> : null}
+          <InputGroup className="h-auto flex-col items-stretch border-border bg-transparent shadow-none focus-within:border-ring/60 has-[[data-slot=input-group-control]:focus-visible]:ring-0 dark:bg-transparent" aria-label={`Message ${agent.name}`}>
+            {mentionOpen ? <MentionPicker items={mentionItems} loading={mentionLoading} error={mentionError} selectedIndex={mentionIndex} onSelect={selectMentionItem} /> : null}
+            <PromptTextarea control={InputGroupTextarea} ref={promptRef} value={prompt} onDraft={updatePrompt} onKeyDown={handlePromptKeyDown} placeholder={formatCopy(copy.talkToPlaceholder, { name: agent.name })} aria-label={formatCopy(copy.talkToPlaceholder, { name: agent.name })} aria-describedby="quick-chat-composer-hint" className="max-h-24 min-h-11 resize-none px-3 py-2 text-sm leading-5 md:text-sm" />
+            <InputGroupAddon align="block-end" className="gap-2 px-2 pb-2 pt-0" onClick={event => { if (!event.target.closest("button")) promptRef.current?.focus(); }}>
+              <InputGroupText id="quick-chat-composer-hint" className="min-w-0 flex-1 text-xs" title="Shift+Enter starts a new line">
+                {chatSending && !isGoalRunning(currentGoal) ? "Enter to queue" : "Enter to send"}
+                <span className="sr-only">. Shift+Enter starts a new line.</span>
+              </InputGroupText>
+              {chatSending && prompt.trim() ? <InputGroupButton type="submit" variant="ghost" size="icon-sm" aria-label={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup} title={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup}><Send className="size-4" /></InputGroupButton> : null}
+              <InputGroupButton type={chatSending ? "button" : "submit"} variant={chatSending ? "ghost" : "default"} size="icon-sm" className="shrink-0 rounded-md" disabled={!chatSending && (!prompt.trim() || blockedWorkspace)} aria-label={chatSending ? copy.stopChatResponse : copy.sendChatMessage} title={chatSending ? copy.stopChatResponse : copy.sendChatMessage} onClick={chatSending ? stopActiveChat : undefined}>
+                {chatSending ? <Square className="size-3.5 fill-current" /> : <Send className="size-4" />}
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
+        </form>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-[calc(100svh-4rem)] min-h-[560px] w-full max-w-full flex-col overflow-x-hidden bg-background/75 lg:h-screen lg:min-h-screen">
+    <div className={cn("flex w-full max-w-full flex-col overflow-x-hidden bg-background/75", compact ? "min-h-0 flex-1" : "h-[calc(100svh-4rem)] min-h-[560px] lg:h-screen lg:min-h-screen")}>
       <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6" data-tauri-drag-region="deep">
-        <div className="flex min-w-0 items-center gap-3">
-          <AgentAvatar agent={agent} className="size-9" />
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
+        <div className="min-w-0">
+          <Popover key={agent.id}>
+            <PopoverTrigger asChild>
               <button
                 type="button"
-                className="flex min-w-0 items-center gap-1 rounded-md text-left outline-none transition-colors hover:text-primary focus-visible:ring-[3px] focus-visible:ring-ring/40"
-                onClick={() => setProfilePreviewOpen(true)}
+                aria-label={`Preview ${agent.name}'s profile`}
+                className="flex min-w-0 max-w-full items-start gap-3 rounded-md text-left outline-none transition-colors hover:text-primary focus-visible:ring-[3px] focus-visible:ring-ring/40"
               >
-                <span className="truncate text-[15px] font-semibold leading-5">{agent.name}</span>
-                <ChevronRight className="size-3.5 text-muted-foreground" />
+                <AgentAvatar agent={agent} className="size-9 shrink-0" />
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-[15px] font-semibold leading-5">{agent.name}</span>
+                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span className="hidden truncate text-xs text-muted-foreground sm:inline">{localizedRole(agent, copy)}</span>
+                </span>
               </button>
-              <span className="hidden text-xs text-muted-foreground sm:inline">{localizedRole(agent, copy)}</span>
-            </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            </PopoverTrigger>
+            <AgentProfilePreview
+              agent={agent}
+              presence={chatSending ? { state: "working" } : entryForPresence(agent)}
+              runtimeAvailable={Boolean(runtime?.available)}
+              workspace={workspaceName(workspace) || workspaceLabel(workspace, workspaces)}
+              model={providerSummaryLabel(effectiveModel)}
+              copy={copy}
+              onViewProfile={() => navigate(memberProfilePath(agent.id, "home"))}
+            />
+          </Popover>
+            <div className="-mt-4 ml-12 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               {runtime?.available ? (
                 <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="min-w-0 truncate" />
               ) : (
@@ -13446,16 +13973,18 @@ function Conversation({
                   <span className="min-w-0 truncate">{copy.autohandMissing}</span>
                 </>
               )}
-              <span className="text-border">·</span>
-              <span className="min-w-0 max-w-40 truncate sm:max-w-[18rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
-              <span className="hidden text-border sm:inline">·</span>
-              <span className="hidden min-w-0 max-w-48 truncate sm:inline">{providerSummaryLabel(effectiveModel)}</span>
-              <span className="hidden text-border sm:inline">·</span>
+              {!compact ? <>
+                <span className="text-border">·</span>
+                <span className="min-w-0 max-w-40 truncate sm:max-w-[18rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
+                <span className="hidden text-border sm:inline">·</span>
+                <span className="hidden min-w-0 max-w-48 truncate sm:inline">{providerSummaryLabel(effectiveModel)}</span>
+              </> : null}
+              <span className={cn("text-border", !compact && "hidden sm:inline")}>·</span>
               <Popover open={harnessPopoverOpen} onOpenChange={setHarnessPopoverOpen}>
                 <PopoverTrigger asChild>
                   <button
                     type="button"
-                    className="hidden items-center gap-1 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
+                    className={cn("items-center gap-1 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground", compact ? "inline-flex shrink-0 whitespace-nowrap" : "hidden sm:inline-flex")}
                     aria-label="Change the engine this member runs with"
                   >
                     <Cpu className="size-3.5" aria-hidden="true" />
@@ -13496,7 +14025,6 @@ function Conversation({
                 </PopoverContent>
               </Popover>
             </div>
-          </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
@@ -13507,6 +14035,7 @@ function Conversation({
             <Plus data-icon="inline-start" />
             <span className="hidden sm:inline">New chat</span>
           </Button>
+          {!compact ? <>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon-sm" className="hidden sm:inline-flex" aria-label={copy.automation} onClick={() => setAutomationFormOpen(true)}>
@@ -13547,9 +14076,15 @@ function Conversation({
             </TooltipTrigger>
             <TooltipContent>{copy.current}</TooltipContent>
           </Tooltip>
+          </> : null}
         </div>
       </header>
 
+      {compact && currentGoal ? (
+        <div className="shrink-0 px-4 sm:px-6">
+          <MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} />
+        </div>
+      ) : null}
       <div className="relative flex min-h-0 flex-1 flex-col">
         {view === "canvas" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -13574,6 +14109,7 @@ function Conversation({
           </div>
         ) : (
         <ScrollArea className="min-h-0 flex-1">
+          {!compact ? <MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /> : null}
           <div
             className={cn(
               "mx-auto flex w-full max-w-3xl flex-col px-4 py-6 pb-36 sm:px-6",
@@ -13595,6 +14131,7 @@ function Conversation({
                       key={message.id}
                       agent={agent}
                       message={message}
+                      computerEvidence={computerEvidenceByMessage.get(message.id)}
                       copy={copy}
                       chatSettings={chatSettings}
                       onRetry={retryMessage}
@@ -13611,7 +14148,7 @@ function Conversation({
         )}
 
         <form className="bg-gradient-to-t from-background via-background to-transparent px-3 pb-4 pt-6 sm:px-5" onSubmit={submit}>
-          {recommendedRecipeMatches.length && !chatSending ? (
+          {!compact && recommendedRecipeMatches.length && !chatSending ? (
             <RecipeRecommendationPanel
               recipes={recommendedRecipeMatches}
               copy={copy}
@@ -13650,121 +14187,14 @@ function Conversation({
                 />
               </div>
               <div className="flex min-w-0 items-center gap-1.5 px-1 pb-1 sm:gap-2">
-              <Select value={blockedWorkspace ? undefined : workspace} onValueChange={setWorkspace} disabled={!workspaceChoices.length}>
-                <SelectTrigger className="h-9 w-0 min-w-0 basis-0 grow overflow-hidden rounded-full border-0 bg-muted px-3 shadow-none hover:bg-accent sm:w-auto sm:max-w-72 sm:basis-auto sm:grow-0">
-                  <FolderGit2 className="shrink-0" />
-                  <span className="min-w-0 truncate">{blockedWorkspace ? copy.selectWorkspace : workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
-                </SelectTrigger>
-                <SelectContent position="popper" className="max-h-[420px]">
-                  <SelectGroup>
-                    <SelectLabel>{copy.localFolders}</SelectLabel>
-                    {workspaceChoices.map((item) => (
-                      <SelectItem key={item.path} value={item.path}>
-                        {item.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-
-              <Popover
-                onOpenChange={(open) => {
-                  if (open && !workspaceDraft && addWorkspaceChoices[0]?.path) {
-                    setWorkspaceDraft(addWorkspaceChoices[0].path);
-                  }
-                }}
-              >
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <PopoverTrigger asChild>
-                      <Button type="button" variant="ghost" size="icon-sm" className="rounded-full" aria-label={copy.addWorkspace}>
-                        <Plus />
-                      </Button>
-                    </PopoverTrigger>
-                  </TooltipTrigger>
-                  <TooltipContent>{copy.addWorkspace}</TooltipContent>
-                </Tooltip>
-                <PopoverContent side="top" align="start" sideOffset={10} className="w-[min(24rem,calc(100vw-2rem))] p-3">
-                  <FieldGroup className="gap-4">
-                    <Field className="gap-2">
-                      <FieldLabel>{copy.selectWorkspace}</FieldLabel>
-                      {/* A machine can hold hundreds of repositories, and a
-                          list you can only scroll is not a chooser. Type to
-                          narrow it. */}
-                      <CommandRoot className="rounded-md border border-border/70 bg-transparent">
-                        <CommandInput
-                          placeholder={copy.filterFolders || "Type to find a folder…"}
-                          disabled={atProjectLimit || !addWorkspaceChoices.length}
-                        />
-                        <CommandList className="max-h-[220px]">
-                          <CommandEmpty className="px-3 py-4 text-xs text-muted-foreground">
-                            {copy.noFoldersMatch || "No folder matches. Paste a path below instead."}
-                          </CommandEmpty>
-                          <CommandGroup heading={copy.localFolders}>
-                            {addWorkspaceChoices.map((item) => (
-                              <CommandItem
-                                key={item.path}
-                                value={`${item.label} ${item.path}`}
-                                onSelect={() => {
-                                  setWorkspaceDraft(item.path);
-                                  setWorkspaceError("");
-                                }}
-                              >
-                                <FolderGit2 className="size-3.5 shrink-0 text-muted-foreground" />
-                                <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                                {selectedAddWorkspaceValue === item.path ? <Check className="size-3.5 shrink-0" /> : null}
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </CommandList>
-                      </CommandRoot>
-                    </Field>
-
-                    <Field className="gap-2">
-                      <FieldLabel>Path</FieldLabel>
-                      <Input
-                        value={workspaceDraft}
-                        onChange={(event) => {
-                          setWorkspaceDraft(event.target.value);
-                          setWorkspaceError("");
-                        }}
-                        placeholder="/Users/name/path/to/repository"
-                        disabled={atProjectLimit}
-                        className="h-9 font-mono text-xs"
-                      />
-                    </Field>
-
-                    {workspaceError ? <FieldDescription className="text-destructive">{workspaceError}</FieldDescription> : null}
-
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={async () => {
-                          try {
-                            const picked = await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: `Choose a folder for ${agent.name}`, start: workspace }) });
-                            if (picked?.path) {
-                              setWorkspaceDraft(picked.path);
-                              setWorkspaceError("");
-                            }
-                          } catch (error) {
-                            if (!/cancelled/i.test(error?.message || "")) setWorkspaceError(error?.message || "Could not open the folder dialog.");
-                          }
-                        }}
-                      >
-                        <FolderGit2 data-icon="inline-start" />
-                        Choose folder…
-                      </Button>
-                      <Button type="button" size="sm" className="flex-1" disabled={!canAddWorkspace || !updateAgent} onClick={addWorkspaceFromComposer}>
-                        <Plus data-icon="inline-start" />
-                        {copy.addWorkspace}
-                      </Button>
-                    </div>
-                  </FieldGroup>
-                </PopoverContent>
-              </Popover>
+              <MemberWorkspacePicker
+                key={agent.id}
+                name={agent.name}
+                workspace={blockedWorkspace ? "" : workspace}
+                choices={memberWorkspaceChoices}
+                onChoose={chooseMemberWorkspace}
+                onBrowse={browseMemberWorkspace}
+              />
 
               <Popover>
                 <Tooltip>
@@ -13942,20 +14372,6 @@ function Conversation({
         open={automationFormOpen}
         onOpenChange={setAutomationFormOpen}
         onSave={saveAutomation}
-      />
-
-      <AgentProfilePreviewDialog
-        agent={agent}
-        tasks={tasks}
-        automations={automations}
-        open={profilePreviewOpen}
-        onOpenChange={setProfilePreviewOpen}
-        locale={locale}
-        copy={copy}
-        onViewDetails={() => {
-          setProfilePreviewOpen(false);
-          navigate(memberProfilePath(agent.id, "home"));
-        }}
       />
 
       <ContextPackPreviewDialog
@@ -14357,13 +14773,13 @@ function SquadStatusRow({ agent, activeMode, latestRun, runtime, workspace, work
   );
 }
 
-const SquadMessage = memo(function SquadMessage({ agent, message, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
+const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry }) {
   const isUser = message.role === "user";
-  if (!isUser) return <AgentResponseMessage agent={agent} message={message} chatSettings={chatSettings} copy={copy} onRetry={onRetry} />;
+  if (!isUser) return <AgentResponseMessage compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} />;
 
   return (
     <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
-      <div className="max-w-[min(40rem,88%)] rounded-2xl rounded-br-md bg-muted px-4 py-2.5 text-[15px] leading-6 text-foreground">
+      <div className={cn("max-w-[min(40rem,88%)] bg-muted text-foreground", compact ? "rounded-md px-2.5 py-1.5 text-sm leading-5" : "rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] leading-6")}>
         <MarkdownBlocks text={message.body} />
       </div>
       <time className="pr-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">{message.time}</time>
@@ -14371,12 +14787,12 @@ const SquadMessage = memo(function SquadMessage({ agent, message, copy = getLoca
   );
 });
 
-function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry }) {
+function AgentResponseMessage({ agent, message, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
   // Trace normalisation and body parsing are the expensive part of a row.
   const view = useMemo(() => buildAgentResponseView(message), [message]);
   const isThinkingPlaceholder = String(message.body || "").trim() === `${agent.name} is thinking...`;
-  const isLoading = message.status === "loading" || isThinkingPlaceholder;
+  const isLoading = message.status === "loading";
   const hasRawOutput = Boolean(view.raw.stdout || view.raw.stderr);
   const elapsedMs = useElapsedMs(message.startedAt, isLoading);
   const durationMs = isLoading ? elapsedMs : durationFromMessage(message);
@@ -14392,40 +14808,42 @@ function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETT
   const needsSignIn = isError && /sign-in|autohand login|not signed in|rejected the account token/i.test(errorText);
 
   return (
-    <article data-message-id={message.id} className="group grid grid-cols-[auto,minmax(0,1fr)] gap-3 transition-colors" aria-live={isLoading ? "polite" : undefined}>
-      <AgentAvatar agent={agent} className="mt-0.5" />
+    <article data-message-id={message.id} className={cn("group transition-colors", !compact && "grid grid-cols-[auto,minmax(0,1fr)] gap-3")} aria-live={isLoading ? "polite" : undefined}>
+      {!compact ? <AgentAvatar agent={agent} className="mt-0.5" /> : null}
       <div className="min-w-0">
         <div className="mb-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
           <span className="text-sm font-semibold text-foreground">{message.authorName || agent.name}</span>
-          <time>{message.time}</time>
-          {isLoading ? (
+          {!compact ? <time>{message.time}</time> : null}
+          {isLoading && !compact ? (
             <span className="inline-flex items-center gap-1 text-primary">
               <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
               {durationLabel ? `${durationLabel}` : "Working"}
             </span>
-          ) : durationLabel ? (
+          ) : durationLabel && !compact ? (
             <span>{durationLabel}</span>
           ) : null}
-          {message.effectiveModel ? <span className="hidden truncate sm:inline">· {providerSummaryLabel(message.effectiveModel)}</span> : null}
+          {!compact && message.effectiveModel ? <span className="hidden truncate sm:inline">· {providerSummaryLabel(message.effectiveModel)}</span> : null}
           {message.status === "stopped" ? <span>· Stopped</span> : null}
         </div>
 
-        {showProgressPlaceholder ? (
+        {showProgressPlaceholder && !taskProgressFromMessage(message)?.items?.length ? (
           <div className="flex max-w-xl items-center gap-2.5 py-1 text-sm text-muted-foreground">
             <Spinner className="size-3.5" />
             <span className="min-w-0 truncate">{progressLabel}</span>
           </div>
         ) : null}
 
+        <AgentTaskChecklist message={message} isLoading={isLoading} />
+
         {hasVisibleAnswer && !isError ? (
-          <div className="max-w-none text-[15px] leading-7 text-foreground/95">
+          <div className={cn("max-w-none text-foreground/95", compact ? "text-sm leading-6" : "text-[15px] leading-7")} >
             <MarkdownBlocks text={view.answer} />
           </div>
         ) : null}
 
         {isError ? (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3.5 py-3 text-sm">
-            <p className="font-medium text-destructive">Could not answer</p>
+          <div className={cn("text-sm", !compact && "rounded-lg border border-destructive/30 bg-destructive/5 px-3.5 py-3")}>
+            <p className="font-medium text-destructive">{message.interrupted ? "Interrupted" : "Could not answer"}</p>
             <p className="mt-1 leading-6 text-foreground/85">{errorText}</p>
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               {onRetry ? (
@@ -14443,9 +14861,12 @@ function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETT
           </div>
         ) : null}
 
-        <AgentWorkDetails message={message} isLoading={isLoading} durationLabel={isLoading ? "" : durationLabel} copy={copy} mode={normalizeChatSettings(chatSettings).workDetails} />
+        {message.workDetailsLimited ? <p className="mt-2 text-xs text-muted-foreground">Work details show the activity received while this reply was running; the final diagnostic output was too large.</p> : null}
+        <ComputerUseEvidence files={computerEvidence} compact={compact} />
+        {!compact ? <AgentWorkUpdate message={message} isLoading={isLoading} /> : null}
+        {!compact ? <AgentWorkDetails message={message} isLoading={isLoading} durationLabel={isLoading ? "" : durationLabel} copy={copy} mode={normalizeChatSettings(chatSettings).workDetails} /> : null}
 
-        {!isLoading && showRawOutput ? <RawTraceBlock raw={view.raw} /> : null}
+        {!compact && !isLoading && showRawOutput ? <RawTraceBlock raw={view.raw} /> : null}
       </div>
     </article>
   );
@@ -14453,6 +14874,8 @@ function AgentResponseMessage({ agent, message, chatSettings = DEFAULT_CHAT_SETT
 
 function chatProgressLabel(message, durationMs) {
   const activity = String(message?.activityLabel || "").trim();
+  if (activity) return activity;
+  if (message?.streamEvents?.some((event) => ["tool_start", "tool_end", "tool_result", "plan_update", "thinking", "message_delta"].includes(event.type)) || message?.trace?.toolCalls?.length) return "Working through the request.";
   const model = message?.effectiveModel ? providerSummaryLabel(message.effectiveModel) : "";
   if (Number(durationMs) >= 45000) {
     return model
@@ -15253,6 +15676,10 @@ function timelineFileLink(row, filePath) {
 }
 
 function MissionControlPage({
+  attention = {},
+  attentionCount = 0,
+  attentionNavigate = {},
+  onMarkUpdatesRead,
   agents = [],
   tasks = [],
   runs = [],
@@ -15271,6 +15698,8 @@ function MissionControlPage({
   activeAgentId,
 }) {
   const params = new URLSearchParams(route.split("?")[1] || "");
+  const [savedView, setSavedView] = useState(() => readStored(WORK_VIEW_STORAGE_KEY, "needs-you"));
+  const view = workViewForRoute(route, savedView);
   const recipeText = recipeCopy(copy);
   const [recipeCatalogOpen, setRecipeCatalogOpen] = useState(false);
   const allRows = useMemo(
@@ -15282,17 +15711,30 @@ function MissionControlPage({
     () => new Map(allRows.map((row) => [row.id, missionRowEvaluationState(row)])),
     [allRows]
   );
+  const viewRows = useMemo(
+    () => view === "needs-you" ? workRowsNeedingYou(allRows, attention.handoffs) : view === "in-progress" ? workRowsInProgress(allRows) : allRows,
+    [allRows, view, attention.handoffs]
+  );
   const evaluationFilterCounts = useMemo(() => {
     const counts = {};
-    for (const state of rowEvaluationStates.values()) counts[state] = (counts[state] || 0) + 1;
+    for (const row of viewRows) {
+      const state = rowEvaluationStates.get(row.id);
+      counts[state] = (counts[state] || 0) + 1;
+    }
     return counts;
-  }, [rowEvaluationStates]);
+  }, [rowEvaluationStates, viewRows]);
   const rows = useMemo(
-    () => (evaluationState ? allRows.filter((row) => rowEvaluationStates.get(row.id) === evaluationState) : allRows),
-    [allRows, evaluationState, rowEvaluationStates]
+    () => evaluationState && view !== "needs-you" ? viewRows.filter((row) => rowEvaluationStates.get(row.id) === evaluationState) : viewRows,
+    [viewRows, evaluationState, rowEvaluationStates, view]
   );
+  const setView = (next) => {
+    setSavedView(next);
+    window.localStorage.setItem(WORK_VIEW_STORAGE_KEY, JSON.stringify(next));
+    navigate?.(missionControlPath({ view: next }));
+  };
   const setEvaluationFilter = (next) => {
     const nextParams = new URLSearchParams(params);
+    nextParams.set("view", view);
     if (next) nextParams.set("eval", next);
     else nextParams.delete("eval");
     const query = nextParams.toString();
@@ -15301,14 +15743,12 @@ function MissionControlPage({
   const selectedTaskId = params.get("task");
   const selectedRunId = params.get("run");
   const selectedRow =
-    rows.find((row) => (selectedTaskId && row.task?.id === selectedTaskId) || (selectedRunId && row.runtimeId === selectedRunId)) ||
-    rows[0] ||
+    allRows.find((row) => (selectedTaskId && row.task?.id === selectedTaskId) || (selectedRunId && row.runtimeId === selectedRunId)) ||
     null;
-  const activeRows = rows.filter((row) => !["completed", "cancelled"].includes(row.status));
-  const blockedRows = rows.filter((row) => ["blocked", "failed"].includes(row.status) || row.blocker);
-  const completedRows = rows.filter((row) => row.status === "completed");
-  const loadState = missionControlLoadState({ runtime, rows, runsError, workspacesError });
-  const runningRows = rows.filter((row) => ["running", "launching", "handoff-pending"].includes(row.status));
+  const activeRows = allRows.filter((row) => !["completed", "cancelled"].includes(row.status));
+  const blockedRows = allRows.filter((row) => ["blocked", "failed"].includes(row.status));
+  const loadState = missionControlLoadState({ runtime, rows: allRows, runsError, workspacesError });
+  const runningRows = allRows.filter((row) => ["running", "launching"].includes(row.status));
 
   // Four numbers in a bordered box is a dashboard telling you it has numbers.
   // One sentence says the same thing and names only what is true right now,
@@ -15319,7 +15759,6 @@ function MissionControlPage({
   if (runningRows.length) summaryParts.push(`${formatLocalizedNumber(runningRows.length, locale)} working`);
   if (blockedRows.length) summaryParts.push(`${formatLocalizedNumber(blockedRows.length, locale)} blocked`);
   if (idleCount) summaryParts.push(`${formatLocalizedNumber(idleCount, locale)} free`);
-  if (counts.permissionWarnings) summaryParts.push(`${formatLocalizedNumber(counts.permissionWarnings, locale)} to review`);
   const summary = summaryParts.length ? summaryParts.join(" \u00b7 ") : copy.workNothingRunning || "Nothing is running.";
 
   return (
@@ -15328,18 +15767,32 @@ function MissionControlPage({
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
             <h1 className="flex items-center gap-2 text-lg font-semibold">
-              <Monitor className="size-4 text-muted-foreground" aria-hidden="true" />
-              {copy.work || "Work"}
+              <Inbox className="size-4 text-muted-foreground" aria-hidden="true" />
+              {copy.needsYou || "Needs you"}
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{[attentionCount ? `${formatLocalizedNumber(attentionCount, locale)} to review` : "You're caught up", summary].join(" · ")}</p>
           </div>
+          <div className="flex items-center gap-2">
+          {view === "needs-you" && ((attention.replies?.length || 0) + (attention.unreadChannels?.length || 0)) > 0 ? (
+            <Button variant="ghost" size="sm" onClick={onMarkUpdatesRead}>{copy.markUpdatesRead || "Mark updates read"}</Button>
+          ) : null}
           {onLaunchRecipe ? (
             <Button variant="outline" size="sm" onClick={() => setRecipeCatalogOpen(true)} data-testid="mission-launch-recipe">
               <BookOpen data-icon="inline-start" />
               {recipeText.launchRecipe}
             </Button>
           ) : null}
+          </div>
         </header>
+
+        <div className="flex flex-wrap gap-5 border-y border-border/70" role="group" aria-label="Work view">
+          {[["needs-you", copy.needsYou || "Needs you"], ["in-progress", copy.inProgress || "In progress"], ["all", copy.allWork || "All work"]].map(([id, label]) => (
+            <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)} className={cn("border-b-2 py-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring", view === id ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
+              {label}
+              {id === "needs-you" && attentionCount ? <span className="ml-2 text-xs text-muted-foreground">{attentionCount}</span> : null}
+            </button>
+          ))}
+        </div>
 
         <MissionControlStateNotice
           state={loadState}
@@ -15352,6 +15805,11 @@ function MissionControlPage({
 
         {loadState === "loading" ? <MissionControlSkeleton /> : null}
 
+        {view === "needs-you" ? (
+          <NeedsYouList {...attention} navigate={attentionNavigate} copy={copy} timeLabel={(value) => formatRelativeTime(value, locale)} showEmpty={!rows.length && !counts.permissionWarnings && ["ready", "empty"].includes(loadState)} blockedWork={rows.length ? (
+            <MissionControlTable rows={rows} title={copy.blockedWork || "Work to review"} evaluationStates={rowEvaluationStates} locale={locale} copy={copy} navigate={navigate} selectedRow={selectedRow} onReplayRow={onReplayRow} replayingRowId={replayingRowId} />
+          ) : null} />
+        ) : <>
         <MissionEvaluationFilter
           active={evaluationState}
           counts={evaluationFilterCounts}
@@ -15372,10 +15830,11 @@ function MissionControlPage({
             replayingRowId={replayingRowId}
           />
         ) : loadState !== "loading" ? (
-          <EmptyBlock icon={Monitor} title="No squad work yet" body="Start a squad member run and it will show up here." />
+          <p className="text-sm text-muted-foreground">{view === "in-progress" ? "Nothing is in progress." : "No work matches this filter."}</p>
         ) : null}
+        </>}
 
-        <MissionDetailPanel row={selectedRow} locale={locale} copy={copy} navigate={navigate} />
+        {selectedRow ? <MissionDetailPanel row={selectedRow} locale={locale} copy={copy} navigate={navigate} /> : null}
       </div>
 
       {onLaunchRecipe ? (
@@ -16148,12 +16607,12 @@ function MissionEvaluationBadge({ state, copy = getLocaleCopy(DEFAULT_LOCALE) })
 // table above 1280px and a stack of cards below it, so the page had two
 // layouts for one list and neither fitted the column. A record is a title,
 // what moved, who owns it and what to do next; none of that needs a grid.
-function MissionControlTable({ rows = [], evaluationStates, selectedRow, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, onReplayRow, replayingRowId = "" }) {
+function MissionControlTable({ rows = [], title, evaluationStates, selectedRow, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, onReplayRow, replayingRowId = "" }) {
   return (
     <section aria-labelledby="mission-work-table">
       <div className="flex items-baseline justify-between gap-3 pb-2">
         <h2 id="mission-work-table" className="text-sm font-semibold">
-          {copy.workRecent || "Active and recent"}
+          {title || copy.workRecent || "Active and recent"}
         </h2>
         <span className="text-xs text-muted-foreground">{formatLocalizedNumber(rows.length, locale)}</span>
       </div>
@@ -16165,8 +16624,8 @@ function MissionControlTable({ rows = [], evaluationStates, selectedRow, locale 
             // row of a divider list is the only thing on the page that reads
             // as a card.
             className={cn(
-              "border-b border-border/60 border-l-2 border-l-transparent py-3 pl-3 pr-2",
-              selectedRow?.id === row.id && "border-l-foreground/40"
+              "border-b border-border/60 py-3 pr-2",
+              selectedRow?.id === row.id ? "border-l-2 border-l-foreground/40 pl-3" : "border-l-0 pl-[14px]"
             )}
           >
             <div className="flex items-baseline justify-between gap-3">
@@ -17490,7 +17949,9 @@ function missionNextAction(status, { detailPath, ownerId } = {}) {
   const chat = ownerId ? memberChatPath(ownerId) : detailPath;
   if (status === "failed") return { id: "replay", label: "Replay", icon: RefreshCw, path: "" };
   if (status === "handoff-pending" || status === "pending") {
-    return { id: "review", label: "Review", icon: ClipboardCheck, path: inboxPath() };
+    const params = new URLSearchParams(String(detailPath || "").split("?")[1] || "");
+    params.set("view", "needs-you");
+    return { id: "review", label: "Review", icon: ClipboardCheck, path: `${missionControlPath()}?${params}` };
   }
   if (status === "running" || status === "launching") return { id: "open", label: "Open chat", icon: Play, path: chat };
   if (status === "blocked") return { id: "open", label: "Open chat", icon: Workflow, path: chat };
@@ -17701,114 +18162,54 @@ function CapabilityRow({ icon: Icon, title, detail }) {
   );
 }
 
-function AgentProfilePreviewDialog({ agent, tasks, automations, open, onOpenChange, onViewDetails, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
-  const { entryFor: entryForPresence } = usePresence();
-  const strengths = getAgentStrengths(agent, copy);
-  const brainCard = brainCardForAgent(agent);
-  const taskCount = tasks.length || agent.stats?.tasks || 0;
-  const automationCount = automations.length || agent.stats?.automations || 0;
-  const activeDays = agent.stats?.activeDays ?? 0;
+function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, model, onViewProfile, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+  const description = agent.description || brainCardForAgent(agent).purpose;
+  const headingId = `member-preview-${agent.id}`;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent closeLabel={copy.close} className="max-h-[88svh] overflow-y-auto rounded-md border-border bg-background p-0 sm:max-w-[680px]">
-        <DialogHeader className="sr-only">
-          <DialogTitle>{formatCopy(copy.profilePreviewTitle, { name: agent.name })}</DialogTitle>
-          <DialogDescription>{formatCopy(copy.profilePreviewDescription, { name: agent.name })}</DialogDescription>
-        </DialogHeader>
-
-        <div className="p-5 sm:p-6">
-          <div className="rounded-md border bg-card/80 p-4 sm:p-5">
-            <div className="grid gap-4 sm:grid-cols-[168px_minmax(0,1fr)] sm:items-start">
-              <AgentPhotoCard
-                agent={agent}
-                compact
-              />
-
-              <div className="min-w-0 pt-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-xl font-semibold tracking-normal">{agent.name}</h2>
-                  <Badge variant="outline" className="rounded-md border-border/80 bg-muted/30">
-                    <ClipboardCheck data-icon="inline-start" />
-                    {localizedRole(agent, copy)}
-                  </Badge>
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                  <PresenceLabel entry={entryForPresence(agent)} copy={copy} />
-                  <Separator orientation="vertical" className="h-4" />
-                  <span>{copy.onboarding}: {formatShortDate(agent.createdAt, locale)}</span>
-                </div>
-              </div>
-            </div>
-
-            <Separator className="mt-5 border-dashed" />
-
-            <div className="grid grid-cols-3 gap-2 py-4 text-center">
-              <div>
-                <div className="text-2xl font-semibold tracking-normal">{formatLocalizedNumber(activeDays, locale)}<span className="ml-1 text-sm">d</span></div>
-                <div className="mt-1 text-xs text-muted-foreground">{copy.onboarded}</div>
-              </div>
-              <button type="button" className="rounded-md transition-colors hover:bg-muted/30" onClick={onViewDetails}>
-                <div className="text-2xl font-semibold tracking-normal">{formatLocalizedNumber(automationCount, locale)}</div>
-                <div className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
-                  {copy.automation}
-                  <ChevronRight className="size-3.5" />
-                </div>
-              </button>
-              <button type="button" className="rounded-md transition-colors hover:bg-muted/30" onClick={onViewDetails}>
-                <div className="text-2xl font-semibold tracking-normal">{formatLocalizedNumber(taskCount, locale)}</div>
-                <div className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
-                  {copy.tasks}
-                  <ChevronRight className="size-3.5" />
-                </div>
-              </button>
-            </div>
+    <PopoverContent
+      align="start"
+      sideOffset={8}
+      aria-labelledby={headingId}
+      className="max-h-[min(32rem,calc(100svh-4rem))] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto p-4"
+    >
+      <div className="flex items-start gap-3">
+        <AgentAvatar agent={agent} className="size-12 shrink-0" />
+        <div className="min-w-0">
+          <h2 id={headingId} className="truncate text-base font-semibold">{agent.name}</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">{localizedRole(agent, copy)}</p>
+          <div className="mt-1 text-xs">
+            {runtimeAvailable ? (
+              <PresenceLabel entry={presence} copy={copy} />
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                <span className="size-1.5 rounded-full bg-destructive" aria-hidden="true" />
+                {copy.autohandMissing}
+              </span>
+            )}
           </div>
-
-          <section className="mt-5">
-            <h3 className="mb-2 text-sm font-semibold text-muted-foreground">{copy.goodAt}</h3>
-            <div className="flex flex-wrap gap-2">
-              {strengths.map((strength) => (
-                <Badge key={strength} variant="outline" className="rounded-full border-border/80 bg-transparent px-3 py-1.5 text-xs text-foreground">
-                  {strength}
-                </Badge>
-              ))}
-            </div>
-          </section>
-
-          <section className="mt-6 rounded-md border bg-muted/20 p-4">
-            <div className="flex items-center gap-2">
-              <Brain className="size-4 text-primary" />
-              <h3 className="text-sm font-semibold text-muted-foreground">Brain card</h3>
-            </div>
-            <p className="mt-3 text-sm leading-6 text-foreground/88">{brainCard.purpose}</p>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {["definitionOfDone", "memoryPolicy"].map((fieldId) => {
-                const field = brainCardFields.find((item) => item.id === fieldId);
-                return (
-                  <div key={fieldId} className="rounded-md bg-background/70 p-3">
-                    <div className="text-[11px] font-medium uppercase text-muted-foreground">{field?.label || fieldId}</div>
-                    <p className="mt-1 max-h-24 overflow-auto text-sm leading-5 text-muted-foreground">{brainCard[fieldId]}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="mt-6">
-            <h3 className="mb-3 text-sm font-semibold text-muted-foreground">{copy.capabilitiesTools}</h3>
-            <CapabilityRow icon={BrainCog} title={copy.memory} detail={formatCopy(copy.learnedEntries, { count: formatLocalizedNumber(agent.memory?.length || 0, locale) })} />
-            <CapabilityRow icon={Sparkles} title={formatCopy(copy.skillWithCount, { count: formatLocalizedNumber(normalizeSkillList(agent.skills).length, locale) })} detail={copy.installedFromSkillRegistry} />
-            <CapabilityRow icon={Unplug} title={copy.connector} detail={formatCopy(copy.localToolsAvailable, { count: formatLocalizedNumber(agent.tools?.length || 0, locale) })} />
-          </section>
-
-          <Button className="mt-6 h-10 w-full text-sm" onClick={onViewDetails}>
-            {copy.viewDetails}
-            <ArrowUpRight data-icon="inline-end" />
-          </Button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+      {description ? <p className="mt-3 text-sm leading-6 text-muted-foreground">{description}</p> : null}
+      <dl className="mt-3 space-y-2 border-t border-border/60 pt-3 text-xs">
+        {[
+          [copy.workspace || "Workspace", workspace],
+          [copy.profilePreviewModel || "Model", model],
+          ["Runs with", harnessLabel(harnessForAgent(agent).id)],
+        ].filter(([, value]) => value).map(([label, value]) => (
+          <div key={label} className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3">
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="break-words">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="mt-3 border-t border-border/60 pt-3">
+        <Button type="button" size="sm" className="w-full" onClick={onViewProfile}>
+          View profile
+          <ArrowUpRight data-icon="inline-end" />
+        </Button>
+      </div>
+    </PopoverContent>
   );
 }
 
@@ -19079,13 +19480,24 @@ function buildCustomRoleInstructions(templateDraft) {
     .join("\n\n");
 }
 
-function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harnesses = [], harnessesLoading = false, onRefreshHarnesses, copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
+function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, existingMemberIds = [], harnesses = [], harnessesLoading = false, onRefreshHarnesses, copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
+  const creationStorageKey = `${STORAGE_KEYS.memberCreation}:${defaultWorkspace || ""}`;
+  const [savedCreation] = useState(() => {
+    const saved = readStored(creationStorageKey, null);
+    return saved?.version === 1 && saved.draft && typeof saved.draft === "object" && !Array.isArray(saved.draft) && ["name", "role", "description", "instructions"].every(field => typeof saved.draft[field] === "string") && !existingMemberIds.includes(saved.memberId) ? saved : null;
+  });
+  const creationIdRef = useRef(/^asq_[a-z0-9_-]+$/.test(savedCreation?.memberId || "") ? savedCreation.memberId : createSquadMemberId());
+  const creatingRef = useRef(false);
+  const creationSettledRef = useRef(false);
+  const [creating, setCreating] = useState(false);
+  const [creationError, setCreationError] = useState(savedCreation?.preparing ? "Preparation was interrupted on this device. Your choices are saved; try again." : "");
+  const [draftStorageError, setDraftStorageError] = useState("");
   // "Design it": one sentence in, a whole member out. The route falls back to
   // a deterministic draft when no model is reachable, so this never dead-ends.
   const [rolesOpen, setRolesOpen] = useState(false);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
-  const [roleWish, setRoleWish] = useState("");
+  const [roleWish, setRoleWish] = useState(typeof savedCreation?.roleWish === "string" ? savedCreation.roleWish : "");
   const [designing, setDesigning] = useState(false);
   // What the last attempt produced, not just a sentence about it. The line is
   // the only thing in the viewport that changes, so it has to name the member
@@ -19122,9 +19534,10 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     designElapsed >= DESIGN_WAIT_PROMISE_MS
       ? copyText.designStillAsking || "Still asking. If nothing comes back by thirty seconds, this page fills itself in from your description instead."
       : copyText.designAsking || "Asking a model to design this.";
-  const [customTemplates, setCustomTemplates] = useState([]);
+  const [customTemplates, setCustomTemplates] = useState(() => (Array.isArray(savedCreation?.customTemplates) ? savedCreation.customTemplates : []).filter(template => template && typeof template.id === "string" && template.id.startsWith("custom-role-") && typeof template.title === "string" && typeof template.description === "string" && typeof template.starter === "string"));
   const [customTemplateDialogOpen, setCustomTemplateDialogOpen] = useState(false);
-  const [templateId, setTemplateId] = useState("");
+  const [templateId, setTemplateId] = useState(() => [...roleTemplates, ...customTemplates].some(template => template.id === savedCreation?.templateId) ? savedCreation.templateId : "");
+  const appliedTemplateRef = useRef(templateId);
   const availableTemplates = useMemo(() => [...roleTemplates, ...customTemplates], [customTemplates]);
   const selectedTemplate = availableTemplates.find((item) => item.id === templateId);
   const template = selectedTemplate || roleTemplates[0] || CUSTOM_ROLE_TEMPLATE;
@@ -19141,9 +19554,10 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     setDraft((current) => ({ ...current, name: nextName }));
     namesByTemplateRef.current = { ...namesByTemplateRef.current, [roleId]: nextName };
   }, []);
-  const namesByTemplateRef = useRef({});
+  const namesByTemplateRef = useRef(savedCreation?.namesByTemplate && typeof savedCreation.namesByTemplate === "object" ? savedCreation.namesByTemplate : {});
   const [avatarError, setAvatarError] = useState("");
-  const [draft, setDraft] = useState(() => ({
+  const [draft, setDraft] = useState(() => {
+    const initial = {
     employeeType: template.id,
     name: "",
     role: template.title,
@@ -19156,7 +19570,53 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     profileFiles: normalizeProfileFiles(template.profileFiles),
     brainCard: normalizeBrainCard(template.brainCard, template),
     harness: normalizeHarnessAssignmentCopy(null),
-  }));
+    };
+    const saved = savedCreation?.draft;
+    if (!saved || !["name", "role", "description", "instructions"].every(field => typeof saved[field] === "string")) return initial;
+    return { ...initial, ...saved, workspace: defaultWorkspace, skills: normalizeSkillList(saved.skills), profileFiles: normalizeProfileFiles(saved.profileFiles), brainCard: normalizeBrainCard(saved.brainCard, saved), harness: normalizeHarnessAssignmentCopy(saved.harness) };
+  });
+
+  function persistCreation(preparing = creating) {
+    if (creationSettledRef.current) return;
+    let serialized;
+    try {
+      serialized = JSON.stringify({ version: 1, memberId: creationIdRef.current, templateId, customTemplates, namesByTemplate: namesByTemplateRef.current, roleWish, draft, preparing });
+      window.localStorage.setItem(creationStorageKey, serialized);
+      setDraftStorageError("");
+    } catch (error) {
+      // WebKit may accept an unchanged full cache without checking quota.
+      // A new draft still needs space; retain the entire cache in compressed
+      // form and retry this exact draft before reporting a storage failure.
+      try {
+        if (serialized && isStorageQuotaError(error) && compactChannelMessagesCache(window.localStorage, STORAGE_KEYS.channelMessages)) {
+          window.localStorage.setItem(creationStorageKey, serialized);
+          setDraftStorageError("");
+          return;
+        }
+      } catch { /* The draft remains in memory if both writes fail. */ }
+      setDraftStorageError("This device could not save your draft. Keep this page open until preparation finishes.");
+    }
+  }
+  useEffect(() => { persistCreation(); }, [creationStorageKey, draft, templateId, customTemplates, roleWish, creating]);
+
+  function clearCreation() {
+    creationSettledRef.current = true;
+    try { window.localStorage.removeItem(creationStorageKey); }
+    catch (error) { console.warn(`Could not clear the saved member draft: ${error.message}`); }
+  }
+
+  async function submitCreation(event) {
+    event.preventDefault();
+    if (!isValid || designing || creatingRef.current) return;
+    creatingRef.current = true; setCreating(true); setCreationError("");
+    persistCreation(true);
+    try {
+      const member = await onCreate(draft, { id: creationIdRef.current, requireProvision: true });
+      if (!member) throw new Error("Could not prepare your teammate. Your draft is kept; try again.");
+      clearCreation();
+    } catch (error) { setCreationError(error.message || "Could not prepare your teammate. Try again."); }
+    finally { creatingRef.current = false; setCreating(false); }
+  }
 
   // Start the designer's CLI while the person is still writing the sentence.
   // Designing gives up after twenty seconds, and a cold start alone was
@@ -19267,6 +19727,9 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
 
   useEffect(() => {
     if (!selectedTemplate) return;
+    if (appliedTemplateRef.current === selectedTemplate.id) return;
+    const previousTemplate = appliedTemplateRef.current;
+    appliedTemplateRef.current = selectedTemplate.id;
 
     setDraft((current) => ({
       ...current,
@@ -19275,7 +19738,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
       // fires this effect a moment after the field appears, so anything
       // typed in that window used to vanish as it was being typed.
       name:
-        current.employeeType === selectedTemplate.id && current.name
+        (current.employeeType === selectedTemplate.id || !previousTemplate) && current.name
           ? current.name
           : namesByTemplateRef.current[selectedTemplate.id] ?? "",
       role: selectedTemplate.title,
@@ -19308,7 +19771,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
   }, [defaultWorkspace, draft.workspace, runtimeShell]);
 
   const isCustomRole = Boolean(selectedTemplate?.id.startsWith(CUSTOM_ROLE_TEMPLATE.id));
-  const isValid = Boolean(selectedTemplate && draft.name.trim() && draft.description.trim() && draft.instructions.trim());
+  const isValid = Boolean(selectedTemplate && draft.name.trim() && draft.description.trim() && draft.instructions.trim() && (!isCustomRole || draft.role.trim()));
 
   const toggleTemplate = useCallback((id) => {
     setTemplateId((current) => (current === id ? "" : id));
@@ -19372,11 +19835,10 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
     <div className="min-h-[calc(100svh-4rem)] bg-background lg:min-h-screen">
       <form
         className="mx-auto flex w-full max-w-[720px] flex-col px-6 py-12 sm:px-8"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (isValid) onCreate(draft);
-        }}
+        onSubmit={submitCreation}
+        aria-busy={creating}
       >
+        <fieldset disabled={creating} className="contents">
         <div className="mb-9 flex items-center justify-between gap-4">
           <h1 className="text-3xl font-semibold tracking-normal sm:text-4xl">New Squad member</h1>
           <Button type="button" variant="ghost" className="lg:hidden" onClick={onCancel}>
@@ -19514,7 +19976,17 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
                   className="h-auto border-transparent bg-transparent px-0 text-2xl font-semibold shadow-none hover:border-input focus-visible:border-ring"
                   onChange={(event) => handleRoleNameChange(template.id, event.target.value)}
                 />
-                <p className="truncate text-sm text-muted-foreground">{draft.role || template.title}</p>
+                {isCustomRole ? (
+                  <Input
+                    id="member-role"
+                    value={draft.role}
+                    maxLength={80}
+                    aria-label="Role title"
+                    placeholder="Role title"
+                    className="h-auto border-transparent bg-transparent px-0 text-sm text-muted-foreground shadow-none hover:border-input focus-visible:border-ring"
+                    onChange={(event) => setDraft((current) => editDraftRole(current, event.target.value))}
+                  />
+                ) : <p className="truncate text-sm text-muted-foreground">{draft.role || template.title}</p>}
               </div>
             </div>
             <Field>
@@ -19642,13 +20114,17 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, harn
             full accent fill at half opacity, so an empty page showed a bright
             green Save with nothing to save. */}
         <div className="mt-16 flex flex-wrap items-center gap-3">
-          <Button type="submit" disabled={!isValid}>
+          <Button type="submit" disabled={!isValid || designing || creating}>
             {copyText.saveMember || "Save member"}
           </Button>
-          <Button type="button" variant="outline" onClick={onCancel}>
+          <Button type="button" variant="outline" onClick={() => { clearCreation(); onCancel(); }}>
             {copyText.cancel || "Cancel"}
           </Button>
         </div>
+        {creating ? <p role="status" className="mt-3 text-sm text-muted-foreground">Preparing your teammate…</p> : null}
+        {creationError ? <p role="alert" className="mt-3 text-sm text-destructive">{creationError}</p> : null}
+        {draftStorageError ? <p role="alert" className="mt-3 text-sm text-muted-foreground">{draftStorageError}</p> : null}
+        </fieldset>
       </form>
       <CustomRoleTemplateDialog
         open={customTemplateDialogOpen}
@@ -22056,6 +22532,7 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
     <div className="min-h-screen bg-background">
       <PageTitle title="Permission" />
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
+        <ComputerUsePermissions member={agent} api={api} />
         <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
           <div className="grid gap-5 border-b border-border/75 p-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:p-6">
             <div className="min-w-0">
@@ -23764,57 +24241,6 @@ function Extensions({ runtime, runs }) {
   );
 }
 
-function AboutDialog({ open, runtime, onOpenChange, onGiveFeedback }) {
-  const squadVersion = runtime?.squadVersion || "0.1.0";
-  const runtimeVersion = runtime?.version || "Runtime not detected";
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent closeLabel="Close" className="max-h-[88svh] overflow-y-auto rounded-md border-border bg-background p-0 sm:max-w-[620px]">
-        <DialogHeader className="border-b px-6 py-5 text-left">
-          <div className="mb-3 flex items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-md bg-primary text-primary-foreground">
-              <Bot className="size-5" aria-hidden="true" />
-            </span>
-            <div>
-              <DialogTitle className="text-2xl">Autohand Squad</DialogTitle>
-              <DialogDescription>Local-first desktop controller for your Autohand Code Squad.</DialogDescription>
-            </div>
-          </div>
-        </DialogHeader>
-        <div className="grid gap-5 px-6 py-5">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <AboutFact label="Squad version" value={squadVersion} />
-            <AboutFact label="CLI runtime" value={runtimeVersion} />
-            <AboutFact label="Bridge" value={runtime?.available ? "Connected" : "Offline"} />
-            <AboutFact label="Workspace root" value={runtime?.workspaceRoot || "User directory"} />
-          </div>
-          <p className="text-sm leading-6 text-muted-foreground">
-            Copyright (c) 2026 Autohand AI Ltd. Released under the MIT License.
-          </p>
-        </div>
-        <DialogFooter className="border-t bg-background px-6 py-4">
-          <Button variant="outline" onClick={() => onOpenChange?.(false)}>
-            Close
-          </Button>
-          <Button onClick={onGiveFeedback}>
-            <MessageSquareText data-icon="inline-start" />
-            Give Feedback
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function AboutFact({ label, value }) {
-  return (
-    <div className="min-w-0 border-t border-border/70 pt-3">
-      <div className="text-xs font-medium uppercase text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate text-sm font-medium">{value}</div>
-    </div>
-  );
-}
-
 function FeedbackDialog({ kind = "feedback", open, route, onOpenChange }) {
   const [rating, setRating] = useState("");
   const [description, setDescription] = useState("");
@@ -24090,7 +24516,12 @@ function SettingsPage({
   onOnboarding,
   updates = null,
   updatesChecking = false,
+  updatesError = "",
+  updatesUpgrading = false,
+  updatesUpgradeResult = null,
   onCheckUpdates,
+  onUpgradeApp,
+  onOpenReleases,
   themePreference,
   activeSkin = skinById(DEFAULT_SKIN_ID),
   onSkinChange,
@@ -24116,6 +24547,7 @@ function SettingsPage({
   onNotificationSettingsChange,
   onTestNotification,
   onRebuildSearchIndex,
+  projectObserver = null,
   improvementSettings = DEFAULT_IMPROVEMENT_SETTINGS,
   onImprovementSettingsChange,
   relayConfig,
@@ -24204,7 +24636,7 @@ function SettingsPage({
     { id: "notifications", icon: Bell, label: copy.notifications || "Notifications", detail: notificationSettingsDetail },
     { id: "improvement", icon: Sparkles, label: copy.selfImprovement || "Self-improvement", detail: improvementDetail(improvementSettings, copy) },
     { id: "handoff", icon: Workflow, label: copy.handoffRetryPolicy, detail: handoffRetryModeLabel(effectiveHandoffRetryMode, copy) },
-    { id: "mission-control", icon: Monitor, label: copy.work || "Work", detail: missionControlDetail },
+    { id: "mission-control", icon: Monitor, label: copy.needsYou || "Needs you", detail: missionControlDetail },
     { id: "runtime", icon: Server, label: copy.runtimeBridge, detail: runtime?.version || copy.checkingRuntime },
     { id: "relay", icon: Share2, label: copy.relay || "Relay", detail: relayStatusDetail(relayConfig, relayStatus, copy) },
     { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
@@ -24557,6 +24989,16 @@ function SettingsPage({
                     onCheckedChange={(checked) => onImprovementSettingsChange?.({ ...improvementSettings, applyAutomatically: checked === true })}
                   />
                 </Field>
+                <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+                  <FieldContent className="max-w-md gap-1">
+                    <FieldTitle><label htmlFor="observe-projects">Observe assigned projects</label></FieldTitle>
+                    <FieldDescription>Idle members check their project folders and message you about concrete improvements. Checks pause during work and breaks; suggestions wait for your direction.</FieldDescription>
+                    <FieldDescription>Reviews run at most once an hour per member, up to four per member and twelve for the squad each day.</FieldDescription>
+                    {projectObserver?.error ? <p role="status" className="text-xs text-destructive">{projectObserver.error}</p> : projectObserver?.snapshot ? <p className="text-xs text-muted-foreground">{projectObserver.snapshot.activeMemberId ? "A member is reviewing a project." : projectObserver.snapshot.running && improvementSettings.observeAssignedProjects ? "Watching assigned projects." : "Project observation is paused."}</p> : null}
+                    {projectObserver?.snapshot?.observations?.filter(item => item.error || item.status === "unsupported").map(item => <p key={item.memberId + item.project} role="status" className="text-xs text-destructive">{item.error || item.unsupported?.message || item.reason}</p>)}
+                  </FieldContent>
+                  <Switch id="observe-projects" checked={improvementSettings.observeAssignedProjects} onCheckedChange={checked => onImprovementSettingsChange?.({ ...improvementSettings, observeAssignedProjects: checked === true })} />
+                </Field>
               </div>
             </section>
 
@@ -24583,14 +25025,14 @@ function SettingsPage({
             </section>
 
             <section id="settings-mission-control" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
-              <SettingsSectionHeader title={copy.work || "Work"} description={missionControlDetail} />
+              <SettingsSectionHeader title={copy.needsYou || "Needs you"} description={missionControlDetail} />
               <a
                 href={missionControlPath()}
                 className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
                 onClick={(event) => handleLocalNavigation(event, missionControlPath())}
               >
                 <span className="min-w-0">
-                  <span className="block font-medium">{copy.workOpen || "Open Work"}</span>
+                  <span className="block font-medium">{copy.openNeedsYou || "Open Needs you"}</span>
                   <span className="mt-1 block truncate text-sm text-muted-foreground">Review active work, queue, and run evidence.</span>
                 </span>
                 <Badge variant={counts.permissionWarnings ? "destructive" : "secondary"} className="w-fit rounded-md px-1.5">
@@ -24618,7 +25060,7 @@ function SettingsPage({
                 title="Updates"
                 description={updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} is available on GitHub.` : "Releases are checked on GitHub (autohandai/squad)."}
               />
-              <SettingsUpdatesPanel updates={updates} checking={updatesChecking} onCheck={onCheckUpdates} />
+              <SettingsUpdatesPanel updates={updates} checking={updatesChecking} error={updatesError} upgrading={updatesUpgrading} upgradeResult={updatesUpgradeResult} onCheck={onCheckUpdates} onUpgrade={onUpgradeApp} onOpenReleases={onOpenReleases} />
             </section>
 
             <section id="settings-runtime" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
@@ -26126,9 +26568,41 @@ const rootElement = document.getElementById("root");
 const root = globalThis.__autohandSquadRoot || createRoot(rootElement);
 globalThis.__autohandSquadRoot = root;
 
+// Information windows have no workspace subscriptions or account gate. They
+// inherit appearance read-only, so opening About cannot write squad state.
+function InformationWindow({ page }) {
+  const [appearance, setAppearance] = useState(() => ({ preference: readThemePreference(), skin: readSkinId() }));
+  const [systemMode, setSystemMode] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)").matches ? THEME_MODE_DARK : THEME_MODE_LIGHT);
+  useEffect(() => {
+    const update = () => setAppearance({ preference: readThemePreference(), skin: readSkinId() });
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const updateSystem = () => setSystemMode(media?.matches ? THEME_MODE_DARK : THEME_MODE_LIGHT);
+    window.addEventListener("storage", update);
+    media?.addEventListener?.("change", updateSystem);
+    return () => { window.removeEventListener("storage", update); media?.removeEventListener?.("change", updateSystem); };
+  }, []);
+  useEffect(() => {
+    const skin = skinById(appearance.skin);
+    const mode = surfaceForSkin(skin, resolveEffectiveThemeMode(appearance.preference, systemMode));
+    const preset = getThemePreset(appearance.preference, mode);
+    const html = document.documentElement;
+    html.classList.toggle("light", mode === THEME_MODE_LIGHT);
+    html.classList.toggle("dark", mode === THEME_MODE_DARK);
+    html.dataset.skin = skin.id;
+    html.dataset.themeMode = appearance.preference.mode;
+    html.dataset.themeSurface = mode;
+    html.dataset.themePreset = preset.id;
+    for (const token of THEME_TOKEN_NAMES) html.style.setProperty(`--${token}`, skin.tokens?.[token] || preset.tokens[token]);
+    for (const [key, fallback] of Object.entries(SKIN_VAR_DEFAULTS)) html.style.setProperty(key, skin.vars?.[key] ?? fallback);
+  }, [appearance, systemMode]);
+  return <AppInformation page={page} api={api} renderMarkdown={(text) => <MarkdownBlocks text={text} />} onCheckUpdates={() => window.location.assign("/settings?section=updates&check=1")} />;
+}
+
+const informationPage = window.location.pathname.match(/^\/app-info\/(about|policies|changelog|licenses)$/)?.[1];
+
 root.render(
   <RenderErrorBoundary>
-    <App />
+    {informationPage ? <InformationWindow page={informationPage} /> : <App />}
   </RenderErrorBoundary>
 );
 
@@ -26138,6 +26612,7 @@ requestAnimationFrame(() => {
   requestAnimationFrame(() => {
     const boot = document.getElementById("boot");
     if (!boot) return;
+    if (boot.dataset.compact === "true") { boot.remove(); return; }
     boot.setAttribute("data-leaving", "");
     const remove = () => boot.remove();
     boot.addEventListener("transitionend", remove, { once: true });

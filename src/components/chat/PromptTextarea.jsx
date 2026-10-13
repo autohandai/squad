@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
  * mention insert, clear on send) it passes a new `value`; the field adopts it
  * whenever it differs from what the field last reported.
  */
-export const PromptTextarea = forwardRef(function PromptTextarea({ value = "", onDraft, onKeyDown, onSelect, onClick, onKeyUp, ...props }, ref) {
+export const PromptTextarea = forwardRef(function PromptTextarea({ value = "", onDraft, onKeyDown, onSelect, onClick, onKeyUp, control: Control = Textarea, ...props }, ref) {
   const [local, setLocal] = useState(value);
   const lastReported = useRef(value);
   const innerRef = useRef(null);
@@ -33,7 +33,7 @@ export const PromptTextarea = forwardRef(function PromptTextarea({ value = "", o
   }
 
   return (
-    <Textarea
+    <Control
       ref={innerRef}
       value={local}
       onChange={(event) => {

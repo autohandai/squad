@@ -67,6 +67,7 @@ export function roleFromDescription(description) {
   return cleaned
     .map((word, index) => {
       const lower = word.toLowerCase();
+      if (lower === "gtm" || lower === "apac") return lower.toUpperCase();
       if (index > 0 && MINOR_WORDS.has(lower)) return lower;
       return lower.charAt(0).toUpperCase() + lower.slice(1);
     })

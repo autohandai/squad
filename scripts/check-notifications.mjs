@@ -213,6 +213,9 @@ assert.equal(result.method, "unsupported");
 result = await postNativeNotification(null, { platform: "linux", spawn: stubSpawn().spawn, hasCommand: () => true });
 assert.equal(result.posted, true, "a missing payload still posts something rather than throwing");
 
+result = await postNativeNotification(payload, { platform: "darwin", env: { AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: "macos" }, spawn: () => assert.fail("native app owner must not also start AppleScript") });
+assert.deepEqual(result, { posted: false, queued: true, method: "desktop-pending" }, "queued native events do not claim OS delivery");
+
 // --- route plug-in end to end --------------------------------------------------
 
 const stateDir = await mkdtemp(join(tmpdir(), "squad-notifications-"));
@@ -347,6 +350,54 @@ try {
   })();
   assert.equal(response.body.success, false, "a failed test notification reports an error");
   assert.match(response.body.error, /nope/);
+
+  const desktop = createNotificationsPlugin({ nativeOwner: true, postNative: async () => ({ posted: false, queued: true, method: "desktop-pending" }) });
+  await desktop.init({ ...ctx, squadStateDir: join(stateDir, "desktop"), events: new EventEmitter() });
+  const queued = await desktop.onEvent({ ...finished });
+  assert.equal(queued.native.method, "desktop-pending");
+  assert.equal(queued.native.posted, false);
+  responses.length = 0;
+  await desktop.handle({ method: "GET", headers: {} }, {}, new URL("http://127.0.0.1:19821/api/notifications"), ctx);
+  assert.equal(responses[0].body.data.items[0].suppressed, false, "native worker can distinguish suppressed events");
+  const ack = async (body) => {
+    responses.length = 0;
+    await desktop.handle({ method: "POST", headers: {}, body }, {}, new URL("http://127.0.0.1:19821/api/notifications/native-delivery"), ctx);
+    return responses[0];
+  };
+  assert.equal((await ack({ id: queued.id, posted: "true" })).status, 400, "delivery requires a boolean OS submission result");
+  assert.equal((await ack({ id: "unknown", posted: true })).status, 400, "only existing pending records may be acknowledged");
+  assert.equal((await ack({ id: queued.id, posted: true })).status, 200);
+  assert.deepEqual(desktop.state.items[0].native, { posted: true, method: "macos-user-notifications" });
+  assert.equal((await ack({ id: queued.id, posted: true })).status, 400, "already acknowledged events cannot be delivered twice");
+  const desktopReload = createNotificationsPlugin({ nativeOwner: true });
+  await desktopReload.init({ ...ctx, squadStateDir: join(stateDir, "desktop"), events: new EventEmitter() });
+  assert.equal(desktopReload.state.items[0].native.posted, true, "delivery result survives relaunch and prevents replay");
+  responses.length = 0;
+  await plugin.handle({ method: "POST", headers: {}, body: { id: newest.id, posted: true } }, {}, new URL("http://127.0.0.1:19821/api/notifications/native-delivery"), ctx);
+  assert.equal(responses[0].status, 409, "a browser/headless bridge cannot claim desktop ownership");
+  desktop.dispose();
+  desktopReload.dispose();
+  let focusTime = 1_000;
+  let focusPosts = 0;
+  const multiWindow = createNotificationsPlugin({ now: () => focusTime, postNative: async () => { focusPosts += 1; return { posted: true, method: "stub" }; } });
+  await multiWindow.init({ ...ctx, squadStateDir: join(stateDir, "multi-window"), events: new EventEmitter() });
+  const focus = async (windowId, route) => {
+    responses.length = 0;
+    await multiWindow.handle({ method: "POST", headers: {}, body: { windowId, route } }, {}, new URL("http://127.0.0.1:19821/api/notifications/focus"), ctx);
+    return responses[0];
+  };
+  await focus("quick-chat", "/conversations/new?member=asq_kai");
+  await focus("main", "/squad");
+  await focus("main", "");
+  const onScreen = await multiWindow.onEvent({ ...finished });
+  assert.equal(onScreen.suppressed, true, "main blur cannot erase the quick-chat conversation's focus");
+  assert.equal(focusPosts, 0);
+  assert.equal((await focus("untrusted-window", "/squad")).status, 400, "focus only accepts known Squad window owners");
+  focusTime += 30_001;
+  const expired = await multiWindow.onEvent({ ...finished });
+  assert.equal(expired.suppressed, false, "closed or stale windows cannot suppress notifications indefinitely");
+  assert.equal(focusPosts, 1);
+  multiWindow.dispose();
   plugin.dispose();
   reloaded.dispose();
 } finally {
@@ -364,8 +415,9 @@ const feed = [
 assert.equal(unreadCount(feed), 3);
 assert.equal(routeForNotification(feed[0]), "/conversations/new?member=asq_kai", "bridge route wins");
 assert.equal(routeForNotification(feed[1]), "/channels/ch_ci");
-assert.equal(routeForNotification(feed[2]), "/inbox");
-assert.equal(routeForNotification(feed[3]), "/mission-control");
+assert.equal(routeForNotification(feed[2]), "/work?view=needs-you");
+assert.equal(routeForNotification(feed[3]), "/work?view=needs-you");
+assert.equal(routeForNotification({ kind: "approval.pending", route: "/mission-control" }), "/work?view=needs-you", "legacy approval route opens the decision filter");
 assert.equal(routeForNotification({ kind: "run.finished", memberId: "asq_kai" }), "/conversations/new?member=asq_kai");
 
 // Grouping depends on the local day boundary; build "now" from local dates so

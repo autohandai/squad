@@ -72,6 +72,7 @@ const MODES = new Set(["allow", "ask", "block"]);
     const policies = builtInPoliciesForRank(rank);
     assert.equal(policies.skill, "allow", `rank ${rank} lets a member use its own skills`);
     assert.equal(policies.find_agent_skills, "allow", `rank ${rank} lets a member see which skills exist`);
+    assert.equal(policies.squad_create_channel, "ask", `rank ${rank} asks before creating shared channels`);
     assert.notEqual(policies.install_agent_skill, "block", `rank ${rank} does not refuse installing outright`);
   }
   // Installing changes the member, so it asks rather than proceeding silently.

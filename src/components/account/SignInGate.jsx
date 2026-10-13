@@ -64,28 +64,31 @@ export function SignInGate({
   const waiting = busy && flow?.state === "running";
 
   return (
-    <main className="flex min-h-screen w-full flex-col items-center justify-center bg-background px-4 py-16 text-foreground">
+    <main className="flex min-h-[100svh] w-full flex-col items-center justify-center bg-background px-6 py-16 text-foreground" data-testid="sign-in-gate">
+      <div className="app-drag-strip" data-tauri-drag-region aria-hidden="true" />
       <div className="w-full max-w-sm">
-        <div className="mb-8 flex items-center gap-3">
-          <span className="grid size-9 place-items-center rounded-lg bg-foreground text-background">
-            <LogIn className="size-4" aria-hidden="true" />
-          </span>
-          <div>
-            <h1 className="text-lg font-semibold leading-tight">Sign in to {productName}</h1>
-            <p className="text-sm text-muted-foreground">Your squad runs on your Autohand account.</p>
-          </div>
+        <div className="mb-9 text-center">
+          <img src="/brand/autohand-squad/autohand-squad-mark-light.webp" alt="" aria-hidden="true" className="mx-auto mb-4 size-14 object-contain dark:hidden" />
+          <img src="/brand/autohand-squad/autohand-squad-mark-dark.webp" alt="" aria-hidden="true" className="mx-auto mb-4 hidden size-14 object-contain dark:block" />
+          <h1 className="text-xl font-semibold tracking-tight">{productName}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Your team of agents, in one place.</p>
+        </div>
+
+        <div className="mb-5">
+          <h2 className="text-base font-medium">Sign in to your squad</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Use your Autohand account to get started.</p>
         </div>
 
         {bridgeUnavailable ? (
-          <p className="mb-5 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
+          <p className="mb-5 text-sm text-muted-foreground" role="status">
             The local bridge is not answering yet. Sign-in continues once it is back.
           </p>
         ) : null}
 
         <div className="flex flex-col gap-3">
           <Button type="button" size="lg" className="h-11 w-full justify-center" onClick={beginSignIn} disabled={busy || bridgeUnavailable}>
-            {waiting ? <Spinner /> : <LogIn data-icon="inline-start" />}
-            {waiting ? "Waiting for the browser…" : "Continue with Autohand account"}
+            {busy ? <Spinner /> : <LogIn data-icon="inline-start" />}
+            {waiting ? "Waiting for the browser…" : busy ? "Opening sign-in…" : "Continue with Autohand account"}
           </Button>
 
           {flow?.url ? (
@@ -106,7 +109,7 @@ export function SignInGate({
             </p>
           ) : null}
 
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
         </div>
 
         <div className={cn("mt-8 border-t border-border/70 pt-5 text-sm text-muted-foreground")}>

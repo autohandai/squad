@@ -19,6 +19,20 @@ export const DRAFT_FIELDS = Object.freeze(["name", "role", "description", "instr
 // open. scripts/check-member-draft.mjs holds those two ends together.
 export const MEMBER_DESIGNER_ID = "squad-designer";
 
+// The custom form generates this one identity line; editing its title must
+// update that line without rewriting the person's authored instructions.
+export function editDraftRole(draft, role) {
+  const previous = `Act as ${String(draft.role || "").trim()}.`;
+  const instructions = String(draft.instructions || "");
+  return {
+    ...draft,
+    role,
+    instructions: instructions.startsWith(previous)
+      ? `Act as ${role.trim()}.${instructions.slice(previous.length)}`
+      : instructions,
+  };
+}
+
 const NAME_LIMIT = 60;
 const ROLE_LIMIT = 80;
 const TEXT_LIMIT = 600;
@@ -55,7 +69,12 @@ const GENERIC = Object.freeze({ role: "Squad Member", name: "Nova", skills: ["re
  */
 export function draftFromDescription(description) {
   const text = typeof description === "string" ? description.trim() : "";
-  const hint = ROLE_HINTS.find((entry) => entry.match.test(text)) || GENERIC;
+  // Commercial pipelines are not data pipelines. Explicit GTM intent takes
+  // priority over incidental engineering words in a detailed business brief.
+  const gtm = /\b(?:gtm|go[\s-]+to[\s-]+market)\b/i.test(text);
+  const hint = gtm
+    ? { role: /\b(?:apac|asia[\s-]+pacific)\b/i.test(text) ? "GTM APAC Leader" : "GTM Leader", name: "Alex", skills: ["go-to-market strategy", "market research", "enterprise sales"] }
+    : ROLE_HINTS.find((entry) => entry.match.test(text)) || GENERIC;
   // A description often opens with the job title: "Chief of staff, controls
   // everyone…". Use it rather than calling that member "Squad Member", which
   // is what happened when the model timed out (ADR-0031).
@@ -120,7 +139,7 @@ export function mergeModelDraft(fallback, model) {
 export function draftInstruction(description) {
   const ask = typeof description === "string" ? description.trim().slice(0, 1200) : "";
   return [
-    "Design one member of a small software squad from the request below.",
+    "Design one squad member for the job requested below. Members may have business, commercial, creative, or engineering roles.",
     "",
     "Request:",
     ask || "(no description given)",
@@ -142,6 +161,7 @@ export function draftInstruction(description) {
     "- brainCard: one sentence per field, each answering its own question:",
     ...brainCardFields.map((field) => `    ${field.id}: ${field.prompt}`),
     "- Base every field on the request. Do not invent a different job.",
+    "- Preserve the requested job and region. A sales or GTM pipeline is not a data-engineering pipeline.",
   ].join("\n");
 }
 

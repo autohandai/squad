@@ -224,6 +224,10 @@ pub struct UpdateSnapshot {
     #[serde(default)]
     pub download_url: Option<String>,
     #[serde(default)]
+    pub download_name: Option<String>,
+    #[serde(default)]
+    pub download_sha256: Option<String>,
+    #[serde(default)]
     pub notes: Option<String>,
 }
 
@@ -985,15 +989,7 @@ async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
                     let update_available =
                         crate::install::compare_versions(&release.version, VERSION)
                             == std::cmp::Ordering::Greater;
-                    let download_url = crate::install::select_artifacts(&release.manifest)
-                        .into_iter()
-                        .find(|artifact| {
-                            matches!(
-                                artifact.component.as_deref(),
-                                Some("dmg" | "installer" | "deb" | "appimage")
-                            )
-                        })
-                        .map(|artifact| artifact.url);
+                    let installer = crate::install::select_desktop_installer(&release.manifest);
                     UpdateSnapshot {
                         success: true,
                         checked_at,
@@ -1008,7 +1004,11 @@ async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
                         error: None,
                         source: format!("github:{repository}"),
                         release_url: Some(release.release_url),
-                        download_url,
+                        download_url: installer.as_ref().map(|artifact| artifact.url.clone()),
+                        download_name: installer
+                            .as_ref()
+                            .and_then(|artifact| artifact.binary_name.clone()),
+                        download_sha256: installer.as_ref().map(|artifact| artifact.sha256.clone()),
                         notes: Some(release.notes),
                     }
                 }
@@ -1027,6 +1027,8 @@ async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
                     source: format!("github:{repository}"),
                     release_url: None,
                     download_url: None,
+                    download_name: None,
+                    download_sha256: None,
                     notes: None,
                 },
             };
@@ -1069,13 +1071,18 @@ async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
                 surface: "squad-daemon".to_string(),
                 device_id: state.device_id.clone(),
                 current_version: VERSION.to_string(),
-                update_available: latest.as_deref().is_some_and(|version| version != VERSION),
+                update_available: latest.as_deref().is_some_and(|version| {
+                    crate::install::compare_versions(version, VERSION)
+                        == std::cmp::Ordering::Greater
+                }),
                 latest_allowed_version: latest,
                 manifest_url: url,
                 error: None,
                 source: "autohand-api".to_string(),
                 release_url: None,
                 download_url: None,
+                download_name: None,
+                download_sha256: None,
                 notes: None,
             }
         }
@@ -1094,6 +1101,8 @@ async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
             source: "autohand-api".to_string(),
             release_url: None,
             download_url: None,
+            download_name: None,
+            download_sha256: None,
             notes: None,
         },
     };

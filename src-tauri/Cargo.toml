@@ -1,6 +1,6 @@
 [package]
 name = "autohand-squad-desktop"
-version = "0.1.5"
+version = "0.1.6"
 description = "Autohand Squad desktop shell (Tauri 2)"
 edition = "2021"
 rust-version = "1.80"
@@ -22,6 +22,19 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
 tokio = { version = "1.41", features = ["rt-multi-thread"] }
 window-vibrancy = "0.8"
+reqwest = { version = "0.13", features = ["blocking", "json"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+getrandom = "0.3"
+libc = "0.2"
+sha2 = "0.10"
+objc2-app-kit = "0.3"
+base64 = "0.23"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-user-notifications = { version = "0.3", features = ["block2"] }
+block2 = "0.6"
 
 [profile.release]
 codegen-units = 1

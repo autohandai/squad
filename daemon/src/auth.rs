@@ -17,8 +17,8 @@ pub struct BrowserLogin {
 }
 
 /// Presentation class for the account confirmation page. The API accepts
-/// `desktop`, `cli`, `blueprint`, `assembly`, or `mobile`.
-pub const DEVICE_CLIENT_TYPE: &str = "desktop";
+/// `squad`, `desktop`, `cli`, `blueprint`, `assembly`, or `mobile`.
+pub const DEVICE_CLIENT_TYPE: &str = "squad";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,8 +90,8 @@ pub async fn run_browser_device_login(config: &SquadConfig, source: &str) -> Res
     let init_url = format!("{}/cli/initiate", base_url.trim_end_matches('/'));
     // The device flow is the CLI's (`clientId` names the wire protocol and
     // stays `autohand-cli`), with schema version 2 falling back to 1 for
-    // older deployments. `clientType` drives the confirmation page: Squad is
-    // a desktop client, so the page says "Autohand Desktop", not "CLI".
+    // older deployments. `clientType` is the stored presentation identity:
+    // this app requests Squad branding while keeping the CLI auth protocol.
     let mut schema_version: u8 = 2;
     let mut init_body: Option<DeviceAuthInitResponse> = None;
     let mut last_error = String::new();
@@ -291,21 +291,21 @@ fn encode_query_component(value: &str) -> String {
 fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     let mut command = {
-        let mut command = std::process::Command::new("open");
+        let mut command = crate::cli::non_bridge_command("open");
         command.arg(url);
         command
     };
 
     #[cfg(target_os = "linux")]
     let mut command = {
-        let mut command = std::process::Command::new("xdg-open");
+        let mut command = crate::cli::non_bridge_command("xdg-open");
         command.arg(url);
         command
     };
 
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = std::process::Command::new("cmd");
+        let mut command = crate::cli::non_bridge_command("cmd");
         command.args(["/C", "start", "", url]);
         command
     };

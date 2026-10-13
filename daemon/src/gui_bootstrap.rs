@@ -13,7 +13,7 @@ use crate::telemetry::{append_telemetry_event, launcher_event};
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use tokio::runtime::Runtime;
 
 const MAX_ATTEMPTS: usize = 5;
@@ -239,7 +239,7 @@ fn native_dialog(title: &str, body: &str, _paths: &StatePaths) -> Result<DialogC
         apple_script_string(title),
         apple_script_string(body)
     );
-    let output = Command::new("osascript")
+    let output = crate::cli::non_bridge_command("osascript")
         .args(["-e", &script])
         .stdin(Stdio::null())
         .output()
@@ -274,7 +274,7 @@ exit 12
         )),
         title = powershell_string(title),
     );
-    let status = Command::new("powershell")
+    let status = crate::cli::non_bridge_command("powershell")
         .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", &script])
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::null())
@@ -292,7 +292,7 @@ exit 12
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn native_dialog(title: &str, body: &str, _paths: &StatePaths) -> Result<DialogChoice> {
     // zenity ships with GNOME; kdialog with KDE. Fall back to stderr.
-    if let Ok(status) = Command::new("zenity")
+    if let Ok(status) = crate::cli::non_bridge_command("zenity")
         .args([
             "--question",
             "--title",
@@ -323,7 +323,7 @@ fn native_dialog(title: &str, body: &str, _paths: &StatePaths) -> Result<DialogC
             DialogChoice::Quit
         });
     }
-    if let Ok(status) = Command::new("kdialog")
+    if let Ok(status) = crate::cli::non_bridge_command("kdialog")
         .args([
             "--title",
             title,
@@ -355,19 +355,19 @@ fn powershell_string(value: &str) -> String {
 pub fn open_path(path: &Path) -> Result<()> {
     #[cfg(target_os = "macos")]
     let mut command = {
-        let mut command = Command::new("open");
+        let mut command = crate::cli::non_bridge_command("open");
         command.arg(path);
         command
     };
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = Command::new("explorer");
+        let mut command = crate::cli::non_bridge_command("explorer");
         command.arg(path);
         command
     };
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let mut command = {
-        let mut command = Command::new("xdg-open");
+        let mut command = crate::cli::non_bridge_command("xdg-open");
         command.arg(path);
         command
     };

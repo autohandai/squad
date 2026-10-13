@@ -109,6 +109,10 @@ pub struct ChannelRecord {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    /// Fields owned by the web bridge (projects, section, git binding, ...)
+    /// that the daemon only carries through.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -134,6 +138,8 @@ pub struct ChannelThreadRecord {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -145,6 +151,11 @@ pub struct ChannelsState {
     pub threads: Vec<ChannelThreadRecord>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// Messages, revision, tombstones and agent receipts belong to the web
+    /// bridge. Carrying them through means a daemon write can never erase
+    /// history the daemon does not model.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -440,6 +451,43 @@ mod tests {
 
         write_channels_state(&paths, &state).unwrap();
         assert_eq!(read_channels_state(&paths).unwrap().unwrap(), state);
+        let _ = fs::remove_dir_all(paths.root);
+    }
+
+    #[test]
+    fn channels_state_round_trip_keeps_fields_the_daemon_does_not_model() {
+        let paths = temp_state_paths();
+        fs::create_dir_all(&paths.root).unwrap();
+        // The web bridge owns messages, revisions, tombstones, projects and
+        // agent receipts. A daemon-side write must not silently drop them.
+        fs::write(
+            &paths.channels_json,
+            r#"{
+                "version": 1,
+                "revision": 7,
+                "deletedChannelIds": ["gone"],
+                "agentChannelAccess": { "eva": { "allowed": true } },
+                "agentChannelActions": [{ "id": "action-1" }],
+                "channels": [{ "id": "channel_general", "name": "general", "section": "Engineering", "projects": [{ "name": "squad", "path": "/tmp/squad" }] }],
+                "threads": [{ "id": "thread_1", "channelId": "channel_general", "workspace": "/tmp/squad" }],
+                "messages": [{ "id": "message_1", "channelId": "channel_general", "body": "keep me" }]
+            }"#,
+        )
+        .unwrap();
+
+        let state = read_channels_state(&paths).unwrap().unwrap();
+        write_channels_state(&paths, &state).unwrap();
+
+        let raw: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&paths.channels_json).unwrap()).unwrap();
+        assert_eq!(raw["revision"], 7);
+        assert_eq!(raw["deletedChannelIds"][0], "gone");
+        assert_eq!(raw["agentChannelAccess"]["eva"]["allowed"], true);
+        assert_eq!(raw["agentChannelActions"][0]["id"], "action-1");
+        assert_eq!(raw["messages"][0]["body"], "keep me");
+        assert_eq!(raw["channels"][0]["section"], "Engineering");
+        assert_eq!(raw["channels"][0]["projects"][0]["path"], "/tmp/squad");
+        assert_eq!(raw["threads"][0]["workspace"], "/tmp/squad");
         let _ = fs::remove_dir_all(paths.root);
     }
 }

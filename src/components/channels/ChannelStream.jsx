@@ -329,7 +329,7 @@ export function ChannelStream({
             </Fragment>
           );
         }
-        const isNew = !newShown && lastReadAt > 0 && ms > lastReadAt && message.role !== "user";
+        const isNew = !message.archivedThread && !newShown && lastReadAt > 0 && ms > lastReadAt && message.role !== "user";
         const name = authorName ? authorName(message) : message.role === "user" ? userName : message.authorName || "Member";
         const compact = !showDay && !isNew && previousAuthor === name && ms - previousTimestamp < 4 * 60 * 1000;
         const loading = message.status === "loading";

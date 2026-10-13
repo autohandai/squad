@@ -163,18 +163,34 @@ For a clean first-run onboarding test, clear
 `autohandSquad.v1.onboarding` from local storage or clear all local storage for
 `127.0.0.1:19821`, then open `/`. Skip only defers optional setup after account
 sign-in; it does not bypass the public-beta login requirement. The setup guide
-remains resumable from the account menu.
+remains resumable from Settings. Chosen folder, role and name survive refreshes;
+failed validation or member preparation stays on the form with a retry. Setup
+completes only after provisioning succeeds, and preparation retries reuse the
+same member ID.
+The New member form, including “Create someone else”, keeps its unfinished
+role/personality draft for that folder after refresh and waits for preparation.
+Cancel clears that draft. A failed runtime-config check explains what to restore
+before retrying and preserves the last confirmed personality.
 
 The repeatable browser check is:
 
 ```bash
 bun run check:onboarding:browser
+bun run check:onboarding:recovery
+bun run check:member-creation:browser
+bun run check:member-config
 ```
 
-It starts the preview server when needed, launches a clean headless Chrome
-profile, verifies `/` routes into `/welcome`, skips into `/squad`, resumes setup
-from the app shell, opens the Settings LLM provider controls, and writes
-screenshots to `.codex-artifacts/`.
+These checks start isolated bridges and clean headless Chrome profiles. The
+first verifies mandatory account gating, root routing, persisted skip, Settings
+resume and provider controls. The second covers invalid folders and saved
+selections, interruptions, prerequisite/folder retries, provisioning failures,
+rapid submissions, confirmed provisioning and restart recovery. Skill hosting
+is an isolated fixture; neither check executes a live provider or login flow.
+Screenshots are written to `.codex-artifacts/`.
+The additional creation check covers the normal/custom role form, alternate
+setup completion and a lost response after real preparation. Config checks
+exercise real disk failures without executing a provider.
 
 ## LLM Provider
 

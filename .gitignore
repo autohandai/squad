@@ -4,6 +4,7 @@ node_modules/
 daemon/target/
 release/
 vendor/autohand-cli/
+vendor/computer-use/
 .autohand/
 .env
 .env.*
@@ -18,7 +19,7 @@ vendor/autohand-cli/
 .codex-artifacts/
 screenshots/
 CLAUDE.md
-goals/
+/goals/
 
 *.log
 *.tmp

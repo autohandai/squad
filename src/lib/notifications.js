@@ -43,6 +43,9 @@ export function unreadCount(items = []) {
  * falls back to the item's ids so an older feed entry still opens somewhere.
  */
 export function routeForNotification(item = {}) {
+  if (["approval.pending", "handoff.pending"].includes(item.kind) && (!item.route || item.route === MISSION_CONTROL_ROUTE || item.route === INBOX_ROUTE)) {
+    return "/work?view=needs-you";
+  }
   if (typeof item.route === "string" && item.route.startsWith("/")) return item.route;
   const channel = String(item.channelId || "").trim();
   const member = String(item.memberId || "").trim();

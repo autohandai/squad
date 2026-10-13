@@ -1,7 +1,7 @@
 // Native menu bar → web app bridge for the desktop shell (Tauri).
 //
-// The Rust shell owns the menu (File › New › Agent / Channel, View › Inbox,
-// Agents, Channels, Mission Control, Settings, …). Each selection is delivered
+// The Rust shell owns the menu (File › New › Agent / Channel, View › Needs you,
+// Agents, Channels, Settings, …). Legacy action ids remain accepted. Each selection is delivered
 // to the page as one DOM event carrying an action id, so the web app keeps a
 // single navigation code path and works identically in a browser tab.
 
@@ -15,6 +15,7 @@ export const DESKTOP_MENU_ACTIONS = new Set([
   "channels",
   "mission-control",
   "settings",
+  "check-upgrades",
   "search",
   "toggle-sidebar",
 ]);

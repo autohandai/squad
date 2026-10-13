@@ -15,7 +15,7 @@ use crate::state::{now_string, read_tray_record, StatePaths};
 use serde::{Deserialize, Serialize};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 pub const MIN_NODE_MAJOR: u32 = 18;
@@ -416,7 +416,7 @@ pub fn run_with_timeout(
     args: &[&str],
     timeout: Duration,
 ) -> Result<String, String> {
-    let mut child = Command::new(program)
+    let mut child = crate::cli::non_bridge_command(program)
         .args(args)
         .env("PATH", gui_path_env())
         .stdin(Stdio::null())

@@ -5,7 +5,7 @@ use crate::state::{
 use crate::ui::{describe_tray, run_tray_action, run_tray_open_path, TrayAction, TraySnapshot};
 use anyhow::{Context, Result};
 use std::io::Cursor;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
@@ -173,7 +173,7 @@ fn record_current_tray(paths: &StatePaths, snapshot: &TraySnapshot) -> Result<()
 fn native_tray_pids() -> Vec<u32> {
     #[cfg(target_family = "unix")]
     {
-        Command::new("ps")
+        crate::cli::non_bridge_command("ps")
             .args(["-axo", "pid=,command="])
             .output()
             .ok()
@@ -221,7 +221,7 @@ fn process_is_running(pid: u32) -> bool {
 
     #[cfg(target_family = "unix")]
     {
-        Command::new("kill")
+        crate::cli::non_bridge_command("kill")
             .arg("-0")
             .arg(pid.to_string())
             .stdout(Stdio::null())
@@ -233,7 +233,7 @@ fn process_is_running(pid: u32) -> bool {
 
     #[cfg(target_os = "windows")]
     {
-        Command::new("tasklist")
+        crate::cli::non_bridge_command("tasklist")
             .args(["/FI", &format!("PID eq {pid}")])
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
@@ -344,6 +344,15 @@ fn members_submenu(snapshot: &TraySnapshot) -> Result<Submenu> {
                 short_label(role, 18)
             )
         };
+        #[cfg(target_os = "macos")]
+        let item = tray_icon::menu::IconMenuItem::with_id_and_native_icon(
+            format!("member:{}", path_segment(&member.id)),
+            &label,
+            snapshot.daemon_running,
+            Some(tray_icon::menu::NativeIcon::User),
+            None,
+        );
+        #[cfg(not(target_os = "macos"))]
         let item = action_item(
             &format!("member:{}", path_segment(&member.id)),
             &label,
@@ -439,7 +448,7 @@ fn jobs_submenu(snapshot: &TraySnapshot) -> Result<Submenu> {
     }
 
     if jobs.len() > 12 {
-        let item = disabled_item(format!("{} more jobs in Mission Control", jobs.len() - 12));
+        let item = disabled_item(format!("{} more jobs in All work", jobs.len() - 12));
         submenu.append(&item)?;
     }
 
@@ -588,7 +597,7 @@ fn confirm_restart_with_active_work(warning: &RestartWorkWarning) -> Result<bool
         apple_script_string_expr(warning.title()),
         apple_script_string_expr(&warning.message())
     );
-    let output = Command::new("osascript")
+    let output = crate::cli::non_bridge_command("osascript")
         .args(["-e", &script])
         .output()
         .context("show restart warning")?;
@@ -612,7 +621,7 @@ exit 1
         title = powershell_single_quoted(warning.title()),
         message = powershell_single_quoted(&warning.message())
     );
-    let output = Command::new("powershell")
+    let output = crate::cli::non_bridge_command("powershell")
         .args(["-NoProfile", "-Command", &script])
         .output()
         .context("show restart warning")?;
@@ -634,7 +643,7 @@ fn confirm_restart_with_active_work(warning: &RestartWorkWarning) -> Result<bool
 #[cfg(target_os = "linux")]
 fn linux_restart_warning_commands(warning: &RestartWorkWarning) -> Vec<Command> {
     let message = warning.message();
-    let mut zenity = Command::new("zenity");
+    let mut zenity = crate::cli::non_bridge_command("zenity");
     zenity.args([
         "--question",
         "--title",
@@ -649,7 +658,7 @@ fn linux_restart_warning_commands(warning: &RestartWorkWarning) -> Vec<Command> 
         "420",
     ]);
 
-    let mut kdialog = Command::new("kdialog");
+    let mut kdialog = crate::cli::non_bridge_command("kdialog");
     kdialog.args([
         "--title",
         warning.title(),

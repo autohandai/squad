@@ -45,3 +45,38 @@ and asks for `h-[100svh]` by hand, which the rewrite does not match.
 - The drag strip is untouched: still fixed at the top, full width, the height of
   the inset, and still the only drag region (ADR-0040). It now sits over the
   app's own surface instead of over a strip of window.
+
+## Profile sidebar correction — 2026-10-01
+
+The owner's profile screenshot showed the brand overlapping the macOS traffic
+lights while the same brand was correctly positioned in a direct message.
+Reading `MemberProfileSidebar` and the desktop selectors in `src/styles.css`
+showed that the profile variant did not carry `app-sidebar`; the inset rule
+therefore never matched it. The collapsed rails had the same omission.
+
+All sidebar variants now carry the same shell class. The profile brand uses
+the workspace brand's size and header spacing, and its header cannot shrink
+when the section list is long. The profile section list scrolls independently.
+The inset still belongs to the inner sidebar root, so adding it to the outer
+column would apply the inset twice on the ordinary workspace sidebar.
+
+This amends the existing titlebar decision rather than choosing a separate
+profile-only offset. Browser geometry and keyboard checks are tracked with
+the current change; source inspection is evidence for the cause, not native
+window verification.
+
+The 2026-10-01 browser run (`node scripts/verify-work-profile-browser.mjs`)
+measured normal and profile logos at x=16, y=40, 32 by 32 pixels, with the same
+28px desktop inset and 56px brand header. Both collapsed variants measured
+y=32, 28 by 28 pixels. None were clipped; default, soft, and grut skins retained
+normal/profile alignment. The report is in `.codex-artifacts/work-profile/`.
+These are Chrome measurements with desktop/mac attributes, not a native
+Tauri window or a packaged-app test.
+
+The final clean macOS bundle was then compiled with `tauri build --bundles app`,
+installed in `/Applications/Autohand Squad.app`, and opened through the native
+window. Native screenshots confirmed the logo and brand text visible below
+the traffic lights on both the workspace and Eva's profile. Refreshing only
+the web assets in the previous running bundle did not establish this proof:
+its profile still appeared without the brand. The clean bundle and runtime
+restart were necessary to verify what the owner actually sees.

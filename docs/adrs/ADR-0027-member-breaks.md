@@ -3,6 +3,24 @@
 Date: 2026-09-27
 Status: Accepted
 
+## Amendment: bridge enforcement and persistent goals, 2026-10-01
+
+The original local-only rule below is superseded. The bridge now persists
+explicit break state, pauses durable goals, interrupts tracked SDK/external
+chat workers, and refuses chat, stream, and run dispatch while resting. An
+explicit end-break wins over stale browser member snapshots. The frontend
+guards handoffs before ownership changes and treats a bridge refusal racing
+with dispatch as failure, returning ownership to the source rather than
+claiming completed work. Ending a break does not resume a goal automatically.
+
+Browser verification exposed an additional cause: mention resolution filtered
+out any member whose status was not online, so a resting recipient never
+reached the refusal guard. Identity resolution now includes resting members;
+availability is decided separately. The new lifecycle and disposable bridge
+checks prove break interruption, persistence and zero new harness dispatch.
+The browser harness checks direct-message and mention refusal with no task
+ownership transfer. Live vendor execution is outside those fixture checks.
+
 ## Context
 
 Every member row in the sidebar was a single click with no way to act on the

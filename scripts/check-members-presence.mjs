@@ -225,7 +225,7 @@ try {
   assert.equal(await handle({ method: "POST" }, stopRes, new URL("http://x/api/members/kai/stop"), fake.ctx), true);
   assert.ok(Date.now() - started < 2000, "stop answers within two seconds");
   assert.equal(stopRes.status, 200);
-  assert.deepEqual(stopRes.payload.data, { memberId: "kai", closedSessions: 1, stoppedRuns: 2, runIds: ["r1", "r2"] });
+  assert.deepEqual(stopRes.payload.data, { memberId: "kai", closedSessions: 1, stoppedRuns: 2, runIds: ["r1", "r2"], pausedGoals: [], stoppedChats: 0 });
   assert.deepEqual(fake.resets, [{ agentId: "kai", reason: "stopped by user" }]);
   assert.equal(fake.runs.get("r1").status, "stopped");
   assert.ok(fake.runs.get("r1").finishedAt, "finishedAt set");
@@ -255,7 +255,7 @@ try {
 
   // Stopping a member nothing is running for is a no-op that still answers.
   const idle = await stopMember(fake.ctx, "ada");
-  assert.deepEqual(idle, { memberId: "ada", closedSessions: 0, stoppedRuns: 0, runIds: [] });
+  assert.deepEqual(idle, { memberId: "ada", closedSessions: 0, stoppedRuns: 0, runIds: [], pausedGoals: [], stoppedChats: 0 });
 
   // A pool that hangs does not hold the response past the budget.
   fake.ctx.sdkSessions.reset = () => new Promise(() => {});

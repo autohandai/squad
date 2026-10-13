@@ -6,6 +6,8 @@
 
 export const APP_COMMANDS = [
   { name: "new", args: "", description: "Start a new conversation (resets the warm session)", scope: "app" },
+  { name: "goal", args: "<objective> | status | pause | resume | cancel", description: "Pursue a persistent goal with this member’s selected harness", scope: "app" },
+  { name: "break", args: "[off]", description: "Pause work and decline new handoffs; /break off returns", scope: "app" },
   { name: "model", args: "<model>", description: "Set the model for the next messages", scope: "app" },
   { name: "harness", args: "autohand|codex|claude", description: "Switch the engine this member runs with", scope: "app" },
   { name: "workspace", args: "<path>", description: "Switch the working folder", scope: "app" },

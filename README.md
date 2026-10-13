@@ -76,9 +76,9 @@ access-controlled service in the current build.
 | Area | Current boundary |
 | --- | --- |
 | Shared workspace | Direct agent conversations, public/private channel labels, threaded multi-agent replies, tasks, and work records stored locally. |
-| Agent setup | Role templates plus configurable skills, tools, models, memory, projects, and permission policies. Connector pages currently report readiness rather than providing full account setup. |
+| Agent setup | Sixteen role templates with runtime-loaded personality, purpose, memory and collaboration rules, plus configurable skills, tools, models, projects and permission policies. Warm and resumed turns preserve saved customizations and harness identity. Connector pages currently report readiness rather than providing full account setup. |
 | Execution | One-shot and streamed chat, tracked runs, Terminal handoff, task history, run output, and evidence views through the local Autohand bridge. |
-| Repeatable work | Recipes and saved automation definitions with explicit **Run now** controls. A background scheduler and inbound webhook worker are not included yet. |
+| Repeatable work | Recipes and member Automations use explicit **Run now** controls. Channel workflows already support bridge schedule/webhook triggers and approval gates; app-dispatched member steps require Squad open. |
 | Distribution | Tag-bound DMG installers for macOS Apple Silicon and Intel, an NSIS setup EXE for Windows x64, portable archives for every supported target, SHA-256 checksums, and updater assets. Native installers bundle Node; portable archives require Node 18.17+ on `PATH`. |
 
 ## Desktop app (Tauri 2)
@@ -92,10 +92,51 @@ the squad running in the tray; Quit stops the services.
 ```bash
 bun run build            # web assets
 bun run cli:fetch        # vendored Autohand Code release
+node scripts/fetch-computer-use.mjs # pinned engine + macOS permission host
 bun run desktop:stage    # stages runtime/ and the sidecars (Node, daemon, analytics, squad)
 bun run desktop:build    # .app + .dmg (macOS), NSIS (Windows), deb/AppImage (Linux)
 bun run desktop:dev      # window against a staged runtime, debug build
 ```
+
+Local macOS desktop builds use a complete ad-hoc app-bundle signature when
+`APPLE_SIGNING_IDENTITY` is unset, preserving a configured Developer ID
+identity. The bundle identity is required by macOS notification permissions;
+the executable's linker signature alone is insufficient. An ad-hoc signature
+is for local use and does not provide Developer ID trust or notarization.
+For a native-only rebuild after staging, run
+`node scripts/build-native-shell.mjs --bundles app`.
+
+Computer Use inputs are prepared at build time. `node scripts/fetch-computer-use.mjs`
+verifies and reuses existing `vendor/computer-use` artifacts, downloading missing
+engine archives from the pinned `computer-use-v0.28.2` release. On macOS it builds
+the permission host from immutable commit
+`fc92b70417cdae941ba8b104a6e7b3b5b52a07e2` in a temporary directory, verifies the
+source archive and individual source hashes, explicitly targets macOS 13.0,
+and includes the Apache license, source notice, and signed build provenance.
+The reviewed `scripts/computer-use-squad-branding.patch` changes only the
+permission host's identity/name and consent wording. The resulting
+`Squad Computer Use.app` uses `ai.autohand.squad.computer-use` and Squad's
+separately pinned app icon. Its provenance records the patch checksum and
+the exact patched source hashes alongside the original upstream pins.
+Users explicitly enable Accessibility and Screen Recording for **Squad
+Computer Use**; existing CLI Computer Use permissions are not reused.
+It requires the Xcode command-line tools. Agents use the packaged inputs;
+they do not download or build the engine while working.
+
+Use `--check` to verify prepared inputs without downloads or changes,
+`--target linux/x64` (or another supported target) to prepare a specific engine,
+`--all` to prepare every engine archive, and `--rebuild-host` to rebuild the
+macOS host. Preparing both Mac architectures on macOS produces a universal
+host; Mac host builds on other operating systems are unsupported.
+`AUTOHAND_SQUAD_COMPUTER_USE_DIR` overrides the vendor input directory, and
+`AUTOHAND_SQUAD_COMPUTER_USE_SOURCE_ARCHIVE` selects an already downloaded source
+archive with the same fixed checksum. Staging defaults to the host inside the
+vendor directory; `AUTOHAND_SQUAD_COMPUTER_USE_HOST` supplies a separately
+verified host. Build preparation does not install the app or request system
+permissions. Developer ID signing and notarization remain release steps.
+Source pins make the inputs repeatable; compiler/SDK and signature differences
+can change the built executable, so the receipt records the actual toolchain
+and output checksum rather than claiming byte-identical builds.
 
 On macOS the window uses a transparent title bar with the traffic lights over
 the sidebar, and the sidebar is a native vibrancy surface; on Windows it uses
@@ -204,6 +245,11 @@ Give feedback, About, and Quit. `cargo run --release --example tray_model`
 First-run users are routed to `/welcome` after sign-in until setup is
 completed or skipped; a signed-out install never reaches the workspace.
 
+Setup saves the chosen folder, role and name across refreshes. Start requires a
+validated folder and ready account, runtime and provider. Folder checks and
+member preparation can be retried in place; completion and navigation wait for
+the bridge to provision the member. Retrying preparation reuses its saved ID.
+
 The workspace opens only for a signed-in Autohand account: a signed-out
 install shows a sign-in page that starts the CLI's own login flow through the
 local bridge (`autohand login`), shows the URL and device code it prints, and
@@ -216,8 +262,8 @@ browser flow completes. An API key remains an alternative for each engine.
 
 ## Members working together
 
-- **Delegation from a reply.** A member that @mentions a teammate in its own reply hands that part of the job to them (security review, QA, tests, design, deployment). The teammate starts immediately, works in the same folder, and reports back; both sides are visible. Depth is capped at two hops.
-- **Members open channels.** A member can include one `SQUAD_ACTION: {"type":"create_channel", …}` line in a reply to open a project channel with the named teammates; you are always a member, the folder becomes a channel project, and the purpose is posted as the first prompt.
+- **Delegation from a reply.** A member that @mentions a teammate in its own reply hands that part of the job to them (security review, QA, tests, design, deployment). The teammate starts immediately in the same folder. A delegated review keeps the original task and returns its awaited verdict to the initiating conversation; the parent stays active until its handoffs resolve. Depth is capped at two hops. Execution coordination requires the browser to remain open; persisted task records are not an automatic background continuation.
+- **Members propose channels.** A member can include one `SQUAD_ACTION: {"type":"create_channel", …}` line in a DM, channel reply or successful background run. The bridge checks its current `squad_create_channel` permission: ask shows an approval row, allow creates, block refuses. The executing member and existing named teammates join, the assigned folder becomes a project, and you can open the channel. Its purpose is saved under the originating member and sent through the runtime once per teammate. Retries reuse receipts; stopped or failed runs cannot execute actions, and interrupted purpose work explains how to continue with a new prompt.
 - **Channel projects.** Channel settings list folders the channel works in (add a known folder or **Choose…** for the native dialog). Mention one as `@project-name` to scope a message to that folder; every channel project is passed to members as an extra directory.
 - **Native folder choice.** In a member's workspace popover, **Choose folder…** opens the OS folder dialog (macOS, Windows, Linux with zenity); the chosen folder still has to be inside your home directory.
 
@@ -344,7 +390,11 @@ exposes the local Autohand bridge:
 - `GET /api/runs/:id` returns one run with logs
 - `POST /api/terminal` opens Terminal in a workspace with `autohand`
 - `GET /api/channels` returns the squad channel/thread state (`channels`, `threads`)
-- `POST /api/channels` creates a channel; `PUT /api/channels` syncs the full snapshot from the web app
+- `GET /api/channels/events` refreshes open windows when channel state changes
+- `GET /api/channel-actions` lists durable agent action receipts; `POST /api/channel-actions/:id/approve|decline` resolves a pending proposal using current permissions
+- `PUT /api/members/:id/channel-access` saves member configuration for current channel permissions, or revokes it with `{ "removed": true }`; remote member settings save on the owning bridge
+- `POST /api/channels` creates a channel after committing it; repeating the same id/name returns that channel, while another channel with the same name returns 409
+- `PUT /api/channels/sync` merges browser channel/thread/message caches without dropping other windows' records or reviving deleted channels; legacy `PUT /api/channels` replaces a snapshot and checks its revision when supplied
 - `PATCH|PUT /api/channels/:id` updates a channel; `DELETE /api/channels/:id` removes it with its threads
 - `POST /api/channels/:id/members` updates membership (`add`, `remove`, or full `memberIds`)
 - `GET|POST /api/channels/:id/threads` lists or records channel threads
@@ -355,6 +405,19 @@ exposes the local Autohand bridge:
 - `GET|POST /api/memory-inbox` reads or updates proposed memory events
 
 ### Agent channels
+
+User creation, editing and membership changes wait for bridge confirmation.
+Channel settings include name, visibility and sidebar section. Failed creation
+keeps the draft for retry; channels retain project folders, threads and messages
+across reloads and restarts. Local bridge writes are serialized and atomic.
+Run `bun run check:channel-lifecycle` for real backend lifecycle/restart checks,
+and `bun run check:channel-lifecycle:browser` for the normal sidebar and settings
+flow in disposable Chrome (requires Chrome; does not use your data or a provider).
+`bun run check:agent-channel-actions` verifies real bridge/SDK-adapter permission,
+approval, purpose, retry and recovery behavior using controlled model output.
+Add `--browser` to its script invocation for rendered approval/error/retry checks.
+These checks do not prove live provider behavior. Remote proposals are reviewed
+on the member's owning bridge; cross-bridge proposal aggregation is deferred.
 
 Channels bring several specialized agents into one shared thread. Assign
 agents to a channel marked public or private and send one prompt; each agent
@@ -421,9 +484,25 @@ cargo build --bins -j1
 ```
 
 Run `bun run check:onboarding:browser` when changing the first-run setup flow.
-It starts a local preview server if needed, drives a clean headless Chrome
-profile through `/`, `/welcome`, `/squad`, and Settings provider setup, and
-writes screenshots under `.codex-artifacts/`. Run `bun run check:release` when
+It starts an isolated local bridge, drives a clean headless Chrome profile
+through account gating, `/`, `/welcome`, `/squad`, Settings resume and provider
+setup, and writes screenshots under `.codex-artifacts/`.
+Run `bun run check:onboarding:recovery` for rendered validation, saved choices,
+failed provisioning, prerequisite recovery, duplicate submissions and confirmed
+real provisioning with an isolated fixture skill catalog. This check does not
+execute a model provider.
+Run `bun run check:member-creation:browser` for normal and alternate setup
+creation, handwritten profile preservation, duplicate submission and refresh
+recovery after a lost preparation response. It uses real provisioning with
+controlled skills/runtime. `bun run check:member-config` checks config damage,
+write failures, preserved personality and permission-update recovery.
+Run `bun run check:collaboration:browser` for the persisted implement → QA →
+review → return path, parallel review and break/error handling against the
+real bridge with controlled SDK output. Live-provider and interruption/retry
+acceptance are reported separately in `docs/reports/squad-reliability.md`.
+The check also closes the browser during accepted review and restarts the bridge:
+the saved transcript and task show interruption, with no automatic model replay.
+Run `bun run check:release` when
 `.github/`, `scripts/`, release metadata, or installer-manifest behavior
 changes. Run `bun run ci` before broad PRs or release-impacting work.
 
@@ -537,8 +616,9 @@ leftover Squad runtime processes before the tray exits.
 - Move into code with Terminal and configured Autohand CLI or GitHub tools to
   prepare or review pull-request work. Remote writes remain permission-gated.
 - Reuse saved automation definitions, skills, recipes, and the handoff retry
-  policy. Auto mode remains review-first unless explicitly enabled; recurring
-  schedules still require an external runner.
+  policy. Auto mode remains review-first unless explicitly enabled. Saved member
+  automation schedules require an external runner; channel workflow schedule and
+  webhook triggers run in the local bridge, with Squad open for app-dispatched steps.
 - Run each configured agent as an isolated Autohand CLI profile using
   `.autohand/agents/<member-id>/config.json`, `AUTOHAND_HOME`,
   `AUTOHAND_CONFIG`, and `--config`.
@@ -548,3 +628,5 @@ leftover Squad runtime processes before the tray exits.
 ## License
 
 Autohand Squad is available under the [MIT License](LICENSE).
+
+Checkpoint retries explicitly restart the saved recipient, retain completed source work, and return recovered child results to the original conversation. Inspect saved evidence before retrying: arbitrary file and command effects are not transactionally deduplicated. Busy recipients decline additional handoffs; retry after their current request finishes. Every `@mention` dispatches immediately, so ordered delegation mentions only the next teammate.
