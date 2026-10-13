@@ -94,6 +94,7 @@ Route paths are matched with plain string comparison or a `RegExp` on
 | `readChannelsState()` / `writeChannelsState(state)` | async fn | `channels.json` (`{ version, channels: [...] }`); channels carry `id, name, memberIds, projects, ...` and may gain new fields |
 | `mutateChannelsState(operation)` | async fn | Runs the callback against fresh channel state inside the shared mutation queue, then commits atomically. Use for read-modify-write changes; snapshot replacement checks a supplied `revision`. |
 | `agentChannelActions` | object | Shared turn completion handler and durable proposal decisions (ADR-0075). `agentChannelAccess` and `agentChannelActions` in channel state are bridge-owned; browser snapshots cannot grant, erase or forge them. |
+| `vault` | object | `store` (list/add/remove views), `requests` (pending secret and payment requests), `dispatch` for the managed MCP server; values never leave the bridge (ADR-0104) |
 | `startRun(payload)` | async fn | start a member run (same payload as `POST /api/runs`) |
 | `events` | EventEmitter | `bridgeEvents`; also `ctx.emit(name, payload)` |
 | `getRuntime()` | fn | the `/api/runtime` snapshot (account, versions, paths) |
@@ -115,6 +116,8 @@ should accept it in the request body or read `ctx.readOptionalJsonFile(join(squa
 | `handoff.pending` | `{ taskId, fromMemberId, toMemberId, title }` (emitted by the web app through `POST /api/events`) |
 | `approval.pending` | `{ workflowId, runId, channelId, stepId }` |
 | `mention.received` | `{ channelId, memberId, messageId, preview }` |
+| `vault.request.pending` | `{ requestId, memberId, runId, channelId, type: "secret"|"payment", title }` (ADR-0104; notifies as an approval) |
+| `vault.request.resolved` | `{ requestId, memberId, type, action }` |
 
 Every payload also carries `at` (ISO). `POST /api/events { name, ...payload }`
 lets the web app raise the last three, which happen client-side.

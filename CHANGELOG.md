@@ -23,6 +23,9 @@ list to the section for that version.
 - A built-in Web research connector gives members `web_search` and `web_fetch` through Firecrawl, with the source address in every result so replies can cite what they read. Paste a Firecrawl key, Test checks it, and the switch turns it on.
 - Follow-ups you send while a member is busy now wait in a queue that lives on the bridge: they survive reopening the app, run one at a time in order, and you can edit, reorder, remove, pause and resume them above the composer (and in Quick Chat). Stop cancels the running follow-up and pauses the queue. After a restart the interrupted follow-up says so and the queue waits for you to resume it.
 - The member chat meta line shows how full the model's context is ("Context 42%") when the harness reports it, with a quiet warning above the composer past 85%. Claude Code members show it today; Codex and Autohand members show nothing until their harness reports a window.
+- Settings → Vault keeps logins, cards and personal details sealed on this computer, with the key held by the macOS Keychain (Windows DPAPI, Linux Secret Service, or a private key file outside the data folder). Each item is one row with Remove; there is no way to show a saved value.
+- Members can list the vault (labels and masked hints such as “Visa ···· 4242”), ask you for a secret through a secure form in the chat whose values go straight to the vault, and ask you to approve a payment: Approve with a saved card, I'll pay myself, or Decline. Requests wait in the chat and in Needs you, notify like an approval, survive a restart, and the member hears only the outcome with the item's id and hint.
+- `vault_fill` is present but refuses on this Mac with the reason: filling a value needs a member workstation, which arrives with lane L3.
 
 ## [0.1.6] - 2026-10-13
 

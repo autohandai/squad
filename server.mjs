@@ -13,6 +13,8 @@ import { readAppInfo } from "./server/app-info.mjs";
 import { bundledComputerClient, createComputerUse } from "./server/computer-use.mjs";
 import { createConnectorStore } from "./server/connectors/store.mjs";
 import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
+import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
+import { vaultToolsAllowed } from "./src/lib/permission-policy.js";
 import { createProductTelemetry, readProductTelemetryConfig } from "./server/product-telemetry.mjs";
 import { MemberAvailability } from "./server/members/availability.mjs";
 import { GoalManager } from "./server/goal-manager.mjs";
@@ -371,6 +373,11 @@ const computerWorkRuntimes = new Map();
 // research server, injected through the same managed seam as Computer Use.
 const connectors = createConnectorStore({ stateDir: squadStateDir, rootDir, nodePath: process.execPath });
 const firecrawlBaseUrl = String(process.env.FIRECRAWL_API_URL || "").trim();
+// The person's vault (ADR-0104): members reach it only through a managed MCP
+// server injected per piece of work, scoped by a per-member credential.
+const vault = createVaultService({ stateDir: squadStateDir, rootDir, homeDir, bridgeUrl: `http://127.0.0.1:${port}`, emit: emitBridgeEvent });
+const vaultWorkRuntimes = new Map();
+bridgeEvents.on("member.stopped", ({ memberId }) => vault.closeMember(memberId));
 
 async function readNativeComputerGrantKey() {
   let file;
@@ -425,6 +432,36 @@ async function finishComputerWork(workId) {
   }
 }
 
+async function prepareVaultWork(agentRuntime, input) {
+  if (isUtilityAgent(agentRuntime.agentId) || !input._computerUseWorkId) return agentRuntime;
+  if (!vaultToolsAllowed(normalizeAgentPermissions(agentRuntime.agent))) return agentRuntime;
+  const session = await vault.openWork({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, channelId: input.channel?.id || "" });
+  const directory = join(agentRuntime.agentHome, "vault-configs");
+  // A stable path keeps the warm SDK session's key (ADR-0030); only an active
+  // Computer Use work, whose config is already per work, gets a per-work copy.
+  const configPath = join(directory, agentRuntime.computerUse ? `${input._computerUseWorkId}.json` : "member.json");
+  const runtime = { ...agentRuntime, configPath, vault: { ...session, perWork: Boolean(agentRuntime.computerUse) } };
+  vaultWorkRuntimes.set(input._computerUseWorkId, runtime);
+  try {
+    const config = JSON.parse(await readFile(agentRuntime.configPath, "utf8"));
+    const existing = Array.isArray(config.mcp?.servers) ? config.mcp.servers : [];
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeSecretFile(configPath, JSON.stringify({ ...config, mcp: { ...config.mcp, enabled: true, servers: [...existing.filter((entry) => entry.name !== VAULT_MCP_SERVER_NAME), session.mcpServer] } }, null, 2));
+    return runtime;
+  } catch (error) { await finishVaultWork(input._computerUseWorkId).catch(() => {}); throw error; }
+}
+
+async function finishVaultWork(workId) {
+  const runtime = vaultWorkRuntimes.get(workId); if (!runtime) return;
+  vaultWorkRuntimes.delete(workId);
+  if (runtime.vault.perWork) await Promise.allSettled([rm(runtime.configPath, { force: true }), ...(runtime.vault.externalConfigPath ? [rm(runtime.vault.externalConfigPath, { force: true })] : [])]);
+}
+
+function vaultInstructions(runtime) {
+  if (isUtilityAgent(runtime?.agentId) || !runtime?.vault) return "";
+  return runtime.vault.instructions || "";
+}
+
 function computerUseInstructions(runtime) {
   if (isUtilityAgent(runtime?.agentId)) return "";
   return runtime?.computerUse
@@ -434,6 +471,7 @@ function computerUseInstructions(runtime) {
 
 bridgeEvents.on("run.finished", ({ runId }) => {
   void finishComputerWork(runId).then((evidence) => { const run = runs.get(runId); if (run && evidence) run.computerUse = evidence; }).catch(() => {});
+  void finishVaultWork(runId).catch(() => {});
 });
 bridgeEvents.on("computer-use.evidence", (evidence) => {
   const run = runs.get(evidence.runId);
@@ -2880,7 +2918,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
     autohandAuthUsable(readAutohandAuth(configPath)) ||
     autohandAuthUsable(readAutohandAuth(userConfigPath));
 
-  return prepareComputerWork({
+  return prepareVaultWork(await prepareComputerWork({
     agent,
     agentId,
     agentHome,
@@ -2898,7 +2936,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
     harness: harnessAssignmentFromAgent(agent),
     // Launch specs carry connector secrets; keep them out of public summaries.
     connectorServers: connectorSpecs,
-  }, input);
+  }, input), input);
 }
 
 function runtimeMemberInstructions(agentRuntime) {
@@ -2971,7 +3009,7 @@ async function autohandArgs(input) {
   const prompt = String(input.prompt || "").trim();
   let profile = String(input.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(input, workspace);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const args = ["--path", workspace, "--config", agentRuntime.configPath];
@@ -3059,7 +3097,7 @@ function sdkTransportEnabled(input, mode) {
 }
 
 function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const model = selectedModelForInput(input, permissions, agentRuntime);
@@ -6484,7 +6522,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   const agentRuntime = await ensureAgentRuntime(payload, workspace);
   const assignment = harnessAssignmentFromAgent(agentRuntime.agent);
   const adapter = getAdapter(assignment);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime)].filter(Boolean).join("\n\n");
   const readiness = await assertHarnessReady(assignment, { context: harnessContextFor(assignment.id) });
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const addDirs = [];
@@ -6495,11 +6533,17 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   }
   const model = String(payload.model || assignment.model || "").trim();
   const resumeId = payload.resumeSession === false ? "" : await readResumeId(agentRuntime.agentHome, adapter.id, workspace);
-  let computerConfigPath = "";
-  if (agentRuntime.computerUse && adapter.id === "claude") {
-    computerConfigPath = join(agentRuntime.agentHome, "computer-use-configs", `${agentRuntime.computerUse.id}.claude.json`);
-    await writeSecretFile(computerConfigPath, JSON.stringify({ mcpServers: { "autohand-computer-use": { command: agentRuntime.computerUse.mcpServer.command, args: agentRuntime.computerUse.mcpServer.args, env: agentRuntime.computerUse.mcpServer.env } } }));
-    agentRuntime.computerUse.externalConfigPath = computerConfigPath;
+  // Squad-managed MCP servers (Computer Use, the vault) reach Claude through
+  // one --mcp-config file and Codex through -c overrides, adapted per harness.
+  const managedServers = [agentRuntime.computerUse?.mcpServer, agentRuntime.vault?.mcpServer].filter(Boolean);
+  let managedConfigPath = "";
+  if (managedServers.length && adapter.id === "claude") {
+    const owner = agentRuntime.computerUse || agentRuntime.vault;
+    const directory = join(agentRuntime.agentHome, agentRuntime.computerUse ? "computer-use-configs" : "vault-configs");
+    managedConfigPath = join(directory, agentRuntime.computerUse ? `${owner.id}.claude.json` : "member.claude.json");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeSecretFile(managedConfigPath, JSON.stringify({ mcpServers: Object.fromEntries(managedServers.map((server) => [server.name, { command: server.command, args: server.args, env: server.env }])) }));
+    owner.externalConfigPath = managedConfigPath;
   }
   // Connectors for Claude travel in a private --mcp-config file rewritten
   // every turn; Codex takes them as -c overrides (ADR-0107).
@@ -6522,15 +6566,16 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
       addDirs,
       resumeId: resume,
     });
-    if (agentRuntime.computerUse && adapter.id === "claude") {
-      built.args.push("--mcp-config", computerConfigPath);
-      built.displayArgs.push("--mcp-config", "<squad-computer-use-config>");
-    } else if (agentRuntime.computerUse && adapter.id === "codex") {
-      const server = agentRuntime.computerUse.mcpServer;
-      const prefix = 'mcp_servers.autohand-computer-use';
-      const values = [`${prefix}.command=${JSON.stringify(server.command)}`, `${prefix}.args=${JSON.stringify(server.args)}`, `${prefix}.env={${Object.entries(server.env).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(",")}}`];
-      for (const value of values) built.args.unshift("-c", value);
-      built.displayArgs.unshift("-c", "<squad-computer-use-config>");
+    if (managedServers.length && adapter.id === "claude") {
+      built.args.push("--mcp-config", managedConfigPath);
+      built.displayArgs.push("--mcp-config", "<squad-managed-mcp-config>");
+    } else if (managedServers.length && adapter.id === "codex") {
+      for (const server of managedServers) {
+        const prefix = `mcp_servers.${server.name}`;
+        const values = [`${prefix}.command=${JSON.stringify(server.command)}`, `${prefix}.args=${JSON.stringify(server.args)}`, `${prefix}.env={${Object.entries(server.env).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(",")}}`];
+        for (const value of values) built.args.unshift("-c", value);
+      }
+      built.displayArgs.unshift("-c", "<squad-managed-mcp-config>");
     }
     if (connectorConfigPath && adapter.id === "claude") {
       built.args.push("--mcp-config", connectorConfigPath);
@@ -6798,7 +6843,7 @@ async function startRun(payload) {
   payload = { ...await withSavedMember(payload), _computerUseWorkId: id };
   payload._channelActionContext = await agentChannelActions.begin({ ...payload, requestId: payload.requestId || `run-${id}` });
   try { return await startRunInner(payload); }
-  catch (error) { await finishComputerWork(id).catch(() => {}); throw error; }
+  catch (error) { await Promise.allSettled([finishComputerWork(id), finishVaultWork(id)]); throw error; }
 }
 
 async function startRunInner(payload) {
@@ -7078,6 +7123,7 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
     return completed;
   } finally {
     await finishComputerWork(workId).catch(() => {});
+    await finishVaultWork(workId).catch(() => {});
     bridgeEvents.off("computer-use.evidence", liveEvidence);
   }
 }
@@ -7242,6 +7288,7 @@ function routeContext() {
       return Number(autohandAiModels().find((entry) => entry.id === id)?.contextWindow) || 0;
     },
     computerUse,
+    vault,
     authorizeComputerUseGrant,
     connectors,
     firecrawlBaseUrl,

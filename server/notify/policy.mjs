@@ -6,7 +6,7 @@
 import { basename } from "node:path";
 
 /** Event names the bridge emits that can become a notification. */
-export const NOTIFICATION_EVENTS = ["run.finished", "chat.finished", "handoff.pending", "approval.pending", "mention.received"];
+export const NOTIFICATION_EVENTS = ["run.finished", "chat.finished", "handoff.pending", "approval.pending", "mention.received", "vault.request.pending"];
 
 /** Settings shape; every kind is on by default. */
 export const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
@@ -51,6 +51,7 @@ export function settingKeyFor(event) {
     case "handoff.pending":
       return "handoffPending";
     case "approval.pending":
+    case "vault.request.pending": // a secret or payment request is an approval the person owns (ADR-0104)
       return "approvalPending";
     case "mention.received":
       return "mention";
@@ -79,6 +80,7 @@ export function routeForEvent(event) {
   const channel = channelRoute(event?.channelId);
   if (name === "handoff.pending") return INBOX_ROUTE;
   if (name === "approval.pending") return channel || MISSION_CONTROL_ROUTE;
+  if (name === "vault.request.pending") return memberChatRoute(event?.memberId) || INBOX_ROUTE;
   if (name === "mention.received") return channel || memberChatRoute(event?.memberId) || INBOX_ROUTE;
   return channel || memberChatRoute(event?.memberId) || MISSION_CONTROL_ROUTE;
 }
@@ -196,6 +198,17 @@ export function notificationFor(event, { appUrl = "http://127.0.0.1:19821", memb
     case "approval.pending": {
       title = channel ? `Approval needed in ${channel}` : "Approval needed";
       body = "A workflow step is waiting for your go-ahead.";
+      break;
+    }
+    case "vault.request.pending": {
+      const what = clip(event?.title, 60);
+      if (String(event?.type) === "payment") {
+        title = what ? `${member} needs you · payment: ${what}` : `${member} needs you · payment`;
+        body = "Approve with a saved card, pay yourself, or decline in the conversation.";
+      } else {
+        title = what ? `${member} needs you · ${what}` : `${member} needs you · a secret`;
+        body = "Fill the secure form in the conversation. The value goes to your vault, not to the member.";
+      }
       break;
     }
     case "mention.received": {

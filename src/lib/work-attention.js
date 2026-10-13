@@ -26,6 +26,6 @@ export function workRowsInProgress(rows) {
 
 // Updates count conversations, decisions count unresolved requests. Reading an
 // update must never acknowledge away a decision that still needs a person.
-export function workAttentionCount({ replies = [], unreadChannels = [], approvals = [], handoffs = [], memoryProposals = [], rows = [] } = {}) {
-  return replies.length + unreadChannels.length + approvals.length + handoffs.length + memoryProposals.length + workRowsNeedingYou(rows, handoffs).length;
+export function workAttentionCount({ replies = [], unreadChannels = [], approvals = [], handoffs = [], memoryProposals = [], vaultRequests = [], rows = [] } = {}) {
+  return replies.length + unreadChannels.length + approvals.length + handoffs.length + memoryProposals.length + vaultRequests.length + workRowsNeedingYou(rows, handoffs).length;
 }

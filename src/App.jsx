@@ -6,6 +6,9 @@ import { ChannelDetailsSettings } from "@/components/channels/ChannelDetailsSett
 import { AnsweredByTag } from "@/components/channels/ResponderSettings";
 import { needsResponderPick, normalizeResponder, resolveResponderRecipients, responderTargetHint } from "@/lib/channel-responders";
 import { AgentChannelProposals } from "@/components/channels/AgentChannelProposals";
+import { VaultRequests, useVaultRequests } from "@/components/chat/VaultRequests";
+import { VaultSettings } from "@/components/settings/VaultSettings";
+import { vaultNeedsYouRows } from "@/lib/vault";
 import { AppInformation } from "@/components/app-info/AppInformation";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
@@ -4777,6 +4780,9 @@ function App() {
   const [createChannelRequest, setCreateChannelRequest] = useState(0);
   const [channelOperationError, setChannelOperationError] = useState("");
   const [agentChannelActions, setAgentChannelActions] = useState([]);
+  // Pending vault requests (secure forms, payment approvals) are bridge-owned
+  // and reconciled like channel proposals (ADR-0104).
+  const vaultRequests = useVaultRequests(api);
   // Squad recruiting (ADR-0015): folder profiles by path for this session and
   // the user's decisions on proposals (accepted / dismissed), keyed by
   // channel + member + project signature.
@@ -6315,6 +6321,7 @@ function App() {
       }),
     [tasks]
   );
+  const inboxVault = useMemo(() => vaultNeedsYouRows(vaultRequests.requests, agents), [vaultRequests.requests, agents]);
   const inboxMemory = useMemo(
     () =>
       memoryInbox
@@ -6362,7 +6369,7 @@ function App() {
     [channels, unreadChannelIds, messagesByChannel]
   );
   const attentionWorkRows = useMemo(() => buildMissionRows({ agents, tasks, runs, runtime, workspaces }), [agents, tasks, runs, runtime, workspaces]);
-  const inboxCount = workAttentionCount({ replies: inboxReplies, unreadChannels: inboxUnreadChannels, approvals: inboxApprovals, handoffs: inboxHandoffs, memoryProposals: inboxMemory, rows: attentionWorkRows }) + (sidebarCounts.permissionWarnings || 0) + agentChannelActions.filter(action => action.status === "proposed").length;
+  const inboxCount = workAttentionCount({ replies: inboxReplies, unreadChannels: inboxUnreadChannels, approvals: inboxApprovals, handoffs: inboxHandoffs, memoryProposals: inboxMemory, vaultRequests: inboxVault, rows: attentionWorkRows }) + (sidebarCounts.permissionWarnings || 0) + agentChannelActions.filter(action => action.status === "proposed").length;
   const attentionBadge = useMemo(() => getAttentionBadgeClient(), []);
   useEffect(() => {
     if (!attentionBadge || !bridgeAnswered || runtime?.bridgeUnavailable) return;
@@ -9130,6 +9137,7 @@ function App() {
           <main className="app-main min-w-0">
             {channelOperationError ? <div role="alert" className="px-6 py-3 text-sm text-destructive">{channelOperationError}</div> : null}
             <AgentChannelProposals proposals={agentChannelActions.filter(action => action.status === "proposed")} members={agents} onDecision={decideChannelProposal} />
+            <VaultRequests vault={vaultRequests} members={agents} copy={localeCopy} />
             <MobileTopbar
               activeAgent={activeAgent}
               showsMember={sidebarActiveTarget(route, activeAgent).kind === "member"}
@@ -9231,7 +9239,7 @@ function App() {
               />
             ) : isMissionControl ? (
               <MissionControlPage
-                attention={{ replies: inboxReplies, unreadChannels: inboxUnreadChannels, handoffs: inboxHandoffs, approvals: inboxApprovals, memoryProposals: inboxMemory }}
+                attention={{ replies: inboxReplies, unreadChannels: inboxUnreadChannels, handoffs: inboxHandoffs, approvals: inboxApprovals, memoryProposals: inboxMemory, vaultRequests: inboxVault }}
                 attentionCount={inboxCount}
                 attentionNavigate={{
                   channel: (channelId) => navigate(channelsPath(channelId)),
@@ -9239,6 +9247,7 @@ function App() {
                   task: (item) => navigate(missionControlPath({ task: item.task?.id })),
                   memory: (item) => navigate(memberProfilePath(item.item?.ownerAgentId || item.item?.agentId || agents[0]?.id, "memory")),
                   approval: (item) => navigate(item.messageId ? `${channelsPath(item.channelId)}?message=${encodeURIComponent(item.messageId)}` : channelsPath(item.channelId)),
+                  vault: (item) => navigate(memberChatPath(item.memberId)),
                 }}
                 onMarkUpdatesRead={() => {
                   const now = new Date().toISOString();
@@ -24673,6 +24682,7 @@ function SettingsPage({
     { id: "chat", icon: MessageSquareText, label: copy.chat, detail: chatSettingsDetail },
     { id: "notifications", icon: Bell, label: copy.notifications || "Notifications", detail: notificationSettingsDetail },
     { id: "voice", icon: Volume2, label: copy.voice || "Voice", detail: copy.voiceDetail || "Built-in or ElevenLabs" },
+    { id: "vault", icon: KeyRound, label: copy.vault || "Vault", detail: copy.vaultDetail || "Logins, cards and personal details" },
     { id: "improvement", icon: Sparkles, label: copy.selfImprovement || "Self-improvement", detail: improvementDetail(improvementSettings, copy) },
     { id: "handoff", icon: Workflow, label: copy.handoffRetryPolicy, detail: handoffRetryModeLabel(effectiveHandoffRetryMode, copy) },
     { id: "mission-control", icon: Monitor, label: copy.needsYou || "Needs you", detail: missionControlDetail },
@@ -25000,6 +25010,14 @@ function SettingsPage({
                 description={copy.voiceDescription || "How replies sound when they are read aloud. The voices built into this computer work without any setup."}
               />
               <VoiceSettings api={api} copy={copy} />
+            </section>
+
+            <section id="settings-vault" className="scroll-mt-6 border-b border-border/70 py-8 first:pt-0">
+              <SettingsSectionHeader
+                title={copy.vault || "Vault"}
+                description={copy.vaultDescription || "Logins, cards and personal details members can ask for but never see. Sealed on this computer; filled only inside a member workstation."}
+              />
+              <VaultSettings api={api} copy={copy} />
             </section>
 
             <section id="settings-improvement" className="scroll-mt-6 border-b border-border/70 py-8">

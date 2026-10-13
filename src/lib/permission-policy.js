@@ -200,7 +200,34 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
       ["code_review", "allow"],
     ],
   },
+  {
+    // The person's vault (ADR-0104). Listing shows hints only; the two
+    // request tools always end in a human decision, so "ask" is their nature;
+    // filling needs a member workstation and refuses on the host.
+    id: "vault",
+    title: "Vault & Payments",
+    tools: [
+      ["vault_list", "allow"],
+      ["request_secret", "ask"],
+      ["request_payment_approval", "ask"],
+      ["vault_fill", "ask"],
+    ],
+  },
 ];
+
+export const VAULT_TOOLS = ["vault_list", "request_secret", "request_payment_approval", "vault_fill"];
+
+/**
+ * Whether a member's permissions let the bridge hand it the vault MCP server
+ * at all. Blocked means not even `vault_list`; the server is then not
+ * injected, so the tools do not exist for that member rather than failing.
+ */
+export function vaultToolsAllowed(permissions) {
+  const source = permissions && typeof permissions === "object" ? permissions : {};
+  if (source.builtInToolPolicyEnabled === false) return true;
+  const policies = source.builtInPolicies && typeof source.builtInPolicies === "object" ? source.builtInPolicies : {};
+  return VAULT_TOOLS.some((tool) => (policies[tool] ?? DEFAULT_BUILT_IN_TOOL_POLICIES[tool]) !== "block");
+}
 
 export const DEFAULT_BUILT_IN_TOOL_POLICIES = Object.fromEntries(
   BUILT_IN_TOOL_POLICY_GROUPS.flatMap((group) => group.tools.map(([name, mode]) => [name, mode]))
@@ -292,6 +319,9 @@ export function builtInPoliciesForRank(rank) {
   if (rank >= 3) {
     setGroup("filesystem-read", "allow");
     setGroup("git-read", "allow");
+    // The vault arrives with the rung that lets a member act in the world:
+    // the lowest rungs are a conversation and get no vault tools.
+    applyGroupDefaults("vault");
     setTools(
       [
         "package_info",

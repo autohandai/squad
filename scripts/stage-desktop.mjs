@@ -59,6 +59,8 @@ async function stageRuntime() {
   // The built-in Web research connector is a child process the bridge spawns
   // by path (ADR-0107); the runtime must carry it.
   await assertFile(join(runtimeDir, 'server', 'connectors', 'web-research-mcp.mjs'));
+  // The vault's managed MCP server is spawned by path at runtime (ADR-0104).
+  await assertFile(join(runtimeDir, 'server', 'vault', 'mcp-server.mjs'));
   // Route plug-ins share pure logic with the web app (src/lib/*.js, no React,
   // no DOM); they import it relatively, so it ships beside server/.
   await cp(join(rootDir, 'src', 'lib'), join(runtimeDir, 'src', 'lib'), { recursive: true });
