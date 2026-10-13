@@ -48,6 +48,7 @@ import { workPlanFor } from "./server/work/plan.mjs";
 import { describeSchedule, isValidTimeZone, normalizeSchedule, validateSchedule } from "./server/routines/schedule.mjs";
 import { scheduleActionInstruction, taskActionInstruction } from "./src/lib/routines.js";
 import { detectRecurringWork, replyProposedSchedule } from "./src/lib/work-plans.js";
+import { memberShapingInstruction, needsShapingInstruction } from "./src/lib/member-shaping.js";
 import { normalizeResponder, responderStatus } from "./src/lib/channel-responders.js";
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
 import { memberProfileDefaults } from "./src/lib/member-profiles.js";
@@ -3038,7 +3039,7 @@ async function autohandArgs(input) {
   const prompt = String(input.prompt || "").trim();
   let profile = String(input.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(input, workspace);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input), workPlanInstructions(input)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input), workPlanInstructions(input), memberShapingInstructions(input)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const args = ["--path", workspace, "--config", agentRuntime.configPath];
@@ -3130,7 +3131,7 @@ function sdkTransportEnabled(input, mode) {
 }
 
 function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input), workPlanInstructions(input)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input), workPlanInstructions(input), memberShapingInstructions(input)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const model = selectedModelForInput(input, permissions, agentRuntime);
@@ -6595,7 +6596,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   const agentRuntime = await ensureAgentRuntime(payload, workspace);
   const assignment = harnessAssignmentFromAgent(agentRuntime.agent);
   const adapter = getAdapter(assignment);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(payload), workPlanInstructions(payload)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(payload), workPlanInstructions(payload), memberShapingInstructions(payload)].filter(Boolean).join("\n\n");
   const readiness = await assertHarnessReady(assignment, { context: harnessContextFor(assignment.id) });
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const addDirs = [];
@@ -7408,6 +7409,22 @@ function workPlanInstructions(payload) {
   const plan = payload?._workPlan?.text;
   if (typeof plan === "string" && plan) parts.push(plan);
   return parts.join("\n\n");
+}
+
+// A member born in conversation (ADR-0126): a member with no role is told to
+// become what the person asks and to record it with a `profile` action; a
+// member with a role hears the same only on a turn that asks for a new one.
+// Bridge-owned like the work-plan instructions, so every engine and entry
+// point gets it; direct-message turns only, since the browser applies the
+// receipt from its own chat stream.
+function memberShapingInstructions(payload) {
+  if (channelContextFromPayload(payload) || payload?.collaboration) return "";
+  if (String(payload?.profile || "").includes('"type":"profile"')) return "";
+  // A turn with no member description (the app's own designer, a bare API
+  // call) is not a blank member; only a described member can be shaped.
+  const agent = payload?.agent && typeof payload.agent === "object" && !Array.isArray(payload.agent) ? payload.agent : null;
+  if (!agent || !String(agent.name || "").trim() || utilityAgentIds.has(String(payload.agentId || agent.id || ""))) return "";
+  return needsShapingInstruction(agent, payload?.prompt) ? memberShapingInstruction(agent) : "";
 }
 
 async function workPlanForTurn(payload) {

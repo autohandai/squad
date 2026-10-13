@@ -84,6 +84,7 @@ import {
   LockKeyhole,
   LogOut,
   Menu,
+  MessageSquarePlus,
   MessageSquareText,
   Monitor,
   Moon,
@@ -298,7 +299,7 @@ import { TeamBuildRows } from "@/components/teams/TeamBuildRows";
 import { builtInTeamTemplates } from "@/data/team-templates";
 import { TEAM_BUILDS_STORAGE_KEY, buildFinishedEvent, buildMemberDraft, createTeamBuild, patchBuild as patchTeamBuildRecord, patchBuildMember as patchTeamBuildMember, pendingBuildMembers, resumeBuilds, teamDocumentFromProposal } from "@/lib/team-builder";
 import { duplicateCreationStash, hiddenMembers, hidePatch, markUnreadReadAt, orderMembers, pinPatch } from "@/lib/member-menus";
-import { planImport, presetTemplate, validateTeamFile } from "@/lib/teams";
+import { planImport, presetTemplate, uniqueName, validateTeamFile } from "@/lib/teams";
 import { BootChecks } from "@/components/shell/BootChecks";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
@@ -320,6 +321,7 @@ import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, mergeSeedAgent
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
+import { blankGreeting, blankMemberDraft, isBlankMember, personalityFileContent, profileReceipts, replyWithoutReceipts } from "@/lib/member-shaping";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -4649,6 +4651,7 @@ function App() {
   const [workTasks, setWorkTasks] = useState([]);
   const memberAccessWritesRef = useRef(new Map());
   const membersRef = useRef(agents);
+  const [blankMemberPending, setBlankMemberPending] = useState(false);
   membersRef.current = agents;
   const sharedConversationChannelRef = useRef(null);
   const [memberGoals, setMemberGoals] = useState([]);
@@ -7468,8 +7471,14 @@ function App() {
               computerUse: data.computerUse || null,
             };
             void reloadChannelsFromBridge();
+            const shaped = profileReceipts(data.channelActions);
+            if (shaped.length) {
+              finalResult.reply = replyWithoutReceipts(finalResult.reply, shaped) || finalResult.reply;
+              applyProfileReceipts(agentId, shaped);
+            }
             updateMessage(agentId, `${id}-a`, {
               body: finalResult.reply,
+              ...(shaped.length ? { profileNote: shaped.map((receipt) => receipt.message.replace(/\.$/, "")).join(" · ") } : {}),
               trace: finalResult.trace,
               streamEvents: liveEvents,
               command: finalResult.command,
@@ -8605,7 +8614,8 @@ function App() {
           {
             id: `intro-${id}`,
             role: "agent",
-            body: introductionFor(created, localeCopy),
+            // A member born in conversation greets instead (ADR-0126).
+            body: isBlankMember(created) ? blankGreeting(created) : introductionFor(created, localeCopy),
             status: "complete",
             introduction: true,
             time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
@@ -8654,6 +8664,36 @@ function App() {
     } finally {
       if (timer !== null) window.clearTimeout(timer);
     }
+  }
+
+  // "Chat with a new member" (ADR-0126): a member with no role yet, prepared
+  // like New member, opened straight into its chat. It takes its role from
+  // what the person says there and sets it with a `profile` action.
+  async function startBlankMember() {
+    if (blankMemberPending) return;
+    setBlankMemberPending(true);
+    try {
+      const existingNames = [...membersRef.current.map((agent) => agent.name), ...pendingTeamMemberNames];
+      const draft = blankMemberDraft({ existingNames, workspace: fallbackWorkspace, harness: normalizeHarnessAssignmentCopy(null) });
+      await createAgent({ ...draft, avatar: birdAvatarForRole("", "", draft.name) });
+    } catch (error) {
+      setChannelOperationError(`Could not start a new member: ${error.message}`);
+    } finally {
+      setBlankMemberPending(false);
+    }
+  }
+
+  // The member set its own profile in this reply (ADR-0126): apply the
+  // receipts through updateAgent, as Edit profile's Save would. Several in
+  // one reply are merged in order and applied once, so a later one cannot be
+  // computed from the member as it was before the earlier one.
+  function applyProfileReceipts(agentId, receipts) {
+    const current = membersRef.current.find((member) => member.id === agentId);
+    if (!current || !receipts.length) return;
+    const merged = Object.assign({}, ...receipts.map((receipt) => receipt.patch));
+    const others = membersRef.current.filter((member) => member.id !== agentId).map((member) => member.name);
+    if (merged.name) merged.name = uniqueName(merged.name, others);
+    void updateAgent(agentId, profilePatchFor(current, merged));
   }
 
   async function startAutohand(agentId, launch) {
@@ -9650,6 +9690,7 @@ function App() {
             renderMemberMenu={renderMemberMenu}
             onCreateTeam={() => setNewTeamOpen(true)}
             onTemplates={() => setTemplatesOpen(true)}
+            onChatNewMember={() => void startBlankMember()}
             onCollapsedChange={setDesktopSidebarCollapsed}
           />}
           <main className="app-main min-w-0">
@@ -9728,6 +9769,7 @@ function App() {
                 onShareTeam={() => setShareTeamOpen(true)}
                 onImportTeam={() => setImportTeamOpen(true)}
                 onNewTeam={() => setNewTeamOpen(true)}
+                onChatNewMember={() => void startBlankMember()}
                 onTemplates={() => setTemplatesOpen(true)}
                 teamBuilds={teamBuilds}
                 onRetryTeamBuild={(id) => void runTeamBuild(id)}
@@ -10082,6 +10124,10 @@ function App() {
               onCreateTeam={() => {
                 setMobileSidebarOpen(false);
                 setNewTeamOpen(true);
+              }}
+              onChatNewMember={() => {
+                setMobileSidebarOpen(false);
+                void startBlankMember();
               }}
               onTemplates={() => {
                 setMobileSidebarOpen(false);
@@ -12600,6 +12646,7 @@ function SidebarContent({
   workspaceSwitcher = null,
   renderMemberMenu = null,
   onCreateTeam,
+  onChatNewMember,
   onTemplates,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
@@ -12683,6 +12730,7 @@ function SidebarContent({
         createChannel: () => setCreateChannelOpen(true),
         createMember: () => navigate(`${MEMBER_ROUTE_PREFIX}/new`),
         createTeam: onCreateTeam,
+        chatNewMember: onChatNewMember,
         templates: onTemplates,
         missionControl: onMissionControl,
       }}
@@ -15277,6 +15325,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
             onDecide={(folder, decision) => onFolderAccess(message, folder, decision)}
           />
         ) : null}
+        {!isLoading && message.profileNote ? <p data-testid="profile-note" className="mt-2 text-xs text-muted-foreground">{message.profileNote}</p> : null}
         {!isLoading && onScheduleOffer && message.scheduleOffer ? (
           <ScheduleOffer offer={message.scheduleOffer} memberName={agent?.name || "The member"} copy={copy} onSchedule={() => onScheduleOffer(message, "schedule")} onDismiss={() => onScheduleOffer(message, "dismiss")} />
         ) : null}
@@ -16293,6 +16342,7 @@ function SquadDirectoryPage({
   onShareTeam,
   onImportTeam,
   onNewTeam,
+  onChatNewMember,
   onTemplates,
   teamBuilds = [],
   onRetryTeamBuild,
@@ -16395,6 +16445,12 @@ function SquadDirectoryPage({
               <Plus data-icon="inline-start" />
               {copy.newMember || "New member"}
             </Button>
+            {onChatNewMember ? (
+              <Button variant="ghost" size="sm" onClick={onChatNewMember} data-testid="chat-new-member">
+                <MessageSquarePlus data-icon="inline-start" />
+                {copy.chatWithNewMember || "Chat with a new member"}
+              </Button>
+            ) : null}
             {onNewTeam ? (
               <Button variant="outline" size="sm" onClick={onNewTeam} data-testid="new-team">
                 <Users data-icon="inline-start" />
@@ -20043,6 +20099,48 @@ function CustomRoleTemplateDialog({ open, onOpenChange, onCreate }) {
   );
 }
 
+// The patch Edit profile saves, from an edit of the member's own fields.
+// A member that set its profile in conversation (ADR-0126) goes through the
+// same function, so its brain card, skill install state and generated
+// profile files are recomputed exactly as an edit would. `personality`
+// becomes the PERSONALITY.md persona file the editor's role sections show.
+function profilePatchFor(agent, edit) {
+  const pick = (field) => (edit[field] === undefined ? agent?.[field] : edit[field]);
+  const skills = normalizeSkillList(edit.skills === undefined ? agent?.skills : edit.skills);
+  const role = String(pick("role") || "").trim() || String(agent?.role || "");
+  const description = String(pick("description") || "").trim();
+  const instructions = String(pick("instructions") || "").trim();
+  const timestamp = new Date().toISOString();
+  const profileFiles = edit.personality === undefined
+    ? agent?.profileFiles
+    : [...normalizeProfileFiles(agent?.profileFiles).filter((file) => file.section !== "persona"), { section: "persona", fileName: "PERSONALITY.md", originalFileName: "PERSONALITY.md", content: personalityFileContent(edit.personality, role), source: "manual" }];
+  const nextAgent = {
+    ...agent,
+    name: String(pick("name") || "").trim() || agent?.name,
+    role,
+    description,
+    instructions,
+    brainCard: normalizeBrainCard(edit.brainCard === undefined ? agent?.brainCard : edit.brainCard, { ...agent, role, description, instructions, skills }),
+    avatar: pick("avatar"),
+    skills,
+    skillInstall: skillInstallFromEditedSkills(agent, skills),
+    profileFiles,
+    updatedAt: timestamp,
+  };
+  return {
+    name: nextAgent.name,
+    role: nextAgent.role,
+    description: nextAgent.description,
+    instructions: nextAgent.instructions,
+    brainCard: nextAgent.brainCard,
+    avatar: nextAgent.avatar,
+    skills: nextAgent.skills,
+    skillInstall: nextAgent.skillInstall,
+    profileFiles: refreshedProfileFilesForAgent(nextAgent),
+    updatedAt: timestamp,
+  };
+}
+
 function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
   const [draft, setDraft] = useState(() => profileEditDraftFromAgent(agent));
   const [avatarError, setAvatarError] = useState("");
@@ -20075,33 +20173,15 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
     event.preventDefault();
     if (!isValid) return;
 
-    const skills = normalizeSkillList(parseDelimitedList(draft.skillsText));
-    const timestamp = new Date().toISOString();
-    const nextAgent = {
-      ...agent,
-      name: draft.name.trim(),
-      role: draft.role.trim() || agent.role,
-      description: draft.description.trim(),
-      instructions: draft.instructions.trim(),
-      brainCard: normalizeBrainCard(draft.brainCard, { ...agent, role: draft.role.trim() || agent.role, description: draft.description, instructions: draft.instructions, skills }),
+    onSave(profilePatchFor(agent, {
+      name: draft.name,
+      role: draft.role,
+      description: draft.description,
+      instructions: draft.instructions,
+      brainCard: draft.brainCard,
       avatar: draft.avatar,
-      skills,
-      skillInstall: skillInstallFromEditedSkills(agent, skills),
-      updatedAt: timestamp,
-    };
-
-    onSave({
-      name: nextAgent.name,
-      role: nextAgent.role,
-      description: nextAgent.description,
-      instructions: nextAgent.instructions,
-      brainCard: nextAgent.brainCard,
-      avatar: nextAgent.avatar,
-      skills: nextAgent.skills,
-      skillInstall: nextAgent.skillInstall,
-      profileFiles: refreshedProfileFilesForAgent(nextAgent),
-      updatedAt: timestamp,
-    });
+      skills: parseDelimitedList(draft.skillsText),
+    }));
     onOpenChange(false);
   }
 

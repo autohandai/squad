@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LayoutTemplate, Plus, UserPlus, Users } from "lucide-react";
+import { LayoutTemplate, MessageSquarePlus, Plus, UserPlus, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -7,11 +7,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 const ROW = "flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
 
 /**
- * The "+" where members are created (ADR-0118): New member, New team…,
- * Templates…. One popover of plain rows, like every menu here; the trigger
- * is whatever the caller already had (the sidebar's small plus).
+ * The "+" where members are created (ADR-0118): Chat with a new member
+ * (ADR-0126), New member, New team…, Templates…. One popover of plain rows,
+ * like every menu here; the trigger is whatever the caller already had (the
+ * sidebar's small plus).
  */
-export function CreateMenu({ copy = {}, onNewMember, onNewTeam, onTemplates, trigger, align = "end" }) {
+export function CreateMenu({ copy = {}, onChatNewMember, onNewMember, onNewTeam, onTemplates, trigger, align = "end" }) {
   const [open, setOpen] = useState(false);
   function run(action) {
     setOpen(false);
@@ -26,7 +27,13 @@ export function CreateMenu({ copy = {}, onNewMember, onNewTeam, onTemplates, tri
           </Button>
         )}
       </PopoverTrigger>
-      <PopoverContent align={align} className="w-44 p-1">
+      <PopoverContent align={align} className="w-56 p-1">
+        {onChatNewMember ? (
+          <button type="button" className={ROW} onClick={() => run(onChatNewMember)} data-testid="chat-new-member-menu">
+            <MessageSquarePlus className="size-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">{copy.chatWithNewMember || "Chat with a new member"}</span>
+          </button>
+        ) : null}
         <button type="button" className={ROW} onClick={() => run(onNewMember)}>
           <UserPlus className="size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">{copy.newMember || "New member"}</span>

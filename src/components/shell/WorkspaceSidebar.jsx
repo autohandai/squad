@@ -259,9 +259,11 @@ export function WorkspaceSidebar({
           onToggle={() => setDmsExpanded((open) => !open)}
           action={
             onNavigate.createTeam || onNavigate.templates ? (
-              // The same plus, now a short menu: New member, New team…, Templates… (ADR-0118).
+              // The same plus, now a short menu: Chat with a new member (ADR-0126),
+              // New member, New team…, Templates… (ADR-0118).
               <CreateMenu
                 copy={copy}
+                onChatNewMember={onNavigate.chatNewMember}
                 onNewMember={onNavigate.createMember}
                 onNewTeam={onNavigate.createTeam}
                 onTemplates={onNavigate.templates}
