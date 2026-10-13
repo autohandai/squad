@@ -111,7 +111,7 @@ pub enum SquadCommand {
         web_port: u16,
     },
     /// Run the MCP control plane over stdio for Claude Desktop, Cursor or
-    /// another MCP client (ADR-0095). Talks to the local bridge only.
+    /// another MCP client (ADR-0109). Talks to the local bridge only.
     Mcp {
         /// Bridge origin. Defaults to http://<host>:<web-port>; loopback only.
         #[arg(long)]

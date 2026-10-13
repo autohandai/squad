@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Control plane check (ADR-0095): a real bridge in an isolated state dir,
+// Control plane check (ADR-0109): a real bridge in an isolated state dir,
 // seeded with a member mirror and channel state, driven through the stdio MCP
 // server in both framings. A fake Codex executable stands in for the harness;
 // no vendor, credentials, installed app or provider requests are used.

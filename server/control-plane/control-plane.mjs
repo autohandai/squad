@@ -1,4 +1,4 @@
-// Pure control-plane logic (ADR-0095): tool definitions, argument validation,
+// Pure control-plane logic (ADR-0109): tool definitions, argument validation,
 // loopback checks, secret redaction, outcome mapping and the two stdio
 // framings. No I/O here so scripts/check-control-plane.mjs can import it
 // without a bridge. The stdio entry point is mcp-server.mjs.

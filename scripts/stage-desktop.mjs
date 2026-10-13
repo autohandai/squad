@@ -54,7 +54,7 @@ async function stageRuntime() {
   await cp(join(rootDir, 'dist'), join(runtimeDir, 'dist'), { recursive: true });
   await cp(join(rootDir, 'server'), join(runtimeDir, 'server'), { recursive: true });
   await assertFile(join(runtimeDir, 'server', 'harness', 'index.mjs'));
-  // `squad mcp` runs this entry from the staged runtime (ADR-0095).
+  // `squad mcp` runs this entry from the staged runtime (ADR-0109).
   await assertFile(join(runtimeDir, 'server', 'control-plane', 'mcp-server.mjs'));
   // Route plug-ins share pure logic with the web app (src/lib/*.js, no React,
   // no DOM); they import it relatively, so it ships beside server/.

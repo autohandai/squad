@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Autohand Squad control plane (ADR-0095): a dependency-free stdio MCP server
+// Autohand Squad control plane (ADR-0109): a dependency-free stdio MCP server
 // that lets Claude Desktop, Cursor or any MCP client coordinate this Squad
 // through the local bridge. JSON-RPC 2.0 over stdin/stdout in either newline
 // or Content-Length framing; each reply uses the framing of its request.

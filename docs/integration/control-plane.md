@@ -1,4 +1,4 @@
-# Control plane: stdio MCP server over the bridge (ADR-0095)
+# Control plane: stdio MCP server over the bridge (ADR-0109)
 
 Lets Claude Desktop, Cursor or any MCP client coordinate this Squad: read
 members and channels, post to channels, start bridge-owned work for a member,

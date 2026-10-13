@@ -1,4 +1,4 @@
-# ADR-0095: An MCP control plane over the bridge, truthful about what the bridge holds
+# ADR-0109: An MCP control plane over the bridge, truthful about what the bridge holds
 
 Date: 2026-10-13. Lane L9 of `docs/superpowers/specs/2026-10-13-parity-lanes-design.md`.
 
