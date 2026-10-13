@@ -20,11 +20,77 @@ const HARNESS_ALIASES = {
   anthropic: "claude",
 };
 
+// ACP agents (ADR-0122): `acp:<registry id>`, plus `pi` and `autohand-acp`.
+// Names come from GET /api/acp/registry once the chooser has fetched it; the
+// bundled ones below keep chips and notes right before that and offline.
+const BUILT_IN_ACP_IDS = Object.freeze({ pi: "Pi", "autohand-acp": "Autohand Code (ACP)" });
+const BUNDLED_ACP_NAMES = Object.freeze({
+  "acp:autohand": "Autohand Code",
+  "acp:claude-acp": "Claude Agent",
+  "acp:codex-acp": "Codex",
+  "acp:gemini": "Gemini CLI",
+  "acp:github-copilot-cli": "Copilot",
+  "acp:opencode": "OpenCode",
+  "acp:cursor": "Cursor",
+  "acp:grok-build": "Grok Build",
+});
+const acpAgents = new Map();
+
+export function isAcpHarnessId(value) {
+  const id = String(value || "").trim().toLowerCase();
+  return Boolean(BUILT_IN_ACP_IDS[id]) || /^acp:[a-z0-9][a-z0-9._-]{0,60}$/.test(id);
+}
+
 export function normalizeHarnessId(value) {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) return DEFAULT_HARNESS_ID;
   if (HARNESS_OPTIONS.some((option) => option.id === raw)) return raw;
-  return HARNESS_ALIASES[raw] || DEFAULT_HARNESS_ID;
+  if (HARNESS_ALIASES[raw]) return HARNESS_ALIASES[raw];
+  if (raw === "pi-acp") return "pi";
+  if (isAcpHarnessId(raw)) return raw;
+  return DEFAULT_HARNESS_ID;
+}
+
+/** Remember the registry listing so labels and chips can name every agent. */
+export function registerAcpAgents(agents) {
+  for (const agent of Array.isArray(agents) ? agents : []) {
+    if (agent?.harnessId) acpAgents.set(String(agent.harnessId), agent);
+  }
+}
+
+export function acpAgentFor(id) {
+  return acpAgents.get(normalizeHarnessId(id)) || null;
+}
+
+export function listAcpAgents() {
+  return Array.from(acpAgents.values());
+}
+
+/** The chooser option for an ACP id, from the registry when fetched, else the bundled name. */
+export function acpOption(id) {
+  const normalized = normalizeHarnessId(id);
+  const agent = acpAgents.get(normalized);
+  const label = agent?.name || BUILT_IN_ACP_IDS[normalized] || BUNDLED_ACP_NAMES[normalized] || normalized.replace(/^acp:/, "");
+  return { id: normalized, label, vendor: agent?.authors?.[0] || "ACP", short: label, isDefault: false, acp: true, description: agent?.description || "", installed: Boolean(agent?.installed), fetchOnUse: Boolean(agent?.fetchOnUse), available: agent ? Boolean(agent.available) : true };
+}
+
+/** Fetch the registry through the app's api() helper; `refresh` forces a fetch. Returns the listing or null. */
+export async function fetchAcpRegistry(api, { refresh = false } = {}) {
+  try {
+    const data = await api(`/api/acp/registry${refresh ? "?refresh=1" : ""}`);
+    registerAcpAgents(data?.agents);
+    return data || null;
+  } catch {
+    return null;
+  }
+}
+
+/** One line under an ACP agent's name in the chooser. */
+export function acpAvailabilityLabel(agent) {
+  if (!agent) return "";
+  if (agent.installed) return "installed";
+  if (agent.fetchOnUse) return "fetched on first use";
+  return "not installed";
 }
 
 // Access (ADR-0114): what a turn may do, in one vocabulary the app shows in
@@ -46,6 +112,11 @@ export const ACCESS_COPY = Object.freeze({
     plan: { label: "Restricted", detail: "Deny dangerous operations." },
     write: { label: "Normal prompts", detail: "Ask on risky or unknown operations." },
     full: { label: "Yes mode", detail: "Approve non-blacklisted operations." },
+  },
+  acp: {
+    plan: { label: "Plan only", detail: "Reads, searches and fetches are allowed; edits, deletes and commands the agent asks about are refused." },
+    write: { label: "Edit in folders", detail: "Edits inside the member's folders and commands are allowed; edits elsewhere are refused." },
+    full: { label: "Full access", detail: "Every permission request from the agent is allowed." },
   },
 });
 
@@ -69,7 +140,8 @@ export function derivedAccess() {
 }
 
 export function accessOption(harnessId, access) {
-  const table = ACCESS_COPY[normalizeHarnessId(harnessId)] || ACCESS_COPY.autohand;
+  const normalized = normalizeHarnessId(harnessId);
+  const table = ACCESS_COPY[normalized] || (isAcpHarnessId(normalized) ? ACCESS_COPY.acp : ACCESS_COPY.autohand);
   const id = normalizeAccess(access) || "write";
   return { id, ...(table[id] || table.write) };
 }
@@ -112,7 +184,13 @@ export function normalizeHarnessAssignment(input) {
 
 export function harnessOption(id) {
   const normalized = normalizeHarnessId(id);
+  if (isAcpHarnessId(normalized)) return acpOption(normalized);
   return HARNESS_OPTIONS.find((option) => option.id === normalized) || HARNESS_OPTIONS[0];
+}
+
+/** True when the engine takes a model name on the command line; ACP agents choose their own. */
+export function harnessTakesModel(id) {
+  return !isAcpHarnessId(normalizeHarnessId(id));
 }
 
 export function harnessLabel(id) {

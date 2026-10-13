@@ -14097,7 +14097,7 @@ function Conversation({
       case "harness": {
         const next = normalizeHarnessAssignmentCopy({ ...harnessForAgent(agent), id: command.args });
         if (!command.args || next.id === harnessId) {
-          postLocalNote(`${agent.name} runs with ${harnessLabel(harnessId)}. Use \`/harness autohand|codex|claude\` to switch.`);
+          postLocalNote(`${agent.name} runs with ${harnessLabel(harnessId)}. Use \`/harness autohand|codex|claude|pi|acp:<registry id>\` to switch.`);
           return true;
         }
         updateAgent?.(agent.id, { harness: next, updatedAt: new Date().toISOString() });

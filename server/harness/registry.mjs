@@ -7,6 +7,8 @@ import { dirname, join } from "node:path";
 import * as autohand from "./autohand.mjs";
 import * as codex from "./codex.mjs";
 import * as claude from "./claude.mjs";
+import * as acp from "./acp.mjs";
+import { listAcpAgents } from "../acp/registry.mjs";
 import { guiSafeEnv } from "./discovery.mjs";
 import { formatDuration } from "../../src/lib/duration.js";
 
@@ -33,16 +35,26 @@ export function listAdapters() {
   return Array.from(adapters.values());
 }
 
+// ACP agents (ADR-0122) are `acp:<registry id>`, plus `pi` and `autohand-acp`;
+// the registry's own `pi-acp` entry folds into `pi`.
 export function normalizeHarnessId(value) {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) return DEFAULT_HARNESS_ID;
   if (adapters.has(raw)) return raw;
-  return aliases.get(raw) || DEFAULT_HARNESS_ID;
+  if (aliases.has(raw)) return aliases.get(raw);
+  if (raw === "pi-acp") return "pi";
+  if (acp.isAcpHarnessId(raw)) return raw;
+  return DEFAULT_HARNESS_ID;
+}
+
+export function isAcpHarness(idOrAssignment) {
+  return acp.isAcpHarnessId(typeof idOrAssignment === "string" ? normalizeHarnessId(idOrAssignment) : normalizeHarnessId(idOrAssignment?.id));
 }
 
 export function getAdapter(idOrAssignment) {
   const id = typeof idOrAssignment === "string" ? normalizeHarnessId(idOrAssignment) : normalizeHarnessId(idOrAssignment?.id);
-  return adapters.get(id) || autohand;
+  if (adapters.has(id)) return adapters.get(id);
+  return acp.forHarnessId(id) || autohand;
 }
 
 export function isExternalHarness(idOrAssignment) {
@@ -112,10 +124,24 @@ export async function detectHarness(id, { explicitPath = "", refresh = false, co
   return value;
 }
 
+/**
+ * Every engine the chooser can offer: the built-in adapters first, then the
+ * ACP agents known on this machine (bundled snapshot or the cached registry;
+ * never a network fetch here, that is GET /api/acp/registry's job).
+ */
 export async function listHarnesses({ refresh = false, contextFor = () => ({}) } = {}) {
   const results = [];
   for (const adapter of listAdapters()) {
     results.push(await detectHarness(adapter.id, { refresh, context: contextFor(adapter.id) }));
+  }
+  let acpAgents = [];
+  try {
+    acpAgents = (await listAcpAgents({ network: false, context: contextFor("acp") })).agents;
+  } catch {
+    acpAgents = [];
+  }
+  for (const agent of acpAgents) {
+    results.push(await detectHarness(agent.harnessId, { refresh, context: contextFor(agent.harnessId) }));
   }
   return results;
 }

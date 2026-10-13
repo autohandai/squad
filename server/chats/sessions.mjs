@@ -33,7 +33,8 @@ export function normalizeHarnessSessions(store) {
   const clean = {};
   if (!isPlainObject(store)) return clean;
   for (const [harnessId, byWorkspace] of Object.entries(store)) {
-    if (!/^[a-z0-9-]{1,40}$/.test(harnessId) || !isPlainObject(byWorkspace)) continue;
+    // Built-in engines are plain ids; ACP agents are `acp:<registry id>` (ADR-0122).
+    if (!/^(acp:)?[a-z0-9][a-z0-9._-]{0,60}$/.test(harnessId) || !isPlainObject(byWorkspace)) continue;
     const entries = {};
     for (const [workspace, entry] of Object.entries(byWorkspace)) {
       const resumeId = String(entry?.resumeId || "").trim();

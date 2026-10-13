@@ -1,0 +1,276 @@
+{
+  "version": "1.0.0",
+  "source": "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json",
+  "snapshotAt": "2026-10-14T00:46:00.000Z",
+  "agentCount": 41,
+  "agents": [
+    {
+      "id": "pi-acp",
+      "name": "pi ACP",
+      "version": "0.0.34",
+      "description": "ACP adapter for pi coding agent",
+      "repository": "https://github.com/svkozak/pi-acp",
+      "authors": [
+        "Sergii Kozak <svkozak@gmail.com>"
+      ],
+      "license": "MIT",
+      "license_url": "https://github.com/svkozak/pi-acp/blob/main/LICENSE",
+      "distribution": {
+        "npx": {
+          "package": "pi-acp@0.0.34"
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/pi-acp.svg"
+    },
+    {
+      "id": "autohand",
+      "name": "Autohand Code",
+      "version": "0.2.1",
+      "description": "Autohand Code - AI coding agent powered by Autohand AI",
+      "repository": "https://github.com/autohandai/autohand-acp",
+      "website": "https://www.autohand.ai/cli/",
+      "authors": [
+        "Autohand AI"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/autohandai/autohand-acp/blob/main/LICENSE",
+      "distribution": {
+        "npx": {
+          "package": "@autohandai/autohand-acp@0.2.1"
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/autohand.svg"
+    },
+    {
+      "id": "claude-acp",
+      "name": "Claude Agent",
+      "version": "0.89.1",
+      "description": "ACP wrapper for Anthropic's Claude",
+      "repository": "https://github.com/agentclientprotocol/claude-agent-acp",
+      "authors": [
+        "Anthropic",
+        "Zed Industries",
+        "JetBrains"
+      ],
+      "license": "proprietary",
+      "license_url": "https://github.com/agentclientprotocol/claude-agent-acp/blob/main/LICENSE",
+      "distribution": {
+        "npx": {
+          "package": "@agentclientprotocol/claude-agent-acp@0.89.1"
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/claude-acp.svg"
+    },
+    {
+      "id": "codex-acp",
+      "name": "Codex",
+      "version": "2.2.2",
+      "description": "ACP adapter for OpenAI's coding assistant",
+      "repository": "https://github.com/agentclientprotocol/codex-acp",
+      "authors": [
+        "OpenAI",
+        "JetBrains s.r.o",
+        "Zed Industries"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/agentclientprotocol/codex-acp/blob/main/LICENSE",
+      "distribution": {
+        "npx": {
+          "package": "@agentclientprotocol/codex-acp@2.2.2"
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/codex-acp.svg"
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini CLI",
+      "version": "0.63.0",
+      "description": "Google's official CLI for Gemini",
+      "repository": "https://github.com/google-gemini/gemini-cli",
+      "website": "https://geminicli.com",
+      "authors": [
+        "Google"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/google-gemini/gemini-cli/blob/main/LICENSE",
+      "distribution": {
+        "npx": {
+          "package": "@google/gemini-cli@0.63.0",
+          "args": [
+            "--acp"
+          ]
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/gemini.svg"
+    },
+    {
+      "id": "github-copilot-cli",
+      "name": "Copilot",
+      "version": "1.0.96",
+      "description": "GitHub's AI pair programmer",
+      "repository": "https://github.com/github/copilot-cli",
+      "website": "https://github.com/features/copilot/cli/",
+      "authors": [
+        "GitHub"
+      ],
+      "license": "proprietary",
+      "license_url": "https://github.com/github/copilot-cli/blob/main/LICENSE.md",
+      "distribution": {
+        "npx": {
+          "package": "@github/copilot@1.0.96",
+          "args": [
+            "--acp"
+          ]
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg"
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "version": "1.19.0",
+      "description": "The open source coding agent",
+      "repository": "https://github.com/anomalyco/opencode",
+      "website": "https://opencode.ai",
+      "authors": [
+        "Anomaly"
+      ],
+      "license": "MIT",
+      "license_url": "https://github.com/anomalyco/opencode/blob/dev/LICENSE",
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/opencode.svg",
+      "distribution": {
+        "binary": {
+          "darwin-aarch64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.19.0/opencode-darwin-arm64.zip",
+            "cmd": "./opencode",
+            "args": [
+              "acp"
+            ],
+            "sha256": "0d5f511948d6fbfedf9bb16753c0ac42613dcc8de75d9deb7e8d0cf584c8fba6"
+          },
+          "darwin-x86_64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.19.0/opencode-darwin-x64.zip",
+            "cmd": "./opencode",
+            "args": [
+              "acp"
+            ],
+            "sha256": "515380b03f3410f2178c8c1c7ba6d1e9556a3bdee2a01d114e7b1681952131a0"
+          },
+          "linux-aarch64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.19.0/opencode-linux-arm64.tar.gz",
+            "cmd": "./opencode",
+            "args": [
+              "acp"
+            ],
+            "sha256": "e9841d43d3e1a8f36ed2691592d3b8b4fb097e606c8b559a277a1b845840e26b"
+          },
+          "linux-x86_64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.19.0/opencode-linux-x64.tar.gz",
+            "cmd": "./opencode",
+            "args": [
+              "acp"
+            ],
+            "sha256": "7bb9e61ad6feacf2e89c10a6a2c1840e3de4220bb50ba1fc7110f31806076aec"
+          },
+          "windows-aarch64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.19.0/opencode-windows-arm64.zip",
+            "cmd": "./opencode",
+            "args": [
+              "acp"
+            ],
+            "sha256": "cfb6f1d40c4596613d2d40e34c48500da7b873f98f7458d3d4ea11136bf174f6"
+          },
+          "windows-x86_64": {
+            "archive": "https://github.com/anomalyco/opencode/releases/download/v1.19.0/opencode-windows-x64.zip",
+            "cmd": "./opencode.exe",
+            "args": [
+              "acp"
+            ],
+            "sha256": "17108e9448c4fdad48eb8714c4ed6f5dfc9cf86c2eb8f2ce5d02043fef806eb5"
+          }
+        }
+      }
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "version": "2026.10.01",
+      "description": "Cursor's coding agent",
+      "website": "https://cursor.com/docs/cli/acp",
+      "authors": [
+        "Cursor"
+      ],
+      "license": "proprietary",
+      "license_url": "https://cursor.com/terms-of-service",
+      "distribution": {
+        "binary": {
+          "darwin-aarch64": {
+            "archive": "https://downloads.cursor.com/lab/2026.10.01-14929f9/darwin/arm64/agent-cli-package.tar.gz",
+            "cmd": "./dist-package/cursor-agent",
+            "args": [
+              "acp"
+            ]
+          },
+          "darwin-x86_64": {
+            "archive": "https://downloads.cursor.com/lab/2026.10.01-14929f9/darwin/x64/agent-cli-package.tar.gz",
+            "cmd": "./dist-package/cursor-agent",
+            "args": [
+              "acp"
+            ]
+          },
+          "linux-aarch64": {
+            "archive": "https://downloads.cursor.com/lab/2026.10.01-14929f9/linux/arm64/agent-cli-package.tar.gz",
+            "cmd": "./dist-package/cursor-agent",
+            "args": [
+              "acp"
+            ]
+          },
+          "linux-x86_64": {
+            "archive": "https://downloads.cursor.com/lab/2026.10.01-14929f9/linux/x64/agent-cli-package.tar.gz",
+            "cmd": "./dist-package/cursor-agent",
+            "args": [
+              "acp"
+            ]
+          },
+          "windows-aarch64": {
+            "archive": "https://downloads.cursor.com/lab/2026.10.01-14929f9/windows/arm64/agent-cli-package.zip",
+            "cmd": "./dist-package\\cursor-agent.cmd",
+            "args": [
+              "acp"
+            ]
+          },
+          "windows-x86_64": {
+            "archive": "https://downloads.cursor.com/lab/2026.10.01-14929f9/windows/x64/agent-cli-package.zip",
+            "cmd": "./dist-package\\cursor-agent.cmd",
+            "args": [
+              "acp"
+            ]
+          }
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/cursor.svg"
+    },
+    {
+      "id": "grok-build",
+      "name": "Grok Build",
+      "version": "1.0.54",
+      "description": "xAI's coding agent and CLI",
+      "website": "https://x.ai/cli",
+      "authors": [
+        "xAI"
+      ],
+      "license": "proprietary",
+      "license_url": "https://x.ai/legal/terms-of-service",
+      "distribution": {
+        "npx": {
+          "package": "@xai-official/grok@1.0.54",
+          "args": [
+            "agent",
+            "stdio"
+          ]
+        }
+      },
+      "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/grok-build.svg"
+    }
+  ]
+}

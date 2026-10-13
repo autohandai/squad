@@ -129,6 +129,8 @@
 - A bell beside the search control carries a small dot while notifications are unread; its popover is a divider list (title, one-line body, relative time) with Mark all read. Native notifications are posted by the bridge, never while the conversation is on screen.
 - Providers in Settings are a divider-separated list, expanded one at a time. An account-backed provider (Autohand AI) shows its status as one sentence ("Signed in as …; an API key is optional"), a model select fed by the catalog, and a managed base URL placeholder; it never asks for a key it does not need.
 - The **Runs with** control is one select plus one readiness sentence; advanced fields (model override, executable path, Test harness) sit behind a text disclosure. The profile shows Harness as a text summary row beside Model, never as vendor cards.
+- The Runs with list has two labelled groups: **Built-in engines** (Autohand Code, Claude Code, Codex) and **From the ACP registry**, one row per agent with its name, a muted "installed" / "fetched on first use" / "not installed" word and its one-line description beneath, truncated. Pi and Autohand Code (ACP) sit first in that group, then installed agents, then the rest by name. No icons, no vendor logos, no install buttons; an agent that is not installed says where to get it in the readiness sentence.
+- An ACP member has Access (Plan only / Edit in folders / Full access) and no model field; one muted line says the agent chooses its own model. Reasoning effort appears only when the registry lists levels. The composer's engine chip shows the agent's registry name.
 
 ## Needs you
 

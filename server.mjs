@@ -55,6 +55,7 @@ import {
   getAdapter,
   harnessAssignmentFromAgent,
   isExternalHarness,
+  isAcpHarness,
   normalizeAccess,
   normalizeEffort,
   listHarnesses,
@@ -942,7 +943,11 @@ function autohandReadinessContext() {
 }
 
 function harnessContextFor(id) {
-  return id === DEFAULT_HARNESS_ID ? autohandReadinessContext() : {};
+  if (id === DEFAULT_HARNESS_ID) return autohandReadinessContext();
+  // ACP agents (ADR-0122): the registry cache lives in the squad state dir
+  // and `autohand-acp` runs the same CLI the Autohand engine uses.
+  if (id === "acp" || isAcpHarness(id)) return { squadStateDir, autohandPath: resolveAutohandBinary() };
+  return {};
 }
 
 const serverStartedAt = new Date().toISOString();
@@ -6614,6 +6619,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
       appendSystemPrompt: profile,
       addDirs,
       resumeId: resume,
+      launchArgs: Array.isArray(readiness.launchArgs) ? readiness.launchArgs : [],
     });
     if (managedServers.length && adapter.id === "claude") {
       built.args.push("--mcp-config", managedConfigPath);
@@ -6665,36 +6671,20 @@ function externalCommandLabel(adapter, displayArgs) {
 
 async function executeExternalHarness(prepared, { timeoutMs, inactivityMs = 0, signal, onEvent }) {
   const { adapter, executable, workspace, envVars, agentRuntime } = prepared;
+  // ACP agents (ADR-0122) speak JSON-RPC over stdio instead of printing
+  // JSONL; the adapter brings its own runner and the turn travels in
+  // `attempt.turn`. Everything after this point is shared.
+  const run = (attempt) => (adapter.transport === "acp"
+    ? adapter.run({ adapter, executable, args: attempt.args, cwd: workspace, env: envVars, turn: attempt.turn, timeoutMs, inactivityMs, signal, onEvent, terminate: terminateChildProcess, clientVersion: packageMetadata.version })
+    : runExternalHarness({ adapter, executable, args: attempt.args, cwd: workspace, env: envVars, timeoutMs, inactivityMs, signal, onEvent, terminate: terminateChildProcess }));
   let attempt = prepared.build(prepared.resumeId);
-  let output = await runExternalHarness({
-    adapter,
-    executable,
-    args: attempt.args,
-    cwd: workspace,
-    env: envVars,
-    timeoutMs,
-    inactivityMs,
-    signal,
-    onEvent,
-    terminate: terminateChildProcess,
-  });
+  let output = await run(attempt);
   // A stale resume id (deleted session, new vendor version) must not strand
   // the member: retry once with a fresh session, then persist the new id.
   if (output.error && prepared.resumeId && !output.stopped && !output.timedOut && output.events.filter((event) => event.type !== "tool_update").length <= 1) {
     await writeResumeId(agentRuntime.agentHome, adapter.id, workspace, "");
     attempt = prepared.build("");
-    output = await runExternalHarness({
-      adapter,
-      executable,
-      args: attempt.args,
-      cwd: workspace,
-      env: envVars,
-      timeoutMs,
-      inactivityMs,
-      signal,
-      onEvent,
-      terminate: terminateChildProcess,
-    });
+    output = await run(attempt);
   }
   if (output.resumeId && !output.stopped) {
     await writeResumeId(agentRuntime.agentHome, adapter.id, workspace, output.resumeId).catch(() => {});

@@ -5,14 +5,20 @@ import { Button } from "@/components/ui/button";
 import { EffortSlider } from "@/components/chat/EffortSlider";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import {
   ACCESS_IDS,
   HARNESS_OPTIONS,
   accessOption,
+  acpAvailabilityLabel,
+  acpOption,
   effortLevelsFor,
+  fetchAcpRegistry,
   harnessLoginStatus,
+  harnessTakesModel,
+  isAcpHarnessId,
+  listAcpAgents,
   modelChoices,
   harnessNeedsSignIn,
   harnessOption,
@@ -33,7 +39,20 @@ import { cn } from "@/lib/utils";
  * for Claude Code, the Autohand account for Autohand Code) through the local
  * bridge and re-checks readiness when it finishes. Advanced fields
  * (executable path, harness-native model) sit behind a disclosure.
+ *
+ * The list is two groups (ADR-0122): the built-in engines, then "From the
+ * ACP registry" with every agent the registry knows, each with its one-line
+ * description and whether it is installed or fetched on first use. The
+ * registry is read when the chooser opens (the bridge refreshes it at most
+ * daily) and Re-check forces a fetch.
  */
+function sortAcpAgents(agents) {
+  return [...agents].sort((a, b) => {
+    const rank = (item) => (item.builtIn ? 0 : item.installed ? 1 : item.fetchOnUse ? 2 : 3);
+    return rank(a) - rank(b) || String(a.name || "").localeCompare(String(b.name || ""));
+  });
+}
+
 export function HarnessSelect({
   value,
   onChange,
@@ -55,13 +74,39 @@ export function HarnessSelect({
   const [customModel, setCustomModel] = useState(false);
   const external = assignment.id !== "autohand";
   const [signIn, setSignIn] = useState({ state: "idle" });
+  const [acpAgents, setAcpAgents] = useState(() => sortAcpAgents(listAcpAgents()));
+  const [acpLoading, setAcpLoading] = useState(false);
   const pollRef = useRef(null);
+  const acpSelected = isAcpHarnessId(assignment.id);
+  const selectedAgent = acpSelected ? acpOption(assignment.id) : null;
   const readiness = testResult?.id === assignment.id ? testResult : readinessFor(harnesses, assignment.id);
   const option = harnessOption(assignment.id);
   const needsSignIn = harnessNeedsSignIn(readiness);
   const accountLabel = readiness?.account?.label || readiness?.account?.email || "";
 
   useEffect(() => () => window.clearInterval(pollRef.current), []);
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    setAcpLoading(true);
+    fetchAcpRegistry(api).finally(() => {
+      if (cancelled) return;
+      setAcpAgents(sortAcpAgents(listAcpAgents()));
+      setAcpLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  async function refreshAll() {
+    onRefresh?.();
+    if (!api) return;
+    setAcpLoading(true);
+    await fetchAcpRegistry(api, { refresh: true });
+    setAcpAgents(sortAcpAgents(listAcpAgents()));
+    setAcpLoading(false);
+  }
   useEffect(() => {
     setSignIn({ state: "idle" });
     window.clearInterval(pollRef.current);
@@ -103,8 +148,8 @@ export function HarnessSelect({
       <div className="flex items-center justify-between gap-3">
         <Label htmlFor={id}>{label}</Label>
         {onRefresh ? (
-          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={onRefresh} disabled={loading}>
-            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} data-icon="inline-start" />
+          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={refreshAll} disabled={loading || acpLoading}>
+            <RefreshCw className={cn("size-3.5", (loading || acpLoading) && "animate-spin")} data-icon="inline-start" />
             Re-check
           </Button>
         ) : null}
@@ -113,21 +158,42 @@ export function HarnessSelect({
         <SelectTrigger id={id} className={cn("w-full bg-card", compact ? "h-9" : "sm:max-w-sm")}>
           <SelectValue placeholder="Choose an engine" />
         </SelectTrigger>
-        <SelectContent>
-          {HARNESS_OPTIONS.map((item) => {
-            const itemReadiness = readinessFor(harnesses, item.id);
-            return (
-              <SelectItem key={item.id} value={item.id}>
-                <span className="flex items-center gap-2">
-                  <span>{item.label}</span>
-                  {item.isDefault ? <span className="text-xs text-muted-foreground">Default</span> : null}
-                  {itemReadiness ? (
-                    <span className={cn("text-xs", readinessTone(itemReadiness.status))}>{readinessLabel(itemReadiness.status)}</span>
-                  ) : null}
+        <SelectContent className="max-h-[min(24rem,60vh)]">
+          <SelectGroup>
+            <SelectLabel>Built-in engines</SelectLabel>
+            {HARNESS_OPTIONS.map((item) => {
+              const itemReadiness = readinessFor(harnesses, item.id);
+              return (
+                <SelectItem key={item.id} value={item.id}>
+                  <span className="flex items-center gap-2">
+                    <span>{item.label}</span>
+                    {item.isDefault ? <span className="text-xs text-muted-foreground">Default</span> : null}
+                    {itemReadiness ? (
+                      <span className={cn("text-xs", readinessTone(itemReadiness.status))}>{readinessLabel(itemReadiness.status)}</span>
+                    ) : null}
+                  </span>
+                </SelectItem>
+              );
+            })}
+          </SelectGroup>
+          <SelectGroup>
+            <SelectLabel>From the ACP registry</SelectLabel>
+            {acpSelected && !acpAgents.some((item) => item.harnessId === assignment.id) ? (
+              <SelectItem value={assignment.id}>{selectedAgent.label}</SelectItem>
+            ) : null}
+            {acpAgents.map((item) => (
+              <SelectItem key={item.harnessId} value={item.harnessId} textValue={item.name}>
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="flex items-center gap-2">
+                    <span>{item.name}</span>
+                    <span className={cn("text-xs", item.installed ? "text-emerald-700 dark:text-emerald-300" : item.fetchOnUse ? "text-muted-foreground" : "text-destructive")}>{acpAvailabilityLabel(item)}</span>
+                  </span>
+                  {item.description ? <span className="max-w-[22rem] truncate text-xs text-muted-foreground">{item.description}</span> : null}
                 </span>
               </SelectItem>
-            );
-          })}
+            ))}
+            {!acpAgents.length ? <div className="px-2 py-1.5 text-xs text-muted-foreground">{acpLoading ? "Reading the registry…" : "The registry is not available."}</div> : null}
+          </SelectGroup>
         </SelectContent>
       </Select>
       <p className="text-sm text-muted-foreground">
@@ -185,6 +251,7 @@ export function HarnessSelect({
           </button>
           {advancedOpen ? (
             <div className="grid gap-3 sm:grid-cols-2">
+              {harnessTakesModel(assignment.id) ? (
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor={`${id}-model`} className="text-xs">
                   {option.short} model
@@ -232,6 +299,9 @@ export function HarnessSelect({
                   />
                 )}
               </div>
+              ) : (
+                <p className="text-xs text-muted-foreground sm:col-span-2">{option.label} chooses its own model; change it in that agent's settings.</p>
+              )}
               {effortLevelsFor(assignment.id, readiness, assignment.model || readiness?.defaults?.model || "").length ? (
                 <div className="sm:col-span-2">
                   <EffortSlider
