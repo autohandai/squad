@@ -39,6 +39,8 @@ import { startTracking } from "./server/workspace-git.mjs";
 import { channelError, createChannelsStore } from "./server/channels-store.mjs";
 import { createAgentChannelActions } from "./server/agent-channel-actions.mjs";
 import { createResponderPicker } from "./server/responders/pick.mjs";
+import { createRunHistory, runHistoryPath } from "./server/runs/history.mjs";
+import { clearHarnessSessions } from "./server/chats/sessions.mjs";
 import { normalizeResponder, responderStatus } from "./src/lib/channel-responders.js";
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
 import { memberProfileDefaults } from "./src/lib/member-profiles.js";
@@ -69,6 +71,7 @@ delete process.env.AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN;
 function emitRunFinished(run) {
   if (!run || run.finishedEventAt) return null;
   run.finishedEventAt = run.finishedAt || new Date().toISOString();
+  runHistory.persist();
   return emitBridgeEvent("run.finished", {
     runId: run.id,
     memberId: run.agentId || "",
@@ -365,6 +368,9 @@ const feedbackApiBaseUrl = (process.env.AUTOHAND_SQUAD_API_BASE_URL || process.e
 const runs = new Map();
 const memberAvailability = new MemberAvailability(squadStateDir);
 const activeChats = new Map();
+// Finished runs outlive the process (ADR-0113): restored at boot, saved on
+// every finish, bounded to the newest 200.
+const runHistory = createRunHistory({ path: runHistoryPath(appStateDir), runs, log: (message) => logEvent(SEVERITY.INFO, message, { "event.name": "run.history" }) });
 let nativeGrantKey = await readNativeComputerGrantKey();
 const computerClient = await bundledComputerClient(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR ? resolve(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR) : rootDir).catch(() => null);
 const computerUse = createComputerUse({ stateDir: squadStateDir, rootDir, bridgeUrl: `http://127.0.0.1:${port}`, nativeClient: computerClient, emit: emitBridgeEvent });
@@ -4038,6 +4044,7 @@ function shutdownServer() {
   computerUse.close();
   projectObserver.stop();
   logEvent(SEVERITY.INFO, "bridge shutting down");
+  void runHistory.flush();
   void otel.close();
   setTimeout(() => {
     const exit = () => process.exit(0);
@@ -7114,18 +7121,143 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
   const originalStream = stream;
   const liveEvidence = (data) => { if (data.runId === workId) originalStream.send("computer-use", { sessionId: data.sessionId, runId: workId, files: data.files }); };
   bridgeEvents.on("computer-use.evidence", liveEvidence);
-  const delayedDone = { send(event, data) { if (event !== "done") originalStream.send(event, data); } };
+  // Every turn is a run (ADR-0113): the Execution panel lists it whichever
+  // engine answers, Stop there stops it, and the record survives a restart.
+  const run = beginChatRun(payload, workId, startedAt);
+  const forwardAbort = () => run.abortController?.abort();
+  if (signal?.aborted) forwardAbort(); else signal?.addEventListener("abort", forwardAbort, { once: true });
+  const runSignal = run.abortController.signal;
+  const delayedDone = chatRunStream(run, { send(event, data) { if (event !== "done") originalStream.send(event, data); } });
   try {
-    const result = await executeChatTurnInner({ ...payload, _computerUseWorkId: workId }, { stream: delayedDone, signal, startedAt });
+    const result = await executeChatTurnInner({ ...payload, _computerUseWorkId: workId }, { stream: delayedDone, signal: runSignal, startedAt });
     const evidence = await finishComputerWork(workId);
-    const completed = await agentChannelActions.finish(actionContext, { ...cleanWorkResult(result), ...(evidence ? { computerUse: evidence } : {}) }, signal);
+    const completed = await agentChannelActions.finish(actionContext, { ...cleanWorkResult(result), ...(evidence ? { computerUse: evidence } : {}) }, runSignal);
+    finishChatRun(run, { result: completed });
     originalStream.send("done", completed);
     return completed;
+  } catch (error) {
+    finishChatRun(run, { error, aborted: runSignal.aborted });
+    throw error;
   } finally {
+    signal?.removeEventListener("abort", forwardAbort);
     await finishComputerWork(workId).catch(() => {});
     await finishVaultWork(workId).catch(() => {});
     bridgeEvents.off("computer-use.evidence", liveEvidence);
   }
+}
+
+function beginChatRun(payload, workId, startedAt) {
+  const assignment = harnessAssignmentFromAgent(payload.agent);
+  const prompt = String(payload.prompt || "").replace(/\s+/g, " ").trim();
+  const run = {
+    id: workId,
+    agentId: String(payload.agentId || payload.agent?.id || ""),
+    title: prompt.length > 140 ? `${prompt.slice(0, 139)}…` : prompt || "Chat",
+    prompt,
+    mode: "chat",
+    kind: "chat",
+    channel: channelContextFromPayload(payload),
+    recipeId: null,
+    canvasId: null,
+    workspace: String(payload.workspace || ""),
+    effectiveModel: null,
+    transport: isExternalHarness(assignment) ? assignment.id : "sdk",
+    harness: assignment.id,
+    harnessVersion: "",
+    command: "",
+    logPath: join(runLogsDir, `${workId}.otlp.jsonl`),
+    status: "running",
+    exitCode: null,
+    startedAt: new Date(startedAt).toISOString(),
+    finishedAt: null,
+    contextPack: null,
+    contextLayers: null,
+    logs: [],
+    abortController: new AbortController(),
+  };
+  runs.set(workId, run);
+  return run;
+}
+
+// The chat stream carries the browser's event shapes (message_delta, tool
+// objects); the run log keeps the same row kinds the Execution feed reads.
+function chatRunStream(run, stream) {
+  return {
+    send(event, data) {
+      if (event === "start" && data && typeof data === "object") {
+        if (data.workspace) run.workspace = String(data.workspace);
+        if (data.effectiveModel) run.effectiveModel = data.effectiveModel;
+        if (data.harnessVersion) run.harnessVersion = String(data.harnessVersion);
+      } else if (event === "sdk" && data && typeof data === "object") {
+        appendChatRunEvent(run, data);
+      }
+      stream.send(event, data);
+    },
+  };
+}
+
+function appendChatRunEvent(run, event) {
+  if (run.logs.length >= 4000) return;
+  switch (event.type) {
+    case "message_end":
+      if (event.content) appendLog(run, "stdout", event.content);
+      return;
+    case "tool_start":
+      appendLog(run, "tool", `started ${event.tool?.name || "tool"} ${compactJson(event.tool?.args || {}, 4000)}`);
+      return;
+    case "tool_update":
+      if (event.output) appendLog(run, event.stream === "stderr" ? "stderr" : "stdout", event.output);
+      return;
+    case "tool_end":
+      appendLog(run, "tool", `${event.toolName || "tool"} ${event.success === false ? "failed" : "completed"} at ${event.timestamp || new Date().toISOString()}`);
+      if (event.output) appendLog(run, event.stream === "stderr" ? "stderr" : "stdout", event.output);
+      return;
+    case "permission_request":
+      appendLog(run, "permission", `${event.title || "Permission requested"}${event.content ? `: ${event.content}` : ""}`);
+      return;
+    case "error":
+      appendLog(run, "stderr", event.error || "Agent stream failed");
+      return;
+    case "status":
+      if (event.label) appendLog(run, "system", event.label);
+      return;
+    default:
+      return;
+  }
+}
+
+function finishChatRun(run, { result = null, error = null, aborted = false } = {}) {
+  if (!run) return;
+  const stoppedAlready = run.status === "stopped";
+  if (!stoppedAlready && !isLiveRun(run)) return;
+  const finishedAt = new Date().toISOString();
+  if (result) {
+    run.command = String(result.command || run.command || "");
+    run.reply = String(result.reply || "");
+    run.trace = result.trace || run.trace || null;
+    run.workspace = String(result.workspace || run.workspace || "");
+    if (result.effectiveModel) run.effectiveModel = result.effectiveModel;
+    if (result.harnessVersion) run.harnessVersion = String(result.harnessVersion);
+    run.sessionId = String(result.sessionId || "");
+    run.durationMs = Number.isFinite(Number(result.durationMs)) ? Number(result.durationMs) : Date.parse(finishedAt) - Date.parse(run.startedAt);
+    run.channelActions = Array.isArray(result.channelActions) ? result.channelActions : [];
+    run.status = result.declined ? "stopped" : "completed";
+    run.exitCode = result.declined ? null : 0;
+  } else {
+    const details = error instanceof ChatRuntimeError ? error.details : null;
+    if (details?.command) run.command = String(details.command);
+    if (details?.trace) run.trace = details.trace;
+    if (details?.sessionId) run.sessionId = String(details.sessionId);
+    run.durationMs = Date.parse(finishedAt) - Date.parse(run.startedAt);
+    run.status = stoppedAlready || aborted || isAbortError(error) ? "stopped" : "failed";
+    run.exitCode = run.status === "failed" ? 1 : null;
+    if (error && run.status === "failed") appendLog(run, "stderr", error.message || String(error));
+  }
+  run.finishedAt = finishedAt;
+  run.finishedEventAt = finishedAt; // chat.finished already reaches the audit trail; no run.finished here
+  appendLog(run, "system", `${run.harness || "member"} reply ${run.status}`);
+  run.abortController = null;
+  runHistory.persist();
 }
 
 async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.now() }) {
@@ -7397,7 +7529,10 @@ async function handleApi(req, res, url) {
       const payload = await readBody(req);
       const agentId = sanitizeAgentId(payload.agentId || payload.agent?.id || "");
       const closed = sdkSessions && agentId ? await sdkSessions.reset(agentId, "new conversation") : 0;
-      json(res, 200, { success: true, data: { agentId, closed } });
+      // Claude Code and Codex resume by id; a new chat must forget those
+      // ids too, or the "new" conversation continues the old one (ADR-0113).
+      const forgotten = agentId ? await clearHarnessSessions(join(isolatedAgentsDir, agentId)).catch(() => 0) : 0;
+      json(res, 200, { success: true, data: { agentId, closed, forgotten } });
     } catch (error) {
       json(res, 400, { success: false, error: error.message });
     }
@@ -8279,6 +8414,8 @@ server = createServer(async (req, res) => {
   }
   await serveStatic(req, res, url);
 });
+
+await runHistory.restore().catch((error) => console.error(`run history could not be restored: ${error?.message || error}`));
 
 server.listen(port, host, () => {
   console.log(`autohandSWE listening on http://${host}:${port}`);

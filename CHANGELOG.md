@@ -33,6 +33,13 @@ list to the section for that version.
 - Member automations now have a real schedule: once, weekdays, every N minutes, monthly (any day or the last day), yearly, or a custom cron expression, each in a chosen time zone. The editor shows the next three dates, and scheduled runs start on the bridge even while Squad is closed, as long as the member has chatted or run before and has a working folder; otherwise the automation says it needs Squad open and runs when you return.
 - Each scheduled automation keeps a run history on the bridge: last run and outcome, next run, occurrences skipped because the previous run was still going, and runs stopped by an optional run limit.
 - Ask a member in chat to schedule something and it proposes a routine; the chat shows the rule in words, the time zone and the next three dates with Confirm and Decline. Nothing is scheduled until you confirm.
+- Previous chats. New chat puts the conversation away instead of discarding it. The History button beside New chat lists them, newest first, with the first question, the number of turns, the engine and when; open one and it comes back as the live conversation, and a Claude Code or Codex member continues the very same engine session. Remove deletes one. Up to 100 chats per member are kept on this computer.
+- Every reply shows up in the Execution panel's Runs tab, whichever engine the member runs on: the question as the title, the engine, the model, the status, and the same activity feed as Work details. Stop there stops the reply. Goal turns, queued follow-ups, scheduled routines and Telegram messages appear the same way.
+- Finished runs stay in the Runs tab after Squad restarts (the newest 200).
+
+### Fixed
+
+- New chat with a Claude Code or Codex member now really starts a new conversation. Before, the engine was resumed with its previous session id, so the "new" chat silently carried the old context.
 
 ## [0.1.6] - 2026-10-13
 

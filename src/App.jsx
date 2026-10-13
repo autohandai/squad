@@ -287,6 +287,8 @@ import { NeedsYouList } from "@/components/inbox/InboxPage";
 import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, workRowsInProgress, workAttentionCount } from "@/lib/work-attention";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
+import { PreviousChats } from "@/components/chat/PreviousChats";
+import { archivePayload, conversationHasWork, restoreConversationEvent } from "@/lib/chat-sessions";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
 import { MemberMenu } from "@/components/members/MemberMenu";
 import { HiddenMembersGroup } from "@/components/members/HiddenMembersGroup";
@@ -4651,6 +4653,10 @@ function App() {
       readStored(storageKeysFor("messages"), { [initialAgents[0].id]: initialMessages(initialAgents[0].name) })
     )
   );
+  // Previous chats (ADR-0113): summaries per member from the bridge; the
+  // conversations themselves live in <squadStateDir>/chats.
+  const [previousChatsByAgent, setPreviousChatsByAgent] = useState({});
+  const [previousChatsLoading, setPreviousChatsLoading] = useState(false);
   const memberAccessWritesRef = useRef(new Map());
   const membersRef = useRef(agents);
   membersRef.current = agents;
@@ -6955,13 +6961,80 @@ function App() {
       return;
     }
     const timestamp = new Date().toISOString();
-    // Drop the warm CLI session so the next message starts a clean context.
+    // Put the conversation away first (ADR-0113): the bridge keeps the
+    // messages and the engine's session id, so it can be opened again later.
+    const current = messagesByAgent[agent.id] || [];
+    if (conversationHasWork(current)) {
+      try {
+        await api(`/api/members/${encodeURIComponent(agent.id)}/chats`, { method: "POST", body: JSON.stringify(archivePayload(agent, current, { workspace: agent.workspace, endedAt: timestamp })) });
+      } catch {
+        // The bridge is away or refused; the chat still resets as before.
+      }
+    }
+    // Drop the warm CLI session and the Claude/Codex resume ids so the next
+    // message starts a clean context.
     api("/api/chat/reset", { method: "POST", body: JSON.stringify({ agentId: agent.id }) }).catch(() => {});
     const event = { type: "messages.reset", memberId: agent.id, at: timestamp, cutoff: timestamp, messages: initialMessages(agent.name) };
     sharedConversationChannelRef.current?.postMessage(event);
     setMessagesByAgent((current) => applySharedConversationEvent(current, event));
     updateAgent(agent.id, { lastConversationAt: timestamp, conversationStartedAt: timestamp, updatedAt: timestamp });
+    void loadPreviousChats(agent.id);
     if (!preserveRoute) navigate(memberChatPath(agent.id));
+  }
+
+  async function loadPreviousChats(agentId) {
+    if (!agentId) return [];
+    setPreviousChatsLoading(true);
+    try {
+      const data = await api(`/api/members/${encodeURIComponent(agentId)}/chats`);
+      const chats = Array.isArray(data?.chats) ? data.chats : [];
+      setPreviousChatsByAgent((current) => ({ ...current, [agentId]: chats }));
+      return chats;
+    } catch {
+      return previousChatsByAgent[agentId] || [];
+    } finally {
+      setPreviousChatsLoading(false);
+    }
+  }
+
+  // Bring a previous chat back as the live conversation. The current one is
+  // put away in the same request when it has work in it, and the engine's
+  // session ids swap with it, so the next message continues that chat.
+  async function openPreviousChat(agentId, chatId) {
+    const agent = agents.find((item) => item.id === agentId) || activeAgent;
+    if (!agent || !chatId) return;
+    if (chatMembersRef.current.get(agent.id)) {
+      appendMessage(agent.id, { id: `open-chat-busy-${Date.now()}`, role: "agent", authorName: "Squad", body: localeCopy.previousChatsBusy || "Wait for the current reply to finish, or stop it, before opening another chat.", status: "complete" });
+      return;
+    }
+    try {
+      for (const goal of memberGoals.filter((item) => item.agentId === agent.id && isGoalRunning(item))) {
+        await controlMemberGoal("pause", goal);
+      }
+      const timestamp = new Date().toISOString();
+      const current = messagesByAgent[agent.id] || [];
+      const data = await api(`/api/members/${encodeURIComponent(agent.id)}/chats/${encodeURIComponent(chatId)}/open`, {
+        method: "POST",
+        body: JSON.stringify({ current: conversationHasWork(current) ? archivePayload(agent, current, { workspace: agent.workspace, endedAt: timestamp }) : null }),
+      });
+      const event = restoreConversationEvent(agent.id, data?.chat, timestamp);
+      sharedConversationChannelRef.current?.postMessage(event);
+      setMessagesByAgent((state) => applySharedConversationEvent(state, event));
+      updateAgent(agent.id, { lastConversationAt: timestamp, conversationStartedAt: timestamp, updatedAt: timestamp });
+      void loadPreviousChats(agent.id);
+    } catch (error) {
+      appendMessage(agent.id, { id: `open-chat-error-${Date.now()}`, role: "agent", authorName: "Squad", body: `Could not open that chat: ${error.message || "the bridge did not answer"}`, status: "error" });
+    }
+  }
+
+  async function removePreviousChat(agentId, chatId) {
+    if (!agentId || !chatId) return;
+    try {
+      await api(`/api/members/${encodeURIComponent(agentId)}/chats/${encodeURIComponent(chatId)}`, { method: "DELETE" });
+    } catch {
+      // Already gone, or the bridge is away; the refreshed list says which.
+    }
+    void loadPreviousChats(agentId);
   }
 
   // A member's reply can delegate to teammates by @mentioning them; each
@@ -9216,6 +9289,7 @@ function App() {
             runtime={runtime} workspaces={workspaces} runs={runs.filter((run) => run.agentId === member.id)} providerSettings={providerSettings}
             locale={localeResolution.locale} copy={localeCopy} onStart={startAutohand} onChat={sendChat}
             onLocalMessage={appendMessage} onNewConversation={(id) => startNewConversation(id, { preserveRoute: true })}
+            previousChats={previousChatsByAgent[member.id] || []} previousChatsLoading={previousChatsLoading} onLoadPreviousChats={loadPreviousChats} onOpenPreviousChat={openPreviousChat} onRemovePreviousChat={removePreviousChat}
             goals={memberGoals.filter((goal) => goal.agentId === member.id)} goalsError={memberGoalsError} onGoalAction={controlMemberGoal} onMemberBreak={setMemberBreak}
             queue={memberQueues[member.id]} contextGauge={memberContext[member.id]} onQueueAction={controlMemberQueue}
             routineProposals={routineProposals.filter((proposal) => proposal.memberId === member.id)} onRoutineDecision={decideRoutineProposal} onRoutineSync={syncAutomationRoutine}
@@ -9643,6 +9717,11 @@ function App() {
                 onMemberBreak={setMemberBreak}
                 onLocalMessage={appendMessage}
                 onNewConversation={startNewConversation}
+                previousChats={previousChatsByAgent[activeAgent?.id] || []}
+                previousChatsLoading={previousChatsLoading}
+                onLoadPreviousChats={loadPreviousChats}
+                onOpenPreviousChat={openPreviousChat}
+                onRemovePreviousChat={removePreviousChat}
                 harnesses={harnesses}
                 harnessesLoading={harnessesLoading}
                 onRefreshHarnesses={() => refreshHarnesses(true)}
@@ -13400,6 +13479,11 @@ function Conversation({
   onRoutineDecision,
   onRoutineSync,
   onNewConversation,
+  previousChats = [],
+  previousChatsLoading = false,
+  onLoadPreviousChats,
+  onOpenPreviousChat,
+  onRemovePreviousChat,
   openTerminal,
   navigate,
   taskPanelOpen,
@@ -14470,6 +14554,16 @@ function Conversation({
             <Plus data-icon="inline-start" />
             <span className="hidden sm:inline">New chat</span>
           </Button>
+          <PreviousChats
+            chats={previousChats}
+            loading={previousChatsLoading}
+            disabled={Boolean(chatSending)}
+            onLoad={() => onLoadPreviousChats?.(agent.id)}
+            onOpen={(chat) => onOpenPreviousChat?.(agent.id, chat.id)}
+            onRemove={(chat) => onRemovePreviousChat?.(agent.id, chat.id)}
+            copy={copy}
+            locale={locale}
+          />
           {!compact ? <>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -18787,6 +18881,8 @@ function RunList({ runs, tasks = [], agents = [], copy = getLocaleCopy(DEFAULT_L
                 {run.agentId ? `${agents.find((agent) => agent.id === run.agentId)?.name || run.agentId} · ` : ""}
                 {workspaceName(run.workspace) || run.workspace}
                 {run.effectiveModel ? ` · ${providerSummaryLabel(run.effectiveModel)}` : ""}
+                {run.harness ? ` · ${harnessLabel(run.harness)}` : ""}
+                {run.mode === "chat" ? ` · ${copy.chatRun || "chat reply"}` : ""}
                 {tasks.some((task) => task.runtimeId === run.id) ? " · linked task" : ""}
               </p>
             </div>

@@ -76,7 +76,8 @@ export function applySharedConversationEvent(currentMessages, event) {
   if (event.type === "messages.reset") {
     const resetAt = event.cutoff === undefined ? at : timestamp(event.cutoff);
     if (!Number.isFinite(resetAt) || resetAt > at || resetAt <= (state.cutoffs[memberId] || 0) || resetAt < cutoff) return currentMessages;
-    if (event.messages !== undefined && (!Array.isArray(event.messages) || event.messages.length > 100)) return currentMessages;
+    // 400 is the archive cap in server/chats/store.mjs: a previous chat comes back through this same event (ADR-0113).
+    if (event.messages !== undefined && (!Array.isArray(event.messages) || event.messages.length > 400)) return currentMessages;
     const messages = [];
     const ids = new Set();
     for (const raw of event.messages || []) {
