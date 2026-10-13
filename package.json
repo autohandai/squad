@@ -115,6 +115,7 @@
     "check:member-config": "node scripts/check-member-config.mjs",
     "check:member-creation:browser": "node scripts/check-member-creation.mjs",
     "check:member-workspace:browser": "node scripts/check-member-workspace.mjs",
+    "check:account-settings:browser": "node scripts/check-account-settings-browser.mjs",
     "check:collaboration:browser": "node scripts/check-collaboration-cycle.mjs",
     "check:collaboration:live": "node scripts/check-collaboration-live.mjs",
     "check:workflow-recovery": "node scripts/check-workflow-recovery.mjs",

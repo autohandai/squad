@@ -309,6 +309,8 @@ import { getNativeNotificationClient } from "@/lib/native-notifications";
 import { applySharedConversationEvent, conversationEventForSharing } from "@/lib/shared-conversations";
 import { formatDuration } from "@/lib/duration";
 import { CHAT_STREAM_CEILING_MS } from "@/lib/chat-timing";
+import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn } from "@/lib/settings-navigation";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs } from "@/lib/chat-recovery";
 import { getAttentionBadgeClient } from "@/lib/attention-badge";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
@@ -4574,6 +4576,7 @@ function MemberPresenceBadge({ presence, className }) {
 
 function App() {
   const [route, setRoute] = useState(() => window.location.pathname + window.location.search);
+  const [chatDraftsByAgent, setChatDraftsByAgent] = useState(() => isSettingsDestination(window.location.pathname) ? readSettingsReturn()?.drafts || {} : {});
   const [removedAgentIds, setRemovedAgentIds] = useState(() => {
     return [...removedIdSet(readStored(storageKeysFor("removedAgents"), []))];
   });
@@ -6310,8 +6313,26 @@ function App() {
   useEffect(() => onDesktopMenu((action) => desktopMenuRef.current?.(action)), []);
 
   function navigate(path) {
-    window.history.pushState({}, "", path);
+    const state = {};
+    if (isSettingsDestination(path)) {
+      state.squadSettingsReturn = isSettingsDestination(route)
+        ? readSettingsReturn()
+        : settingsReturnSnapshot({ route: window.location.pathname + window.location.search + window.location.hash, drafts: chatDraftsByAgent });
+      rememberSettingsReturn(state.squadSettingsReturn);
+    } else if (isSettingsDestination(route)) {
+      rememberSettingsReturn(null);
+    }
+    window.history.pushState(state, "", path);
     setRoute(path);
+    setMobileSidebarOpen(false);
+  }
+
+  function returnFromSettings() {
+    const previous = readSettingsReturn();
+    const target = previous?.route || squadDirectoryPath();
+    rememberSettingsReturn(null);
+    window.history.replaceState({}, "", target);
+    setRoute(target);
     setMobileSidebarOpen(false);
   }
 
@@ -6333,7 +6354,7 @@ function App() {
     const { path, params } = splitRoute(route);
     if (!path.startsWith("/settings") || params.get("check") !== "1") return;
     const target = routeWithParams(route, { check: null });
-    window.history.replaceState({}, "", target);
+    window.history.replaceState(window.history.state, "", target);
     setRoute(target);
     void refreshUpdates(true);
     // An explicit link check is consumed once, including on browser fallback.
@@ -8843,6 +8864,7 @@ function App() {
         <div className="flex h-[100svh] min-h-0 flex-col bg-background text-foreground" data-testid="mac-quick-chat">
           <QuickChatMemberPicker members={agents} activeMemberId={member?.id} entryFor={entryFor} copy={localeCopy} onSelect={(id) => navigate(`/quick-chat?member=${encodeURIComponent(id)}`)} renderAvatar={(item, className) => <AgentAvatar agent={item} className={className} />} />
           {member ? <Conversation
+            promptByAgent={chatDraftsByAgent} setPromptByAgent={setChatDraftsByAgent}
             compact agent={member} agents={agents} messages={messagesByAgent[member.id] || []}
             runtime={runtime} workspaces={workspaces} runs={runs.filter((run) => run.agentId === member.id)} providerSettings={providerSettings}
             locale={localeResolution.locale} copy={localeCopy} onStart={startAutohand} onChat={sendChat}
@@ -9083,6 +9105,7 @@ function App() {
               />
             ) : isSettings ? (
               <SettingsPage
+                onBack={returnFromSettings}
                 onOnboarding={openOnboarding}
                 updates={updates}
                 updatesChecking={updatesChecking}
@@ -9177,6 +9200,8 @@ function App() {
               <Extensions runtime={runtime} runs={runs} />
             ) : (
               <Conversation
+                promptByAgent={chatDraftsByAgent}
+                setPromptByAgent={setChatDraftsByAgent}
                 agent={activeAgent}
                 messages={messagesByAgent[activeAgent?.id] || []}
                 briefing={briefingForActiveMember}
@@ -12446,35 +12471,11 @@ function AccountMenuButton({
   placement = "top-end",
   triggerClassName,
 }) {
-  const { profile, signOut, signingOut, openFeedback, openAppInfo, checkForUpgrades } = useContext(AccountContext);
+  const { profile, signOut, signingOut, openFeedback, openAppInfo } = useContext(AccountContext);
   const [open, setOpen] = useState(false);
-  const menuRef = useRef(null);
-  const menuPosition =
-    {
-      "bottom-end": "right-0 top-11",
-      "right-start": "bottom-0 left-10",
-      "top-end": "bottom-10 right-0",
-    }[placement] || "bottom-10 right-0";
-
-  useEffect(() => {
-    if (!open) return undefined;
-
-    function closeOnOutsidePress(event) {
-      if (menuRef.current?.contains(event.target)) return;
-      setOpen(false);
-    }
-
-    function closeOnEscape(event) {
-      if (event.key === "Escape") setOpen(false);
-    }
-
-    document.addEventListener("pointerdown", closeOnOutsidePress);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePress);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
+  const menuPlacement = placement === 'right-start'
+    ? { side: 'right', align: 'end' }
+    : { side: placement === 'bottom-end' ? 'bottom' : 'top', align: 'end' };
 
   function choose(action) {
     setOpen(false);
@@ -12482,25 +12483,25 @@ function AccountMenuButton({
   }
 
   return (
-    <div ref={menuRef} className="relative shrink-0">
+    <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
+      <DropdownMenuTrigger asChild>
       <Button
         variant="ghost"
         size="icon-sm"
         className={triggerClassName}
-        onClick={() => setOpen((current) => !current)}
         aria-label={copy.openAccountMenu}
         aria-haspopup="menu"
         aria-expanded={open}
       >
         <Settings />
       </Button>
-      {open ? (
-        <div
-          role="menu"
-          className={cn(
-            "absolute z-50 w-64 rounded-lg border border-border/85 bg-popover p-1.5 text-popover-foreground shadow-2xl shadow-black/35",
-            menuPosition
-          )}
+      </DropdownMenuTrigger>
+        <DropdownMenuContent
+          {...menuPlacement}
+          sideOffset={8}
+          collisionPadding={{ top: 36, right: 8, bottom: 8, left: 8 }}
+          aria-label={copy.account}
+          className="w-64 max-w-[calc(100vw-1rem)] border-border/85 p-1.5"
         >
           <div className="px-2.5 py-2.5">
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -12519,39 +12520,36 @@ function AccountMenuButton({
               </span>
             </div>
           </div>
-          <div className="my-1 border-t border-border/70" />
+          <DropdownMenuSeparator />
           <AccountMenuItem icon={Monitor} label={copy.needsYou || "Needs you"} onClick={() => choose(onMissionControl)} hasChevron />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} hasChevron />
           <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} hasChevron />
           {openAppInfo ? <AccountMenuItem icon={BookOpen} label={copy.aboutSquad || "About Autohand Squad"} onClick={() => choose(() => openAppInfo("about"))} /> : null}
           {openFeedback ? (
             <>
-              <div className="my-1 border-t border-border/70" />
+              <DropdownMenuSeparator />
               <AccountMenuItem icon={Bug} label={copy.reportBug || "Report a bug"} onClick={() => choose(() => openFeedback("bug"))} />
               <AccountMenuItem icon={MessageSquareText} label={copy.giveFeedback || "Give feedback"} onClick={() => choose(() => openFeedback("feedback"))} />
             </>
           ) : null}
-          <div className="my-1 border-t border-border/70" />
+          <DropdownMenuSeparator />
           <AccountMenuItem icon={LogOut} label={signingOut ? copy.signingOut || "Signing out…" : copy.signOut} onClick={() => choose(signOut)} disabled={!signOut || signingOut} />
-        </div>
-      ) : null}
-    </div>
+        </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
 function AccountMenuItem({ icon: Icon, label, onClick, hasChevron = false, disabled = false }) {
   return (
-    <button
-      type="button"
-      role="menuitem"
+    <DropdownMenuItem
       disabled={disabled}
-      className="flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-60"
-      onClick={onClick}
+      className="h-10 w-full gap-3 px-3 text-sm"
+      onSelect={onClick}
     >
       <Icon className="size-4" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {hasChevron ? <ChevronRight className="size-4 text-muted-foreground" /> : null}
-    </button>
+    </DropdownMenuItem>
   );
 }
 
@@ -12945,6 +12943,8 @@ function ConversationWelcome({ agent, copy, onPrompt, briefing = null }) {
 }
 
 function Conversation({
+  promptByAgent,
+  setPromptByAgent,
   compact = false,
   agent,
   agents = [],
@@ -13004,7 +13004,6 @@ function Conversation({
     requestedWorkspace && !isBlockedWorkspace(requestedWorkspace, runtime)
       ? requestedWorkspace
       : getAgentWorkspace(agent, runtime, workspaces);
-  const [promptByAgent, setPromptByAgent] = useState({});
   const [workspace, setWorkspace] = useState(defaultWorkspace);
   const [mode, setMode] = useState(defaultLaunch.mode);
   const [policy, setPolicy] = useState(defaultLaunch.policy);
@@ -23490,9 +23489,10 @@ function PermissionModeControl({ value, onChange }) {
   );
 }
 
-function PageTitle({ title }) {
+function PageTitle({ title, leading }) {
   return (
-    <div className="flex h-14 items-center border-b border-border/75 bg-background/92 px-5 backdrop-blur-xl sm:px-6">
+    <div className="flex h-14 items-center gap-3 border-b border-border/75 bg-background/92 px-5 backdrop-blur-xl sm:px-6">
+      {leading}
       <h1 className="text-lg font-semibold">{title}</h1>
     </div>
   );
@@ -24513,6 +24513,7 @@ function SettingsAnalyticsPage({ locale = DEFAULT_LOCALE, copy = getLocaleCopy(D
 }
 
 function SettingsPage({
+  onBack,
   onOnboarding,
   updates = null,
   updatesChecking = false,
@@ -24726,7 +24727,7 @@ function SettingsPage({
 
   return (
     <div className="min-h-screen bg-background">
-      <PageTitle title={copy.settings} />
+      <PageTitle title={copy.settings} leading={<Button variant="ghost" size="icon-sm" aria-label="Back from Settings" title="Back" onClick={onBack}><ArrowLeft /></Button>} />
       <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-6 lg:px-10 lg:py-10">
         <div className="lg:grid lg:grid-cols-[192px_minmax(0,1fr)] lg:gap-14">
           <aside className="min-w-0 lg:sticky lg:top-8 lg:self-start">

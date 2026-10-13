@@ -21,6 +21,8 @@ Local review candidate; GitHub publication is pending user confirmation.
 
 ### Fixed
 
+- The account gear menu stays above chat content and remains clickable across skins, collapsed sidebars, and narrow windows. Keyboard navigation and Escape work too.
+- Settings has a Back action that returns to the screen you opened it from and keeps your member-chat draft, even after changing sections or reloading Settings.
 - Long replies show readable durations such as “1 hour 35 min”. Large work details no longer hide the final answer or timeout and leave its timer running; failures show their cause and Retry.
 - Full channel history can use a compressed local cache when device storage is full, preserving messages and making room for new member drafts and saved teammates.
 - Describing a GTM or APAC market leader no longer becomes a Data Engineer because the brief mentions a sales pipeline. Custom role titles can be corrected before creation.
