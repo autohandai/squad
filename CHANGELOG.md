@@ -36,10 +36,12 @@ list to the section for that version.
 - Previous chats. New chat puts the conversation away instead of discarding it. The History button beside New chat lists them, newest first, with the first question, the number of turns, the engine and when; open one and it comes back as the live conversation, and a Claude Code or Codex member continues the very same engine session. Remove deletes one. Up to 100 chats per member are kept on this computer.
 - Every reply shows up in the Execution panel's Runs tab, whichever engine the member runs on: the question as the title, the engine, the model, the status, and the same activity feed as Work details. Stop there stops the reply. Goal turns, queued follow-ups, scheduled routines and Telegram messages appear the same way.
 - Finished runs stay in the Runs tab after Squad restarts (the newest 200).
+- Claude Code and Codex members get real controls in the composer settings: Access (Plan only / Accept edits / Full access for Claude Code; Read only / Workspace write / Full access for Codex), a model list read from the installed engine (Claude Code's fable, opus, sonnet, haiku and cached models; your Codex default), Custom… for a typed name, and Reasoning effort when the engine has one. Choosing Auto switches a plan-mode member to Accept edits. The same three fields under Advanced in the member's engine settings set the defaults.
 
 ### Fixed
 
 - The app no longer opens to "Autohand Squad could not render — Cannot access uninitialized variable" after the routines update; a value was read before it was set up. The build is now opened in a browser as part of the checks so this cannot pass unnoticed again.
+- A Claude Code member whose permission level is Chat only no longer stays stuck in plan mode: the composer shows that it is in plan mode and lets you switch it off for a message, and "Auto" now really writes.
 - New chat with a Claude Code or Codex member now really starts a new conversation. Before, the engine was resumed with its previous session id, so the "new" chat silently carried the old context.
 
 ## [0.1.6] - 2026-10-13

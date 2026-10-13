@@ -3,7 +3,9 @@
 
 import { join } from "node:path";
 import { existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { compareVersions, fileExists, findExecutable, homeDir, parseVersion, probe, redactHome } from "./discovery.mjs";
+import { resolveAccess } from "./access.mjs";
 
 export const id = "codex";
 export const label = "Codex";
@@ -86,7 +88,38 @@ export async function detect({ explicitPath = "" } = {}) {
     detail: account.method ? `Codex ${version} is signed in (${account.method}).` : `Codex ${version} is signed in.`,
     setup: "",
     account,
+    ...codexOptions(),
   };
+}
+
+export const CODEX_EFFORTS = Object.freeze(["minimal", "low", "medium", "high", "xhigh"]);
+
+/**
+ * What this Codex accepts (ADR-0114). Codex has no command that lists
+ * models, so the choices are the model in ~/.codex/config.toml (the person's
+ * own default) and anything typed by hand; efforts are the documented
+ * `model_reasoning_effort` values.
+ */
+function codexOptions() {
+  let config = "";
+  try { config = readFileSync(join(codexHome(), "config.toml"), "utf8"); } catch {}
+  const defaults = parseCodexConfig(config);
+  return {
+    models: defaults.model ? [{ id: defaults.model, label: defaults.model, detail: "your Codex default" }] : [],
+    efforts: [...CODEX_EFFORTS],
+    accessModes: ["plan", "write", "full"],
+    defaults,
+  };
+}
+
+/** Pure: top-level `model` and `model_reasoning_effort` from config.toml. */
+export function parseCodexConfig(text) {
+  const top = String(text || "").split(/\n\s*\[/)[0];
+  const read = (key) => {
+    const match = top.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]*)"`, "m"));
+    return match ? match[1].trim() : "";
+  };
+  return { model: read("model"), effort: read("model_reasoning_effort") };
 }
 
 // `codex login status` prints one line such as "Logged in using ChatGPT" or
@@ -102,9 +135,12 @@ function codexAccount(executable) {
   };
 }
 
-function sandboxFor(permissionMode, policy) {
-  if (permissionMode === "unrestricted") return "danger-full-access";
-  if (permissionMode === "restricted" || policy === "restricted") return "read-only";
+// Access (ADR-0114): an explicit choice wins; otherwise the member's
+// permission level and the launch policy decide, as before.
+function sandboxFor(permissionMode, policy, access = "") {
+  const resolved = resolveAccess({ access, permissionMode, policy });
+  if (resolved === "full") return "danger-full-access";
+  if (resolved === "plan") return "read-only";
   return "workspace-write";
 }
 
@@ -112,7 +148,7 @@ function sandboxFor(permissionMode, policy) {
  * Build the non-interactive command. Prompt goes last. `resumeId` switches to
  * `codex exec resume <thread>` which keeps the same thread on disk.
  */
-export function buildArgs({ prompt, workspace, model, permissions = {}, policy = "", appendSystemPrompt = "", addDirs = [], resumeId = "" }) {
+export function buildArgs({ prompt, workspace, model, permissions = {}, policy = "", access = "", effort = "", efforts = CODEX_EFFORTS, appendSystemPrompt = "", addDirs = [], resumeId = "" }) {
   const args = ["exec"];
   const display = ["exec"];
   if (resumeId) {
@@ -124,7 +160,7 @@ export function buildArgs({ prompt, workspace, model, permissions = {}, policy =
   if (!resumeId) {
     args.push("-C", workspace);
     display.push("-C", workspace);
-    const sandbox = sandboxFor(permissions.permissionMode, policy);
+    const sandbox = sandboxFor(permissions.permissionMode, policy, access);
     args.push("--sandbox", sandbox);
     display.push("--sandbox", sandbox);
     for (const dir of addDirs) {
@@ -135,6 +171,12 @@ export function buildArgs({ prompt, workspace, model, permissions = {}, policy =
   if (model) {
     args.push("-m", model);
     display.push("-m", model);
+  }
+  // Reasoning effort travels as a config override, which Codex accepts on a
+  // resumed thread too.
+  if (effort && (!Array.isArray(efforts) || !efforts.length || efforts.includes(effort))) {
+    args.push("-c", `model_reasoning_effort="${effort}"`);
+    display.push("-c", `model_reasoning_effort="${effort}"`);
   }
   let finalPrompt = String(prompt || "");
   if (appendSystemPrompt && !resumeId) {

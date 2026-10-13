@@ -7,8 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  ACCESS_IDS,
   HARNESS_OPTIONS,
+  accessOption,
+  effortChoices,
   harnessLoginStatus,
+  modelChoices,
   harnessNeedsSignIn,
   harnessOption,
   normalizeHarnessAssignment,
@@ -46,7 +50,9 @@ export function HarnessSelect({
   compact = false,
 }) {
   const assignment = normalizeHarnessAssignment(value);
-  const [advancedOpen, setAdvancedOpen] = useState(Boolean(assignment.executablePath || assignment.model));
+  const [advancedOpen, setAdvancedOpen] = useState(Boolean(assignment.executablePath || assignment.model || assignment.effort || assignment.access));
+  const [customModel, setCustomModel] = useState(false);
+  const external = assignment.id !== "autohand";
   const [signIn, setSignIn] = useState({ state: "idle" });
   const pollRef = useRef(null);
   const readiness = testResult?.id === assignment.id ? testResult : readinessFor(harnesses, assignment.id);
@@ -180,16 +186,94 @@ export function HarnessSelect({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor={`${id}-model`} className="text-xs">
-                  {option.short} model override
+                  {option.short} model
                 </Label>
-                <Input
-                  id={`${id}-model`}
-                  value={assignment.model}
-                  placeholder={assignment.id === "claude" ? "e.g. sonnet" : assignment.id === "codex" ? "e.g. gpt-5-codex" : "Use the workspace model"}
-                  className="h-9 bg-card"
-                  onChange={(event) => update({ model: event.target.value })}
-                />
+                {external ? (
+                  <>
+                    <Select
+                      value={customModel ? "__custom" : assignment.model || "__default"}
+                      onValueChange={(next) => {
+                        if (!next) return;
+                        if (next === "__custom") { setCustomModel(true); return; }
+                        setCustomModel(false);
+                        update({ model: next === "__default" ? "" : next });
+                      }}
+                    >
+                      <SelectTrigger id={`${id}-model`} className="h-9 w-full bg-card">
+                        <SelectValue placeholder="Engine default" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {modelChoices(readiness, { current: customModel ? "" : assignment.model }).map((item) => (
+                          <SelectItem key={item.id || "__default"} value={item.id || "__default"}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="__custom">Custom…</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {customModel ? (
+                      <Input
+                        value={assignment.model}
+                        placeholder={assignment.id === "claude" ? "claude-opus-5-5" : "gpt-6.1-sol"}
+                        className="h-9 bg-card"
+                        autoFocus
+                        onChange={(event) => update({ model: event.target.value })}
+                      />
+                    ) : null}
+                  </>
+                ) : (
+                  <Input
+                    id={`${id}-model`}
+                    value={assignment.model}
+                    placeholder="Use the workspace model"
+                    className="h-9 bg-card"
+                    onChange={(event) => update({ model: event.target.value })}
+                  />
+                )}
               </div>
+              {external && effortChoices(readiness).length ? (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor={`${id}-effort`} className="text-xs">
+                    Reasoning effort
+                  </Label>
+                  <Select value={assignment.effort || "__default"} onValueChange={(next) => next && update({ effort: next === "__default" ? "" : next })}>
+                    <SelectTrigger id={`${id}-effort`} className="h-9 w-full bg-card">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default">{readiness?.defaults?.effort ? `Engine default (${readiness.defaults.effort})` : "Engine default"}</SelectItem>
+                      {effortChoices(readiness).map((level) => (
+                        <SelectItem key={level} value={level}>
+                          {level}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              {external ? (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor={`${id}-access`} className="text-xs">
+                    Access
+                  </Label>
+                  <Select value={assignment.access || "__default"} onValueChange={(next) => next && update({ access: next === "__default" ? "" : next })}>
+                    <SelectTrigger id={`${id}-access`} className="h-9 w-full bg-card">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default">From the permission level</SelectItem>
+                      {ACCESS_IDS.map((accessId) => (
+                        <SelectItem key={accessId} value={accessId}>
+                          {accessOption(assignment.id, accessId).label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {assignment.access ? accessOption(assignment.id, assignment.access).detail : "Plan when the level is Chat only, full when it is unrestricted, edits otherwise. The composer can change it per message."}
+                  </p>
+                </div>
+              ) : null}
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor={`${id}-path`} className="text-xs">
                   Executable path

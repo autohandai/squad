@@ -118,7 +118,7 @@ const fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='--ver
 fs.appendFileSync(${JSON.stringify(harnessCalls)},JSON.stringify({harness:'codex',overrides:args.flatMap((v,i)=>v==='-c'?[args[i+1]]:[])})+'\\n');
 console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'fixture codex reply'}}));console.log(JSON.stringify({type:'turn.completed'}));`);
   await writeFile(fakeClaude, `#!${process.execPath}
-const fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='--version'){console.log('2.0.0 (Claude Code)');process.exit(0);}if(args[0]==='auth'){console.log(JSON.stringify({loggedIn:true,authMethod:'fixture',email:'fixture@example.com'}));process.exit(0);}
+const fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='--version'){console.log('2.0.0 (Claude Code)');process.exit(0);}if(args[0]==='--help'){process.exit(0);}if(args[0]==='auth'){console.log(JSON.stringify({loggedIn:true,authMethod:'fixture',email:'fixture@example.com'}));process.exit(0);}
 const configs=args.flatMap((v,i)=>v==='--mcp-config'?[args[i+1]]:[]);fs.appendFileSync(${JSON.stringify(harnessCalls)},JSON.stringify({harness:'claude',configs,contents:configs.map(p=>JSON.parse(fs.readFileSync(p,'utf8')))})+'\\n');
 console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture claude reply',session_id:'fixture-session'}));`);
   await chmod(fakeCodex, 0o700); await chmod(fakeClaude, 0o700);

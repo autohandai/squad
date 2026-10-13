@@ -50,6 +50,9 @@ export function isExternalHarness(idOrAssignment) {
 }
 
 /** Persisted member field. Missing or malformed input maps to Autohand. */
+import { normalizeAccess, normalizeEffort } from "./access.mjs";
+export { ACCESS_IDS, normalizeAccess, normalizeEffort, resolveAccess } from "./access.mjs";
+
 export function normalizeHarnessAssignment(input) {
   const source = input && typeof input === "object" ? input : typeof input === "string" ? { id: input } : {};
   return {
@@ -57,6 +60,8 @@ export function normalizeHarnessAssignment(input) {
     id: normalizeHarnessId(source.id || source.harnessId),
     executablePath: String(source.executablePath || "").trim(),
     model: String(source.model || "").trim().slice(0, 120),
+    effort: normalizeEffort(source.effort),
+    access: normalizeAccess(source.access),
   };
 }
 

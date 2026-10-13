@@ -38,13 +38,18 @@ assert.equal(normalizeHarnessId(''), DEFAULT_HARNESS_ID);
 assert.equal(normalizeHarnessId('Claude-Code'), 'claude');
 assert.equal(normalizeHarnessId('openai-codex'), 'codex');
 assert.equal(normalizeHarnessId('nope'), DEFAULT_HARNESS_ID);
-assert.deepEqual(normalizeHarnessAssignment(undefined), { schemaVersion: 1, id: 'autohand', executablePath: '', model: '' });
+assert.deepEqual(normalizeHarnessAssignment(undefined), { schemaVersion: 1, id: 'autohand', executablePath: '', model: '', effort: '', access: '' });
 assert.deepEqual(normalizeHarnessAssignment({ id: 'codex', model: ' gpt-5 ', executablePath: '' }), {
   schemaVersion: 1,
   id: 'codex',
   executablePath: '',
   model: 'gpt-5',
+  effort: '',
+  access: '',
 });
+assert.deepEqual(normalizeHarnessAssignment({ id: 'claude', effort: ' High ', access: 'PLAN' }), { schemaVersion: 1, id: 'claude', executablePath: '', model: '', effort: 'high', access: 'plan' }, 'effort and access are normalised');
+assert.equal(normalizeHarnessAssignment({ id: 'claude', effort: 'not a level!', access: 'root' }).effort, '', 'an invalid effort is dropped');
+assert.equal(normalizeHarnessAssignment({ id: 'claude', access: 'root' }).access, '', 'an unknown access is dropped');
 assert.equal(isExternalHarness('autohand'), false);
 assert.equal(isExternalHarness({ id: 'claude' }), true);
 assert.equal(getAdapter('codex').id, 'codex');
@@ -74,6 +79,20 @@ assert.equal(getAdapter('codex').id, 'codex');
   assert.ok(!resumed.args.includes('--sandbox'), 'resume keeps the thread sandbox');
   const unrestricted = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'unrestricted' } });
   assert.equal(unrestricted.args[unrestricted.args.indexOf('--sandbox') + 1], 'danger-full-access');
+
+  // Access and effort (ADR-0114): an explicit access wins over the member's
+  // permission level; effort travels as a config override, also on resume.
+  const explicit = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'restricted' }, access: 'write', effort: 'high' });
+  assert.equal(explicit.args[explicit.args.indexOf('--sandbox') + 1], 'workspace-write', 'a restricted member can be given workspace write for one turn');
+  assert.equal(explicit.args[explicit.args.indexOf('-c') + 1], 'model_reasoning_effort="high"');
+  const full = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'restricted' }, access: 'full' });
+  assert.equal(full.args[full.args.indexOf('--sandbox') + 1], 'danger-full-access');
+  const badEffort = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', effort: 'turbo' });
+  assert.ok(!badEffort.args.includes('-c'), 'an effort Codex does not document is not sent');
+  const resumedEffort = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', resumeId: 't', effort: 'xhigh' });
+  assert.equal(resumedEffort.args[resumedEffort.args.indexOf('-c') + 1], 'model_reasoning_effort="xhigh"', 'effort still applies on a resumed thread');
+  assert.deepEqual(codexAdapter.parseCodexConfig('model = "gpt-6.1-sol"\nmodel_reasoning_effort = "xhigh"\n[tui]\nmodel = "other"\n'), { model: 'gpt-6.1-sol', effort: 'xhigh' }, 'only top-level keys count');
+  assert.deepEqual(codexAdapter.parseCodexConfig(''), { model: '', effort: '' });
 }
 
 // --- claude args --------------------------------------------------------------
@@ -96,6 +115,32 @@ assert.equal(getAdapter('codex').id, 'codex');
   assert.equal(restricted.args[restricted.args.indexOf('--permission-mode') + 1], 'plan');
   const bypass = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'unrestricted' } });
   assert.ok(bypass.args.includes('--dangerously-skip-permissions'));
+
+  // Access and effort (ADR-0114).
+  const planOff = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'restricted' }, policy: 'restricted', access: 'write', effort: 'high', efforts: ['low', 'medium', 'high'] });
+  assert.equal(planOff.args[planOff.args.indexOf('--permission-mode') + 1], 'acceptEdits', 'plan mode can be switched off for a restricted member');
+  assert.equal(planOff.args[planOff.args.indexOf('--effort') + 1], 'high');
+  const planOn = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'unrestricted' }, access: 'plan' });
+  assert.equal(planOn.args[planOn.args.indexOf('--permission-mode') + 1], 'plan', 'plan mode can be switched on for an unrestricted member');
+  assert.ok(!planOn.args.includes('--dangerously-skip-permissions'));
+  const unsupported = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', effort: 'max', efforts: ['low', 'medium', 'high'] });
+  assert.ok(!unsupported.args.includes('--effort'), 'an effort this binary does not list is not sent');
+  const unknownList = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', effort: 'max', efforts: [] });
+  assert.equal(unknownList.args[unknownList.args.indexOf('--effort') + 1], 'max', 'no list known: the value goes through');
+  const help = `  --effort <level>                      Effort level for the current session
+                                        (low, medium, high, xhigh, max)
+  --model <model>                       Model for the current session. Provide
+                                        an alias for the latest model (e.g.
+                                        'fable', 'opus', or 'sonnet') or a
+                                        model's full name.
+  -n, --name <name>                     Set a display name for this session
+  --permission-mode <mode>              Permission mode to use for the session
+                                        (choices: "acceptEdits", "auto",
+                                        "bypassPermissions", "manual",
+                                        "dontAsk", "plan")
+`;
+  assert.deepEqual(claudeAdapter.parseClaudeHelp(help), { efforts: ['low', 'medium', 'high', 'xhigh', 'max'], permissionModes: ['acceptEdits', 'auto', 'bypassPermissions', 'manual', 'dontAsk', 'plan'], modelAliases: ['fable', 'opus', 'sonnet', 'haiku'] }, 'the option lists come from the binary\'s own help');
+  assert.deepEqual(claudeAdapter.parseClaudeHelp(''), { efforts: [], permissionModes: [], modelAliases: [] }, 'an older binary without --effort offers nothing');
 }
 
 // --- codex parsing ------------------------------------------------------------

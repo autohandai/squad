@@ -118,7 +118,7 @@ if(args[0]==='--version'){console.log('claude 1.0.0');process.exit(0);}
 const member=process.env.AUTOHAND_SQUAD_MEMBER;
 const resumeAt=args.indexOf('--resume');
 const session=resumeAt>=0?args[resumeAt+1]:'fixture-'+member+'-'+Date.now().toString(36);
-fs.appendFileSync(file,JSON.stringify({kind:'start',member,resume:resumeAt>=0?args[resumeAt+1]:'',prompt:String(args[1]||'').slice(0,80)})+'\\n');
+fs.appendFileSync(file,JSON.stringify({kind:'start',member,resume:resumeAt>=0?args[resumeAt+1]:'',prompt:String(args[1]||'').slice(0,80),args})+'\\n');
 const emit=x=>console.log(JSON.stringify(x));
 emit({type:'system',subtype:'init',session_id:session,model:'claude-fixture'});
 emit({type:'assistant',message:{id:'reply',content:[{type:'tool_use',id:'t1',name:'Read',input:{file_path:'README.md'}}]}});
@@ -174,13 +174,33 @@ process.exit(0);
   const openedTwice = await api(`/api/members/alex/chats/${archived.data.id}/open`, {});
   assert.equal(openedTwice.status, 404, 'a chat can only be opened once');
 
+  // 3b. Access and effort from the composer reach the CLI (ADR-0114): a member
+  //     whose permission level means plan mode can be given edits for one turn.
+  const restrictedMember = { ...member('alex'), permissions: { permissionMode: 'restricted' } };
+  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'Plan this'), agent: restrictedMember }) })).text();
+  let seen = (await calls()).at(-1).args;
+  assert.equal(seen[seen.indexOf('--permission-mode') + 1], 'plan', 'a restricted member is in plan mode by default');
+  assert.ok(!seen.includes('--effort'), 'no effort unless chosen');
+  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'Now do it'), agent: restrictedMember, access: 'write', effort: 'high', model: 'opus' }) })).text();
+  seen = (await calls()).at(-1).args;
+  assert.equal(seen[seen.indexOf('--permission-mode') + 1], 'acceptEdits', 'Access: Accept edits switches plan mode off for this turn');
+  assert.equal(seen[seen.indexOf('--effort') + 1], 'high', 'the chosen reasoning effort is passed');
+  assert.equal(seen[seen.indexOf('--model') + 1], 'opus', 'the chosen model is passed');
+  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'Default again'), agent: { ...restrictedMember, harness: { ...restrictedMember.harness, effort: 'low', access: 'full' } } }) })).text();
+  seen = (await calls()).at(-1).args;
+  assert.equal(seen[seen.indexOf('--permission-mode') + 1], 'bypassPermissions', 'the member\'s engine settings apply when the turn chooses nothing');
+  assert.equal(seen[seen.indexOf('--effort') + 1], 'low');
+  const readiness = (await api('/api/harnesses')).data.harnesses.find((h) => h.id === 'claude');
+  assert.ok(Array.isArray(readiness.accessModes) && readiness.accessModes.includes('plan'), 'readiness lists access modes');
+  assert.ok(Array.isArray(readiness.efforts), 'readiness carries an effort list (the global listing probes the machine\'s own claude, not the member fixture)');
+
   // 4. /api/chat/reset forgets the engine session as well.
   const reset = await api('/api/chat/reset', { agentId: 'alex' });
   assert.equal(reset.data.forgotten, 1); assert.equal(await resumeIdOnDisk(), '');
 
   // 5. Finished runs survive a restart.
   const before = (await api('/api/runs')).data.filter((run) => run.agentId === 'alex');
-  assert.equal(before.length, 3);
+  assert.equal(before.length, 6);
   await delay(700); // the history write is debounced
   await stopBridge();
   await startBridge();

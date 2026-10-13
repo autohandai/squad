@@ -3,7 +3,9 @@
 // server.mjs work unchanged.
 
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { compareVersions, fileExists, findExecutable, homeDir, parseVersion, probe, redactHome } from "./discovery.mjs";
+import { resolveAccess } from "./access.mjs";
 
 export const id = "claude";
 export const label = "Claude Code";
@@ -85,6 +87,7 @@ export async function detect({ explicitPath = "" } = {}) {
     };
   }
   const account = claudeAccount(executable);
+  const options = claudeOptions(executable);
   if (account.checked && !account.signedIn) {
     return {
       status: "setup-required",
@@ -106,7 +109,53 @@ export async function detect({ explicitPath = "" } = {}) {
       : `Claude Code ${version} is available.`,
     setup: "",
     account,
+    ...options,
   };
+}
+
+/**
+ * What this installed Claude Code accepts (ADR-0114), read from its own
+ * `--help` so the app never offers a flag the binary does not have:
+ * `--effort` choices, `--permission-mode` choices, the model aliases named
+ * in the `--model` paragraph, plus the models Claude Code itself cached in
+ * ~/.claude.json and the default model from ~/.claude/settings.json.
+ */
+function claudeOptions(executable) {
+  const help = probe(executable, ["--help"], { timeoutMs: 10000 });
+  const parsed = parseClaudeHelp(help.ok ? help.stdout : "");
+  const home = claudeHome();
+  let defaultModel = "";
+  try { defaultModel = String(JSON.parse(readFileSync(join(home, "settings.json"), "utf8")).model || ""); } catch {}
+  const models = parsed.modelAliases.map((alias) => ({ id: alias, label: alias.charAt(0).toUpperCase() + alias.slice(1), detail: `latest ${alias}` }));
+  try {
+    const cache = JSON.parse(readFileSync(join(homeDir, ".claude.json"), "utf8")).additionalModelOptionsCache;
+    for (const item of Array.isArray(cache) ? cache : []) {
+      const value = String(item?.value || "").trim();
+      if (value && !models.some((model) => model.id === value)) models.push({ id: value, label: `${String(item.label || value)}${/\[1m\]$/.test(value) ? " (1M context)" : ""}`, detail: String(item.description || "") });
+    }
+  } catch {}
+  return {
+    models,
+    efforts: parsed.efforts,
+    permissionModeChoices: parsed.permissionModes,
+    accessModes: ["plan", "write", "full"],
+    defaults: { model: defaultModel, effort: "" },
+  };
+}
+
+/** Pure: pull the option lists out of `claude --help` text. */
+export function parseClaudeHelp(text) {
+  const source = String(text || "");
+  const choices = (flag) => {
+    const match = source.match(new RegExp(`${flag} <[a-z]+>[\\s\\S]{0,400}?\\(choices: ([^)]*)\\)`));
+    return match ? match[1].split(",").map((item) => item.replace(/["\s]/g, "")).filter(Boolean) : [];
+  };
+  const effortMatch = source.match(/--effort <level>[\s\S]{0,200}?\(([^)]*)\)/);
+  const efforts = effortMatch ? effortMatch[1].split(",").map((item) => item.replace(/["\s]/g, "")).filter((item) => /^[a-z]+$/.test(item)) : [];
+  const modelParagraph = source.match(/--model <model>([\s\S]{0,400}?)(?:\n\s{2}-|\n\s*$)/);
+  const modelAliases = modelParagraph ? Array.from(modelParagraph[1].matchAll(/'([a-z0-9.-]+)'/g)).map((match) => match[1]) : [];
+  for (const alias of ["fable", "opus", "sonnet", "haiku"]) if (!modelAliases.includes(alias) && modelAliases.length) modelAliases.push(alias);
+  return { efforts, permissionModes: choices("--permission-mode"), modelAliases };
 }
 
 // `claude auth status` prints JSON (loggedIn, authMethod, email, subscriptionType)
@@ -129,17 +178,21 @@ function claudeAccount(executable) {
   }
 }
 
-function permissionArgs(permissions = {}, policy = "") {
-  if (permissions.permissionMode === "unrestricted") {
+// Access (ADR-0114): an explicit choice from the composer or the member's
+// engine settings wins; otherwise the member's permission level and the
+// launch policy decide, exactly as before.
+function permissionArgs(permissions = {}, policy = "", access = "") {
+  const resolved = resolveAccess({ access, permissionMode: permissions.permissionMode, policy });
+  if (resolved === "full") {
     return ["--permission-mode", "bypassPermissions", "--dangerously-skip-permissions"];
   }
-  if (permissions.permissionMode === "restricted" || policy === "restricted") {
+  if (resolved === "plan") {
     return ["--permission-mode", "plan", "--restricted"];
   }
   return ["--permission-mode", "acceptEdits"];
 }
 
-export function buildArgs({ prompt, workspace, model, permissions = {}, policy = "", appendSystemPrompt = "", addDirs = [], resumeId = "" }) {
+export function buildArgs({ prompt, workspace, model, permissions = {}, policy = "", access = "", effort = "", efforts = [], appendSystemPrompt = "", addDirs = [], resumeId = "" }) {
   // The prompt is passed right after `-p`: `--add-dir` is variadic in the
   // Claude CLI and would otherwise consume a trailing prompt argument.
   const args = ["-p", String(prompt || ""), "--output-format", "stream-json", "--verbose", "--include-partial-messages"];
@@ -152,9 +205,15 @@ export function buildArgs({ prompt, workspace, model, permissions = {}, policy =
     args.push("--model", model);
     display.push("--model", model);
   }
-  for (const flag of permissionArgs(permissions, policy)) {
+  for (const flag of permissionArgs(permissions, policy, access)) {
     args.push(flag);
     display.push(flag);
+  }
+  // Reasoning effort only when this binary advertises it (detect reads
+  // `--help`); an unknown list lets the value through so a newer CLI works.
+  if (effort && (!Array.isArray(efforts) || !efforts.length || efforts.includes(effort))) {
+    args.push("--effort", effort);
+    display.push("--effort", effort);
   }
   if (appendSystemPrompt) {
     args.push("--append-system-prompt", appendSystemPrompt);

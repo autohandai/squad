@@ -53,6 +53,8 @@ import {
   getAdapter,
   harnessAssignmentFromAgent,
   isExternalHarness,
+  normalizeAccess,
+  normalizeEffort,
   listHarnesses,
   normalizeHarnessAssignment,
   publicReadiness,
@@ -6539,6 +6541,10 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
     if (project.path !== workspace) addDirs.push(project.path);
   }
   const model = String(payload.model || assignment.model || "").trim();
+  // Access and reasoning effort (ADR-0114): the turn's explicit choice, else
+  // the member's engine settings, else nothing (the adapter derives access).
+  const access = normalizeAccess(payload.access || assignment.access);
+  const effort = normalizeEffort(payload.effort || assignment.effort);
   const resumeId = payload.resumeSession === false ? "" : await readResumeId(agentRuntime.agentHome, adapter.id, workspace);
   // Squad-managed MCP servers (Computer Use, the vault) reach Claude through
   // one --mcp-config file and Codex through -c overrides, adapted per harness.
@@ -6569,6 +6575,9 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
       model,
       permissions,
       policy: payload.policy || "",
+      access,
+      effort,
+      efforts: Array.isArray(readiness.efforts) ? readiness.efforts : [],
       appendSystemPrompt: profile,
       addDirs,
       resumeId: resume,
@@ -6604,6 +6613,8 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
     agentRuntime,
     permissions,
     model,
+    access,
+    effort,
     resumeId,
     build,
     executable: readiness.executablePath,

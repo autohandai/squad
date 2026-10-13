@@ -27,6 +27,64 @@ export function normalizeHarnessId(value) {
   return HARNESS_ALIASES[raw] || DEFAULT_HARNESS_ID;
 }
 
+// Access (ADR-0114): what a turn may do, in one vocabulary the app shows in
+// each engine's own words. "" means derive it from the member's permission
+// level the way the adapters always did (derivedAccess below).
+export const ACCESS_IDS = Object.freeze(["plan", "write", "full"]);
+export const ACCESS_COPY = Object.freeze({
+  claude: {
+    plan: { label: "Plan only", detail: "Reads and plans; no edits, no commands (Claude Code plan mode)." },
+    write: { label: "Accept edits", detail: "Edits files; commands Claude Code would ask about are refused instead." },
+    full: { label: "Full access", detail: "Every permission prompt is bypassed." },
+  },
+  codex: {
+    plan: { label: "Read only", detail: "Read-only sandbox; nothing is written." },
+    write: { label: "Workspace write", detail: "Writes inside the workspace; other folders and the network stay closed." },
+    full: { label: "Full access", detail: "No sandbox and no approvals." },
+  },
+  autohand: {
+    plan: { label: "Restricted", detail: "Deny dangerous operations." },
+    write: { label: "Normal prompts", detail: "Ask on risky or unknown operations." },
+    full: { label: "Yes mode", detail: "Approve non-blacklisted operations." },
+  },
+});
+
+export function normalizeAccess(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return ACCESS_IDS.includes(raw) ? raw : "";
+}
+
+export function normalizeEffort(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return /^[a-z0-9-]{1,20}$/.test(raw) ? raw : "";
+}
+
+/** The access the adapters derive when nothing explicit is chosen. */
+export function derivedAccess(permissionMode = "", policy = "") {
+  if (permissionMode === "unrestricted") return "full";
+  if (permissionMode === "restricted" || policy === "restricted") return "plan";
+  return "write";
+}
+
+export function accessOption(harnessId, access) {
+  const table = ACCESS_COPY[normalizeHarnessId(harnessId)] || ACCESS_COPY.autohand;
+  const id = normalizeAccess(access) || "write";
+  return { id, ...(table[id] || table.write) };
+}
+
+/** Model choices for a select: the engine default first, then what the bridge reported. */
+export function modelChoices(readiness, { current = "" } = {}) {
+  const reported = Array.isArray(readiness?.models) ? readiness.models.filter((item) => item && item.id) : [];
+  const defaultLabel = readiness?.defaults?.model ? `Engine default (${readiness.defaults.model})` : "Engine default";
+  const choices = [{ id: "", label: defaultLabel }, ...reported.map((item) => ({ id: String(item.id), label: String(item.label || item.id), detail: String(item.detail || "") }))];
+  if (current && !choices.some((item) => item.id === current)) choices.push({ id: current, label: current, custom: true });
+  return choices;
+}
+
+export function effortChoices(readiness) {
+  return Array.isArray(readiness?.efforts) ? readiness.efforts.map((item) => String(item)).filter(Boolean) : [];
+}
+
 export function normalizeHarnessAssignment(input) {
   const source = input && typeof input === "object" ? input : typeof input === "string" ? { id: input } : {};
   return {
@@ -34,6 +92,8 @@ export function normalizeHarnessAssignment(input) {
     id: normalizeHarnessId(source.id || source.harnessId),
     executablePath: String(source.executablePath || "").trim(),
     model: String(source.model || "").trim().slice(0, 120),
+    effort: normalizeEffort(source.effort),
+    access: normalizeAccess(source.access),
   };
 }
 

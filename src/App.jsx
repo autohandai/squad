@@ -363,9 +363,14 @@ import {
   slashCommandFrom,
 } from "@/lib/composer-syntax";
 import {
+  ACCESS_IDS,
+  accessOption,
+  derivedAccess,
+  effortChoices,
   fetchHarnesses,
   harnessForAgent,
   harnessLabel,
+  modelChoices,
   normalizeHarnessAssignment as normalizeHarnessAssignmentCopy,
   readinessFor,
   readinessLabel,
@@ -7131,7 +7136,7 @@ function App() {
     if (launch.queue) {
       const item = await api(`/api/queues/${encodeURIComponent(agentId)}/items`, {
         method: "POST",
-        body: JSON.stringify({ requestId, squadMembers: agents.map(member => channelActionMember(member)), agentId, mode: "prompt", text: prompt, workspace: selectedWorkspace, policy: launch.policy, model: launch.model, profile, agent: channelActionMember(agent, selectedWorkspace) }),
+        body: JSON.stringify({ requestId, squadMembers: agents.map(member => channelActionMember(member)), agentId, mode: "prompt", text: prompt, workspace: selectedWorkspace, policy: launch.policy, model: launch.model, effort: launch.effort || "", access: launch.access || "", profile, agent: channelActionMember(agent, selectedWorkspace) }),
       });
       void refreshMemberQueues().catch(() => {});
       return { queued: true, item };
@@ -7181,6 +7186,8 @@ function App() {
       workspace: selectedWorkspace,
       policy: launch.policy,
       model: launch.model,
+      effort: launch.effort || "",
+      access: launch.access || "",
       profile,
       agent: channelActionMember(agent, selectedWorkspace),
       collaboration: launch.collaboration || null,
@@ -8581,6 +8588,8 @@ function App() {
           mode: effectiveMode,
           policy: effectivePolicy,
           model: effectiveLaunchModel,
+          effort: launch.effort || "",
+          access: launch.access || "",
           dryRun: launch.dryRun,
           recipeId: recipe?.id || undefined,
           profile: buildAgentProfile(agent, selectedWorkspace),
@@ -13534,6 +13543,16 @@ function Conversation({
   const [policy, setPolicy] = useState(defaultLaunch.policy);
   const [model, setModel] = useState(defaultLaunch.model || "");
   const [dryRun, setDryRun] = useState(defaultLaunch.dryRun);
+  // Access and reasoning effort for Claude Code and Codex members (ADR-0114).
+  // "" access means "whatever the member's permission level implies", which
+  // the select still shows, so plan mode is visible and can be switched off.
+  const launchAssignment = harnessForAgent(agent);
+  const externalEngine = launchAssignment.id !== "autohand";
+  const engineReadiness = readinessFor(harnesses, launchAssignment.id);
+  const [effort, setEffort] = useState(defaultLaunch.effort || launchAssignment.effort || "");
+  const [access, setAccess] = useState(defaultLaunch.access || launchAssignment.access || "");
+  const [customModel, setCustomModel] = useState(false);
+  const shownAccess = access || derivedAccess(agent.permissions?.permissionMode, policy);
   // The compact chooser reuses this conversation to retain per-member drafts.
   // Execution settings still belong to the newly selected member.
   useEffect(() => {
@@ -13542,6 +13561,9 @@ function Conversation({
     setPolicy(defaultLaunch.policy);
     setModel(defaultLaunch.model || "");
     setDryRun(defaultLaunch.dryRun);
+    setEffort(defaultLaunch.effort || harnessForAgent(agent).effort || "");
+    setAccess(defaultLaunch.access || harnessForAgent(agent).access || "");
+    setCustomModel(false);
   }, [agent.id]);
   const [panelTab, setPanelTab] = useState("runs");
   const [focusRunId, setFocusRunId] = useState("");
@@ -13876,7 +13898,7 @@ function Conversation({
       if (!text || blockedWorkspace) return;
       setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
       setMentionState(null);
-      steerNow({ prompt: expandSkillMentions(text, installedSkillNames), workspace, policy, model });
+      steerNow({ prompt: expandSkillMentions(text, installedSkillNames), workspace, policy, model, effort, access });
       return;
     }
 
@@ -13976,7 +13998,7 @@ function Conversation({
   function queuePrompt(nextPrompt) {
     const queuedPrompt = String(nextPrompt || "").trim();
     if (!queuedPrompt) return;
-    void Promise.resolve(onChat(agent.id, { prompt: queuedPrompt, workspace, policy, model, queue: true })).catch((error) => {
+    void Promise.resolve(onChat(agent.id, { prompt: queuedPrompt, workspace, policy, model, effort, access, queue: true })).catch((error) => {
       postLocalNote(`Could not queue the follow-up: ${error.message}`);
       setPromptByAgent((current) => ({ ...current, [agent.id]: current[agent.id] || queuedPrompt }));
     });
@@ -14008,7 +14030,7 @@ function Conversation({
   async function sendQueuedNow(item) {
     const cancelled = await runQueueAction("cancel", { id: item.id });
     if (!cancelled) return;
-    steerNow({ prompt: item.text, workspace: item.workspace || workspace, policy, model });
+    steerNow({ prompt: item.text, workspace: item.workspace || workspace, policy, model, effort, access });
   }
 
   function sendPendingSteer(agentId = agent.id) {
@@ -14117,7 +14139,7 @@ function Conversation({
   useEffect(() => {
     if (typeof window === "undefined" || !window.__AUTOHAND_SQUAD_VERIFY__) return undefined;
     window.__AUTOHAND_SQUAD_VERIFY_SEND__ = (nextPrompt) => {
-      sendPromptNow({ prompt: String(nextPrompt || ""), workspace, policy, model }, { agentId: agent.id, restorePromptOnError: true });
+      sendPromptNow({ prompt: String(nextPrompt || ""), workspace, policy, model, effort, access }, { agentId: agent.id, restorePromptOnError: true });
     };
     return () => {
       if (window.__AUTOHAND_SQUAD_VERIFY_SEND__) {
@@ -14181,7 +14203,7 @@ function Conversation({
     const index = visibleMessages.findIndex((item) => item.id === message.id);
     const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
     if (!previousUser?.body) return;
-    sendPromptNow({ prompt: previousUser.body, workspace, policy, model, retry: true, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
+    sendPromptNow({ prompt: previousUser.body, workspace, policy, model, effort, access, retry: true, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
   };
 
   function postLocalNote(body, status = "note") {
@@ -14228,7 +14250,7 @@ function Conversation({
         } else if (chatSending) {
           postLocalNote("This member is already working. Pause or cancel the current goal before starting another.");
         } else {
-          sendPromptNow({ prompt: expandSkillMentions(command.args, installedSkillNames), workspace, policy, model, mode: "goal" }, { agentId: agent.id, restorePromptOnError: true });
+          sendPromptNow({ prompt: expandSkillMentions(command.args, installedSkillNames), workspace, policy, model, effort, access, mode: "goal" }, { agentId: agent.id, restorePromptOnError: true });
         }
         return true;
       }
@@ -14309,7 +14331,7 @@ function Conversation({
       queuePrompt(expandedPrompt);
       return;
     }
-    sendPromptNow({ prompt: expandedPrompt, workspace, policy, model }, { agentId: agent.id, restorePromptOnError: true });
+    sendPromptNow({ prompt: expandedPrompt, workspace, policy, model, effort, access }, { agentId: agent.id, restorePromptOnError: true });
   }
 
   // Goal 08: preview the context pack before launching a run. Calls the server
@@ -14753,7 +14775,13 @@ function Conversation({
                       <ToggleGroup
                         type="single"
                         value={mode}
-                        onValueChange={(value) => value && setMode(value)}
+                        onValueChange={(value) => {
+                          if (!value) return;
+                          setMode(value);
+                          // Auto means "do the work": a member still in plan
+                          // mode would only describe it (ADR-0114).
+                          if (value === "auto" && externalEngine && shownAccess === "plan") setAccess("write");
+                        }}
                         variant="outline"
                         className="grid w-full grid-cols-3"
                         spacing={0}
@@ -14766,29 +14794,112 @@ function Conversation({
                       </ToggleGroup>
                     </Field>
 
-                    <Field className="gap-2">
-                      <FieldLabel>{copy.policy}</FieldLabel>
-                      <Select value={policy} onValueChange={setPolicy}>
-                        <SelectTrigger className="h-9 w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            <SelectLabel>{copy.policy}</SelectLabel>
-                            {POLICY_OPTIONS.map((item) => (
-                              <SelectItem key={item.id} value={item.id}>
-                                {policyLabel(item.id, copy)}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </Field>
+                    {externalEngine ? (
+                      <Field className="gap-2">
+                        <FieldLabel>{copy.access || "Access"}</FieldLabel>
+                        <Select value={shownAccess} onValueChange={(value) => value && setAccess(value)}>
+                          <SelectTrigger className="h-9 w-full" aria-label={copy.access || "Access"}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectLabel>{harnessLabel(launchAssignment.id)}</SelectLabel>
+                              {ACCESS_IDS.map((id) => (
+                                <SelectItem key={id} value={id}>
+                                  {accessOption(launchAssignment.id, id).label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">{accessOption(launchAssignment.id, shownAccess).detail}</p>
+                      </Field>
+                    ) : (
+                      <Field className="gap-2">
+                        <FieldLabel>{copy.policy}</FieldLabel>
+                        <Select value={policy} onValueChange={setPolicy}>
+                          <SelectTrigger className="h-9 w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectLabel>{copy.policy}</SelectLabel>
+                              {POLICY_OPTIONS.map((item) => (
+                                <SelectItem key={item.id} value={item.id}>
+                                  {policyLabel(item.id, copy)}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                      </Field>
+                    )}
 
-                    <Field className="gap-2">
-                      <FieldLabel>{copy.model}</FieldLabel>
-                      <Input value={model} onChange={(event) => setModel(event.target.value)} placeholder={copy.model} className="h-9" />
-                    </Field>
+                    {externalEngine ? (
+                      <Field className="gap-2">
+                        <FieldLabel>{copy.model}</FieldLabel>
+                        <Select
+                          value={customModel ? "__custom" : model || "__default"}
+                          onValueChange={(value) => {
+                            if (!value) return;
+                            if (value === "__custom") { setCustomModel(true); return; }
+                            setCustomModel(false);
+                            setModel(value === "__default" ? "" : value);
+                          }}
+                        >
+                          <SelectTrigger className="h-9 w-full" aria-label={copy.model}>
+                            <SelectValue placeholder={copy.engineDefault || "Engine default"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectLabel>{harnessLabel(launchAssignment.id)}</SelectLabel>
+                              {modelChoices(engineReadiness, { current: customModel ? "" : model }).map((item) => (
+                                <SelectItem key={item.id || "__default"} value={item.id || "__default"}>
+                                  {item.label}
+                                </SelectItem>
+                              ))}
+                              <SelectItem value="__custom">{copy.customModel || "Custom…"}</SelectItem>
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        {customModel ? (
+                          <Input
+                            value={model}
+                            onChange={(event) => setModel(event.target.value)}
+                            placeholder={launchAssignment.id === "claude" ? "claude-opus-5-5" : "gpt-6.1-sol"}
+                            className="h-9"
+                            autoFocus
+                          />
+                        ) : null}
+                      </Field>
+                    ) : (
+                      <Field className="gap-2">
+                        <FieldLabel>{copy.model}</FieldLabel>
+                        <Input value={model} onChange={(event) => setModel(event.target.value)} placeholder={copy.model} className="h-9" />
+                      </Field>
+                    )}
+
+                    {externalEngine && effortChoices(engineReadiness).length ? (
+                      <Field className="gap-2">
+                        <FieldLabel>{copy.effort || "Reasoning effort"}</FieldLabel>
+                        <Select value={effort || "__default"} onValueChange={(value) => value && setEffort(value === "__default" ? "" : value)}>
+                          <SelectTrigger className="h-9 w-full" aria-label={copy.effort || "Reasoning effort"}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectLabel>{harnessLabel(launchAssignment.id)}</SelectLabel>
+                              <SelectItem value="__default">{engineReadiness?.defaults?.effort ? `${copy.engineDefault || "Engine default"} (${engineReadiness.defaults.effort})` : copy.engineDefault || "Engine default"}</SelectItem>
+                              {effortChoices(engineReadiness).map((level) => (
+                                <SelectItem key={level} value={level}>
+                                  {level}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                      </Field>
+                    ) : null}
 
                     <Field orientation="horizontal" className="items-center justify-between gap-4 rounded-md border bg-background px-3 py-2">
                       <FieldContent className="gap-0.5">
