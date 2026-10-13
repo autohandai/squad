@@ -14,11 +14,12 @@ export function normalizeEffort(value) {
   return /^[a-z0-9-]{1,20}$/.test(raw) ? raw : "";
 }
 
-/** Explicit access wins; otherwise the member's permission level and the launch policy decide, as before. */
-export function resolveAccess({ access = "", permissionMode = "", policy = "" } = {}) {
-  const explicit = normalizeAccess(access);
-  if (explicit) return explicit;
-  if (permissionMode === "unrestricted") return "full";
-  if (permissionMode === "restricted" || policy === "restricted") return "plan";
-  return "write";
+/**
+ * Explicit access wins; otherwise full (ADR-0114, second revision): the
+ * person asked for full access by default on every engine. The permission
+ * level and the launch policy no longer force plan mode or a read-only
+ * sandbox; they are still passed to Autohand's own flags.
+ */
+export function resolveAccess({ access = "" } = {}) {
+  return normalizeAccess(access) || "full";
 }

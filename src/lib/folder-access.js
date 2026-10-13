@@ -54,7 +54,9 @@ export function folderWasDismissed(message, folder) {
 
 /** The folders a card should still ask about for this reply. */
 export function pendingFolderRequests(agent, message) {
-  return deniedFolders(message).filter((folder) => !folderIsGranted(agent, folder) && !folderWasDismissed(message, folder));
+  const asked = Array.isArray(message?.folderRequests) ? message.folderRequests.map(String) : [];
+  const all = [...asked, ...deniedFolders(message).filter((folder) => !asked.includes(folder))];
+  return all.filter((folder) => !folderIsGranted(agent, folder) && !folderWasDismissed(message, folder));
 }
 
 /** The member's folders with one more, as the profile editor would store it. */
@@ -68,4 +70,44 @@ export function projectsWithFolder(agent, folder, { now = new Date().toISOString
 /** The follow-up that lets the member carry on once the folder is allowed. */
 export function continuationPrompt(folder) {
   return `You now have access to ${folder}. Continue where you stopped.`;
+}
+
+// --- Folders mentioned in plain English (ADR-0120) -------------------------
+
+const PATH_MENTION = /(?:^|[\s"'`(\[])((?:~|\/Users|\/home|\/Volumes|[A-Za-z]:\\)[^\s"'`)\]>,;]*)/g;
+
+/** Path-looking mentions in a prompt: ~/x, /Users/…, /home/…, C:\… ; trailing punctuation trimmed. */
+export function mentionedPaths(text) {
+  const found = [];
+  for (const match of String(text || "").matchAll(PATH_MENTION)) {
+    const raw = match[1].replace(/[.:!?]+$/, "").replace(/[/\\]\*\*?$/, "");
+    if (raw && raw !== "~" && !found.includes(raw)) found.push(raw);
+  }
+  return found;
+}
+
+/** The folders a member may already use: its workspace and its folders, and anything inside them. */
+export function folderIsCovered(agent, workspace, folder) {
+  const roots = [workspace, ...(Array.isArray(agent?.projects) ? agent.projects.map((project) => project?.path) : [])].filter(Boolean).map(String);
+  return roots.some((root) => folder === root || folder.startsWith(root.endsWith("/") ? root : `${root}/`));
+}
+
+/** From the bridge's check answer, the folders this turn would need and may ask for. */
+export function foldersNeedingAccess(agent, workspace, checked) {
+  const folders = [];
+  for (const entry of Array.isArray(checked) ? checked : []) {
+    const folder = String(entry?.folder || "");
+    if (!folder || !entry.allowed || folderIsCovered(agent, workspace, folder) || folders.includes(folder)) continue;
+    folders.push(folder);
+  }
+  return folders;
+}
+
+/** Needs-you rows for pending folder requests. */
+export function folderNeedsYouRows(requests = [], members = []) {
+  const nameOf = (id) => members.find((member) => member.id === id)?.name || "A member";
+  return (Array.isArray(requests) ? requests : [])
+    .filter((item) => item?.status === "pending")
+    .map((item) => ({ id: `folder-${item.id}`, request: item, memberId: item.memberId, folder: item.folder, title: `${nameOf(item.memberId)} needs ${item.folder}`, detail: item.prompt ? `For: ${String(item.prompt).slice(0, 140)}` : "Mentioned in your message", at: item.createdAt || "" }))
+    .sort((a, b) => String(b.at).localeCompare(String(a.at)));
 }

@@ -66,7 +66,7 @@ assert.equal(getAdapter('codex').id, 'codex');
   });
   assert.equal(args[0], 'exec');
   assert.ok(args.includes('--json'));
-  assert.equal(args[args.indexOf('--sandbox') + 1], 'read-only');
+  assert.equal(args[args.indexOf('--sandbox') + 1], 'danger-full-access', 'full access by default (ADR-0120); the permission level no longer forces read-only');
   assert.equal(args[args.indexOf('-C') + 1], '/w');
   assert.equal(args[args.indexOf('-m') + 1], 'gpt-5');
   assert.ok(args.at(-1).startsWith('<operating_instructions>'), 'profile is prepended to the first turn');
@@ -83,7 +83,9 @@ assert.equal(getAdapter('codex').id, 'codex');
   // Access and effort (ADR-0114): an explicit access wins over the member's
   // permission level; effort travels as a config override, also on resume.
   const explicit = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'restricted' }, access: 'write', effort: 'high' });
-  assert.equal(explicit.args[explicit.args.indexOf('--sandbox') + 1], 'workspace-write', 'a restricted member can be given workspace write for one turn');
+  assert.equal(explicit.args[explicit.args.indexOf('--sandbox') + 1], 'workspace-write', 'an explicit access wins for one turn');
+  const readOnly = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', access: 'plan' });
+  assert.equal(readOnly.args[readOnly.args.indexOf('--sandbox') + 1], 'read-only', 'read-only is a choice');
   assert.equal(explicit.args[explicit.args.indexOf('-c') + 1], 'model_reasoning_effort="high"');
   const full = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'restricted' }, access: 'full' });
   assert.equal(full.args[full.args.indexOf('--sandbox') + 1], 'danger-full-access');
@@ -108,17 +110,19 @@ assert.equal(getAdapter('codex').id, 'codex');
   });
   assert.deepEqual(args.slice(0, 2), ['-p', 'hello'], 'prompt is bound to -p before variadic options');
   assert.equal(args[args.indexOf('--resume') + 1], 'sess-1');
-  assert.equal(args[args.indexOf('--permission-mode') + 1], 'acceptEdits');
+  assert.equal(args[args.indexOf('--permission-mode') + 1], 'bypassPermissions', 'full access by default (ADR-0120)');
   assert.equal(args.filter((item) => item === '--add-dir').length, 2, 'each directory uses its own --add-dir flag');
   assert.equal(args.at(-1), '/x', 'nothing follows the last --add-dir value');
-  const restricted = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'restricted' } });
-  assert.equal(restricted.args[restricted.args.indexOf('--permission-mode') + 1], 'plan');
+  const restricted = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'restricted' }, access: 'plan' });
+  assert.equal(restricted.args[restricted.args.indexOf('--permission-mode') + 1], 'plan', 'plan mode is a choice');
+  const levelOnly = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'restricted' } });
+  assert.equal(levelOnly.args[levelOnly.args.indexOf('--permission-mode') + 1], 'bypassPermissions', 'the permission level alone no longer forces plan');
   const bypass = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'unrestricted' } });
   assert.ok(bypass.args.includes('--dangerously-skip-permissions'));
 
   // Access and effort (ADR-0114).
   const planOff = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'restricted' }, policy: 'restricted', access: 'write', effort: 'high', efforts: ['low', 'medium', 'high'] });
-  assert.equal(planOff.args[planOff.args.indexOf('--permission-mode') + 1], 'acceptEdits', 'plan mode can be switched off for a restricted member');
+  assert.equal(planOff.args[planOff.args.indexOf('--permission-mode') + 1], 'acceptEdits', 'accept edits is a choice');
   assert.equal(planOff.args[planOff.args.indexOf('--effort') + 1], 'high');
   const planOn = claudeAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'unrestricted' }, access: 'plan' });
   assert.equal(planOn.args[planOn.args.indexOf('--permission-mode') + 1], 'plan', 'plan mode can be switched on for an unrestricted member');

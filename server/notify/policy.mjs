@@ -6,7 +6,7 @@
 import { basename } from "node:path";
 
 /** Event names the bridge emits that can become a notification. */
-export const NOTIFICATION_EVENTS = ["run.finished", "chat.finished", "handoff.pending", "approval.pending", "mention.received", "vault.request.pending"];
+export const NOTIFICATION_EVENTS = ["run.finished", "chat.finished", "handoff.pending", "approval.pending", "mention.received", "vault.request.pending", "folder.request.pending"];
 
 /** Settings shape; every kind is on by default. */
 export const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
@@ -52,6 +52,7 @@ export function settingKeyFor(event) {
       return "handoffPending";
     case "approval.pending":
     case "vault.request.pending": // a secret or payment request is an approval the person owns (ADR-0104)
+    case "folder.request.pending": // a folder request is one too (ADR-0120)
       return "approvalPending";
     case "mention.received":
       return "mention";
@@ -81,6 +82,7 @@ export function routeForEvent(event) {
   if (name === "handoff.pending") return INBOX_ROUTE;
   if (name === "approval.pending") return channel || MISSION_CONTROL_ROUTE;
   if (name === "vault.request.pending") return memberChatRoute(event?.memberId) || INBOX_ROUTE;
+  if (name === "folder.request.pending") return memberChatRoute(event?.memberId) || INBOX_ROUTE;
   if (name === "mention.received") return channel || memberChatRoute(event?.memberId) || INBOX_ROUTE;
   return channel || memberChatRoute(event?.memberId) || MISSION_CONTROL_ROUTE;
 }
@@ -209,6 +211,11 @@ export function notificationFor(event, { appUrl = "http://127.0.0.1:19821", memb
         title = what ? `${member} needs you · ${what}` : `${member} needs you · a secret`;
         body = "Fill the secure form in the conversation. The value goes to your vault, not to the member.";
       }
+      break;
+    }
+    case "folder.request.pending": {
+      title = `${member} needs a folder · ${clip(event?.folder, 60)}`;
+      body = "Allow it in the conversation and the message goes; decline and nothing runs.";
       break;
     }
     case "mention.received": {

@@ -59,11 +59,13 @@ export function normalizeEffort(value) {
   return /^[a-z0-9-]{1,20}$/.test(raw) ? raw : "";
 }
 
-/** The access the adapters derive when nothing explicit is chosen. */
-export function derivedAccess(permissionMode = "", policy = "") {
-  if (permissionMode === "unrestricted") return "full";
-  if (permissionMode === "restricted" || policy === "restricted") return "plan";
-  return "write";
+/**
+ * The access the adapters derive when nothing explicit is chosen: full, on
+ * every engine (ADR-0114, second revision, at the person's request). Plan or
+ * read-only is a choice made per message or per member, never a default.
+ */
+export function derivedAccess() {
+  return "full";
 }
 
 export function accessOption(harnessId, access) {

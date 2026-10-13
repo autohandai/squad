@@ -22,7 +22,7 @@ import { buildRecall, turnTitle } from '../server/chats/recall.mjs';
 import { historyRecord, runFromRecord } from '../server/runs/history.mjs';
 import { archivePayload, chatMetaLine, conversationHasWork, messagesForTransfer, restoreConversationEvent, sortChats } from '../src/lib/chat-sessions.js';
 import { applySharedConversationEvent } from '../src/lib/shared-conversations.js';
-import { continuationPrompt, deniedFolders, folderFromDeniedPath, pendingFolderRequests, projectsWithFolder } from '../src/lib/folder-access.js';
+import { continuationPrompt, deniedFolders, folderFromDeniedPath, folderNeedsYouRows, foldersNeedingAccess, mentionedPaths, pendingFolderRequests, projectsWithFolder } from '../src/lib/folder-access.js';
 import { effortLevelsFor } from '../src/lib/harness.js';
 
 // ---------- pure checks ----------
@@ -103,7 +103,14 @@ assert.deepEqual(effortLevelsFor('claude', { efforts: ['low', 'high'] }), ['low'
 assert.deepEqual(effortLevelsFor('autohand', {}, 'moa'), ['none', 'normal', 'extended'], 'Autohand: moa takes --thinking levels');
 assert.deepEqual(effortLevelsFor('autohand', {}, 'fantail'), [], 'Autohand: other models have no reasoning level');
 assert.deepEqual(effortLevelsFor('autohand', {}, ''), [], 'Autohand: no model, no slider');
-console.log('Chat pure checks passed: bounds, record, sessions, history, restore event, recall, folder access, effort levels.');
+assert.deepEqual(mentionedPaths('we had a plan ~/.claude/plan/* you can access there, and /Users/igor/Documents/leads/icp.md. Also C:\\work\\x'), ['~/.claude/plan', '/Users/igor/Documents/leads/icp.md', 'C:\\work\\x'], 'paths named in plain English are found, globs and punctuation trimmed');
+assert.deepEqual(mentionedPaths('no paths here, just words and a URL https://x.y/z'), []);
+const checked = [{ given: '~/.claude/plan', folder: '/Users/igor/.claude/plan', allowed: true }, { given: '/Users/igor/Documents/leads/icp.md', folder: '/Users/igor/Documents/leads', allowed: true }, { given: '/etc', folder: '/etc', allowed: false }];
+assert.deepEqual(foldersNeedingAccess({ projects: [{ path: '/Users/igor/Documents/leads' }] }, '/w', checked), ['/Users/igor/.claude/plan'], 'covered folders and disallowed ones are left out');
+assert.deepEqual(pendingFolderRequests({ projects: [] }, { folderRequests: ['/a', '/b'], folderAccessDismissed: ['/b'] }), ['/a'], 'held requests on a message are pending until decided');
+const rows = folderNeedsYouRows([{ id: '1', memberId: 'alex', folder: '/a', prompt: 'read it', createdAt: 't', status: 'pending' }, { id: '2', memberId: 'alex', folder: '/b', status: 'allowed' }], [{ id: 'alex', name: 'Alex' }]);
+assert.equal(rows.length, 1); assert.equal(rows[0].title, 'Alex needs /a'); assert.equal(rows[0].detail, 'For: read it');
+console.log('Chat pure checks passed: bounds, record, sessions, history, restore event, recall, folder access, effort levels, folder mentions.');
 
 // ---------- bridge ----------
 const directory = await mkdtemp(join(tmpdir(), 'squad-chats-'));
@@ -252,7 +259,7 @@ process.exit(0);
   const restrictedMember = { ...member('alex'), permissions: { permissionMode: 'restricted' } };
   await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'Plan this'), agent: restrictedMember }) })).text();
   let seen = (await calls()).at(-1).args;
-  assert.equal(seen[seen.indexOf('--permission-mode') + 1], 'plan', 'a restricted member is in plan mode by default');
+  assert.equal(seen[seen.indexOf('--permission-mode') + 1], 'bypassPermissions', 'full access by default, whatever the permission level (ADR-0120)');
   assert.ok(!seen.includes('--effort'), 'no effort unless chosen');
   await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'Now do it'), agent: restrictedMember, access: 'write', effort: 'high', model: 'opus' }) })).text();
   seen = (await calls()).at(-1).args;
@@ -278,6 +285,18 @@ process.exit(0);
   const readiness = (await api('/api/harnesses')).data.harnesses.find((h) => h.id === 'claude');
   assert.ok(Array.isArray(readiness.accessModes) && readiness.accessModes.includes('plan'), 'readiness lists access modes');
   assert.ok(Array.isArray(readiness.efforts), 'readiness carries an effort list (the global listing probes the machine\'s own claude, not the member fixture)');
+
+  // 3e. Folder mentions (ADR-0120): the bridge says what a path is, and a
+  //     request reaches the notification feed like a vault request.
+  const checkedFolders = (await api('/api/folders/check', { paths: ['~/x/y.md', rootDir, '/etc'] })).data.folders;
+  assert.equal(checkedFolders[0].folder, join(process.env.HOME, 'x'), 'a file under ~ resolves to its folder');
+  assert.equal(checkedFolders[0].allowed, true);
+  assert.equal(checkedFolders[1].directory, true); assert.equal(checkedFolders[1].folder, rootDir);
+  assert.equal(checkedFolders[2].allowed, false, 'outside the home directory is never allowed');
+  const requested = await api('/api/folders/request', { memberId: 'alex', memberName: 'Alex', folder: join(process.env.HOME, 'x'), prompt: 'look at ~/x/y.md' });
+  assert.equal(requested.status, 200);
+  const feed = await until(async () => { const r = await api('/api/notifications'); const items = r.data?.items || r.data || []; return (Array.isArray(items) ? items : []).find((item) => item.kind === 'folder.request.pending') || null; }, 'folder request in the notification feed');
+  assert.ok(feed.title.includes('needs a folder'), feed.title);
 
   // 4. /api/chat/reset forgets the engine session as well.
   const reset = await api('/api/chat/reset', { agentId: 'alex' });

@@ -290,7 +290,7 @@ import { MemberHistory } from "@/components/members/MemberHistory";
 import { PreviousChats } from "@/components/chat/PreviousChats";
 import { FolderAccessCard } from "@/components/chat/FolderAccessCard";
 import { EffortSlider } from "@/components/chat/EffortSlider";
-import { continuationPrompt, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
+import { continuationPrompt, folderNeedsYouRows, foldersNeedingAccess, mentionedPaths, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
 import { archivePayload, conversationHasWork, restoreConversationEvent } from "@/lib/chat-sessions";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
 import { MemberMenu } from "@/components/members/MemberMenu";
@@ -419,6 +419,7 @@ const STORAGE_KEYS = {
   // "not in storage" as "never seen".
   removedAgents: "autohandSquad.v1.removedAgents",
   automations: "autohandSquad.v1.automations",
+  folderRequests: "autohandSquad.v1.folderRequests",
   channels: "autohandSquad.v1.channels",
   channelThreads: "autohandSquad.v1.channelThreads",
   channelMessages: "autohandSquad.v1.channelMessages",
@@ -4649,6 +4650,13 @@ function App() {
   // conversations themselves live in <squadStateDir>/chats.
   const [previousChatsByAgent, setPreviousChatsByAgent] = useState({});
   const [previousChatsLoading, setPreviousChatsLoading] = useState(false);
+  // Folder requests (ADR-0120): a member needs a folder the person named;
+  // pending ones sit in Needs you until allowed or declined in the chat.
+  const [folderRequests, setFolderRequests] = useState(() => { const stored = readStored(storageKeysFor("folderRequests"), []); return Array.isArray(stored) ? stored : []; });
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEYS.folderRequests, JSON.stringify(folderRequests.slice(0, 50))); } catch {}
+  }, [folderRequests]);
+  const inboxFolders = useMemo(() => folderNeedsYouRows(folderRequests, agents), [folderRequests, agents]);
   // Member routines (ADR-0110) are declared here, with the other state, because
   // the Needs-you count reads routineProposals long before the routines block
   // below; declared there, the first render threw "Cannot access
@@ -6460,7 +6468,7 @@ function App() {
     [channels, unreadChannelIds, messagesByChannel]
   );
   const attentionWorkRows = useMemo(() => buildMissionRows({ agents, tasks, runs, runtime, workspaces }), [agents, tasks, runs, runtime, workspaces]);
-  const inboxCount = workAttentionCount({ replies: inboxReplies, unreadChannels: inboxUnreadChannels, approvals: inboxApprovals, handoffs: inboxHandoffs, memoryProposals: inboxMemory, vaultRequests: inboxVault, rows: attentionWorkRows }) + (sidebarCounts.permissionWarnings || 0) + agentChannelActions.filter(action => action.status === "proposed").length + routineProposals.length;
+  const inboxCount = workAttentionCount({ replies: inboxReplies, unreadChannels: inboxUnreadChannels, approvals: inboxApprovals, handoffs: inboxHandoffs, memoryProposals: inboxMemory, vaultRequests: inboxVault, folderRequests: inboxFolders, rows: attentionWorkRows }) + (sidebarCounts.permissionWarnings || 0) + agentChannelActions.filter(action => action.status === "proposed").length + routineProposals.length;
   const attentionBadge = useMemo(() => getAttentionBadgeClient(), []);
   useEffect(() => {
     if (!attentionBadge || !bridgeAnswered || runtime?.bridgeUnavailable) return;
@@ -6984,6 +6992,20 @@ function App() {
     }
     void loadPreviousChats(agent.id);
     if (!preserveRoute) navigate(memberChatPath(agent.id));
+  }
+
+  function recordFolderRequests(agentId, folders, prompt) {
+    const agent = agents.find((item) => item.id === agentId);
+    const createdAt = new Date().toISOString();
+    const fresh = folders.filter((folder) => !folderRequests.some((item) => item.memberId === agentId && item.folder === folder && item.status === "pending"));
+    if (!fresh.length) return;
+    setFolderRequests((current) => [...fresh.map((folder) => ({ id: `fr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, memberId: agentId, folder, prompt: String(prompt || "").slice(0, 400), createdAt, status: "pending" })), ...current].slice(0, 50));
+    for (const folder of fresh) {
+      api("/api/folders/request", { method: "POST", body: JSON.stringify({ memberId: agentId, memberName: agent?.name || "", folder, prompt: String(prompt || "").slice(0, 400) }) }).catch(() => {});
+    }
+  }
+  function settleFolderRequest(agentId, folder, status) {
+    setFolderRequests((current) => current.map((item) => item.memberId === agentId && item.folder === folder && item.status === "pending" ? { ...item, status, settledAt: new Date().toISOString() } : item));
   }
 
   async function loadPreviousChats(agentId) {
@@ -9295,6 +9317,7 @@ function App() {
             runtime={runtime} workspaces={workspaces} runs={runs.filter((run) => run.agentId === member.id)} providerSettings={providerSettings}
             locale={localeResolution.locale} copy={localeCopy} onStart={startAutohand} onChat={sendChat}
             onLocalMessage={appendMessage} onUpdateMessage={updateMessage} onNewConversation={(id) => startNewConversation(id, { preserveRoute: true })}
+            onFolderRequests={recordFolderRequests} onFolderSettled={settleFolderRequest}
             previousChats={previousChatsByAgent[member.id] || []} previousChatsLoading={previousChatsLoading} onLoadPreviousChats={loadPreviousChats} onOpenPreviousChat={openPreviousChat} onRemovePreviousChat={removePreviousChat}
             goals={memberGoals.filter((goal) => goal.agentId === member.id)} goalsError={memberGoalsError} onGoalAction={controlMemberGoal} onMemberBreak={setMemberBreak}
             queue={memberQueues[member.id]} contextGauge={memberContext[member.id]} onQueueAction={controlMemberQueue}
@@ -9556,7 +9579,7 @@ function App() {
               />
             ) : isMissionControl ? (
               <MissionControlPage
-                attention={{ replies: inboxReplies, unreadChannels: inboxUnreadChannels, handoffs: inboxHandoffs, approvals: inboxApprovals, memoryProposals: inboxMemory, vaultRequests: inboxVault }}
+                attention={{ replies: inboxReplies, unreadChannels: inboxUnreadChannels, handoffs: inboxHandoffs, approvals: inboxApprovals, memoryProposals: inboxMemory, vaultRequests: inboxVault, folderRequests: inboxFolders }}
                 attentionCount={inboxCount}
                 attentionNavigate={{
                   channel: (channelId) => navigate(channelsPath(channelId)),
@@ -9565,6 +9588,7 @@ function App() {
                   memory: (item) => navigate(memberProfilePath(item.item?.ownerAgentId || item.item?.agentId || agents[0]?.id, "memory")),
                   approval: (item) => navigate(item.messageId ? `${channelsPath(item.channelId)}?message=${encodeURIComponent(item.messageId)}` : channelsPath(item.channelId)),
                   vault: (item) => navigate(memberChatPath(item.memberId)),
+                  folder: (item) => navigate(memberChatPath(item.memberId)),
                 }}
                 onMarkUpdatesRead={() => {
                   const now = new Date().toISOString();
@@ -9724,6 +9748,8 @@ function App() {
                 onLocalMessage={appendMessage}
                 onUpdateMessage={updateMessage}
                 onNewConversation={startNewConversation}
+                onFolderRequests={recordFolderRequests}
+                onFolderSettled={settleFolderRequest}
                 previousChats={previousChatsByAgent[activeAgent?.id] || []}
                 previousChatsLoading={previousChatsLoading}
                 onLoadPreviousChats={loadPreviousChats}
@@ -13074,6 +13100,8 @@ function Conversation({
   onRoutineDecision,
   onRoutineSync,
   onNewConversation,
+  onFolderRequests,
+  onFolderSettled,
   previousChats = [],
   previousChatsLoading = false,
   onLoadPreviousChats,
@@ -13110,7 +13138,9 @@ function Conversation({
   onInitialCanvasConsumed,
   menu = null,
 }) {
-  const defaultLaunch = agent.launch || { mode: "prompt", policy: "restricted", model: "", dryRun: false };
+  // Full access by default on every engine (ADR-0114, second revision): "yes" is
+  // the Autohand CLI policy with no prompts; Claude Code and Codex derive "full".
+  const defaultLaunch = agent.launch || { mode: "prompt", policy: "yes", model: "", dryRun: false };
   const [harnessDraft, setHarnessDraft] = useState(() => harnessForAgent(agent));
   const [harnessPopoverOpen, setHarnessPopoverOpen] = useState(false);
   useEffect(() => {
@@ -13628,6 +13658,13 @@ function Conversation({
     const targetAgentId = options.agentId || agent.id;
     const submittedPrompt = String(nextItem.prompt || "").trim();
     if (!submittedPrompt || blockedWorkspace) return;
+    // Folders named in plain English (ADR-0120): with Full access they are
+    // added to the member before the turn; otherwise the message waits for
+    // Allow, here and in Needs you.
+    if (!nextItem.folderChecked && targetAgentId === agent.id && mentionedPaths(submittedPrompt).length) {
+      void preflightFolders(nextItem, options);
+      return;
+    }
 
     const controller = new AbortController();
     activeChatControllerRef.current = { ...activeChatControllerRef.current, [targetAgentId]: controller };
@@ -13647,6 +13684,8 @@ function Conversation({
           workspace: sourceLaunch.workspace || workspace,
           policy: sourceLaunch.policy || policy,
           model: sourceLaunch.model || model,
+          effort: sourceLaunch.effort || effort,
+          access: sourceLaunch.access || access,
           mode: sourceLaunch.mode,
           requestId: sourceLaunch.requestId,
           collaboration: sourceLaunch.collaboration,
@@ -13983,16 +14022,50 @@ function Conversation({
     setTaskPanelOpen(true);
   }
 
+  async function preflightFolders(nextItem, options) {
+    const submittedPrompt = String(nextItem.prompt || "").trim();
+    let folders = [];
+    try {
+      const data = await api("/api/folders/check", { method: "POST", body: JSON.stringify({ paths: mentionedPaths(submittedPrompt) }) });
+      folders = foldersNeedingAccess(agent, workspace, data?.folders);
+    } catch {
+      // The bridge is away; the turn goes as it always did.
+    }
+    const currentAccess = (nextItem.access || access || derivedAccess());
+    if (!folders.length) {
+      sendPromptNow({ ...nextItem, folderChecked: true }, options);
+      return;
+    }
+    if (currentAccess === "full") {
+      updateAgent?.(agent.id, { projects: folders.reduce((projects, folder) => projectsWithFolder({ ...agent, projects }, folder), Array.isArray(agent.projects) ? agent.projects : []), updatedAt: new Date().toISOString() });
+      onLocalMessage?.(agent.id, { id: `folder-added-${Date.now()}`, role: "agent", authorName: "Squad", body: `${agent.name} can now use ${folders.join(", ")}.`, status: "complete", time: new Date().toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) });
+      sendPromptNow({ ...nextItem, folderChecked: true }, options);
+      return;
+    }
+    setPromptByAgent((current) => ({ ...current, [agent.id]: submittedPrompt }));
+    onLocalMessage?.(agent.id, { id: `folder-ask-${Date.now()}`, role: "agent", authorName: "Squad", body: `${agent.name} needs ${folders.length === 1 ? "a folder" : "folders"} outside its own before this can go.`, status: "complete", folderRequests: folders, folderPrompt: submittedPrompt, time: new Date().toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) });
+    onFolderRequests?.(agent.id, folders, submittedPrompt);
+  }
+
   // Folder access (ADR-0116): Allow adds the folder to the member, which the
   // bridge turns into --add-dir on every later turn, then asks it to go on.
   function decideFolderAccess(message, folder, decision) {
     if (!folder) return;
     if (decision === "allow") {
-      updateAgent?.(agent.id, { projects: projectsWithFolder(agent, folder), updatedAt: new Date().toISOString() });
-      sendPromptNow({ prompt: continuationPrompt(folder), workspace, policy, model, effort, access }, { agentId: agent.id, restorePromptOnError: true });
+      const granted = { ...agent, projects: projectsWithFolder(agent, folder) };
+      updateAgent?.(agent.id, { projects: granted.projects, updatedAt: new Date().toISOString() });
+      onFolderSettled?.(agent.id, folder, "allowed");
+      // A held message (asked before sending) goes now; a refusal after the
+      // fact gets the continuation.
+      const held = String(message.folderPrompt || "").trim();
+      const remaining = (Array.isArray(message.folderRequests) ? message.folderRequests : []).filter((item) => item !== folder);
+      onUpdateMessage?.(agent.id, message.id, { folderRequests: remaining, folderAccessGranted: [...(Array.isArray(message.folderAccessGranted) ? message.folderAccessGranted : []), folder] });
+      if (held && !remaining.length) sendPromptNow({ prompt: held, workspace, policy, model, effort, access, folderChecked: true }, { agentId: agent.id, restorePromptOnError: true });
+      else if (!held) sendPromptNow({ prompt: continuationPrompt(folder), workspace, policy, model, effort, access, folderChecked: true }, { agentId: agent.id, restorePromptOnError: true });
       return;
     }
-    onUpdateMessage?.(agent.id, message.id, { folderAccessDismissed: [...(Array.isArray(message.folderAccessDismissed) ? message.folderAccessDismissed : []), folder] });
+    onFolderSettled?.(agent.id, folder, "declined");
+    onUpdateMessage?.(agent.id, message.id, { folderAccessDismissed: [...(Array.isArray(message.folderAccessDismissed) ? message.folderAccessDismissed : []), folder], folderRequests: (Array.isArray(message.folderRequests) ? message.folderRequests : []).filter((item) => item !== folder) });
   }
 
   function startFreshChat() {

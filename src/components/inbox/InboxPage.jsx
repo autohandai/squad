@@ -1,4 +1,4 @@
-import { ArrowRight, Bot, BrainCog, Hash, Inbox, KeyRound, MessageSquare, Workflow } from "lucide-react";
+import { ArrowRight, Bot, BrainCog, FolderOpen, Hash, Inbox, KeyRound, MessageSquare, Workflow } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -44,13 +44,14 @@ export function NeedsYouList({
   approvals = [],
   memoryProposals = [],
   vaultRequests = [],
+  folderRequests = [],
   copy = {},
   navigate = {},
   timeLabel = () => "",
   showEmpty = true,
   blockedWork = null,
 }) {
-  const total = replies.length + unreadChannels.length + handoffs.length + approvals.length + memoryProposals.length + vaultRequests.length;
+  const total = replies.length + unreadChannels.length + handoffs.length + approvals.length + memoryProposals.length + vaultRequests.length + folderRequests.length;
   if (!total && !blockedWork) return showEmpty ? <p className="text-sm text-muted-foreground">{copy.workCaughtUp || "You're caught up. Nothing needs you right now."}</p> : null;
   return (
     <div className="flex flex-col gap-6" data-testid="needs-you-list">
@@ -80,6 +81,21 @@ export function NeedsYouList({
             tone="text-amber-600 dark:text-amber-300"
             action={item.request?.type === "payment" ? copy.reviewPayment || "Decide payment" : copy.reviewSecret || "Open secure form"}
             onOpen={() => navigate.vault?.(item)}
+          />
+        ))}
+      </Section>
+
+      <Section title={copy.inboxFolders || "Folder access"} count={folderRequests.length}>
+        {folderRequests.map((item) => (
+          <Row
+            key={item.id}
+            icon={FolderOpen}
+            title={item.title}
+            detail={item.detail}
+            time={timeLabel(item.at)}
+            tone="text-amber-600 dark:text-amber-300"
+            action={copy.decideFolder || "Allow or decline"}
+            onOpen={() => navigate.folder?.(item)}
           />
         ))}
       </Section>

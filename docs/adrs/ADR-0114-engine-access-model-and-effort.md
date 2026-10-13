@@ -102,6 +102,13 @@ only when the model is `moa`, and sent as `--thinking <level>` on the CLI
 path. The Autohand SDK session exposes no thinking option, so a warm SDK
 turn ignores it; this is recorded here rather than hidden.
 
+## Revision, 2026-10-14: full by default, and the send path
+
+See ADR-0120: access is `full` unless chosen otherwise, and the main send
+path (`sendPromptNow`) now forwards `effort` and `access`; until then the
+composer's choice never reached the bridge, which is why plan mode seemed
+sticky.
+
 ## Consequences
 
 - A per-turn Full access choice bypasses every Claude Code prompt and every

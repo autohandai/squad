@@ -322,6 +322,8 @@ const UI_COPY_BY_LANGUAGE = {
     openCli: "Open CLI",
     openInTerminal: "Open in Terminal",
     policy: "Policy",
+    inboxFolders: "Folder access",
+    decideFolder: "Allow or decline",
     access: "Access",
     effort: "Reasoning effort",
     engineDefault: "Engine default",
