@@ -63,6 +63,8 @@ list to the section for that version.
 
 ### Fixed
 
+- Squad no longer gets stuck on "Waking the squad" after an update. Watching your members' folders under Documents waited for macOS to ask for permission, which froze the app's local service, and the new supervisor then restarted it before you could answer. Folder watching now runs on its own, and the supervisor waits a minute before restarting a service that is still running.
+
 - A member running on Claude Code, Codex or an ACP agent no longer shows "Autohand AI / moa" as its model in the chat header, the profile preview or `/model`. It now names the engine and its model ("Claude · fable", "Codex · gpt-6.1-sol"), or "Claude default" when the engine picks; Autohand members are unchanged. Replies show the same.
 - Drafting an automation never takes over the member's conversation: one-off runs no longer replace the engine session the chat resumes.
 - Replies are readable again: bullets sit beside their text instead of above it, and numbered lists keep their numbers.

@@ -192,17 +192,33 @@ export class ProjectObserver {
   async snapshot(){await this.ready;return {settings:structuredClone(this.store.settings),members:this.store.members.map(member=>({id:member.id,name:member.name,role:member.role,status:member.status,projects:member.projects})),observations:structuredClone(Object.values(this.store.observations)),notices:structuredClone(this.store.notices),limits:structuredClone(this.store.daily),running:Boolean(this.timer),activeMemberId:this.active?.memberId||null};}
   async start(){await this.ready;if(this.timer)return;this.closed=false;await this.syncWatches();this.timer=setTimeout(()=>this.loop(),this.startupDelayMs);this.timer.unref?.();}
   async loop(){if(this.closed)return;try{await this.tick();}catch(error){this.emit('project.observer.error',{error:error.message});}if(!this.closed){this.timer=setTimeout(()=>this.loop(),this.pollIntervalMs);this.timer.unref?.();}}
-  stop(){this.closed=true;clearTimeout(this.timer);this.timer=null;this.active?.controller.abort();for(const watcher of this.watchers.values())watcher.close();this.watchers.clear();}
+  stop(){this.closed=true;clearTimeout(this.timer);this.timer=null;this.active?.controller.abort();this.stopWatcher();this.watchers.clear();}
+  stopWatcher(){const child=this.watcherWorker;this.watcherWorker=null;if(child&&child.exitCode===null){try{child.kill("SIGKILL");}catch{}}}
   deferMember(memberId,reason='Human work takes priority.') {if(this.active?.memberId===memberId){this.active.reason=reason;this.active.controller.abort();}}
   async syncWatches(){
     if(!this.watchEnabled)return;
-    const projects=new Set(this.store.settings.observeAssignedProjects?this.store.members.flatMap(member=>member.projects.map(project=>project.path)).slice(0,32):[]);
-    for(const [path,watcher] of this.watchers)if(!projects.has(path)){watcher.close();this.watchers.delete(path);}
-    const {watch}=await import('node:fs');
-    for(const path of projects)if(!this.watchers.has(path)){
-      const changed=(_event,filename)=>{const file=String(filename||'');if(file&&!allowedPath(file,{}))return;for(const member of this.store.members)if(member.projects.some(project=>project.path===path)){const entry=this.store.observations[`${member.id}:${path}`];if(entry)entry.nextScanAt=Math.min(entry.nextScanAt||0,this.now()+30_000);}};
-      try {const watcher=watch(path,{recursive:process.platform==='darwin'||process.platform==='win32',persistent:false},changed);watcher.on('error',()=>{watcher.close();this.watchers.delete(path);});this.watchers.set(path,watcher);}catch{/* Polling remains authoritative when a platform/folder cannot be watched. */}
+    const projects=[...new Set(this.store.settings.observeAssignedProjects?this.store.members.flatMap(member=>member.projects.map(project=>project.path)).slice(0,32):[])];
+    // fs.watch runs in a child process (ADR-0123): opening a folder under a
+    // privacy-protected location can block until a prompt is answered; on
+    // the main thread that froze the whole bridge, and in a worker thread it
+    // blocked process.exit.
+    if(!this.watcherWorker&&projects.length){
+      const {fork}=await import('node:child_process');
+      const child=fork(new URL('./project-observer-watcher.mjs',import.meta.url),[],{stdio:['ignore','ignore','ignore','ipc'],serialization:'json'});
+      this.watcherWorker=child;
+      // A child stuck in open() would outlive the bridge; kill it on exit.
+      const killOnExit=()=>{try{child.kill('SIGKILL');}catch{}};
+      process.once('exit',killOnExit);
+      child.unref();child.channel?.unref?.();
+      child.on('exit',()=>{process.off('exit',killOnExit);if(this.watcherWorker===child)this.watcherWorker=null;});
+      child.on('error',()=>{if(this.watcherWorker===child)this.watcherWorker=null;});
+      child.on('message',({path,filename}={})=>{
+        const file=String(filename||'');if(file&&!allowedPath(file,{}))return;
+        for(const member of this.store.members)if(member.projects.some(project=>project.path===path)){const entry=this.store.observations[`${member.id}:${path}`];if(entry)entry.nextScanAt=Math.min(entry.nextScanAt||0,this.now()+30_000);}
+      });
     }
+    this.watchers=new Map(projects.map(path=>[path,true]));
+    try{this.watcherWorker?.send({paths:projects});}catch{}
   }
   async eligible(member){
     const state=await this.getRuntimeState(member);

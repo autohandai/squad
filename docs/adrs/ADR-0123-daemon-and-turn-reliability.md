@@ -212,6 +212,44 @@ Also run on this change: `bun run build`, `check:render`,
 running record restores as nothing was changed to expect `interrupted`),
 `check:harness`. All pass.
 
+## Second revision, 2026-10-14: the supervisor killed a bridge that was waiting for a person
+
+The first install with bridge supervision never came up. The daemon logged
+"web server did not answer probe 1 of 3 (pid … alive)" and restarted the
+bridge every 15 to 20 seconds (seven restarts in a few minutes). Each bridge
+printed "listening" and then answered nothing, not even `/` for static
+files, at 0% CPU. The same runtime binary, environment and a copy of the
+state answered in two seconds when started from a terminal. That first
+reproduction misled: the terminal already holds Documents access.
+
+`sample` on the stuck process showed the main thread in `open()` called from
+`uv_fs_event_start`, that is `fs.watch`, from the project observer
+(ADR-0071), which watches every member's assigned folders. All of them are
+under `~/Documents`. The user's privacy database showed Documents access
+granted to `ai.autohand.squad` at 01:38 for the previous build. The app is
+ad-hoc signed, so each rebuild is a new identity to macOS and the grant does
+not carry over. The first `fs.watch` waited on the Documents prompt, which
+froze the main thread. The supervisor killed it after 15 seconds and the
+next process asked again. No log line said so; the system log query for TCC
+events returned nothing.
+
+Decision. Folder watching moves out of the bridge into its own process
+(`server/project-observer-watcher.mjs`, forked with IPC, killed with
+SIGKILL on stop and on bridge exit). A worker thread was tried first and
+rejected: a worker stuck in `open()` also blocks `process.exit`, so the
+bridge could not stop. The daemon waits twelve probes (a minute) before it
+restarts a bridge that is alive but silent; a process that is gone is still
+restarted at once. `scripts/check-observer-watch.mjs` gives the observer a
+named pipe as a project folder (its `open` blocks the same way) and asserts
+the main thread keeps running, then that a real folder change still
+arrives; against the old observer the check hangs.
+
+Consequences of this revision: a member's folders are watched only after
+the person answers the Documents prompt, and until then the observer polls;
+each rebuild of an ad-hoc signed app asks again, which a stable signing
+identity would avoid; a bridge that is genuinely hung now takes a minute
+rather than 15 seconds to be replaced.
+
 ## Consequences
 
 - One automatic retry costs 750 ms plus a second spawn on a disk that is

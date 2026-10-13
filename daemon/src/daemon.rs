@@ -948,8 +948,12 @@ async fn send_ping(state: &AppState, metrics: DaemonMetrics) -> crate::api::Ping
 
 /// Seconds between probes of `GET /api/runtime` (800 ms deadline each).
 const BRIDGE_PROBE_INTERVAL: Duration = Duration::from_secs(5);
-/// Consecutive failed probes before an unresponsive bridge is restarted.
-pub(crate) const BRIDGE_PROBE_FAILURES_BEFORE_RESTART: u32 = 3;
+/// Consecutive failed probes before a bridge that is alive but silent is
+/// restarted: a minute. Three probes (15 s) killed a bridge that was waiting
+/// on macOS's Documents-folder privacy prompt before anyone could answer it,
+/// every time, and each new process asked again (ADR-0123, second revision).
+/// A gone process is still restarted at once.
+pub(crate) const BRIDGE_PROBE_FAILURES_BEFORE_RESTART: u32 = 12;
 const BRIDGE_RESTART_BACKOFF_BASE: Duration = Duration::from_secs(5);
 const BRIDGE_RESTART_BACKOFF_CAP: Duration = Duration::from_secs(60);
 
@@ -1979,17 +1983,21 @@ mod tests {
             bridge_action(true, true, false, false, 0),
             BridgeAction::Restart(_)
         ));
-        // Alive but silent: wait for the deadline (three probes), then restart.
+        // Alive but silent: wait a minute (twelve probes), then restart.
         assert_eq!(
             bridge_action(true, true, true, false, 0),
             BridgeAction::Wait
         );
         assert_eq!(
-            bridge_action(true, true, true, false, 1),
+            bridge_action(true, true, true, false, 2),
+            BridgeAction::Wait
+        );
+        assert_eq!(
+            bridge_action(true, true, true, false, 10),
             BridgeAction::Wait
         );
         assert!(matches!(
-            bridge_action(true, true, true, false, 2),
+            bridge_action(true, true, true, false, 11),
             BridgeAction::Restart(_)
         ));
         // Backoff doubles and caps at a minute.
