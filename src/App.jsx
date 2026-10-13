@@ -4657,6 +4657,12 @@ function App() {
   // conversations themselves live in <squadStateDir>/chats.
   const [previousChatsByAgent, setPreviousChatsByAgent] = useState({});
   const [previousChatsLoading, setPreviousChatsLoading] = useState(false);
+  // Member routines (ADR-0110) are declared here, with the other state, because
+  // the Needs-you count reads routineProposals long before the routines block
+  // below; declared there, the first render threw "Cannot access
+  // 'routineProposals' before initialization" and the app could not render.
+  const [routines, setRoutines] = useState([]);
+  const [routineProposals, setRoutineProposals] = useState([]);
   const memberAccessWritesRef = useRef(new Map());
   const membersRef = useRef(agents);
   membersRef.current = agents;
@@ -8283,8 +8289,6 @@ function App() {
   // Member routines (ADR-0110). The bridge owns schedules, run history and
   // chat proposals; the app reads them, confirms or declines proposals, and
   // dispatches runs for members the bridge cannot run on its own.
-  const [routines, setRoutines] = useState([]);
-  const [routineProposals, setRoutineProposals] = useState([]);
   const dispatchedRoutineRunsRef = useRef(new Set());
   const loadRoutines = useCallback(async () => {
     const [list, proposals] = await Promise.all([api("/api/routines"), api("/api/routines/proposals?status=proposed")]);

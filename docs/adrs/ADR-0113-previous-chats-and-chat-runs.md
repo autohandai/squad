@@ -98,6 +98,31 @@ run-channel-actions, routines, audit, remote-access, member-goals all pass;
 queues passed three times in a row after one timeout that coincided with
 the web build running on the same machine.
 
+## What was learnt: the app could not render and 79 checks passed
+
+The first install of this change opened to "Autohand Squad could not
+render — Cannot access uninitialized variable". Headless Chrome against the
+installed bridge gave `ReferenceError: Cannot access 'Kl' before
+initialization`; an unminified build (`vite build --minify false`) named
+it: `routineProposals`. The routines lane (ADR-0110) declared
+`const [routineProposals] = useState([])` about 1,800 lines below the
+Needs-you count that reads `routineProposals.length`, and the merge put the
+count first. Nothing in `bun run ci` executes the bundle: `check:web` only
+builds it, and the browser checks are outside the chain. The wrong first
+diagnosis was that the fix "held" because a second `--dump-dom` run showed
+no error: that dump was empty, because the repaired app polls the bridge and
+virtual time never settles, so Chrome printed nothing. Silence looked like
+success.
+
+Decision: the two routines state hooks move up beside the other state, and
+`scripts/check-render.mjs` (`bun run check:render`, in the chain right
+after `check:web`) serves `dist/` through a throwaway bridge, opens it in
+headless Chrome over the DevTools protocol, and fails on the error boundary,
+any uncaught exception, or an empty `#root`. Run against the broken bundle
+it reports the boundary and the `ReferenceError`; against the fixed one it
+passes. Without Chrome it warns and passes unless
+`AUTOHAND_REQUIRE_BROWSER=1`.
+
 ## Consequences
 
 - The Runs tab now fills with every reply, so a busy member produces a long
@@ -117,3 +142,5 @@ the web build running on the same machine.
   details show the same activity from two records.
 - Runs that were live at a crash are not recovered as "interrupted"; they
   are absent, while queues and goals keep their own recovery.
+- The render check needs Chrome; on a machine without one it only warns,
+  so the chain can still pass without having rendered the app there.

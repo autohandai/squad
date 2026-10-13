@@ -39,6 +39,7 @@ list to the section for that version.
 
 ### Fixed
 
+- The app no longer opens to "Autohand Squad could not render — Cannot access uninitialized variable" after the routines update; a value was read before it was set up. The build is now opened in a browser as part of the checks so this cannot pass unnoticed again.
 - New chat with a Claude Code or Codex member now really starts a new conversation. Before, the engine was resumed with its previous session id, so the "new" chat silently carried the old context.
 
 ## [0.1.6] - 2026-10-13
