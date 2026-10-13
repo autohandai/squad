@@ -32,3 +32,7 @@ src-tauri/target/
 src-tauri/runtime/
 src-tauri/binaries/
 src-tauri/gen/
+
+# symlinks used by lane worktrees (dir patterns above do not match symlinks)
+/node_modules
+/vendor
