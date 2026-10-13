@@ -110,7 +110,7 @@ export class AutohandSDK {
   const visibleMessages=sse.split('\n\n').filter(b=>b.startsWith('event: sdk\n')).map(b=>JSON.parse(b.split('\ndata: ')[1])).filter(e=>e.type==='message_end');
   assert.ok(visibleMessages.every(e=>!e.content.includes('<squad_')),'private goal report is hidden');
   const invocations=(await calls()).filter(c=>c.member==='pursuit'&&c.kind==='start');
-  assert.equal(invocations.length,2);assert.equal(invocations[0].cwd,rootDir);assert.deepEqual(invocations[1].args.slice(0,3),['exec','resume','fixture-pursuit']);
+  assert.equal(invocations.length,2);assert.equal(invocations[0].cwd,rootDir);const execAt=invocations[1].args.indexOf('exec');assert.ok(execAt>=0,'codex exec present after any global -c overrides (ADR-0104)');assert.deepEqual(invocations[1].args.slice(execAt,execAt+3),['exec','resume','fixture-pursuit']);
   assert.equal((await api('/api/goals?agentId=pursuit')).data.length,1);
 
   const claudeLaunch=payload('claude-pursuit','Verify selected workspace');claudeLaunch.agent.harness.id='claude';
