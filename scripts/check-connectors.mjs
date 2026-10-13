@@ -274,9 +274,14 @@ console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture clau
   assert.ok(codexSeen.overrides.some((value) => value.startsWith('mcp_servers.squad-connector-web-research.env=') && value.includes(SECRETS.firecrawl)));
   const claudeSeen = harnessSeen.filter((entry) => entry.harness === 'claude');
   assert.equal(claudeSeen.length, 2);
-  assert.equal(claudeSeen[0].configs.length, 1); assert.deepEqual(Object.keys(claudeSeen[0].contents[0].mcpServers), ['squad-connector-web-research', `squad-connector-${newline.id}`]);
-  assert.equal(claudeSeen[0].contents[0].mcpServers['squad-connector-web-research'].env.FIRECRAWL_API_KEY, SECRETS.firecrawl);
-  assert.equal(claudeSeen[1].configs.length, 0, 'a blocked member gets no --mcp-config');
+  // Other managed servers (Computer Use, the vault, ADR-0104) travel in their own
+  // --mcp-config file, so find the connectors file rather than expecting one file.
+  const isConnectorConfig = (contents) => Object.keys(contents?.mcpServers || {}).some((key) => key.startsWith('squad-connector-'));
+  const connectorConfig = claudeSeen[0].contents.find(isConnectorConfig);
+  assert.ok(connectorConfig, 'connectors travel to Claude in a --mcp-config file');
+  assert.deepEqual(Object.keys(connectorConfig.mcpServers), ['squad-connector-web-research', `squad-connector-${newline.id}`]);
+  assert.equal(connectorConfig.mcpServers['squad-connector-web-research'].env.FIRECRAWL_API_KEY, SECRETS.firecrawl);
+  assert.ok(!claudeSeen[1].contents.some(isConnectorConfig), 'a blocked member gets no connectors --mcp-config');
   assert.equal((await stat(claudeSeen[0].configs[0])).mode & 0o777, 0o600);
   assert.deepEqual(claudeMcpConfig([{ serverName: 'squad-connector-x', kind: 'url', transport: 'sse', url: 'https://x.example/sse', headers: { Authorization: 'Bearer t' } }]), { mcpServers: { 'squad-connector-x': { type: 'sse', url: 'https://x.example/sse', headers: { Authorization: 'Bearer t' } } } });
   assert.deepEqual(codexConfigArgs([{ serverName: 'squad-connector-x', kind: 'url', url: 'https://x.example/mcp', headers: { Authorization: 'Bearer t' } }]), ['-c', 'mcp_servers.squad-connector-x.url="https://x.example/mcp"', '-c', 'mcp_servers.squad-connector-x.http_headers={"Authorization"="Bearer t"}']);
