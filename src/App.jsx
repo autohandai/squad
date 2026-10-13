@@ -91,6 +91,7 @@ import {
   Plus,
   RefreshCw,
   Share2,
+  Smartphone,
   ScanSearch,
   Search,
   Send,
@@ -280,6 +281,7 @@ import { RunsOnSettings } from "@/components/members/RunsOnSettings";
 import { BootChecks } from "@/components/shell/BootChecks";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
+import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
 import { LOCAL_WORKSPACE_ID, buildWorkspaceList, memberOwnership, ownershipLabel, peopleSentence, selectWorkspace } from "@/lib/workspaces";
 import { beginBreak, endBreak, isOnBreak, memberAvailability } from "@/lib/member-availability";
 import { briefingContext, buildBriefing, hasNews } from "@/lib/member-briefing";
@@ -307,6 +309,7 @@ import { ComputerUseEvidence } from "@/components/computer-use/ComputerUseEviden
 import { useComputerUseEvidence } from "@/components/computer-use/useComputerUseEvidence";
 import { evidenceForMessage } from "@/components/computer-use/model";
 import { goalMessagePatch, goalProgress, isGoalRunning, latestMemberGoal, reconcileGoalMessages } from "@/lib/member-goals";
+import { reconcileRemoteTurns, remoteAccessDetail } from "@/lib/remote-access";
 import { taskProgressFromMessage } from "@/lib/task-progress";
 import { SidebarUpdateNotice } from "@/components/account/SidebarUpdateNotice";
 import { identifySquadTelemetry, recordSignInStarted, recordMemberCreated, recordMemberUsed, recordFeatureUsed } from "@/lib/product-telemetry";
@@ -474,6 +477,7 @@ const SETTINGS_SECTION_IDS = Object.freeze([
   "mission-control",
   "runtime",
   "relay",
+  "remote-access",
   "updates",
 ]);
 
@@ -5762,6 +5766,25 @@ function App() {
   const [relayConfig, setRelayConfig] = useState({ url: "", workspace: "", enabled: false, hasToken: false });
   const [relayStatus, setRelayStatus] = useState({ configured: false, connected: false, peers: [], self: null });
   const [workspaceSelection, setWorkspaceSelection] = useState({ selectedId: LOCAL_WORKSPACE_ID });
+  // Telegram remote access (ADR-0088): the bridge owns the bot and the paired
+  // account; the app only shows its status and reconciles the turns it ran.
+  const [remoteAccess, setRemoteAccess] = useState({ configured: false, polling: false, paired: null, pairing: null, notifyMode: "long" });
+  const refreshRemoteAccess = useCallback(async () => {
+    try {
+      setRemoteAccess(await api("/api/remote-access/status"));
+    } catch {
+      // The route is optional; Settings simply shows Off.
+    }
+  }, []);
+  useEffect(() => { void refreshRemoteAccess(); }, [refreshRemoteAccess]);
+  const remoteAccessActions = useMemo(() => ({
+    refresh: refreshRemoteAccess,
+    connect: async (token) => setRemoteAccess(await api("/api/remote-access/token", { method: "PUT", body: JSON.stringify({ token }) })),
+    disconnect: async () => setRemoteAccess(await api("/api/remote-access/token", { method: "DELETE" })),
+    unpair: async () => setRemoteAccess(await api("/api/remote-access/unpair", { method: "POST" })),
+    rotatePairing: async () => setRemoteAccess(await api("/api/remote-access/pairing/rotate", { method: "POST" })),
+    setNotifyMode: async (notifyMode) => setRemoteAccess(await api("/api/remote-access/settings", { method: "PUT", body: JSON.stringify({ notifyMode }) })),
+  }), [refreshRemoteAccess]);
   const refreshRelayStatus = useCallback(async () => {
     try {
       setRelayStatus(await api("/api/relay/status"));
@@ -5881,6 +5904,11 @@ function App() {
       pending = true;
       await Promise.allSettled([
         refreshMemberGoals(),
+        api("/api/remote-access/turns").then((data) => {
+          if (cancelled) return;
+          const turns = Array.isArray(data?.turns) ? data.turns : [];
+          if (turns.length) setMessagesByAgent((current) => reconcileRemoteTurns(current, turns, membersRef.current, localeResolution.locale));
+        }),
         api("/api/members/breaks").then((records) => {
           if (cancelled) return;
           setAgents((current) => {
@@ -5902,7 +5930,7 @@ function App() {
     void pollMemberWork();
     const timer = window.setInterval(pollMemberWork, 2500);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [refreshMemberGoals]);
+  }, [refreshMemberGoals, localeResolution.locale]);
 
   async function controlMemberGoal(action, goal) {
     const updated = await api(`/api/goals/${encodeURIComponent(goal.id)}/${action}`, { method: "POST" });
@@ -9157,6 +9185,8 @@ function App() {
                 onSyncRelay={async () => {
                   setRelayStatus(await api("/api/relay/sync", { method: "POST" }));
                 }}
+                remoteAccess={remoteAccess}
+                remoteAccessActions={remoteAccessActions}
               />
             ) : isCreate ? (
               <CreateAgent
@@ -24567,6 +24597,8 @@ function SettingsPage({
   relayStatus,
   onSaveRelayConfig,
   onSyncRelay,
+  remoteAccess = null,
+  remoteAccessActions = null,
 }) {
   const [searchRebuild, setSearchRebuild] = useState({ state: "idle", total: 0, error: "" });
   async function rebuildSearch() {
@@ -24653,6 +24685,7 @@ function SettingsPage({
     { id: "mission-control", icon: Monitor, label: copy.needsYou || "Needs you", detail: missionControlDetail },
     { id: "runtime", icon: Server, label: copy.runtimeBridge, detail: runtime?.version || copy.checkingRuntime },
     { id: "relay", icon: Share2, label: copy.relay || "Relay", detail: relayStatusDetail(relayConfig, relayStatus, copy) },
+    { id: "remote-access", icon: Smartphone, label: copy.remoteAccess || "Remote access", detail: remoteAccessDetail(remoteAccess, copy) },
     { id: "updates", icon: RefreshCw, label: "Updates", detail: updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} available` : `Version ${updates?.appVersion || "—"}` },
   ];
   settingsSections.unshift({ id: "setup", icon: ListChecks, label: copy.setupGuide || "Setup guide", detail: copy.setupGuideDetail || "Run the first-run checks again" });
@@ -25159,6 +25192,23 @@ function SettingsPage({
                 status={relayStatus}
                 onSave={onSaveRelayConfig}
                 onSync={onSyncRelay}
+                copy={copy}
+              />
+            </section>
+
+            <section id="settings-remote-access" className="scroll-mt-6 border-b border-border/70 py-8 last:border-b-0">
+              <SettingsSectionHeader
+                title={copy.remoteAccess || "Remote access"}
+                description={copy.remoteAccessDescription || "Talk to your members from Telegram while Squad keeps running here. The bridge polls Telegram from this machine; nothing is opened to the internet, and only the one account you pair is answered."}
+              />
+              <RemoteAccessSettings
+                status={remoteAccess || {}}
+                onConnect={remoteAccessActions?.connect}
+                onDisconnect={remoteAccessActions?.disconnect}
+                onUnpair={remoteAccessActions?.unpair}
+                onRotatePairing={remoteAccessActions?.rotatePairing}
+                onNotifyMode={remoteAccessActions?.setNotifyMode}
+                onRefresh={remoteAccessActions?.refresh}
                 copy={copy}
               />
             </section>
