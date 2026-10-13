@@ -49,6 +49,65 @@ let bridgeContext = null;
 let listening = false;
 
 // ---------------------------------------------------------------------------
+// The one scheduler (ADR-0110)
+//
+// This route owns the bridge's only ticking loop. Other modules that need
+// time-driven work (member routines) register a participant and are called
+// from the same tick with the same `since`/`now` window, so there is one
+// clock, one interval and one place to reason about missed ticks.
+//
+// The clock is real time unless AUTOHAND_SQUAD_SCHEDULER_CLOCK names an ISO
+// instant, in which case the scheduler starts there and advances with real
+// time. Checks use it to reach "the right minute" in seconds; nothing else
+// reads it. AUTOHAND_SQUAD_SCHEDULER_TICK_MS shortens the interval the same
+// way.
+
+const CLOCK_OFFSET_MS = (() => {
+  const value = process.env.AUTOHAND_SQUAD_SCHEDULER_CLOCK;
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed - Date.now() : 0;
+})();
+
+export function schedulerNow() {
+  return new Date(Date.now() + CLOCK_OFFSET_MS);
+}
+
+const participants = new Set();
+
+/** Register `fn(ctx, { since, now })` to run on every scheduler tick. */
+export function registerTickParticipant(fn) {
+  participants.add(fn);
+  return () => participants.delete(fn);
+}
+
+function configuredTickMs() {
+  const value = Number(process.env.AUTOHAND_SQUAD_SCHEDULER_TICK_MS);
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_TICK_MS;
+}
+
+/**
+ * Start a member run on the bridge itself: the shared executor for schedule
+ * workflows and member routines. The member must be known to the bridge
+ * (saved profile or a registered channel-action copy) and the run needs a
+ * workspace; the run advances from the bridge's own run.finished event.
+ */
+export async function startBridgeMemberRun(ctx, { memberId, agent = undefined, prompt, workspace, title, channelId = "", channel = null, transport = undefined, timeoutMs = undefined, marker = {} }) {
+  return ctx.startRun({
+    agentId: memberId,
+    ...(agent ? { agent } : {}),
+    prompt,
+    workspace,
+    title,
+    ...(transport ? { transport } : {}),
+    ...(timeoutMs ? { timeoutMs } : {}),
+    ...(channelId ? { channelId, memberIds: [memberId] } : {}),
+    ...(channel ? { channel } : {}),
+    ...marker,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Store
 
 function storePath(ctx) {
@@ -252,22 +311,18 @@ async function startOnBridge(ctx, workflow, run, next) {
   const now = new Date().toISOString();
   const channel = await channelRecord(ctx, workflow.channelId);
   try {
-    const memberRun = await ctx.startRun({
-      agentId: next.memberId,
+    const memberRun = await startBridgeMemberRun(ctx, {
+      memberId: next.memberId,
       prompt: next.prompt,
       workspace: next.workspace,
       title: `${workflow.name} · ${next.step.id}`,
       transport: "cli",
       timeoutMs: 300000,
       channelId: workflow.channelId,
-      memberIds: [next.memberId],
       channel: channel
         ? { id: channel.id, name: channel.name, visibility: channel.visibility, memberIds: [next.memberId], channelMemberIds: channel.memberIds || [], targetLabel: workflow.name }
         : { id: workflow.channelId, name: "", memberIds: [next.memberId] },
-      workflowRunId: run.id,
-      workflowId: workflow.id,
-      workflowName: workflow.name,
-      stepId: next.step.id,
+      marker: { workflowRunId: run.id, workflowId: workflow.id, workflowName: workflow.name, stepId: next.step.id },
     });
     const started = nextRunState(workflow, run, { type: "step.started", stepId: next.step.id, memberRunId: memberRun?.id || "" }, { now });
     log(ctx, ctx.SEVERITY.INFO, `workflow ${workflow.name} started ${next.step.id} on the bridge`, runAttributes(workflow, started, { "event.name": "workflow.step.started", "autohand.workflow.step_id": next.step.id, "autohand.run.id": memberRun?.id || "" }));
@@ -306,14 +361,25 @@ function onMemberRunFinished(ctx, event) {
 // ---------------------------------------------------------------------------
 // Scheduler
 
-/** Fire every schedule workflow due between `since` and `now`. Exported for the check. */
-export async function tick(ctx, { since = lastTick || new Date(), now = new Date() } = {}) {
+/**
+ * Fire every schedule workflow due between `since` and `now`, then give each
+ * registered participant (member routines) the same window. Exported for
+ * the check. A participant that throws is logged and never blocks the rest.
+ */
+export async function tick(ctx, { since = lastTick || schedulerNow(), now = schedulerNow() } = {}) {
   await loadStore(ctx);
   lastTick = now;
   const fired = [];
   for (const { workflow } of dueSchedules(allWorkflows(), since, now)) {
     const { run } = await startWorkflowRun(ctx, workflow, { type: "schedule", key: `${workflow.id}:schedule:${now.toISOString()}` });
     fired.push({ workflowId: workflow.id, runId: run.id, channelId: workflow.channelId });
+  }
+  for (const participant of participants) {
+    try {
+      await participant(ctx, { since, now });
+    } catch (error) {
+      log(ctx, ctx.SEVERITY.ERROR, `scheduler participant failed: ${error?.message || error}`, { "event.name": "workflow.scheduler.participant_failed" });
+    }
   }
   return fired;
 }
@@ -323,7 +389,7 @@ export function stop() {
   timer = null;
 }
 
-export async function init(ctx, { tickMs = DEFAULT_TICK_MS } = {}) {
+export async function init(ctx, { tickMs = configuredTickMs() } = {}) {
   bridgeContext = ctx;
   await loadStore(ctx);
   if (!listening && ctx.events?.on) {
@@ -331,7 +397,7 @@ export async function init(ctx, { tickMs = DEFAULT_TICK_MS } = {}) {
     listening = true;
   }
   stop();
-  lastTick = new Date();
+  lastTick = schedulerNow();
   if (tickMs > 0) {
     timer = setInterval(() => {
       tick(bridgeContext).catch((error) => log(bridgeContext, bridgeContext.SEVERITY.ERROR, `workflow scheduler tick failed: ${error?.message || error}`, { "event.name": "workflow.scheduler.failed" }));

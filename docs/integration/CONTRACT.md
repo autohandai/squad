@@ -95,7 +95,9 @@ Route paths are matched with plain string comparison or a `RegExp` on
 | `mutateChannelsState(operation)` | async fn | Runs the callback against fresh channel state inside the shared mutation queue, then commits atomically. Use for read-modify-write changes; snapshot replacement checks a supplied `revision`. |
 | `agentChannelActions` | object | Shared turn completion handler and durable proposal decisions (ADR-0075). `agentChannelAccess` and `agentChannelActions` in channel state are bridge-owned; browser snapshots cannot grant, erase or forge them. |
 | `vault` | object | `store` (list/add/remove views), `requests` (pending secret and payment requests), `dispatch` for the managed MCP server; values never leave the bridge (ADR-0104) |
+| `agentChannelActions` | object | Shared turn completion handler and durable proposal decisions (ADR-0075). `registerHandler(type, fn)` routes another `SQUAD_ACTION` type (ADR-0110 `schedule`) to a module; `memberAccess(id)` reads a registered member copy. `agentChannelAccess` and `agentChannelActions` in channel state are bridge-owned; browser snapshots cannot grant, erase or forge them. |
 | `startRun(payload)` | async fn | start a member run (same payload as `POST /api/runs`) |
+| `stopRun(runId, reason)` | async fn | stop a live run the bridge started (same path as `POST /api/runs/:id/stop`); `false` when not live (ADR-0110) |
 | `events` | EventEmitter | `bridgeEvents`; also `ctx.emit(name, payload)` |
 | `getRuntime()` | fn | the `/api/runtime` snapshot (account, versions, paths) |
 | `cleanWorkspace(path)` | async fn | validates a folder path inside the home directory, returns the normalized path or throws |
@@ -116,6 +118,7 @@ should accept it in the request body or read `ctx.readOptionalJsonFile(join(squa
 | `shell.ran` | `{ memberId?, command, exitCode, workspace }` |
 | `handoff.pending` | `{ taskId, fromMemberId, toMemberId, title }` (emitted by the web app through `POST /api/events`) |
 | `approval.pending` | `{ workflowId, runId, channelId, stepId }` |
+| `routine.run` / `routine.finished` / `routines.changed` | `{ routineId, runId, memberId, status, dispatch?, trigger? }` (ADR-0110) |
 | `mention.received` | `{ channelId, memberId, messageId, preview }` |
 | `vault.request.pending` | `{ requestId, memberId, runId, channelId, type: "secret"|"payment", title }` (ADR-0104; notifies as an approval) |
 | `vault.request.resolved` | `{ requestId, memberId, type, action }` |

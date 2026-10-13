@@ -7303,6 +7303,12 @@ function routeContext() {
     mutateChannelsState,
     agentChannelActions,
     startRun,
+    // Stop a live run the bridge started (routine run limits, ADR-0110).
+    // Same path as POST /api/runs/:id/stop; false when the run is not live.
+    stopRun: async (runId, reason = "stopped") => {
+      const run = runs.get(String(runId || ""));
+      return run && isLiveRun(run) ? stopRun(run, reason) : false;
+    },
     events: bridgeEvents,
     emit: emitBridgeEvent,
     getRuntime,

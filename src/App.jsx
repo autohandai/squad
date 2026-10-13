@@ -9,6 +9,10 @@ import { AgentChannelProposals } from "@/components/channels/AgentChannelProposa
 import { VaultRequests, useVaultRequests } from "@/components/chat/VaultRequests";
 import { VaultSettings } from "@/components/settings/VaultSettings";
 import { vaultNeedsYouRows } from "@/lib/vault";
+import { RoutineSchedule } from "@/components/members/RoutineSchedule";
+import { RoutineRunList, RoutineRunRow } from "@/components/members/RoutineRunRow";
+import { RoutineProposalCard } from "@/components/members/RoutineProposalCard";
+import { browserTimeZone, routineDraftFromAutomation, routinePayloadFromAutomation, scheduleActionInstruction, scheduleKindLabel } from "@/lib/routines";
 import { AppInformation } from "@/components/app-info/AppInformation";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
@@ -2839,6 +2843,9 @@ function normalizeAutomationCopy(automation, defaultAgentId = initialAgents[0]?.
     updatedAt: automation?.updatedAt || createdAt,
     lastRun: automation?.lastRun || null,
     runHistory: Array.isArray(automation?.runHistory) ? automation.runHistory : [],
+    // Member routines (ADR-0110): the schedule draft and the bridge routine id.
+    routine: automation?.routine && typeof automation.routine === "object" ? automation.routine : null,
+    routineId: String(automation?.routineId || ""),
   };
 }
 
@@ -2862,6 +2869,7 @@ function automationDraftFrom(automation, agent, defaultWorkspace) {
     eventType: automation?.eventType || "pull_request.opened",
     linkedRepository: automation?.linkedRepository || "",
     webhookPath: automation?.webhookPath || `/api/squad-members/${agent?.id || "member"}/automations/${id || "new"}/run`,
+    routine: routineDraftFromAutomation(automation),
   };
 }
 
@@ -2888,6 +2896,8 @@ function buildAutomationFromDraft(draft, existing, agent, defaultWorkspace) {
       eventType: draft.eventType,
       linkedRepository: draft.linkedRepository.trim(),
       webhookPath: draft.webhookPath || `/api/squad-members/${agent?.id || "member"}/automations/${id}/run`,
+      routine: draft.routine || null,
+      routineId: existing?.routineId || "",
       status: existing?.status || "active",
       createdAt: existing?.createdAt || timestamp,
       updatedAt: timestamp,
@@ -3700,6 +3710,7 @@ const SEARCH_PUSHED_KEY = "autohandSquad.v1.searchPushedAt";
 // Channel workflows (#28): how often the app asks the bridge for steps a
 // schedule or webhook started, and how many fired trigger keys to keep.
 const WORKFLOW_POLL_MS = 10_000;
+const ROUTINE_POLL_MS = 15_000;
 const WORKFLOW_FIRED_KEYS_KEPT = 2000;
 const SEARCH_PUSH_BATCH = 400;
 const SEARCH_FLUSH_MS = 250;
@@ -6445,7 +6456,7 @@ function App() {
     [channels, unreadChannelIds, messagesByChannel]
   );
   const attentionWorkRows = useMemo(() => buildMissionRows({ agents, tasks, runs, runtime, workspaces }), [agents, tasks, runs, runtime, workspaces]);
-  const inboxCount = workAttentionCount({ replies: inboxReplies, unreadChannels: inboxUnreadChannels, approvals: inboxApprovals, handoffs: inboxHandoffs, memoryProposals: inboxMemory, vaultRequests: inboxVault, rows: attentionWorkRows }) + (sidebarCounts.permissionWarnings || 0) + agentChannelActions.filter(action => action.status === "proposed").length;
+  const inboxCount = workAttentionCount({ replies: inboxReplies, unreadChannels: inboxUnreadChannels, approvals: inboxApprovals, handoffs: inboxHandoffs, memoryProposals: inboxMemory, vaultRequests: inboxVault, rows: attentionWorkRows }) + (sidebarCounts.permissionWarnings || 0) + agentChannelActions.filter(action => action.status === "proposed").length + routineProposals.length;
   const attentionBadge = useMemo(() => getAttentionBadgeClient(), []);
   useEffect(() => {
     if (!attentionBadge || !bridgeAnswered || runtime?.bridgeUnavailable) return;
@@ -8196,6 +8207,85 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelsBridgeReady]);
 
+  // Member routines (ADR-0110). The bridge owns schedules, run history and
+  // chat proposals; the app reads them, confirms or declines proposals, and
+  // dispatches runs for members the bridge cannot run on its own.
+  const [routines, setRoutines] = useState([]);
+  const [routineProposals, setRoutineProposals] = useState([]);
+  const dispatchedRoutineRunsRef = useRef(new Set());
+  const loadRoutines = useCallback(async () => {
+    const [list, proposals] = await Promise.all([api("/api/routines"), api("/api/routines/proposals?status=proposed")]);
+    setRoutines(Array.isArray(list?.routines) ? list.routines : []);
+    setRoutineProposals(Array.isArray(proposals?.proposals) ? proposals.proposals : []);
+  }, []);
+  const previewRoutine = previewRoutineOnBridge;
+  async function dispatchRoutineRun(dispatch) {
+    if (!dispatch?.runId || dispatchedRoutineRunsRef.current.has(dispatch.runId)) return;
+    dispatchedRoutineRunsRef.current.add(dispatch.runId);
+    const run = await startAutohand(dispatch.memberId, { prompt: dispatch.prompt, workspace: dispatch.workspace, mode: "auto", modeLabel: "Auto", policy: "restricted", model: dispatch.model || "", dryRun: false });
+    try {
+      if (run?.id) await api(`/api/routines/runs/${encodeURIComponent(dispatch.runId)}/started`, { method: "POST", body: JSON.stringify({ memberRunId: run.id }) });
+      else await api(`/api/routines/runs/${encodeURIComponent(dispatch.runId)}/finished`, { method: "POST", body: JSON.stringify({ status: "failed", preview: "Autohand did not start from the app." }) });
+    } catch {
+      // Already started elsewhere or no longer queued.
+    }
+    await loadRoutines().catch(() => {});
+  }
+  useEffect(() => {
+    if (!channelsBridgeReady) return undefined;
+    let cancelled = false;
+    let busy = false;
+    async function poll() {
+      if (busy || cancelled) return;
+      busy = true;
+      try {
+        const pending = await api("/api/routines/pending");
+        if (cancelled) return;
+        for (const dispatch of Array.isArray(pending?.dispatches) ? pending.dispatches : []) void dispatchRoutineRun(dispatch);
+        await loadRoutines();
+      } catch {
+        // Bridge unavailable or without the routines route; try again next tick.
+      } finally {
+        busy = false;
+      }
+    }
+    void poll();
+    const timer = window.setInterval(poll, ROUTINE_POLL_MS);
+    window.addEventListener("focus", poll);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", poll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelsBridgeReady]);
+  async function decideRoutineProposal(id, decision) {
+    await api(`/api/routines/proposals/${encodeURIComponent(id)}/${decision}`, { method: "POST", body: "{}" });
+    await loadRoutines();
+  }
+  // Keep the bridge routine in step with a member automation: a schedule
+  // creates or updates it, "Manual only" or a deleted automation removes it.
+  async function syncAutomationRoutine(automation) {
+    const payload = automation.triggerType === "schedule" ? routinePayloadFromAutomation(automation) : null;
+    if (!payload) {
+      if (automation.routineId) await api(`/api/routines/${encodeURIComponent(automation.routineId)}`, { method: "DELETE" }).catch(() => {});
+      await loadRoutines().catch(() => {});
+      return { ...automation, routineId: "" };
+    }
+    let saved = null;
+    if (automation.routineId) {
+      saved = await api(`/api/routines/${encodeURIComponent(automation.routineId)}`, { method: "PUT", body: JSON.stringify(payload) }).catch(() => null);
+    }
+    if (!saved) saved = await api("/api/routines", { method: "POST", body: JSON.stringify(payload) });
+    await loadRoutines().catch(() => {});
+    return { ...automation, routineId: saved.id };
+  }
+  async function removeAutomationRoutine(automation) {
+    if (!automation?.routineId) return;
+    await api(`/api/routines/${encodeURIComponent(automation.routineId)}`, { method: "DELETE" }).catch(() => {});
+    await loadRoutines().catch(() => {});
+  }
+
   async function createAgent(draft, options = {}) {
     const id = options.id || createSquadMemberId();
     const timestamp = new Date().toISOString();
@@ -8475,6 +8565,7 @@ function App() {
           tasks: agent.stats.tasks + 1,
         },
       });
+      return run;
     } catch (error) {
       setTasks((current) =>
         current.map((task) =>
@@ -9006,15 +9097,28 @@ function App() {
     if (!automationAgentId) return;
     const automationAgent = agents.find((agent) => agent.id === automationAgentId) || activeAgent;
     const workspace = automation.workspace || workspacePath(automation.target, workspaces, automationAgent?.workspace || fallbackWorkspace);
-    await startAutohand(automationAgentId, {
-      prompt: automation.prompt,
-      workspace,
-      mode: "auto",
-      modeLabel: "Auto",
-      policy: "restricted",
-      model: automation.model === "auto" ? "" : automation.model,
-      dryRun: false,
-    });
+    if (automation.routineId) {
+      // A scheduled automation runs through the same bridge dispatch as its
+      // schedule, so Run now lands in the routine's history (ADR-0110).
+      try {
+        const result = await api(`/api/routines/${encodeURIComponent(automation.routineId)}/run`, { method: "POST", body: "{}" });
+        if (result?.dispatch) await dispatchRoutineRun(result.dispatch);
+        else await loadRoutines().catch(() => {});
+      } catch (error) {
+        appendMessage(automationAgentId, { id: `routine-run-${Date.now()}`, role: "agent", body: `Could not start ${automation.name}: ${error.message}`, status: "complete", time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }) });
+        return;
+      }
+    } else {
+      await startAutohand(automationAgentId, {
+        prompt: automation.prompt,
+        workspace,
+        mode: "auto",
+        modeLabel: "Auto",
+        policy: "restricted",
+        model: automation.model === "auto" ? "" : automation.model,
+        dryRun: false,
+      });
+    }
     const timestamp = new Date().toISOString();
     setAutomations((current) =>
       current.map((item) =>
@@ -9114,6 +9218,7 @@ function App() {
             onLocalMessage={appendMessage} onNewConversation={(id) => startNewConversation(id, { preserveRoute: true })}
             goals={memberGoals.filter((goal) => goal.agentId === member.id)} goalsError={memberGoalsError} onGoalAction={controlMemberGoal} onMemberBreak={setMemberBreak}
             queue={memberQueues[member.id]} contextGauge={memberContext[member.id]} onQueueAction={controlMemberQueue}
+            routineProposals={routineProposals.filter((proposal) => proposal.memberId === member.id)} onRoutineDecision={decideRoutineProposal} onRoutineSync={syncAutomationRoutine}
             openTerminal={openTerminal} navigate={quickNavigate} taskPanelOpen={taskPanelOpen} setTaskPanelOpen={setTaskPanelOpen}
             tasks={tasks.filter((task) => taskBelongsToAgent(task, member.id))} automations={automations.filter((item) => automationBelongsToAgent(item, member.id))}
             setAutomations={setAutomations} runAutomation={runAutomation} updateAgent={updateAgent} chatSettings={chatSettings}
@@ -9481,6 +9586,10 @@ function App() {
                 tasks={tasks.filter((task) => taskBelongsToAgent(task, activeAgent?.id))}
                 automations={activeAutomations}
                 setAutomations={setAutomations}
+                routines={routines}
+                onRoutineSync={syncAutomationRoutine}
+                onRoutineRemove={removeAutomationRoutine}
+                previewRoutine={previewRoutine}
                 memoryInbox={memoryInbox}
                 saveMemoryProposalEdit={saveMemoryProposalEdit}
                 acceptMemoryProposal={acceptMemoryProposal}
@@ -9524,6 +9633,9 @@ function App() {
                 onChat={sendChat}
                 goals={memberGoals.filter((goal) => goal.agentId === activeAgent?.id)}
                 goalsError={memberGoalsError}
+                routineProposals={routineProposals.filter((proposal) => proposal.memberId === activeAgent?.id)}
+                onRoutineDecision={decideRoutineProposal}
+                onRoutineSync={syncAutomationRoutine}
                 onGoalAction={controlMemberGoal}
                 queue={memberQueues[activeAgent?.id]}
                 contextGauge={memberContext[activeAgent?.id]}
@@ -11732,11 +11844,14 @@ function mentionedChannelProjects(text, channel) {
 
 // Maximum member-to-member delegation depth from a direct chat.
 const DM_DELEGATION_MAX_HOPS = 2;
+// Member routines (ADR-0110): the schedule proposal format. The zone is the
+// browser's and stable per machine, so it does not churn the session key.
+const SCHEDULE_ACTION_INSTRUCTION = scheduleActionInstruction(browserTimeZone());
 const CHANNEL_ACTION_INSTRUCTION = 'To propose a shared channel, include one line exactly like: SQUAD_ACTION: {"type":"create_channel","name":"project-name","members":["Noah","Eva"],"purpose":"one sentence"}. Use existing teammates and an assigned workspace. The bridge checks squad_create_channel: ask requires user approval, block refuses, allow creates. Never claim creation before bridge confirmation.';
 
 function buildTeammateContext(agent, agents = [], { hop = 0 } = {}) {
   const teammates = agents.filter((item) => item.id !== agent.id && item.status !== "offline");
-  if (!teammates.length) return CHANNEL_ACTION_INSTRUCTION;
+  if (!teammates.length) return [CHANNEL_ACTION_INSTRUCTION, SCHEDULE_ACTION_INSTRUCTION].join("\n");
   // Deliberately durable: this text is the SDK's system prompt, and the warm
   // session pool keys on it. A teammate's presence label changes whenever any
   // run starts or stops, so including it changed the key between messages and
@@ -11752,6 +11867,7 @@ function buildTeammateContext(agent, agents = [], { hop = 0 } = {}) {
       ? "Delegate parts of the job that belong to a teammate's role (security review, QA, tests, design, deployment) by @mentioning them by name in your reply with a clear ask. EVERY @mention starts that teammate immediately and parallel mentions start together. For ordered implementation, QA, then review, mention only the next teammate; describe later teammates by plain name without @. They receive your message as a handoff, do the work, and report back to you; the user sees both sides. Mention a teammate only when their role is needed now."
       : "You are already working on a delegated task; finish it yourself and do not delegate further.",
     CHANNEL_ACTION_INSTRUCTION,
+    SCHEDULE_ACTION_INSTRUCTION,
   ].join("\n");
 }
 
@@ -11800,6 +11916,7 @@ function buildChannelProfileContext(channel, agent, agents = [], { autoMode, sel
   return [
     "Autohand Squad channel context",
     CHANNEL_ACTION_INSTRUCTION,
+    SCHEDULE_ACTION_INSTRUCTION,
     `Channel: #${channel.name} (${channel.visibility})`,
     threadId ? `Thread: ${threadId}` : "",
     roster.length ? `Channel members:\n${roster.join("\n")}` : "",
@@ -13279,6 +13396,9 @@ function Conversation({
   contextGauge = null,
   onQueueAction,
   onMemberBreak,
+  routineProposals = [],
+  onRoutineDecision,
+  onRoutineSync,
   onNewConversation,
   openTerminal,
   navigate,
@@ -14137,8 +14257,15 @@ function Conversation({
     setTaskPanelOpen(true);
   }
 
-  function saveAutomation(draft) {
-    const saved = buildAutomationFromDraft(draft, null, agent, defaultWorkspace);
+  async function saveAutomation(draft) {
+    let saved = buildAutomationFromDraft(draft, null, agent, defaultWorkspace);
+    if (onRoutineSync) {
+      try {
+        saved = await onRoutineSync(saved);
+      } catch (error) {
+        onLocalMessage?.(agent.id, { id: `routine-save-${Date.now()}`, role: "agent", body: `The schedule was not saved on the bridge: ${error.message}`, status: "complete" });
+      }
+    }
     setAutomations((current) => [saved, ...current]);
     setAutomationFormOpen(false);
   }
@@ -14209,6 +14336,7 @@ function Conversation({
       <div className="flex min-h-0 flex-1 flex-col bg-background" data-testid="quick-chat-conversation">
         {currentGoal ? <div className="shrink-0 px-3"><MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /></div> : null}
         <ScrollArea className="min-h-0 flex-1">
+          <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} className="px-3 sm:px-3" />
           <div className="flex flex-col gap-4 px-3 py-3">
             {hasConversationMessages ? localizedMessages.map((message) => (
               <SquadMessage key={message.id} compact agent={agent} message={message} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} />
@@ -14418,6 +14546,7 @@ function Conversation({
         ) : (
         <ScrollArea className="min-h-0 flex-1">
           {!compact ? <MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /> : null}
+          <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} />
           <div
             className={cn(
               "mx-auto flex w-full max-w-3xl flex-col px-4 py-6 pb-36 sm:px-6",
@@ -18164,6 +18293,7 @@ function formatClockTime(value, locale = DEFAULT_LOCALE) {
 }
 
 function automationScheduleLabel(automation, locale = DEFAULT_LOCALE) {
+  if (automation.triggerType === "schedule" && automation.routine?.kind && automation.routine.kind !== "manual") return scheduleKindLabel(automation.routine);
   if (automation.triggerType === "event") {
     return `${automation.eventSource || "Git"}: ${String(automation.eventType || "repository event").replaceAll("_", " ")}`;
   }
@@ -18181,8 +18311,8 @@ function automationNextRunLabel(automation, locale = DEFAULT_LOCALE) {
   if (automation.status === "paused") return "Paused";
   if (automation.triggerType === "event") return `Waiting for ${automation.eventSource || "Git"} event`;
   if (automation.triggerType === "webhook") return "Waiting for webhook/API call";
-  if (automation.scheduleFrequency === "manual") return "Manual run only";
-  return `Tomorrow ${formatClockTime(automation.scheduleTime, locale)}`;
+  if (automation.scheduleFrequency === "manual" || !automation.routine?.kind || automation.routine.kind === "manual") return "Manual run only";
+  return "Scheduled on the bridge";
 }
 
 function automationTriggerTitle(automation) {
@@ -20780,11 +20910,17 @@ function AutomationsPage({
   route,
   navigate,
   runAutomation,
+  routines = [],
+  onRoutineSync,
+  onRoutineRemove,
+  previewRoutine,
   locale = DEFAULT_LOCALE,
   copy = getLocaleCopy(DEFAULT_LOCALE),
 }) {
   const [formOpen, setFormOpen] = useState(false);
   const [editingAutomation, setEditingAutomation] = useState(null);
+  const [routineError, setRoutineError] = useState("");
+  const routineFor = (automation) => (automation?.routineId ? routines.find((routine) => routine.id === automation.routineId) || null : null);
   const automationId = memberAutomationIdFromRoute(route);
   const selectedAutomation = automations.find((automation) => automation.id === automationId);
   const defaultWorkspace = getAgentWorkspace(agent, runtime, workspaces);
@@ -20799,8 +20935,16 @@ function AutomationsPage({
     setFormOpen(true);
   }
 
-  function saveAutomation(draft) {
-    const saved = buildAutomationFromDraft(draft, editingAutomation, agent, defaultWorkspace);
+  async function saveAutomation(draft) {
+    let saved = buildAutomationFromDraft(draft, editingAutomation, agent, defaultWorkspace);
+    setRoutineError("");
+    if (onRoutineSync) {
+      try {
+        saved = await onRoutineSync(saved);
+      } catch (error) {
+        setRoutineError(`The schedule was not saved on the bridge: ${error.message}`);
+      }
+    }
     setAutomations((current) => {
       const exists = current.some((item) => item.id === saved.id);
       if (exists) {
@@ -20816,6 +20960,7 @@ function AutomationsPage({
   }
 
   function deleteAutomation(automation) {
+    void onRoutineRemove?.(automation);
     setAutomations((current) => current.filter((item) => item.id !== automation.id));
     if (automationId) {
       navigate(automationListPath(agent.id));
@@ -20824,6 +20969,7 @@ function AutomationsPage({
 
   function toggleAutomation(automation) {
     const timestamp = new Date().toISOString();
+    if (automation.routineId && onRoutineSync) void onRoutineSync({ ...automation, status: automation.status === "active" ? "paused" : "active" }).catch((error) => setRoutineError(error.message));
     setAutomations((current) =>
       current.map((item) =>
         item.id === automation.id
@@ -20842,6 +20988,9 @@ function AutomationsPage({
       <AutomationDetailView
         agent={agent}
         automation={selectedAutomation}
+        routine={routineFor(selectedAutomation)}
+        previewRoutine={previewRoutine}
+        routineError={routineError}
         runtime={runtime}
         workspaces={workspaces}
         defaultWorkspace={defaultWorkspace}
@@ -20880,9 +21029,10 @@ function AutomationsPage({
         {automations.length ? (
           <Alert className="border-blue-500/60 bg-blue-950/25 text-blue-100 dark:bg-blue-950/25">
             <InfoIcon />
-            <AlertDescription>Local automations only run while your computer is awake.</AlertDescription>
+            <AlertDescription>Scheduled automations run on the bridge while your computer is awake, even with Squad closed; a routine marked “needs Squad open” waits for the app.</AlertDescription>
           </Alert>
         ) : null}
+        {routineError ? <p role="alert" className="text-sm text-destructive">{routineError}</p> : null}
 
         {automations.length ? (
           <div className="grid gap-4 lg:grid-cols-2">
@@ -20890,6 +21040,7 @@ function AutomationsPage({
               <AutomationCard
                 key={automation.id}
                 automation={automation}
+                routine={routineFor(automation)}
                 agent={agent}
                 navigate={navigate}
                 onEdit={openEdit}
@@ -20910,6 +21061,7 @@ function AutomationsPage({
         defaultWorkspace={defaultWorkspace}
         runtime={runtime}
         workspaces={workspaces}
+        previewRoutine={previewRoutine}
         open={formOpen}
         onOpenChange={(open) => {
           setFormOpen(open);
@@ -20946,7 +21098,7 @@ function AutomationEmptyState({ onCreate }) {
   );
 }
 
-function AutomationCard({ automation, agent, navigate, onEdit, onDelete, onToggle, locale = DEFAULT_LOCALE }) {
+function AutomationCard({ automation, routine = null, agent, navigate, onEdit, onDelete, onToggle, locale = DEFAULT_LOCALE }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -20957,13 +21109,13 @@ function AutomationCard({ automation, agent, navigate, onEdit, onDelete, onToggl
         onClick={() => navigate(automationDetailPath(agent.id, automation.id))}
       >
         <span className="block truncate text-base font-semibold">{automation.name}</span>
-        <span className="mt-3 block text-sm text-muted-foreground">{automationScheduleLabel(automation, locale)}</span>
+        <span className="mt-3 block text-sm text-muted-foreground">{routine?.description ? `${routine.description} · ${routine.schedule?.timeZone || ""}` : automationScheduleLabel(automation, locale)}</span>
       </button>
       <div className="my-5 border-t border-dashed border-border/80" />
       <div className="flex items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
           <Switch checked={automation.status === "active"} onCheckedChange={() => onToggle(automation)} />
-          <span className="truncate text-sm text-muted-foreground">Next: {automationNextRunLabel(automation, locale)}</span>
+          {routine ? <RoutineRunRow routine={routine} locale={locale} compact className="min-w-0" /> : <span className="truncate text-sm text-muted-foreground">Next: {automationNextRunLabel(automation, locale)}</span>}
         </div>
         <div className="relative">
           <Button
@@ -21019,6 +21171,9 @@ function AutomationMenu({ onEdit, onDelete }) {
 function AutomationDetailView({
   agent,
   automation,
+  routine = null,
+  previewRoutine,
+  routineError = "",
   runtime,
   workspaces,
   defaultWorkspace,
@@ -21068,8 +21223,9 @@ function AutomationDetailView({
             <div className="mt-5 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
               <AutomationStatusPill status={automation.status} />
               <span>Created {formatAutomationDate(automation.createdAt, locale)}</span>
-              <span>Next run {automationNextRunLabel(automation, locale)}</span>
+              {routine ? <RoutineRunRow routine={routine} locale={locale} /> : <span>Next run {automationNextRunLabel(automation, locale)}</span>}
             </div>
+            {routineError ? <p role="alert" className="mt-3 text-sm text-destructive">{routineError}</p> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Tooltip>
@@ -21115,7 +21271,7 @@ function AutomationDetailView({
             />
             <AutomationDetailField
               label="Automations"
-              value={automationScheduleLabel(automation, locale)}
+              value={routine?.description ? `${routine.description} · ${routine.schedule?.timeZone || ""}${routine.maxRunMinutes ? ` · stops after ${routine.maxRunMinutes} min` : ""}` : automationScheduleLabel(automation, locale)}
               icon={automation.triggerType === "event" ? GitBranch : automation.triggerType === "webhook" ? Webhook : Clock3}
             />
             {automation.triggerType === "event" ? (
@@ -21132,6 +21288,13 @@ function AutomationDetailView({
             <p className="mt-2 text-sm text-muted-foreground">Since creation</p>
           </aside>
         </section>
+
+        {routine ? (
+          <section>
+            <h2 className="text-xl font-semibold">Scheduled runs</h2>
+            <RoutineRunList routine={routine} locale={locale} className="mt-3" />
+          </section>
+        ) : null}
 
         <section>
           <h2 className="text-xl font-semibold">
@@ -21176,6 +21339,7 @@ function AutomationDetailView({
         defaultWorkspace={defaultWorkspace}
         runtime={runtime}
         workspaces={workspaces}
+        previewRoutine={previewRoutine}
         open={formOpen}
         onOpenChange={(open) => {
           setFormOpen(open);
@@ -21215,7 +21379,13 @@ function AutomationDetailField({ label, value, icon: Icon, accent = false }) {
   );
 }
 
-function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, workspaces, open, onOpenChange, onSave }) {
+// The bridge computes a schedule's rule and next dates (ADR-0110); every
+// editor mount shares this default so none shows an empty Next row.
+function previewRoutineOnBridge(schedule) {
+  return api("/api/routines/preview", { method: "POST", body: JSON.stringify({ schedule }) });
+}
+
+function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, workspaces, previewRoutine = previewRoutineOnBridge, open, onOpenChange, onSave }) {
   const [draft, setDraft] = useState(() => automationDraftFrom(automation, agent, defaultWorkspace));
   const workspaceChoices = workspaceOptions(workspaces, draft.workspace, runtime);
   const projectChoices = normalizeAgentProjects(agent?.projects, agent?.workspace, workspaces);
@@ -21387,35 +21557,9 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
               </section>
 
               {draft.triggerType === "schedule" ? (
-                <section className="grid gap-3 sm:grid-cols-2">
-                  <label className="grid gap-2">
-                    <span className="text-sm font-semibold text-muted-foreground">Schedule</span>
-                    <Select value={draft.scheduleFrequency} onValueChange={(scheduleFrequency) => updateDraft({ scheduleFrequency })}>
-                      <SelectTrigger className="h-10 w-full text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectLabel>Repeat</SelectLabel>
-                          {AUTOMATION_SCHEDULE_FREQUENCIES.map((frequency) => (
-                            <SelectItem key={frequency.id} value={frequency.id}>
-                              {frequency.label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </label>
-                  <label className="grid gap-2">
-                    <span className="text-sm font-semibold text-muted-foreground">Time</span>
-                    <Input
-                      type="time"
-                      value={draft.scheduleTime}
-                      onChange={(event) => updateDraft({ scheduleTime: event.target.value })}
-                      className="h-10 text-sm"
-                      disabled={draft.scheduleFrequency === "manual"}
-                    />
-                  </label>
+                <section className="grid gap-1">
+                  <div className="text-sm font-semibold text-muted-foreground">Schedule</div>
+                  <RoutineSchedule value={draft.routine} onChange={(routine) => updateDraft({ routine })} preview={previewRoutine} />
                 </section>
               ) : null}
 

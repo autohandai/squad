@@ -220,3 +220,7 @@
 - Squad’s Computer Use permission host has its own product identity and System Settings entry. It must not share permission identity with another Autohand product whose signer or lifecycle differs.
 
 - A handoff retry executes the saved receiving checkpoint explicitly; retain completed source work, attempt history and final result return. Busy recipients decline without hidden queueing. Every @mention dispatches immediately; ordered delegation mentions only the next recipient.
+
+- The Automations editor's Schedule section is a divider list of label-and-control rows (Repeat, the kind's own fields, Time zone, Run limit, Next). The next three dates come from the bridge and read as plain text lines; no calendar widget, no card.
+- A scheduled automation's row carries one quiet meta line: a status dot, last run and outcome, next run, and "Needs Squad open" in amber when the bridge cannot run it alone. The detail page lists recorded occurrences (including skipped and missed) as divider rows.
+- A schedule proposal from chat is a divider section at the top of the member's chat: who proposes what, the rule in words with its time zone, the next three dates as small text, then Decline and Confirm. No card frame, no tinted fill; nothing is scheduled until Confirm.

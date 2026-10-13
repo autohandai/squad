@@ -29,6 +29,11 @@ function parseReply(reply) {
 export function createAgentChannelActions({ store, availability, sanitizeId, run, reportError = console.error }) {
   let draining = false;
   const schedule = () => setImmediate(() => drain().catch(reportError));
+  // Other proposal kinds (ADR-0110: `schedule`) ride the same SQUAD_ACTION
+  // line and the same per-turn identity, request id and index, but their
+  // records live with their own module. A handler receives the parsed action
+  // and returns a receipt { id, type, status, message }.
+  const handlers = new Map();
   const register = (state, agent, profile = '') => {
     if (!agent?.id) return;
     const id = sanitizeId(agent.id);
@@ -124,7 +129,16 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
     if (!actions.length) return result;
     const receipts = [];
     for (const [index, raw] of actions.slice(0, 5).entries()) {
-      const id = `channel-action-${digest([context.actorId, context.requestId, index]).slice(0, 32)}`;
+      const key = digest([context.actorId, context.requestId, index]).slice(0, 32);
+      const handler = raw && typeof raw === 'object' && !Array.isArray(raw) && typeof raw.type === 'string' ? handlers.get(raw.type) : null;
+      if (handler) {
+        let handled;
+        try { handled = await handler({ id: `${raw.type}-action-${key}`, context, raw, digest: digest(raw), signal, declined: Boolean(result.declined) }); }
+        catch (error) { handled = { id: `${raw.type}-action-${key}`, type: raw.type, actorId: context.actorId, status: 'failed', message: error?.message || String(error) }; }
+        receipts.push(handled);
+        continue;
+      }
+      const id = `channel-action-${key}`;
       const receipt = await store.mutate(async state => {
         const previous = state.agentChannelActions.find(item => item.id === id);
         if (previous) {
@@ -232,5 +246,7 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
     });
     schedule();
   }
-  return { begin, finish, setAccess, decide, recover, list: async () => (await store.read()).agentChannelActions };
+  return { begin, finish, setAccess, decide, recover, list: async () => (await store.read()).agentChannelActions,
+    registerHandler(type, handler) { if (type === 'create_channel' || typeof handler !== 'function') throw new Error('registerHandler needs a new action type and a function.'); handlers.set(String(type), handler); return () => handlers.delete(String(type)); },
+    memberAccess: async id => (await store.read()).agentChannelAccess?.[sanitizeId(id)] || null };
 }

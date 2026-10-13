@@ -24,6 +24,19 @@ route and member profiles (ADR-0081). App-dispatched steps need the app open;
 bridge-dispatched steps name a workspace. Missed ticks and arbitrary external
 HTTP effects are not automatically replayed after a crash.
 
+## The one scheduler (ADR-0110)
+
+This route owns the bridge's only ticking loop. `tick` fires due schedule
+workflows, then calls every function registered with
+`registerTickParticipant(fn)` with the same `{ since, now }` window (member
+routines register at their `init`). `schedulerNow()` is the clock both read;
+it is real time unless `AUTOHAND_SQUAD_SCHEDULER_CLOCK` pins a start for a
+check, and `AUTOHAND_SQUAD_SCHEDULER_TICK_MS` shortens the interval.
+`startBridgeMemberRun(ctx, { memberId, agent?, prompt, workspace, title,
+channelId?, channel?, transport?, timeoutMs?, marker })` is the shared
+executor: `startOnBridge` and routine dispatch both call it. See
+`docs/integration/routines.md`.
+
 ## Storage
 
 `server.mjs`'s `normalizeChannel` keeps only the fields it knows and the web
