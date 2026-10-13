@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Channel responder rules (ADR-0094): pure recipient resolution, then the real
+// Channel responder rules (ADR-0108): pure recipient resolution, then the real
 // bridge in an isolated state dir against a local fake OpenAI-compatible
 // endpoint. No vendor, credential, installed app or provider request is used.
 // The fake counts every request so the ADR's request numbers come from here.

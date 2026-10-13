@@ -108,7 +108,7 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
     const threadId = `${receipt.id}-thread`;
     const actor = state.agentChannelAccess[receipt.actorId].agent;
     const body = `${actor.name} opened this channel: ${action.purpose}`;
-    // Same responder rule as the browser (ADR-0094): members the purpose
+    // Same responder rule as the browser (ADR-0108): members the purpose
     // @mentions answer it; otherwise the channel's mode decides. A channel
     // created here starts on Everyone, so the mode never asks the model.
     const roster = action.memberIds.map(memberId => ({ id: memberId, name: state.agentChannelAccess[memberId]?.agent?.name || memberId }));

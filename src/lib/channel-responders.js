@@ -1,4 +1,4 @@
-// Channel responder rules (ADR-0094). Who answers a channel message that
+// Channel responder rules (ADR-0108). Who answers a channel message that
 // mentions nobody: everyone (the original fan-out), a named lead, or a member
 // picked by one bounded model call. Explicit mentions and `@here` always win.
 //

@@ -1,4 +1,4 @@
-# ADR-0094: Channel responder rules
+# ADR-0108: Channel responder rules
 
 Status: accepted
 

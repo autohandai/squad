@@ -4742,7 +4742,7 @@ function normalizeChannel(item) {
     // Self-judge / auto-mode execution control is opt-in per channel and
     // always defaults OFF; only an explicit true enables it.
     autoModeDefault: item.autoModeDefault === true,
-    // Who answers un-mentioned messages (ADR-0094): everyone, a lead, or auto.
+    // Who answers un-mentioned messages (ADR-0108): everyone, a lead, or auto.
     responder: normalizeResponder(item.responder),
     // Owned by the git route plug-in (docs/integration/git.md); kept verbatim so
     // the web app's own PUT /api/channels mirror does not erase the binding.
@@ -4846,7 +4846,7 @@ const channelsStore = createChannelsStore({ filename: channelsStatePath, normali
 const readChannelsState = () => channelsStore.read();
 const writeChannelsState = input => channelsStore.replace(input);
 // Auto responder picks use the workspace default provider (no member
-// override) and only when it can be called directly (ADR-0094).
+// override) and only when it can be called directly (ADR-0108).
 const responderPicker = createResponderPicker({
   resolveProvider: () => resolveProviderForAgent(null),
   autohandBaseUrl: AUTOHAND_AI_DEFAULT_BASE_URL,
@@ -7501,7 +7501,7 @@ async function handleApi(req, res, url) {
     return true;
   }
 
-  // Responder rules (ADR-0094). Availability tells the settings row whether
+  // Responder rules (ADR-0108). Availability tells the settings row whether
   // Auto can run; pick decides one message's recipients and is the only place
   // the model is asked. Mentions never reach it.
   if (url.pathname === "/api/responders/availability" && req.method === "GET") {

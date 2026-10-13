@@ -2,7 +2,7 @@
 
 Who answers a channel message that mentions nobody: Everyone (the original
 fan-out), a named Lead, or Auto (one bounded model call picks). Explicit
-mentions and `@here` always win (ADR-0094).
+mentions and `@here` always win (ADR-0108).
 
 | File | Role |
 | --- | --- |

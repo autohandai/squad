@@ -3291,7 +3291,7 @@ function normalizeChannelCopy(channel) {
     section: String(channel.section || "").trim(),
     creatorId: String(channel.creatorId || "").trim(),
     autoModeDefault: channel.autoModeDefault === true,
-    // Who answers un-mentioned messages (ADR-0094); kept so the mirrored
+    // Who answers un-mentioned messages (ADR-0108); kept so the mirrored
     // channel list cannot erase a saved lead or mode.
     responder: normalizeResponder(channel.responder),
     // Owned by the git route plug-in (docs/integration/git.md). Kept verbatim
@@ -3908,7 +3908,7 @@ async function api(path, options = {}) {
   return payload.data;
 }
 
-// Stable so the settings row's effect runs once per open (ADR-0094).
+// Stable so the settings row's effect runs once per open (ADR-0108).
 function loadResponderAvailability() {
   return api("/api/responders/availability");
 }
@@ -7559,7 +7559,7 @@ function App() {
     const text = String(prompt || "").trim();
     if (!channel || !text) return;
     const mentions = resolveChannelMentionTargets(text, channel, agents);
-    // Responder rules (ADR-0094): mentions and @here win; otherwise the
+    // Responder rules (ADR-0108): mentions and @here win; otherwise the
     // channel's mode decides, and only Auto asks the bridge to pick.
     const pick = needsResponderPick(mentions, channel) ? await requestResponderPick(channel, text) : null;
     const recipients = resolveResponderRecipients({ mentions, channel, pick });

@@ -1,4 +1,4 @@
-// Auto responder pick (ADR-0094): one bounded chat-completion call to the
+// Auto responder pick (ADR-0108): one bounded chat-completion call to the
 // bridge's resolved provider that answers "who should reply?" as JSON. It
 // never does the work; the chosen member still runs its own turn. It only
 // runs against providers the bridge can call directly with an API key and an

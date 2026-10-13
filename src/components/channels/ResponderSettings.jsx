@@ -3,7 +3,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { normalizeResponder, responderStatus, responderTagLabel } from "@/lib/channel-responders";
 
-// One choice row in the channel settings form (ADR-0094): who answers a
+// One choice row in the channel settings form (ADR-0108): who answers a
 // message that mentions nobody. Saved with the form's single Save action.
 const MODE_DETAIL = {
   everyone: "Every member answers a message that mentions nobody.",
