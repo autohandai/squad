@@ -114,6 +114,16 @@ integrator also uses moved to `src/lib/handoffs.js`.
 - `bun run check:activity`, `check:work-attention` and `check:goal-bridge`
   were run after the change; see the lane report for their results.
 
+## What was learnt at merge
+
+On main the browser check failed twice at "the Tasks tab to be active"
+while it passed in the lane: the press was dispatched at a rect read while
+the sheet was still sliding in, landed on the overlay, and Radix closed the
+sheet as an outside click (a diagnostic dump showed no sheet at all at that
+moment). The check now waits until the tab has stopped moving before
+pressing. Timing, not the panel, was the difference between the two
+machines' states.
+
 ## Consequences
 
 - Chat replies and launched runs still share one list with no filter

@@ -206,8 +206,21 @@ try {
     await writeFile(join(shotsDir, `${name}.png`), Buffer.from(data, "base64"));
   };
   // A real pointer press: Radix tab triggers activate on mousedown, not click.
+  // The sheet slides in; a press at a rect read mid-transition lands on the
+  // overlay, which Radix treats as "outside" and closes the sheet. Wait until
+  // the tab has stopped moving before pressing.
+  const settledRect = async (read) => {
+    let last = null;
+    for (let i = 0; i < 20; i += 1) {
+      const next = await read();
+      if (next && last && Math.abs(next.x - last.x) < 0.5 && Math.abs(next.y - last.y) < 0.5) return next;
+      last = next;
+      await delay(120);
+    }
+    return last;
+  };
   const clickTab = async (label) => {
-    const rect = await cdp.evaluate(`(() => { const sheet = document.querySelector('[data-slot="sheet-content"]'); const el = [...(sheet || document).querySelectorAll('button,[role="tab"]')].find((b) => (b.textContent || '').trim() === ${JSON.stringify(label)}); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    const rect = await settledRect(() => cdp.evaluate(`(() => { const sheet = document.querySelector('[data-slot="sheet-content"]'); const el = [...(sheet || document).querySelectorAll('button,[role="tab"]')].find((b) => (b.textContent || '').trim() === ${JSON.stringify(label)}); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`));
     if (!rect) return false;
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x, y: rect.y });
     await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: rect.x, y: rect.y, button: "left", clickCount: 1 });
