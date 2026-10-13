@@ -33,7 +33,7 @@ member history; loopback bind with an Origin guard.
 
 ## Lanes
 
-Each lane is one branch `lane/<id>`, one worktree, one ADR number reserved
+Each lane is one branch `lane/<id>`, one worktree, one ADR number reserved (0101–0112; 0087–0098 were taken by concurrent work on main)
 below, its own `scripts/check-<id>.mjs` wired into the `ci` chain, CHANGELOG
 lines under `[Unreleased]`, and DESIGN.md lines for any durable UI rule.
 New UI goes in new files under `src/components/<area>/`; `src/App.jsx` gets
@@ -42,7 +42,7 @@ imports and mount points only. New bridge code goes in
 `docs/integration/CONTRACT.md`, with an integration note at
 `docs/integration/<id>.md`.
 
-### L1 voice (ADR-0087)
+### L1 voice (ADR-0101)
 
 From: xiryn mic dictation; OpenMausBot on-device macOS dictation, replies read
 aloud with built-in Mac voices or a cloud voice, per-member voice.
@@ -57,7 +57,7 @@ reply and a per-member "read replies as they land" switch, using
 register (no code fences, paths, tables). Optional ElevenLabs key in Settings
 with the key held by the bridge only. Out: calls, voice personas.
 
-### L2 remote-access (ADR-0088)
+### L2 remote-access (ADR-0102)
 
 From: xiryn Telegram bridge; CopilotKit "reach"; OpenMausBot phone pairing.
 Scope: Settings → Remote access with a Telegram bot token, Connect, a QR and
@@ -71,7 +71,7 @@ paired chat with a deep link and inline Approve/Decline where the event has a
 decision. Unpaired senders get a refusal. Out: WhatsApp, Slack, Discord
 (leave the sink interface ready for them).
 
-### L3 workstations (ADR-0089)
+### L3 workstations (ADR-0103)
 
 From: xiryn Docker desktop per agent; OpenMausBot cloud desktop / Local VM;
 both OpenBots give every coworker its own computer and browser.
@@ -88,7 +88,7 @@ auto-stop and auto-delete, Reset. A `request_takeover({reason})` tool ends
 the turn with a Needs-you item and a notification. Out: cloud providers,
 Windows containers, phone links (L12).
 
-### L4 vault (ADR-0090)
+### L4 vault (ADR-0104)
 
 From: xiryn vault and payment approvals; CopilotKit saved passwords and
 write-only credentials.
@@ -103,7 +103,7 @@ types a value only inside an L3 workstation browser after checking the page
 site; on this Mac it is refused with the reason. Out: UPI, autofill on the
 host.
 
-### L5 usage-and-system (ADR-0091)
+### L5 usage-and-system (ADR-0105)
 
 From: xiryn usage ledger and Settings → System.
 Scope: `/api/analytics` breaks tokens, steps and duration down by member, by
@@ -111,7 +111,7 @@ model and by day; the Usage page shows those tables. Settings → System shows
 counts of members, channels, threads, messages and memory entries, the data
 folder, and the update-check switch. Out: cost estimates in currency.
 
-### L6 teams-and-member-menus (ADR-0092)
+### L6 teams-and-member-menus (ADR-0106)
 
 From: OpenMausBot share/import team, presets, right-click bot menu.
 Scope: a member row and chat header menu with Pin, Mark unread, Duplicate,
@@ -123,7 +123,7 @@ team reviews the file before creating anything; imported members start on
 Ask with skills off. Presets appear in New member's role list. Out: an
 organisation library, a hosted catalogue.
 
-### L7 connectors (ADR-0093)
+### L7 connectors (ADR-0107)
 
 From: OpenMausBot bring-your-own MCP servers and Composio marketplace; xiryn
 Firecrawl research with citations; CopilotKit connected accounts.
@@ -135,7 +135,7 @@ MCP seam. Member enablement sits under the existing `mcp.connectors`
 permission. Out: OAuth app marketplace (leave a connector preset list ready
 for it).
 
-### L8 responders (ADR-0094)
+### L8 responders (ADR-0108)
 
 From: OpenMausBot room responder rules and the decision model; nightly OpenBot
 single task owner.
@@ -145,7 +145,7 @@ the responder from the roster and the last lines; below 0.6 confidence the
 lead answers). Explicit mentions always win. Out: a third-party decision
 service.
 
-### L9 control-plane (ADR-0095)
+### L9 control-plane (ADR-0109)
 
 From: OpenMausBot's stdio MCP server for Claude Desktop/Cursor.
 Scope: `squad mcp` (sidecar) exposing `list_members`, `list_channels`,
@@ -154,7 +154,7 @@ Scope: `squad mcp` (sidecar) exposing `list_members`, `list_channels`,
 with a redacted tail), `interrupt`, `set_model`. No approvals, deletion,
 credentials or computer lifecycle. Out: remote (non-loopback) exposure.
 
-### L10 routines (ADR-0096)
+### L10 routines (ADR-0110)
 
 From: OpenMausBot routine schedules; CopilotKit responsibilities.
 Scope: member Automations gain real schedules: weekdays, every N minutes,
@@ -164,7 +164,7 @@ member in chat to schedule something produces a confirmation card and
 nothing runs until confirmed. Runs that need the app open say so. Out: a
 second scheduler (reuse the workflows one).
 
-### L11 queues (ADR-0097)
+### L11 queues (ADR-0111)
 
 From: nightly OpenBot FIFO queues and context monitoring.
 Scope: the follow-up queue above the composer becomes durable on the bridge:
@@ -172,7 +172,7 @@ pause, resume, reorder, cancel, survives restart; a per-member context gauge
 from the harness's reported usage with a warning before the window fills.
 Out: automatic compaction (harness-owned).
 
-### L12 phone (ADR-0098)
+### L12 phone (ADR-0112)
 
 From: OpenMausBot phone web app and pairing; xiryn phone take-over link.
 Scope: pair a phone browser to this bridge over the relay or a Tailscale
