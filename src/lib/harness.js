@@ -292,3 +292,44 @@ export async function harnessLoginStatus(api, id) {
 export async function cancelHarnessLogin(api, id) {
   return api(`/api/harnesses/login?id=${encodeURIComponent(normalizeHarnessId(id))}`, { method: "DELETE" });
 }
+
+// The model a member's chat names (ADR-0125). For Claude Code, Codex and
+// ACP members the engine picks the model, not the Autohand provider
+// settings, so the meta line, the profile preview and /model must not fall
+// back to "Autohand AI / moa" (the provider default every member inherits).
+// Sources in order: the member's own model choice, what the last reply
+// actually ran on, the engine's reported default, else "<engine> default".
+const VENDOR_PROVIDER_IDS = Object.freeze({ anthropic: "claude", openai: "codex" });
+
+function engineShortName(id) {
+  const option = harnessOption(id);
+  return option.acp ? option.label : option.short || option.label;
+}
+
+/**
+ * Pure. `null` for an Autohand member (the caller keeps the provider label);
+ * otherwise `{ engine, model, source, label }` with `label` like
+ * "Claude · fable", "Codex · gpt-6.1-sol" or "Gemini CLI default".
+ */
+export function engineModelSummary({ harness, readiness = null, lastEffectiveModel = null } = {}) {
+  const assignment = normalizeHarnessAssignment(harness);
+  if (assignment.id === DEFAULT_HARNESS_ID) return null;
+  const engine = engineShortName(assignment.id);
+  const option = harnessOption(assignment.id);
+  const vendor = String(option.vendor || "").trim().toLowerCase();
+  const lastProvider = String(lastEffectiveModel?.provider || "").trim().toLowerCase();
+  const lastModel = lastProvider && lastProvider === vendor ? String(lastEffectiveModel?.model || "").trim() : "";
+  const defaultModel = String(readiness?.defaults?.model || "").trim();
+  const [model, source] = assignment.model ? [assignment.model, "member"] : lastModel ? [lastModel, "last-reply"] : defaultModel ? [defaultModel, "engine-default"] : ["", "none"];
+  return { engine, model, source, label: model ? `${engine} · ${model}` : `${engine} default` };
+}
+
+/** The label for a reply's recorded model: vendor engines by name, Autohand providers by `fallback`. */
+export function replyModelLabel(effectiveModel, fallback = (value) => value?.label || value?.provider || "") {
+  const provider = String(effectiveModel?.provider || "").trim().toLowerCase();
+  const engineId = VENDOR_PROVIDER_IDS[provider];
+  if (!engineId) return fallback(effectiveModel);
+  const engine = engineShortName(engineId);
+  const model = String(effectiveModel?.model || "").trim();
+  return model ? `${engine} · ${model}` : `${engine} default`;
+}

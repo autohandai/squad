@@ -14,7 +14,10 @@
 //
 // Storage: `~/.autohand/squad/routines.json` via server/routines/store.mjs.
 
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+
+import { detectRecurringWork } from "../../src/lib/work-plans.js";
 
 import { registerTickParticipant, schedulerNow, startBridgeMemberRun } from "./workflows.route.mjs";
 import {
@@ -370,6 +373,94 @@ async function decideProposal(ctx, id, confirm) {
 }
 
 // ---------------------------------------------------------------------------
+// Plain-English drafts (ADR-0125): the New Automation dialog's one sentence
+// becomes a proposal through a bounded one-off run of the member itself, on
+// its own engine, which must answer with the schedule action (or with one
+// question). The run is an ordinary visible run; it neither resumes nor
+// replaces the member's conversation session. The proposal it records is
+// resolved at once as drafted, because the person confirms it by saving the
+// dialog, not in Needs you.
+
+const DRAFT_TIMEOUT_MS = Number(process.env.AUTOHAND_SQUAD_DRAFT_TIMEOUT_MS) || 180_000;
+const DRAFT_TEXT_LIMIT = 2000;
+
+function draftPrompt({ text, question, answer, timeZone, memberName }) {
+  const followUp = question && answer ? `\nYou asked: "${question}". They answered: "${answer}".` : "";
+  return `Draft an automation: ${text}${followUp}
+
+The person typed the line above into Squad's New Automation dialog for you${memberName ? ` (${memberName})` : ""}. Turn it into one routine for yourself. Do not do the work now. Reply with exactly one schedule action line in the format from your instructions: a short title (under 60 characters), instructions written as what you will do on each run, the schedule, and the timezone (the person's is ${timeZone}). If the days or the time cannot be inferred at all, reply with exactly one short question instead and no action.`;
+}
+
+async function waitForRun(ctx, runId, timeoutMs) {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    const run = ctx.runs?.get?.(runId);
+    if (run && run.finishedAt && !ctx.isLiveRun?.(run)) return run;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  await ctx.stopRun?.(runId, "automation draft took too long").catch(() => false);
+  return null;
+}
+
+function lastQuestion(reply) {
+  const text = String(reply || "").replace(/SQUAD_ACTION:.*$/gm, "").trim();
+  const questions = text.match(/[^.!?\n]*\?/g);
+  return (questions ? questions.at(-1) : text).trim().slice(0, 300);
+}
+
+async function draftAutomation(ctx, body, now) {
+  const memberId = String(body?.memberId || "").trim();
+  const text = String(body?.text || "").replace(/\s+/g, " ").trim().slice(0, DRAFT_TEXT_LIMIT);
+  const workspace = String(body?.workspace || "").trim();
+  if (!memberId) throw Object.assign(new Error("memberId is required"), { status: 400 });
+  if (!text) throw Object.assign(new Error("say what should happen, and when"), { status: 400 });
+  if (!workspace) throw Object.assign(new Error("choose a folder for the automation"), { status: 400 });
+  const known = await knownMembers(ctx);
+  const access = known.get(memberId);
+  const agent = body?.agent && typeof body.agent === "object" && !Array.isArray(body.agent) ? { ...body.agent, id: memberId } : access?.agent;
+  if (!agent) throw Object.assign(new Error("this member has not chatted yet; send it a message first"), { status: 409 });
+  if (await ctx.isMemberBusy?.(memberId)) throw Object.assign(new Error(`${agent.name || "The member"} is working; draft again when the reply finishes`), { status: 409 });
+  const timeZone = isValidTimeZone(body?.timeZone) ? body.timeZone : "UTC";
+  const summary = await ctx.startRun({
+    agentId: memberId,
+    agent,
+    profile: String(body?.profile || access?.profile || ""),
+    workspace,
+    prompt: draftPrompt({ text, question: String(body?.question || "").slice(0, 300), answer: String(body?.answer || "").slice(0, 600), timeZone, memberName: agent.name }),
+    title: `Draft an automation: ${text}`.slice(0, 140),
+    mode: "prompt",
+    requestId: `draft-${randomUUID()}`,
+    resumeSession: false,
+    ephemeralSession: true,
+  });
+  const run = await waitForRun(ctx, summary.id, DRAFT_TIMEOUT_MS);
+  if (!run) throw Object.assign(new Error(`${agent.name || "The member"} did not answer within ${Math.round(DRAFT_TIMEOUT_MS / 1000)} seconds`), { status: 504 });
+  if (run.status !== "completed") throw Object.assign(new Error(`${agent.name || "The member"} could not draft it (${run.status})`), { status: 502, runId: run.id });
+  await ensureStore(ctx);
+  const action = (run.channelActions || []).find((item) => item?.type === "schedule" && item.status === "proposed");
+  const proposal = action ? store.proposal(action.id) : null;
+  const reply = String(run.reply || "").replace(/\n*Proposed routine “[\s\S]*$/, "").replace(/SQUAD_ACTION:.*$/gm, "").trim().slice(0, 600);
+  if (proposal) {
+    const nowIso = now.toISOString();
+    store.replaceProposal({ ...proposal, status: "declined", message: "Drafted in New Automation; saving it there creates the routine.", decidedAt: nowIso, updatedAt: nowIso });
+    await store.save();
+    changed(ctx);
+    log(ctx, ctx.SEVERITY.INFO, `automation drafted by ${memberId}: ${proposal.title}`, { "event.name": "routine.drafted", "autohand.member.id": memberId, "autohand.routine.proposal_id": proposal.id, "autohand.run.id": run.id });
+    return { status: "proposed", runId: run.id, reply, draft: { title: proposal.title, instructions: proposal.instructions, schedule: proposal.schedule, timeZone: proposal.schedule.timeZone, description: describeSchedule(proposal.schedule), next: nextOccurrences(proposal.schedule, now, 3).map((date) => date.toISOString()) } };
+  }
+  const failed = (run.channelActions || []).find((item) => item?.type === "schedule" && item.status === "failed");
+  if (/\?/.test(reply) && !failed) return { status: "question", runId: run.id, question: lastQuestion(reply) };
+  const found = detectRecurringWork(text);
+  if (found) {
+    const schedule = normalizeSchedule({ ...found.schedule, timeZone });
+    if (!validateSchedule(schedule).length) {
+      return { status: "read-from-words", runId: run.id, reply: failed?.message || reply, draft: { title: found.title, instructions: found.instructions, schedule, timeZone, description: describeSchedule(schedule), next: nextOccurrences(schedule, now, 3).map((date) => date.toISOString()) } };
+    }
+  }
+  return { status: "question", runId: run.id, question: failed?.message || lastQuestion(reply) || "When should this run?" };
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle
 
 export async function init(ctx) {
@@ -466,6 +557,15 @@ export async function handle(req, res, url, ctx) {
       nextLabels: next.map((date) => formatOccurrence(date, schedule.timeZone)),
       now: now.toISOString(),
     });
+  }
+
+  // POST /api/routines/draft { memberId, text, workspace, timeZone, agent?, profile?, question?, answer? }
+  if (path === "/api/routines/draft" && req.method === "POST") {
+    try {
+      return ok(ctx, res, 200, await draftAutomation(ctx, await ctx.readBody(req), now));
+    } catch (error) {
+      return fail(ctx, res, error.status || 500, error.message);
+    }
   }
 
   // GET /api/routines/pending — queued runs the app has to dispatch.

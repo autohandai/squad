@@ -113,6 +113,47 @@ time zone, the editor opens in the browser's. The offer creates nothing: Set
 it up opens the Automations editor pre-filled, and saving goes through the
 same routine sync as any automation.
 
+## The next-turn nudge and plain-English drafts (ADR-0125)
+
+After the same direct-message turn, `noteAutomationNudge` in `server.mjs`
+reads the person's message with `repeatedWorkSignal` (`src/lib/work-plans.js`):
+a schedule phrase from the table above, else a repeat word (`again` after a
+work verb, `as usual`, `like yesterday`, `the usual`, `keep doing …`; `try
+again` and questions are skipped), else a near-identical earlier ask (word
+overlap of 0.6 or more against the member's completed chat runs from the
+last 14 days, at least four content words). When one matches and the reply
+proposed no schedule, the member's next person turn gets one line appended
+to its prompt (`automationNudgeLine`) asking it to propose the routine or
+ask one question. Used once, kept in memory, expires after a day; a reply
+that proposes a schedule clears it. Repeat words never produce a
+"Schedule this?" offer, because they say nothing about when.
+
+`POST /api/routines/draft { memberId, text, workspace, timeZone, agent?,
+profile?, question?, answer? }` runs one bounded run of the member
+(`AUTOHAND_SQUAD_DRAFT_TIMEOUT_MS`, default 180 s) with
+`ephemeralSession: true`, so it neither resumes nor replaces the member's
+saved engine session. Answers: `{ status: "proposed", draft }` from the
+member's schedule action (the proposal is resolved at once as drafted, so it
+does not wait in Needs you), `{ status: "question", question }`, or
+`{ status: "read-from-words", draft }` from the table above when the member
+answered without an action. 409 while the member is working.
+
+## Keep working between messages (ADR-0125)
+
+`GET|PUT /api/agenda/:memberId` (`{ enabled, dailyCap }`, off and 6 by
+default, kept in `<squadStateDir>/always-on.json`), `POST
+/api/agenda/:memberId/stop`, `GET /api/agenda`. Every
+`AUTOHAND_SQUAD_AGENDA_TICK_MS` (30 s) the bridge looks at each member with
+the switch on and starts at most one item when the member is idle, not on a
+break, has nothing queued, has been quiet for `AUTOHAND_SQUAD_AGENDA_IDLE_MS`
+(10 min) since the person's last message, and is under the day's cap:
+`nextAgendaItem` picks a goal paused by a restart, the runtime boundary or a
+person message, else the open, non-recurring task due soonest that the
+agenda has not tried today. A goal is resumed through the goal manager; a
+task starts as a bridge run titled "On its own: …" with `agendaTaskPrompt`.
+`chat.started` with `person: true` (any direct message the person typed or
+queued, including Telegram) stops it.
+
 ## Routines and recurring tasks
 
 `routine.run` creates the task linked to the routine (`recurring`, `source:

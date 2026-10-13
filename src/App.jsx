@@ -10,9 +10,12 @@ import { VaultRequests, useVaultRequests } from "@/components/chat/VaultRequests
 import { VaultSettings } from "@/components/settings/VaultSettings";
 import { vaultNeedsYouRows } from "@/lib/vault";
 import { RoutineSchedule } from "@/components/members/RoutineSchedule";
+import { AutomationPlainEnglish } from "@/components/members/AutomationPlainEnglish";
+import { KeepWorkingSwitch } from "@/components/members/KeepWorkingSwitch";
+import { AgendaLine } from "@/components/chat/AgendaLine";
 import { RoutineRunList, RoutineRunRow } from "@/components/members/RoutineRunRow";
 import { RoutineProposalCard } from "@/components/members/RoutineProposalCard";
-import { browserTimeZone, routineDraftFromAutomation, routinePayloadFromAutomation, scheduleActionInstruction, scheduleKindLabel, taskActionInstruction } from "@/lib/routines";
+import { browserTimeZone, routineDraft, routineDraftFromAutomation, routinePayloadFromAutomation, scheduleActionInstruction, scheduleKindLabel, taskActionInstruction } from "@/lib/routines";
 import { AppInformation } from "@/components/app-info/AppInformation";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
@@ -385,6 +388,8 @@ import {
   readinessLabel,
   readinessTone,
   testHarness,
+  engineModelSummary,
+  replyModelLabel,
 } from "@/lib/harness";
 
 class RenderErrorBoundary extends React.Component {
@@ -13567,6 +13572,32 @@ function Conversation({
     [launchPermissions, deferredPrompt, mode, policy]
   );
   const effectiveModel = effectiveModelForAgent(agent, providerSettings);
+  // Claude Code, Codex and ACP members name their engine's model, never the
+  // Autohand provider default they would otherwise inherit (ADR-0125).
+  const lastReplyModel = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) if (messages[index]?.effectiveModel) return messages[index].effectiveModel;
+    return null;
+  }, [messages]);
+  const engineModel = engineModelSummary({ harness: agent.harness, readiness: engineReadiness, lastEffectiveModel: lastReplyModel });
+  const memberModelLabel = engineModel ? engineModel.label : providerSummaryLabel(effectiveModel);
+  // Always-on (ADR-0125): what the member started on its own, for the one
+  // quiet line above the composer. The bridge holds it; a slow poll is enough.
+  const [agenda, setAgenda] = useState(null);
+  const [agendaStopping, setAgendaStopping] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => api(`/api/agenda/${encodeURIComponent(agent.id)}`).then((data) => { if (!cancelled) setAgenda(data); }).catch(() => {});
+    setAgenda(null);
+    load();
+    const timer = setInterval(load, 15000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [agent.id]);
+  const stopAgenda = useCallback(async () => {
+    setAgendaStopping(true);
+    try { setAgenda(await api(`/api/agenda/${encodeURIComponent(agent.id)}/stop`, { method: "POST", body: "{}" })); }
+    catch { /* the next poll shows the real state */ }
+    finally { setAgendaStopping(false); }
+  }, [agent.id]);
   const runningCount = runs.filter((run) => run.status === "running").length;
   const mentionQuery = mentionState?.query || "";
   const mentionKind = mentionState?.kind || "mention";
@@ -14184,7 +14215,7 @@ function Conversation({
         return true;
       case "model":
         if (!command.args) {
-          postLocalNote(`Current model: ${model || providerSummaryLabel(effectiveModel)}. Use \`/model <id>\` to change it for the next messages.`);
+          postLocalNote(`Current model: ${model || memberModelLabel}. Use \`/model <id>\` to change it for the next messages.`);
           return true;
         }
         setModel(command.args);
@@ -14421,6 +14452,7 @@ function Conversation({
         </ScrollArea>
         <form className="shrink-0 p-3 pt-2" onSubmit={submit} data-testid="quick-chat-composer">
           <FollowUpQueue compact queue={queue} copy={copy} busy={queueActionBusy} error={queueActionError} onEdit={(id, text) => runQueueAction("edit", { id, text })} onMove={(id, delta) => runQueueAction("move", { id, delta })} onCancel={(id) => runQueueAction("cancel", { id })} onPause={() => runQueueAction("pause")} onResume={() => runQueueAction("resume")} />
+          <AgendaLine agenda={agenda} memberName={agent.name} onStop={stopAgenda} stopping={agendaStopping} copy={copy} className="mb-2" />
           <ContextWarningLine gauge={contextGauge} copy={copy} className="mb-2" />
           {blockedWorkspace ? <p className="mb-2 text-xs text-destructive">Choose a project folder for {agent.name} in Squad before sending work.</p> : null}
           {launchWarnings.length ? <p className="mb-2 text-xs text-muted-foreground">{launchWarnings.map((warning) => warning.detail).join(" ")}</p> : null}
@@ -14468,7 +14500,7 @@ function Conversation({
               presence={chatSending ? { state: "working" } : entryForPresence(agent)}
               runtimeAvailable={Boolean(runtime?.available)}
               workspace={workspaceName(workspace) || workspaceLabel(workspace, workspaces)}
-              model={providerSummaryLabel(effectiveModel)}
+              model={memberModelLabel}
               copy={copy}
               onViewProfile={() => navigate(memberProfilePath(agent.id, "home"))}
             />
@@ -14486,7 +14518,7 @@ function Conversation({
                 <span className="text-border">·</span>
                 <span className="min-w-0 max-w-40 truncate sm:max-w-[18rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
                 <span className="hidden text-border sm:inline">·</span>
-                <span className="hidden min-w-0 max-w-48 truncate sm:inline">{providerSummaryLabel(effectiveModel)}</span>
+                <span className="hidden min-w-0 max-w-48 truncate sm:inline" data-testid="chat-model-label">{memberModelLabel}</span>
                 <ContextGaugeMeta gauge={contextGauge} copy={copy} className="hidden sm:inline" separator={<span className="hidden text-border sm:inline">·</span>} />
               </> : null}
               <span className={cn("text-border", !compact && "hidden sm:inline")}>·</span>
@@ -14516,6 +14548,7 @@ function Conversation({
                     onRefresh={onRefreshHarnesses}
                     description="Changes apply to the next message. Personality, model, and permissions stay the same."
                   />
+                  <KeepWorkingSwitch api={api} memberId={agent.id} memberName={agent.name} copy={copy} className="mt-3 border-t border-border/70 pt-3" />
                   <div className="mt-3 flex items-center justify-end gap-2">
                     <Button type="button" variant="ghost" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "harness"))}>
                       Details
@@ -14680,6 +14713,7 @@ function Conversation({
               onSelect={(recipe) => setRecipeLaunchTarget(recipe)}
             />
           ) : null}
+          <AgendaLine agenda={agenda} memberName={agent.name} onStop={stopAgenda} stopping={agendaStopping} copy={copy} className="mx-auto mb-2 w-full max-w-3xl px-1" />
           <ContextWarningLine gauge={contextGauge} copy={copy} className="mx-auto mb-2 w-full max-w-3xl px-1" />
           <div className="mx-auto flex w-full max-w-3xl flex-col rounded-2xl border border-border bg-card shadow-xs transition-[border-color,box-shadow] focus-within:border-ring/60 focus-within:shadow-sm">
             <FollowUpQueue
@@ -15272,7 +15306,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
           ) : durationLabel && !compact ? (
             <span>{durationLabel}</span>
           ) : null}
-          {!compact && message.effectiveModel ? <span className="hidden truncate sm:inline">· {providerSummaryLabel(message.effectiveModel)}</span> : null}
+          {!compact && message.effectiveModel ? <span className="hidden truncate sm:inline">· {replyModelLabel(message.effectiveModel, providerSummaryLabel)}</span> : null}
           {message.status === "stopped" ? <span>· Stopped</span> : null}
           {hasVisibleAnswer && !isError ? <ReadAloudButton text={view.answer} message={message} api={api} auto={Boolean(agent.readAloud)} compact={compact} copy={copy} /> : null}
         </div>
@@ -15340,7 +15374,7 @@ function chatProgressLabel(message, durationMs) {
   const activity = String(message?.activityLabel || "").trim();
   if (activity) return activity;
   if (message?.streamEvents?.some((event) => ["tool_start", "tool_end", "tool_result", "plan_update", "thinking", "message_delta"].includes(event.type)) || message?.trace?.toolCalls?.length) return "Working through the request.";
-  const model = message?.effectiveModel ? providerSummaryLabel(message.effectiveModel) : "";
+  const model = message?.effectiveModel ? replyModelLabel(message.effectiveModel, providerSummaryLabel) : "";
   if (Number(durationMs) >= 45000) {
     return model
       ? `Still waiting for ${model}. The provider has not sent the first response yet.`
@@ -20829,12 +20863,56 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
   const projectChoices = normalizeAgentProjects(agent?.projects, agent?.workspace, workspaces);
   const descriptionLength = draft.description.length;
   const isValid = draft.name.trim() && draft.description.trim() && draft.workspace.trim();
+  // Plain English first (ADR-0125): a new automation starts from one
+  // sentence the member's engine drafts; the old fields sit under "Fill in
+  // by hand". Editing an existing automation opens the fields directly.
+  const isNew = !automation?.id;
+  const [plainText, setPlainText] = useState("");
+  const [plainAnswer, setPlainAnswer] = useState("");
+  const [plain, setPlain] = useState({ status: "idle" });
+  const [handOpen, setHandOpen] = useState(!isNew);
+  const drafted = plain.status === "proposed" || plain.status === "read-from-words";
 
   useEffect(() => {
     if (open) {
       setDraft(automationDraftFrom(automation, agent, defaultWorkspace));
+      const seeded = !automation?.id && automation;
+      setPlainText(seeded ? String(automation.description || automation.prompt || "") : "");
+      setPlainAnswer("");
+      setPlain(seeded ? { status: "proposed", seeded: true } : { status: "idle" });
+      setHandOpen(Boolean(automation?.id));
     }
   }, [agent, automation, defaultWorkspace, open]);
+
+  async function draftFromPlainText() {
+    const text = plainText.trim();
+    if (!text || !agent?.id) return;
+    const question = plain.status === "question" ? plain.question : "";
+    const workspace = draft.workspace || defaultWorkspace || agent.workspace || "";
+    setPlain({ status: "drafting", question });
+    try {
+      const result = await api("/api/routines/draft", {
+        method: "POST",
+        body: JSON.stringify({ memberId: agent.id, text, workspace, timeZone: browserTimeZone(), agent: agentLaunchPayload(agent, workspace), profile: buildAgentProfile(agent, workspace), question, answer: question ? plainAnswer.trim() : "" }),
+      });
+      if (result?.status === "question") {
+        setPlain({ status: "question", question: result.question });
+        setPlainAnswer("");
+        return;
+      }
+      const proposal = result?.draft || {};
+      setDraft((current) => ({
+        ...current,
+        name: proposal.title || current.name,
+        description: proposal.instructions || current.description,
+        triggerType: "schedule",
+        routine: routineDraft({ ...(proposal.schedule || {}), timeZone: proposal.timeZone || proposal.schedule?.timeZone }, { maxRunMinutes: current.routine?.maxRunMinutes }),
+      }));
+      setPlain({ status: result?.status || "proposed", reply: result?.reply || "" });
+    } catch (error) {
+      setPlain({ status: "error", error: error?.message || "Could not draft it." });
+    }
+  }
 
   function updateDraft(patch) {
     setDraft((current) => ({ ...current, ...patch }));
@@ -20850,15 +20928,65 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent closeLabel="Close" className="max-h-[88svh] overflow-hidden rounded-md border-border bg-background p-0 sm:max-w-[760px]">
         <DialogHeader className="sr-only">
-          <DialogTitle>{automation ? "Edit Automation" : "New Automation"}</DialogTitle>
+          <DialogTitle>{automation?.id ? "Edit Automation" : "New Automation"}</DialogTitle>
           <DialogDescription>Configure a local Autohand automation.</DialogDescription>
         </DialogHeader>
 
         <form className="flex max-h-[88svh] flex-col" onSubmit={submit}>
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
-            <h2 className="text-xl font-semibold tracking-normal">{automation ? "Edit Automation" : "New Automation"}</h2>
+            <h2 className="text-xl font-semibold tracking-normal">{automation?.id ? "Edit Automation" : "New Automation"}</h2>
 
-            <div className="mt-5 grid gap-5">
+            {isNew ? (
+              <div className="mt-5 grid gap-4">
+                <AutomationPlainEnglish
+                  memberName={agent?.name || "The member"}
+                  engineLabel={harnessLabel(harnessForAgent(agent).id)}
+                  text={plainText}
+                  onTextChange={setPlainText}
+                  answer={plainAnswer}
+                  onAnswerChange={setPlainAnswer}
+                  state={plain}
+                  onDraft={draftFromPlainText}
+                />
+                {drafted ? (
+                  <section className="grid gap-3 border-t border-border/70 pt-4" data-testid="automation-draft">
+                    {handOpen ? (
+                      <p className="text-sm text-muted-foreground">Drafted: <span className="text-foreground">{draft.name}</span>. Adjust it in the fields below.</p>
+                    ) : (
+                      <>
+                        <label className="grid gap-1.5">
+                          <span className="text-xs font-medium text-muted-foreground">Name</span>
+                          <Input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} className="h-9 text-sm" />
+                        </label>
+                        <label className="grid gap-1.5">
+                          <span className="text-xs font-medium text-muted-foreground">Each run, {agent?.name || "the member"} will</span>
+                          <Textarea value={draft.description} onChange={(event) => updateDraft({ description: event.target.value.slice(0, 10000) })} className="min-h-[64px] resize-y text-sm" />
+                        </label>
+                        <div className="grid gap-1">
+                          <span className="text-xs font-medium text-muted-foreground">Schedule</span>
+                          <RoutineSchedule value={draft.routine} onChange={(routine) => updateDraft({ routine })} preview={previewRoutine} />
+                        </div>
+                      </>
+                    )}
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      {plain.status === "read-from-words" ? `${agent?.name || "The member"} did not propose a schedule; this one was read from your words. ` : ""}
+                      Runs in {workspaceLabel(draft.workspace, workspaces) || "the member's folder"}. Nothing runs until you save.
+                    </p>
+                  </section>
+                ) : null}
+                <button
+                  type="button"
+                  className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  aria-expanded={handOpen}
+                  onClick={() => setHandOpen((value) => !value)}
+                >
+                  <ChevronDown className={cn("size-3.5 transition-transform", !handOpen && "-rotate-90")} aria-hidden="true" />
+                  Fill in by hand
+                </button>
+              </div>
+            ) : null}
+
+            {handOpen ? <div className="mt-5 grid gap-5">
               <label className="grid gap-2">
                 <span className="text-sm font-semibold text-muted-foreground">Name <span className="text-primary">*</span></span>
                 <Input
@@ -21063,7 +21191,7 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
                   />
                 </section>
               ) : null}
-            </div>
+            </div> : null}
           </div>
 
           <DialogFooter className="border-t bg-background/95 px-5 py-3 backdrop-blur sm:px-6">
@@ -23505,6 +23633,7 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
           description=""
         />
         {testError ? <p className="text-sm text-destructive">{testError}</p> : null}
+        <KeepWorkingSwitch api={api} memberId={agent.id} memberName={agent.name} copy={copy} className="border-t border-border/70 pt-4" />
         <div className="flex flex-wrap items-center gap-2">
           <Button
             disabled={!dirty}

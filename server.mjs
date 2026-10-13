@@ -47,7 +47,7 @@ import { buildRecall, collectRecallSources } from "./server/chats/recall.mjs";
 import { workPlanFor } from "./server/work/plan.mjs";
 import { describeSchedule, isValidTimeZone, normalizeSchedule, validateSchedule } from "./server/routines/schedule.mjs";
 import { scheduleActionInstruction, taskActionInstruction } from "./src/lib/routines.js";
-import { detectRecurringWork, replyProposedSchedule } from "./src/lib/work-plans.js";
+import { automationNudgeLine, detectRecurringWork, repeatedWorkSignal, replyProposedSchedule } from "./src/lib/work-plans.js";
 import { memberShapingInstruction, needsShapingInstruction } from "./src/lib/member-shaping.js";
 import { normalizeResponder, responderStatus } from "./src/lib/channel-responders.js";
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
@@ -6614,7 +6614,10 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   // the member's engine settings, else nothing (the adapter derives access).
   const access = normalizeAccess(payload.access || assignment.access);
   const effort = normalizeEffort(payload.effort || assignment.effort);
-  const resumeId = payload.resumeSession === false ? "" : await readResumeId(agentRuntime.agentHome, adapter.id, workspace);
+  // A one-off bridge turn (an automation draft, ADR-0125) neither resumes nor
+  // replaces the member's saved session, so its conversation is untouched.
+  const ephemeral = payload.ephemeralSession === true;
+  const resumeId = payload.resumeSession === false || ephemeral ? "" : await readResumeId(agentRuntime.agentHome, adapter.id, workspace);
   // Squad-managed MCP servers (Computer Use, the vault) reach Claude through
   // one --mcp-config file and Codex through -c overrides, adapted per harness.
   const managedServers = [agentRuntime.computerUse?.mcpServer, agentRuntime.vault?.mcpServer].filter(Boolean);
@@ -6686,6 +6689,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
     access,
     effort,
     resumeId,
+    ephemeral,
     build,
     executable: readiness.executablePath,
     envVars: {
@@ -6749,7 +6753,7 @@ async function executeExternalHarness(prepared, { timeoutMs, inactivityMs = 0, s
     attempt = prepared.build("");
     output = await runOnce(attempt);
   }
-  if (output.resumeId && !output.stopped) {
+  if (output.resumeId && !output.stopped && !prepared.ephemeral) {
     await writeResumeId(agentRuntime.agentHome, adapter.id, workspace, output.resumeId).catch(() => {});
   }
   return { ...output, command: externalCommandLabel(adapter, attempt.displayArgs) };
@@ -7214,6 +7218,9 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
   }
   payload = await withSavedMember(payload);
   const workId = randomUUID();
+  // Always-on (ADR-0125): a person's message stops whatever the agenda
+  // started for this member; the agenda route listens for this.
+  emitBridgeEvent("chat.started", { memberId, requestId: String(payload.requestId || ""), person: isPersonTurn(payload), channelId: String(channelContextFromPayload(payload)?.id || "") });
   const actionContext = await agentChannelActions.begin(payload);
   const originalStream = stream;
   const liveEvidence = (data) => { if (data.runId === workId) originalStream.send("computer-use", { sessionId: data.sessionId, runId: workId, files: data.files }); };
@@ -7225,8 +7232,12 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
   if (signal?.aborted) forwardAbort(); else signal?.addEventListener("abort", forwardAbort, { once: true });
   const runSignal = run.abortController.signal;
   const delayedDone = chatRunStream(run, { send(event, data) { if (event !== "done") originalStream.send(event, data); } });
+  // The nudge the previous reply left (ADR-0125) rides on this turn's prompt
+  // only, after the run recorded the person's own words; it is used once.
+  const nudge = takeAutomationNudge(payload);
+  if (nudge) run.automationNudge = { kind: nudge.kind, phrase: nudge.phrase };
   try {
-    const result = await executeChatTurnInner({ ...payload, _computerUseWorkId: workId }, { stream: delayedDone, signal: runSignal, startedAt });
+    const result = await executeChatTurnInner({ ...payload, _computerUseWorkId: workId, ...(nudge ? { prompt: `${String(payload.prompt || "").trim()}\n\n${automationNudgeLine(nudge)}` } : {}) }, { stream: delayedDone, signal: runSignal, startedAt });
     const evidence = await finishComputerWork(workId);
     const completed = await agentChannelActions.finish(actionContext, { ...cleanWorkResult(result), ...(evidence ? { computerUse: evidence } : {}) }, runSignal);
     const scheduleOffer = scheduleOfferFor(payload, completed);
@@ -7234,6 +7245,7 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
       completed.scheduleOffer = scheduleOffer;
       logEvent(SEVERITY.INFO, `schedule offered for ${memberId}: ${scheduleOffer.description} ("${scheduleOffer.phrase}")`, { "event.name": "work.schedule.offered", "autohand.member.id": memberId, "autohand.work.phrase": scheduleOffer.phrase });
     }
+    noteAutomationNudge(payload, completed, workId);
     finishChatRun(run, { result: completed });
     originalStream.send("done", completed);
     return completed;
@@ -7450,6 +7462,52 @@ function scheduleOfferFor(payload, result) {
   const schedule = normalizeSchedule({ ...found.schedule, timeZone: isValidTimeZone(timeZone) ? timeZone : "UTC" });
   if (validateSchedule(schedule).length) return null;
   return { phrase: found.phrase, title: found.title, instructions: found.instructions, schedule, timeZone: schedule.timeZone, description: describeSchedule(schedule) };
+}
+
+// Always-on (ADR-0125). A turn is the person's when it is a direct message
+// they typed (or queued): not a channel, goal, routine, observer, handoff,
+// agenda or draft turn.
+function isPersonTurn(payload) {
+  if (!payload || payload.collaboration || payload.goalId || payload.goal || payload.mode === "goal") return false;
+  if (channelContextFromPayload(payload)) return false;
+  return !/^(goal|routine|observer|agenda|draft|run)-/.test(String(payload.requestId || ""));
+}
+
+// The next-turn nudge: when the person's message reads as repeating work and
+// the reply proposed no routine, the member's next turn carries one line
+// asking it to propose or ask. In memory: a bridge restart forgets it, and
+// it expires after a day. "Schedule this?" (ADR-0124) is unchanged.
+const automationNudges = new Map();
+const AUTOMATION_NUDGE_TTL_MS = 24 * 60 * 60_000;
+
+function previousPersonPrompts(memberId, excludeId) {
+  const since = Date.now() - 14 * 24 * 60 * 60_000;
+  return [...runs.values()]
+    .filter((run) => run.id !== excludeId && run.agentId === memberId && run.kind === "chat" && run.status === "completed" && !run.channel && Date.parse(run.startedAt) >= since && run.prompt)
+    .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
+    .slice(0, 40)
+    .map((run) => run.prompt);
+}
+
+function noteAutomationNudge(payload, result, workId) {
+  const memberId = String(payload.agentId || payload.agent?.id || "");
+  if (!memberId || !isPersonTurn(payload) || !result || result.declined) return;
+  if (replyProposedSchedule(result.channelActions)) {
+    automationNudges.delete(memberId);
+    return;
+  }
+  const signal = repeatedWorkSignal(payload.prompt, previousPersonPrompts(memberId, workId));
+  if (!signal) return;
+  automationNudges.set(memberId, { ...signal, at: Date.now() });
+  logEvent(SEVERITY.INFO, `automation nudge noted for ${memberId} (${signal.kind}: "${signal.phrase}")`, { "event.name": "work.automation.nudge_noted", "autohand.member.id": memberId, "autohand.work.signal": signal.kind });
+}
+
+function takeAutomationNudge(payload) {
+  const memberId = String(payload.agentId || payload.agent?.id || "");
+  const nudge = automationNudges.get(memberId);
+  if (!nudge || !isPersonTurn(payload)) return null;
+  automationNudges.delete(memberId);
+  return Date.now() - nudge.at <= AUTOMATION_NUDGE_TTL_MS ? nudge : null;
 }
 
 async function recallForTurn(payload) {

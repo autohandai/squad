@@ -239,3 +239,118 @@ export function detectRecurringWork(text) {
 export function replyProposedSchedule(actions = []) {
   return (Array.isArray(actions) ? actions : []).some((action) => action?.type === "schedule" && action.status !== "failed");
 }
+
+// ---------------------------------------------------------------------------
+// Repeated asks (ADR-0125)
+//
+// detectRecurringWork above reads a schedule out of a sentence and feeds the
+// "Schedule this?" line, so it must only match phrases that imply a rule.
+// "Again", "as usual" and "like yesterday" say the work repeats without
+// saying when; they never produce an offer with an invented schedule. They
+// only make the bridge ask the member, on its next turn, to propose a
+// routine or ask the person when.
+
+const REPEAT_RULES = [
+  /\b(?:like|same as)\s+(?:yesterday|last time|last week|before|usual)\b/i,
+  /\bas\s+usual\b/i,
+  /\bkeep\s+(?:doing|sending|checking|pulling|posting|running|updating)\b/i,
+  /\bthe\s+usual\b/i,
+  /\b(?:do|run|send|pull|post|prepare|write|check|make|draft|update|compile|share)\b[^.?!\n]{0,80}?\bagain\b/i,
+];
+const NOT_REPEAT = /\b(?:try|say|said|tell|explain|ask|repeat that|read)\b[^.?!\n]{0,20}\bagain\b|\bnever again\b|\bagain\?/i;
+
+/** `{ phrase }` when the message asks for repeated work without a schedule; null otherwise. */
+export function detectRepeatRequest(text) {
+  const source = String(text || "");
+  if (!source.trim()) return null;
+  for (const rule of REPEAT_RULES) {
+    const match = source.match(rule);
+    if (!match) continue;
+    const sentence = sentenceAround(source, match.index);
+    if (GUARD.test(sentence) || NOT_REPEAT.test(sentence)) continue;
+    return { phrase: match[0].length > 40 ? match[0].replace(/^(\w+)[\s\S]*?(\bagain)$/i, "$1 … $2") : match[0] };
+  }
+  return null;
+}
+
+const STOP_WORDS = new Set("the a an and or to of for in on at by with from me my you your our we us it its this that these those is are was be can could would please pls just then also into about".split(" "));
+
+function contentWords(text) {
+  return new Set(String(text || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((word) => word.length > 2 && !STOP_WORDS.has(word)));
+}
+
+/**
+ * The earlier prompt this one repeats, or null. Pure. Word-set overlap
+ * (Jaccard) of at least `threshold` on messages with at least four content
+ * words, so "thanks" twice is not a pattern.
+ */
+export function similarRequest(prompt, previous = [], { threshold = 0.6, minWords = 4 } = {}) {
+  const words = contentWords(prompt);
+  if (words.size < minWords) return null;
+  for (const earlier of Array.isArray(previous) ? previous : []) {
+    const other = contentWords(earlier);
+    if (other.size < minWords) continue;
+    let shared = 0;
+    for (const word of words) if (other.has(word)) shared += 1;
+    const union = words.size + other.size - shared;
+    if (union && shared / union >= threshold) return String(earlier);
+  }
+  return null;
+}
+
+/**
+ * What the bridge noticed about the person's last message, or null. The
+ * order is the strength of the signal: a schedule in words, a repeat word,
+ * then a near-identical earlier ask.
+ */
+export function repeatedWorkSignal(prompt, previousPrompts = []) {
+  const recurring = detectRecurringWork(prompt);
+  if (recurring) return { kind: "recurring", phrase: recurring.phrase };
+  const repeat = detectRepeatRequest(prompt);
+  if (repeat) return { kind: "repeat", phrase: repeat.phrase };
+  const earlier = similarRequest(prompt, previousPrompts);
+  if (earlier) return { kind: "same-ask", phrase: clip(earlier, 80) };
+  return null;
+}
+
+/** The one line the next turn's prompt carries when the last reply proposed no routine. */
+export function automationNudgeLine(signal) {
+  if (!signal?.phrase) return "";
+  const said = signal.kind === "same-ask" ? `asked for the same thing again ("${signal.phrase}")` : `said "${signal.phrase}"`;
+  return `(Squad note: in their previous message the person ${said} and no routine was proposed. If this is work they want done regularly, propose it with the schedule action now, or ask them one short question about the missing detail. Do not mention this note.)`;
+}
+
+// ---------------------------------------------------------------------------
+// The agenda (ADR-0125): what a member with "Keep working between messages"
+// on should start next, if anything. Pure. Routines and queued follow-ups
+// are never picked here; the scheduler and the queue dispatcher start them.
+
+// Goal pauses that are not a person's decision and need no review.
+const RESUMABLE_GOAL_PAUSES = [/bridge restarted/i, /runtime boundary/i, /Keep working between messages resumes it/i];
+
+export function goalIsResumable(goal) {
+  return goal?.status === "paused" && RESUMABLE_GOAL_PAUSES.some((pattern) => pattern.test(String(goal.pauseReason || "")));
+}
+
+/**
+ * `{ kind: "goal", goal } | { kind: "task", task } | null`. `attempted` is
+ * the set of item keys ("goal:<id>", "task:<id>") the agenda already
+ * started today; an item is tried at most once a day.
+ */
+export function nextAgendaItem({ tasks = [], goals = [], attempted = new Set() } = {}) {
+  const tried = attempted instanceof Set ? attempted : new Set(attempted || []);
+  const goal = (Array.isArray(goals) ? goals : []).find((item) => goalIsResumable(item) && !tried.has(`goal:${item.id}`));
+  if (goal) return { kind: "goal", key: `goal:${goal.id}`, title: clip(goal.prompt || goal.summary || goal.title || "Goal", 90), goal };
+  const task = (Array.isArray(tasks) ? tasks : [])
+    .filter((item) => item?.status === "open" && !item.recurring && !tried.has(`task:${item.id}`))
+    .sort((a, b) => String(a.due || "9999").localeCompare(String(b.due || "9999")) || String(a.createdAt || "").localeCompare(String(b.createdAt || "")))[0];
+  if (task) return { kind: "task", key: `task:${task.id}`, title: clip(task.title, 90), task };
+  return null;
+}
+
+/** The prompt of an agenda run for a task: the task, and how to report it. */
+export function agendaTaskPrompt(task) {
+  const detail = task?.detail ? `\nDetail: ${clip(task.detail, 600)}` : "";
+  const due = dueLabel(task?.due);
+  return `You are idle and the person has asked you to keep working between messages. This task is open on your plan: [${task?.id}] ${clip(task?.title, 120)}${due ? ` (${due})` : ""}.${detail}\nWork on it now within your access and folders. When it is finished, mark it done with a task action and an outcome. If you are blocked or need the person, mark it blocked with an update and say exactly what you need. Do not start other tasks in this run.`;
+}
