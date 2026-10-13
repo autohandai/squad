@@ -13,6 +13,8 @@ list to the section for that version.
 ### Added
 
 - A control plane for MCP clients. `squad mcp` (or `bun run mcp` from a checkout) runs a stdio MCP server that Claude Desktop, Cursor or any MCP client can register to list members and channels, read channel threads, search, create channels, post to a channel, send work to a member and wait for the reply, and stop it. It talks only to the local bridge, never exposes approvals, deletion, credentials or computers, and replaces anything that looks like a key or token in replies with `[redacted]`. Members and their models are still created and changed in the app; those two tools say so instead of pretending. See `docs/integration/control-plane.md`.
+- A mic button in the member chat, quick chat and channel composers. Speak and the words appear in the field as they are recognised; review them and press Enter when you are ready. Nothing is sent on its own. Browsers that can recognise speech on the device are asked to, so audio stays on the computer. In the desktop app the button explains how to use the Mac's own dictation (the Dictation key, or Fn twice), which types into the same field.
+- Read a member's reply aloud with the speaker control on the reply, or turn on "Read replies aloud" in the member's profile so each new reply is read as it lands. Code blocks, file paths, links and tables are summarised instead of spelled out. Replies use the voices built into the computer, or an ElevenLabs voice when a key is added in Settings → Voice; the key stays with the local bridge and is never shown to the browser.
 
 ## [0.1.6] - 2026-10-13
 

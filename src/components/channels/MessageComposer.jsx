@@ -4,6 +4,7 @@ import { ArrowUp, AtSign, Paperclip, Smile, Square, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { VoiceInputButton } from "@/components/chat/VoiceInputButton";
 
 const EMOJI_SET = ["👍", "👀", "✅", "🎉", "🚀", "🐝", "✨", "❤️", "🙏", "🔥", "💡", "🧠", "🛠️", "📎", "🗓️", "😄"];
 
@@ -211,6 +212,7 @@ export function MessageComposer({
         <Button type="button" variant="ghost" size="icon-sm" aria-label="Format bold" disabled={disabled} onClick={() => wrapSelection("**")}>
           <Type className="size-4" />
         </Button>
+        <VoiceInputButton value={text} onValueChange={setText} disabled={disabled} noticeClassName="ml-1 max-w-[14rem]" />
         {hint ? <span className="ml-2 hidden truncate text-xs text-muted-foreground sm:inline">{hint}</span> : null}
         <span className="flex-1" />
         {busy && onStop ? (

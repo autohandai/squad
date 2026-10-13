@@ -234,7 +234,7 @@ function ReactionRow({ reactions = [], onReact, messageId, onSetUpFlow, setUpLab
   );
 }
 
-function HoverActions({ messageId, onReact, onReply, onSetUpFlow, setUpLabel }) {
+function HoverActions({ messageId, onReact, onReply, onSetUpFlow, setUpLabel, extra = null }) {
   return (
     <div className="absolute -top-3 right-2 hidden items-center gap-0.5 rounded-md border border-border/70 bg-background p-0.5 shadow-xs group-hover:flex group-focus-within:flex">
       {QUICK_REACTIONS.map((emoji) => (
@@ -254,6 +254,7 @@ function HoverActions({ messageId, onReact, onReply, onSetUpFlow, setUpLabel }) 
           <Reply className="size-3.5" />
         </button>
       ) : null}
+      {extra}
     </div>
   );
 }
@@ -285,6 +286,7 @@ export function ChannelStream({
   repliedLabel = "replied",
   onSetUpReactionFlow,
   setUpFlowLabel = "Make a reaction do something…",
+  renderActions,
 }) {
   const ordered = useMemo(() => sortChannelMessages(messages), [messages]);
   const repliers = useMemo(() => repliersByUserMessage(ordered, agents), [ordered, agents]);
@@ -397,6 +399,7 @@ export function ChannelStream({
                   onReply={onReply ? () => onReply(message) : null}
                   onSetUpFlow={onSetUpReactionFlow ? () => onSetUpReactionFlow(message) : null}
                   setUpLabel={setUpFlowLabel}
+                  extra={renderActions ? renderActions(message) : null}
                 />
               ) : null}
             </article>

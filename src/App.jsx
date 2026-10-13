@@ -33,6 +33,7 @@ import {
   Ban,
   BookOpen,
   Bell,
+  Volume2,
   Bot,
   Cpu,
   Boxes,
@@ -294,6 +295,10 @@ import { introductionFor } from "@/lib/member-introduction";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
+import { ReadAloudButton } from "@/components/chat/ReadAloudButton";
+import { ReadAloudSetting } from "@/components/chat/ReadAloudSetting";
+import { VoiceInputButton } from "@/components/chat/VoiceInputButton";
+import { VoiceSettings } from "@/components/settings/VoiceSettings";
 import { AgentTaskChecklist, AgentWorkUpdate } from "@/components/chat/AgentTaskChecklist";
 import { MemberGoalControls } from "@/components/chat/MemberGoalControls";
 import { QuickChatMemberPicker, quickChatMemberSelection } from "@/components/chat/QuickChatMemberPicker";
@@ -10556,6 +10561,7 @@ function ChannelsPage({
                 authorName={(message) => (message.role === "system" && message.workflowRunId ? message.workflowName || copy.workflow || "Workflow" : channelMessageAuthorName(message, agents, accountProfile.name))}
                 onReact={onReact}
                 onReply={(message) => setReplyTo(message)}
+                renderActions={(message) => ((message.role === "agent" || message.agentId) && String(message.body || "").trim() ? <ReadAloudButton compact text={message.body} message={message} api={api} copy={copy} /> : null)}
                 emptyLabel={members.length ? copy.channelNoThreads : copy.channelNoMembers}
                 newLabel={copy.newMessages || "New"}
                 typingLabel={copy.isTyping || "is typing…"}
@@ -13923,6 +13929,7 @@ function Conversation({
                 {chatSending && !isGoalRunning(currentGoal) ? "Enter to queue" : "Enter to send"}
                 <span className="sr-only">. Shift+Enter starts a new line.</span>
               </InputGroupText>
+              <VoiceInputButton control={InputGroupButton} size="icon-sm" value={prompt} onValueChange={(next) => updatePrompt(next)} disabled={blockedWorkspace} copy={copy} noticeClassName="max-w-[10rem]" />
               {chatSending && prompt.trim() ? <InputGroupButton type="submit" variant="ghost" size="icon-sm" aria-label={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup} title={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup}><Send className="size-4" /></InputGroupButton> : null}
               <InputGroupButton type={chatSending ? "button" : "submit"} variant={chatSending ? "ghost" : "default"} size="icon-sm" className="shrink-0 rounded-md" disabled={!chatSending && (!prompt.trim() || blockedWorkspace)} aria-label={chatSending ? copy.stopChatResponse : copy.sendChatMessage} title={chatSending ? copy.stopChatResponse : copy.sendChatMessage} onClick={chatSending ? stopActiveChat : undefined}>
                 {chatSending ? <Square className="size-3.5 fill-current" /> : <Send className="size-4" />}
@@ -14296,6 +14303,8 @@ function Conversation({
                   </FieldGroup>
                 </PopoverContent>
               </Popover>
+
+                <VoiceInputButton value={prompt} onValueChange={(next) => updatePrompt(next)} disabled={blockedWorkspace} copy={copy} noticeClassName="max-w-[16rem]" />
 
                 {chatSending && prompt.trim() ? (
                   <Tooltip>
@@ -14823,6 +14832,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
           ) : null}
           {!compact && message.effectiveModel ? <span className="hidden truncate sm:inline">· {providerSummaryLabel(message.effectiveModel)}</span> : null}
           {message.status === "stopped" ? <span>· Stopped</span> : null}
+          {hasVisibleAnswer && !isError ? <ReadAloudButton text={view.answer} message={message} api={api} auto={Boolean(agent.readAloud)} compact={compact} copy={copy} /> : null}
         </div>
 
         {showProgressPlaceholder && !taskProgressFromMessage(message)?.items?.length ? (
@@ -23944,6 +23954,8 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
 
         <ProfileHarnessSummary agent={agent} harnesses={harnesses} navigate={navigate} />
 
+        <ReadAloudSetting agent={agent} copy={copy} onChange={(checked) => updateAgent?.(agent.id, { readAloud: checked })} />
+
         <BrainCardPanel agent={agent} onEdit={() => setProfileEditOpen(true)} />
 
         {startAutohand ? (
@@ -24635,6 +24647,7 @@ function SettingsPage({
     { id: "providers", icon: Brain, label: "LLM Providers", detail: providerSettingsSummary },
     { id: "chat", icon: MessageSquareText, label: copy.chat, detail: chatSettingsDetail },
     { id: "notifications", icon: Bell, label: copy.notifications || "Notifications", detail: notificationSettingsDetail },
+    { id: "voice", icon: Volume2, label: copy.voice || "Voice", detail: copy.voiceDetail || "Built-in or ElevenLabs" },
     { id: "improvement", icon: Sparkles, label: copy.selfImprovement || "Self-improvement", detail: improvementDetail(improvementSettings, copy) },
     { id: "handoff", icon: Workflow, label: copy.handoffRetryPolicy, detail: handoffRetryModeLabel(effectiveHandoffRetryMode, copy) },
     { id: "mission-control", icon: Monitor, label: copy.needsYou || "Needs you", detail: missionControlDetail },
@@ -24951,6 +24964,14 @@ function SettingsPage({
                 onChange={onNotificationSettingsChange}
                 onTest={onTestNotification}
               />
+            </section>
+
+            <section id="settings-voice" className="scroll-mt-6 border-b border-border/70 py-8">
+              <SettingsSectionHeader
+                title={copy.voice || "Voice"}
+                description={copy.voiceDescription || "How replies sound when they are read aloud. The voices built into this computer work without any setup."}
+              />
+              <VoiceSettings api={api} copy={copy} />
             </section>
 
             <section id="settings-improvement" className="scroll-mt-6 border-b border-border/70 py-8">

@@ -3,6 +3,7 @@ import { SendHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { VoiceInputButton } from "@/components/chat/VoiceInputButton";
 
 // One-prompt channel dispatch: the user submits a single prompt and every
 // squad member assigned to the channel plans its own execution and replies in
@@ -56,6 +57,7 @@ export function ChannelComposer({ channel, copy = FALLBACK_COPY, busy = false, o
             }
           }}
         />
+        <VoiceInputButton value={prompt} onValueChange={setPrompt} disabled={busy} copy={copy} />
         <Button size="icon" aria-label={copy.sendChatMessage} disabled={busy || !prompt.trim() || !hasMembers} onClick={submit}>
           <SendHorizontal />
         </Button>
