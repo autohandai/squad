@@ -23,6 +23,7 @@ import { historyRecord, runFromRecord } from '../server/runs/history.mjs';
 import { archivePayload, chatMetaLine, conversationHasWork, messagesForTransfer, restoreConversationEvent, sortChats } from '../src/lib/chat-sessions.js';
 import { applySharedConversationEvent } from '../src/lib/shared-conversations.js';
 import { continuationPrompt, deniedFolders, folderFromDeniedPath, pendingFolderRequests, projectsWithFolder } from '../src/lib/folder-access.js';
+import { effortLevelsFor } from '../src/lib/harness.js';
 
 // ---------- pure checks ----------
 const msg = (i, role, body, extra = {}) => ({ id: `m${i}`, role, body, startedAt: `2026-10-13T0${i % 10}:00:00.000Z`, ...extra });
@@ -98,7 +99,11 @@ assert.equal(projectsWithFolder(memberWithFolder, '/Users/igor/notes'), memberWi
 assert.deepEqual(pendingFolderRequests(memberWithFolder, denied), ['/Users/igor/.claude/plans'], 'a granted folder is no longer asked about');
 assert.deepEqual(pendingFolderRequests(memberWithFolder, { ...denied, folderAccessDismissed: ['/Users/igor/.claude/plans'] }), [], 'nor a dismissed one');
 assert.ok(continuationPrompt('/x').includes('/x'));
-console.log('Chat pure checks passed: bounds, record, sessions, history, restore event, recall, folder access.');
+assert.deepEqual(effortLevelsFor('claude', { efforts: ['low', 'high'] }), ['low', 'high'], 'Claude Code levels come from the binary');
+assert.deepEqual(effortLevelsFor('autohand', {}, 'moa'), ['none', 'normal', 'extended'], 'Autohand: moa takes --thinking levels');
+assert.deepEqual(effortLevelsFor('autohand', {}, 'fantail'), [], 'Autohand: other models have no reasoning level');
+assert.deepEqual(effortLevelsFor('autohand', {}, ''), [], 'Autohand: no model, no slider');
+console.log('Chat pure checks passed: bounds, record, sessions, history, restore event, recall, folder access, effort levels.');
 
 // ---------- bridge ----------
 const directory = await mkdtemp(join(tmpdir(), 'squad-chats-'));

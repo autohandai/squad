@@ -136,6 +136,17 @@ and trace stay, the message is marked), and a failed keep is written into
 the fresh conversation as a Squad note with the reason. `check:chats` now
 archives a 5 MB conversation and asserts it is accepted and trimmed.
 
+## What was learnt, third: replies were unreadable
+
+Every bullet in a reply rendered as a dot on its own line with the text
+below it, and numbered lists lost their numbers. The list row used the
+Tailwind class `grid-cols-[1rem,minmax(0,1fr)]`; with a comma the compiled
+rule is `grid-template-columns:1rem,minmax(0,1fr)`, which is invalid CSS,
+so the grid fell back to one column. The spelling is
+`grid-cols-[1.25rem_minmax(0,1fr)]`. The parser now keeps the ordinal of
+`1.` items and the renderer prints it. Before/after screenshots from the
+headless-Chrome harness are in `.codex-artifacts/formatting/`.
+
 ## Consequences
 
 - The Runs tab now fills with every reply, so a busy member produces a long

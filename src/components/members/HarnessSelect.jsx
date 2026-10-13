@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, ExternalLink, LogIn, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { EffortSlider } from "@/components/chat/EffortSlider";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,7 +11,7 @@ import {
   ACCESS_IDS,
   HARNESS_OPTIONS,
   accessOption,
-  effortChoices,
+  effortLevelsFor,
   harnessLoginStatus,
   modelChoices,
   harnessNeedsSignIn,
@@ -231,24 +232,15 @@ export function HarnessSelect({
                   />
                 )}
               </div>
-              {external && effortChoices(readiness).length ? (
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor={`${id}-effort`} className="text-xs">
-                    Reasoning effort
-                  </Label>
-                  <Select value={assignment.effort || "__default"} onValueChange={(next) => next && update({ effort: next === "__default" ? "" : next })}>
-                    <SelectTrigger id={`${id}-effort`} className="h-9 w-full bg-card">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__default">{readiness?.defaults?.effort ? `Engine default (${readiness.defaults.effort})` : "Engine default"}</SelectItem>
-                      {effortChoices(readiness).map((level) => (
-                        <SelectItem key={level} value={level}>
-                          {level}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              {effortLevelsFor(assignment.id, readiness, assignment.model || readiness?.defaults?.model || "").length ? (
+                <div className="sm:col-span-2">
+                  <EffortSlider
+                    id={`${id}-effort`}
+                    levels={effortLevelsFor(assignment.id, readiness, assignment.model || readiness?.defaults?.model || "")}
+                    value={assignment.effort}
+                    defaultLabel={readiness?.defaults?.effort ? `Engine default (${readiness.defaults.effort})` : "Engine default"}
+                    onChange={(next) => update({ effort: next })}
+                  />
                 </div>
               ) : null}
               {external ? (

@@ -83,6 +83,25 @@ with `access: "write"`, `effort: "high"`, `model: "opus"` carries
 gpt-6.1-sol with efforts minimal to xhigh for Codex. `bun run check:render`
 passes on the rebuilt bundle.
 
+## Revision, 2026-10-14: effort is a slider, for every engine
+
+The person did not want effort as a drop-down ("make the effort not a drop
+down in the ui but a nice sliding and micro animations in the slide too, for
+any harness not just claude code, moa for autohand is the only model that
+accepts reasoning effort level"). `src/components/chat/EffortSlider.jsx`
+replaces both selects (composer popover and the member's engine settings):
+stops are Engine default then the engine's levels, the thumb and range
+slide (180 ms), the level name fades up when it changes, the bolt pulses
+once, the active stop grows, and a quiet reset returns to the default; all
+motion is off under `prefers-reduced-motion`. The primitive is the shadcn
+slider over the `radix-ui` package already in the bundle (no new
+dependency). Levels per engine come from `effortLevelsFor` in
+`src/lib/harness.js`: Claude Code and Codex from the readiness lists;
+Autohand Code `none`, `normal`, `extended` (the CLI's `--thinking`), shown
+only when the model is `moa`, and sent as `--thinking <level>` on the CLI
+path. The Autohand SDK session exposes no thinking option, so a warm SDK
+turn ignores it; this is recorded here rather than hidden.
+
 ## Consequences
 
 - A per-turn Full access choice bypasses every Claude Code prompt and every
@@ -94,7 +113,8 @@ passes on the rebuilt bundle.
 - Codex offers only the configured model and Custom, since nothing on this
   machine lists what the account can use.
 - Autohand members keep the old Policy select and free-text model; their
-  catalog lives elsewhere and was not touched.
+  catalog lives elsewhere and was not touched. Their reasoning level reaches
+  the CLI path only; the SDK session has no such option today.
 - The derived default still follows the permission level, so a Chat-only
   member starts every new conversation in plan mode until the engine
   setting says otherwise.

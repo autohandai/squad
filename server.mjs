@@ -3043,6 +3043,10 @@ async function autohandArgs(input) {
   const effectiveModel = input.model || agentRuntime.resolvedProvider?.model || (permissions.modelSecurityEnabled ? permissions.modelSecurity.model : "");
   if (effectiveModel) {
     pushArg("--model", effectiveModel);
+    // Reasoning level (ADR-0114): only the moa model takes --thinking, and
+    // only the levels the CLI documents (none, normal, extended).
+    const thinking = normalizeEffort(input.effort || harnessAssignmentFromAgent(agentRuntime.agent).effort);
+    if (thinking && ["none", "normal", "extended"].includes(thinking) && String(effectiveModel || "").toLowerCase() === "moa") pushArg("--thinking", thinking);
   }
   if (agentRuntime.profileDocs?.path) {
     args.push("--add-dir", agentRuntime.profileDocs.path);

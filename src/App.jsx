@@ -289,6 +289,7 @@ import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { PreviousChats } from "@/components/chat/PreviousChats";
 import { FolderAccessCard } from "@/components/chat/FolderAccessCard";
+import { EffortSlider } from "@/components/chat/EffortSlider";
 import { continuationPrompt, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
 import { archivePayload, conversationHasWork, restoreConversationEvent } from "@/lib/chat-sessions";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
@@ -368,7 +369,7 @@ import {
   ACCESS_IDS,
   accessOption,
   derivedAccess,
-  effortChoices,
+  effortLevelsFor,
   fetchHarnesses,
   harnessForAgent,
   harnessLabel,
@@ -1794,9 +1795,6 @@ const SHELL_GUARDRAILS = [
 ];
 
 const CLI_TOOL_PERMISSIONS = CLI_PERMISSION_GROUPS.flatMap((group) => group.items);
-const DEFAULT_PERMISSION_MODES = Object.fromEntries(
-  CLI_TOOL_PERMISSIONS.map((item) => [item.id, item.defaultMode])
-);
 
 const PERMISSION_TABS = [
   { id: "ladder", label: "Ladder" },
@@ -1979,7 +1977,7 @@ const AUTONOMY_LADDER_LEVELS = [
   },
 ];
 
-const AUTONOMY_LADDER_LEVEL_IDS = AUTONOMY_LADDER_LEVELS.map((level) => level.id);
+
 const PR_READY_LADDER_LEVELS = new Set(["open-pr", "auto-merge-disabled"]);
 const MODEL_PROVIDER_OPTIONS = [
   "autohandai",
@@ -4619,19 +4617,6 @@ function presenceRecordIsFresh(record, maxAgeMs) {
   return Date.now() - value <= maxAgeMs;
 }
 
-function MemberPresenceBadge({ presence, className }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex size-2.5 shrink-0 rounded-full ring-2 ring-background",
-        presence.className,
-        presence.pulse && "animate-pulse",
-        className
-      )}
-      aria-hidden="true"
-    />
-  );
-}
 
 function App() {
   const [route, setRoute] = useState(() => window.location.pathname + window.location.search);
@@ -9874,202 +9859,6 @@ function appendMentionToPrompt(prompt, mention) {
   return `${current}${spacer}${mention} `.replace(/^\s+/, "");
 }
 
-function ChannelMentionComposer({ channel, members = [], copy = getLocaleCopy(DEFAULT_LOCALE), busy = false, onDispatch }) {
-  const [prompt, setPrompt] = useState("");
-  const [error, setError] = useState("");
-  const promptRef = useRef(null);
-  const [mentionState, setMentionState] = useState(null);
-  const [mentionIndex, setMentionIndex] = useState(0);
-  const autoMode = channel?.autoModeDefault === true;
-  const resolution = resolveChannelMentionTargets(prompt, channel, members);
-  const targetLabel = formatChannelTargetLabel(resolution);
-  const hasInvalidOnly = prompt.trim() && resolution.hasMentions && !resolution.targetAgents.length;
-  const canSubmit = Boolean(prompt.trim()) && !busy && !hasInvalidOnly;
-  const mentionQuery = mentionState?.query || "";
-  const mentionItems = useMemo(() => {
-    const query = mentionQuery.toLowerCase();
-    const hereItem = {
-      type: "channel",
-      value: "here",
-      title: "here",
-      detail: "Everyone in this channel",
-    };
-    const memberItems = members
-      .filter((member) => {
-        const haystack = `${member.name || ""} ${member.role || ""} ${channelMentionHandle(member)}`.toLowerCase();
-        return !query || haystack.includes(query);
-      })
-      .map((member) => ({
-        type: "agent",
-        value: channelMentionHandle(member),
-        title: channelMentionHandle(member) || member.name,
-        detail: localizedRole(member, copy),
-        agent: member,
-        presence: memberPresenceForAgent(member),
-      }));
-    return [
-      ...(!query || "here".includes(query) ? [hereItem] : []),
-      ...memberItems,
-    ].slice(0, 6);
-  }, [copy, members, mentionQuery]);
-  const mentionOpen = Boolean(mentionState) && !busy;
-
-  useEffect(() => {
-    setMentionIndex(0);
-  }, [mentionItems.length, mentionQuery]);
-
-  function updatePrompt(value, caret = value.length) {
-    setPrompt(value);
-    setMentionState(currentMentionQuery(value, caret));
-    if (error) setError("");
-  }
-
-  function syncMentionFromTarget(target) {
-    updatePrompt(target.value, target.selectionStart ?? target.value.length);
-  }
-
-  function selectMentionItem(item) {
-    const nextPrompt = insertMentionText(prompt, item, mentionState);
-    setPrompt(nextPrompt.text);
-    setMentionState(null);
-    setError("");
-    window.requestAnimationFrame(() => {
-      promptRef.current?.focus();
-      promptRef.current?.setSelectionRange(nextPrompt.caret, nextPrompt.caret);
-    });
-  }
-
-  function addMention(mention) {
-    setPrompt((current) => appendMentionToPrompt(current, mention));
-    setMentionState(null);
-    setError("");
-    window.requestAnimationFrame(() => {
-      promptRef.current?.focus();
-    });
-  }
-
-  function submit() {
-    const text = prompt.trim();
-    if (!text || busy) return;
-    const nextResolution = resolveChannelMentionTargets(text, channel, members);
-    if (nextResolution.hasMentions && !nextResolution.targetAgents.length) {
-      setError("Use @here or mention a channel member by name.");
-      return;
-    }
-    onDispatch?.({
-      prompt: text,
-      autoMode,
-      selfJudge: autoMode,
-      targetMemberIds: nextResolution.targetMemberIds,
-      targetLabel: nextResolution.targetLabel,
-    });
-    setPrompt("");
-    setMentionState(null);
-    setError("");
-  }
-
-  function handlePromptKeyDown(event) {
-    const wantsPlainEnter =
-      event.key === "Enter" &&
-      !event.shiftKey &&
-      !event.altKey &&
-      !event.metaKey &&
-      !event.ctrlKey &&
-      !event.nativeEvent?.isComposing;
-
-    if (!mentionOpen) {
-      if (wantsPlainEnter) {
-        event.preventDefault();
-        submit();
-      }
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setMentionState(null);
-      return;
-    }
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setMentionIndex((current) => (mentionItems.length ? (current + 1) % mentionItems.length : 0));
-      return;
-    }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setMentionIndex((current) => (mentionItems.length ? (current - 1 + mentionItems.length) % mentionItems.length : 0));
-      return;
-    }
-    if ((event.key === "Enter" || event.key === "Tab") && mentionItems[mentionIndex]) {
-      event.preventDefault();
-      selectMentionItem(mentionItems[mentionIndex]);
-      return;
-    }
-
-    if (wantsPlainEnter) {
-      event.preventDefault();
-      submit();
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-        <span>Mentions:</span>
-        <Button type="button" variant="ghost" size="sm" className="h-7 rounded-md px-2" onClick={() => addMention("@here")}>
-          @here
-        </Button>
-        {members.map((member) => (
-          <Button
-            key={member.id}
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 rounded-md px-2"
-            onClick={() => addMention(channelMentionLabel(member))}
-          >
-            {channelMentionLabel(member)}
-          </Button>
-        ))}
-      </div>
-      <div className="flex items-end gap-2">
-        <div className="relative min-w-0 flex-1">
-          {mentionOpen ? (
-            <MentionPicker
-              items={mentionItems}
-              selectedIndex={mentionIndex}
-              onSelect={selectMentionItem}
-            />
-          ) : null}
-          <Textarea
-            ref={promptRef}
-            value={prompt}
-            placeholder="Use @here for everyone or @Noah for one member..."
-            rows={2}
-            className="min-h-[64px] resize-none"
-            disabled={busy}
-            aria-label={copy.channelPromptPlaceholder || "Channel prompt"}
-            onChange={(event) => syncMentionFromTarget(event.target)}
-            onClick={(event) => syncMentionFromTarget(event.currentTarget)}
-            onKeyDown={handlePromptKeyDown}
-            onKeyUp={(event) => {
-              if (mentionOpen && ["Enter", "Tab", "Escape", "ArrowDown", "ArrowUp"].includes(event.key)) return;
-              syncMentionFromTarget(event.currentTarget);
-            }}
-            onSelect={(event) => syncMentionFromTarget(event.currentTarget)}
-          />
-        </div>
-        <Button size="icon" aria-label={copy.channels} disabled={!canSubmit} onClick={submit}>
-          <Send />
-        </Button>
-      </div>
-      <p className={cn("text-xs", error || hasInvalidOnly ? "text-destructive" : "text-muted-foreground")}>
-        {error || (hasInvalidOnly ? "Use @here or mention a channel member by name." : null) ||
-          `Target: ${targetLabel || responderTargetHint(channel, members) || "channel"}. ${autoMode ? copy.channelAutoModeOn : copy.channelAutoModeOff}.`}
-      </p>
-    </div>
-  );
-}
 
 function threadReplyLabel(count) {
   const value = Number(count) || 0;
@@ -10177,104 +9966,6 @@ function ChannelReplyPreview({ replies = [], replyCount = 0, agents = [], expand
   );
 }
 
-function ChannelThreadItem({
-  thread,
-  rootMessage,
-  replies = [],
-  agents = [],
-  userName = ACCOUNT_PROFILE.name,
-  copy = getLocaleCopy(DEFAULT_LOCALE),
-  locale = DEFAULT_LOCALE,
-  busy = false,
-  onFollowUp,
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [followUp, setFollowUp] = useState("");
-  const replyCount = replies.length || Number(thread?.replyCount || 0);
-
-  function submitFollowUp() {
-    const text = followUp.trim();
-    if (!text || busy) return;
-    onFollowUp?.({ prompt: text, threadId: thread.id });
-    setFollowUp("");
-    setExpanded(true);
-  }
-
-  return (
-    <section className="group border-b border-border/70 pb-4 last:border-b-0" aria-label={thread.title || "Channel thread"}>
-      {rootMessage ? (
-        <ChannelThreadMessage message={rootMessage} agents={agents} userName={userName} locale={locale} />
-      ) : null}
-
-      <div className="ml-11 mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {thread.autoMode === true ? <Badge variant="secondary" className="rounded-md px-1.5 py-0">Auto mode on</Badge> : null}
-        {thread.targetLabel ? <span>{thread.targetLabel}</span> : null}
-        <AnsweredByTag responder={rootMessage?.responder} members={agents} />
-      </div>
-
-      {replyCount > 0 ? (
-        <ChannelReplyPreview
-          replies={replies}
-          replyCount={replyCount}
-          agents={agents}
-          expanded={expanded}
-          onToggle={() => setExpanded((open) => !open)}
-        />
-      ) : (
-        <button
-          type="button"
-          className="ml-11 mt-1 rounded-md px-1 py-1 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          onClick={() => setExpanded((open) => !open)}
-          aria-expanded={expanded}
-        >
-          {expanded ? "Hide reply composer" : copy.threadFollowUp}
-        </button>
-      )}
-
-      {expanded ? (
-        <div className="ml-11 mt-3 border-l border-border/80 pl-4">
-          {replyCount > 0 ? (
-            <div className="mb-3 flex items-center gap-3 text-sm text-muted-foreground">
-              <span>{threadReplyLabel(replyCount)}</span>
-              <Separator className="min-w-0 flex-1" />
-            </div>
-          ) : null}
-          <div className="flex flex-col gap-2">
-            {replies.map((message) => (
-              <ChannelThreadMessage
-                key={message.id}
-                message={message}
-                agents={agents}
-                userName={userName}
-                locale={locale}
-              />
-            ))}
-          </div>
-          <div className="mt-3 flex items-end gap-2">
-            <Textarea
-              value={followUp}
-              placeholder={copy.threadFollowUpPlaceholder}
-              rows={1}
-              className="min-h-[40px] flex-1 resize-none"
-              disabled={busy}
-              aria-label={copy.threadFollowUp}
-              onChange={(event) => setFollowUp(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  submitFollowUp();
-                }
-              }}
-            />
-            <Button variant="outline" size="sm" disabled={busy || !followUp.trim()} onClick={submitFollowUp}>
-              {copy.threadFollowUp}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
 
 // Squad channels: channel list + channel detail flow. One prompt fans out to
 // every member assigned to the selected channel; replies stay grouped in
@@ -11248,9 +10939,6 @@ function workspacePath(target, workspaces = [], fallback = "") {
   return match?.path || fallback || workspaces[0]?.path || "";
 }
 
-function agentSidebarPreview(agent) {
-  return agent?.description || agent?.instructions || agent?.role || "Ready for local Autohand work.";
-}
 
 function agentSidebarTime(agent, locale = DEFAULT_LOCALE) {
   const raw = agent?.lastConversationAt || agent?.updatedAt || agent?.createdAt;
@@ -11621,12 +11309,13 @@ function parseMarkdownBlocks(text) {
       }
     }
 
-    const listMatch = line.match(/^(\s*)(?:[-*]|\d+\.)\s+(.+)$/);
+    const listMatch = line.match(/^(\s*)(?:([-*])|(\d+)\.)\s+(.+)$/);
     if (listMatch) {
       flushParagraph();
       listItems.push({
         level: Math.min(Math.floor(listMatch[1].length / 2), 3),
-        text: listMatch[2],
+        ordinal: listMatch[3] ? Number(listMatch[3]) : null,
+        text: listMatch[4],
       });
       continue;
     }
@@ -11731,17 +11420,25 @@ function MarkdownBlocks({ text, muted = false }) {
           );
         }
         if (block.type === "list") {
+          // One row per item: marker column, then text. The columns are
+          // `1rem_minmax(0,1fr)` with an underscore; written with a comma this
+          // compiled to invalid CSS and every bullet sat on its own line above
+          // its text (ADR-0113, formatting). Numbered items keep their number.
           return (
-            <ul key={index} className="space-y-1">
+            <ul key={index} className="space-y-1.5">
               {block.items.map((item, itemIndex) => (
                 <li
                   key={`${itemIndex}-${item.text}`}
-                  className="grid grid-cols-[1rem,minmax(0,1fr)] gap-2"
+                  className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-1.5"
                   style={{ marginLeft: `${item.level * 1.1}rem` }}
                 >
-                  <span className="pt-[0.68rem]">
-                    <span className="block size-1.5 rounded-full bg-primary/70" />
-                  </span>
+                  {item.ordinal !== null && item.ordinal !== undefined ? (
+                    <span className="select-none pt-px text-right text-[13px] tabular-nums text-muted-foreground">{item.ordinal}.</span>
+                  ) : (
+                    <span className="flex justify-center pt-[0.6rem]">
+                      <span className="block size-1.5 rounded-full bg-foreground/55" />
+                    </span>
+                  )}
                   <span className="min-w-0">
                     <InlineMarkdown text={item.text} />
                   </span>
@@ -12280,103 +11977,6 @@ function ChannelCreateDialog({
   );
 }
 
-function SidebarChannelsSection({
-  channels = [],
-  agents = [],
-  activeChannelId = "",
-  active = false,
-  expanded = false,
-  threadCounts = {},
-  copy = getLocaleCopy(DEFAULT_LOCALE),
-  onExpandedChange,
-  onOpenChannels,
-  onSelectChannel,
-  onCreateChannel,
-}) {
-  const [createOpen, setCreateOpen] = useState(false);
-  const ToggleIcon = expanded ? ChevronDown : ChevronRight;
-
-  function openCreateDialog() {
-    onExpandedChange?.(true);
-    setCreateOpen(true);
-  }
-
-  return (
-    <div className="flex min-h-0 flex-col gap-1">
-      <div className="flex items-center gap-1">
-        <Button
-          variant="ghost"
-          className={cn(
-            "h-11 min-w-0 flex-1 justify-start rounded-md px-2.5 text-muted-foreground hover:bg-muted/55 hover:text-foreground",
-            active && "bg-muted/80 text-foreground"
-          )}
-          aria-expanded={expanded}
-          aria-controls="squad-sidebar-channels"
-          aria-current={active ? "page" : undefined}
-          onClick={() => {
-            onExpandedChange?.(!expanded);
-            if (!active) onOpenChannels?.();
-          }}
-        >
-          <ToggleIcon data-icon="inline-start" className="size-3.5" />
-          <Hash data-icon="inline-start" />
-          <span className="min-w-0 flex-1 truncate">{copy.channels}</span>
-          <Badge variant="secondary" className="rounded-md px-1.5">
-            {channels.length}
-          </Badge>
-        </Button>
-        <Button variant="ghost" size="icon-sm" aria-label={copy.createChannel} onClick={openCreateDialog}>
-          <Plus />
-        </Button>
-      </div>
-
-      {expanded ? (
-        <div id="squad-sidebar-channels" className="ml-7 flex flex-col gap-0.5">
-          {channels.length === 0 ? (
-            <p className="px-2 py-2 text-sm text-muted-foreground">{copy.channelNoChannels}</p>
-          ) : (
-            channels.map((channel) => {
-              const isActive = channel.id === activeChannelId;
-              const threadCount = threadCounts[channel.id] || 0;
-              return (
-                <button
-                  key={channel.id}
-                  type="button"
-                  aria-current={isActive ? "page" : undefined}
-                  className={cn(
-                    "flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
-                    isActive ? "bg-muted/80 text-foreground" : "text-foreground/85 hover:bg-muted/55"
-                  )}
-                  onClick={() => onSelectChannel?.(channel.id)}
-                >
-                  {channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? (
-                    <Lock role="img" className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPrivate} />
-                  ) : (
-                    <Hash role="img" className="size-3.5 shrink-0 text-muted-foreground" aria-label={copy.channelPublic} />
-                  )}
-                  <span className="min-w-0 flex-1 truncate">{channel.name}</span>
-                  {threadCount > 0 ? (
-                    <Badge variant="secondary" className="rounded-md px-1.5">
-                      {threadCount}
-                    </Badge>
-                  ) : null}
-                </button>
-              );
-            })
-          )}
-        </div>
-      ) : null}
-
-      <ChannelCreateDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        agents={agents}
-        copy={copy}
-        onCreateChannel={onCreateChannel}
-      />
-    </div>
-  );
-}
 
 function CollapsedSidebarRail({
   agents,
@@ -13102,33 +12702,6 @@ function NavButton({ active, onClick, children }) {
   );
 }
 
-function RuntimeCompact({ runtime }) {
-  if (!runtime) {
-    return (
-      <Card className="gap-3 rounded-lg py-4">
-        <CardContent className="flex items-center gap-3 px-4">
-          <Skeleton className="size-9 rounded-md" />
-          <div className="flex flex-1 flex-col gap-2">
-            <Skeleton className="h-3 w-28" />
-            <Skeleton className="h-3 w-36" />
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card className="gap-3 rounded-lg border-border/80 bg-muted/35 py-4 shadow-none">
-      <CardContent className="flex items-center gap-3 px-4">
-        <span className={cn("size-2.5 rounded-full", runtime.available ? "bg-primary shadow-[0_0_24px_var(--primary)]" : "bg-destructive")} />
-        <div className="min-w-0">
-          <div className="text-sm font-semibold">{runtime.available ? "Autohand wired" : "Autohand missing"}</div>
-          <div className="truncate text-xs text-muted-foreground">{runtime.version || runtime.autohandPath || "checking runtime"}</div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function MobileTopbar({ activeAgent, showsMember = false, theme, copy = getLocaleCopy(DEFAULT_LOCALE), onMenu, onSettings, onMissionControl, onOnboarding, onAnalytics }) {
   const subtitle = showsMember && activeAgent ? `${activeAgent.name} / ${localizedRole(activeAgent, copy)}` : "";
@@ -14903,25 +14476,16 @@ function Conversation({
                       </Field>
                     )}
 
-                    {externalEngine && effortChoices(engineReadiness).length ? (
+                    {effortLevelsFor(launchAssignment.id, engineReadiness, model || engineReadiness?.defaults?.model || "").length ? (
                       <Field className="gap-2">
-                        <FieldLabel>{copy.effort || "Reasoning effort"}</FieldLabel>
-                        <Select value={effort || "__default"} onValueChange={(value) => value && setEffort(value === "__default" ? "" : value)}>
-                          <SelectTrigger className="h-9 w-full" aria-label={copy.effort || "Reasoning effort"}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectGroup>
-                              <SelectLabel>{harnessLabel(launchAssignment.id)}</SelectLabel>
-                              <SelectItem value="__default">{engineReadiness?.defaults?.effort ? `${copy.engineDefault || "Engine default"} (${engineReadiness.defaults.effort})` : copy.engineDefault || "Engine default"}</SelectItem>
-                              {effortChoices(engineReadiness).map((level) => (
-                                <SelectItem key={level} value={level}>
-                                  {level}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
+                        <EffortSlider
+                          id="launch-effort"
+                          label={copy.effort || "Reasoning effort"}
+                          levels={effortLevelsFor(launchAssignment.id, engineReadiness, model || engineReadiness?.defaults?.model || "")}
+                          value={effort}
+                          defaultLabel={engineReadiness?.defaults?.effort ? `${copy.engineDefault || "Engine default"} (${engineReadiness.defaults.effort})` : copy.engineDefault || "Engine default"}
+                          onChange={setEffort}
+                        />
                       </Field>
                     ) : null}
 
@@ -15281,32 +14845,6 @@ function LaunchPermissionWarnings({ warnings = [] }) {
   );
 }
 
-function SquadStatusRow({ agent, activeMode, latestRun, runtime, workspace, workspaces, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
-  const latestStatus = latestRun?.status || "idle";
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="max-w-3xl text-base leading-7 text-foreground/88">
-        {localizedAgentInstructions(agent, copy)}
-      </p>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>{runModeLabel(activeMode.id, copy)}</span>
-        <span className="h-1 w-1 rounded-full bg-muted-foreground/45" />
-        <span>{statusLabel(latestStatus, copy)}</span>
-        <span className="h-1 w-1 rounded-full bg-muted-foreground/45" />
-        <span className="min-w-0 truncate">{workspaceLabel(workspace, workspaces)}</span>
-        <span className="h-1 w-1 rounded-full bg-muted-foreground/45" />
-        <span>{formatCopy(copy.runsWithLabel || "Runs with {name}", { name: harnessLabel(harnessForAgent(agent).id) })}</span>
-      </div>
-      {!runtime?.available ? (
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertTitle>{copy.autohandCliMissing}</AlertTitle>
-          <AlertDescription>{copy.autohandCliMissingDescription}</AlertDescription>
-        </Alert>
-      ) : null}
-    </div>
-  );
-}
 
 const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onFolderAccess, memberBusy = false }) {
   const isUser = message.role === "user";
@@ -15515,66 +15053,7 @@ function RawTraceBlock({ raw }) {
   );
 }
 
-function WorkspaceField({ workspace, setWorkspace, workspaces, runtime }) {
-  const workspaceChoices = workspaceOptions(workspaces, workspace, runtime);
-  const blocked = isBlockedWorkspace(workspace, runtime);
-  return (
-    <Field>
-      <FieldLabel>Workspace</FieldLabel>
-      <Select value={blocked ? undefined : workspace} onValueChange={setWorkspace} disabled={!workspaceChoices.length}>
-        <SelectTrigger className="w-full">
-          <SelectValue placeholder="Scanning local folders" />
-        </SelectTrigger>
-        <SelectContent position="popper" className="max-h-[420px]">
-          <SelectGroup>
-            <SelectLabel>Folders under {runtime?.workspaceRoot || "user directory"}</SelectLabel>
-            {workspaceChoices.map((item) => (
-              <SelectItem key={item.path} value={item.path}>
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-      <FieldDescription className="truncate">
-        {blocked
-          ? "Choose a project folder or git repo. Home is blocked by Autohand CLI."
-          : workspace || `Folders under ${runtime?.workspaceRoot || "your user directory"}`}
-      </FieldDescription>
-    </Field>
-  );
-}
 
-function RuntimeBeacon({ runtime, latestRun }) {
-  return (
-    <Card className="overflow-hidden border-border/80 bg-card/75 shadow-xl shadow-black/15">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <TerminalSquare />
-          Runtime
-        </CardTitle>
-        <CardDescription>{runtime?.available ? "ready" : "offline"}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="grid grid-cols-[48px_minmax(0,1fr)] items-center gap-3">
-          <span className="runtime-glow grid size-12 place-items-center rounded-lg bg-primary text-primary-foreground">
-            <TerminalSquare />
-          </span>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold">{runtime?.autohandPath || "not found"}</div>
-            <div className="text-xs text-muted-foreground">{runtime?.version || "checking runtime"}</div>
-          </div>
-        </div>
-        <Separator />
-        <div className="grid grid-cols-3 gap-2 text-sm">
-          <Metric label="Latest" value={latestRun?.status || "idle"} />
-          <Metric label="Root" value={workspaceName(runtime?.workspaceRoot) || "home"} />
-          <Metric label="Mode" value="local" />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function Metric({ label, value }) {
   return (
@@ -16417,36 +15896,6 @@ function formatRelativeTime(value, locale = DEFAULT_LOCALE) {
   return date.toLocaleDateString(locale, { month: "short", day: "numeric" });
 }
 
-function squadStatusMeta(status) {
-  switch (status) {
-    case "running":
-    case "launching":
-      return { label: "Working", dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400", live: true };
-    case "handoff-pending":
-      return { label: "Handoff", dot: "bg-violet-500", text: "text-violet-600 dark:text-violet-400" };
-    case "pending":
-      return { label: "Pending", dot: "bg-sky-500", text: "text-sky-600 dark:text-sky-400" };
-    case "blocked":
-      return { label: "Blocked", dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-500" };
-    case "failed":
-      return { label: "Failed", dot: "bg-red-500", text: "text-red-600 dark:text-red-400" };
-    case "completed":
-      return { label: "Done", dot: "bg-emerald-500", text: "text-muted-foreground" };
-    case "available":
-    case "online":
-    case "ready":
-    case "idle":
-      return { label: "Available", dot: "bg-emerald-500", text: "text-muted-foreground" };
-    case "away":
-      return { label: "Away", dot: "bg-amber-400", text: "text-muted-foreground" };
-    case "offline":
-    case "archived":
-    case "disabled":
-      return { label: "Offline", dot: "bg-muted-foreground/40", text: "text-muted-foreground/70" };
-    default:
-      return { label: status ? status.replace(/-/g, " ") : "Idle", dot: "bg-muted-foreground/40", text: "text-muted-foreground" };
-  }
-}
 
 // Availability is the user-managed lifecycle state of a member, kept distinct
 // from the work/activity surfaced on the Work page. The Squad page owns this.
@@ -16913,21 +16362,6 @@ function SquadMemberRow({
   );
 }
 
-function SquadMenuItem({ icon: Icon, children, onClick, destructive = false }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
-        destructive ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-muted"
-      )}
-    >
-      <Icon className="size-4 shrink-0" aria-hidden="true" />
-      <span className="min-w-0 flex-1 truncate">{children}</span>
-    </button>
-  );
-}
 
 function MissionAnchor({ href, navigate, className, children, ...props }) {
   function onClick(event) {
@@ -18484,15 +17918,6 @@ function missionTime(value) {
   return Number.isNaN(time) ? 0 : time;
 }
 
-function formatShortDate(value, locale = DEFAULT_LOCALE) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value || "");
-  return new Intl.DateTimeFormat(locale, {
-    month: "2-digit",
-    day: "2-digit",
-    year: "numeric",
-  }).format(date);
-}
 
 function formatLongDate(value, locale = DEFAULT_LOCALE) {
   const date = new Date(value);
@@ -18557,11 +17982,6 @@ function automationNextRunLabel(automation, locale = DEFAULT_LOCALE) {
   return "Scheduled on the bridge";
 }
 
-function automationTriggerTitle(automation) {
-  if (automation.triggerType === "event") return "Event";
-  if (automation.triggerType === "webhook") return "Webhook";
-  return "Schedule";
-}
 
 function compactRecordId(id) {
   const value = String(id || "");
@@ -18623,12 +18043,6 @@ function handoffContextText(handoff, task, sourceAgent, targetAgent) {
   return lines.join("\n");
 }
 
-function getAgentStrengths(agent, copy = getLocaleCopy(DEFAULT_LOCALE)) {
-  if (agent?.employeeType === "common-qa-engineer" || agent?.role === "QA Engineer") {
-    return copy.qaStrengths;
-  }
-  return normalizeSkillList(agent?.skills).slice(0, 5).map((skill) => localizedSkillLabel(skill, copy));
-}
 
 function AgentPhotoCard({ agent, className, compact = false }) {
   return (
@@ -18647,23 +18061,6 @@ function AgentPhotoCard({ agent, className, compact = false }) {
   );
 }
 
-function CapabilityRow({ icon: Icon, title, detail }) {
-  return (
-    <button
-      type="button"
-      className="grid min-h-14 w-full grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3 border-t border-border/80 py-3 text-left transition-colors hover:bg-muted/20"
-    >
-      <span className="grid size-8 place-items-center rounded-md bg-muted text-muted-foreground">
-        <Icon className="size-4" />
-      </span>
-      <span className="min-w-0">
-        <span className="block truncate text-sm font-semibold">{title}</span>
-        {detail ? <span className="mt-1 block truncate text-xs text-muted-foreground">{detail}</span> : null}
-      </span>
-      <ChevronRight className="size-4 text-muted-foreground" />
-    </button>
-  );
-}
 
 function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, model, onViewProfile, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   const description = agent.description || brainCardForAgent(agent).purpose;
@@ -18836,38 +18233,6 @@ function WorkRecordAutomationsTable({ automations, copy = getLocaleCopy(DEFAULT_
   );
 }
 
-function MessagesCard({ agent, messages }) {
-  return (
-    <Card className="border-border/80 bg-card/70 shadow-xl shadow-black/10">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <MessageSquareText />
-          Conversation
-        </CardTitle>
-        <CardDescription>Run context and Autohand launch feedback</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-col gap-3">
-          {messages.map((message) => (
-            <article
-              key={message.id}
-              className={cn(
-                "rounded-lg border p-4",
-                message.role === "user" ? "ml-auto max-w-3xl border-primary/45 bg-primary/10" : "max-w-4xl bg-muted/35"
-              )}
-            >
-              <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">{message.role === "user" ? "You" : agent.name}</span>
-                <time>{message.time}</time>
-              </div>
-              <MarkdownBlocks text={message.body} muted={message.role !== "user"} />
-            </article>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function TaskPanel({
   agents = [],

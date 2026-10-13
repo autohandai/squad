@@ -85,6 +85,17 @@ export function effortChoices(readiness) {
   return Array.isArray(readiness?.efforts) ? readiness.efforts.map((item) => String(item)).filter(Boolean) : [];
 }
 
+// Autohand Code's `--thinking` levels; only the moa model takes them.
+export const AUTOHAND_THINKING_LEVELS = Object.freeze(["none", "normal", "extended"]);
+export const AUTOHAND_THINKING_MODELS = Object.freeze(["moa"]);
+
+/** The reasoning levels a turn can choose, for this engine and model. */
+export function effortLevelsFor(harnessId, readiness, model = "") {
+  const id = normalizeHarnessId(harnessId);
+  if (id === "autohand") return AUTOHAND_THINKING_MODELS.includes(String(model || "").trim().toLowerCase()) ? [...AUTOHAND_THINKING_LEVELS] : [];
+  return effortChoices(readiness);
+}
+
 export function normalizeHarnessAssignment(input) {
   const source = input && typeof input === "object" ? input : typeof input === "string" ? { id: input } : {};
   return {

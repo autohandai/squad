@@ -506,3 +506,19 @@ html[data-skin="grut"] .app-sidebar {
 html[data-skin] [data-slot="avatar"] {
   border-radius: var(--skin-avatar-radius, 0.375rem);
 }
+
+/* Reasoning effort slider (ADR-0114): the thumb and range slide, the level
+   name fades up, the bolt pulses once, the active stop grows. */
+.effort-slider [data-slot="slider"] > span[style] { transition: left 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.effort-slider [data-slot="slider-range"] { transition: left 180ms cubic-bezier(0.2, 0.8, 0.2, 1), right 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.effort-slider [data-slot="slider-thumb"] { transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 160ms; }
+.effort-slider [data-slot="slider-thumb"]:active { transform: scale(1.15); }
+.effort-slider .effort-stop { transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), background-color 160ms; }
+.effort-slider .effort-stop-active { transform: scale(1.6); }
+.effort-level { animation: effort-level-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.effort-bolt { animation: effort-bolt 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes effort-level-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes effort-bolt { 0% { transform: scale(1); } 40% { transform: scale(1.25) rotate(-8deg); color: var(--primary); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .effort-slider *, .effort-level, .effort-bolt { animation: none !important; transition: none !important; }
+}

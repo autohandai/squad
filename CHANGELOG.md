@@ -36,6 +36,7 @@ list to the section for that version.
 - Previous chats. New chat puts the conversation away instead of discarding it. The History button beside New chat lists them, newest first, with the first question, the number of turns, the engine and when; open one and it comes back as the live conversation, and a Claude Code or Codex member continues the very same engine session. Remove deletes one. Up to 100 chats per member are kept on this computer.
 - Every reply shows up in the Execution panel's Runs tab, whichever engine the member runs on: the question as the title, the engine, the model, the status, and the same activity feed as Work details. Stop there stops the reply. Goal turns, queued follow-ups, scheduled routines and Telegram messages appear the same way.
 - Finished runs stay in the Runs tab after Squad restarts (the newest 200).
+- Reasoning effort is a slider, not a drop-down, in the composer settings and the member's engine settings, for every engine: Claude Code and Codex levels from the installed CLI, and for Autohand Code the moa model's thinking levels. The thumb slides, the level name fades in, and a small reset returns to the engine default.
 - When a Claude Code member is refused a folder ("… is outside …; --restricted confines the file tools …"), the reply shows the folder with Allow and continue / Not now. Allow adds it to the member's folders for every later turn and asks it to carry on. Claude Code's own plans folder is allowed from the start, so plan mode can write its plan.
 - Previous chats is proven in a real browser as part of the checks: New chat puts the conversation away, the list shows it, opening it brings it back.
 - Members remember. Every direct message now starts with a short "Earlier conversations" note: the chats you put away with New chat (what was asked, what was answered last), what other members were asked recently, and the latest messages in channels the member belongs to. It works the same on Autohand, Claude Code and Codex, costs a bounded slice of context, and redacts anything that looks like a key. Work details shows whether it was included; the bridge answers the exact text at `/api/members/<id>/recall`.
@@ -43,6 +44,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Replies are readable again: bullets sit beside their text instead of above it, and numbered lists keep their numbers.
 - The app no longer opens to "Autohand Squad could not render — Cannot access uninitialized variable" after the routines update; a value was read before it was set up. The build is now opened in a browser as part of the checks so this cannot pass unnoticed again.
 - A Claude Code member whose permission level is Chat only no longer stays stuck in plan mode: the composer shows that it is in plan mode and lets you switch it off for a message, and "Auto" now really writes.
 - Previous chats actually keep real conversations: a chat with Work details is several megabytes and the bridge refused it silently. It is accepted now, and if keeping it ever fails the new chat says so.
