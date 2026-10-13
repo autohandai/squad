@@ -43,6 +43,10 @@ list to the section for that version.
 - Members remember. Every direct message now starts with a short "Earlier conversations" note: the chats you put away with New chat (what was asked, what was answered last), what other members were asked recently, and the latest messages in channels the member belongs to. It works the same on Autohand, Claude Code and Codex, costs a bounded slice of context, and redacts anything that looks like a key. Work details shows whether it was included; the bridge answers the exact text at `/api/members/<id>/recall`.
 - Claude Code and Codex members get real controls in the composer settings: Access (Plan only / Accept edits / Full access for Claude Code; Read only / Workspace write / Full access for Codex), a model list read from the installed engine (Claude Code's fable, opus, sonnet, haiku and cached models; your Codex default), Custom… for a typed name, and Reasoning effort when the engine has one. Choosing Auto switches a plan-mode member to Accept edits. The same three fields under Advanced in the member's engine settings set the defaults.
 
+### Changed
+
+- The Execution panel beside a member's chat now looks like the rest of the app. The title is followed by one sentence saying what is going on ("1 running · 1 handoff waiting", or "Nothing running right now."), a short Now list of open tasks only when there are any, and plain underlined Runs / Tasks / Automations tabs instead of three boxed buttons. Runs are grouped by day and each one is a single line: a small status dot, the member, your question, the time; a second muted line says "chat reply", "goal" or "launched" and names the engine or model only when it was not the member's usual one. Stop appears on a run that is still going. Tasks, handoffs and automations are plain rows too, with no pills, cards or icon tiles, and an empty tab is one sentence.
+
 ### Fixed
 
 - Replies are readable again: bullets sit beside their text instead of above it, and numbered lists keep their numbers.

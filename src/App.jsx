@@ -355,6 +355,9 @@ import { CanvasList } from "@/components/canvases/CanvasList";
 import { CanvasPanel } from "@/components/canvases/CanvasPanel";
 import { canvasMentionItems, expandCanvasMentions, isCanvasMentionQuery } from "@/lib/canvases";
 import { activityFromTrace, activityStats, classifyTool, normalizeActivity } from "@/lib/activity";
+import { ExecutionPanel } from "@/components/execution/ExecutionPanel";
+import { RunList } from "@/components/execution/RunList";
+import { latestFailedHandoff, latestHandoff, latestPendingHandoff, taskOwner } from "@/lib/handoffs";
 import {
   commandsForHarness,
   composerTrigger,
@@ -11533,6 +11536,17 @@ function statusLabel(status, copy = getLocaleCopy(DEFAULT_LOCALE)) {
   return copy.statusLabels?.[value] || value;
 }
 
+// What the Execution panel (src/components/execution) cannot import from a
+// component file: the app's own label and date helpers, wrapped once.
+const executionPanelFormat = {
+  statusLabel: (status, copy) => statusLabel(status, copy),
+  date: (value) => formatRecordDate(value),
+  schedule: (automation) => automationScheduleLabel(automation),
+  workspaceName: (path) => workspaceName(path),
+  role: (agent) => localizedRole(agent),
+  whyAgent: (agent) => brainCardForAgent(agent).whyThisAgent,
+};
+
 function buildAgentProfile(agent, workspace) {
   const permissions = resolveAgentPermissionsForWorkspace(agent, workspace);
   const ladder = autonomyLadderLevelMeta(permissions.ladderLevel);
@@ -14655,7 +14669,7 @@ function Conversation({
 
       <Sheet open={taskPanelOpen} onOpenChange={setTaskPanelOpen}>
         <SheetContent closeLabel={copy.close} className="w-full border-border/80 p-0 sm:max-w-xl">
-          <TaskPanel
+          <ExecutionPanel
             agents={agents}
             activeAgent={agent}
             tasks={tasks}
@@ -14667,7 +14681,11 @@ function Conversation({
             setActiveTab={setPanelTab}
             focusRunId={focusRunId}
             copy={copy}
+            locale={locale}
             handoffRetryMode={handoffRetryMode}
+            AgentAvatar={AgentAvatar}
+            api={api}
+            format={executionPanelFormat}
             onCreateHandoff={onCreateHandoff}
             onCancelHandoff={onCancelHandoff}
             onFailHandoff={onFailHandoff}
@@ -15142,29 +15160,6 @@ const EMPTY_MISSION_COUNTS = Object.freeze({
   memoryPending: 0,
   permissionWarnings: 0,
 });
-
-const MISSION_STATE_MATRIX = [
-  {
-    status: "running",
-    treatment: "Active run in progress; keep watching output or continue the run.",
-    evidence: "Latest command or run log.",
-  },
-  {
-    status: "blocked",
-    treatment: "Owner needs a decision, credential, dependency, or handoff.",
-    evidence: "Failure reason or unresolved dependency.",
-  },
-  {
-    status: "failed",
-    treatment: "Run or checkpoint did not complete; replay from the recorded context.",
-    evidence: "Failed checkpoint, test result, or runtime error.",
-  },
-  {
-    status: "completed",
-    treatment: "Recent work is preserved for review before it moves to archive.",
-    evidence: "Review note, screenshot, or validation summary.",
-  },
-];
 
 const TASK_EVIDENCE_EVENT_TYPES = [
   { id: "context-pack", label: "Context pack", icon: Boxes },
@@ -16024,8 +16019,6 @@ function squadMemberState(agent, agentRows = []) {
   return { stateId, meta: memberStateMeta(stateId), working, runningRow, currentRow, lastActive };
 }
 
-const SQUAD_FILTERS = [{ id: "all", label: "All" }, ...SQUAD_MEMBER_STATES.map((state) => ({ id: state.id, label: state.label }))];
-
 function SquadDirectoryPage({
   agents = [],
   tasks = [],
@@ -16664,23 +16657,6 @@ function MissionControlTable({ rows = [], title, evaluationStates, selectedRow, 
         ))}
       </div>
     </section>
-  );
-}
-
-function MissionMemberCell({ row, copy = getLocaleCopy(DEFAULT_LOCALE), navigate }) {
-  const owner = row.owner;
-  return (
-    <MissionAnchor
-      href={row.profilePath}
-      navigate={navigate}
-      className="flex min-w-0 items-center gap-3 text-left hover:text-emerald-600 dark:text-emerald-400 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring"
-    >
-      {owner ? <AgentAvatar agent={owner} /> : <span className="grid size-10 place-items-center rounded-full bg-muted"><UserRound className="size-4" aria-hidden="true" /></span>}
-      <span className="min-w-0">
-        <span className="block truncate text-sm font-semibold text-foreground">{owner?.name || "Unassigned"}</span>
-        <span className="block truncate text-xs text-muted-foreground">{owner ? localizedRole(owner, copy) : "Squad member"}</span>
-      </span>
-    </MissionAnchor>
   );
 }
 
@@ -17967,16 +17943,6 @@ function missionNextAction(status, { detailPath, ownerId } = {}) {
   return { id: "details", label: "Details", icon: History, path: detailPath };
 }
 
-function missionStatusClass(status) {
-  if (status === "completed") return "bg-[#eef7ec] text-[#3d6a3f]";
-  if (status === "failed") return "bg-[#fff1ee] text-[#9b3726]";
-  if (status === "blocked") return "bg-[#fff2df] text-[#8a4b00]";
-  if (status === "running" || status === "launching") return "bg-[#edf6ff] text-[#27638f]";
-  if (status === "handoff-pending") return "bg-[#f2efff] text-[#6350a6]";
-  if (status === "online" || status === "ready") return "bg-[#eeeeee] text-[#555555]";
-  return "bg-[#eeeeee] text-[#666666]";
-}
-
 function missionStatusDotClass(status) {
   if (status === "completed") return "bg-[#5d9f63]";
   if (status === "failed") return "bg-[#d44d36]";
@@ -18082,24 +18048,6 @@ function taskAgentIds(task) {
 function taskBelongsToAgent(task, agentId) {
   const normalizedId = normalizeSquadMemberId(agentId);
   return Boolean(normalizedId && taskAgentIds(task).has(normalizedId));
-}
-
-function taskOwner(task, agents = []) {
-  const ownerId = normalizeSquadMemberId(task?.currentOwnerId || task?.agentId);
-  return agents.find((agent) => agent.id === ownerId);
-}
-
-function latestHandoff(task) {
-  const handoffs = Array.isArray(task?.handoffs) ? task.handoffs : [];
-  return handoffs[handoffs.length - 1] || null;
-}
-
-function latestPendingHandoff(task) {
-  return [...(Array.isArray(task?.handoffs) ? task.handoffs : [])].reverse().find((handoff) => handoff.status === "pending") || null;
-}
-
-function latestFailedHandoff(task) {
-  return [...(Array.isArray(task?.handoffs) ? task.handoffs : [])].reverse().find((handoff) => handoff.status === "failed") || null;
 }
 
 function handoffContextText(handoff, task, sourceAgent, targetAgent) {
@@ -18306,379 +18254,6 @@ function WorkRecordAutomationsTable({ automations, copy = getLocaleCopy(DEFAULT_
   );
 }
 
-
-function TaskPanel({
-  agents = [],
-  activeAgent,
-  tasks,
-  runs,
-  automations,
-  setAutomations,
-  runAutomation,
-  activeTab = "runs",
-  setActiveTab,
-  focusRunId = "",
-  copy = getLocaleCopy(DEFAULT_LOCALE),
-  handoffRetryMode = DEFAULT_HANDOFF_RETRY_MODE,
-  onCreateHandoff,
-  onCancelHandoff,
-  onFailHandoff,
-  onRetryHandoff,
-}) {
-  const [handoffSource, setHandoffSource] = useState(null);
-  const handoffCount = tasks.filter((task) => latestHandoff(task)).length;
-  const blockedCount = tasks.filter((task) => latestFailedHandoff(task)).length;
-
-  function openTaskHandoff(task, handoff = null) {
-    setHandoffSource({ type: "task", task, handoff, sourceAgentId: task.currentOwnerId || task.agentId });
-  }
-
-  function openRunHandoff(run) {
-    const linkedTask = tasks.find((task) => task.runtimeId === run.id);
-    setHandoffSource({ type: "run", run, task: linkedTask, sourceAgentId: run.agentId || activeAgent?.id });
-  }
-
-  function saveHandoff(draft) {
-    onCreateHandoff?.(handoffSource, draft);
-    setHandoffSource(null);
-  }
-
-  return (
-    <div className="flex h-full min-h-screen flex-col">
-      <SheetHeader className="border-b border-border/70 px-5 pb-3 pt-5">
-        <SheetTitle className="text-base">{copy.execution}</SheetTitle>
-        <SheetDescription className="sr-only">{copy.executionDescription}</SheetDescription>
-        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span><span className="font-medium text-foreground">{tasks.length}</span> parent {tasks.length === 1 ? "task" : "tasks"}</span>
-          <span><span className="font-medium text-foreground">{handoffCount}</span> {handoffCount === 1 ? "handoff" : "handoffs"}</span>
-          <span className={cn(blockedCount && "text-destructive")}><span className="font-medium">{blockedCount}</span> blocked</span>
-        </p>
-      </SheetHeader>
-      <MissionControlStrip tasks={tasks} agents={agents} />
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
-        <div className="border-b border-border/70 px-5">
-          <TabsList className="h-10 w-full justify-start gap-4 rounded-none bg-transparent p-0">
-            {[
-              ["runs", copy.runs],
-              ["tasks", copy.tasks],
-              ["automations", copy.automations],
-            ].map(([value, label]) => (
-              <TabsTrigger
-                key={value}
-                value={value}
-                className="h-10 rounded-none border-b-2 border-transparent px-0 text-sm text-muted-foreground shadow-none data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
-              >
-                {label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </div>
-        <ScrollArea className="min-h-0 flex-1">
-          <TabsContent value="runs" className="m-0 p-5">
-            <RunList runs={runs} tasks={tasks} agents={agents} copy={copy} onHandoff={openRunHandoff} focusRunId={focusRunId} />
-          </TabsContent>
-          <TabsContent value="tasks" className="m-0 p-5">
-            <TaskList
-              tasks={tasks}
-              agents={agents}
-              copy={copy}
-              handoffRetryMode={handoffRetryMode}
-              onHandoff={openTaskHandoff}
-              onCancelHandoff={onCancelHandoff}
-              onFailHandoff={onFailHandoff}
-              onRetryHandoff={onRetryHandoff}
-            />
-          </TabsContent>
-          <TabsContent value="automations" className="m-0 p-5">
-            <AutomationList automations={automations} setAutomations={setAutomations} runAutomation={runAutomation} copy={copy} />
-          </TabsContent>
-        </ScrollArea>
-      </Tabs>
-      <HandoffDialog
-        open={Boolean(handoffSource)}
-        source={handoffSource}
-        agents={agents}
-        activeAgent={activeAgent}
-        copy={copy}
-        onOpenChange={(open) => !open && setHandoffSource(null)}
-        onSave={saveHandoff}
-      />
-    </div>
-  );
-}
-
-function MissionControlStrip({ tasks = [], agents = [] }) {
-  const activeTasks = tasks.filter((task) => !["completed", "cancelled"].includes(task.status));
-  const blockedTasks = tasks.filter((task) => task.status === "blocked" || latestFailedHandoff(task));
-  const visibleTasks = [...activeTasks, ...tasks].filter((task, index, list) => list.findIndex((item) => item.id === task.id) === index).slice(0, 3);
-
-  if (!visibleTasks.length) return null;
-  return (
-    <section className="border-b border-border/70 px-5 py-3" aria-label="Work">
-      <div className="mb-1 flex items-center justify-between gap-3">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Now</h3>
-        {blockedTasks.length ? <span className="text-xs text-destructive">{blockedTasks.length} blocked</span> : null}
-      </div>
-      <div className="divide-y divide-border/60">
-        {visibleTasks.length ? (
-          visibleTasks.map((task) => {
-            const owner = taskOwner(task, agents);
-            const handoff = latestHandoff(task);
-            return (
-              <div key={task.id} className="py-2">
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="min-w-0 truncate">{task.title}</span>
-                  <StatusBadge status={task.status} />
-                </div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                  <span>{owner?.name || task.currentOwnerId || "unassigned"}</span>
-                  {handoff ? <span>· handoff {handoff.status}</span> : null}
-                  <span>· {(task.assignments || []).length} {(task.assignments || []).length === 1 ? "assignment" : "assignments"}</span>
-                </div>
-              </div>
-            );
-          })
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
-function RunList({ runs, tasks = [], agents = [], copy = getLocaleCopy(DEFAULT_LOCALE), onHandoff, focusRunId = "" }) {
-  // A history link (?panel=runs&run=<id>) lands on that run with its output open.
-  useEffect(() => {
-    if (!focusRunId) return;
-    document.getElementById(`run-${focusRunId}`)?.scrollIntoView({ block: "start" });
-  }, [focusRunId, runs.length]);
-  if (!runs.length) {
-    return <EmptyBlock icon={TerminalSquare} title={copy.noAutohandRuns} body={copy.runsAppearAfterLaunch} />;
-  }
-  return (
-    <div className="-mx-1 divide-y divide-border/60">
-      {runs.map((run) => (
-        <article key={run.id} id={`run-${run.id}`} className="px-1 py-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-sm">
-                <StatusIcon status={run.status} />
-                <span className="min-w-0 truncate font-medium">{run.title}</span>
-              </div>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                {run.agentId ? `${agents.find((agent) => agent.id === run.agentId)?.name || run.agentId} · ` : ""}
-                {workspaceName(run.workspace) || run.workspace}
-                {run.effectiveModel ? ` · ${providerSummaryLabel(run.effectiveModel)}` : ""}
-                {run.harness ? ` · ${harnessLabel(run.harness)}` : ""}
-                {run.mode === "chat" ? ` · ${copy.chatRun || "chat reply"}` : ""}
-                {tasks.some((task) => task.runtimeId === run.id) ? " · linked task" : ""}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <StatusBadge status={run.status} copy={copy} />
-              <Button type="button" variant="ghost" size="icon-sm" aria-label="Handoff" onClick={() => onHandoff?.(run)}>
-                <Workflow />
-              </Button>
-            </div>
-          </div>
-          <RunActivity run={run} copy={copy} initialOpen={Boolean(focusRunId) && run.id === focusRunId} />
-        </article>
-      ))}
-    </div>
-  );
-}
-
-/**
- * Run output in the Execution panel: the activity feed folded from `run.logs`
- * (the last 260 lines the runs list carries). Once a run has finished and the
- * disclosure is open, the full history comes from `GET /api/runs/:id/activity`.
- */
-function RunActivity({ run, copy = getLocaleCopy(DEFAULT_LOCALE), initialOpen = false }) {
-  const [open, setOpen] = useState(Boolean(initialOpen));
-  useEffect(() => {
-    if (initialOpen) setOpen(true);
-  }, [initialOpen]);
-  const [showRaw, setShowRaw] = useState(false);
-  const [history, setHistory] = useState(null);
-  const logs = Array.isArray(run.logs) ? run.logs : [];
-  const finished = !LIVE_RUN_STATUSES.has(run.status);
-  const localItems = useMemo(() => normalizeActivity(logs, { status: run.status }), [logs, run.status]);
-
-  useEffect(() => {
-    if (!open || !finished || history?.runId === run.id) return undefined;
-    let cancelled = false;
-    api(`/api/runs/${encodeURIComponent(run.id)}/activity`)
-      .then((data) => {
-        if (cancelled || !data || !Array.isArray(data.items)) return;
-        setHistory({ runId: run.id, items: data.items, raw: Array.isArray(data.raw) ? data.raw : logs });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [open, finished, run.id, history?.runId, logs]);
-
-  const useHistory = finished && history?.runId === run.id;
-  const items = useHistory ? history.items : localItems;
-  const raw = useHistory ? history.raw : logs;
-
-  return (
-    <details className="mt-1.5 text-xs" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-        {logs.length ? `Output · ${logs.length} lines` : "Waiting for output…"}
-      </summary>
-      <code className="mt-2 block truncate text-[11px] text-muted-foreground">{run.command}</code>
-      <ActivityFeed items={items} raw={raw} showRaw={showRaw} onToggleRaw={() => setShowRaw((value) => !value)} copy={copy} className="mt-2" />
-    </details>
-  );
-}
-
-function TaskList({
-  tasks,
-  agents = [],
-  copy = getLocaleCopy(DEFAULT_LOCALE),
-  handoffRetryMode = DEFAULT_HANDOFF_RETRY_MODE,
-  onHandoff,
-  onCancelHandoff,
-  onFailHandoff,
-  onRetryHandoff,
-}) {
-  if (!tasks.length) {
-    return <EmptyBlock icon={LayoutList} title={copy.noTasksYet} body={copy.startAutohandFromLaunchSurface} />;
-  }
-  return (
-    <div className="-mx-1 divide-y divide-border/60">
-      {tasks.map((task) => {
-        const owner = taskOwner(task, agents);
-        const handoff = latestHandoff(task);
-        const pendingHandoff = latestPendingHandoff(task);
-        const failedHandoff = latestFailedHandoff(task);
-        const fromAgent = agents.find((agent) => agent.id === handoff?.fromAgentId);
-        const toAgent = agents.find((agent) => agent.id === handoff?.toAgentId);
-        return (
-        <div key={task.id} className="px-1 py-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-sm">
-                <StatusIcon status={task.status} />
-                <span className="min-w-0 truncate font-medium">{task.title}</span>
-              </div>
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-                <span>{owner?.name || task.currentOwnerId || task.agentId || "unassigned"}</span>
-                {task.project ? <span>· {task.project}</span> : null}
-                <span>· {(task.assignments || []).length} {(task.assignments || []).length === 1 ? "assignment" : "assignments"}</span>
-                {handoff ? <span className={cn(handoff.status === "failed" && "text-destructive")}>· handoff {handoff.status}</span> : null}
-                <span>· {formatRecordDate(task.updatedAt, DEFAULT_LOCALE, copy)}</span>
-              </p>
-            </div>
-            <StatusBadge status={task.status} copy={copy} />
-          </div>
-          {task.summary ? <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{task.summary}</p> : null}
-
-          {handoff ? (
-            <div className="mt-3 border-l-2 border-border/70 pl-3">
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <Workflow className="size-4 text-primary" />
-                <span className="font-semibold">{fromAgent?.name || "Source"}{" -> "}{toAgent?.name || "Target"}</span>
-                <span className="text-xs text-muted-foreground">attempt {handoff.attempt || 1}</span>
-              </div>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">{handoff.reason || "No reason provided."}</p>
-              {handoff.failureReason ? (
-                <p className="mt-2 rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                  {handoff.failureReason}
-                </p>
-              ) : null}
-              <div className="mt-3 flex flex-wrap gap-2">
-                {pendingHandoff ? (
-                  <>
-                    <Button type="button" variant="outline" size="sm" onClick={() => onCancelHandoff?.(task, pendingHandoff)}>
-                      <X data-icon="inline-start" />
-                      Cancel
-                    </Button>
-                    <Button type="button" variant="outline" size="sm" onClick={() => onHandoff?.(task, pendingHandoff)}>
-                      <ArrowUpRight data-icon="inline-start" />
-                      Reroute
-                    </Button>
-                    <Button type="button" variant="outline" size="sm" onClick={() => onFailHandoff?.(task, pendingHandoff)}>
-                      <AlertTriangle data-icon="inline-start" />
-                      Mark blocked
-                    </Button>
-                  </>
-                ) : null}
-                {failedHandoff && handoffRetryMode === "checkpoint" ? (
-                  <Button type="button" variant="outline" size="sm" onClick={() => onRetryHandoff?.(task, failedHandoff)}>
-                    <RefreshCw data-icon="inline-start" />
-                    Retry checkpoint
-                  </Button>
-                ) : null}
-                {failedHandoff && handoffRetryMode === "manual" ? (
-                  <Button type="button" variant="outline" size="sm" onClick={() => onHandoff?.(task, failedHandoff)}>
-                    <ArrowUpRight data-icon="inline-start" />
-                    Reroute manually
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-
-          <TaskTimelinePreview task={task} agents={agents} />
-          <div className="mt-2 flex justify-end">
-            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground" onClick={() => onHandoff?.(task)}>
-              <Workflow data-icon="inline-start" />
-              Handoff
-            </Button>
-          </div>
-        </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function TaskTimelinePreview({ task, agents = [] }) {
-  const timeline = Array.isArray(task.timeline) ? task.timeline.slice(-4) : [];
-  if (!timeline.length) return null;
-  return (
-    <div className="mt-4 border-l border-border/80 pl-3">
-      {timeline.map((event) => {
-        const actor = agents.find((agent) => agent.id === event.actorAgentId);
-        const target = agents.find((agent) => agent.id === event.targetAgentId);
-        return (
-          <div key={event.id || `${event.type}-${event.at}`} className="pb-3 last:pb-0">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="size-1.5 rounded-full bg-primary" />
-              <span>{event.type?.replaceAll(".", " ") || "timeline"}</span>
-              <span>{formatRecordDate(event.at)}</span>
-            </div>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              {event.summary}
-              {target && target.id !== actor?.id ? ` Current target: ${target.name}.` : ""}
-            </p>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function recommendedHandoffTargets(source, agents = [], activeAgent) {
-  const sourceAgentId = normalizeSquadMemberId(source?.sourceAgentId || source?.task?.currentOwnerId || source?.task?.agentId || activeAgent?.id);
-  const sourceAgent = agents.find((agent) => agent.id === sourceAgentId) || activeAgent;
-  const role = String(sourceAgent?.role || sourceAgent?.employeeType || "").toLowerCase();
-  const preferredRoles = role.includes("qa")
-    ? ["frontend", "full stack", "backend"]
-    : role.includes("frontend")
-      ? ["qa", "solution", "devops"]
-      : role.includes("backend")
-        ? ["qa", "security", "devops"]
-        : ["qa", "frontend", "devops"];
-  return agents
-    .filter((agent) => agent.id !== sourceAgentId)
-    .map((agent) => {
-      const targetRole = `${agent.role || ""} ${agent.employeeType || ""}`.toLowerCase();
-      const score = preferredRoles.findIndex((preferred) => targetRole.includes(preferred));
-      return { agent, recommended: score >= 0, score: score >= 0 ? score : 99, recommendation: brainCardForAgent(agent).whyThisAgent };
-    })
-    .sort((left, right) => left.score - right.score || String(left.agent.name).localeCompare(String(right.agent.name)));
-}
 
 // Goal 09: Run Recipes — recipe catalog + launch preview UI. The catalog dialog
 // lists role-applicable recipes; selecting one opens the launch preview that
@@ -18918,185 +18493,6 @@ function RecipeCatalogDialog({
   );
 }
 
-function HandoffDialog({ open, source, agents = [], activeAgent, copy = getLocaleCopy(DEFAULT_LOCALE), onOpenChange, onSave }) {
-  const sourceTask = source?.task;
-  const sourceRun = source?.run;
-  const sourceHandoff = source?.handoff;
-  const sourceAgentId = normalizeSquadMemberId(source?.sourceAgentId || sourceTask?.currentOwnerId || sourceTask?.agentId || sourceRun?.agentId || activeAgent?.id);
-  const sourceAgent = agents.find((agent) => agent.id === sourceAgentId) || activeAgent;
-  const targets = recommendedHandoffTargets(source, agents, activeAgent);
-  const firstTarget = targets[0]?.agent;
-  const [draft, setDraft] = useState({
-    targetAgentId: "",
-    reason: "",
-    requiredContext: "",
-    expectedOutput: "",
-    sourceEvidence: "",
-  });
-
-  useEffect(() => {
-    if (!open) return;
-    const defaultEvidence = sourceRun
-      ? `Run ${sourceRun.id?.slice(0, 8) || "unknown"} / ${sourceRun.status || "status unknown"} / ${sourceRun.workspace || "workspace"}`
-      : sourceTask?.runtimeId
-        ? `Runtime ${sourceTask.runtimeId}`
-        : sourceTask?.project || "";
-    setDraft({
-      targetAgentId: sourceHandoff?.toAgentId || firstTarget?.id || "",
-      reason: sourceHandoff?.failureReason
-        ? `Retry after blocked handoff: ${sourceHandoff.failureReason}`
-        : sourceHandoff?.reason || "",
-      requiredContext: sourceHandoff?.requiredContext || sourceTask?.summary || sourceRun?.command || "",
-      expectedOutput: sourceHandoff?.expectedOutput || "Inspect the preserved context, continue the same parent task, and report evidence.",
-      sourceEvidence: sourceHandoff?.sourceEvidence || defaultEvidence,
-    });
-  }, [open, sourceHandoff, sourceRun, sourceTask, firstTarget?.id]);
-
-  function updateDraft(patch) {
-    setDraft((current) => ({ ...current, ...patch }));
-  }
-
-  function submit(event) {
-    event.preventDefault();
-    if (!draft.targetAgentId || draft.targetAgentId === sourceAgentId) return;
-    onSave?.(draft);
-  }
-
-  const selectedTarget = agents.find((agent) => agent.id === draft.targetAgentId);
-  const selectedRecommendation = selectedTarget ? brainCardForAgent(selectedTarget).whyThisAgent : "";
-  const validTargets = targets.length > 0;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent closeLabel={copy.close} className="max-h-[88svh] overflow-y-auto rounded-md border-border bg-background p-0 sm:max-w-[680px]">
-        <DialogHeader className="border-b px-6 py-5">
-          <DialogTitle>Handoff parent task</DialogTitle>
-          <DialogDescription>
-            Keep the same parent task and create a child assignment for the receiving squad member.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={submit}>
-          <div className="grid gap-5 p-6">
-            <div className="rounded-md border bg-muted/30 p-4">
-              <div className="text-sm font-semibold">{sourceTask?.title || sourceRun?.title || "Run handoff"}</div>
-              <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                <Badge variant="outline">From {sourceAgent?.name || "current owner"}</Badge>
-                {selectedTarget ? <Badge variant="outline">To {selectedTarget.name}</Badge> : null}
-                {sourceTask ? <Badge variant="secondary">Parent {compactRecordId(sourceTask.id)}</Badge> : null}
-                {sourceRun ? <Badge variant="secondary">Run {compactRecordId(sourceRun.id)}</Badge> : null}
-              </div>
-            </div>
-
-            <Field>
-              <FieldLabel>Next squad member</FieldLabel>
-              <Select value={draft.targetAgentId} onValueChange={(targetAgentId) => updateDraft({ targetAgentId })} disabled={!validTargets}>
-                <SelectTrigger className="h-10 w-full">
-                  <SelectValue placeholder="Choose receiving squad member" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectLabel>Online squad members</SelectLabel>
-                    {targets.map(({ agent, recommended }) => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name} / {localizedRole(agent, copy)}{recommended ? " / recommended" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <FieldDescription>
-                Recommendations do not require user confirmation by default; saved recipes or automations can add approval rules later.
-              </FieldDescription>
-              {selectedRecommendation ? (
-                <div className="rounded-md border bg-muted/30 p-3 text-sm leading-6 text-muted-foreground">
-                  <span className="font-semibold text-foreground">Why this agent?</span> {selectedRecommendation}
-                </div>
-              ) : null}
-            </Field>
-
-            <Field>
-              <FieldLabel>Reason</FieldLabel>
-              <Input value={draft.reason} onChange={(event) => updateDraft({ reason: event.target.value })} placeholder="Why this squad member should take over" />
-            </Field>
-
-            <Field>
-              <FieldLabel>Required context</FieldLabel>
-              <Textarea
-                value={draft.requiredContext}
-                onChange={(event) => updateDraft({ requiredContext: event.target.value })}
-                className="min-h-24 resize-y"
-                placeholder="What the receiving member needs to know"
-              />
-            </Field>
-
-            <Field>
-              <FieldLabel>Expected output</FieldLabel>
-              <Textarea
-                value={draft.expectedOutput}
-                onChange={(event) => updateDraft({ expectedOutput: event.target.value })}
-                className="min-h-20 resize-y"
-                placeholder="What the receiving member should produce"
-              />
-            </Field>
-
-            <Field>
-              <FieldLabel>Source evidence</FieldLabel>
-              <Textarea
-                value={draft.sourceEvidence}
-                onChange={(event) => updateDraft({ sourceEvidence: event.target.value })}
-                className="min-h-20 resize-y font-mono text-sm"
-                placeholder="Run IDs, files, screenshots, logs, findings"
-              />
-            </Field>
-          </div>
-          <DialogFooter className="sticky bottom-0 border-t bg-background/95 px-6 py-4 backdrop-blur">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange?.(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!draft.targetAgentId || draft.targetAgentId === sourceAgentId}>
-              Create handoff
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function AutomationList({ automations, setAutomations, runAutomation, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
-  return (
-    <div className="flex flex-col gap-3">
-      {automations.map((automation) => (
-        <div key={automation.id} className="rounded-lg border bg-muted/25 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="font-semibold">{automation.name}</div>
-              <div className="mt-1 text-sm text-muted-foreground">{automationScheduleLabel(automation)}</div>
-              <Badge variant="outline" className="mt-3">{workspaceName(automation.workspace) || automation.target}</Badge>
-            </div>
-            <Switch
-              checked={automation.status === "active"}
-              onCheckedChange={() =>
-                setAutomations((current) =>
-                  current.map((item) =>
-                    item.id === automation.id
-                      ? { ...item, status: item.status === "active" ? "paused" : "active" }
-                      : item
-                  )
-                )
-              }
-            />
-          </div>
-          <Button variant="secondary" size="sm" className="mt-4" onClick={() => runAutomation(automation)}>
-            <Play data-icon="inline-start" />
-            {copy.runNow}
-          </Button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function EmptyBlock({ icon: Icon, title, body }) {
   return (
     <Empty className="border">
@@ -19110,13 +18506,6 @@ function EmptyBlock({ icon: Icon, title, body }) {
       <EmptyContent />
     </Empty>
   );
-}
-
-function StatusIcon({ status }) {
-  if (status === "completed") return <CheckCircle2 className="text-primary" />;
-  if (status === "failed" || status === "blocked") return <AlertTriangle className="text-destructive" />;
-  if (status === "running" || status === "launching" || status === "handoff-pending") return <Activity className="text-primary" />;
-  return <CircleDot className="text-muted-foreground" />;
 }
 
 function StatusBadge({ status, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
@@ -23999,7 +23388,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
         </Card>
 
         <div className="grid gap-5 lg:grid-cols-[1fr_1.1fr]">
-          <RunList runs={runs} copy={copy} />
+          <RunList runs={runs} tasks={tasks} agents={agents} copy={copy} locale={locale} AgentAvatar={AgentAvatar} api={api} />
           <AutomationSummary automations={automations} copy={copy} />
         </div>
       </div>
