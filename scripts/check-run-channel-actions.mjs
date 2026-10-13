@@ -25,7 +25,7 @@ if (args[0]==='--version') { console.log('codex 1.0.0'); process.exit(0); }
 if (args[0]==='login') { console.log('Logged in using fixture'); process.exit(0); }
 const prompt=args.find((arg,index)=>args[index-1]==='--prompt') || args.at(-1) || '';
 const text='Background result.\\nSQUAD_ACTION: '+prompt.match(/REQUEST:(.*)/)[1];
-if (args[0]==='exec') {
+if (args.includes('exec')) {
  console.log(JSON.stringify({type:'thread.started',thread_id:'controlled-run'}));
  console.log(JSON.stringify({type:'item.completed',item:{id:'reply',type:'agent_message',text}}));
  console.log(JSON.stringify({type:'turn.completed'}));
