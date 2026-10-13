@@ -186,3 +186,26 @@ Wave A: L1, L2, L5, L7, L9. Wave B: L6, L8, L10, L11. Wave C: L3, then L4
 and L12. Each lane rebases on main before merging; the orchestrator merges
 fast-forward, runs the full `bun run ci`, then deletes the branch and
 worktree.
+
+## Status, 2026-10-13 (later)
+
+Landed on main, each with its ADR, integration note, check script in the
+`ci` chain and CHANGELOG lines: L1 voice (ADR-0101), L2 remote-access
+(ADR-0102), L4 vault (ADR-0104), L5 usage-and-system (ADR-0105), L6
+teams-and-member-menus (ADR-0106), L7 connectors (ADR-0107), L8 responders
+(ADR-0108), L9 control-plane (ADR-0109), L10 routines (ADR-0110), L11
+queues (ADR-0111). Each lane's checks passed on main after its merge; the
+full chain passed after seven lanes (`.codex-artifacts/lanes/ci-after-seven-lanes.log`)
+and runs again after all ten.
+
+Three integration fixes were needed at merge time and are recorded in their
+commits: the portable packaging fixture had to carry the control-plane,
+web-research and vault runtime files; the connectors check expected Claude
+to receive exactly one `--mcp-config` (the vault adds a second); two fake
+Codex fixtures only answered when `exec` was the first argument, while the
+vault, like Computer Use, prefixes global `-c` overrides.
+
+Not started: L3 workstations and L12 phone. Both need a Docker image build
+of several gigabytes and Docker's daemon was not answering while the data
+volume sat at 100 % (about 1 to 5 GiB free during the day). They begin once
+there is room.
