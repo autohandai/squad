@@ -277,7 +277,7 @@ import { MediaAttachment } from "@/components/channels/MediaAttachment";
 import { AnchorChip } from "@/components/channels/AnchorChip";
 import { anchorsFromDraft, appendAnchorToken, frameKey, frameUrl, messageMediaContext, parseAnchorTokens, removeAnchorToken } from "@/lib/anchors";
 import { NeedsYouList } from "@/components/inbox/InboxPage";
-import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, workRowsInProgress, workAttentionCount } from "@/lib/work-attention";
+import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, workRowsInProgress, workAttentionCount, channelProposalRows, routineProposalRows, decisionRows, needsYouSummary } from "@/lib/work-attention";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { PreviousChats } from "@/components/chat/PreviousChats";
@@ -5423,13 +5423,9 @@ function App() {
   }, [route]);
   useEffect(() => {
     if (!requestedHandoffId || !isWorkRoute(route)) return;
-    const index = inboxHandoffs.findIndex((item) => (item.task?.handoffs || []).some((handoff) => handoff.id === requestedHandoffId));
-    if (index >= 0) {
-      const heading = localeCopy.inboxHandoffs || "Handoffs waiting";
-      highlightSearchHit(() => {
-        const section = [...document.querySelectorAll("main section")].find((node) => node.querySelector("h2")?.textContent === heading);
-        return section?.querySelectorAll("button")[index] || null;
-      });
+    const target = inboxHandoffs.find((item) => (item.task?.handoffs || []).some((handoff) => handoff.id === requestedHandoffId));
+    if (target) {
+      highlightSearchHit(() => document.querySelector(`[data-testid="needs-you-list"] [data-decision-id="${CSS.escape(target.id)}"]`));
     }
     const next = routeWithParams(route, { handoff: null });
     window.history.replaceState({}, "", next);
@@ -6474,13 +6470,19 @@ function App() {
     () =>
       tasks.flatMap((task) => {
         const handoff = latestPendingHandoff(task);
-        return handoff
-          ? [{ id: `${task.id}-${handoff.id}`, task, title: task.title || "Handoff", detail: handoff.reason || handoff.expectedOutput || "", at: handoff.createdAt || task.updatedAt || "" }]
-          : [];
+        if (!handoff) return [];
+        const nameOf = (id) => agents.find((agent) => agent.id === id)?.name || "";
+        const who = [nameOf(handoff.fromAgentId), nameOf(handoff.toAgentId)].filter(Boolean).join(" → ");
+        return [{ id: `${task.id}-${handoff.id}`, task, title: task.title || "Handoff", detail: handoff.reason || handoff.expectedOutput || "", who, at: handoff.createdAt || task.updatedAt || "" }];
       }),
-    [tasks]
+    [tasks, agents]
   );
   const inboxVault = useMemo(() => vaultNeedsYouRows(vaultRequests.requests, agents), [vaultRequests.requests, agents]);
+  // Member proposals are decisions too (ADR-0121): a channel a member wants
+  // to open and a routine it wants to schedule each get a row that opens the
+  // surface where the Approve / Confirm controls already live.
+  const inboxChannelProposals = useMemo(() => channelProposalRows(agentChannelActions, agents), [agentChannelActions, agents]);
+  const inboxRoutines = useMemo(() => routineProposalRows(routineProposals, agents), [routineProposals, agents]);
   const inboxMemory = useMemo(
     () =>
       memoryInbox
@@ -6592,8 +6594,15 @@ function App() {
         }),
     [channels, unreadChannelIds, messagesByChannel]
   );
-  const attentionWorkRows = useMemo(() => buildMissionRows({ agents, tasks, runs, runtime, workspaces }), [agents, tasks, runs, runtime, workspaces]);
-  const inboxCount = workAttentionCount({ replies: inboxReplies, unreadChannels: inboxUnreadChannels, approvals: inboxApprovals, handoffs: inboxHandoffs, memoryProposals: inboxMemory, vaultRequests: inboxVault, folderRequests: inboxFolders, rows: attentionWorkRows }) + (sidebarCounts.permissionWarnings || 0) + agentChannelActions.filter(action => action.status === "proposed").length + routineProposals.length;
+  // The sidebar count is the decision rows plus the unread conversations,
+  // exactly what the Needs you page lists under those two headings
+  // (ADR-0121). Work that stopped has its own count on the page; a failed
+  // reply is already an unread reply, so counting it again doubled it.
+  const inboxAttention = useMemo(
+    () => ({ replies: inboxReplies, unreadChannels: inboxUnreadChannels, handoffs: inboxHandoffs, approvals: inboxApprovals, memoryProposals: inboxMemory, vaultRequests: inboxVault, folderRequests: inboxFolders, channelProposals: inboxChannelProposals, routineProposals: inboxRoutines }),
+    [inboxReplies, inboxUnreadChannels, inboxHandoffs, inboxApprovals, inboxMemory, inboxVault, inboxFolders, inboxChannelProposals, inboxRoutines]
+  );
+  const inboxCount = workAttentionCount(inboxAttention) + (sidebarCounts.permissionWarnings || 0);
   const attentionBadge = useMemo(() => getAttentionBadgeClient(), []);
   useEffect(() => {
     if (!attentionBadge || !bridgeAnswered || runtime?.bridgeUnavailable) return;
@@ -9731,7 +9740,7 @@ function App() {
               />
             ) : isMissionControl ? (
               <MissionControlPage
-                attention={{ replies: inboxReplies, unreadChannels: inboxUnreadChannels, handoffs: inboxHandoffs, approvals: inboxApprovals, memoryProposals: inboxMemory, vaultRequests: inboxVault, folderRequests: inboxFolders }}
+                attention={inboxAttention}
                 attentionCount={inboxCount}
                 attentionNavigate={{
                   channel: (channelId) => navigate(channelsPath(channelId)),
@@ -9741,6 +9750,23 @@ function App() {
                   approval: (item) => navigate(item.messageId ? `${channelsPath(item.channelId)}?message=${encodeURIComponent(item.messageId)}` : channelsPath(item.channelId)),
                   vault: (item) => navigate(memberChatPath(item.memberId)),
                   folder: (item) => navigate(memberChatPath(item.memberId)),
+                  // The proposal blocks sit above every page; the channel list
+                  // and the member's chat are where each is decided.
+                  channelProposal: () => navigate(channelsPath()),
+                  routine: (item) => navigate(memberChatPath(item.memberId)),
+                  work: (item) => navigate(item.detailPath || missionControlPath()),
+                  // A failed reply is retried where it failed: the conversation
+                  // scrolls to the reply that started with this run, or to the
+                  // latest failed reply when none matches, and Retry is there.
+                  retryChat: (item) => {
+                    const agentId = item.memberId;
+                    if (!agentId) return navigate(item.detailPath || missionControlPath());
+                    const startedAt = Date.parse(item.row?.run?.startedAt || "") || 0;
+                    const list = Array.isArray(messagesByAgent[agentId]) ? messagesByAgent[agentId] : [];
+                    const failed = list.filter((message) => message.role === "agent" && message.status === "error");
+                    const match = failed.find((message) => Math.abs((Date.parse(message.startedAt || message.createdAt || "") || 0) - startedAt) < 120_000) || failed.at(-1);
+                    navigate(match ? `${memberChatPath(agentId)}&message=${encodeURIComponent(match.id)}` : memberChatPath(agentId));
+                  },
                 }}
                 onMarkUpdatesRead={() => {
                   const now = new Date().toISOString();
@@ -12290,7 +12316,7 @@ function CollapsedSidebarRail({
             >
               <Inbox className="size-4" />
               {inboxCount > 0 ? (
-                <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-foreground px-1 text-[9px] font-semibold text-background">
+                <span data-testid="needs-you-count" className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-foreground px-1 text-[9px] font-semibold text-background">
                   {inboxCount > 99 ? "99+" : inboxCount}
                 </span>
               ) : null}
@@ -15998,21 +16024,22 @@ function MissionControlPage({
   const selectedRow =
     allRows.find((row) => (selectedTaskId && row.task?.id === selectedTaskId) || (selectedRunId && row.runtimeId === selectedRunId)) ||
     null;
-  const activeRows = allRows.filter((row) => !["completed", "cancelled"].includes(row.status));
-  const blockedRows = allRows.filter((row) => ["blocked", "failed"].includes(row.status));
   const loadState = missionControlLoadState({ runtime, rows: allRows, runsError, workspacesError });
   const runningRows = allRows.filter((row) => ["running", "launching"].includes(row.status));
 
   // Four numbers in a bordered box is a dashboard telling you it has numbers.
   // One sentence says the same thing and names only what is true right now,
-  // so a quiet squad reads as quiet instead of as four zeroes.
-  const busyOwnerIds = new Set(activeRows.map((row) => row.owner?.id).filter(Boolean));
-  const idleCount = Math.max(agents.length - busyOwnerIds.size, 0);
-  const summaryParts = [];
-  if (runningRows.length) summaryParts.push(`${formatLocalizedNumber(runningRows.length, locale)} working`);
-  if (blockedRows.length) summaryParts.push(`${formatLocalizedNumber(blockedRows.length, locale)} blocked`);
-  if (idleCount) summaryParts.push(`${formatLocalizedNumber(idleCount, locale)} free`);
-  const summary = summaryParts.length ? summaryParts.join(" \u00b7 ") : copy.workNothingRunning || "Nothing is running.";
+  // so a quiet squad reads as quiet instead of as four zeroes. It counts
+  // what the page lists (ADR-0121): decisions, unread, stopped, working.
+  const decisionCount = decisionRows(attention).length;
+  const unreadCount = (attention.replies?.length || 0) + (attention.unreadChannels?.length || 0);
+  const stoppedCount = workRowsNeedingYou(allRows, attention.handoffs).length;
+  const summary = needsYouSummary({ decisions: decisionCount, unread: unreadCount, stopped: stoppedCount, working: runningRows.length }, copy, (value) => formatLocalizedNumber(value, locale));
+  const checksLabel = (row) => {
+    const state = rowEvaluationStates.get(row.id);
+    const filter = MISSION_EVALUATION_FILTERS.find((item) => item.id === state && item.id !== "none");
+    return filter ? copy[filter.labelKey] || state : "";
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -16023,7 +16050,7 @@ function MissionControlPage({
               <Inbox className="size-4 text-muted-foreground" aria-hidden="true" />
               {copy.needsYou || "Needs you"}
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">{[attentionCount ? `${formatLocalizedNumber(attentionCount, locale)} to review` : "You're caught up", summary].join(" · ")}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
           </div>
           <div className="flex items-center gap-2">
           {view === "needs-you" && ((attention.replies?.length || 0) + (attention.unreadChannels?.length || 0)) > 0 ? (
@@ -16059,9 +16086,17 @@ function MissionControlPage({
         {loadState === "loading" ? <MissionControlSkeleton /> : null}
 
         {view === "needs-you" ? (
-          <NeedsYouList {...attention} navigate={attentionNavigate} copy={copy} timeLabel={(value) => formatRelativeTime(value, locale)} showEmpty={!rows.length && !counts.permissionWarnings && ["ready", "empty"].includes(loadState)} blockedWork={rows.length ? (
-            <MissionControlTable rows={rows} title={copy.blockedWork || "Work to review"} evaluationStates={rowEvaluationStates} locale={locale} copy={copy} navigate={navigate} selectedRow={selectedRow} onReplayRow={onReplayRow} replayingRowId={replayingRowId} />
-          ) : null} />
+          <NeedsYouList
+            {...attention}
+            rows={rows}
+            navigate={attentionNavigate}
+            copy={copy}
+            timeLabel={(value) => formatRelativeTime(value, locale)}
+            checksLabel={checksLabel}
+            onReplay={onReplayRow}
+            replayingRowId={replayingRowId}
+            selectedRowId={selectedRow?.id || ""}
+          />
         ) : <>
         <MissionEvaluationFilter
           active={evaluationState}
@@ -18017,6 +18052,15 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
   const profilePath = owner ? memberProfilePath(owner.id, "home") : missionControlPath();
   const workspacePathTarget = owner ? `${memberProfilePath(owner.id, "project")}?workspace=${encodeURIComponent(workspacePath)}` : detailPath;
   const status = run.status || "running";
+  // Since ADR-0113 every chat reply is a run, so most run rows are replies.
+  // A reply is not a standalone run that lost its parent task, and the
+  // command line that started it belongs in Work details and the Execution
+  // panel, not on a list (ADR-0121): the row says what was asked and what
+  // came back, or the last line of output for a launched run.
+  const isReply = run.mode === "chat" || run.kind === "chat";
+  const lastLine = String((Array.isArray(run.logs) ? run.logs : []).at?.(-1)?.line || "").trim();
+  const reply = String(run.reply || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const title = (run.title && run.title !== run.command ? run.title : "") || (isReply ? "Chat reply" : "Launched run");
 
   return {
     id: `run-${run.id}`,
@@ -18024,8 +18068,8 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
     task: null,
     run,
     owner,
-    title: run.title || run.command || "Standalone run",
-    summary: run.command || "Run output is available from the local bridge.",
+    title,
+    summary: isReply ? reply || "No reply was recorded." : lastLine || "Run output is available from the local bridge.",
     status,
     runtimeId: run.id,
     repository,
@@ -18035,10 +18079,10 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
     runPath: detailPath,
     workspaceLink: workspacePath ? workspacePathTarget : "",
     detailPath,
-    blocker: status === "failed" ? "Standalone run failed before a parent task was linked." : "",
+    blocker: status === "failed" && !isReply ? "Standalone run failed before a parent task was linked." : "",
     permissionWarnings: owner ? permissionWarningsForAgent(owner, runtime, workspacePath) : [],
-    evidence: { type: "command", label: run.command || "Run command not recorded." },
-    nextAction: missionNextAction(status, { detailPath, ownerId: owner?.id }),
+    evidence: isReply ? { type: "reply", label: reply || "No reply was recorded." } : { type: "output", label: lastLine || "Run output is available from the local bridge." },
+    nextAction: missionNextAction(status, { detailPath, ownerId: owner?.id, reply: isReply }),
     updatedAt: run.updatedAt || run.completedAt || run.startedAt || new Date().toISOString(),
   };
 }
@@ -18116,8 +18160,11 @@ function missionEvidenceType(text) {
  * Replay is the one that genuinely acts, because a failed run can be started
  * again. The rest now name the surface that owns the decision and go there.
  */
-function missionNextAction(status, { detailPath, ownerId } = {}) {
+function missionNextAction(status, { detailPath, ownerId, reply = false } = {}) {
   const chat = ownerId ? memberChatPath(ownerId) : detailPath;
+  // A failed reply is retried in the conversation, where Retry already is;
+  // Replay is for launched runs only.
+  if (status === "failed" && reply) return { id: "open", label: "Open chat", icon: Play, path: chat };
   if (status === "failed") return { id: "replay", label: "Replay", icon: RefreshCw, path: "" };
   if (status === "handoff-pending" || status === "pending") {
     const params = new URLSearchParams(String(detailPath || "").split("?")[1] || "");

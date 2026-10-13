@@ -259,15 +259,20 @@ async function main() {
     // Remaining combined-view assertions are deliberately DOM based; filters,
     // counts and history should be proved as a person sees them.
     report.workInitial = await cdp.evaluate("({ text: document.querySelector('main').innerText, sidebar: document.querySelector('aside').innerText, route: location.pathname + location.search })");
-    for (const heading of ["Approvals waiting", "Handoffs waiting", "Work to review", "Memory proposals", "Replies", "Unread channels"]) assert(report.workInitial.text.includes(heading), `Combined view contains ${heading}`);
-    assert(report.workInitial.text.includes("7 to review"), "Exactly seven unique updates/decisions need you");
+    // ADR-0121: decisions (approval, handoff, memory) first, then unread (two
+    // replies and one channel), then the blocked work; the sentence counts
+    // what the page lists and the badge is decisions plus unread.
+    // innerText carries the CSS uppercase of the kind labels.
+    for (const heading of ["Decisions", "APPROVALS", "HANDOFFS", "MEMORY PROPOSALS", "Unread", "Work that stopped"]) assert(report.workInitial.text.includes(heading), `Combined view contains ${heading}`);
+    assert(report.workInitial.text.includes("3 decisions · 3 unread · 1 stopped"), `The sentence counts decisions, unread and stopped: ${report.workInitial.text.split("\n").slice(0, 4).join(" | ")}`);
+    assert(report.workInitial.sidebar.includes("6"), "The sidebar badge is decisions plus unread");
     assert(!report.workInitial.sidebar.split("\n").some((line) => line === "Inbox" || line === "Work"), "One sidebar destination replaces Inbox and Work");
     assert(!report.workInitial.text.includes("Browser fixture ongoing work"), "Running work belongs to In progress");
     assert(!report.workInitial.text.includes("Browser fixture completed evidence"), "Completed evidence belongs to All work");
     assert(!report.workInitial.text.includes("Task Record"), "No unselected record panel consumes attention view space");
     await screenshot("needs-you");
     await cdp.evaluate("Array.from(document.querySelector('main').querySelectorAll('button')).find(button => button.textContent.trim() === 'Mark updates read').click()");
-    await waitFor(() => cdp.evaluate("document.querySelector('main').innerText.includes('4 to review')"), "read updates retain four unresolved decisions");
+    await waitFor(() => cdp.evaluate("document.querySelector('main').innerText.includes('3 decisions · 1 stopped')"), "read updates retain the three unresolved decisions and the stopped work");
     report.afterMarkRead = await cdp.evaluate("document.querySelector('main').innerText");
     for (const title of ["Browser fixture approval", "Browser fixture handoff", "Browser fixture blocked work", "Browser fixture memory"]) assert(report.afterMarkRead.includes(title), `Reading updates preserves ${title}`);
     for (const title of ["Browser fixture reply", "Browser fixture unread channel update", "Mark updates read"]) assert(!report.afterMarkRead.includes(title), `Reading updates clears ${title}`);

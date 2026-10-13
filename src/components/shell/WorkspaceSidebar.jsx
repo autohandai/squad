@@ -14,10 +14,11 @@ function sectionOf(channel) {
   return value || DEFAULT_CHANNEL_SECTION;
 }
 
-function UnreadCount({ count }) {
+function UnreadCount({ count, testId }) {
   if (!count) return null;
   return (
     <span
+      data-testid={testId}
       className="grid min-w-5 place-items-center rounded-full bg-foreground px-1.5 text-[11px] font-semibold leading-5 text-background"
       aria-label={`${count} unread`}
     >
@@ -186,7 +187,7 @@ export function WorkspaceSidebar({
             label={copy.needsYou || "Needs you"}
             active={active.kind === "work"}
             onClick={onNavigate.inbox}
-            trailing={<UnreadCount count={inboxCount} />}
+            trailing={<UnreadCount count={inboxCount} testId="needs-you-count" />}
           />
           <NavRow
             icon={Bot}
