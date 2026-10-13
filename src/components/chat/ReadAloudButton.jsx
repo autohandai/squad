@@ -11,7 +11,7 @@ function finished(message) {
 }
 
 /**
- * The speaker on a member reply (ADR-0087). One reader serves the page, so
+ * The speaker on a member reply (ADR-0101). One reader serves the page, so
  * starting this reply stops any other. Props:
  *   text     the reply as markdown; rewritten to the spoken register before it is read
  *   message  { id, status } for identity and for the auto-read transition

@@ -8,7 +8,7 @@ import { DESKTOP_DICTATION_HINT, composeDictation, createDictation, dictationSup
 const NOTICE_MS = 8000;
 
 /**
- * The mic in a composer (ADR-0087). Speech lands in the draft through
+ * The mic in a composer (ADR-0101). Speech lands in the draft through
  * `onValueChange(nextText)` for review; nothing is sent. Props:
  *   value          the current draft, so dictation appends to what was typed
  *   onValueChange  receives the full next draft while listening

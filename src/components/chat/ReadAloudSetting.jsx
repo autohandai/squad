@@ -4,7 +4,7 @@ import { getPageReader } from "@/lib/read-aloud";
 
 /**
  * Member profile → Voice: the per-member "Read replies aloud" switch
- * (ADR-0087). `onChange(checked)` persists `agent.readAloud`; the reply rows
+ * (ADR-0101). `onChange(checked)` persists `agent.readAloud`; the reply rows
  * read it through the member they render for.
  */
 export function ReadAloudSetting({ agent, onChange, copy = {} }) {

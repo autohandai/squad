@@ -1,4 +1,4 @@
-// Dictation into a composer draft (ADR-0087).
+// Dictation into a composer draft (ADR-0101).
 //
 // Pure: it takes the recogniser class, the user agent and the clock as
 // arguments so scripts/check-voice.mjs can drive it with fakes. The browser's
@@ -27,7 +27,7 @@ export const DESKTOP_DICTATION_HINT = "Use the Mac's dictation here: press the D
  *   browser  → SpeechRecognition is usable
  *   desktop  → the macOS shell: WKWebView exposes the constructor but recognition
  *              never starts without the app's speech usage description, so the
- *              Mac's built-in dictation is the way in (ADR-0087)
+ *              Mac's built-in dictation is the way in (ADR-0101)
  *   none     → no recogniser at all
  */
 export function dictationSupport({ userAgent = globalThis.navigator?.userAgent || "", scope = globalThis.window } = {}) {

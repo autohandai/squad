@@ -23,7 +23,7 @@ function Row({ title, description, children, htmlFor }) {
 }
 
 /**
- * Settings → Voice (ADR-0087). The ElevenLabs key goes to the bridge and is
+ * Settings → Voice (ADR-0101). The ElevenLabs key goes to the bridge and is
  * never read back: the bridge reports a four-character hint. `api` is the
  * app's JSON helper (GET/PUT/DELETE /api/voice/settings, GET /api/voice/voices).
  */

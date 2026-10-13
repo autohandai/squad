@@ -1,4 +1,4 @@
-// Markdown → something a voice can read (ADR-0087).
+// Markdown → something a voice can read (ADR-0101).
 //
 // Members write for a screen: fenced code, file paths, tables, link soup,
 // list scaffolding. Read verbatim, a diff is minutes of punctuation and

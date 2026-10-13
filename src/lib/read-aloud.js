@@ -1,4 +1,4 @@
-// Reading a member reply aloud (ADR-0087).
+// Reading a member reply aloud (ADR-0101).
 //
 // One reader per page: starting a reply stops the one playing. Built-in voices
 // come from window.speechSynthesis; when the bridge holds an ElevenLabs key

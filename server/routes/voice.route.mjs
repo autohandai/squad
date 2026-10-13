@@ -1,4 +1,4 @@
-// Voice route plug-in (docs/integration/voice.md, ADR-0087).
+// Voice route plug-in (docs/integration/voice.md, ADR-0101).
 //
 //   GET    /api/voice/settings   { provider, configured, ready, keyHint, voiceId, voiceName }
 //   PUT    /api/voice/settings   body: { key?, voiceId?, voiceName? }

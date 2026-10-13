@@ -1,4 +1,4 @@
-// ElevenLabs on the bridge (ADR-0087). The key lives in
+// ElevenLabs on the bridge (ADR-0101). The key lives in
 // <squadStateDir>/voice.json (mode 0600) and never reaches the browser: the
 // settings route reports configured-or-not plus a four-character hint, and
 // the speak route returns audio bytes. `fetchFn` is injectable so

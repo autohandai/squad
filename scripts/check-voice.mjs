@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Checks for voice (ADR-0087): the spoken-register rewrite, the dictation
+// Checks for voice (ADR-0101): the spoken-register rewrite, the dictation
 // state machine driven by a fake recogniser, the read-aloud reader driven by a
 // fake synthesiser and audio element, and the bridge voice route with an
 // injected fetch so no ElevenLabs call is made.
