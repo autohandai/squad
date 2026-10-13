@@ -13,15 +13,19 @@
 
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { readSkillFrontmatter } from "../skills/local.mjs";
 import { STORE_FILE as WORKFLOW_STORE_FILE, importWorkflows, removeChannelWorkflows } from "../routes/workflows.route.mjs";
-import { TEAM_LIMITS, buildTeamFile, planImport, presetFileName, presetFromMember, presetRecord, slug, teamFileName } from "../../src/lib/teams.js";
+import { STORE_FILE as ROUTINES_STORE_FILE } from "../routines/store.mjs";
+import { TEAM_FILE_SUFFIX, TEAM_LIMITS, buildTeamFile, planImport, presetFileName, presetFromMember, presetRecord, slug, teamFileName, validateTeamFile } from "../../src/lib/teams.js";
 
 export const PRESETS_FILE = "presets.json";
 export const IMPORTED_SKILLS_DIR = "skills";
+// Built-in team templates (ADR-0118): one team file each, shipped with the
+// bridge and bundled into the web app from the same folder.
+export const TEMPLATES_DIR = join("server", "teams", "templates");
 
 function safeId(value) {
   const safe = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
@@ -135,19 +139,33 @@ export async function assembleTeamExport(ctx, body = {}) {
     }
   }
   const presets = (Array.isArray(source.presets) ? source.presets : []).map(presetRecord).filter(Boolean);
+  // A member's routines (ADR-0110) travel with it, paused, unless switched off.
+  const routines = include.routines === false ? [] : await readMemberRoutines(ctx, memberNameById);
   const teamName = String(source.team || "").trim() || "Squad";
   const built = buildTeamFile({
     kind: "team",
     team: teamName,
+    description: String(source.description || "").trim(),
+    lead: String(source.lead || "").trim(),
     members: memberRecords,
     skills,
     channels,
     workflows,
     presets,
+    routines,
     exportedAt: new Date().toISOString(),
     app: `autohand-squad ${ctx.packageMetadata?.version || ""}`.trim(),
   });
   return { ...built, filename: teamFileName(teamName, new Date()) };
+}
+
+/** Routines (routines.json) whose member is in the selection, named by member. */
+export async function readMemberRoutines(ctx, memberNameById = new Map()) {
+  const saved = await ctx.readOptionalJsonFile(join(ctx.squadStateDir, ROUTINES_STORE_FILE));
+  const list = Array.isArray(saved?.routines) ? saved.routines : [];
+  return list
+    .filter((routine) => routine && memberNameById.has(String(routine.memberId || "")))
+    .map((routine) => ({ member: memberNameById.get(String(routine.memberId)), title: routine.title, instructions: routine.instructions, schedule: routine.schedule, maxRunMinutes: routine.maxRunMinutes }));
 }
 
 /** A preset file for one member: the preset and its skills text, no team. */
@@ -327,12 +345,91 @@ export async function createChannelsAndWorkflows(ctx, plan, memberIds = {}) {
 export async function planTeamImport(ctx, document, { existingMemberNames = [] } = {}) {
   const state = await ctx.readChannelsState();
   const presets = await readPresets(ctx);
+  const connectors = ctx.connectors ? await ctx.connectors.list().catch(() => []) : [];
   return planImport(document, {
     existingMemberNames,
     existingChannelNames: (state?.channels || []).map((channel) => channel.name),
     existingSkillNames: await listImportedSkillNames(ctx),
     existingPresetKeys: presets.map((entry) => entry.key),
+    existingConnectorNames: connectors.map((connector) => connector.name),
   });
+}
+
+// --- routines and connectors (ADR-0118) ---------------------------------------
+
+/**
+ * Create the plan's routines, paused, through the routines route on this
+ * same bridge (the route owns the store and the scheduler, ADR-0110), so a
+ * routine made here is exactly one made in the editor. `timeZone` is the
+ * importer's zone for schedules the file left without one. Returns the
+ * routines created; one whose member was not created is left out.
+ */
+export async function createRoutines(ctx, plan, memberIds = {}, { host = "", timeZone = "" } = {}) {
+  const created = [];
+  const origin = `http://${host || "127.0.0.1:19821"}`;
+  for (const routine of plan.routines || []) {
+    const memberId = String(memberIds?.[routine.memberKey] || "").trim();
+    if (!memberId) continue;
+    const schedule = { ...routine.schedule };
+    if (!schedule.timeZone && timeZone) schedule.timeZone = timeZone;
+    const response = await fetch(`${origin}/api/routines`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ memberId, title: routine.title, instructions: routine.instructions, schedule, maxRunMinutes: routine.maxRunMinutes || 0, enabled: false, timeZone: timeZone || undefined }),
+    });
+    const envelope = await response.json().catch(() => null);
+    if (!envelope?.success) throw Object.assign(new Error(`routine ${routine.title}: ${envelope?.error || `routines route answered ${response.status}`}`), { status: 400 });
+    created.push({ id: envelope.data.id, title: envelope.data.title, memberId, enabled: envelope.data.enabled === true });
+  }
+  return created;
+}
+
+/**
+ * Save the plan's connectors switched off (ADR-0107: a new connector is
+ * saved off and tested before it is turned on). A connector whose name is
+ * already here is kept as it is; the built-in one is never created.
+ * Returns `{ added, kept }` of `{ id, name }`.
+ */
+export async function createConnectors(ctx, plan) {
+  const added = [];
+  const kept = [];
+  if (!ctx.connectors) return { added, kept, skipped: (plan.connectors || []).map((connector) => connector.name) };
+  const existing = await ctx.connectors.list().catch(() => []);
+  const byName = new Map(existing.map((connector) => [String(connector.name || "").toLowerCase(), connector]));
+  for (const connector of plan.connectors || []) {
+    const current = byName.get(connector.name.toLowerCase());
+    if (connector.kind === "builtin" || connector.action === "keep" || current) {
+      kept.push({ id: current?.id || "", name: connector.name });
+      continue;
+    }
+    const body = connector.kind === "url"
+      ? { name: connector.name, kind: "url", url: connector.url, transport: connector.transport, headers: (connector.headers || []).map((name) => ({ key: name, value: "" })) }
+      : { name: connector.name, kind: "stdio", command: connector.command, args: connector.args || [], env: (connector.env || []).map((name) => ({ key: name, value: "" })) };
+    const saved = await ctx.connectors.create(body);
+    byName.set(connector.name.toLowerCase(), saved);
+    added.push({ id: saved.id, name: saved.name });
+  }
+  return { added, kept };
+}
+
+// --- built-in templates -------------------------------------------------------
+
+/** The built-in team templates: `{ id, name, description, document }` each, validated. */
+export async function listTemplates(ctx) {
+  const dir = join(ctx.rootDir, TEMPLATES_DIR);
+  if (!existsSync(dir)) return [];
+  const names = (await readdir(dir)).filter((name) => name.endsWith(TEAM_FILE_SUFFIX)).sort();
+  const out = [];
+  for (const name of names) {
+    try {
+      const result = validateTeamFile(await readFile(join(dir, name), "utf8"));
+      if (!result.ok) continue;
+      out.push({ id: basename(name, TEAM_FILE_SUFFIX), name: result.document.team.name, description: result.document.team.description, document: result.document });
+    } catch {
+      // A template that cannot be read is not offered.
+    }
+  }
+  return out;
 }
 
 export { slug };

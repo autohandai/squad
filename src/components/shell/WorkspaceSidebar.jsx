@@ -4,6 +4,7 @@ import { Bot, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Plus, Sea
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { CreateMenu } from "@/components/teams/CreateMenu";
 import { cn } from "@/lib/utils";
 
 export const DEFAULT_CHANNEL_SECTION = "Channels";
@@ -256,9 +257,24 @@ export function WorkspaceSidebar({
           expanded={dmsExpanded}
           onToggle={() => setDmsExpanded((open) => !open)}
           action={
-            <Button variant="ghost" size="icon-sm" className="size-6" aria-label={copy.createSquadMember || "Create member"} onClick={onNavigate.createMember}>
-              <Plus className="size-3.5" />
-            </Button>
+            onNavigate.createTeam || onNavigate.templates ? (
+              // The same plus, now a short menu: New member, New team…, Templates… (ADR-0118).
+              <CreateMenu
+                copy={copy}
+                onNewMember={onNavigate.createMember}
+                onNewTeam={onNavigate.createTeam}
+                onTemplates={onNavigate.templates}
+                trigger={
+                  <Button variant="ghost" size="icon-sm" className="size-6" aria-label={copy.createLabel || "Create"}>
+                    <Plus className="size-3.5" />
+                  </Button>
+                }
+              />
+            ) : (
+              <Button variant="ghost" size="icon-sm" className="size-6" aria-label={copy.createSquadMember || "Create member"} onClick={onNavigate.createMember}>
+                <Plus className="size-3.5" />
+              </Button>
+            )
           }
         />
         {dmsExpanded ? (

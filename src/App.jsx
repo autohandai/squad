@@ -298,8 +298,13 @@ import { HiddenMembersGroup } from "@/components/members/HiddenMembersGroup";
 import { TeamMenu } from "@/components/teams/TeamMenu";
 import { ShareTeamDialog } from "@/components/teams/ShareTeamDialog";
 import { ImportTeamDialog } from "@/components/teams/ImportTeamDialog";
+import { NewTeamDialog } from "@/components/teams/NewTeamDialog";
+import { TemplatesDialog } from "@/components/teams/TemplatesDialog";
+import { TeamBuildRows } from "@/components/teams/TeamBuildRows";
+import { builtInTeamTemplates } from "@/data/team-templates";
+import { TEAM_BUILDS_STORAGE_KEY, buildFinishedEvent, buildMemberDraft, createTeamBuild, patchBuild as patchTeamBuildRecord, patchBuildMember as patchTeamBuildMember, pendingBuildMembers, resumeBuilds, teamDocumentFromProposal } from "@/lib/team-builder";
 import { duplicateCreationStash, hiddenMembers, hidePatch, markUnreadReadAt, orderMembers, pinPatch } from "@/lib/member-menus";
-import { presetTemplate } from "@/lib/teams";
+import { planImport, presetTemplate, validateTeamFile } from "@/lib/teams";
 import { BootChecks } from "@/components/shell/BootChecks";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
@@ -5531,6 +5536,152 @@ function App() {
   }, [refreshTeamPresets]);
   const presetTemplates = useMemo(() => teamPresets.map((entry) => presetTemplate(entry.preset)).filter(Boolean), [teamPresets]);
 
+  // Teams from an objective or a template (ADR-0118). A build is the record
+  // of one team being added: its members are prepared one at a time in the
+  // background through the same `createAgent` New member uses, then one
+  // bridge call adds the channel, the routines (paused) and the connectors
+  // (off). The record persists so a reload shows what was interrupted and
+  // offers Retry instead of losing the team.
+  const [newTeamOpen, setNewTeamOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [teamTemplates, setTeamTemplates] = useState(builtInTeamTemplates);
+  const [teamBuilds, setTeamBuilds] = useState(() => resumeBuilds(readStored([TEAM_BUILDS_STORAGE_KEY], [])));
+  const teamBuildsRef = useRef(teamBuilds);
+  teamBuildsRef.current = teamBuilds;
+  useEffect(() => {
+    persistLocal(TEAM_BUILDS_STORAGE_KEY, teamBuilds);
+  }, [teamBuilds]);
+  useEffect(() => {
+    if (!templatesOpen) return;
+    api("/api/teams/templates")
+      .then((data) => {
+        if (Array.isArray(data?.templates) && data.templates.length) setTeamTemplates(data.templates);
+      })
+      .catch(() => {
+        // An older bridge has no templates route; the bundled copies stand.
+      });
+  }, [templatesOpen]);
+  const pendingTeamMemberNames = useMemo(() => teamBuilds.flatMap((build) => pendingBuildMembers(build).map((member) => member.name)), [teamBuilds]);
+
+  function updateTeamBuild(id, patch) {
+    setTeamBuilds((current) => patchTeamBuildRecord(current, id, patch));
+  }
+  function updateTeamBuildMember(id, key, patch) {
+    setTeamBuilds((current) => patchTeamBuildMember(current, id, key, patch));
+  }
+  function dismissTeamBuild(id) {
+    setTeamBuilds((current) => current.filter((build) => build.id !== id));
+  }
+  // The feed turns this into one notification: "Marketing team is ready" or
+  // "could not be finished" (server/notify/policy.mjs, team.built).
+  async function reportTeamBuilt(build) {
+    await api("/api/events", { method: "POST", body: JSON.stringify(buildFinishedEvent(build)) }).catch(() => {});
+  }
+
+  async function runTeamBuild(id) {
+    let build = teamBuildsRef.current.find((item) => item.id === id);
+    if (!build) return;
+    const members = build.members.map((member) => ({ ...member }));
+    const memberIds = {};
+    for (const member of members) if (member.status === "ready" && member.id) memberIds[member.key] = member.id;
+    const applyMember = (key, patch) => {
+      Object.assign(members.find((member) => member.key === key), patch);
+      updateTeamBuildMember(id, key, patch);
+    };
+    const apply = (patch) => {
+      build = { ...build, ...patch, members };
+      updateTeamBuild(id, patch);
+    };
+    if (build.status !== "bridge-failed") {
+      apply({ status: "preparing", error: "" });
+      for (const member of members) {
+        if (member.status === "ready") continue;
+        applyMember(member.key, { status: "preparing", error: "" });
+        try {
+          const agent = await createAgent(member.draft, { id: member.id, navigate: false, ladderLevel: build.trusted ? undefined : "suggest-commands" });
+          if (!agent) throw new Error("The bridge did not confirm the member.");
+          memberIds[member.key] = agent.id || member.id;
+          applyMember(member.key, { status: "ready", id: agent.id || member.id });
+        } catch (error) {
+          applyMember(member.key, { status: "failed", error: error?.message || "could not be prepared" });
+          apply({ status: "failed", error: `${member.name} could not be prepared.` });
+          await reportTeamBuilt(build);
+          return;
+        }
+      }
+    }
+    apply({ status: "finishing", error: "" });
+    try {
+      const data = await api("/api/teams/import", {
+        method: "POST",
+        body: JSON.stringify({
+          document: build.document,
+          existingMemberNames: build.existingMemberNames || [],
+          memberIds,
+          choices: { skills: true, presets: !build.trusted, channels: true, workflows: true, routines: true, connectors: true },
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+      });
+      build = { ...build, members, status: "ready", channels: data.channels || [], routines: data.routines || [], connectors: data.connectors?.added || [] };
+      dismissTeamBuild(id);
+      await reportTeamBuilt(build);
+      await reloadChannelsFromBridge().catch(() => {});
+      await loadRoutines().catch(() => {});
+      try {
+        const all = await api("/api/workflows");
+        if (all?.channels && typeof all.channels === "object") setWorkflowsByChannel(all.channels);
+      } catch {
+        // The ten-second workflow poll picks them up.
+      }
+      if (!build.trusted) void refreshTeamPresets();
+    } catch (error) {
+      apply({ status: "bridge-failed", error: error?.message || "The bridge could not add the rest." });
+      await reportTeamBuilt(build);
+    }
+  }
+
+  // Non-blocking: the dialog has already closed when this runs. The plan
+  // comes from the bridge (names made unique against the squad and the
+  // members still being prepared), the drafts are what createAgent takes.
+  async function addTeam(document, { trusted = false, source = "template" } = {}) {
+    const validated = validateTeamFile(document);
+    if (!validated.ok) return;
+    const existingMemberNames = [...membersRef.current.map((agent) => agent.name), ...pendingTeamMemberNames];
+    let plan;
+    try {
+      plan = (await api("/api/teams/import/plan", { method: "POST", body: JSON.stringify({ document: validated.document, existingMemberNames }) })).plan;
+    } catch {
+      plan = planImport(validated.document, { existingMemberNames });
+    }
+    const recordByKey = new Map(validated.document.members.map((member) => [member.key, member]));
+    const memberIds = {};
+    const drafts = {};
+    for (const member of plan.members) {
+      const record = recordByKey.get(member.key);
+      if (!record) continue;
+      const draft = buildMemberDraft(record, member.name, { trusted });
+      const template = draft.employeeType ? roleTemplates.find((item) => item.id === draft.employeeType) : null;
+      draft.avatar = draft.avatar || birdAvatarForRole(draft.employeeType, draft.role, draft.name);
+      draft.skillSource = template?.skillSource || AUTOHAND_SKILLS_REGISTRY_URL;
+      // Starter notes go through the ordinary profile writer as MEMORY.md; a
+      // role template brings its personality file, as in New member.
+      draft.profileFiles = draft.notes
+        ? [{ section: "memory", fileName: "MEMORY.md", content: draft.notes, source: "manual" }]
+        : template
+          ? normalizeProfileFiles(template.profileFiles)
+          : [];
+      memberIds[member.key] = createSquadMemberId();
+      drafts[member.key] = draft;
+    }
+    const build = { ...createTeamBuild({ document: validated.document, plan, drafts, memberIds, trusted, source }), existingMemberNames };
+    teamBuildsRef.current = [...teamBuildsRef.current, build];
+    setTeamBuilds((current) => [...current, build]);
+    void runTeamBuild(build.id);
+  }
+  function addTeamFromProposal(proposal) {
+    void addTeam(teamDocumentFromProposal(proposal, { roleTemplates, app: "autohand-squad" }), { trusted: true, source: "objective" });
+  }
+
   const notificationBell = (
     <NotificationBell
       items={notifications}
@@ -9420,6 +9571,24 @@ function App() {
           void refreshTeamPresets();
         }}
       />
+      <NewTeamDialog
+        open={newTeamOpen}
+        onOpenChange={setNewTeamOpen}
+        agents={agents}
+        roleTemplates={roleTemplates}
+        pendingNames={pendingTeamMemberNames}
+        copy={localeCopy}
+        onAddTeam={addTeamFromProposal}
+      />
+      <TemplatesDialog
+        open={templatesOpen}
+        onOpenChange={setTemplatesOpen}
+        templates={teamTemplates}
+        agents={agents}
+        copy={localeCopy}
+        onAddTeam={(document, options) => void addTeam(document, options)}
+        onImportFile={() => setImportTeamOpen(true)}
+      />
       <div className="app-shell-root relative min-h-screen overflow-x-clip bg-background text-foreground">
         {/* The window's only drag region. Empty on purpose: Tauri drags only
             when the pointer lands on the annotated element itself, so an
@@ -9465,6 +9634,8 @@ function App() {
             searchTrailing={notificationBell}
             workspaceSwitcher={workspaceSwitcher}
             renderMemberMenu={renderMemberMenu}
+            onCreateTeam={() => setNewTeamOpen(true)}
+            onTemplates={() => setTemplatesOpen(true)}
             onCollapsedChange={setDesktopSidebarCollapsed}
           />
           <main className="app-main min-w-0">
@@ -9541,6 +9712,11 @@ function App() {
                 onSharePreset={setSharePreset}
                 onShareTeam={() => setShareTeamOpen(true)}
                 onImportTeam={() => setImportTeamOpen(true)}
+                onNewTeam={() => setNewTeamOpen(true)}
+                onTemplates={() => setTemplatesOpen(true)}
+                teamBuilds={teamBuilds}
+                onRetryTeamBuild={(id) => void runTeamBuild(id)}
+                onDismissTeamBuild={dismissTeamBuild}
               />
             ) : isChannels ? (
               <ChannelsPage
@@ -9870,6 +10046,14 @@ function App() {
               searchTrailing={notificationBell}
               workspaceSwitcher={workspaceSwitcher}
               renderMemberMenu={renderMemberMenu}
+              onCreateTeam={() => {
+                setMobileSidebarOpen(false);
+                setNewTeamOpen(true);
+              }}
+              onTemplates={() => {
+                setMobileSidebarOpen(false);
+                setTemplatesOpen(true);
+              }}
             />
           </SheetContent>
         </Sheet>
@@ -12378,6 +12562,8 @@ function SidebarContent({
   searchTrailing = null,
   workspaceSwitcher = null,
   renderMemberMenu = null,
+  onCreateTeam,
+  onTemplates,
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const { entryFor: entryForPresence } = usePresence();
@@ -12459,6 +12645,8 @@ function SidebarContent({
         member: (targetId) => navigate(memberChatPath(targetId)),
         createChannel: () => setCreateChannelOpen(true),
         createMember: () => navigate(`${MEMBER_ROUTE_PREFIX}/new`),
+        createTeam: onCreateTeam,
+        templates: onTemplates,
         missionControl: onMissionControl,
       }}
       footer={
@@ -16042,6 +16230,11 @@ function SquadDirectoryPage({
   onSharePreset,
   onShareTeam,
   onImportTeam,
+  onNewTeam,
+  onTemplates,
+  teamBuilds = [],
+  onRetryTeamBuild,
+  onDismissTeamBuild,
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -16106,8 +16299,13 @@ function SquadDirectoryPage({
   // same fields, and this one spent 502px of a 900px screen before the first
   // member appeared, against 145px on Work. One title, one sentence, one
   // control row, then people.
+  // Members still being prepared for a team (ADR-0118) count here and show
+  // as rows above the roster until each becomes an ordinary member.
+  const preparingCount = teamBuilds.reduce((sum, build) => sum + pendingBuildMembers(build).length, 0);
+  const showBuildRows = teamBuilds.length > 0 && filter === "all" && !normalizedQuery;
   const summary = (() => {
     const parts = [`${formatLocalizedNumber(members.length, locale)} ${members.length === 1 ? "member" : "members"}`];
+    if (preparingCount) parts.push(`${formatLocalizedNumber(preparingCount, locale)} ${(copy.preparingLabel || "preparing").toLowerCase()}`);
     if (workingNow) parts.push(`${formatLocalizedNumber(workingNow, locale)} working`);
     for (const state of stateCounts) {
       if (state.id !== "active" && state.count) parts.push(`${formatLocalizedNumber(state.count, locale)} ${state.label.toLowerCase()}`);
@@ -16135,7 +16333,13 @@ function SquadDirectoryPage({
               <Plus data-icon="inline-start" />
               {copy.newMember || "New member"}
             </Button>
-            <TeamMenu copy={copy} onShare={onShareTeam} onImport={onImportTeam} />
+            {onNewTeam ? (
+              <Button variant="outline" size="sm" onClick={onNewTeam} data-testid="new-team">
+                <Users data-icon="inline-start" />
+                {copy.newTeam || "New team"}
+              </Button>
+            ) : null}
+            <TeamMenu copy={copy} onTemplates={onTemplates} onShare={onShareTeam} onImport={onImportTeam} />
           </div>
         </header>
 
@@ -16167,13 +16371,22 @@ function SquadDirectoryPage({
           ))}
         </div>
 
-        {filteredMembers.length ? (
+        {filteredMembers.length || (showBuildRows && preparingCount) ? (
           <section aria-labelledby="squad-everyone">
             <div className="flex items-baseline justify-between gap-3 pb-2">
               <h2 id="squad-everyone" className="text-sm font-semibold">{copy.workEveryone || "Everyone"}</h2>
-              <span className="text-xs text-muted-foreground">{formatLocalizedNumber(filteredMembers.length, locale)}</span>
+              <span className="text-xs text-muted-foreground">{formatLocalizedNumber(filteredMembers.length + (showBuildRows ? preparingCount : 0), locale)}</span>
             </div>
             <ul className="flex flex-col border-t border-border/60">
+              {showBuildRows ? (
+                <TeamBuildRows
+                  builds={teamBuilds}
+                  copy={copy}
+                  renderAvatar={(agent) => <AgentAvatar agent={agent} />}
+                  onRetry={onRetryTeamBuild}
+                  onDismiss={onDismissTeamBuild}
+                />
+              ) : null}
               {filteredMembers.map(({ agent, agentRows, state }) => (
                 <SquadMemberRow
                   key={agent.id}

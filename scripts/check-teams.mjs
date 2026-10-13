@@ -96,7 +96,7 @@ const built = buildTeamFile({
   const { document, skipped, redacted, summary } = built;
   assert.equal(document.format, TEAM_FORMAT);
   assert.equal(document.version, TEAM_VERSION);
-  assert.deepEqual(Object.keys(document).sort(), ["channels", "format", "kind", "members", "presets", "skills", "team", "version", "workflows"]);
+  assert.deepEqual(Object.keys(document).sort(), ["channels", "connectors", "format", "kind", "members", "presets", "routines", "skills", "team", "version", "workflows"]);
   const serialized = JSON.stringify(document);
   for (const forbidden of [TOKEN, PASSWORD, "wh_secret_token_value", "Bearer abc", "/Users/someone", "ladderLevel", "modelAssignment", "executablePath", '"projects"', '"memory"', "extra.sh"]) {
     assert.ok(!serialized.includes(forbidden), `the file never carries ${forbidden}`);
@@ -231,7 +231,7 @@ try {
   assert.equal(exported.status, 200, JSON.stringify(exported));
   const { document, filename, summary, redacted } = exported.data;
   assert.match(filename, /^release-crew-\d{4}-\d{2}-\d{2}\.squad-team\.json$/);
-  assert.deepEqual(Object.keys(document).sort(), ["channels", "format", "kind", "members", "presets", "skills", "team", "version", "workflows"]);
+  assert.deepEqual(Object.keys(document).sort(), ["channels", "connectors", "format", "kind", "members", "presets", "routines", "skills", "team", "version", "workflows"]);
   assert.deepEqual(Object.keys(document.members[0]).sort(), ["brainCard", "description", "harness", "instructions", "key", "look", "name", "notes", "role", "skills"], "exactly the allowed member fields");
   const serialized = JSON.stringify(document);
   for (const forbidden of [TOKEN, PASSWORD, workflow.data.trigger.token, "/Users/someone", "ladderLevel", "executablePath", process.cwd(), "helper.sh", "never shared", "private-tool"]) {
@@ -246,7 +246,7 @@ try {
   assert.equal(document.workflows[0].channel, "release");
   assert.equal(document.workflows[0].steps[0].member, "Iris");
   assert.equal(document.workflows[0].trigger.type, "webhook");
-  assert.deepEqual(summary, { members: 2, skills: 1, channels: 1, workflows: 1, presets: 0, notes: 1 });
+  assert.deepEqual(summary, { members: 2, skills: 1, channels: 1, workflows: 1, presets: 0, routines: 0, connectors: 0, notes: 1 });
   assert.ok(redacted.length >= 2, `the export reports what it changed (${redacted.length})`);
 
   // Notes stay home unless asked for; skills can be chosen by name.

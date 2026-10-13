@@ -6,7 +6,7 @@
 import { basename } from "node:path";
 
 /** Event names the bridge emits that can become a notification. */
-export const NOTIFICATION_EVENTS = ["run.finished", "chat.finished", "handoff.pending", "approval.pending", "mention.received", "vault.request.pending", "folder.request.pending"];
+export const NOTIFICATION_EVENTS = ["run.finished", "chat.finished", "handoff.pending", "approval.pending", "mention.received", "vault.request.pending", "folder.request.pending", "team.built"];
 
 /** Settings shape; every kind is on by default. */
 export const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
@@ -56,6 +56,8 @@ export function settingKeyFor(event) {
       return "approvalPending";
     case "mention.received":
       return "mention";
+    case "team.built": // a team finished preparing in the background (ADR-0118)
+      return status === "failed" ? "runFailed" : "runFinished";
     default:
       return null;
   }
@@ -84,6 +86,7 @@ export function routeForEvent(event) {
   if (name === "vault.request.pending") return memberChatRoute(event?.memberId) || INBOX_ROUTE;
   if (name === "folder.request.pending") return memberChatRoute(event?.memberId) || INBOX_ROUTE;
   if (name === "mention.received") return channel || memberChatRoute(event?.memberId) || INBOX_ROUTE;
+  if (name === "team.built") return "/squad";
   return channel || memberChatRoute(event?.memberId) || MISSION_CONTROL_ROUTE;
 }
 
@@ -221,6 +224,23 @@ export function notificationFor(event, { appUrl = "http://127.0.0.1:19821", memb
     case "mention.received": {
       title = channel ? `${member} mentioned you in ${channel}` : `${member} mentioned you`;
       body = clip(event?.preview, 140) || "Open the channel to read the message.";
+      break;
+    }
+    case "team.built": {
+      const team = clip(event?.team, 60) || "The team";
+      const count = Number(event?.memberCount) || 0;
+      const failed = Number(event?.failedCount) || 0;
+      if (status === "failed") {
+        title = `${team} could not be finished`;
+        body = failed
+          ? `${failed} ${failed === 1 ? "member was" : "members were"} not prepared. Retry or dismiss it in Squad.`
+          : clip(event?.error, 140) || "Open Squad for details.";
+      } else {
+        title = `${team} is ready`;
+        const channels = Array.isArray(event?.channels) ? event.channels.filter(Boolean) : [];
+        const routines = Number(event?.routines) || 0;
+        body = [`${count} ${count === 1 ? "member" : "members"} prepared`, channels.length ? `#${channels[0]} created` : "", routines ? `${routines} ${routines === 1 ? "routine" : "routines"} paused` : ""].filter(Boolean).join(" · ") + ".";
+      }
       break;
     }
     default:

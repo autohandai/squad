@@ -8,13 +8,18 @@
 //                                       members the browser creates next
 //   GET    /api/teams/presets           presets offered in New member
 //   DELETE /api/teams/presets/:id       forget an imported preset
+//   GET    /api/teams/templates         the built-in team templates (ADR-0118)
+//
+// An import also creates the file's routines (paused, through the routines
+// route) and connectors (off) when `choices.routines` / `choices.connectors`
+// are not false (ADR-0118).
 //
 // Members are created by the browser through its confirmed creation path
 // (ADR-0077), so a member arriving half-made is impossible here: this route
 // only ever hands back the drafts. See docs/integration/teams.md.
 
 import { TeamFileError, parseTeamUpload } from "../teams/validate.mjs";
-import { addPresets, assemblePresetExport, assembleTeamExport, createChannelsAndWorkflows, planTeamImport, readPresets, removePreset, writeImportedSkills } from "../teams/package.mjs";
+import { addPresets, assemblePresetExport, assembleTeamExport, createChannelsAndWorkflows, createConnectors, createRoutines, listTemplates, planTeamImport, readPresets, removePreset, writeImportedSkills } from "../teams/package.mjs";
 import { TEAM_LIMITS } from "../../src/lib/teams.js";
 
 export const name = "teams";
@@ -87,16 +92,37 @@ export async function handle(req, res, url, ctx) {
       const bridge = choices.channels === false
         ? { channels: [], workflows: [] }
         : await createChannelsAndWorkflows(ctx, { ...plan, workflows: choices.workflows === false ? [] : plan.workflows }, memberIds);
-      ctx.logEvent(ctx.SEVERITY.INFO, `team file imported: ${bridge.channels.length} channels, ${bridge.workflows.length} workflows, ${skills.added.length} skills, ${presets.added.length} presets`, { "event.name": "team.imported" });
+      // Routines and connectors are additive: a routine that cannot be made
+      // stops the rest and is reported, but the channel just made stays, since
+      // the members it holds already exist.
+      let routines = [];
+      let routineError = "";
+      try {
+        routines = choices.routines === false ? [] : await createRoutines(ctx, plan, memberIds, { host: String(req.headers?.host || ""), timeZone: String(body?.timeZone || "") });
+      } catch (error) {
+        routineError = error?.message || "routines could not be created";
+      }
+      const connectors = choices.connectors === false ? { added: [], kept: [] } : await createConnectors(ctx, plan);
+      ctx.logEvent(ctx.SEVERITY.INFO, `team file imported: ${bridge.channels.length} channels, ${bridge.workflows.length} workflows, ${routines.length} routines, ${connectors.added.length} connectors, ${skills.added.length} skills, ${presets.added.length} presets`, { "event.name": "team.imported" });
       return ok(ctx, res, 201, {
         members: plan.members,
         channels: bridge.channels,
         workflows: bridge.workflows,
+        routines,
+        connectors,
         skills,
         presets: { added: presets.added.map((entry) => ({ id: entry.id, name: entry.preset.name })), kept: presets.kept.map((entry) => ({ id: entry.id, name: entry.preset.name })) },
-        dropped: plan.dropped,
+        dropped: routineError ? [...plan.dropped, { what: "routines", reason: routineError }] : plan.dropped,
         warnings,
       });
+    } catch (error) {
+      return fail(ctx, res, error);
+    }
+  }
+
+  if (path === "/api/teams/templates" && req.method === "GET") {
+    try {
+      return ok(ctx, res, 200, { templates: await listTemplates(ctx) });
     } catch (error) {
       return fail(ctx, res, error);
     }

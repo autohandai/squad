@@ -30,6 +30,8 @@ export const TEAM_LIMITS = Object.freeze({
   workflows: 100,
   stepsPerWorkflow: 20,
   presets: 40,
+  routines: 40,
+  connectors: 20,
   name: 80,
   key: 96,
   line: 600,
@@ -51,6 +53,13 @@ const APPROVAL_BY = Object.freeze(["user", "member"]);
 const DISPATCH_MODES = Object.freeze(["app", "bridge"]);
 const HTTP_METHODS = Object.freeze(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 const HARNESS_IDS = Object.freeze(["autohand", "codex", "claude"]);
+// Routine schedules are the shapes server/routines/schedule.mjs accepts
+// (ADR-0110); a routine always arrives paused, so `enabled` is not a field.
+const ROUTINE_KINDS = Object.freeze(["once", "weekdays", "interval", "monthly", "yearly", "cron"]);
+// A connector in a file is a name and an address, never a key: header and
+// environment names travel, values do not, and a connector arrives off.
+const CONNECTOR_KINDS = Object.freeze(["url", "stdio", "builtin"]);
+const CONNECTOR_TRANSPORTS = Object.freeze(["http", "sse"]);
 // A look is a path the app serves itself. A data URL is a picture; pictures
 // are not in this version of the format (ADR-0106, consequences).
 const AVATAR_PATH = /^\/[a-z0-9/_.-]+\.(?:png|jpg|jpeg|webp|svg)$/i;
@@ -262,6 +271,64 @@ export function workflowExportRecord(workflow, { channelName = "", memberNameByI
   };
 }
 
+function routineScheduleRecord(value) {
+  const source = isObject(value) ? value : {};
+  const kind = ROUTINE_KINDS.includes(source.kind) ? source.kind : "weekdays";
+  const record = { kind, time: /^\d{2}:\d{2}$/.test(String(source.time || "")) ? String(source.time) : "09:00" };
+  // A time zone is the person's, not the file's: it is optional here and the
+  // import fills in the importer's zone when the file names none.
+  const timeZone = line(source.timeZone, 64);
+  if (timeZone) record.timeZone = timeZone;
+  if (kind === "once") record.date = line(source.date, 10);
+  if (kind === "weekdays") record.days = (Array.isArray(source.days) ? source.days : [1, 2, 3, 4, 5]).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6).slice(0, 7);
+  if (kind === "interval") record.everyMinutes = Math.min(1440, Math.max(5, Number(source.everyMinutes) || 60));
+  if (kind === "monthly") record.day = source.day === "last" ? "last" : Math.min(31, Math.max(1, Number(source.day) || 1));
+  if (kind === "yearly") {
+    record.month = Math.min(12, Math.max(1, Number(source.month) || 1));
+    record.day = Math.min(31, Math.max(1, Number(source.day) || 1));
+  }
+  if (kind === "cron") record.cron = line(source.cron, 120);
+  return record;
+}
+
+/** A member routine (ADR-0110) as a file carries it: paused, member by name. */
+export function routineExportRecord(routine, { memberName = "" } = {}) {
+  const source = isObject(routine) ? routine : {};
+  const member = line(memberName || source.member || source.memberName, TEAM_LIMITS.name);
+  const title = line(source.title, 120);
+  const instructions = text(source.instructions, TEAM_LIMITS.prompt);
+  if (!member || !title || !instructions) return null;
+  const record = { member, title, instructions, schedule: routineScheduleRecord(source.schedule) };
+  const minutes = Number(source.maxRunMinutes);
+  if (Number.isFinite(minutes) && minutes > 0) record.maxRunMinutes = Math.min(1440, Math.round(minutes));
+  return record;
+}
+
+/** A connector (ADR-0107) as a file carries it: name, kind, address; no values. */
+export function connectorExportRecord(connector) {
+  const source = isObject(connector) ? connector : {};
+  const name = line(source.name, TEAM_LIMITS.name);
+  const kind = source.builtin === true ? "builtin" : CONNECTOR_KINDS.includes(source.kind) ? source.kind : "";
+  if (!name || !kind) return null;
+  const record = { name, kind, note: line(source.note, TEAM_LIMITS.line) };
+  if (kind === "url") {
+    const url = line(source.url, TEAM_LIMITS.url);
+    if (!/^https?:\/\//i.test(url)) return null;
+    record.url = url;
+    record.transport = CONNECTOR_TRANSPORTS.includes(source.transport) ? source.transport : "http";
+    record.headers = (Array.isArray(source.headers) ? source.headers : [])
+      .map((header) => line(typeof header === "string" ? header : header?.name || header?.key, 128))
+      .filter(Boolean)
+      .slice(0, TEAM_LIMITS.headers);
+  } else if (kind === "stdio") {
+    record.command = line(source.command, 1024);
+    if (!record.command) return null;
+    record.args = (Array.isArray(source.args) ? source.args : []).map((arg) => line(arg, 1024)).filter(Boolean).slice(0, 32);
+    record.env = (Array.isArray(source.env) ? source.env : []).map((entry) => line(typeof entry === "string" ? entry : entry?.key || entry?.name, 128)).filter(Boolean).slice(0, 16);
+  }
+  return record;
+}
+
 /** A preset: a member minus anything that is specific to one squad. */
 export function presetRecord(preset) {
   const source = isObject(preset) ? preset : {};
@@ -318,7 +385,7 @@ function dedupeKeys(records) {
  * did not fit under `skipped`, and redacts every string, listing each change
  * under `redacted`. Returns `{ document, skipped, redacted, summary }`.
  */
-export function buildTeamFile({ kind = "team", team = "", members = [], skills = [], channels = [], workflows = [], presets = [], exportedAt = new Date().toISOString(), app = "" } = {}) {
+export function buildTeamFile({ kind = "team", team = "", description = "", lead = "", members = [], skills = [], channels = [], workflows = [], presets = [], routines = [], connectors = [], exportedAt = new Date().toISOString(), app = "" } = {}) {
   const skipped = [];
   const take = (list, limit, what) => {
     if (list.length <= limit) return list;
@@ -357,18 +424,38 @@ export function buildTeamFile({ kind = "team", team = "", members = [], skills =
     "workflows"
   );
   const presetRecords = dedupeKeys(take(presets.map(presetRecord).filter(Boolean), TEAM_LIMITS.presets, "presets"));
+  // A routine names a member in the file; one for anyone else is dropped.
+  const routineRecords = take(
+    routines.map((routine) => routineExportRecord(routine)).filter((routine) => routine && memberNames.has(routine.member.toLowerCase())),
+    TEAM_LIMITS.routines,
+    "routines"
+  );
+  const seenConnectors = new Set();
+  const connectorRecords = take(
+    connectors.map(connectorExportRecord).filter((connector) => {
+      if (!connector || seenConnectors.has(connector.name.toLowerCase())) return false;
+      seenConnectors.add(connector.name.toLowerCase());
+      return true;
+    }),
+    TEAM_LIMITS.connectors,
+    "connectors"
+  );
+  const leadName = line(lead, TEAM_LIMITS.name).toLowerCase();
+  const leadRecord = leadName ? memberRecords.find((member) => member.name.toLowerCase() === leadName) : null;
   const redacted = [];
   const document = redactDeep(
     {
       format: TEAM_FORMAT,
       version: TEAM_VERSION,
       kind: kind === "preset" ? "preset" : "team",
-      team: { name: line(team, TEAM_LIMITS.name) || "Squad", exportedAt: line(exportedAt, 40), app: line(app, 80) },
+      team: { name: line(team, TEAM_LIMITS.name) || "Squad", description: line(description), lead: leadRecord ? leadRecord.name : "", exportedAt: line(exportedAt, 40), app: line(app, 80) },
       members: memberRecords,
       skills: skillRecords,
       channels: channelRecords,
       workflows: workflowRecords,
       presets: presetRecords,
+      routines: routineRecords,
+      connectors: connectorRecords,
     },
     redacted
   );
@@ -382,6 +469,8 @@ export function buildTeamFile({ kind = "team", team = "", members = [], skills =
       channels: document.channels.length,
       workflows: document.workflows.length,
       presets: document.presets.length,
+      routines: document.routines.length,
+      connectors: document.connectors.length,
       notes: document.members.filter((member) => member.notes).length + document.presets.filter((preset) => preset.notes).length,
     },
   };
@@ -415,10 +504,10 @@ export function validateTeamFile(input, { maxBytes = TEAM_LIMITS.fileBytes } = {
   if (!isObject(source)) return { ok: false, error: "This file is not a team file." };
   if (source.format !== TEAM_FORMAT) return { ok: false, error: "This file is not a team file: it does not say it is one." };
   if (source.version !== TEAM_VERSION) return { ok: false, error: `This team file is version ${String(source.version)}; this app reads version ${TEAM_VERSION}.` };
-  const allowedTop = new Set(["format", "version", "kind", "team", "members", "skills", "channels", "workflows", "presets"]);
+  const allowedTop = new Set(["format", "version", "kind", "team", "members", "skills", "channels", "workflows", "presets", "routines", "connectors"]);
   const unknown = Object.keys(source).filter((key) => !allowedTop.has(key));
   if (unknown.length) return { ok: false, error: `This file carries fields a team file has no place for: ${unknown.join(", ")}.` };
-  for (const [key, limit] of [["members", TEAM_LIMITS.members], ["skills", TEAM_LIMITS.skills], ["channels", TEAM_LIMITS.channels], ["workflows", TEAM_LIMITS.workflows], ["presets", TEAM_LIMITS.presets]]) {
+  for (const [key, limit] of [["members", TEAM_LIMITS.members], ["skills", TEAM_LIMITS.skills], ["channels", TEAM_LIMITS.channels], ["workflows", TEAM_LIMITS.workflows], ["presets", TEAM_LIMITS.presets], ["routines", TEAM_LIMITS.routines], ["connectors", TEAM_LIMITS.connectors]]) {
     if (source[key] !== undefined && !Array.isArray(source[key])) return { ok: false, error: `"${key}" should be a list.` };
     if (Array.isArray(source[key]) && source[key].length > limit) return { ok: false, error: `This file lists ${source[key].length} ${key}; a team file holds at most ${limit}.` };
   }
@@ -443,15 +532,29 @@ export function validateTeamFile(input, { maxBytes = TEAM_LIMITS.fileBytes } = {
     if (!isObject(workflow) || !line(workflow.name)) return { ok: false, error: "A workflow in this file has no name." };
     if (Array.isArray(workflow.steps) && workflow.steps.length > TEAM_LIMITS.stepsPerWorkflow) oversize.push(`workflow ${line(workflow.name)}`);
   }
+  for (const routine of source.routines || []) {
+    if (!isObject(routine) || !line(routine.title)) return { ok: false, error: "A routine in this file has no title." };
+    if (!line(routine.member)) return { ok: false, error: `Routine ${line(routine.title)} names no member.` };
+    if (typeof routine.instructions === "string" && routine.instructions.length > TEAM_LIMITS.prompt) oversize.push(`routine ${line(routine.title)}`);
+  }
+  for (const connector of source.connectors || []) {
+    if (!isObject(connector) || !line(connector.name)) return { ok: false, error: "A connector in this file has no name." };
+    const extra = Object.keys(connector).filter((key) => !["name", "kind", "note", "url", "transport", "headers", "command", "args", "env"].includes(key));
+    if (extra.length) return { ok: false, error: `Connector ${line(connector.name)} carries ${extra.join(", ")}, which a team file never does: a key or token is never in a file.` };
+  }
   if (oversize.length) return { ok: false, error: `Too long for a team file: ${oversize.slice(0, 3).join(", ")}${oversize.length > 3 ? ` and ${oversize.length - 3} more` : ""}.` };
   const rebuilt = buildTeamFile({
     kind: source.kind,
     team: isObject(source.team) ? source.team.name : "",
+    description: isObject(source.team) ? source.team.description : "",
+    lead: isObject(source.team) ? source.team.lead : "",
     members: source.members || [],
     skills: source.skills || [],
     channels: source.channels || [],
     workflows: source.workflows || [],
     presets: source.presets || [],
+    routines: source.routines || [],
+    connectors: source.connectors || [],
     exportedAt: isObject(source.team) ? source.team.exportedAt : "",
     app: isObject(source.team) ? source.team.app : "",
   });
@@ -489,7 +592,7 @@ export function memberDraftFromRecord(member, name = member.name) {
  * already there, and everything it will drop with the reason. Pure, so the
  * review screen and the bridge agree.
  */
-export function planImport(document, { existingMemberNames = [], existingChannelNames = [], existingSkillNames = [], existingPresetKeys = [] } = {}) {
+export function planImport(document, { existingMemberNames = [], existingChannelNames = [], existingSkillNames = [], existingPresetKeys = [], existingConnectorNames = [] } = {}) {
   const dropped = [];
   const takenMembers = [...existingMemberNames];
   const members = (document.members || []).map((member) => {
@@ -539,7 +642,35 @@ export function planImport(document, { existingMemberNames = [], existingChannel
   const skills = (document.skills || []).map((skill) => ({ name: skill.name, description: skill.description, text: skill.text, action: existingSkills.has(skill.name.toLowerCase()) ? "keep" : "add" }));
   const existingPresets = new Set(existingPresetKeys);
   const presets = presetsFromDocument(document).map((preset) => ({ ...preset, action: existingPresets.has(preset.key) ? "keep" : "add" }));
-  return { kind: document.kind || "team", team: document.team?.name || "Squad", members, channels, workflows, skills, presets, dropped };
+  // Routines (ADR-0110) bind to a member in the file and arrive paused.
+  const routines = [];
+  for (const routine of document.routines || []) {
+    const member = nameByOriginal.get(routine.member.toLowerCase());
+    if (!member) {
+      dropped.push({ what: `routine ${routine.title}`, reason: `${routine.member} is not in this file` });
+      continue;
+    }
+    routines.push({ memberKey: member.key, memberName: member.name, title: routine.title, instructions: routine.instructions, schedule: { ...routine.schedule }, maxRunMinutes: routine.maxRunMinutes || 0, enabled: false });
+  }
+  // Connectors (ADR-0107) are saved off; one with a name already here is kept.
+  const existingConnectors = new Set(existingConnectorNames.map((name) => String(name).trim().toLowerCase()));
+  const connectors = (document.connectors || []).map((connector) => ({ ...connector, action: connector.kind === "builtin" || existingConnectors.has(connector.name.toLowerCase()) ? "keep" : "add" }));
+  const leadName = String(document.team?.lead || "").toLowerCase();
+  const lead = leadName ? nameByOriginal.get(leadName) || null : null;
+  return {
+    kind: document.kind || "team",
+    team: document.team?.name || "Squad",
+    description: document.team?.description || "",
+    lead: lead ? { key: lead.key, name: lead.name } : null,
+    members,
+    channels,
+    workflows,
+    skills,
+    presets,
+    routines,
+    connectors,
+    dropped,
+  };
 }
 
 /** The presets a file offers New member: its own, plus each member as one. */

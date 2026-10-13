@@ -122,6 +122,7 @@ should accept it in the request body or read `ctx.readOptionalJsonFile(join(squa
 | `mention.received` | `{ channelId, memberId, messageId, preview }` |
 | `vault.request.pending` | `{ requestId, memberId, runId, channelId, type: "secret"|"payment", title }` (ADR-0104; notifies as an approval) |
 | `vault.request.resolved` | `{ requestId, memberId, type, action }` |
+| `team.built` | `{ status: "completed"|"failed", team, memberCount, failedCount, channels, routines, error }` (raised by the web app through `POST /api/events` when a team from an objective or a template finishes preparing; ADR-0118) |
 
 Every payload also carries `at` (ISO). `POST /api/events { name, ...payload }`
 lets the web app raise the last three, which happen client-side.
