@@ -1,4 +1,4 @@
-// Telegram remote access bridge (ADR-0088, docs/integration/remote-access.md).
+// Telegram remote access bridge (ADR-0102, docs/integration/remote-access.md).
 //
 // Long-polls the Bot API from this machine, answers exactly one paired
 // account, runs each inbound message as a bridge-owned turn for the chosen

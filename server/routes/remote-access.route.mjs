@@ -1,4 +1,4 @@
-// Remote access route plug-in (ADR-0088, docs/integration/remote-access.md).
+// Remote access route plug-in (ADR-0102, docs/integration/remote-access.md).
 //
 //   GET    /api/remote-access/status            bot, pairing, owner, notify mode (never the token)
 //   PUT    /api/remote-access/token             body: { token } → connects; a bad token is not saved

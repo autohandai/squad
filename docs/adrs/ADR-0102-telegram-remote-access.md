@@ -1,4 +1,4 @@
-# ADR-0088: Remote access over Telegram
+# ADR-0102: Remote access over Telegram
 
 Date: 2026-10-13
 

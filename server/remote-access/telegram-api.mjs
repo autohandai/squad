@@ -1,5 +1,5 @@
 // A minimal Telegram Bot API client: plain fetch from this machine, no SDK,
-// no inbound ports (ADR-0088). https://core.telegram.org/bots/api
+// no inbound ports (ADR-0102). https://core.telegram.org/bots/api
 //
 // The base URL is injectable so scripts/check-remote-access.mjs can point the
 // real bridge at a fake Bot API on loopback.

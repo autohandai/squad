@@ -5766,7 +5766,7 @@ function App() {
   const [relayConfig, setRelayConfig] = useState({ url: "", workspace: "", enabled: false, hasToken: false });
   const [relayStatus, setRelayStatus] = useState({ configured: false, connected: false, peers: [], self: null });
   const [workspaceSelection, setWorkspaceSelection] = useState({ selectedId: LOCAL_WORKSPACE_ID });
-  // Telegram remote access (ADR-0088): the bridge owns the bot and the paired
+  // Telegram remote access (ADR-0102): the bridge owns the bot and the paired
   // account; the app only shows its status and reconciles the turns it ran.
   const [remoteAccess, setRemoteAccess] = useState({ configured: false, polling: false, paired: null, pairing: null, notifyMode: "long" });
   const refreshRemoteAccess = useCallback(async () => {

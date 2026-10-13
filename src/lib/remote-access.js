@@ -1,4 +1,4 @@
-// Browser-side helpers for Telegram remote access (ADR-0088). Pure: no React,
+// Browser-side helpers for Telegram remote access (ADR-0102). Pure: no React,
 // no DOM, importable from scripts/check-remote-access.mjs.
 //
 // Turns started from Telegram are owned by the bridge; the app reconciles

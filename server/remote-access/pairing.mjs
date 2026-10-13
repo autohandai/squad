@@ -1,4 +1,4 @@
-// Pairing and state rules for Telegram remote access (ADR-0088). Pure
+// Pairing and state rules for Telegram remote access (ADR-0102). Pure
 // functions over the persisted state; the bridge (bridge.mjs) does the I/O.
 //
 // Exactly one Telegram account owns the bot. It pairs by sending the

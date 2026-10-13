@@ -1,4 +1,4 @@
-// Telegram formatting for member replies (ADR-0088). Members answer in
+// Telegram formatting for member replies (ADR-0102). Members answer in
 // Markdown; Telegram renders a small HTML subset and caps a message at 4096
 // characters. Pure functions, no I/O; scripts/check-remote-access.mjs covers
 // the conversions.

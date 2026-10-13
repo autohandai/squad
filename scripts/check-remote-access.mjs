@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Telegram remote access (ADR-0088): the pure formatting and pairing rules,
+// Telegram remote access (ADR-0102): the pure formatting and pairing rules,
 // the browser reconciliation helper, and the real bridge driven end to end
 // in an isolated state dir against a fake Telegram Bot API on loopback and a
 // disposable Codex-shaped member fixture. No vendor, credentials, installed

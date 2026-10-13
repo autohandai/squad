@@ -1,6 +1,6 @@
 # Integration: remote access over Telegram
 
-ADR-0088. The module owns `server/remote-access/{telegram-api,format,pairing,bridge}.mjs`,
+ADR-0102. The module owns `server/remote-access/{telegram-api,format,pairing,bridge}.mjs`,
 `server/routes/remote-access.route.mjs`, `src/lib/remote-access.js`,
 `src/components/settings/RemoteAccessSettings.jsx`, `scripts/check-remote-access.mjs`.
 The wiring below is already done in `src/App.jsx`, `package.json` and
