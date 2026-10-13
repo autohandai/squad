@@ -6975,11 +6975,14 @@ function App() {
     // Put the conversation away first (ADR-0113): the bridge keeps the
     // messages and the engine's session id, so it can be opened again later.
     const current = messagesByAgent[agent.id] || [];
+    let keepFailure = "";
     if (conversationHasWork(current)) {
       try {
         await api(`/api/members/${encodeURIComponent(agent.id)}/chats`, { method: "POST", body: JSON.stringify(archivePayload(agent, current, { workspace: agent.workspace, endedAt: timestamp })) });
-      } catch {
-        // The bridge is away or refused; the chat still resets as before.
+      } catch (error) {
+        // The chat still resets; the fresh conversation says the old one
+        // was not kept and why, instead of a silent empty list.
+        keepFailure = error?.message || "the bridge did not answer";
       }
     }
     // Drop the warm CLI session and the Claude/Codex resume ids so the next
@@ -6989,6 +6992,9 @@ function App() {
     sharedConversationChannelRef.current?.postMessage(event);
     setMessagesByAgent((current) => applySharedConversationEvent(current, event));
     updateAgent(agent.id, { lastConversationAt: timestamp, conversationStartedAt: timestamp, updatedAt: timestamp });
+    if (keepFailure) {
+      appendMessage(agent.id, { id: `keep-chat-error-${Date.now()}`, role: "agent", authorName: "Squad", body: `The previous chat could not be kept under Previous chats: ${keepFailure}`, status: "error" });
+    }
     void loadPreviousChats(agent.id);
     if (!preserveRoute) navigate(memberChatPath(agent.id));
   }

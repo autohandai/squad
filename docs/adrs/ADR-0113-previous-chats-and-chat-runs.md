@@ -123,6 +123,19 @@ it reports the boundary and the `ReferenceError`; against the fixed one it
 passes. Without Chrome it warns and passes unless
 `AUTOHAND_REQUIRE_BROWSER=1`.
 
+## What was learnt, second: the first real chat was never kept
+
+The first install showed "No previous chats yet" after New chat on a real
+conversation. No file existed under `<squadStateDir>/chats`. The bridge's
+`readBody` default limit is 1 MB; a conversation with Work details is a few
+MB of JSON (a two-message chat with 400 tool rows measured 2,036,135 bytes
+and got `413 request body too large`), and the app's catch swallowed the
+refusal. Decision: the chats route reads up to 32 MB, the app drops raw
+stream events above a 3 MB transfer budget before sending (the reply text
+and trace stay, the message is marked), and a failed keep is written into
+the fresh conversation as a Squad note with the reason. `check:chats` now
+archives a 5 MB conversation and asserts it is accepted and trimmed.
+
 ## Consequences
 
 - The Runs tab now fills with every reply, so a busy member produces a long

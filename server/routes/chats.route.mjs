@@ -23,6 +23,10 @@ import { captureHarnessSessions, restoreHarnessSessions } from "../chats/session
 
 export const name = "chats";
 
+// A conversation with Work details is a few MB of JSON; the bridge's default
+// body limit is 1 MB and refused every real chat with a 413 that the app
+// swallowed (ADR-0113, "what was learnt"). The store trims to 4 MB.
+const MAX_BODY_BYTES = 32 * 1024 * 1024;
 const LIST = /^\/api\/members\/([^/]+)\/chats$/;
 const ONE = /^\/api\/members\/([^/]+)\/chats\/([^/]+)$/;
 const OPEN = /^\/api\/members\/([^/]+)\/chats\/([^/]+)\/open$/;
@@ -82,7 +86,7 @@ export async function handle(req, res, url, ctx) {
     try {
       const memberId = memberIdFrom(match);
       const chatId = chatIdFrom(match);
-      const body = await context.readBody(req);
+      const body = await context.readBody(req, MAX_BODY_BYTES);
       const chat = await store.get(memberId, chatId);
       if (!chat) throw Object.assign(new Error("that chat is no longer here"), { status: 404 });
       let archived = null;
@@ -142,7 +146,7 @@ export async function handle(req, res, url, ctx) {
   if (match && req.method === "POST") {
     try {
       const memberId = memberIdFrom(match);
-      const body = await context.readBody(req);
+      const body = await context.readBody(req, MAX_BODY_BYTES);
       context.json(res, 201, { success: true, data: await archive(context, memberId, body) });
     } catch (error) {
       fail(res, context, error);

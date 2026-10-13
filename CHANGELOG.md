@@ -42,6 +42,7 @@ list to the section for that version.
 
 - The app no longer opens to "Autohand Squad could not render — Cannot access uninitialized variable" after the routines update; a value was read before it was set up. The build is now opened in a browser as part of the checks so this cannot pass unnoticed again.
 - A Claude Code member whose permission level is Chat only no longer stays stuck in plan mode: the composer shows that it is in plan mode and lets you switch it off for a message, and "Auto" now really writes.
+- Previous chats actually keep real conversations: a chat with Work details is several megabytes and the bridge refused it silently. It is accepted now, and if keeping it ever fails the new chat says so.
 - New chat with a Claude Code or Codex member now really starts a new conversation. Before, the engine was resumed with its previous session id, so the "new" chat silently carried the old context.
 
 ## [0.1.6] - 2026-10-13

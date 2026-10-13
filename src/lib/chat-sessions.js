@@ -17,9 +17,29 @@ export function chatTitleFrom(messages, fallback = "Chat") {
   return fallback;
 }
 
+export const TRANSFER_BUDGET_BYTES = 3 * 1024 * 1024;
+
+/**
+ * Keep the request a browser can send quickly: above the budget the raw
+ * stream events go (the reply text and the trace stay, and the message is
+ * marked so Work details says why). The bridge applies the same order at
+ * its own 4 MB bound (server/chats/store.mjs).
+ */
+export function messagesForTransfer(messages, budget = TRANSFER_BUDGET_BYTES) {
+  const list = Array.isArray(messages) ? messages : [];
+  if (JSON.stringify(list).length <= budget) return { messages: list, limited: false };
+  const trimmed = list.map((message) => {
+    if (!Array.isArray(message?.streamEvents)) return message;
+    const { streamEvents: _dropped, ...rest } = message;
+    return { ...rest, workDetailsLimited: true };
+  });
+  if (JSON.stringify(trimmed).length <= budget) return { messages: trimmed, limited: true };
+  return { messages: trimmed.map((message) => (message?.trace && typeof message.trace === "object" ? { ...message, trace: { ...message.trace, events: undefined } } : message)), limited: true };
+}
+
 /** What the browser sends to POST /api/members/:id/chats. */
 export function archivePayload(agent, messages, { workspace = "", endedAt = new Date().toISOString() } = {}) {
-  const list = Array.isArray(messages) ? messages : [];
+  const list = messagesForTransfer(messages).messages;
   return {
     messages: list,
     startedAt: agent?.conversationStartedAt || list[0]?.startedAt || "",

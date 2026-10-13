@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import { boundMessages, buildChatRecord, chatSummary, chatTitleFrom, MAX_MESSAGES_PER_CHAT } from '../server/chats/store.mjs';
 import { countHarnessSessions, normalizeHarnessSessions } from '../server/chats/sessions.mjs';
 import { historyRecord, runFromRecord } from '../server/runs/history.mjs';
-import { archivePayload, chatMetaLine, conversationHasWork, restoreConversationEvent, sortChats } from '../src/lib/chat-sessions.js';
+import { archivePayload, chatMetaLine, conversationHasWork, messagesForTransfer, restoreConversationEvent, sortChats } from '../src/lib/chat-sessions.js';
 import { applySharedConversationEvent } from '../src/lib/shared-conversations.js';
 
 // ---------- pure checks ----------
@@ -50,6 +50,11 @@ assert.equal(runFromRecord({ ...stored, status: 'running' }), null);
 const agent = { id: 'alex', harness: { id: 'claude' }, workspace: '/w', conversationStartedAt: '2026-10-13T01:00:00.000Z' };
 const payloadOut = archivePayload(agent, [msg(1, 'user', 'Plan the week')], { endedAt: '2026-10-13T02:00:00.000Z' });
 assert.equal(payloadOut.harness, 'claude'); assert.equal(payloadOut.startedAt, '2026-10-13T01:00:00.000Z'); assert.equal(payloadOut.title, 'Plan the week'); assert.equal(payloadOut.workspace, '/w');
+const bulky = [msg(1, 'user', 'q'), msg(2, 'agent', 'a', { streamEvents: Array.from({ length: 800 }, (_, i) => ({ type: 'tool_update', output: 'x'.repeat(5000), i })), trace: { events: [{ type: 'x' }] } })];
+const transfer = messagesForTransfer(bulky);
+assert.equal(transfer.limited, true); assert.equal(transfer.messages[1].streamEvents, undefined, 'the browser drops stream events above its transfer budget'); assert.ok(transfer.messages[1].trace.events, 'the trace stays');
+assert.equal(messagesForTransfer([msg(1, 'user', 'q')]).limited, false);
+assert.equal(archivePayload(agent, bulky).messages[1].workDetailsLimited, true, 'archivePayload sends the trimmed form');
 const restoreAt = '2026-10-13T05:00:00.000Z';
 const big = Array.from({ length: 150 }, (_, i) => msg(i, i % 2 ? 'agent' : 'user', `m${i}`, i === 149 ? { status: 'loading' } : {}));
 const event = restoreConversationEvent('alex', { messages: big }, restoreAt);
@@ -157,6 +162,14 @@ process.exit(0);
   const one = (await api(`/api/members/alex/chats/${archived.data.id}`)).data;
   assert.equal(one.messages.length, 2); assert.equal(one.messages[1].streamEvents.length, 1, 'the record keeps the work details');
   assert.equal(one.sessions.claude[rootDir].resumeId, firstSession, 'the record holds the engine session');
+
+  // 2b. A real conversation is megabytes of JSON: the route must take it
+  //     (the bridge default is 1 MB and refused every real chat with a 413).
+  const heavyEvents = Array.from({ length: 1000 }, (_, i) => ({ type: 'tool_update', toolId: `t${i}`, output: 'x'.repeat(5000) }));
+  const heavy = await api('/api/members/heavy/chats', { messages: [{ id: 'u1', role: 'user', body: 'Big one', startedAt: '2026-10-13T01:00:00.000Z' }, { id: 'a1', role: 'agent', body: 'Done', status: 'complete', startedAt: '2026-10-13T01:00:01.000Z', streamEvents: heavyEvents }], harness: 'claude' });
+  assert.equal(heavy.status, 201, `a 5 MB conversation is accepted: ${JSON.stringify(heavy).slice(0, 200)}`);
+  assert.equal(heavy.data.limited, true, 'and trimmed to the store bound');
+  assert.equal((await api(`/api/members/heavy/chats/${heavy.data.id}`)).data.messages[1].body, 'Done', 'the reply text survives the trim');
 
   // 3. The next turn starts a new session; opening the chat brings the old one back.
   await chat('alex', 'Something new');
