@@ -104,7 +104,7 @@ export class QueueDispatcher {
         await this.store.transition(item, {
           status: "done", finishedAt: this.at(), reply: String(result?.reply || "").slice(0, 16000),
           progress: result?.progress ? { ...result.progress, outcome: "completed" } : item.progress ? { ...item.progress, outcome: "completed" } : null,
-          result: { workspace: result?.workspace || item.workspace, transport: result?.transport || "", effectiveModel: result?.effectiveModel || null, durationMs: Number(result?.durationMs) || (this.now() - startedAt), command: result?.command || "", startedAt: result?.startedAt || item.startedAt, completedAt: result?.completedAt || this.at() },
+          result: { workspace: result?.workspace || item.workspace, transport: result?.transport || "", effectiveModel: result?.effectiveModel || null, durationMs: Number(result?.durationMs) || (this.now() - startedAt), command: result?.command || "", startedAt: result?.startedAt || item.startedAt, completedAt: result?.completedAt || this.at(), channelActions: (Array.isArray(result?.channelActions) ? result.channelActions : []).filter((action) => action?.type === "profile").slice(0, 5) },
         });
       } catch (error) {
         if (item.status === "running") {

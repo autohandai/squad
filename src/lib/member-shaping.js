@@ -177,3 +177,28 @@ function joinWords(items) {
   if (items.length <= 1) return items[0] || "profile";
   return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
+
+/** The quiet line under a reply that carried profile receipts. */
+export function profileNoteFor(receipts = []) {
+  return receipts.map((receipt) => String(receipt?.message || "").replace(/\.$/, "")).filter(Boolean).join(" · ");
+}
+
+/**
+ * Receipts from turns the browser did not stream itself (queued follow-ups,
+ * goals, Telegram, routines, the control plane), found in GET /api/runs.
+ * Each receipt is applied once: `seen` holds the applied ids, `since` is the
+ * time this browser started watching, so history restored from before then
+ * is never replayed over a later manual edit (ADR-0126, revision).
+ */
+export function unappliedProfileReceipts(runs = [], { seen = new Set(), since = "" } = {}) {
+  const out = [];
+  for (const run of Array.isArray(runs) ? runs : []) {
+    const finished = String(run?.finishedAt || "");
+    if (since && finished && finished < since) continue;
+    for (const receipt of profileReceipts(run?.channelActions)) {
+      if (!receipt.id || seen.has(receipt.id)) continue;
+      out.push({ agentId: String(run.agentId || receipt.actorId || ""), receipt });
+    }
+  }
+  return out.filter((entry) => entry.agentId);
+}

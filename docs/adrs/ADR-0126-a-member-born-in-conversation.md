@@ -103,6 +103,29 @@ No new model service, no new store, no new route.
   cleared in the editor, is treated as blank too. That is the definition
   chosen, not an accident; it is listed below as a consequence.
 
+## Revision, 2026-10-14: a rename sent while the member was answering did not stick
+
+Max (Codex) was renamed to Robert with "you will be called Robert". The
+reply read "I'll go by Robert. Max is now called Robert." but the header,
+the sidebar and the reply author all stayed "Max". The bridge had applied
+it: the run in `GET /api/runs` carried a `profile` receipt, status applied,
+patch `{ name: "Robert" }`. The message was sent 20 seconds after the
+previous one, while Max was still answering, so it ran as a queued
+follow-up (ADR-0111). The app applied receipts only in `sendChat`'s
+stream handler; the queue dispatcher dropped `channelActions` from the
+item's result and `reconcileQueueMessages` never looked for them. Goal,
+Telegram, routine and control-plane turns had the same gap.
+
+Decision. The dispatcher keeps profile receipts on the queue item; the
+queued reply lifts the receipt line into the quiet note like a direct
+reply; and the app applies receipts from the run list it already polls
+every 1.8 s, which every turn ends up in, once per receipt id. Ids applied
+and the time this browser started watching are kept in local storage, so
+run history restored from before then is never replayed over a later
+manual edit. `check:member-by-chat` now queues a rename through the real
+bridge and asserts the receipt is on the item and on the run; with the
+dispatcher change removed that assertion fails.
+
 ## Consequences and what was knowingly left undone
 
 - **The sidebar preview line is not built.** The other app shows "New Bot —

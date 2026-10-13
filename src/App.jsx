@@ -324,7 +324,7 @@ import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, mergeSeedAgent
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
-import { blankGreeting, blankMemberDraft, isBlankMember, personalityFileContent, profileReceipts, replyWithoutReceipts } from "@/lib/member-shaping";
+import { blankGreeting, blankMemberDraft, isBlankMember, personalityFileContent, profileNoteFor, profileReceipts, replyWithoutReceipts, unappliedProfileReceipts } from "@/lib/member-shaping";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -6229,6 +6229,35 @@ function App() {
     [presenceMap, bridgeReachable, entryFor]
   );
 
+  // Profile receipts from turns this window did not stream (queued
+  // follow-ups, goals, Telegram, routines): applied once each, from the run
+  // list every turn ends up in (ADR-0126, revision). A rename sent while the
+  // member was still answering used to stay in the reply text and never
+  // reached the member, the sidebar or the header.
+  const appliedProfileReceiptsRef = useRef(null);
+  const applyProfileReceiptsRef = useRef(null);
+  if (!appliedProfileReceiptsRef.current) {
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem("autohandSquad.v1.profileReceipts") || "null"); } catch {}
+    const since = typeof stored?.since === "string" && stored.since ? stored.since : new Date().toISOString();
+    appliedProfileReceiptsRef.current = new Set(Array.isArray(stored?.ids) ? stored.ids : []);
+    appliedProfileReceiptsRef.current.since = since;
+  }
+  const applyReceiptsFromRuns = useCallback((list) => {
+    const seen = appliedProfileReceiptsRef.current;
+    const pending = unappliedProfileReceipts(list, { seen, since: seen.since });
+    if (!pending.length) return;
+    const byMember = new Map();
+    for (const { agentId, receipt } of pending) {
+      seen.add(receipt.id);
+      byMember.set(agentId, [...(byMember.get(agentId) || []), receipt]);
+    }
+    // The latest render's applier: updateAgent closes over current state.
+    for (const [agentId, receipts] of byMember) applyProfileReceiptsRef.current?.(agentId, receipts);
+    try { localStorage.setItem("autohandSquad.v1.profileReceipts", JSON.stringify({ since: seen.since, ids: [...seen].slice(-200) })); } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     async function loadRuns() {
@@ -6237,6 +6266,7 @@ function App() {
         if (!cancelled) {
           setRuns(data);
           setRunsError("");
+          applyReceiptsFromRuns(data);
         }
       } catch {
         if (!cancelled) {
@@ -7480,10 +7510,11 @@ function App() {
             if (shaped.length) {
               finalResult.reply = replyWithoutReceipts(finalResult.reply, shaped) || finalResult.reply;
               applyProfileReceipts(agentId, shaped);
+              for (const receipt of shaped) appliedProfileReceiptsRef.current.add(receipt.id);
             }
             updateMessage(agentId, `${id}-a`, {
               body: finalResult.reply,
-              ...(shaped.length ? { profileNote: shaped.map((receipt) => receipt.message.replace(/\.$/, "")).join(" · ") } : {}),
+              ...(shaped.length ? { profileNote: profileNoteFor(shaped) } : {}),
               trace: finalResult.trace,
               streamEvents: liveEvents,
               command: finalResult.command,
@@ -8692,6 +8723,7 @@ function App() {
   // receipts through updateAgent, as Edit profile's Save would. Several in
   // one reply are merged in order and applied once, so a later one cannot be
   // computed from the member as it was before the earlier one.
+  applyProfileReceiptsRef.current = applyProfileReceipts;
   function applyProfileReceipts(agentId, receipts) {
     const current = membersRef.current.find((member) => member.id === agentId);
     if (!current || !receipts.length) return;

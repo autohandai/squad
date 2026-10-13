@@ -8,6 +8,8 @@
 // started is reconciled into the conversation as a user message plus the
 // member's reply, the same way durable goals are (src/lib/member-goals.js).
 
+import { profileNoteFor, profileReceipts, replyWithoutReceipts } from "./member-shaping.js";
+
 export const CONTEXT_WARNING_PERCENT = 85;
 
 export function queuedItems(queue) {
@@ -71,8 +73,12 @@ export function queueItemMessagePatch(item, member = {}) {
     : item.status === "cancelled" ? `${name} stopped this reply.`
       : item.status === "failed" ? `${name} could not answer: ${item.error || "no final update was received."}`
         : `${name} returned no chat text.`;
-  const reply = String(item.reply || "").trim();
+  // A follow-up that renamed or reshaped the member (ADR-0126): the receipt
+  // line becomes the quiet note under the reply, as in a direct reply.
+  const receipts = profileReceipts(item.result?.channelActions);
+  const reply = (receipts.length ? replyWithoutReceipts(item.reply, receipts) : "") || String(item.reply || "").trim();
   return {
+    ...(receipts.length ? { profileNote: profileNoteFor(receipts) } : {}),
     queueItemId: item.id,
     queueUpdatedAt: item.updatedAt,
     body: status === "complete" && reply ? reply : status === "stopped" && reply ? reply : fallback,

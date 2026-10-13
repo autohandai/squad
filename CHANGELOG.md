@@ -63,6 +63,8 @@ list to the section for that version.
 
 ### Fixed
 
+- Renaming a member in chat now updates it everywhere (header, sidebar, every reply) even when you send the rename while the member is still answering, and when it arrives from a goal, Telegram or a routine. Before, the member said its new name but kept the old one.
+
 - Squad no longer gets stuck on "Waking the squad" after an update. Watching your members' folders under Documents waited for macOS to ask for permission, which froze the app's local service, and the new supervisor then restarted it before you could answer. Folder watching now runs on its own, and the supervisor waits a minute before restarting a service that is still running.
 
 - A member running on Claude Code, Codex or an ACP agent no longer shows "Autohand AI / moa" as its model in the chat header, the profile preview or `/model`. It now names the engine and its model ("Claude · fable", "Codex · gpt-6.1-sol"), or "Claude default" when the engine picks; Autohand members are unchanged. Replies show the same.

@@ -22,7 +22,8 @@ import { createServer } from 'node:net';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { BLANK_MEMBER_NAME, asksForRole, blankGreeting, blankMemberDraft, isBlankMember, isPlaceholderName, memberShapingInstruction, namesSelf, needsShapingInstruction, profileChangeLine, profileReceipts, replyWithoutReceipts, validateProfileAction } from '../src/lib/member-shaping.js';
+import { BLANK_MEMBER_NAME, asksForRole, blankGreeting, blankMemberDraft, isBlankMember, isPlaceholderName, memberShapingInstruction, namesSelf, needsShapingInstruction, profileChangeLine, profileReceipts, replyWithoutReceipts, validateProfileAction, profileNoteFor, unappliedProfileReceipts } from '../src/lib/member-shaping.js';
+import { queueItemMessagePatch } from '../src/lib/member-queue.js';
 import { patchedMemberCopy } from '../server/routes/member-shaping.route.mjs';
 
 let checks = 0;
@@ -65,6 +66,22 @@ check('the bridge copy takes the patch, personality as PERSONALITY.md', copied.n
 console.log(`Member-by-chat pure checks passed (${checks}): blank, names, greeting, role requests, instruction, validation, identity, receipt line, browser helpers.`);
 
 // ---------- bridge ----------
+// --- Receipts from turns this window did not stream (revision, 2026-10-14) ---
+{
+  const rename = { id: 'profile-action-r1', type: 'profile', actorId: 'asq_max', status: 'applied', message: 'Max is now called Robert.', patch: { name: 'Robert' } };
+  const runs = [
+    { id: 'run-old', agentId: 'asq_max', finishedAt: '2026-10-13T10:00:00.000Z', channelActions: [{ ...rename, id: 'profile-action-old', patch: { name: 'Old' } }] },
+    { id: 'run-new', agentId: 'asq_max', finishedAt: '2026-10-14T19:50:32.000Z', channelActions: [rename, { id: 'x', type: 'create_channel', status: 'applied' }] },
+  ];
+  const pending = unappliedProfileReceipts(runs, { seen: new Set(), since: '2026-10-14T00:00:00.000Z' });
+  assert.deepEqual(pending.map((entry) => [entry.agentId, entry.receipt.patch.name]), [['asq_max', 'Robert']], 'a rename from a queued turn is found; history from before the browser watched is not replayed');
+  assert.deepEqual(unappliedProfileReceipts(runs, { seen: new Set(['profile-action-r1']), since: '2026-10-14T00:00:00.000Z' }), [], 'each receipt is applied once');
+  const queued = queueItemMessagePatch({ id: 'q1', status: 'done', reply: "I'll go by Robert.\n\nMax is now called Robert.", result: { channelActions: [rename] }, updatedAt: 't' }, { name: 'Max' });
+  assert.equal(queued.body, "I'll go by Robert.", 'a queued reply lifts the receipt line out of its text');
+  assert.equal(queued.profileNote, 'Max is now called Robert', 'and shows it as the quiet note');
+  assert.equal(profileNoteFor([rename, { message: 'Robert is now your X lead.' }]), 'Max is now called Robert · Robert is now your X lead');
+}
+
 const directory = await mkdtemp(join(tmpdir(), 'squad-member-by-chat-'));
 const callsFile = join(directory, 'calls.jsonl');
 const fake = join(directory, 'fixture-claude');
@@ -167,6 +184,7 @@ process.exit(0);
   const replayed = await chat('nova', `again ${reply(`Done.\n${action}`)}`, { requestId: 'req-shape-1' });
   check('(iii) replaying the same action is the same state', replayed.done?.channelActions?.[0]?.status === 'applied' && (await registered('nova')).role === 'GTM Leader');
 
+
   // (iv) Refusals change nothing.
   const forged = await chat('nova', `${reply('Sure.\nSQUAD_ACTION: {"type":"profile","op":"set","member":"Eva","role":"Intern"}')}`, { requestId: 'req-forge-1' });
   const forgedReceipt = forged.done?.channelActions?.[0];
@@ -184,6 +202,18 @@ process.exit(0);
   const taken = await chat('nova', `${reply('Sure.\nSQUAD_ACTION: {"type":"profile","op":"set","name":"Eva"}')}`, { requestId: 'req-name-1' });
   check('a taken name is numbered', taken.done?.channelActions?.[0]?.patch?.name === 'Eva 2' && taken.done.reply.endsWith('Alex is now called Eva 2.') && (await registered('nova')).name === 'Eva 2', JSON.stringify(taken.done?.channelActions));
 
+  // (vii) A rename sent as a queued follow-up keeps its receipt on the
+  // queue item, so the app can lift the line and apply the rename
+  // (revision 2026-10-14: "you will be called Robert" while Max was busy).
+  const renameAction = 'SQUAD_ACTION: {"type":"profile","op":"set","name":"Robert"}';
+  const queuedText = `you will be called Robert ${reply(`I'll go by Robert.\n${renameAction}`)}`;
+  const enqueued = await api('/api/queues/nova/items', { ...payload('nova', queuedText), text: queuedText });
+  check('(vii) the rename is queued', enqueued.success === true, JSON.stringify(enqueued).slice(0, 300));
+  const doneItem = await until(async () => { const queue = (await api('/api/queues/nova')).data; const item = queue?.items?.find((entry) => entry.id === enqueued.data.id); return item?.status === 'done' ? item : null; }, 'the queued rename to finish', 30000);
+  const queuedReceipt = doneItem.result?.channelActions?.[0];
+  check('(vii) the queued turn keeps its profile receipt', queuedReceipt?.type === 'profile' && queuedReceipt.status === 'applied' && queuedReceipt.patch?.name === 'Robert', JSON.stringify(doneItem.result).slice(0, 400));
+  const queuedRun = (await api('/api/runs')).data.find((item) => item.channelActions?.some((action) => action.id === queuedReceipt?.id));
+  check('(vii) and the same receipt is on the run the app polls', Boolean(queuedRun), '');
   console.log(`\ncheck-member-by-chat: ok (${checks} checks). The shaping instruction on blank and role-change turns only, the profile action applied with a receipt and recorded on the bridge copy, replay, refusals for another member (by name and id), a bad op and an unknown key, and a taken name numbered. Not provider execution.`);
 } catch (error) {
   console.error(`bridge log tail: ${logs.slice(-2500)}`);
