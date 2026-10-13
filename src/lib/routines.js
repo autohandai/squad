@@ -185,6 +185,15 @@ export function routineNextLabel(routine, locale = undefined) {
   return `Next ${formatInZone(routine.nextAt, routine.schedule?.timeZone, locale)}`;
 }
 
+/**
+ * The instruction that makes a member keep its own work plan (ADR-0124):
+ * add tasks when the person gives it work, mark them done, and answer a
+ * sitrep from the plan. Short on purpose; the two examples are the format.
+ */
+export function taskActionInstruction() {
+  return `Keep your own work plan in Squad. When the person gives you work, add it as tasks; when you finish one, mark it done; when they describe recurring work, propose the schedule (above) AND add the matching task. Asked for a sitrep or "what are you working on", answer from "Your work plan" below, never from memory. Each task action is one line exactly like: SQUAD_ACTION: {"type":"task","op":"add","title":"Send the NZ batch","detail":"20 ICP-matched leads, personalised","due":"2026-10-15"} or SQUAD_ACTION: {"type":"task","op":"done","id":"t_ab12cd","outcome":"18 sent, 2 bounced"}. Ops: add (title, optional detail and due YYYY-MM-DD), done (id or exact title, optional outcome), update (id, then any of title, detail, due, status open|doing|blocked). Up to five actions per reply. The bridge records each one and appends a receipt; do not claim a task exists before that receipt.`;
+}
+
 /** The instruction appended to a member's context so it can propose a schedule from chat. */
 export function scheduleActionInstruction(timeZone = browserTimeZone()) {
   return `To schedule repeatable work when the user asks for it, include one line exactly like: SQUAD_ACTION: {"type":"schedule","title":"Morning report","instructions":"what to do each time","schedule":{"kind":"weekdays","days":[1,2,3,4,5],"time":"09:00"},"timezone":"${timeZone}"}. Kinds: once {"kind":"once","date":"YYYY-MM-DD","time":"HH:MM"}; weekdays {"kind":"weekdays","days":[0-6, 0 is Sunday],"time":"HH:MM"}; interval {"kind":"interval","everyMinutes":5-1440}; monthly {"kind":"monthly","day":1-31 or "last","time":"HH:MM"}; yearly {"kind":"yearly","month":1-12,"day":1-31,"time":"HH:MM"}; cron {"kind":"cron","cron":"minute hour day-of-month month day-of-week"}. The user's timezone is ${timeZone}; always include an IANA timezone. The bridge records it as a proposal and the user confirms it in Squad; never claim anything is scheduled before that confirmation.`;

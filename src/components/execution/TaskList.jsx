@@ -50,9 +50,11 @@ export function TaskList({
   onCancelHandoff,
   onFailHandoff,
   onRetryHandoff,
+  silentEmpty = false,
 }) {
   if (!tasks.length) {
-    return <EmptyLine>{copy.tasksAppearAfterHandoff || "Tasks appear here once work is launched or handed to this member."}</EmptyLine>;
+    // Under the member's plan the empty sentence would be a second one (ADR-0124).
+    return silentEmpty ? null : <EmptyLine>{copy.tasksAppearAfterHandoff || "Tasks appear here once work is launched or handed to this member."}</EmptyLine>;
   }
   return (
     <div className="divide-y divide-border/70" data-testid="execution-tasks">

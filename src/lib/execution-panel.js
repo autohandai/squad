@@ -123,10 +123,11 @@ export function runStatusWord(run, copy = {}) {
  * The one sentence under the title: only what is true now. Zero counts are
  * left out so a quiet member reads as quiet rather than as three zeroes.
  */
-export function executionSummary({ runs = [], tasks = [], copy = {} } = {}) {
+export function executionSummary({ runs = [], tasks = [], planTasks = [], copy = {} } = {}) {
   const parts = [];
   const live = runs.filter(isLiveRun).length;
-  const open = tasks.filter((task) => OPEN_TASK_STATUSES.has(task?.status)).length;
+  // Open work is the launched tasks plus the member's own plan (ADR-0124).
+  const open = tasks.filter((task) => OPEN_TASK_STATUSES.has(task?.status)).length + planTasks.filter((task) => task && task.status !== "done").length;
   const waiting = tasks.filter((task) => latestPendingHandoff(task)).length;
   const blocked = tasks.filter((task) => task?.status === "blocked" || latestFailedHandoff(task)).length;
   const say = (template, fallback, count) => String(template || fallback).replace("{count}", String(count));

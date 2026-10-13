@@ -8,7 +8,8 @@ import { AutomationList } from "./AutomationList";
 import { HandoffDialog } from "./HandoffDialog";
 import { RunList } from "./RunList";
 import { NowList, TaskList } from "./TaskList";
-import { TextTabs } from "./bits";
+import { WorkPlanList } from "./WorkPlanList";
+import { GroupLabel, TextTabs } from "./bits";
 
 /**
  * The Execution panel (ADR-0117): a plain sheet beside the chat. Title, one
@@ -22,6 +23,9 @@ import { TextTabs } from "./bits";
  *   api          the bridge client (path, options) => data
  *   format       { statusLabel(status, copy), date(iso), schedule(automation),
  *                  workspaceName(path), role(agent), whyAgent(agent) }
+ *   workPlan     { tasks, create(input), update(id, patch), remove(id) } — the
+ *                member's own plan on the bridge (ADR-0124)
+ *   onAskMember  (text) => void, sends a chat message to the member
  */
 export function ExecutionPanel({
   agents = [],
@@ -44,6 +48,8 @@ export function ExecutionPanel({
   onCancelHandoff,
   onFailHandoff,
   onRetryHandoff,
+  workPlan = null,
+  onAskMember,
 }) {
   const [handoffSource, setHandoffSource] = useState(null);
   // One clock for the relative times, ticking while the sheet is open.
@@ -53,7 +59,8 @@ export function ExecutionPanel({
     return () => clearInterval(timer);
   }, []);
 
-  const summary = executionSummary({ runs, tasks, copy });
+  const planTasks = Array.isArray(workPlan?.tasks) ? workPlan.tasks : [];
+  const summary = executionSummary({ runs, tasks, planTasks, copy });
   const tabs = [
     { id: "runs", label: copy.runs || "Runs" },
     { id: "tasks", label: copy.tasks || "Tasks" },
@@ -96,18 +103,34 @@ export function ExecutionPanel({
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="px-5 pb-6" role="tabpanel">
           {activeTab === "tasks" ? (
-            <TaskList
-              tasks={tasks}
-              agents={agents}
-              copy={copy}
-              handoffRetryMode={handoffRetryMode}
-              statusLabel={format.statusLabel}
-              formatDate={format.date}
-              onHandoff={openTaskHandoff}
-              onCancelHandoff={onCancelHandoff}
-              onFailHandoff={onFailHandoff}
-              onRetryHandoff={onRetryHandoff}
-            />
+            <>
+              {workPlan ? (
+                <WorkPlanList
+                  tasks={planTasks}
+                  member={activeAgent}
+                  copy={copy}
+                  now={now}
+                  onCreate={workPlan.create}
+                  onUpdate={workPlan.update}
+                  onRemove={workPlan.remove}
+                  onAsk={onAskMember}
+                />
+              ) : null}
+              {workPlan && tasks.length ? <GroupLabel>{copy.workLaunched || "Launched and handed off"}</GroupLabel> : null}
+              <TaskList
+                tasks={tasks}
+                agents={agents}
+                copy={copy}
+                handoffRetryMode={handoffRetryMode}
+                statusLabel={format.statusLabel}
+                formatDate={format.date}
+                onHandoff={openTaskHandoff}
+                onCancelHandoff={onCancelHandoff}
+                onFailHandoff={onFailHandoff}
+                onRetryHandoff={onRetryHandoff}
+                silentEmpty={Boolean(workPlan)}
+              />
+            </>
           ) : activeTab === "automations" ? (
             <AutomationList
               automations={automations}

@@ -12,7 +12,7 @@ import { vaultNeedsYouRows } from "@/lib/vault";
 import { RoutineSchedule } from "@/components/members/RoutineSchedule";
 import { RoutineRunList, RoutineRunRow } from "@/components/members/RoutineRunRow";
 import { RoutineProposalCard } from "@/components/members/RoutineProposalCard";
-import { browserTimeZone, routineDraftFromAutomation, routinePayloadFromAutomation, scheduleActionInstruction, scheduleKindLabel } from "@/lib/routines";
+import { browserTimeZone, routineDraftFromAutomation, routinePayloadFromAutomation, scheduleActionInstruction, scheduleKindLabel, taskActionInstruction } from "@/lib/routines";
 import { AppInformation } from "@/components/app-info/AppInformation";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
@@ -282,6 +282,7 @@ import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { PreviousChats } from "@/components/chat/PreviousChats";
 import { FolderAccessCard } from "@/components/chat/FolderAccessCard";
+import { ScheduleOffer } from "@/components/chat/ScheduleOffer";
 import { EffortSlider } from "@/components/chat/EffortSlider";
 import { continuationPrompt, folderNeedsYouRows, foldersNeedingAccess, mentionedPaths, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
 import { archivePayload, conversationHasWork, restoreConversationEvent } from "@/lib/chat-sessions";
@@ -4643,6 +4644,8 @@ function App() {
   // 'routineProposals' before initialization" and the app could not render.
   const [routines, setRoutines] = useState([]);
   const [routineProposals, setRoutineProposals] = useState([]);
+  // Member work plans (ADR-0124): the bridge's tasks per member, polled with routines.
+  const [workTasks, setWorkTasks] = useState([]);
   const memberAccessWritesRef = useRef(new Map());
   const membersRef = useRef(agents);
   membersRef.current = agents;
@@ -7462,6 +7465,7 @@ function App() {
               ...(finalResult.goal ? goalMessagePatch(finalResult.goal) : {}),
               ...(finalResult.progress ? { progress: finalResult.progress } : {}),
               ...(finalResult.computerUse ? { computerUse: finalResult.computerUse } : {}),
+              ...(data.scheduleOffer ? { scheduleOffer: data.scheduleOffer } : {}),
               declined: finalResult.declined,
             });
             return;
@@ -8447,10 +8451,18 @@ function App() {
   // dispatches runs for members the bridge cannot run on its own.
   const dispatchedRoutineRunsRef = useRef(new Set());
   const loadRoutines = useCallback(async () => {
-    const [list, proposals] = await Promise.all([api("/api/routines"), api("/api/routines/proposals?status=proposed")]);
+    const [list, proposals, work] = await Promise.all([api("/api/routines"), api("/api/routines/proposals?status=proposed"), api("/api/work").catch(() => null)]);
     setRoutines(Array.isArray(list?.routines) ? list.routines : []);
     setRoutineProposals(Array.isArray(proposals?.proposals) ? proposals.proposals : []);
+    if (work) setWorkTasks(Array.isArray(work.tasks) ? work.tasks : []);
   }, []);
+  // The person's side of a member's plan (ADR-0124): add, edit, done, remove on the bridge.
+  const workPlanFor = (memberId) => ({
+    tasks: workTasks.filter((task) => task.memberId === memberId),
+    create: async (input) => { await api("/api/work", { method: "POST", body: JSON.stringify({ ...input, memberId, source: "person" }) }); await loadRoutines(); },
+    update: async (id, patch) => { await api(`/api/work/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }); await loadRoutines(); },
+    remove: async (id) => { await api(`/api/work/${encodeURIComponent(id)}`, { method: "DELETE" }); await loadRoutines(); },
+  });
   const previewRoutine = previewRoutineOnBridge;
   async function dispatchRoutineRun(dispatch) {
     if (!dispatch?.runId || dispatchedRoutineRunsRef.current.has(dispatch.runId)) return;
@@ -9455,7 +9467,7 @@ function App() {
             previousChats={previousChatsByAgent[member.id] || []} previousChatsLoading={previousChatsLoading} onLoadPreviousChats={loadPreviousChats} onOpenPreviousChat={openPreviousChat} onRemovePreviousChat={removePreviousChat}
             goals={memberGoals.filter((goal) => goal.agentId === member.id)} goalsError={memberGoalsError} onGoalAction={controlMemberGoal} onMemberBreak={setMemberBreak}
             queue={memberQueues[member.id]} contextGauge={memberContext[member.id]} onQueueAction={controlMemberQueue}
-            routineProposals={routineProposals.filter((proposal) => proposal.memberId === member.id)} onRoutineDecision={decideRoutineProposal} onRoutineSync={syncAutomationRoutine}
+            routineProposals={routineProposals.filter((proposal) => proposal.memberId === member.id)} onRoutineDecision={decideRoutineProposal} onRoutineSync={syncAutomationRoutine} workPlan={workPlanFor(member.id)}
             openTerminal={openTerminal} navigate={quickNavigate} taskPanelOpen={taskPanelOpen} setTaskPanelOpen={setTaskPanelOpen}
             tasks={tasks.filter((task) => taskBelongsToAgent(task, member.id))} automations={automations.filter((item) => automationBelongsToAgent(item, member.id))}
             setAutomations={setAutomations} runAutomation={runAutomation} updateAgent={updateAgent} chatSettings={chatSettings}
@@ -9918,6 +9930,7 @@ function App() {
                 routineProposals={routineProposals.filter((proposal) => proposal.memberId === activeAgent?.id)}
                 onRoutineDecision={decideRoutineProposal}
                 onRoutineSync={syncAutomationRoutine}
+                workPlan={workPlanFor(activeAgent?.id)}
                 onGoalAction={controlMemberGoal}
                 queue={memberQueues[activeAgent?.id]}
                 contextGauge={memberContext[activeAgent?.id]}
@@ -11868,11 +11881,13 @@ const DM_DELEGATION_MAX_HOPS = 2;
 // Member routines (ADR-0110): the schedule proposal format. The zone is the
 // browser's and stable per machine, so it does not churn the session key.
 const SCHEDULE_ACTION_INSTRUCTION = scheduleActionInstruction(browserTimeZone());
+// Member work plans (ADR-0124): the task action format, next to the schedule one.
+const TASK_ACTION_INSTRUCTION = taskActionInstruction();
 const CHANNEL_ACTION_INSTRUCTION = 'To propose a shared channel, include one line exactly like: SQUAD_ACTION: {"type":"create_channel","name":"project-name","members":["Noah","Eva"],"purpose":"one sentence"}. Use existing teammates and an assigned workspace. The bridge checks squad_create_channel: ask requires user approval, block refuses, allow creates. Never claim creation before bridge confirmation.';
 
 function buildTeammateContext(agent, agents = [], { hop = 0 } = {}) {
   const teammates = agents.filter((item) => item.id !== agent.id && item.status !== "offline");
-  if (!teammates.length) return [CHANNEL_ACTION_INSTRUCTION, SCHEDULE_ACTION_INSTRUCTION].join("\n");
+  if (!teammates.length) return [CHANNEL_ACTION_INSTRUCTION, SCHEDULE_ACTION_INSTRUCTION, TASK_ACTION_INSTRUCTION].join("\n");
   // Deliberately durable: this text is the SDK's system prompt, and the warm
   // session pool keys on it. A teammate's presence label changes whenever any
   // run starts or stops, so including it changed the key between messages and
@@ -11889,6 +11904,7 @@ function buildTeammateContext(agent, agents = [], { hop = 0 } = {}) {
       : "You are already working on a delegated task; finish it yourself and do not delegate further.",
     CHANNEL_ACTION_INSTRUCTION,
     SCHEDULE_ACTION_INSTRUCTION,
+    TASK_ACTION_INSTRUCTION,
   ].join("\n");
 }
 
@@ -11938,6 +11954,7 @@ function buildChannelProfileContext(channel, agent, agents = [], { autoMode, sel
     "Autohand Squad channel context",
     CHANNEL_ACTION_INSTRUCTION,
     SCHEDULE_ACTION_INSTRUCTION,
+    TASK_ACTION_INSTRUCTION,
     `Channel: #${channel.name} (${channel.visibility})`,
     threadId ? `Thread: ${threadId}` : "",
     roster.length ? `Channel members:\n${roster.join("\n")}` : "",
@@ -13300,6 +13317,7 @@ function Conversation({
   routineProposals = [],
   onRoutineDecision,
   onRoutineSync,
+  workPlan = null,
   onNewConversation,
   onFolderRequests,
   onFolderSettled,
@@ -13388,6 +13406,15 @@ function Conversation({
     onInitialPanelConsumed?.();
   }, [initialPanel]);
   const [automationFormOpen, setAutomationFormOpen] = useState(false);
+  // "Schedule this?" (ADR-0124 §4): the editor opens pre-filled from the offer.
+  const [automationSeed, setAutomationSeed] = useState(null);
+  function decideScheduleOffer(message, decision) {
+    const offer = message?.scheduleOffer;
+    onUpdateMessage?.(agent.id, message.id, { scheduleOffer: null, scheduleOfferDecided: decision });
+    if (decision !== "schedule" || !offer?.schedule) return;
+    setAutomationSeed({ name: offer.title || "", prompt: offer.instructions || "", description: offer.instructions || "", triggerType: "schedule", workspace: defaultWorkspace, routine: { ...offer.schedule, timeZone: offer.timeZone || browserTimeZone() } });
+    setAutomationFormOpen(true);
+  }
   // Canvases (ADR-0023): this member's documents, shown instead of the stream
   // while the Canvas view is on; the composer stays so `@canvas:` still works.
   const [view, setView] = useState("messages");
@@ -14318,7 +14345,7 @@ function Conversation({
           <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} className="px-3 sm:px-3" />
           <div className="flex flex-col gap-4 px-3 py-3">
             {hasConversationMessages ? localizedMessages.map((message) => (
-              <SquadMessage key={message.id} compact agent={agent} message={message} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} memberBusy={Boolean(chatSending)} />
+              <SquadMessage key={message.id} compact agent={agent} message={message} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} memberBusy={Boolean(chatSending)} />
             )) : <p className="py-3 text-sm text-muted-foreground">Send a message to {agent.name}.</p>}
             <div ref={messagesEndRef} aria-hidden="true" />
           </div>
@@ -14562,6 +14589,7 @@ function Conversation({
                       chatSettings={chatSettings}
                       onRetry={retryMessage}
                       onFolderAccess={decideFolderAccess}
+                      onScheduleOffer={decideScheduleOffer}
                       memberBusy={Boolean(chatSending)}
                     />
                   ))}
@@ -14877,18 +14905,20 @@ function Conversation({
             onCancelHandoff={onCancelHandoff}
             onFailHandoff={onFailHandoff}
             onRetryHandoff={onRetryHandoff}
+            workPlan={workPlan}
+            onAskMember={(text) => sendPromptNow({ prompt: text })}
           />
         </SheetContent>
       </Sheet>
 
       <AutomationFormDialog
         agent={agent}
-        automation={null}
+        automation={automationSeed}
         defaultWorkspace={defaultWorkspace}
         runtime={runtime}
         workspaces={workspaces}
         open={automationFormOpen}
-        onOpenChange={setAutomationFormOpen}
+        onOpenChange={(open) => { setAutomationFormOpen(open); if (!open) setAutomationSeed(null); }}
         onSave={saveAutomation}
       />
 
@@ -15124,9 +15154,9 @@ function LaunchPermissionWarnings({ warnings = [] }) {
 }
 
 
-const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onFolderAccess, memberBusy = false }) {
+const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onFolderAccess, onScheduleOffer, memberBusy = false }) {
   const isUser = message.role === "user";
-  if (!isUser) return <AgentResponseMessage compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onFolderAccess={onFolderAccess} memberBusy={memberBusy} />;
+  if (!isUser) return <AgentResponseMessage compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} memberBusy={memberBusy} />;
 
   return (
     <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
@@ -15138,7 +15168,7 @@ const SquadMessage = memo(function SquadMessage({ agent, message, computerEviden
   );
 });
 
-function AgentResponseMessage({ agent, message, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onFolderAccess, memberBusy = false }) {
+function AgentResponseMessage({ agent, message, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onFolderAccess, onScheduleOffer, memberBusy = false }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
   // Trace normalisation and body parsing are the expensive part of a row.
   const view = useMemo(() => buildAgentResponseView(message), [message]);
@@ -15225,6 +15255,9 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
             copy={copy}
             onDecide={(folder, decision) => onFolderAccess(message, folder, decision)}
           />
+        ) : null}
+        {!isLoading && onScheduleOffer && message.scheduleOffer ? (
+          <ScheduleOffer offer={message.scheduleOffer} memberName={agent?.name || "The member"} copy={copy} onSchedule={() => onScheduleOffer(message, "schedule")} onDismiss={() => onScheduleOffer(message, "dismiss")} />
         ) : null}
 
         {!compact && !isLoading && showRawOutput ? <RawTraceBlock raw={view.raw} /> : null}

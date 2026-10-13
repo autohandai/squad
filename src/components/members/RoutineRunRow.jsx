@@ -61,7 +61,7 @@ export function RoutineRunList({ routine, locale, className, emptyText = "No sch
             {runStatusWord(run.status)}
           </span>
           <span className="min-w-0 truncate text-muted-foreground">
-            {run.reason || run.preview || (run.trigger === "manual" ? "Run now" : run.dispatch === "bridge" ? "Ran on the bridge" : "")}
+            {[run.reason || run.preview || (run.trigger === "manual" ? "Run now" : run.dispatch === "bridge" ? "Ran on the bridge" : ""), run.note].filter(Boolean).join(" · ")}
           </span>
         </li>
       ))}

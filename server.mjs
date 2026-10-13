@@ -43,6 +43,10 @@ import { createRunHistory, runHistoryPath } from "./server/runs/history.mjs";
 import { clearHarnessSessions } from "./server/chats/sessions.mjs";
 import { ChatStore } from "./server/chats/store.mjs";
 import { buildRecall, collectRecallSources } from "./server/chats/recall.mjs";
+import { workPlanFor } from "./server/work/plan.mjs";
+import { describeSchedule, isValidTimeZone, normalizeSchedule, validateSchedule } from "./server/routines/schedule.mjs";
+import { scheduleActionInstruction, taskActionInstruction } from "./src/lib/routines.js";
+import { detectRecurringWork, replyProposedSchedule } from "./src/lib/work-plans.js";
 import { normalizeResponder, responderStatus } from "./src/lib/channel-responders.js";
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
 import { memberProfileDefaults } from "./src/lib/member-profiles.js";
@@ -3030,7 +3034,7 @@ async function autohandArgs(input) {
   const prompt = String(input.prompt || "").trim();
   let profile = String(input.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(input, workspace);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input), workPlanInstructions(input)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const args = ["--path", workspace, "--config", agentRuntime.configPath];
@@ -3122,7 +3126,7 @@ function sdkTransportEnabled(input, mode) {
 }
 
 function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input), workPlanInstructions(input)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const model = selectedModelForInput(input, permissions, agentRuntime);
@@ -3218,6 +3222,7 @@ const contextLayerOrder = [
   "taskContextPack",
   "userRequest",
   "recentConversations",
+  "workPlan",
   "toolTranscript",
 ];
 
@@ -3730,6 +3735,20 @@ function assembleContextLayers(mode, payload, agentRuntime) {
       ? clampSummary(`${recall.counts.ownChats} previous chat(s), ${recall.counts.otherTurns + recall.counts.otherChats} from other members, ${recall.counts.channels} channel(s).`)
       : "",
     ...(recall?.text ? {} : { reason: payload?.channelId || payload?.channel?.channelId ? "Channel turns carry the thread instead." : "Nothing earlier to recall yet." }),
+  });
+
+  // Your work plan (ADR-0124): the member's tasks, routines, goals and queued
+  // follow-ups, present on direct-message turns.
+  const workPlan = payload?._workPlan && typeof payload._workPlan === "object" ? payload._workPlan : null;
+  layers.push({
+    name: "workPlan",
+    included: Boolean(workPlan?.text),
+    source: "bridge:work",
+    sourceKey: null,
+    sourceRef: "work+routines+goals+queues",
+    contentHash: workPlan?.text ? contextHash(workPlan.text) : null,
+    summary: workPlan?.text ? clampSummary(`${workPlan.counts.tasks} open task(s), ${workPlan.counts.routines} routine(s), ${workPlan.counts.goals} goal(s), ${workPlan.counts.queued} queued follow-up(s).`) : "",
+    ...(workPlan?.text ? {} : { reason: payload?.channelId || payload?.channel?.channelId ? "Channel turns carry the thread instead." : "Not a direct-message turn." }),
   });
 
   // The tool/result transcript is produced while the run executes; recorded as a
@@ -6565,7 +6584,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   const agentRuntime = await ensureAgentRuntime(payload, workspace);
   const assignment = harnessAssignmentFromAgent(agentRuntime.agent);
   const adapter = getAdapter(assignment);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(payload)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(payload), workPlanInstructions(payload)].filter(Boolean).join("\n\n");
   const readiness = await assertHarnessReady(assignment, { context: harnessContextFor(assignment.id) });
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const addDirs = [];
@@ -7166,6 +7185,11 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
     const result = await executeChatTurnInner({ ...payload, _computerUseWorkId: workId }, { stream: delayedDone, signal: runSignal, startedAt });
     const evidence = await finishComputerWork(workId);
     const completed = await agentChannelActions.finish(actionContext, { ...cleanWorkResult(result), ...(evidence ? { computerUse: evidence } : {}) }, runSignal);
+    const scheduleOffer = scheduleOfferFor(payload, completed);
+    if (scheduleOffer) {
+      completed.scheduleOffer = scheduleOffer;
+      logEvent(SEVERITY.INFO, `schedule offered for ${memberId}: ${scheduleOffer.description} ("${scheduleOffer.phrase}")`, { "event.name": "work.schedule.offered", "autohand.member.id": memberId, "autohand.work.phrase": scheduleOffer.phrase });
+    }
     finishChatRun(run, { result: completed });
     originalStream.send("done", completed);
     return completed;
@@ -7304,6 +7328,56 @@ function recallInstructions(payload) {
   return typeof text === "string" && text ? text : "";
 }
 
+// Work plans (ADR-0124). Two parts, both bridge-owned so every engine and
+// every entry point (app, queue, Telegram, control plane, routine run) gets
+// them: the task and schedule action formats when the profile the caller
+// sent lacks them (the app's own profile already carries both; the browser
+// cuts nothing, but this site slices the profile at 12,000 characters, and a
+// Telegram turn uses the saved member profile, which never had them), and
+// "Your work plan" on direct-message turns.
+function bridgeTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function workPlanInstructions(payload) {
+  const base = String(payload?.profile || "");
+  const parts = [];
+  if (!base.includes('"type":"task"')) parts.push(taskActionInstruction());
+  if (!base.includes('"type":"schedule"')) parts.push(scheduleActionInstruction(bridgeTimeZone()));
+  const plan = payload?._workPlan?.text;
+  if (typeof plan === "string" && plan) parts.push(plan);
+  return parts.join("\n\n");
+}
+
+async function workPlanForTurn(payload) {
+  if (channelContextFromPayload(payload)) return null;
+  const memberId = sanitizeAgentId(payload.agentId || payload.agent?.id || "");
+  try {
+    return await workPlanFor({ memberId, squadStateDir, goals, memberName: payload.agent?.name || "" });
+  } catch (error) {
+    logEvent(SEVERITY.DEBUG, `work plan skipped for ${memberId}: ${error?.message || error}`, { "event.name": "chat.work_plan.skipped", "autohand.member.id": memberId });
+    return null;
+  }
+}
+
+// The bridge-side safety net (ADR-0124 §4): the person named recurring work
+// and the reply proposed no schedule, so the chat offers "Schedule this?"
+// with a schedule read from the phrase. Nothing is created here.
+function scheduleOfferFor(payload, result) {
+  if (!result || result.declined || channelContextFromPayload(payload) || payload.collaboration) return null;
+  if (replyProposedSchedule(result.channelActions)) return null;
+  const found = detectRecurringWork(payload.prompt);
+  if (!found) return null;
+  const timeZone = bridgeTimeZone();
+  const schedule = normalizeSchedule({ ...found.schedule, timeZone: isValidTimeZone(timeZone) ? timeZone : "UTC" });
+  if (validateSchedule(schedule).length) return null;
+  return { phrase: found.phrase, title: found.title, instructions: found.instructions, schedule, timeZone: schedule.timeZone, description: describeSchedule(schedule) };
+}
+
 async function recallForTurn(payload) {
   if (channelContextFromPayload(payload)) return null;
   const memberId = sanitizeAgentId(payload.agentId || payload.agent?.id || "");
@@ -7319,7 +7393,7 @@ async function recallForTurn(payload) {
 async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.now() }) {
   if (signal?.aborted) throw new Error("chat stopped by the user");
   await memberAvailability.assertCanWork(payload);
-  payload = { ...payload, _recall: await recallForTurn(payload) };
+  payload = { ...payload, _recall: await recallForTurn(payload), _workPlan: await workPlanForTurn(payload) };
   stream = withWorkProgress(stream);
   let result;
   if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {

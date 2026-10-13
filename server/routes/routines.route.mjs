@@ -245,10 +245,27 @@ function onMemberRunFinished(ctx, event) {
     const nowIso = schedulerNow().toISOString();
     store.replaceRoutine(settleRun(routine, run, { status, finishedAt: nowIso, preview: String(event.title || "").slice(0, 400), reason: status === "failed" ? "The member run failed." : status === "stopped" ? "The member run was stopped." : "" }));
     log(ctx, status === "completed" ? ctx.SEVERITY.INFO : ctx.SEVERITY.WARN, `routine ${routine.title} ${status}`, runAttributes(routine, { ...run, status }, { "event.name": `routine.run.${status}`, "autohand.run.id": memberRunId }));
-    ctx.emit("routine.finished", { routineId: routine.id, routineTitle: routine.title, runId: run.id, memberId: routine.memberId, status });
+    ctx.emit("routine.finished", { routineId: routine.id, routineTitle: routine.title, runId: run.id, memberId: routine.memberId, status, memberRunId, preview: String(event.title || "").slice(0, 400) });
     void store.save().then(() => changed(ctx));
     return;
   }
+}
+
+/**
+ * Attach a note to a routine's current or latest run (ADR-0124): the work
+ * plan calls it when the member or the person marks the linked task done,
+ * so the routine's history shows it. False when the routine has no runs.
+ */
+export async function noteRoutineRun(ctx, routineId, note) {
+  await ensureStore(ctx);
+  const routine = store.routine(String(routineId || ""));
+  if (!routine) return false;
+  const run = activeRun(routine) || lastRun(routine) || (routine.runs || [])[0];
+  if (!run) return false;
+  store.replaceRoutine(settleRun(routine, run, { note: String(note || "").slice(0, 400) }));
+  await store.save();
+  changed(ctx);
+  return true;
 }
 
 async function recoverInterruptedRuns(ctx) {

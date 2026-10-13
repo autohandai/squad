@@ -9,7 +9,7 @@
 //               maxRunMinutes, source: editor|chat, proposalId, nextAt, lastRunAt, runs,
 //               createdAt, updatedAt }
 //   run       { id, routineId, trigger: schedule|manual, scheduledFor, queuedAt, startedAt,
-//               finishedAt, status, dispatch: bridge|app|"", memberRunId, reason, preview }
+//               finishedAt, status, dispatch: bridge|app|"", memberRunId, reason, preview, note }
 //   status    queued | running | completed | failed | stopped | skipped | missed | interrupted
 //   proposal  { id, type: "schedule", memberId, workspace, requestId, digest, title,
 //               instructions, schedule, status: proposed|confirmed|declined|failed, message,
@@ -61,6 +61,8 @@ export function normalizeRun(input, routineId = "") {
     memberRunId: text(source.memberRunId, 80),
     reason: text(source.reason, 400),
     preview: text(source.preview, 400),
+    // A note the work plan attaches (ADR-0124): "Marked done by the member".
+    note: text(source.note, 400),
   };
 }
 
