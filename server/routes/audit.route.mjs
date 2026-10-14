@@ -32,13 +32,22 @@ function text(value, max = 240) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+// Previews are shown as a line of history: plain text, cut on a word.
+function previewText(value, max = 140) {
+  const plain = String(value ?? "").replace(/```[\s\S]*?(```|$)/g, " ").replace(/`([^`]*)`?/g, "$1").replace(/\*\*([^*]*)\*\*?/g, "$1").replace(/\s+/g, " ").trim();
+  if (plain.length <= max) return plain;
+  const head = plain.slice(0, max + 1);
+  const cut = head.lastIndexOf(" ");
+  return `${(cut > max * 0.5 ? head.slice(0, cut) : plain.slice(0, max)).replace(/[\s,;:.\-–—]+$/, "")}…`;
+}
+
 function severityFor(status) {
   return status === "failed" || status === "error" ? 13 : 9;
 }
 
 function summaryFor(event, kind) {
   const title = text(event.title);
-  const preview = text(event.preview, 140);
+  const preview = previewText(event.preview, 140);
   switch (event.name) {
     case "run.finished":
       return `${event.status === "failed" ? "Run failed" : event.status === "stopped" ? "Run stopped" : "Run finished"}${title ? `: ${title}` : ""}`;

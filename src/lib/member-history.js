@@ -179,7 +179,7 @@ export function dayLabel(iso, { now = Date.now(), locale = "en-US", copy = {} } 
 /** Group newest-first records by calendar day: `[{ day, label, records }]`. */
 export function groupRecordsByDay(records = [], options = {}) {
   const groups = [];
-  for (const record of mergeRecords(records)) {
+  for (const record of withoutEchoedMentions(mergeRecords(records))) {
     const day = dayKey(record.at);
     const last = groups[groups.length - 1];
     if (last && last.day === day) last.records.push(record);
@@ -223,16 +223,71 @@ export function recordLinks(record, copy = {}) {
   return links;
 }
 
-/** Fallback row text when a record carries no summary. */
+/**
+ * Row text. Summaries are written by the bridge as "Replied in channel:
+ * <first 140 characters of the reply>", so a row showed raw markdown
+ * ("**Selected repository for this run:** - `/Users/igorcosta/Documents/a")
+ * cut mid-word, and the empty-reply fallback ("Autohand returned no chat
+ * text.") as if the member had said it. The preview is read as plain text,
+ * cut on a word, and the fallback says what happened.
+ */
 export function recordSummary(record, copy = {}) {
   const normalized = normalizeRecord(record);
   if (!normalized) return "";
-  if (normalized.summary) return normalized.summary;
-  return `${kindTitle(normalized.kind, copy)}${normalized.eventName ? ` · ${normalized.eventName}` : ""}`;
+  if (!normalized.summary) return `${kindTitle(normalized.kind, copy)}${normalized.eventName ? ` · ${normalized.eventName}` : ""}`;
+  const match = /^([^:]{1,40}):\s+([\s\S]*)$/.exec(normalized.summary);
+  if (!match) return normalized.summary === "Stopped" ? copy.historyStopped || "Stopped by you" : normalized.summary;
+  const [, lead, rest] = match;
+  if (/^Replied/.test(lead) && /^\s*⚠️?\s*(The request was malformed|This message was blocked|You've reached your)/i.test(rest)) {
+    return `${lead.replace(/^Replied/, "Could not reply")}: ${plainPreview(rest.replace(/^\s*⚠️?\s*/, ""))}`;
+  }
+  if (/^[^\n]{1,80} returned no chat text\.?$/.test(rest.trim())) return `${lead}, with no text`;
+  return `${lead}: ${plainPreview(rest)}`;
+}
+
+/** Markdown preview as one plain sentence, cut on a word with "…". */
+export function plainPreview(value, max = 120) {
+  // The bridge stored previews hard-cut at 140 characters; one that long was
+  // cut, even if removing markdown makes it shorter here.
+  const truncatedAtSource = String(value || "").trim().length >= 130;
+  let text = String(value || "")
+    .replace(/```[\s\S]*?(```|$)/g, " ")
+    .replace(/`([^`]*)`?/g, "$1")
+    .replace(/\*\*([^*]*)\*\*?/g, "$1")
+    .replace(/(^|\s)[-*•]\s+/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text.length > max || truncatedAtSource) {
+    // Drop the last, possibly half, word and close with an ellipsis.
+    const limit = Math.min(max, text.length);
+    const head = text.slice(0, limit);
+    const cut = head.lastIndexOf(" ");
+    text = `${(cut > limit * 0.5 ? head.slice(0, cut) : head).replace(/[\s,;:.\-–—]+$/, "")}…`;
+  }
+  return text;
+}
+
+/**
+ * A mention and the reply to it carry the same text a few seconds apart
+ * ("Mentioned: @Iris — from my side…" over "Replied in channel: @Iris —
+ * from my side…"). Keep the reply.
+ */
+export function withoutEchoedMentions(records = []) {
+  const replies = records.filter((record) => record?.eventName === "chat.finished");
+  return records.filter((record) => {
+    if (record?.eventName !== "mention.received") return true;
+    const text = String(record.summary || "").replace(/^Mentioned:\s*/, "").slice(0, 60);
+    const at = Date.parse(record.at || "");
+    return !replies.some((reply) => String(reply.summary || "").includes(text) && Math.abs(Date.parse(reply.at || "") - at) < 10 * 60 * 1000);
+  });
 }
 
 /** Is the record a failure worth marking in the list? */
 export function recordFailed(record) {
   const status = String(record?.status || "").toLowerCase();
-  return status === "failed" || status === "error";
+  if (status === "failed" || status === "error") return true;
+  // The engine reports some refusals as an ordinary reply ("⚠️ The request
+  // was malformed… blocked by Autohand's safety check"); the row said
+  // "Replied:" in plain text as if it had answered.
+  return /^Replied[^:]*:\s*⚠️?\s*(The request was malformed|This message was blocked|You've reached your)/i.test(String(record?.summary || ""));
 }

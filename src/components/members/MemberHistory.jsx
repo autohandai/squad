@@ -135,7 +135,12 @@ function HistoryRow({ record, copy, renderLink, locale, now }) {
   const Icon = KIND_ICONS[record.kind] || Play;
   const failed = recordFailed(record);
   const links = typeof renderLink === "function" ? recordLinks(record, copy).map((ref) => ({ ref, node: renderLink(ref) })).filter((item) => item.node) : [];
-  const time = relativeTime(record.at, { locale, copy, now });
+  // Rows sit under a day heading ("29 Sep"), so older rows repeating
+  // "Message · 29 Sep" said the date twice; they show the clock time.
+  const ageMs = (now ?? Date.now()) - new Date(record.at).getTime();
+  const time = ageMs > 24 * 60 * 60 * 1000 && record.at
+    ? new Date(record.at).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" })
+    : relativeTime(record.at, { locale, copy, now });
   const absolute = record.at ? new Date(record.at).toLocaleString(locale) : "";
 
   return (
