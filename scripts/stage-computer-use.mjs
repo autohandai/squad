@@ -22,13 +22,17 @@ export async function stageComputerUse({ rootDir, runtimeDir, platform = process
   if (!asset) throw new Error(`Computer Use has no artifact for ${platform}/${arch}.`);
   const archive = resolve(sourceDir, asset.name);
   if (await sha(archive) !== asset.sha256) throw new Error('Computer Use archive does not match the immutable component checksum.');
-  const listing = platform === 'win32' ? runCommand('tar', ['-tf', archive]) : runCommand('tar', ['-tzf', archive]);
+  // On Windows runners Git Bash puts GNU tar first on PATH, and GNU tar reads
+  // "D:\\…" as a remote host ("Cannot connect to D: resolve failed", release
+  // run 38529019645). Windows' own bsdtar handles drive letters.
+  const tar = platform === 'win32' ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+  const listing = platform === 'win32' ? runCommand(tar, ['-tf', archive]) : runCommand('tar', ['-tzf', archive]);
   for (const name of listing.split(/\r?\n/).filter(Boolean)) {
     if (name.startsWith('/') || name.includes('\\') || name.split('/').includes('..') || /^[A-Za-z]:/.test(name)) throw new Error('Computer Use archive contains an unsafe path.');
   }
   const temporary = await mkdtemp(join(tmpdir(), 'squad-computer-use-'));
   try {
-    runCommand('tar', platform === 'win32' ? ['-xf', archive, '-C', temporary] : ['-xzf', archive, '-C', temporary]);
+    runCommand(tar, platform === 'win32' ? ['-xf', archive, '-C', temporary] : ['-xzf', archive, '-C', temporary]);
     const driverName = platform === 'win32' ? 'cua-driver.exe' : 'cua-driver';
     const driverPath = join(temporary, driverName);
     if (!(await stat(driverPath)).isFile()) throw new Error('Computer Use archive has no driver binary.');
