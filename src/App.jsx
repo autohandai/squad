@@ -5155,6 +5155,10 @@ function App() {
         threads: Object.values(channelThreads).flat(),
         messages: Object.values(messagesByChannel).flat(),
       }),
+    }).then(() => {
+      // A later sync that lands clears the earlier failure; it used to sit
+      // over every page, Settings included, until some other channel action.
+      setChannelOperationError((current) => (current.startsWith("Channel changes could not be saved") ? "" : current));
     }).catch((error) => {
       setChannelOperationError(`Channel changes could not be saved: ${clause(error.message)}. Reconnect and try again.`);
     });
@@ -9655,7 +9659,14 @@ function App() {
           />}
           <main className="app-main min-w-0">
             {bridgeLine ? <div role="status" aria-live="polite" data-testid="bridge-status" className="px-6 py-2 text-xs text-muted-foreground">{bridgeLine}</div> : null}
-            {channelOperationError ? <div role="alert" className="px-6 py-3 text-sm text-destructive">{channelOperationError}</div> : null}
+            {channelOperationError ? (
+              <div role="alert" className="flex items-start gap-3 px-6 py-3 text-sm text-destructive">
+                <span className="min-w-0 flex-1">{channelOperationError}</span>
+                <Button type="button" variant="ghost" size="icon-sm" className="size-6 shrink-0 text-muted-foreground" aria-label="Dismiss" onClick={() => setChannelOperationError("")}>
+                  <X className="size-3.5" />
+                </Button>
+              </div>
+            ) : null}
             <AgentChannelProposals proposals={agentChannelActions.filter(action => action.status === "proposed")} members={agents} onDecision={decideChannelProposal} />
             <VaultRequests vault={vaultRequests} members={agents} copy={localeCopy} />
             {isSettings ? null : <MobileTopbar
@@ -11472,6 +11483,12 @@ function contextWindowLabel(tokens) {
   const value = Number(tokens) || 0;
   if (value >= 999_500) return `${Number((value / 1_000_000).toFixed(1)).toString()}M`;
   return `${Math.round(value / 1000)}k`;
+}
+
+// The CLI reports "0.9.7 (unknown)" when it was built without a commit; the
+// parenthesis said nothing to a reader and looked like an error.
+function engineVersion(value) {
+  return String(value || "").replace(/\s*\((?:unknown|dev|none)\)\s*$/i, "").trim();
 }
 
 function formatShortTime(value, locale = DEFAULT_LOCALE) {
@@ -22589,7 +22606,7 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
               icon={TerminalSquare}
               label="CLI runtime"
               value={runtime?.available ? "ready" : "offline"}
-              detail={runtime?.version || runtime?.autohandPath || "local bridge"}
+              detail={engineVersion(runtime?.version) || runtime?.autohandPath || "local bridge"}
             />
             <PermissionRuntimeItem
               icon={LockKeyhole}
@@ -25073,7 +25090,7 @@ function SettingsPage({
       <>
         {/* The bridge is Squad's; 0.8.2 is the Autohand CLI it runs. Both
             rows used to show the CLI's version as their own. */}
-        <SettingsSectionHeader title={copy.runtimeBridge} description={runtime ? `Autohand Squad ${runtime.squadVersion || ""} · Autohand Code ${runtime.version || "not found"}`.replace(/\s+·/, " ·") : copy.checkingRuntime} />
+        <SettingsSectionHeader title={copy.runtimeBridge} description={runtime ? `Autohand Squad ${runtime.squadVersion || ""} · Autohand Code ${engineVersion(runtime.version) || "not found"}`.replace(/\s+·/, " ·") : copy.checkingRuntime} />
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="divide-y divide-border/65">
             <OutsideSessionsSettings api={api} />
@@ -25118,13 +25135,11 @@ function SettingsPage({
 
           <div className="min-w-0">
             <div className="text-sm font-medium">{copy.localStorage}</div>
+            {/* Four tinted code tiles (autohandSquad.v1.theme, …locale,
+                …chatSettings, …handoffSettings) sat under a sentence that
+                named agents and messages, which they did not list. The
+                sentence is what a person needs; the key names are internals. */}
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.localStorageDescription}</p>
-            <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
-              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.theme}</code>
-              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.locale}</code>
-              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.chatSettings}</code>
-              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.handoffSettings}</code>
-            </div>
           </div>
         </div>
       </>

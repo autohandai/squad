@@ -117,7 +117,9 @@ export function SystemSettings({ api, locale = "en", copy = {}, onAutoCheckUpdat
 
         <Row title={copy.systemDataFolder || "Data folder"} description={copy.systemDataFolderDetail || "Channels, runs, telemetry and settings live here."}>
           <code translate="no" className="min-w-0 truncate text-xs text-muted-foreground" title={dataFolder} data-testid="system-data-folder">
-            {dataFolder || "…"}
+            {/* "/Users/igorcosta..." hid the
+                only part that says where the data is. */}
+            {dataFolder ? dataFolder.replace(/^\/(?:Users|home)\/[^/]+/, "~") : "…"}
           </code>
           <Button type="button" variant="ghost" size="sm" disabled={!dataFolder} onClick={copyPath}>
             {copied === "copied" ? copy.copied || "Copied" : copied === "failed" ? copy.copyFailed || "Select the path to copy it" : copy.copyPath || "Copy path"}
