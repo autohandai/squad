@@ -1,4 +1,8 @@
-# ADR-0130: A bug hunt as a user, and what it changed about seeds and frames
+# ADR-0132: A bug hunt as a user, and what it changed about seeds and frames
+
+*Written as ADR-0130 on `lane/bughunt`; renumbered when the lane merged, because
+`main` had meanwhile taken ADR-0130 (in-app updates) and ADR-0131. Commit
+messages on the lane still say ADR-0130.*
 
 Status: accepted, 2026-10-14
 
