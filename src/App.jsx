@@ -1,4 +1,4 @@
-import React, { createContext, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import React, { Fragment, createContext, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectObserver } from "@/lib/use-project-observer";
 import { onDesktopMenu } from "@/lib/desktop-menu";
 import { FirstRun } from "@/components/onboarding/FirstRun";
@@ -11491,6 +11491,18 @@ function engineVersion(value) {
   return String(value || "").replace(/\s*\((?:unknown|dev|none)\)\s*$/i, "").trim();
 }
 
+// The day a chat message belongs to, in the channel stream's wording
+// ("Tuesday, 14 October"); empty when the message carries no timestamp.
+function chatDayLabel(message, locale = DEFAULT_LOCALE) {
+  const ms = Date.parse(message?.startedAt || message?.createdAt || message?.completedAt || "");
+  if (!Number.isFinite(ms)) return "";
+  try {
+    return new Date(ms).toLocaleDateString(locale, { weekday: "long", month: "long", day: "numeric" });
+  } catch {
+    return new Date(ms).toDateString();
+  }
+}
+
 function formatShortTime(value, locale = DEFAULT_LOCALE) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value || "");
@@ -13722,6 +13734,14 @@ function Conversation({
   const computerEvidenceByMessage = useMemo(() => new Map(visibleMessages.map((message) => [message.id, evidenceForMessage(message, computerEvidenceSessions)])), [visibleMessages, computerEvidenceSessions]);
   // Stable message objects so memoized rows skip re-rendering while typing.
   const localizedMessages = useMemo(() => visibleMessages.map((message) => localizedMessage(message, agent, copy)), [visibleMessages, agent, copy]);
+  // Older questions carry only a clock time; they belong to the day of the
+  // reply that follows, so the day line sits above the question, not
+  // between it and its answer.
+  const messageDays = useMemo(() => {
+    const days = localizedMessages.map((message) => chatDayLabel(message, locale));
+    for (let index = days.length - 2; index >= 0; index -= 1) if (!days[index]) days[index] = days[index + 1];
+    return days;
+  }, [localizedMessages, locale]);
   useEffect(() => {
     const normalizedWorkspace = normalizeSquadWorkspacePath(workspace, runtime);
     if (normalizedWorkspace && normalizedWorkspace !== workspace) {
@@ -14697,20 +14717,34 @@ function Conversation({
                   </Alert>
                 ) : null}
                 <div className="flex flex-col gap-6">
-                  {localizedMessages.map((message) => (
-                    <SquadMessage
-                      key={message.id}
-                      agent={agent}
-                      message={message}
-                      computerEvidence={computerEvidenceByMessage.get(message.id)}
-                      copy={copy}
-                      chatSettings={chatSettings}
-                      onRetry={retryMessage}
-                      onFolderAccess={decideFolderAccess}
-                      onScheduleOffer={decideScheduleOffer}
-                      memberBusy={Boolean(chatSending)}
-                    />
-                  ))}
+                  {/* Noah's chat showed "04:25 PM" above "01:39 AM" with nothing
+                      to say they were different days; channels mark each day. */}
+                  {localizedMessages.map((message, index) => {
+                    const day = messageDays[index];
+                    const previous = index ? messageDays[index - 1] : "";
+                    return (
+                      <Fragment key={message.id}>
+                        {day && day !== previous ? (
+                          <div className="-mb-2 flex items-center gap-3" role="separator" aria-label={day}>
+                            <span className="h-px flex-1 bg-border" />
+                            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{day}</span>
+                            <span className="h-px flex-1 bg-border" />
+                          </div>
+                        ) : null}
+                        <SquadMessage
+                          agent={agent}
+                          message={message}
+                          computerEvidence={computerEvidenceByMessage.get(message.id)}
+                          copy={copy}
+                          chatSettings={chatSettings}
+                          onRetry={retryMessage}
+                          onFolderAccess={decideFolderAccess}
+                          onScheduleOffer={decideScheduleOffer}
+                          memberBusy={Boolean(chatSending)}
+                        />
+                      </Fragment>
+                    );
+                  })}
                   <div ref={messagesEndRef} aria-hidden="true" />
                 </div>
               </>
