@@ -5,6 +5,7 @@ import { Field, FieldContent, FieldDescription, FieldTitle } from "@/components/
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { VAULT_FORM_FIELDS, VAULT_KINDS, vaultKeySourceLabel, vaultKindLabel } from "@/lib/vault";
+import { cn } from "@/lib/utils";
 
 /**
  * Settings → Vault body: one divider row per saved item with Remove, an
@@ -19,6 +20,7 @@ export function VaultSettings({ api, copy = {} }) {
   const [fields, setFields] = useState({});
   const [busy, setBusy] = useState("");
   const [formError, setFormError] = useState("");
+  const [armedId, setArmedId] = useState("");
 
   const reload = useCallback(async () => {
     try {
@@ -100,8 +102,22 @@ export function VaultSettings({ api, copy = {} }) {
               <FieldTitle className="truncate">{item.label}</FieldTitle>
               <FieldDescription>{vaultKindLabel(item.kind)} · {item.hint}</FieldDescription>
             </FieldContent>
-            <Button type="button" variant="ghost" size="sm" disabled={Boolean(busy)} onClick={() => remove(item)}>
-              {busy === item.id ? copy.removing || "Removing…" : copy.remove || "Remove"}
+            {/* A saved login cannot be recovered once removed; one stray click
+                used to delete it. The first click asks. */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn(armedId === item.id && "text-destructive hover:text-destructive")}
+              disabled={Boolean(busy)}
+              onBlur={() => setArmedId((current) => (current === item.id ? "" : current))}
+              onClick={() => {
+                if (armedId !== item.id) { setArmedId(item.id); return; }
+                setArmedId("");
+                void remove(item);
+              }}
+            >
+              {busy === item.id ? copy.removing || "Removing…" : armedId === item.id ? copy.confirmRemove || "Remove for good?" : copy.remove || "Remove"}
             </Button>
           </Field>
         ))}

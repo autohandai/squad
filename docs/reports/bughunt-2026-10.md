@@ -105,3 +105,4 @@ are in the order found.
 | 95 | Execution panel | A run with one line of output read "Output · 1 lines". | Fixed plural. | "Output · 1 line". |
 | 96 | Execution panel | A run that had finished without output still said "Waiting for output…". | The empty label ignored whether the run was live. | Finished runs with nothing read "No output". |
 | 97 | Execution panel | A run still going after three hours showed "180m" at the end of its row. | Live runs always used whole minutes. | "3h 0m" from an hour on. |
+| 98 | Settings, vault | One click on Remove deleted a saved login, card or set of personal details for good. | A direct delete. | The first click turns the button into "Remove for good?"; a second removes; moving away cancels. |
