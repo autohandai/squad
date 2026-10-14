@@ -24416,7 +24416,7 @@ function FeedbackAttachmentPreview({
 function SettingsAnalyticsPage({ locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   return (
     <div className="min-h-screen bg-background">
-      <PageTitle title="Usage" />
+      <PageTitle title={copy?.analytics || "Analytics"} />
       <div className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 lg:px-8">
         <AnalyticsPanel active locale={locale} />
       </div>
@@ -25555,10 +25555,12 @@ function AnalyticsPanel({ active, locale }) {
       tone: "primary",
     },
     {
-      label: "Queue volume",
+      // The bridge's queueVolume counts queue items and every run, finished
+      // ones included; under "Queue volume 2" it read "0 queued".
+      label: "Work handled",
       value: queueVolume,
       detail: `${formatAnalyticsNumber(work.scheduledJobs ?? 0, locale)} scheduled`,
-      meta: `${formatAnalyticsNumber(work.queueDepth ?? 0, locale)} queued`,
+      meta: `${formatAnalyticsNumber(work.queueDepth ?? 0, locale)} waiting now`,
       meter: Math.min(queueVolume * 12, 100),
       icon: LayoutList,
       tone: "chart",
@@ -25567,7 +25569,7 @@ function AnalyticsPanel({ active, locale }) {
       label: "Failure rate",
       value: formatAnalyticsPercent(work.failureRate),
       detail: recentErrors.length
-        ? `${formatAnalyticsNumber(recentErrors.length, locale)} recent failures`
+        ? `${formatAnalyticsNumber(recentErrors.length, locale)} recent ${recentErrors.length === 1 ? "failure" : "failures"}`
         : `${formatAnalyticsNumber(work.failedRuns ?? 0, locale)} failed runs`,
       meta: `${formatAnalyticsNumber(work.completedRuns ?? 0, locale)} completed`,
       meter: failureRatePercent,
@@ -25632,7 +25634,7 @@ function AnalyticsPanel({ active, locale }) {
           <ShieldAlert />
           <AlertTitle>Recent upstream failures detected</AlertTitle>
           <AlertDescription>
-            {formatAnalyticsNumber(recentErrors.length, locale)} recent failure signals are present even though the aggregate error counter is {formatAnalyticsNumber(telemetryErrorCount, locale)}.
+            {recentErrors.length === 1 ? "1 recent failure signal is" : `${formatAnalyticsNumber(recentErrors.length, locale)} recent failure signals are`} present even though the aggregate error counter is {formatAnalyticsNumber(telemetryErrorCount, locale)}.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -26538,7 +26540,20 @@ function InformationWindow({ page }) {
     for (const token of THEME_TOKEN_NAMES) html.style.setProperty(`--${token}`, skin.tokens?.[token] || preset.tokens[token]);
     for (const [key, fallback] of Object.entries(SKIN_VAR_DEFAULTS)) html.style.setProperty(key, skin.vars?.[key] ?? fallback);
   }, [appearance, systemMode]);
-  return <AppInformation page={page} api={api} renderMarkdown={(text) => <MarkdownBlocks text={text} />} onCheckUpdates={() => window.location.assign("/settings?section=updates&check=1")} />;
+  // The desktop shell opens these pages in their own window. In a browser they
+  // replace the app, which left no way back but the browser's own button.
+  const inDesktopShell = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  return (
+    <>
+      {inDesktopShell ? null : (
+        <a href="/" className="fixed left-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground">
+          <ArrowLeft className="size-4" aria-hidden="true" />
+          Back to Squad
+        </a>
+      )}
+      <AppInformation page={page} api={api} renderMarkdown={(text) => <MarkdownBlocks text={text} />} onCheckUpdates={() => window.location.assign("/settings?section=updates&check=1")} />
+    </>
+  );
 }
 
 const informationPage = window.location.pathname.match(/^\/app-info\/(about|policies|changelog|licenses)$/)?.[1];
