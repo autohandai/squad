@@ -6713,7 +6713,11 @@ async function executeExternalHarness(prepared, { timeoutMs, inactivityMs = 0, s
   // runner; the turn travels in `attempt.turn`. Everything after is shared.
   const runOnce = (attempt) => (adapter.transport === "acp"
     ? adapter.run({ adapter, executable, args: attempt.args, cwd: workspace, env: envVars, turn: attempt.turn, timeoutMs, inactivityMs, signal, onEvent, terminate: terminateChildProcess, clientVersion: packageMetadata.version })
-    : runExternalHarness({ adapter, executable, args: attempt.args, cwd: workspace, env: envVars, timeoutMs, inactivityMs, signal, onEvent, terminate: terminateChildProcess }));
+    : runExternalHarness({ adapter, executable, args: attempt.args, cwd: workspace, env: envVars, timeoutMs, inactivityMs, signal, onEvent, terminate: terminateChildProcess,
+      harnessVersion: prepared.readiness.version, models: prepared.readiness.models || [],
+      modelRecoveryPath: prepared.ephemeral ? '' : join(agentRuntime.agentHome, 'claude-model-routing.json'),
+      modelAccountKey: `${prepared.readiness.account?.method || ''}:${prepared.readiness.account?.label || ''}`,
+    }));
   // What a start failure looked like, in words (ADR-0123): the engine's own
   // disk and the workspace's are measured once per turn, only when needed.
   const classify = (output) => classifyColdStart({
@@ -6769,6 +6773,7 @@ function externalHarnessResult(prepared, output, { startedAt, payload }) {
   trace.command = output.command;
   trace.exitCode = output.exitCode;
   trace.transport = adapter.id;
+  trace.runtimeTransport = output.sdkTransport || 'cli';
   trace.harness = adapter.id;
   trace.sessionId = output.resumeId || "";
   trace.startedAt = new Date(startedAt).toISOString();
@@ -6789,7 +6794,7 @@ function externalHarnessResult(prepared, output, { startedAt, payload }) {
     configPath: agentRuntime.configPath,
     displayConfigPath: agentRuntime.displayConfigPath,
     agentHome: agentRuntime.agentHome,
-    effectiveModel: prepared.model ? { provider: adapter.vendor.toLowerCase(), model: prepared.model } : { provider: adapter.vendor.toLowerCase(), model: "" },
+    effectiveModel: { provider: adapter.vendor.toLowerCase(), model: output.effectiveModel || [...output.events].reverse().find(event => event.type === 'agent_start' && event.model)?.model || prepared.model || '' },
     skillInstall: agentRuntime.skillInstall,
     profileDocs: agentRuntime.profileDocs,
     brainCard: agentRuntime.brainCard,
@@ -6918,6 +6923,7 @@ async function startExternalHarnessRun(payload) {
         onEvent: (event) => appendSdkEventLog(run, event),
       });
       run.command = output.command;
+      if (output.effectiveModel) run.effectiveModel = { provider: adapter.vendor.toLowerCase(), model: output.effectiveModel };
       if (run.status !== "stopped") {
         run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
         run.trace.harness = adapter.id;

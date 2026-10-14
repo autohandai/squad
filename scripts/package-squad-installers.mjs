@@ -23,6 +23,7 @@ import process from 'node:process';
 import { createRequire } from 'node:module';
 const appPackageForCli = createRequire(import.meta.url)('../package.json');
 import { packageApp } from '@crabnebula/packager';
+import { stageClaudeSdk } from './stage-claude-sdk.mjs';
 
 const nativeComponents = [
   'squad',
@@ -106,6 +107,7 @@ async function stageProductionModules() {
 
   await copyRequiredFile(join(sdkSource, 'package.json'), join(sdkDestination, 'package.json'));
   await copyRequiredDirectory(join(sdkSource, 'dist'), join(sdkDestination, 'dist'));
+  await stageClaudeSdk(modulesRoot, resourcesDir);
   await stageVendoredAutohandCli(sdkCli, join(resourcesDir, 'vendor', 'autohand-cli'));
 
   for (const dependency of ['toml', 'yaml']) {

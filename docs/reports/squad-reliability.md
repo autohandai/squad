@@ -725,3 +725,55 @@ its actions through accessibility. The user resumed using the updated app
 during that probe, so native Settings-return activation was not claimed.
 
 This is an ad-hoc-signed local review build. No GitHub release was published.
+
+### Claude SDK and model recovery review, 2026-10-14
+
+Claude 2.1.296 and newer now use the pinned Anthropic Agent SDK 0.3.296 with
+the person's installed CLI and authentication. Member instructions, folders,
+access, effort, MCP servers, resume state, progress, Stop and deadlines travel
+through the SDK. Older CLIs retain the JSONL compatibility path. A named model
+allowance failure can resume on another SDK-listed model, with up to three
+switches inside the original deadline and a private persisted cooldown until
+the reported reset. General account exhaustion and authentication/billing
+failures do not trigger hopping or enabling overage. ADR-0128 and ADR-0129
+record the decisions, the actual quota payload and the evidence boundaries.
+
+The initial controlled Fable replay failed terminally. SDK policy/lifecycle
+checks and the real-bridge protocol replay now pass, including continued
+session context, actual-model attribution and cooldown after restart. A
+rendered browser delivered the recovered answer, retained the switch in work
+details, saved the actual model and restored the reply after reload. The live
+request encountered the real Fable refusal and returned `SDK_OK` from
+`claude-opus-5-5`, with one switch and no tool calls. Repeating it through the
+installed app's SDK and harness modules also passed.
+
+The CI chain completed across the main run and focused/resumed runs. The
+maximum-runtime fixture initially raced a cold Node startup against a shorter
+silence deadline; its corrected independent deadlines and activity assertion
+passed. The portable fixture initially lacked the newly required SDK and now
+copies, imports and verifies the actual SDK library from the extracted archive.
+Queue and inbox browser timing assertions each failed during aggregate work
+and passed on focused reruns; no production change was made for those races.
+The remaining browser and Rust runtime checks passed. This is cumulative
+suite evidence, not a claim that one uninterrupted `bun run ci` finished green.
+The existing queued-rename source fix passed the member-by-chat bridge check,
+and the member-shaping browser check passed. The SDK browser replay also sent
+a queued rename, observed Robert in the sidebar and chat header, and checked
+that the role and engine were unchanged. The earlier Max/Robert member
+was absent from the current roster, so it was not recreated or repaired.
+
+The installed 0.1.6 candidate was staged at `2026-10-13T22:24:13.813Z` from
+`b1988d7f23405778489080993479b87b0a73c68c` plus working changes. Its executable
+SHA-256 is `d709171c28695f75d6d9f335a3cc8cbc20067d7e47f9c41fbcded4b200000b72`.
+Strict signature and 454 runtime file comparisons passed; the running receipt
+matches. Fresh SQLite/channel backups and the previous bundle are retained.
+All nine members and their configuration, all 84 saved member-message IDs,
+eight channels, 24 threads and 99 channel messages survived replacement.
+
+The first native opening stayed on its inline startup screen; the bridge and
+current JS asset were serving correctly. An idle restart cleared it, and the
+Squad directory rendered with all nine members. No saved state or cache was
+cleared. Its transient cause, and the screenshot's extra Dock icon, remain
+unconfirmed. The SDK still runs a CLI child; successful SDK requests do not
+prove an OS icon defect has disappeared. The app is open for local inspection;
+no GitHub release was published.

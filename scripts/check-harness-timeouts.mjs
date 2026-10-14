@@ -25,7 +25,11 @@ try {
   assert.equal(idle.timedOut, true);
   assert.match(idle.error, /without activity/, 'A silent turn reports inactivity rather than a wall-clock deadline');
   assert.ok(Date.now() - idleStarted < 2000, 'Silence stops the subprocess within its inactivity window');
-  const capped = await run('progress', { timeoutMs: 300 });
+  // Keep the inactivity deadline beyond this case's ceiling. A cold child
+  // can take >220 ms to start; that is covered by the silence/startup cases,
+  // and must not win the race in the maximum-runtime assertion.
+  const capped = await run('progress', { timeoutMs: 600, inactivityMs: 1000 });
+  assert.ok(capped.events.length > 0, 'The capped fixture actually started and reported activity');
   assert.equal(capped.timedOut, true);
   assert.match(capped.error, /maximum runtime/, 'Progress cannot bypass the separate runtime ceiling');
   const startup = await run('startup', { firstEventTimeoutMs: 100, inactivityMs: 1000 });

@@ -124,8 +124,8 @@ function claudeOptions(executable) {
   const help = probe(executable, ["--help"], { timeoutMs: 10000 });
   const parsed = parseClaudeHelp(help.ok ? help.stdout : "");
   const home = claudeHome();
-  let defaultModel = "";
-  try { defaultModel = String(JSON.parse(readFileSync(join(home, "settings.json"), "utf8")).model || ""); } catch {}
+  let defaultModel = String(process.env.ANTHROPIC_MODEL || "");
+  try { if (!defaultModel) defaultModel = String(JSON.parse(readFileSync(join(home, "settings.json"), "utf8")).model || ""); } catch {}
   const models = parsed.modelAliases.map((alias) => ({ id: alias, label: alias.charAt(0).toUpperCase() + alias.slice(1), detail: `latest ${alias}` }));
   try {
     const cache = JSON.parse(readFileSync(join(homeDir, ".claude.json"), "utf8")).additionalModelOptionsCache;
@@ -287,6 +287,9 @@ export function parseLine(line, state) {
     const content = Array.isArray(event?.message?.content) ? event.message.content : [];
     const events = [];
     const messageText = blockText(content);
+    if (event.error) {
+      return [{ type: 'error', code: event.error, message: messageText || `Claude Code: ${event.error}`, timestamp }];
+    }
     if (messageText) {
       events.push({ type: "message_end", messageId: String(event.message?.id || ""), content: messageText, timestamp });
     }
@@ -332,7 +335,7 @@ export function parseLine(line, state) {
       events.push({ type: "usage", usage: modelUsage ? { ...event.usage, modelUsage } : event.usage, costUsd: event.total_cost_usd, timestamp });
     }
     if (event.is_error || String(event.subtype || "").startsWith("error")) {
-      events.push({ type: "error", message: event.result || event.error || `Claude Code ended with ${event.subtype || "an error"}`, timestamp });
+      events.push({ type: "error", message: event.result || event.error || (Array.isArray(event.errors) ? event.errors.join('\n') : '') || `Claude Code ended with ${event.subtype || "an error"}`, timestamp });
     } else {
       if (event.result && !state.sawDelta) {
         events.push({ type: "message_end", messageId: state.resumeId, content: String(event.result), timestamp });

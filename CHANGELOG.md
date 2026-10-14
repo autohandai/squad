@@ -10,6 +10,14 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- A Claude member continues on another model when Claude says the current model's allowance is exhausted, preserving its conversation and showing which model answered. It remembers the exhausted model until its reset time, stops when the account itself is out of allowance, and keeps Stop working during recovery.
+
+### Changed
+
+- Claude execution uses Anthropic's Agent SDK with the installed Claude CLI on compatible versions. Replies, progress, sessions and cancellation stay inside Squad; older CLIs keep their existing compatibility path.
+
 ### Added
 
 - Settings → Runtime bridge → Sessions outside Squad: turn on recording for Claude Code or Codex and the sessions you start in a terminal appear in the Runs tab of the member on that engine and folder (and in All work), with the question, the tools used and the reply. Squad adds its own hooks to the engine's config, keeps a backup, and leaves your other hooks alone; turning it off removes only Squad's.

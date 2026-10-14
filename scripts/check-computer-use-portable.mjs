@@ -25,6 +25,7 @@ try{
  await cp(new URL('../src/lib/',import.meta.url),join(web,'src/lib'),{recursive:true});
  await file(join(web,'server/routes/workflows.route.mjs'),await readFile(new URL('../server/routes/workflows.route.mjs',import.meta.url),'utf8'));
  for(const name of ['@autohandai/agent-sdk/package.json','@autohandai/agent-sdk/dist/index.js','toml/package.json','yaml/package.json'])await file(join(root,'node_modules',name));
+ await cp(new URL('../node_modules/@anthropic-ai/claude-agent-sdk/',import.meta.url),join(root,'node_modules/@anthropic-ai/claude-agent-sdk'),{recursive:true});
  const cliName=names[`${os}/${arch}`];assert.ok(cliName,'fixture needs a supported native portable target');const cli='pinned CLI fixture';await file(join(root,'vendor/autohand-cli',cliName),cli);const pkg=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));await file(join(root,'vendor/autohand-cli/BUILD_INFO.json'),JSON.stringify({version:pkg.autohand.cliVersion,sha256:{[cliName]:digest(cli)}}));
  const engine=join(root,'engine-input'),vendor=join(root,'vendor/computer-use');await mkdir(vendor,{recursive:true});
  await file(join(engine,'cua-driver'+exe),'engine fixture');await file(join(engine,'LICENSE-CUA.md'),'Fixture component notice; not a real license proof.');
@@ -39,6 +40,9 @@ try{
  assert.equal(workflowRoute.name,'workflows','Extracted route must resolve its shared runtime imports.');
  const profiles=await import(pathToFileURL(join(bundled,'src/lib/member-profiles.js')));
  assert.equal(profiles.roleTemplates.length,16,'Extracted runtime must include existing member profiles.');
+ const claudeSdk=await import(pathToFileURL(join(bundled,'node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs')));
+ assert.equal(typeof claudeSdk.query,'function','Extracted portable runtime must load the actual Claude SDK.');
+ assert.equal(digest(await readFile(join(bundled,'node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs'))),digest(await readFile(new URL('../node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs',import.meta.url))));
  assert.equal(await readFile(join(component,'cua-driver'+exe),'utf8'),'engine fixture');assert.ok((await readFile(join(component,'LICENSE-CUA.md'),'utf8')).includes('Fixture component notice'));
  const info=JSON.parse(await readFile(join(component,'BUILD_INFO.json'),'utf8'));assert.equal(info.archive.sha256,archiveDigest);assert.equal(info.driver.sha256,digest(await readFile(join(component,info.driver.path))));for(const item of info.files)assert.equal(digest(await readFile(join(component,item.path))),item.sha256,item.path);
  if(os==='darwin'){assert.equal(info.host.sha256,digest(await readFile(join(component,info.host.path))));assert.equal(info.host.bundleId,COMPUTER_USE_HOST.bundleId);assert.deepEqual(info.host.branding,{...COMPUTER_USE_HOST});assert.equal(info.host.path,`${COMPUTER_USE_HOST.bundleName}/Contents/MacOS/${COMPUTER_USE_HOST.executable}`);}assert.equal(await readFile(join(bundled,'vendor/autohand-cli',cliName),'utf8'),cli,'Code CLI and Computer Use must ship together');

@@ -18,6 +18,7 @@ import process from 'node:process';
 import { stageAppInfo } from './stage-app-info.mjs';
 import { stageProductTelemetry } from './stage-product-telemetry.mjs';
 import { stageComputerUse } from './stage-computer-use.mjs';
+import { stageClaudeSdk } from './stage-claude-sdk.mjs';
 
 const rootDir = process.cwd();
 const tauriDir = join(rootDir, 'src-tauri');
@@ -76,6 +77,7 @@ async function stageRuntime() {
   for (const dependency of ['toml', 'yaml']) {
     await cp(join(modulesRoot, dependency), join(runtimeDir, 'node_modules', dependency), { recursive: true, dereference: true });
   }
+  await stageClaudeSdk(modulesRoot, runtimeDir);
 
   // Vendored Autohand CLI for this platform, verified against BUILD_INFO.
   const cliNames = {

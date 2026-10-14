@@ -121,7 +121,7 @@ export function createProjectObserverReview({prepareAutohandRuntime,readiness=as
         if(assignment.model)args.push('--model',assignment.model);
       }else throw unsupportedObserver('This selected harness has no verified read-only project observation mode.');
       if(signal?.aborted)throw new Error('Project observation stopped.');
-      const output=await runHarness({adapter:getAdapter(assignment),executable,args,cwd:scratch,env:{AUTOHAND_SQUAD_MEMBER:member.id,AUTOHAND_SQUAD_OBSERVATION:'1'},timeoutMs,signal,terminate,onEvent:()=>{}});
+      const output=await runHarness({adapter:getAdapter(assignment),executable,args,cwd:scratch,env:{AUTOHAND_SQUAD_MEMBER:member.id,AUTOHAND_SQUAD_OBSERVATION:'1'},timeoutMs,signal,terminate,onEvent:()=>{},harnessVersion:ready.version,models:ready.models||[]});
       if(output.error)throw new Error(String(output.error));
       if(assignment.id==='claude'&&output.events.some(event=>event.type==='tool_start'))throw unsupportedObserver('The Claude observation runtime produced a tool call despite tools being disabled.');
       const reply=[...output.events].reverse().find(event=>event.type==='message_end'&&event.content)?.content;

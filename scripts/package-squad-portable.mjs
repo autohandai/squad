@@ -21,6 +21,7 @@ import { createRequire } from 'node:module';
 const appPackageForCli = createRequire(import.meta.url)('../package.json');
 import { tarCreateArgs } from './release-archive.mjs';
 import { stageComputerUse } from './stage-computer-use.mjs';
+import { stageClaudeSdk } from './stage-claude-sdk.mjs';
 import { COMPUTER_USE_HOST } from './computer-use-host.mjs';
 import { fileURLToPath } from 'node:url';
 
@@ -115,6 +116,7 @@ export async function packageSquadPortable(options = {}) {
 
     await copyRequiredFile(join(sdkSource, 'package.json'), join(sdkDestination, 'package.json'));
     await copyRequiredDirectory(join(sdkSource, 'dist'), join(sdkDestination, 'dist'));
+    await stageClaudeSdk(modulesRoot, bundleRoot);
     await stageVendoredAutohandCli(sdkCli, join(bundleRoot, 'vendor', 'autohand-cli'));
     // Native components must be present and verified before recording the archive
     // checksum. The portable download never retrieves an engine at runtime.

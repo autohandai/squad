@@ -126,6 +126,16 @@ manual edit. `check:member-by-chat` now queues a rename through the real
 bridge and asserts the receipt is on the item and on the run; with the
 dispatcher change removed that assertion fails.
 
+The Claude SDK review rechecked the rendered queued path with the actual SDK
+protocol and a local executable fixture. A queued "you will be called Robert"
+renamed the sidebar and chat header while preserving the role and engine,
+without that window receiving the turn's stream. Its first fixture incorrectly
+converted SDK input content blocks with `String(content)`, producing
+`[object Object]` and no profile action; correcting the fixture to inspect the
+content proved the queue path, rather than changing production code to fit an
+incorrect prompt. `node scripts/check-claude-model-recovery.mjs --browser`
+passed; the screenshot is `queued-rename-browser.png` in the SDK artifacts.
+
 ## Consequences and what was knowingly left undone
 
 - **The sidebar preview line is not built.** The other app shows "New Bot —

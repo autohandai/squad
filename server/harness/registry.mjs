@@ -9,7 +9,7 @@ import * as codex from "./codex.mjs";
 import * as claude from "./claude.mjs";
 import * as acp from "./acp.mjs";
 import { listAcpAgents } from "../acp/registry.mjs";
-import { guiSafeEnv } from "./discovery.mjs";
+import { compareVersions, guiSafeEnv } from "./discovery.mjs";
 import { formatDuration } from "../../src/lib/duration.js";
 
 export const DEFAULT_HARNESS_ID = "autohand";
@@ -229,7 +229,17 @@ function newParseState() {
  * startedAt, durationMs }. A spawn failure resolves too (exitCode null,
  * spawnError set) so a cold start can be named instead of thrown.
  */
-export function runExternalHarness({
+export function runExternalHarness(options) {
+  // The pinned SDK's protocol matches Claude Code 2.1.296. Older installed
+  // CLIs retain the existing JSONL compatibility path rather than receiving
+  // control requests/flags they do not understand.
+  if (options.adapter.id === 'claude' && compareVersions(options.harnessVersion || '', '2.1.296') >= 0) {
+    return import('./claude-sdk.mjs').then(({ runClaudeSdk }) => runClaudeSdk(options));
+  }
+  return runCliHarness(options);
+}
+
+function runCliHarness({
   adapter,
   executable,
   args,
