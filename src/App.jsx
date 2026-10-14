@@ -348,6 +348,8 @@ import { FollowUpQueue } from "@/components/chat/FollowUpQueue";
 import { ContextGaugeMeta, ContextWarningLine } from "@/components/chat/ContextGauge";
 import { taskProgressFromMessage } from "@/lib/task-progress";
 import { SidebarUpdateNotice } from "@/components/account/SidebarUpdateNotice";
+import { UpdatesSettings } from "@/components/settings/UpdatesSettings";
+import { UPDATE_BUSY_PHASES, updateView } from "@/lib/update-status";
 import { identifySquadTelemetry, recordSignInStarted, recordMemberCreated, recordMemberUsed, recordFeatureUsed } from "@/lib/product-telemetry";
 import { getNativeNotificationClient } from "@/lib/native-notifications";
 import { applySharedConversationEvent, conversationEventForSharing } from "@/lib/shared-conversations";
@@ -4743,7 +4745,7 @@ function App() {
   const [updatesChecking, setUpdatesChecking] = useState(false);
   const [updatesError, setUpdatesError] = useState("");
   const [updatesUpgrading, setUpdatesUpgrading] = useState(false);
-  const [updatesUpgradeResult, setUpdatesUpgradeResult] = useState(null);
+  const [updatesUpgradeResult, setUpdatesUpgradeResult] = useState({ phase: "idle" });
   async function refreshUpdates(refresh = false) {
     if (refresh) recordFeatureUsed("updates", "check");
     setUpdatesChecking(true);
@@ -4759,20 +4761,44 @@ function App() {
       setUpdatesChecking(false);
     }
   }
+  const updatesOperationRef = useRef({ phase: "idle" });
+  function acceptUpdateOperation(data) {
+    updatesOperationRef.current = data || { phase: "idle" };
+    setUpdatesUpgradeResult(updatesOperationRef.current);
+    setUpdatesUpgrading(UPDATE_BUSY_PHASES.has(data?.phase));
+  }
+  async function updateAction(action, body) {
+    setUpdatesError("");
+    try {
+      const data = await api(`/api/updates/${action}`, { method: "POST", body: JSON.stringify(body || {}) });
+      acceptUpdateOperation(data);
+      return data;
+    } catch (error) { setUpdatesError(error.message || "The update could not finish. Try again."); return null; }
+  }
   async function upgradeApp() {
     recordFeatureUsed("updates", "upgrade");
-    setUpdatesUpgrading(true);
-    setUpdatesError("");
-    setUpdatesUpgradeResult(null);
-    try {
-      const data = await api("/api/updates/upgrade", { method: "POST" });
-      setUpdatesUpgradeResult(data);
-    } catch (error) {
-      setUpdatesError(error.message || "The installer could not be downloaded or opened.");
-    } finally {
-      setUpdatesUpgrading(false);
+    await updateAction("upgrade");
+  }
+  const cancelUpdate = () => updateAction("cancel");
+  async function installUpdate() {
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    const native = /^AutohandSquadDesktop\//.test(navigator.userAgent) && typeof invoke === "function";
+    const data = await updateAction("install", { mode: native ? "restart" : "installer" });
+    if (data?.phase === "installing" && data.installMode === "restart") {
+      try { await invoke("squad_quit_for_update"); }
+      catch (error) { setUpdatesError(typeof error === "string" ? error : error?.message || "Squad could not close. Keep it open and try again when the update stops."); }
     }
   }
+  useEffect(() => {
+    let disposed = false; let timer;
+    async function poll() {
+      try { const data = await api("/api/updates/progress"); if (!disposed) acceptUpdateOperation(data); }
+      catch { /* A service restart keeps the last known progress visible. */ }
+      if (!disposed) timer = window.setTimeout(poll, UPDATE_BUSY_PHASES.has(updatesOperationRef.current?.phase) ? 500 : 10_000);
+    }
+    void poll();
+    return () => { disposed = true; window.clearTimeout(timer); };
+  }, [updatesUpgrading]);
   async function openReleasePage() {
     setUpdatesError("");
     try {
@@ -4791,7 +4817,7 @@ function App() {
     void refreshUpdates(false);
     const timer = window.setInterval(() => {
       if (updatesAutoCheckRef.current) void refreshUpdates(false);
-    }, 30 * 60_000);
+    }, 5 * 60_000);
     return () => window.clearInterval(timer);
   }, []);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -6690,7 +6716,7 @@ function App() {
     }
   }
   const accountContextValue = useMemo(
-    () => ({ profile: accountProfile, signOut, signingOut, openFeedback, openAppInfo, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult, upgradeApp, openReleasePage }),
+    () => ({ profile: accountProfile, signOut, signingOut, openFeedback, openAppInfo, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult, upgradeApp, installUpdate, cancelUpdate, openReleasePage }),
     // signOut / openFeedback are stable closures over state setters and route.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [accountProfile, signingOut, route, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult]
@@ -9917,6 +9943,8 @@ function App() {
                 updatesUpgradeResult={updatesUpgradeResult}
                 onCheckUpdates={() => refreshUpdates(true)}
                 onUpgradeApp={upgradeApp}
+                onInstallUpdate={installUpdate}
+                onCancelUpdate={cancelUpdate}
                 onOpenReleases={openReleasePage}
                 themePreference={themePreference}
                 activeSkin={activeSkin}
@@ -12325,6 +12353,15 @@ function ChannelCreateDialog({
 }
 
 
+function CompactUpdateButton({ onSettings }) {
+  const { updates, updatesChecking, updatesError, updatesUpgradeResult } = useContext(AccountContext);
+  const view = updateView(updates, updatesUpgradeResult || {}, { checking: updatesChecking, error: updatesError });
+  if (!view.available && !view.busy && !["ready", "failed", "complete", "installer-open"].includes(view.phase)) return null;
+  return <Tooltip><TooltipTrigger asChild>
+    <Button variant="ghost" size="icon" aria-label="Review Squad update" data-testid="compact-update-notice" onClick={() => onSettings?.("updates")}><ArrowUpRight /></Button>
+  </TooltipTrigger><TooltipContent side="right">{view.title}</TooltipContent></Tooltip>;
+}
+
 function CollapsedSidebarRail({
   agents,
   activeAgent,
@@ -12533,7 +12570,8 @@ function CollapsedSidebarRail({
         </nav>
       </ScrollArea>
 
-      <div className="-mx-2 mt-auto flex w-[calc(100%+1rem)] justify-center border-t border-border/80 pt-4">
+      <div className="-mx-2 mt-auto flex w-[calc(100%+1rem)] flex-col items-center gap-2 justify-center border-t border-border/80 pt-4">
+        <CompactUpdateButton onSettings={onSettings} />
         <AccountMenuButton
           copy={copy}
           onSettings={onSettings}
@@ -12640,7 +12678,8 @@ function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLoc
         })}
       </nav>
 
-      <div className="-mx-2 mt-auto flex w-[calc(100%+1rem)] justify-center border-t border-border/80 pt-4">
+      <div className="-mx-2 mt-auto flex w-[calc(100%+1rem)] flex-col items-center gap-2 justify-center border-t border-border/80 pt-4">
+        <CompactUpdateButton onSettings={onSettings} />
         <AccountMenuButton
           copy={copy}
           onSettings={onSettings}
@@ -12869,68 +12908,11 @@ function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCop
   );
 }
 
-function SettingsUpdatesPanel({ updates, checking = false, error = "", upgrading = false, upgradeResult = null, onCheck, onUpgrade, onOpenReleases }) {
-  const snapshot = updates?.snapshot || null;
-  const current = updates?.appVersion || snapshot?.currentVersion || "";
-  const latest = snapshot?.latestAllowedVersion || "";
-  const status = updates?.status || (snapshot?.success === true && snapshot?.checkedAt ? snapshot.updateAvailable ? "available" : "up-to-date" : "never-checked");
-  const available = status === "available";
-  const verifiedDownload = available && snapshot?.source === "github:autohandai/squad" && snapshot?.downloadUrl && snapshot?.downloadName && /^[a-f0-9]{64}$/i.test(snapshot?.downloadSha256 || "");
-  const checkedAt = snapshot?.checkedAt ? String(snapshot.checkedAt).replace(/^unix-ms:/, "") : "";
-  const checkedLabel = checkedAt && /^\d+$/.test(checkedAt) ? new Date(Number(checkedAt)).toLocaleString() : checkedAt;
-  const title = checking ? "Checking for upgrades…" : error ? "Update action failed" : status === "offline" ? "Update service is offline" : status === "check-failed" ? "Could not check for upgrades" : available ? `Version ${latest} is available` : status === "up-to-date" ? "You're up to date" : "Not checked yet";
-  const checkError = error || updates?.checkError || snapshot?.error;
-
-  return (
-    <div className="divide-y divide-border/65">
-      <div className="grid gap-3 px-2 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-        <div className="min-w-0">
-          <div className="font-medium" role="status" aria-live="polite">{title}</div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Installed {current || "unknown"}
-            {latest ? ` · ${available || status === "up-to-date" ? "latest" : "last known"} ${snapshot.channel || "stable"} release ${latest}` : ""}
-            {checkedLabel ? ` · checked ${checkedLabel}` : ""}
-          </p>
-          {status === "offline" ? <p className="mt-2 text-sm text-muted-foreground">Start the local Squad service, then check again. A saved check cannot be used to upgrade.</p> : null}
-          {checkError ? <p className="mt-2 text-sm text-destructive" role="alert">{checkError}</p> : null}
-          {available && !verifiedDownload ? <p className="mt-2 text-sm text-muted-foreground">This release has no verified installer for this computer. Open releases to choose a download.</p> : null}
-          {upgrading ? <p className="mt-2 text-sm text-muted-foreground" role="status">Checking the release, downloading and verifying the installer…</p> : null}
-          {upgradeResult?.message ? <p className="mt-2 text-sm text-muted-foreground" role="status">{upgradeResult.message}</p> : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {verifiedDownload ? (
-            <Button type="button" size="sm" onClick={onUpgrade} disabled={checking || upgrading}>
-              {upgrading ? <Spinner /> : <ArrowUpRight data-icon="inline-start" />}
-              {upgrading ? "Preparing upgrade…" : `Upgrade to ${latest}`}
-            </Button>
-          ) : null}
-          <Button type="button" variant="outline" size="sm" onClick={onCheck} disabled={checking || upgrading}>
-            {checking ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
-            Check for upgrades
-          </Button>
-        </div>
-      </div>
-      {available && snapshot.notes ? (
-        <div className="px-2 py-4">
-          <div className="text-sm font-medium">What changed</div>
-          <div className="mt-2 max-h-56 overflow-auto text-sm text-muted-foreground">
-            <MarkdownBlocks text={snapshot.notes} muted />
-          </div>
-        </div>
-      ) : null}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-4">
-        <p className="text-sm text-muted-foreground">Releases from github.com/autohandai/squad. The installer opens after verification; you finish installation when your work is ready.</p>
-        <Button type="button" variant="ghost" size="sm" onClick={onOpenReleases} disabled={upgrading}>Open releases</Button>
-      </div>
-    </div>
-  );
-}
-
 function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onMissionControl, onOnboarding, onAnalytics, updateAvailable = false }) {
   const { profile, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult, upgradeApp, openReleasePage } = useContext(AccountContext);
   return (
     <div className="border-t p-4">
-      <SidebarUpdateNotice updates={updates} checking={updatesChecking} upgrading={updatesUpgrading} error={updatesError} upgradeResult={updatesUpgradeResult} onDownload={upgradeApp} onOpenReleases={openReleasePage} />
+      <SidebarUpdateNotice updates={updates} checking={updatesChecking} upgrading={updatesUpgrading} error={updatesError} operation={updatesUpgradeResult} onDownload={upgradeApp} onReview={() => onSettings?.("updates")} onOpenReleases={openReleasePage} />
       {/* The gap belongs to the update button, not to the account row: carried
           on the row it was 12px of dead space in the normal case, and it made
           the footer top-heavy - 29px above the name against 16px below. */}
@@ -13073,6 +13055,7 @@ function MobileTopbar({ activeAgent, showsMember = false, theme, copy = getLocal
             "Eva / QA Engineer" while showing the whole team. */}
         {subtitle ? <div className="truncate text-center text-xs text-muted-foreground">{subtitle}</div> : null}
       </div>
+      <CompactUpdateButton onSettings={onSettings} />
       <AccountMenuButton copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} placement="bottom-end" />
     </div>
   );
@@ -24497,6 +24480,8 @@ function SettingsPage({
   updatesUpgradeResult = null,
   onCheckUpdates,
   onUpgradeApp,
+  onInstallUpdate,
+  onCancelUpdate,
   onOpenReleases,
   themePreference,
   activeSkin = skinById(DEFAULT_SKIN_ID),
@@ -25121,9 +25106,9 @@ function SettingsPage({
       <>
         <SettingsSectionHeader
           title="Updates"
-          description={updates?.snapshot?.updateAvailable ? `Version ${updates.snapshot.latestAllowedVersion} is available on GitHub.` : "Releases are checked on GitHub (autohandai/squad)."}
+          description="Keep Squad current."
         />
-        <SettingsUpdatesPanel updates={updates} checking={updatesChecking} error={updatesError} upgrading={updatesUpgrading} upgradeResult={updatesUpgradeResult} onCheck={onCheckUpdates} onUpgrade={onUpgradeApp} onOpenReleases={onOpenReleases} />
+        <UpdatesSettings updates={updates} checking={updatesChecking} error={updatesError} operation={updatesUpgradeResult || {}} onCheck={onCheckUpdates} onDownload={onUpgradeApp} onInstall={onInstallUpdate} onCancel={onCancelUpdate} onOpenReleases={onOpenReleases} renderNotes={(text) => <MarkdownBlocks text={text} muted />} />
       </>
     ),
     system: () => (

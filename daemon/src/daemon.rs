@@ -241,6 +241,7 @@ struct AppState {
     config: SquadConfig,
     account_email: Arc<StdMutex<Option<String>>>,
     accepting_work: Arc<AtomicBool>,
+    update_admission: Arc<StdMutex<Option<String>>>,
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
     device_id: String,
     web_restarts: Arc<AtomicU64>,
@@ -287,6 +288,7 @@ pub async fn run_daemon_with_paths(paths: StatePaths, overrides: ConfigOverrides
         account_email: Arc::new(StdMutex::new(config.account_email.clone())),
         config,
         accepting_work: Arc::new(AtomicBool::new(true)),
+        update_admission: Arc::new(StdMutex::new(None)),
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
         device_id,
         web_restarts: Arc::new(AtomicU64::new(0)),
@@ -509,6 +511,16 @@ async fn route_request(
             let response = telemetry_flush_response(state).await;
             write_json_response(stream, 200, &response).await
         }
+        ("POST", "/updates/pause" | "/updates/resume") => {
+            let input = parse_json_body::<serde_json::Value>(&request.body)?;
+            let token = input
+                .get("token")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let (status, response) =
+                update_admission_response(state, token, request.path == "/updates/pause");
+            write_json_response(stream, status, &response).await
+        }
         ("POST", "/updates/check") => {
             let response = check_updates_response(state).await;
             write_json_response(stream, 200, &response).await
@@ -609,6 +621,10 @@ fn queue_response(state: &AppState) -> QueueResponse {
 }
 
 fn enqueue_response(state: &AppState, request: EnqueueRequest) -> (u16, QueueItem) {
+    let _admission = state
+        .update_admission
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     if !state.accepting_work.load(Ordering::SeqCst) {
         return (
             503,
@@ -652,6 +668,74 @@ fn enqueue_response(state: &AppState, request: EnqueueRequest) -> (u16, QueueIte
     );
     (201, item)
 }
+fn update_admission_response(
+    state: &AppState,
+    token: &str,
+    pause: bool,
+) -> (u16, serde_json::Value) {
+    if token.len() != 36
+        || !token
+            .chars()
+            .all(|value| value.is_ascii_hexdigit() || value == '-')
+    {
+        return (
+            400,
+            json!({"success":false,"error":"Invalid update owner."}),
+        );
+    }
+    let mut owner = state
+        .update_admission
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if !pause {
+        if owner.as_deref() != Some(token) {
+            return (
+                409,
+                json!({"success":false,"error":"This update does not own the admission pause."}),
+            );
+        }
+        *owner = None;
+        state.accepting_work.store(true, Ordering::SeqCst);
+        return (200, json!({"success":true,"paused":false}));
+    }
+    if !state.accepting_work.load(Ordering::SeqCst) {
+        return (
+            409,
+            json!({"success":false,"error":"The Squad service is already paused or stopping."}),
+        );
+    }
+    // Admission and record creation use this same mutex: no accepted request
+    // can slip past the final idle check and be stopped by an installer.
+    if active_run_count(&state.paths) > 0
+        || read_queue_items(&state.paths)
+            .map(|items| {
+                items
+                    .iter()
+                    .any(|item| ["queued", "pending", "running"].contains(&item.status.as_str()))
+            })
+            .unwrap_or(true)
+    {
+        return (
+            409,
+            json!({"success":false,"error":"Finish active and queued daemon work before installing."}),
+        );
+    }
+    state.accepting_work.store(false, Ordering::SeqCst);
+    *owner = Some(token.to_string());
+    let held = state.update_admission.clone();
+    let accepting = state.accepting_work.clone();
+    let token = token.to_string();
+    tokio::spawn(async move {
+        sleep(Duration::from_secs(900)).await;
+        let mut owner = held.lock().unwrap_or_else(|poison| poison.into_inner());
+        if owner.as_deref() == Some(&token) {
+            *owner = None;
+            accepting.store(true, Ordering::SeqCst);
+        }
+    });
+    (200, json!({"success":true,"paused":true}))
+}
+
 fn runs_response(state: &AppState) -> RunsResponse {
     RunsResponse {
         success: true,
@@ -660,6 +744,10 @@ fn runs_response(state: &AppState) -> RunsResponse {
 }
 
 fn start_run_response(state: &AppState, request: RunRequest) -> (u16, RunRecord) {
+    let _admission = state
+        .update_admission
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     if !state.accepting_work.load(Ordering::SeqCst) {
         let record = new_run_record(&state.paths, request, "rejected");
         return (503, record);
@@ -1139,15 +1227,30 @@ async fn run_observability_cycle(state: &AppState) {
         append_server_log(&state.paths, &format!("ping failed: {error}"));
     }
 
-    let updates = check_updates_response(state).await;
-    if let Some(error) = updates.error {
-        append_server_log(&state.paths, &format!("version check failed: {error}"));
+    if automatic_update_checks_enabled(&state.paths.root) {
+        let updates = check_updates_response(state).await;
+        if let Some(error) = updates.error {
+            append_server_log(&state.paths, &format!("version check failed: {error}"));
+        }
     }
 
     let flush = telemetry_flush_response(state).await;
     if let Some(error) = flush.remote_error {
         append_server_log(&state.paths, &format!("telemetry flush failed: {error}"));
     }
+}
+
+// Match the bridge's System switch. Explicit /updates/check remains ungated.
+fn automatic_update_checks_enabled(root: &Path) -> bool {
+    fs::read_to_string(root.join("settings.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| {
+            value
+                .get("autoCheckUpdates")
+                .and_then(serde_json::Value::as_bool)
+        })
+        .unwrap_or(true)
 }
 
 async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
@@ -1301,7 +1404,14 @@ async fn check_updates_response(state: &AppState) -> UpdateSnapshot {
 }
 
 fn restart_response(state: &AppState) -> (u16, LifecycleResponse) {
-    state.accepting_work.store(false, Ordering::SeqCst);
+    {
+        let mut owner = state
+            .update_admission
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *owner = None;
+        state.accepting_work.store(false, Ordering::SeqCst);
+    }
     record_daemon_event(
         state,
         "daemon.restart_requested",
@@ -1338,7 +1448,14 @@ fn restart_response(state: &AppState) -> (u16, LifecycleResponse) {
 }
 
 async fn stop_response(state: &AppState) -> LifecycleResponse {
-    state.accepting_work.store(false, Ordering::SeqCst);
+    {
+        let mut owner = state
+            .update_admission
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *owner = None;
+        state.accepting_work.store(false, Ordering::SeqCst);
+    }
     record_daemon_event(
         state,
         "daemon.stop_requested",
@@ -1937,6 +2054,81 @@ fn read_timestamp_field(path: &PathBuf, field: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn update_admission_refuses_new_work_and_preserves_queued_work() {
+        let paths = temp_state_paths();
+        paths.ensure().unwrap();
+        let state = AppState {
+            paths: paths.clone(),
+            config: SquadConfig::defaults(),
+            account_email: Arc::new(StdMutex::new(None)),
+            accepting_work: Arc::new(AtomicBool::new(true)),
+            update_admission: Arc::new(StdMutex::new(None)),
+            shutdown_tx: Arc::new(Mutex::new(None)),
+            device_id: "fixture".into(),
+            web_restarts: Arc::new(AtomicU64::new(0)),
+        };
+        let token = "01234567-0123-0123-0123-012345678901";
+        assert_eq!(update_admission_response(&state, token, true).0, 200);
+        assert!(!state.accepting_work.load(Ordering::SeqCst));
+        let request = RunRequest {
+            prompt: "must not run".into(),
+            workspace: None,
+            agent_id: None,
+            extra_args: None,
+            harness: None,
+            channel_id: None,
+            thread_id: None,
+        };
+        assert_eq!(start_run_response(&state, request).0, 503);
+        let request = EnqueueRequest {
+            prompt: "must not queue".into(),
+            workspace: None,
+            scheduled_for: None,
+            channel_id: None,
+            thread_id: None,
+        };
+        assert_eq!(enqueue_response(&state, request).0, 503);
+        assert_eq!(
+            update_admission_response(&state, "99999999-9999-9999-9999-999999999999", false).0,
+            409
+        );
+        assert!(!state.accepting_work.load(Ordering::SeqCst));
+        assert_eq!(update_admission_response(&state, token, false).0, 200);
+        assert!(state.accepting_work.load(Ordering::SeqCst));
+        fs::write(
+            paths.queue_dir.join("kept.json"),
+            r#"{"id":"kept","status":"queued","prompt":"keep this"}"#,
+        )
+        .unwrap();
+        assert_eq!(update_admission_response(&state, token, true).0, 409);
+        assert!(state.accepting_work.load(Ordering::SeqCst));
+        assert_eq!(
+            read_queue_items(&paths).unwrap()[0].prompt.as_deref(),
+            Some("keep this")
+        );
+        fs::remove_dir_all(paths.root).unwrap();
+    }
+
+    #[test]
+    fn automatic_update_setting_gates_background_checks() {
+        let root =
+            std::env::temp_dir().join(format!("squad-update-setting-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(super::automatic_update_checks_enabled(&root));
+        std::fs::write(
+            root.join("settings.json"),
+            r#"{"autoCheckUpdates":false,"other":true}"#,
+        )
+        .unwrap();
+        assert!(!super::automatic_update_checks_enabled(&root));
+        std::fs::write(root.join("settings.json"), r#"{"autoCheckUpdates":true}"#).unwrap();
+        assert!(super::automatic_update_checks_enabled(&root));
+        std::fs::write(root.join("settings.json"), "broken").unwrap();
+        assert!(super::automatic_update_checks_enabled(&root));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     use super::*;
     use crate::config::PartialSquadConfig;
     use crate::state::StatePaths;
@@ -2065,6 +2257,7 @@ mod tests {
             account_email: Arc::new(StdMutex::new(None)),
             config: SquadConfig::defaults(),
             accepting_work: Arc::new(AtomicBool::new(true)),
+            update_admission: Arc::new(StdMutex::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
             device_id: "device-1".to_string(),
             web_restarts: Arc::new(AtomicU64::new(0)),
@@ -2094,6 +2287,7 @@ mod tests {
             account_email: Arc::new(StdMutex::new(None)),
             config: SquadConfig::defaults(),
             accepting_work: Arc::new(AtomicBool::new(true)),
+            update_admission: Arc::new(StdMutex::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
             device_id: "device-1".to_string(),
             web_restarts: Arc::new(AtomicU64::new(0)),
@@ -2122,6 +2316,7 @@ mod tests {
             account_email: Arc::new(StdMutex::new(None)),
             config: SquadConfig::defaults(),
             accepting_work: Arc::new(AtomicBool::new(true)),
+            update_admission: Arc::new(StdMutex::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
             device_id: "device-1".to_string(),
             web_restarts: Arc::new(AtomicU64::new(0)),
@@ -2196,6 +2391,40 @@ mod tests {
             .unwrap();
         assert!(status.success);
         assert!(status.accepting_work);
+
+        let owner = r#"{"token":"01234567-0123-0123-0123-012345678901"}"#;
+        let paused: serde_json::Value =
+            local_json_request(&record, "POST", "/updates/pause", Some(owner))
+                .await
+                .unwrap();
+        assert_eq!(paused["paused"], true);
+        let refused_run: serde_json::Value = local_json_request(
+            &record,
+            "POST",
+            "/runs",
+            Some(r#"{"prompt":"must not start"}"#),
+        )
+        .await
+        .unwrap();
+        assert_eq!(refused_run["status"], "rejected");
+        let refused_queue: serde_json::Value = local_json_request(
+            &record,
+            "POST",
+            "/queue",
+            Some(r#"{"prompt":"must not queue"}"#),
+        )
+        .await
+        .unwrap();
+        assert_eq!(refused_queue["status"], "rejected");
+        let runs: RunsResponse = local_json_request(&record, "GET", "/runs", None)
+            .await
+            .unwrap();
+        assert!(runs.runs.is_empty());
+        let resumed: serde_json::Value =
+            local_json_request(&record, "POST", "/updates/resume", Some(owner))
+                .await
+                .unwrap();
+        assert_eq!(resumed["paused"], false);
 
         let queued: QueueItem = local_json_request(
             &record,

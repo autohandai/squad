@@ -143,8 +143,10 @@ export async function openDesktopTarget(target, { platform = process.platform, s
   });
 }
 
-export async function upgradeDesktop({ appStateDir, checkFresh, platform = process.platform, arch = process.arch, fetchImpl = fetch, openImpl = openDesktopTarget, maxBytes = MAX_INSTALLER_BYTES, timeoutMs = DOWNLOAD_TIMEOUT_MS }) {
+export async function upgradeDesktop({ appStateDir, checkFresh, platform = process.platform, arch = process.arch, fetchImpl = fetch, openImpl = openDesktopTarget, maxBytes = MAX_INSTALLER_BYTES, timeoutMs = DOWNLOAD_TIMEOUT_MS, openAfterDownload = true, signal, onProgress = () => {} }) {
+  onProgress({ phase: "checking", bytes: 0, totalBytes: null });
   const status = await checkFresh();
+  signal?.throwIfAborted();
   if (!status.fresh || !status.daemonReachable || status.status !== "available" || status.checkError) {
     throw updateError(status.checkError || "Check for an available update while the local service is running.", 409);
   }
@@ -155,11 +157,16 @@ export async function upgradeDesktop({ appStateDir, checkFresh, platform = proce
   const temporaryPath = join(temporaryDir, installer.name);
   const finalPath = join(updatesDir, installer.name);
   const controller = new AbortController();
+  const cancel = () => controller.abort(signal.reason);
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await installerResponse(fetchImpl, installer.url, controller.signal);
     const expectedSize = Number(response.headers.get("content-length"));
     if (expectedSize > maxBytes) throw updateError("The installer exceeds the allowed download size.", 413);
+    const totalBytes = Number.isSafeInteger(expectedSize) && expectedSize > 0 ? expectedSize : null;
+    onProgress({ phase: "downloading", version: installer.version, bytes: 0, totalBytes });
     const file = await open(temporaryPath, "wx", 0o600);
     const hash = createHash("sha256");
     let bytes = 0;
@@ -170,12 +177,16 @@ export async function upgradeDesktop({ appStateDir, checkFresh, platform = proce
         if (bytes > maxBytes) throw updateError("The installer exceeds the allowed download size.", 413);
         hash.update(chunk);
         await file.writeFile(chunk);
+        onProgress({ phase: "downloading", version: installer.version, bytes, totalBytes });
       }
       await file.sync();
     } finally { await file.close(); }
-    if (!bytes || hash.digest("hex") !== installer.sha256) throw updateError("Installer verification failed. Nothing was opened; check for upgrades and try again.", 422);
+    onProgress({ phase: "verifying", version: installer.version, bytes, totalBytes });
+    controller.signal.throwIfAborted();
+    if ((totalBytes && bytes !== totalBytes) || !bytes || hash.digest("hex") !== installer.sha256) throw updateError("Installer verification failed. Nothing was opened; check for upgrades and try again.", 422);
     await rename(temporaryPath, finalPath);
     clearTimeout(timer);
+    if (!openAfterDownload) return { ...installer, path: finalPath, verified: true, opened: false, bytes, totalBytes };
     try { await openImpl(finalPath, { platform }); }
     catch (error) { throw updateError(`The verified installer was saved at ${finalPath}, but could not be opened: ${error.message || "system opener failed"}`, 502); }
     const message = installer.name.endsWith(".AppImage")
@@ -183,7 +194,8 @@ export async function upgradeDesktop({ appStateDir, checkFresh, platform = proce
       : "The verified installer is open. Finish your work, follow the installer instructions, then reopen Autohand Squad to use the upgrade.";
     return { version: installer.version, path: finalPath, name: installer.name, verified: true, opened: true, message };
   } catch (error) {
+    if (signal?.aborted) throw updateError("Update download cancelled.", 499);
     if (controller.signal.aborted) throw updateError("Installer download timed out. Nothing was opened; try again.", 504);
     throw error;
-  } finally { clearTimeout(timer); await rm(temporaryDir, { recursive: true, force: true }); }
+  } finally { clearTimeout(timer); signal?.removeEventListener("abort", cancel); await rm(temporaryDir, { recursive: true, force: true }); }
 }

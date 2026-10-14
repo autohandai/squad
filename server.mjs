@@ -6,7 +6,9 @@ import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { profileWorkspace } from "./server/workspace-profile.mjs";
-import { desktopUpdateStatus, openDesktopTarget, RELEASES_URL, upgradeDesktop } from "./server/desktop-updates.mjs";
+import { updateDaemonAdmission } from "./server/mac-update.mjs";
+import { createUpdateFlow } from "./server/update-flow.mjs";
+import { desktopUpdateStatus, openDesktopTarget, RELEASES_URL } from "./server/desktop-updates.mjs";
 import { createUsageLedgerCache, usageLedger } from "./server/usage/ledger.mjs";
 import { autoCheckUpdatesEnabled, readSystemSettings } from "./server/system/settings.mjs";
 import { readAppInfo } from "./server/app-info.mjs";
@@ -356,7 +358,12 @@ const otelLogsDir = process.env.AUTOHAND_SQUAD_LOGS_DIR
   : join(appStateDir, "logs");
 const webOtelLogPath = join(otelLogsDir, "web.otlp.jsonl");
 const providerSettingsPath = join(appStateDir, "provider-settings.json");
-let desktopUpgradeRunning = false;
+let desktopInstallLocked = false;
+let desktopDaemonUpdateToken = "";
+async function releaseDesktopDaemonAdmission() {
+  const token=desktopDaemonUpdateToken; desktopDaemonUpdateToken="";
+  if(token) await updateDaemonAdmission({stateDir:squadStateDir,token,pause:false}).catch(()=>{});
+}
 const maxRunLogLines = 600;
 const childTerminationGraceMs = 2500;
 const autohandStateRoot = process.env.AUTOHAND_HOME
@@ -379,6 +386,27 @@ const channelsStatePath = join(squadStateDir, "channels.json");
 const squadDeviceIdPath = join(squadStateDir, "device-id");
 const feedbackBackupDir = join(squadStateDir, "feedback");
 const feedbackApiBaseUrl = (process.env.AUTOHAND_SQUAD_API_BASE_URL || process.env.AUTOHAND_API_URL || "https://api.autohand.ai").replace(/\/+$/, "");
+const desktopUpdates = createUpdateFlow({
+  appStateDir, serviceStateDir: squadStateDir, appVersion: packageMetadata.version || "",
+  checkFresh: () => desktopUpdateStatus({ squadStateDir, appVersion: packageMetadata.version || "", refresh: true }),
+  canRestart: async ({ automatic = false } = {}) => {
+    if (desktopInstallLocked) return false;
+    desktopInstallLocked = true;
+    try {
+      if (automatic) {
+        desktopDaemonUpdateToken=randomUUID();
+        await updateDaemonAdmission({stateDir:squadStateDir,token:desktopDaemonUpdateToken,pause:true});
+      }
+      const [savedQueue, queued, diskRuns, activeGoals] = await Promise.all([
+        readOptionalJsonFile(join(squadStateDir, "queues.json")), readJsonDir(join(squadStateDir, "queue")), readJsonDir(join(squadStateDir, "runs")), goals.list(),
+      ]);
+      const active = value => ["pending", "queued", "launching", "running", "handoff-pending"].includes(value.status);
+      const busy = activeChats.size || observerRunStarts.size || Boolean(projectObserver.active) || sdkSessions?.stats().busy || [...runs.values()].some(isLiveRun) || activeGoals.some(active) || [...queued, ...diskRuns, ...(savedQueue?.items || [])].some(active);
+      if (busy) { desktopInstallLocked = false; await releaseDesktopDaemonAdmission(); }
+      return !busy;
+    } catch (error) { desktopInstallLocked = false; await releaseDesktopDaemonAdmission(); throw error; }
+  },
+});
 const runs = new Map();
 const memberAvailability = new MemberAvailability(squadStateDir);
 const activeChats = new Map();
@@ -501,12 +529,16 @@ bridgeEvents.on("computer-use.evidence", (evidence) => {
 });
 // One bridge-owned turn launcher for goals and member queues (ADR-0111):
 // the same chat turn the streaming route runs, with events as callbacks.
-const executeBridgeTurn = (payload, { signal, onEvent }) => executeChatTurn(payload, {
+const executeBridgeTurn = (payload, { signal, onEvent }) => {
+  if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
+  return executeChatTurn(payload, {
   signal, stream: { send: onEvent }, startedAt: Date.now(),
-});
+  });
+};
 const goals = new GoalManager({
   squadStateDir,
   assertCanWork: async (payload) => {
+    if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
     projectObserver.deferMember(String(payload.agentId || payload.agent?.id || ""), "An explicit goal takes priority.");
     await memberAvailability.assertCanWork(payload);
   },
@@ -517,6 +549,7 @@ const goals = new GoalManager({
 // dispatcher waits for all of it before starting the next follow-up.
 async function isMemberBusy(memberId) {
   const id = String(memberId || "");
+  if (desktopInstallLocked) return true;
   if (!id) return false;
   if (activeChats.get(id)?.size || observerRunStarts.get(id)) return true;
   if (sdkSessions?.stats().sessions.some((session) => session.agentId === id && session.busy)) return true;
@@ -558,11 +591,12 @@ async function projectObserverRuntimeState(member) {
     onBreak: availability.onBreak,
     status: visible?.status || member.status,
     remote: Boolean(remote),
-    busy: Boolean(activeChats.get(member.id)?.size || observerRunStarts.get(member.id) || sdkSessions?.stats().sessions.some(session => session.agentId === member.id && session.busy) || [...runs.values()].some(run => run.agentId === member.id && isLiveRun(run)) || activeGoals.some(goal => goal.status === "running") || diskBusy || snapshotBusy),
+    busy: Boolean(desktopInstallLocked || activeChats.get(member.id)?.size || observerRunStarts.get(member.id) || sdkSessions?.stats().sessions.some(session => session.agentId === member.id && session.busy) || [...runs.values()].some(run => run.agentId === member.id && isLiveRun(run)) || activeGoals.some(goal => goal.status === "running") || diskBusy || snapshotBusy),
   };
 }
 
 function registerChat(memberId, controller) {
+  if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   projectObserver.deferMember(memberId, "A conversation takes priority.");
   const controllers = activeChats.get(memberId) || new Set();
   controllers.add(controller); activeChats.set(memberId, controllers);
@@ -6861,6 +6895,7 @@ async function streamChatWithExternalHarness(payload, { stream, signal, startedA
 }
 
 async function startExternalHarnessRun(payload) {
+  if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   const id = payload._computerUseWorkId || randomUUID();
   payload = { ...payload, _computerUseWorkId: id };
   const mode = payload.mode || "prompt";
@@ -6953,6 +6988,7 @@ async function startExternalHarnessRun(payload) {
 }
 
 async function startRun(payload) {
+  if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   const id = randomUUID();
   payload = { ...await withSavedMember(payload), _computerUseWorkId: id };
   payload._channelActionContext = await agentChannelActions.begin({ ...payload, requestId: payload.requestId || `run-${id}` });
@@ -6961,6 +6997,7 @@ async function startRun(payload) {
 }
 
 async function startRunInner(payload) {
+  if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   const memberId = String(payload.agentId || payload.agent?.id || "");
   projectObserver.deferMember(memberId, "An assigned run takes priority.");
   observerRunStarts.set(memberId, (observerRunStarts.get(memberId) || 0) + 1);
@@ -7212,6 +7249,7 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
 // with the reply's first line, or "failed" with the error message, so the
 // route can emit chat.finished with an honest status.
 async function executeChatTurn(payload, { stream, signal, startedAt = Date.now() }) {
+  if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   const memberId = String(payload.agentId || payload.agent?.id || "");
   if (payload.collaboration?.role === "receiver" && (
     (activeChats.get(memberId)?.size || 0) > 1 ||
@@ -7562,6 +7600,7 @@ async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.
 }
 
 async function streamChat(payload, res) {
+  if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   const stream = startEventStream(res);
   const startedAt = Date.now();
   const controller = new AbortController();
@@ -8466,25 +8505,27 @@ async function handleApi(req, res, url) {
     return true;
   }
 
+  if (url.pathname === "/api/updates/progress" && req.method === "GET") {
+    const data = await desktopUpdates.progress();
+    if (data.phase === "failed" && !desktopUpdates.installing()) { desktopInstallLocked = false; await releaseDesktopDaemonAdmission(); }
+    json(res, 200, { success: true, data });
+    return true;
+  }
   if (url.pathname === "/api/updates/upgrade" && req.method === "POST") {
-    if (desktopUpgradeRunning) {
-      json(res, 409, { success: false, error: "An installer download is already in progress." });
-      return true;
-    }
-    desktopUpgradeRunning = true;
+    json(res, 202, { success: true, data: await desktopUpdates.start() });
+    return true;
+  }
+  if (url.pathname === "/api/updates/cancel" && req.method === "POST") {
+    json(res, 200, { success: true, data: await desktopUpdates.cancel() });
+    return true;
+  }
+  if (url.pathname === "/api/updates/install" && req.method === "POST") {
     try {
-      const data = await upgradeDesktop({
-        appStateDir,
-        checkFresh: () => desktopUpdateStatus({
-          squadStateDir,
-          appVersion: packageMetadata.version || "",
-          refresh: true,
-        }),
-      });
+      const input = await readBody(req, 1024);
+      const data = await desktopUpdates.install({ preferInstaller: input?.mode === "installer" });
+      if (data.installMode !== "restart") { desktopInstallLocked = false; await releaseDesktopDaemonAdmission(); }
       json(res, 200, { success: true, data });
-    } finally {
-      desktopUpgradeRunning = false;
-    }
+    } catch (error) { if (!desktopUpdates.installing()) { desktopInstallLocked = false; await releaseDesktopDaemonAdmission(); } throw error; }
     return true;
   }
 
@@ -8650,6 +8691,10 @@ server = createServer(async (req, res) => {
       });
     } else if (!requestOriginAllowed(req, url)) {
       json(res, 403, { success: false, error: "cross-origin requests to the local bridge are not allowed" });
+      return;
+    }
+    if (desktopInstallLocked && !["GET", "HEAD"].includes(req.method) && !url.pathname.startsWith("/api/updates/")) {
+      json(res, 503, { success: false, error: "Squad is installing an update. Wait for it to reopen." });
       return;
     }
     try {

@@ -777,3 +777,53 @@ cleared. Its transient cause, and the screenshot's extra Dock icon, remain
 unconfirmed. The SDK still runs a CLI child; successful SDK requests do not
 prove an OS icon defect has disappeared. The app is open for local inspection;
 no GitHub release was published.
+
+
+### Local update flow and chrome selection — 2026-10-14
+
+- Updates now separates installed/public versions and the last check, labels a
+  local build ahead of public GitHub as a preview, and shares one download /
+  verify / ready / install operation with expanded and compact sidebars.
+  Download progress measures bytes; unknown lengths show bytes without a
+  percentage. Cancel, retained ready downloads, retry and restart are explicit.
+- The Mac path checks the DMG checksum and bundle identity/version/signature,
+  prepares beside Applications, refuses active/queued work, fences direct daemon
+  admission, gracefully stops only owned services, and exchanges bundles
+  atomically. A failed opener restores the previous app. Post-launch crash
+  rollback, elevated installs and automatic old-download cleanup remain absent.
+- Focused flow, all 28 desktop-download cases, JSX/imports, skin/token checks,
+  System checks, Settings browser checks and production/native builds passed.
+  Update browser fixtures verify all status states, measured progress, cancel,
+  ready-state reload, refusal, retry and unknown-size streams; pointer selection
+  tests cover Default, Soft and Grut while conversation/input text stays copyable.
+- Native Rust tests passed for atomic exchange/restore, update admission and the
+  automatic-check preference. The isolated live daemon HTTP test confirms that
+  a paused service returns rejected run/queue records and saves no run; owner
+  resume succeeds. The initial fixture wrongly treated its JSON client as an
+  HTTP-status checker; corrected assertions inspect the rejected records.
+- The Mac fixture used a real mounted DMG, signature checks, staged copy and the
+  release binary's atomic swap/restore command. Its launch is mocked. Identity
+  mismatch refuses service shutdown and a separate fixture child stays alive.
+- Installed `/Applications/Autohand Squad.app`, version 0.1.6, built at
+  `2026-10-13T23:52:00.218Z`, from dirty `b1988d7f23405778489080993479b87b0a73c68c`.
+  Main executable SHA256: `32450cc09b0d7e73e0463ffd67705babc41ad9e2d379a1c4dedc5366eb12c1a6`.
+  All 458 staged runtime files matched current source and installed copies;
+  whole-bundle strict signature and the running app-info receipt matched.
+- Native CUA inspection confirmed Squad with 9 members, the clickable account
+  menu, the simplified preview Updates screen, no chrome highlight after Select
+  All, and the Back arrow returning to Squad. The app remains open on Updates.
+  Native Escape did not change the route in this inspection; only the arrow is
+  asserted here. The browser Settings suite separately passed its Escape check.
+- Every pre-install persistent WebKit storage value remained identical. The 9
+  member profiles, 84 saved member message IDs, cached 99 channel messages, skin
+  and theme stayed intact; backend 8 channels / 24 threads / 99 messages and
+  access/deletion state matched. No saved draft keys were present to exercise.
+  The previous bundle, complete WebKit DB and channel snapshot are retained in
+  the private update-review artifact directory.
+- Proof: `.codex-artifacts/update-review/` contains flow/download/mac-fixture,
+  Rust admission/HTTP/auto-check/swap, browser/Settings, build logs, installed
+  receipt, state-preservation and native-report records. Cargo's pre-existing
+  global-cache cleanup permission warning was nonfatal. This was not a fresh
+  uninterrupted full CI run, a notarized build or a published GitHub release.
+  No live newer GitHub installer was available or installed; publication stays
+  pending the user's confirmation.

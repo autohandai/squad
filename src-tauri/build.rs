@@ -8,6 +8,7 @@ fn main() {
             "squad_notification_permission",
             "squad_notification_test",
             "squad_notification_settings",
+            "squad_quit_for_update",
         ]),
     ))
     .expect("build Squad native permissions")

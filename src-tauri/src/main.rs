@@ -32,6 +32,7 @@ mod computer_use_setup;
 mod dock_badge;
 mod native_notifications;
 mod quick_chat;
+mod update_swap;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
@@ -62,6 +63,9 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 fn main() {
+    if update_swap::run_from_args() {
+        return;
+    }
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             computer_use_setup::squad_setup_computer_use,
@@ -70,7 +74,8 @@ fn main() {
             dock_badge::squad_set_attention_badge,
             native_notifications::squad_notification_permission,
             native_notifications::squad_notification_test,
-            native_notifications::squad_notification_settings
+            native_notifications::squad_notification_settings,
+            squad_quit_for_update
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app);
@@ -217,6 +222,11 @@ fn point_runtime_at_bundle(app: &AppHandle) {
         // This running shell is authoritative even if the launch environment
         // inherited an obsolete development shell path.
         std::env::set_var(DESKTOP_SHELL_ENV, &exe);
+        #[cfg(target_os = "macos")]
+        if let Some(bundle) = exe.parent().and_then(Path::parent).and_then(Path::parent) {
+            std::env::set_var("AUTOHAND_SQUAD_DESKTOP_APP", bundle);
+            std::env::set_var("AUTOHAND_SQUAD_DESKTOP_PID", std::process::id().to_string());
+        }
     }
     if let Some(exe_dir) = std::env::current_exe()
         .ok()
@@ -240,6 +250,51 @@ fn point_runtime_at_bundle(app: &AppHandle) {
             }
         }
     }
+}
+
+/// Only close after the local bridge has verified and armed a replacement.
+/// The detached helper waits for this process before touching the bundle.
+#[tauri::command]
+async fn squad_quit_for_update(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    shell: tauri::State<'_, Arc<Shell>>,
+) -> Result<(), String> {
+    let base = lock(&shell.app_url)
+        .clone()
+        .ok_or("Squad is still starting.")?;
+    let origin = window.url().map_err(|e| e.to_string())?.origin();
+    let expected = reqwest::Url::parse(&base)
+        .map_err(|e| e.to_string())?
+        .origin();
+    if window.label() != MAIN_WINDOW || origin != expected {
+        return Err("Updates can only restart Squad from its main window.".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response: serde_json::Value = client
+        .get(format!(
+            "{}/api/updates/progress",
+            base.trim_end_matches('/')
+        ))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    if response["data"]["phase"] != "installing"
+        || response["data"]["installMode"] != "restart"
+        || response["data"]["nativePid"].as_u64() != Some(u64::from(std::process::id()))
+    {
+        return Err("No verified update is ready to install. Squad was left open.".into());
+    }
+    app.exit(0);
+    Ok(())
 }
 
 fn sidecar_name(base: &str) -> String {

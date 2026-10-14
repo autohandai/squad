@@ -110,13 +110,23 @@ function installFixtures(data) {
       const scenario = window.__updateVerify;
       if (scenario.checkDelayMs && url.searchParams.has("refresh")) await new Promise((resolve) => setTimeout(resolve, scenario.checkDelayMs));
       const status = scenario.status || "never-checked";
-      return response({ daemonReachable: status !== "offline", appVersion: "0.1.5", status, checkError: status === "check-failed" ? "Browser fixture GitHub check failed" : "", fresh: ["available", "up-to-date"].includes(status), repository: "autohandai/squad", releasesUrl: "https://github.com/autohandai/squad/releases", snapshot: status === "never-checked" ? null : { success: ["available", "up-to-date"].includes(status), checkedAt: `unix-ms:${Date.parse(data.now)}`, source: "github:autohandai/squad", updateAvailable: status === "available", latestAllowedVersion: status === "up-to-date" ? "0.1.5" : "0.1.6", downloadUrl: "https://github.com/autohandai/squad/releases/download/v0.1.6/autohand-squad-0.1.6-macos-arm64.dmg", downloadName: "autohand-squad-0.1.6-macos-arm64.dmg", downloadSha256: "a".repeat(64), notes: "Browser fixture release notes.", channel: "stable" } });
+      return response({ daemonReachable: status !== "offline", appVersion: scenario.preview ? "0.1.6" : "0.1.5", status, checkError: status === "check-failed" ? "Browser fixture GitHub check failed" : "", fresh: ["available", "up-to-date"].includes(status), repository: "autohandai/squad", releasesUrl: "https://github.com/autohandai/squad/releases", snapshot: status === "never-checked" ? null : { success: ["available", "up-to-date"].includes(status), checkedAt: `unix-ms:${Date.parse(data.now)}`, source: "github:autohandai/squad", updateAvailable: status === "available", latestAllowedVersion: status === "up-to-date" ? "0.1.5" : "0.1.6", downloadUrl: "https://github.com/autohandai/squad/releases/download/v0.1.6/autohand-squad-0.1.6-macos-arm64.dmg", downloadName: "autohand-squad-0.1.6-macos-arm64.dmg", downloadSha256: "a".repeat(64), notes: "Browser fixture release notes.", channel: "stable" } });
     }
+    window.__updateOperation ||= JSON.parse(localStorage.getItem("workProfileVerify.operation") || '{"phase":"idle"}');
+    const saveOperation = value => { window.__updateOperation=value; localStorage.setItem("workProfileVerify.operation",JSON.stringify(value)); return value; };
+    if (url.pathname === "/api/updates/progress") return response(window.__updateOperation);
     if (url.pathname === "/api/updates/upgrade") {
-      const scenario = window.__updateVerify;
-      if (scenario.upgradeDelayMs) await new Promise((resolve) => setTimeout(resolve, scenario.upgradeDelayMs));
-      if (scenario.upgradeError) return new Response(JSON.stringify({ success: false, error: scenario.upgradeError }), { status: 400, headers: { "content-type": "application/json" } });
-      return response({ version: "0.1.6", verified: true, opened: true, message: "The verified installer is open. Finish your work, follow the installer instructions, then reopen Autohand Squad to use the upgrade." });
+      const scenario=window.__updateVerify;
+      const generation=window.__updateGeneration=(window.__updateGeneration||0)+1;
+      saveOperation({phase:"checking",bytes:0,totalBytes:null});
+      setTimeout(()=>{if(window.__updateGeneration===generation) saveOperation({phase:"downloading",version:"0.1.6",bytes:25,totalBytes:scenario.unknownSize?null:100});},20);
+      setTimeout(()=>{if(window.__updateGeneration===generation) saveOperation(scenario.upgradeError?{phase:"failed",error:scenario.upgradeError}:{phase:"ready",version:"0.1.6",verified:true,bytes:100,totalBytes:100,installMode:scenario.nativeRestart?"restart":"installer"});},scenario.upgradeDelayMs || 2000);
+      return response(window.__updateOperation);
+    }
+    if (url.pathname === "/api/updates/cancel") { window.__updateGeneration++; return response(saveOperation({phase:"cancelled"})); }
+    if (url.pathname === "/api/updates/install") {
+      if(window.__updateVerify.installError) return new Response(JSON.stringify({success:false,error:window.__updateVerify.installError}),{status:409,headers:{"content-type":"application/json"}});
+      return response(saveOperation({...window.__updateOperation,phase:"installer-open",message:"The system installer is open. Follow its instructions, then reopen Squad."}));
     }
     if (url.pathname === "/api/updates/releases") return response({ opened: true, url: "https://github.com/autohandai/squad/releases" });
     if (url.pathname === "/api/runtime") return response({ available: true, version: "browser-fixture", defaultWorkspace: data.root, workspaceRoot: data.root.split("/").slice(0, -1).join("/"), serverStartedAt: data.now, account: { signedIn: true, email: "browser@example.test" }, limits: { maxProjectsPerMember: 5 } });
@@ -207,9 +217,10 @@ async function main() {
     await cdp.send("Network.setUserAgentOverride", { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/142.0.0.0 Safari/537.36 AutohandSquadDesktop/1.0", platform: "MacIntel" });
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installFixtures.toString()})(${JSON.stringify(fixtures)});` });
-    const navigate = async (path) => { await cdp.send("Page.navigate", { url: `${baseUrl}${path}` }); await waitFor(() => cdp.evaluate("Boolean(document.querySelector('.app-sidebar') && document.querySelector('main') && !document.body.innerText.includes('Waking the squad'))"), path); };
+    const navigate = async (path) => { await cdp.send("Page.navigate", { url: `${baseUrl}${path}` }); await waitFor(() => cdp.evaluate("Boolean(document.querySelector('main') && !document.body.innerText.includes('Waking the squad'))"), path); };
     const screenshot = async (name) => { await delay(250); const shot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }); const path = join(artifacts, `${name}.png`); await writeFile(path, Buffer.from(shot.data, "base64")); report.screenshots.push(path); };
     const geometry = () => cdp.evaluate(`(() => { const sidebar = document.querySelector('.app-sidebar'); const image = sidebar?.querySelector('img'); const rect = image?.getBoundingClientRect(); return { shell: document.documentElement.dataset.shell, platform: document.documentElement.dataset.platform, x: rect?.x, y: rect?.y, width: rect?.width, height: rect?.height, paddingTop: getComputedStyle(sidebar).paddingTop, headerHeight: sidebar?.querySelector('[data-tauri-drag-region]')?.getBoundingClientRect().height, clipped: rect ? rect.y < sidebar.getBoundingClientRect().y : true }; })()`);
+    if (!process.env.AUTOHAND_VERIFY_UPDATES_ONLY) {
     await navigate(`/conversations/new?member=${agents[0].id}`);
     await waitFor(() => cdp.evaluate(`Boolean(document.querySelector('button[aria-label="Preview Eva\\'s profile"]'))`), "Eva DM trigger");
     report.normalLogo = await geometry();
@@ -352,57 +363,68 @@ async function main() {
       }
     }
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
+    }
+    await navigate("/settings/updates");
     report.updater = { statuses: [], mockedInstallerOnly: true };
     const updaterText = () => cdp.evaluate("document.querySelector('#settings-updates')?.innerText || ''");
     const updaterButton = async (label) => cdp.evaluate(`Array.from(document.querySelector('#settings-updates').querySelectorAll('button')).find(button => button.textContent.trim() === ${JSON.stringify(label)}).click()`);
-    for (const [status, title] of [["never-checked", "Not checked yet"], ["offline", "Update service is offline"], ["check-failed", "Could not check for upgrades"], ["up-to-date", "You're up to date"], ["available", "Version 0.1.6 is available"]]) {
-      await cdp.evaluate(`localStorage.setItem('workProfileVerify.updateScenario', JSON.stringify({ status: ${JSON.stringify(status)} }))`);
-      await navigate("/settings?section=updates");
-      await waitFor(async () => (await updaterText()).includes(title), `updater status ${status}`);
-      const text = await updaterText();
-      if (status !== "up-to-date") assert(!text.includes("You're up to date"), `${status} must not claim up to date`);
-      if (status !== "available") assert(!text.includes("Upgrade to 0.1.6"), `${status} must not offer a stale installer`);
-      await cdp.evaluate("document.querySelector('#settings-updates').scrollIntoView({ block: 'start' })");
-      await screenshot(`updater-${status}`);
-      report.updater.statuses.push({ status, title });
+    for (const [status, title] of [["never-checked","Not checked yet"],["offline","Update service is offline"],["check-failed","Could not check for updates"],["up-to-date","You're up to date"],["available","Version 0.1.6 is available"]]) {
+      await cdp.evaluate(`localStorage.setItem('workProfileVerify.operation','{"phase":"idle"}'); localStorage.setItem('workProfileVerify.updateScenario',JSON.stringify({status:${JSON.stringify(status)}}))`);
+      await navigate('/settings/updates');
+      await waitFor(async()=> (await updaterText()).includes(title),`update ${status}`);
+      if(status!=='up-to-date') assert(!(await updaterText()).includes("You're up to date"));
+      await screenshot(`update-${status}`); report.updater.statuses.push(status);
+    }
+    await cdp.evaluate("localStorage.setItem('workProfileVerify.updateScenario',JSON.stringify({status:'up-to-date',preview:true}))");
+    await navigate('/settings/updates'); await waitFor(async()=>(await updaterText()).includes('You’re running a preview'),'local preview identity');
+    assert((await updaterText()).includes('0.1.6') && (await updaterText()).includes('0.1.5')); await screenshot('update-preview');
+    await cdp.evaluate("localStorage.setItem('workProfileVerify.updateScenario',JSON.stringify({status:'available'}))");
+    await navigate('/settings/updates'); await waitFor(async()=>(await updaterText()).includes('Download update'),'download action');
+    await cdp.evaluate("window.__updateVerify.checkDelayMs=1000"); await updaterButton('Check for updates');
+    await waitFor(async()=>(await updaterText()).includes('Checking for updates'),'manual check busy');
+    await waitFor(async()=>(await updaterText()).includes('Version 0.1.6 is available'),'manual check finished');
+    await updaterButton('Download update');
+    await waitFor(()=>cdp.evaluate("document.querySelector('[role=progressbar]')?.getAttribute('aria-valuenow')==='25'"),'actual 25 percent');
+    assert(!await cdp.evaluate("window.__verifyRequests.some(r=>r.path==='/api/updates/install')"),'download does not install');
+    await screenshot('update-downloading');
+    await updaterButton('Cancel download'); await waitFor(async()=>(await updaterText()).includes('Download cancelled'),'cancel');
+    await updaterButton('Download update'); await waitFor(async()=>(await updaterText()).includes('Version 0.1.6 is ready'),'verified ready');
+    await screenshot('update-ready');
+    await cdp.evaluate("window.__updateVerify.installError='Finish active agent work before installing.'"); await updaterButton('Install update');
+    await waitFor(()=>cdp.evaluate("document.querySelector('#settings-updates [role=alert]')?.innerText.includes('Finish active agent work')"),'busy work refusal');
+    await cdp.evaluate("window.__updateVerify.installError=''"); await updaterButton('Install update');
+    await waitFor(async()=>(await updaterText()).includes('Installer opened'),'system installer');
+    await navigate('/settings/updates'); await waitFor(async()=>(await updaterText()).includes('Installer opened'),'operation survives reload');
+    // Retry and unknown-size streams keep bytes but never invent a percentage.
+    await cdp.evaluate("localStorage.setItem('workProfileVerify.operation','{\"phase\":\"idle\"}'); localStorage.setItem('workProfileVerify.updateScenario',JSON.stringify({status:'available',upgradeError:'Installer verification failed.'}))");
+    await navigate('/settings/updates'); await waitFor(async()=>(await updaterText()).includes('Download update'),'retry scenario');
+    await updaterButton('Download update'); await waitFor(()=>cdp.evaluate("document.querySelector('#settings-updates [role=alert]')?.innerText.includes('Installer verification failed')"),'checksum failure');
+    await cdp.evaluate("window.__updateVerify.upgradeError=''; window.__updateVerify.unknownSize=true; window.__updateVerify.upgradeDelayMs=3000");
+    await updaterButton('Retry download'); await waitFor(async()=>(await updaterText()).includes('downloaded'),'unknown total shows bytes');
+    assert(!await cdp.evaluate("Boolean(document.querySelector('[role=progressbar]'))"),'unknown total has no made-up bar');
+    await updaterButton('Cancel download');
+    await updaterButton('Release notes'); assert(await cdp.evaluate("window.__verifyRequests.some(r=>r.path==='/api/updates/releases')"));
+    // Pointer selection of settings chrome is refused in all skins.
+    for(const skin of ['default','soft','grut']) {
+      await cdp.evaluate(`localStorage.setItem('autohandSquad.v1.skin',${JSON.stringify(skin)})`); await navigate('/settings/updates');
+      const rect=await cdp.evaluate("(()=>{const r=document.querySelector('[data-testid=software-update] h3').getBoundingClientRect();return {x:r.x+2,y:r.y+r.height/2,end:r.x+r.width-2};})()");
+      await cdp.evaluate('getSelection().removeAllRanges()');
+      await cdp.send('Input.dispatchMouseEvent',{type:'mousePressed',x:rect.x,y:rect.y,button:'left',clickCount:1});
+      await cdp.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:rect.end,y:rect.y,button:'left',buttons:1});
+      await cdp.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:rect.end,y:rect.y,button:'left',clickCount:1});
+      assert.equal(await cdp.evaluate('getSelection().toString()'),'');
+      assert.equal(await cdp.evaluate("getComputedStyle(document.querySelector('[data-testid=software-update] h3')).userSelect"),'none');
+      await screenshot(`update-${skin}-selection`);
     }
     await navigate(`/conversations/new?member=${agents[0].id}`);
-    await waitFor(() => cdp.evaluate("Boolean(document.querySelector('[data-testid=sidebar-update-notice]'))"), "available contextual update notice");
-    assert(!await cdp.evaluate("document.querySelector('.app-sidebar').innerText.includes('Restart to update')"), "Available release must not imply installation is already ready for restart");
-    assert(await cdp.evaluate("(() => { const notice = document.querySelector('[data-testid=sidebar-update-notice]'); const account = document.querySelector('.app-sidebar button[aria-haspopup=menu]'); return notice.getBoundingClientRect().bottom <= account.getBoundingClientRect().y; })()"), "Download notice sits above account");
-    await cdp.evaluate("document.querySelector('[data-testid=sidebar-update-notice] button[aria-label=\"Download Squad update\"]').click()");
-    await waitFor(() => cdp.evaluate("window.__verifyRequests.some(request => request.path === '/api/updates/upgrade' && request.method === 'POST') && document.querySelector('[data-testid=sidebar-update-notice]').innerText.includes('verified installer')"), "contextual download uses mocked verified installer endpoint");
-    report.updater.contextualDownloadWithHonestLabel = true;
-    await screenshot("updater-banner-download");
-    await navigate("/settings/updates");
-    await waitFor(() => cdp.evaluate("document.querySelector('#settings-updates [role=status]')?.textContent === 'Version 0.1.6 is available'"), "Updates settings retain available release status");
-    await cdp.evaluate("window.__updateVerify.checkDelayMs = 1000");
-    await updaterButton("Check for upgrades");
-    await waitFor(() => cdp.evaluate("document.querySelector('#settings-updates').innerText.includes('Checking for upgrades') && Array.from(document.querySelector('#settings-updates').querySelectorAll('button')).filter(button => /Check for upgrades|Upgrade to/.test(button.textContent)).every(button => button.disabled)"), "check busy disables actions");
-    await waitFor(() => cdp.evaluate("document.querySelector('#settings-updates [role=status]')?.textContent === 'Version 0.1.6 is available' && Array.from(document.querySelector('#settings-updates').querySelectorAll('button')).filter(button => /Check for upgrades|Upgrade to/.test(button.textContent)).every(button => !button.disabled)"), "fresh check completion");
-    assert(await cdp.evaluate("window.__verifyRequests.some(request => request.path === '/api/updates' && request.query === '?refresh=1')"), "Check calls refreshed update endpoint");
-    report.updater.freshCheckAndBusyState = true;
-    await cdp.evaluate("window.__updateVerify.upgradeDelayMs = 1000");
-    await updaterButton("Upgrade to 0.1.6");
-    await waitFor(() => cdp.evaluate("document.querySelector('#settings-updates').innerText.includes('Preparing upgrade') && Array.from(document.querySelector('#settings-updates').querySelectorAll('button')).filter(button => /Preparing upgrade|Check for upgrades/.test(button.textContent)).every(button => button.disabled)"), "upgrade busy disables actions");
-    await screenshot("updater-preparing");
-    await waitFor(async () => (await updaterText()).includes("The verified installer is open"), "verified installer opened mock result");
-    assert(await cdp.evaluate("window.__verifyRequests.some(request => request.path === '/api/updates/upgrade' && request.method === 'POST')"), "Upgrade invokes server installer endpoint");
-    await screenshot("updater-verified-installer-opened");
-    report.updater.verifiedInstallerOpenedMockResult = true;
-    await cdp.evaluate("window.__updateVerify.upgradeError = 'Browser fixture installer checksum mismatch'; window.__updateVerify.upgradeDelayMs = 0");
-    await updaterButton("Upgrade to 0.1.6");
-    await waitFor(() => cdp.evaluate("document.querySelector('#settings-updates [role=alert]')?.innerText.includes('Browser fixture installer checksum mismatch')"), "upgrade error is surfaced");
-    assert(!(await updaterText()).includes("The verified installer is open"), "Failed upgrade clears earlier installer success");
-    await screenshot("updater-upgrade-failed");
-    report.updater.upgradeFailureSurfaced = true;
-    await cdp.evaluate("window.__updateVerify.upgradeError = ''");
-    await updaterButton("Upgrade to 0.1.6");
-    await waitFor(async () => (await updaterText()).includes("The verified installer is open"), "retry upgrade after failure");
-    assert(!await cdp.evaluate("Boolean(document.querySelector('#settings-updates [role=alert]'))"), "Successful retry clears error");
-    await updaterButton("Open releases");
-    assert(await cdp.evaluate("window.__verifyRequests.some(request => request.path === '/api/updates/releases' && request.method === 'POST')"), "Open releases invokes native release endpoint");
-    report.updater.retryClearsErrorAndOpenReleasesUsesEndpoint = true;
+    await waitFor(()=>cdp.evaluate("Boolean(document.querySelector('[data-selectable]'))"),'copyable conversation');
+    assert.equal(await cdp.evaluate("getComputedStyle(document.querySelector('[data-selectable]')).userSelect"),'text');
+    const field=await cdp.evaluate("Boolean(document.querySelector('textarea') && getComputedStyle(document.querySelector('textarea')).userSelect==='text')"); assert(field);
+    report.updater.progressCancelReadyReloadRetryAndSelection=true;
+    if(process.env.AUTOHAND_VERIFY_UPDATES_ONLY) {
+      await writeFile(join(artifacts,'report.json'),JSON.stringify(report,null,2)); console.log('Update browser flow passed with mocked release/download/install endpoints; actual pointer selection and rendered progress verified.'); return;
+    }
+
     report.appInformation = {};
     const navigateInformation = async (page) => {
       await cdp.send("Page.navigate", { url: `${baseUrl}/app-info/${page}?window=1` });

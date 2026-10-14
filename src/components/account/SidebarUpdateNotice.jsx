@@ -1,33 +1,73 @@
 import { ArrowDownToLine } from "lucide-react";
-
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { UpdateProgress } from "./UpdateProgress";
+import { updateView } from "@/lib/update-status";
 import { cn } from "@/lib/utils";
-
-/** Contextual update notice, shown only after a successful repository check. */
-export function SidebarUpdateNotice({ updates, checking = false, upgrading = false, error = "", upgradeResult = null, onDownload, onOpenReleases, className }) {
-  const snapshot = updates?.snapshot;
-  const available = updates?.status === "available" && snapshot?.success === true && snapshot?.updateAvailable === true && snapshot?.source === "github:autohandai/squad";
-  if (!available) return null;
-  const verifiedDownload = snapshot.downloadUrl && snapshot.downloadName && /^[a-f0-9]{64}$/i.test(snapshot.downloadSha256 || "");
-  const busy = checking || upgrading;
-  const download = verifiedDownload ? onDownload : onOpenReleases;
-
+/** The same operation appears in Settings and every sidebar skin. */
+export function SidebarUpdateNotice({
+  updates,
+  checking = false,
+  error = "",
+  operation = {},
+  onDownload,
+  onReview,
+  onOpenReleases,
+  className,
+}) {
+  const view = updateView(updates, operation, { checking, error });
+  if (
+    !view.available &&
+    !view.busy &&
+    !["ready", "failed", "complete", "installer-open"].includes(view.phase)
+  )
+    return null;
+  const ready = ["ready", "installer-open", "complete"].includes(view.phase);
   return (
-    <section aria-label="Squad update" className={cn("mx-4 border-t border-border/65 py-3", className)} data-testid="sidebar-update-notice">
+    <section
+      aria-label="Squad update"
+      className={cn("flex flex-col gap-2 py-3", className)}
+      data-testid="sidebar-update-notice"
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-medium">New update available</p>
-          {snapshot.latestAllowedVersion ? <p className="mt-0.5 text-xs text-muted-foreground">Version {snapshot.latestAllowedVersion}</p> : null}
+          <p className="text-sm font-medium">
+            {view.busy ? view.title : ready ? view.title : "Update available"}
+          </p>
+          {!view.busy && !ready ? (
+            <p className="text-xs text-muted-foreground">
+              Version {view.latest}
+            </p>
+          ) : null}
         </div>
-        <Button type="button" variant="ghost" size="sm" className="shrink-0 px-2" onClick={download} disabled={busy || !download} aria-label={upgrading ? "Preparing Squad update" : "Download Squad update"}>
-          {upgrading ? <Spinner /> : <ArrowDownToLine aria-hidden="true" className="size-3.5" />}
-          {upgrading ? "Preparing…" : "Download"}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={
+            ready || view.busy || view.phase === "failed"
+              ? onReview
+              : view.downloadable
+                ? onDownload
+                : onOpenReleases
+          }
+          disabled={checking && !view.busy}
+          aria-label={ready ? "Review Squad update" : "Download Squad update"}
+        >
+          {view.busy || ready || view.phase === "failed" ? (
+            "View"
+          ) : (
+            <>
+              <ArrowDownToLine data-icon="inline-start" />
+              Download
+            </>
+          )}
         </Button>
       </div>
-      {upgrading ? <p className="mt-2 text-xs text-muted-foreground" role="status">Downloading and verifying the installer…</p> : null}
-      {upgradeResult?.message ? <p className="mt-2 text-xs leading-5 text-muted-foreground" role="status">{upgradeResult.message}</p> : null}
-      {error ? <p className="mt-2 text-xs leading-5 text-destructive" role="alert">{error}</p> : null}
+      <UpdateProgress operation={operation} compact />
+      {view.failure ? (
+        <p className="text-xs text-destructive" role="alert">
+          {view.failure}
+        </p>
+      ) : null}
     </section>
   );
 }

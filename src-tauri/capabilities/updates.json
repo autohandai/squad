@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "software-updates",
+  "description": "Close Squad only after its bridge arms a verified installer for this exact native process. Rust validates the main window and bridge origin.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"] },
+  "permissions": ["allow-squad-quit-for-update"]
+}

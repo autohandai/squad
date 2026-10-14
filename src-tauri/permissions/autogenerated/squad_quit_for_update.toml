@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-squad-quit-for-update"
+description = "Enables the squad_quit_for_update command without any pre-configured scope."
+commands.allow = ["squad_quit_for_update"]
+
+[[permission]]
+identifier = "deny-squad-quit-for-update"
+description = "Denies the squad_quit_for_update command without any pre-configured scope."
+commands.deny = ["squad_quit_for_update"]

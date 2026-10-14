@@ -16,11 +16,12 @@ list to the section for that version.
 
 ### Changed
 
-- Navigation and controls no longer highlight on mouse drag; messages, errors, release notes, and input text can still be copied.
+- Updates is a simple status, installed/public versions, and one next action. Local builds ahead of GitHub are labelled as previews. Navigation and controls no longer highlight on mouse drag; messages, errors, release notes, and input text can still be copied.
 - Claude execution uses Anthropic's Agent SDK with the installed Claude CLI on compatible versions. Replies, progress, sessions and cancellation stay inside Squad; older CLIs keep their existing compatibility path.
 
 ### Added
 
+- In-app update downloads show real progress, can be cancelled, and stay ready while you keep working. On writable macOS installs, Install and restart replaces the app after work finishes, preserves your data, and keeps the previous app for recovery. Other installs open their verified system installer. Compact sidebars show new releases too.
 - Settings → Runtime bridge → Sessions outside Squad: turn on recording for Claude Code or Codex and the sessions you start in a terminal appear in the Runs tab of the member on that engine and folder (and in All work), with the question, the tools used and the reply. Squad adds its own hooks to the engine's config, keeps a backup, and leaves your other hooks alone; turning it off removes only Squad's.
 
 - Chat with a new member. The first item in the sidebar's Direct messages "+", and a button beside New member on the Squad page, creates "New member" and opens its chat, where it says "Hey! I'm New member. What can I help you with?". Tell it what it is in plain English ("you're going to be my GTM Leader", "be our release manager") and it confirms in one line, gives itself a name, a role, instructions, a personality and skills, asks up to four things it needs to start, and gets on with it. The sidebar row renames, one quiet line under the reply says "Alex is now your GTM Leader", and the profile page shows what it set; Edit profile changes any of it. Say "actually, be my QA lead" later and it changes again. Works on every engine. New member's form and New team / Templates are unchanged and remain the other ways in.
