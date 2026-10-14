@@ -382,6 +382,7 @@ import {
   slashCommandFrom,
 } from "@/lib/composer-syntax";
 import {
+  engineVersion,
   ACCESS_IDS,
   accessOption,
   derivedAccess,
@@ -11488,12 +11489,6 @@ function contextWindowLabel(tokens) {
   const value = Number(tokens) || 0;
   if (value >= 999_500) return `${Number((value / 1_000_000).toFixed(1)).toString()}M`;
   return `${Math.round(value / 1000)}k`;
-}
-
-// The CLI reports "0.9.7 (unknown)" when it was built without a commit; the
-// parenthesis said nothing to a reader and looked like an error.
-function engineVersion(value) {
-  return String(value || "").replace(/\s*\((?:unknown|dev|none)\)\s*$/i, "").trim();
 }
 
 // The day a chat message belongs to, in the channel stream's wording
@@ -23745,16 +23740,15 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
           >
             {copy.save || "Save"}
           </Button>
-          <Button variant="ghost" onClick={() => navigate(memberProfilePath(agent.id, "home"))}>
-            {copy.close || "Close"}
-          </Button>
+          {/* "Close" beside Save went to Home: on a page, not a dialog, there
+              was nothing to close and it read as Cancel. The sidebar has Home. */}
         </div>
         <Separator />
         <div>
           <h2 className="text-lg font-semibold">{copy.runsOn || "Runs on"}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {copy.runsOnDescription ||
-              `${agent.name} runs on this machine unless you point it at another bridge. The work happens there; the conversation stays here.`}
+              `${agent.name} runs on this machine unless you point them at another bridge. The work happens there; the conversation stays here.`}
           </p>
         </div>
         <RunsOnSettings
@@ -23779,7 +23773,7 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
               <dt className="font-medium">{item.label}</dt>
               <dd className="text-muted-foreground">
                 <span className={readinessTone(item.status)}>{readinessLabel(item.status)}</span>
-                {item.version ? ` · ${item.version}` : ""}
+                {item.version ? ` · ${engineVersion(item.version)}` : ""}
                 {item.executable ? ` · ${item.executable}` : ""}
                 {item.setup ? (
                   <>

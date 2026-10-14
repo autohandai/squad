@@ -333,3 +333,9 @@ export function replyModelLabel(effectiveModel, fallback = (value) => value?.lab
   const model = String(effectiveModel?.model || "").trim();
   return model ? `${engine} · ${model}` : `${engine} default`;
 }
+
+// The CLI reports "0.9.7 (unknown)" when it was built without a commit; the
+// parenthesis said nothing to a reader and looked like an error.
+export function engineVersion(value) {
+  return String(value || "").replace(/\s*\((?:unknown|dev|none)\)\s*$/i, "").trim();
+}

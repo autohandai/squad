@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import {
+import { engineVersion,
   ACCESS_IDS,
   HARNESS_OPTIONS,
   accessOption,
@@ -169,8 +169,10 @@ export function HarnessSelect({
                   <span className="flex items-center gap-2">
                     <span>{item.label}</span>
                     {item.isDefault ? <span className="text-xs text-muted-foreground">Default</span> : null}
+                    {/* In the open list only: in the closed field it repeated
+                        the status line right under it ("Ready", "Ready · …"). */}
                     {itemReadiness ? (
-                      <span className={cn("text-xs", readinessTone(itemReadiness.status))}>{readinessLabel(itemReadiness.status)}</span>
+                      <span className={cn("text-xs [[data-slot=select-value]_&]:hidden", readinessTone(itemReadiness.status))}>{readinessLabel(itemReadiness.status)}</span>
                     ) : null}
                   </span>
                 </SelectItem>
@@ -201,7 +203,7 @@ export function HarnessSelect({
         <span className={cn("font-medium", readinessTone(loading && !readiness ? "checking" : readiness?.status))}>
           {loading && !readiness ? readinessLabel("checking") : readinessLabel(readiness?.status)}
         </span>
-        {readiness?.version ? <span> · {option.short} {readiness.version}</span> : null}
+        {readiness?.version ? <span> · {option.short} {engineVersion(readiness.version)}</span> : null}
         {accountLabel ? <span> · {accountLabel}</span> : readiness?.detail ? <span> · {readiness.detail}</span> : null}
         {readiness?.setup && !needsSignIn ? (
           <span>
