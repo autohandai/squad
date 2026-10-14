@@ -3,7 +3,7 @@ import { ArrowLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { settingsPath } from "@/lib/settings-navigation";
+import { filterSettingsSections, settingsPath } from "@/lib/settings-navigation";
 
 /**
  * The Settings shell (ADR-0119): the app sidebar is gone, a Back control and
@@ -34,6 +34,8 @@ export function SettingsShell({ sections = [], activeId = "", onSelect, onBack, 
   const rowRefs = useRef(new Map());
   const [indicator, setIndicator] = useState(null);
   const [indicatorLive, setIndicatorLive] = useState(false);
+  const [filter, setFilter] = useState("");
+  const shownSections = filterSettingsSections(sections, filter);
 
   const measure = useCallback(() => {
     const nav = navRef.current;
@@ -117,6 +119,28 @@ export function SettingsShell({ sections = [], activeId = "", onSelect, onBack, 
       </div>
       <div className="mx-auto w-full max-w-6xl px-4 pb-10 sm:px-6 md:grid md:grid-cols-[208px_minmax(0,1fr)] md:gap-12 md:pt-8 lg:px-10 lg:gap-16">
         <aside className="min-w-0 md:sticky md:top-8 md:self-start">
+          {/* Find a setting by what it does ("dark", "api key", "telegram");
+              Enter opens the first match, Esc clears. */}
+          <input
+            type="search"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && shownSections[0]) {
+                event.preventDefault();
+                onSelect?.(shownSections[0].id);
+                setFilter("");
+              } else if (event.key === "Escape" && filter) {
+                event.preventDefault();
+                event.stopPropagation();
+                setFilter("");
+              }
+            }}
+            placeholder="Find a setting"
+            aria-label="Find a setting"
+            className="mb-2 hidden h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40 md:block"
+          />
+          {filter && !shownSections.length ? <p className="hidden px-1 py-2 text-xs text-muted-foreground md:block">No setting matches.</p> : null}
           <nav
             ref={navRef}
             aria-label={`${title} sections`}
@@ -128,8 +152,8 @@ export function SettingsShell({ sections = [], activeId = "", onSelect, onBack, 
             style={indicatorStyle}
             onKeyDown={onListKeyDown}
           >
-            {indicator ? <span aria-hidden="true" className="settings-nav-indicator" /> : null}
-            {sections.map((section) => {
+            {indicator && !filter ? <span aria-hidden="true" className="settings-nav-indicator" /> : null}
+            {shownSections.map((section) => {
               const active = section.id === activeId;
               return (
                 <a

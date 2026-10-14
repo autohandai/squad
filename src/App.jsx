@@ -14931,8 +14931,13 @@ function Conversation({
                   onDraft={updatePrompt}
                   onKeyDown={handlePromptKeyDown}
                   placeholder={formatCopy(copy.talkToPlaceholder, { name: agent.name })}
-                  className="max-h-64 min-h-[3.25rem] resize-none border-0 bg-transparent px-3.5 py-3 text-base leading-6 shadow-none focus-visible:ring-0 md:text-[15px]"
+                  className="peer max-h-64 min-h-[3.25rem] resize-none border-0 bg-transparent px-3.5 py-3 text-base leading-6 shadow-none focus-visible:ring-0 md:text-[15px]"
                 />
+                {/* Only while the composer is focused and empty: the keys that
+                    are not on any button. */}
+                <p className="pointer-events-none hidden px-3.5 pb-1 text-[11px] text-muted-foreground peer-placeholder-shown:peer-focus:block" aria-hidden="true">
+                  Enter sends · Shift Enter for a new line · ↑ brings back your last message · / for commands
+                </p>
               </div>
               <div className="flex min-w-0 items-center gap-1.5 px-1 pb-1 sm:gap-2">
               <MemberWorkspacePicker

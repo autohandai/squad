@@ -39,3 +39,6 @@ the lane preview (lane build served locally, reads forwarded to the installed
 | 28 | Member, Memory | Finding one fact a member keeps | "What Eva knows" shows a count and, past six entries, a search field; Esc clears it, and an empty result says what found nothing. |
 | 29 | Member, History | Finding one event in a long trail | "Search this history" over the loaded records, saying when Load more would search further back. |
 | 30 | Member, Permissions | Undoing hand-tuned tool settings | "3 tools differ from the Level 4 defaults. Reset to the level's defaults": choosing the level you are already on did nothing, so there was no way back. |
+| 31 | Settings | Finding a setting without knowing its section | "Find a setting" above the section list matches names and what each section holds ("dark" → Appearance, "api key" → LLM Providers, "telegram" → Remote access); Enter opens the first match. |
+| 32 | Search (⌘K) | Using the palette from the keyboard | A hint row: ↑↓ move, Enter open, Esc close, ? all shortcuts. |
+| 33 | Member chat | Knowing the keys that are on no button | While the composer is focused and empty, one quiet line: Enter sends, Shift Enter for a new line, ↑ last message, / for commands. |

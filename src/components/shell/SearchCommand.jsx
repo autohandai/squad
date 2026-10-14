@@ -227,6 +227,13 @@ export function SearchCommand({
           copy={copy}
         />
       </div>
+      {/* The keys the palette answers to, where they are used. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/70 px-3 py-2 text-[11px] text-muted-foreground" aria-hidden="true">
+        <span><kbd className="font-mono">↑↓</kbd> move</span>
+        <span><kbd className="font-mono">Enter</kbd> open</span>
+        <span><kbd className="font-mono">Esc</kbd> close</span>
+        <span className="ml-auto"><kbd className="font-mono">?</kbd> all shortcuts</span>
+      </div>
     </CommandDialog>
   );
 }
