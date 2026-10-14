@@ -12350,7 +12350,7 @@ function CollapsedSidebarRail({
                 isSquadDirectory && "bg-accent text-foreground"
               )}
               onClick={() => navigate(squadDirectoryPath())}
-              aria-label={`Squad directory, ${visibleAgents.length} members`}
+              aria-label={`Squad directory, ${visibleAgents.length} ${visibleAgents.length === 1 ? "member" : "members"}`}
             >
               <Users className="size-4" />
             </Button>
@@ -12368,7 +12368,7 @@ function CollapsedSidebarRail({
                 isChannelsRoute && "bg-accent text-foreground"
               )}
               onClick={() => navigate(channelsPath())}
-              aria-label={`${copy.channels}, ${channelCount} channels`}
+              aria-label={`${copy.channels}, ${channelCount} ${channelCount === 1 ? "channel" : "channels"}`}
             >
               <Hash className="size-4" />
               <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[9px] font-semibold text-primary-foreground">
@@ -25676,7 +25676,7 @@ function AnalyticsPanel({ active, locale }) {
             detail={`${runningServices} of ${serviceRows.length} services reporting`}
           />
           <AnalyticsHeroStat label="Latest snapshot" value={generatedAt} detail={runtimeVersion} />
-          <AnalyticsHeroStat label="Last signal" value={latestSignal} detail={`${formatAnalyticsNumber(telemetryEvents, locale)} events observed`} />
+          <AnalyticsHeroStat label="Last signal" value={latestSignal} detail={`${formatAnalyticsNumber(telemetryEvents, locale)} ${telemetryEvents === 1 ? "event" : "events"} observed`} />
         </CardContent>
       </Card>
 
