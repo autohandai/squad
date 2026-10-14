@@ -16973,10 +16973,13 @@ function MissionRiskAndEvidence({ row }) {
           {permissionWarning.message}
         </div>
       ) : null}
-      <div className="break-words text-xs leading-5 text-muted-foreground">
-        <span className="font-semibold text-foreground">{row.evidence.type}: </span>
-        {row.evidence.label}
-      </div>
+      {/* The same sentence twice in one row helped nobody. */}
+      {row.evidence?.label && row.evidence.label !== row.summary ? (
+        <div className="break-words text-xs leading-5 text-muted-foreground">
+          <span className="font-semibold text-foreground">{row.evidence.type}: </span>
+          {row.evidence.label}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -18137,6 +18140,12 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
   const lastLine = String((Array.isArray(run.logs) ? run.logs : []).at?.(-1)?.line || "").trim();
   const reply = String(run.reply || "").replace(/\s+/g, " ").trim().slice(0, 200);
   const title = (run.title && run.title !== run.command ? run.title : "") || (isReply ? "Chat reply" : "Launched run");
+  // A reply that never came has a reason in its log; "No reply was recorded"
+  // under a failed row hid it.
+  const failureReason = isReply && !reply && ["failed", "stopped", "interrupted"].includes(run.status)
+    ? String([...(Array.isArray(run.logs) ? run.logs : [])].reverse().find((entry) => entry?.source === "stderr" && String(entry.line || "").trim())?.line || "").replace(/^\[Autohand Squad\]\s*/, "").replace(/\s+/g, " ").trim().slice(0, 240)
+    : "";
+  const replySummary = reply || failureReason || (run.status === "stopped" ? "Stopped before a reply." : "No reply was recorded.");
 
   return {
     id: `run-${run.id}`,
@@ -18145,7 +18154,7 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
     run,
     owner,
     title,
-    summary: isReply ? reply || "No reply was recorded." : lastLine || "Run output is available from the local bridge.",
+    summary: isReply ? replySummary : lastLine || "Run output is available from the local bridge.",
     status,
     runtimeId: run.id,
     repository,
@@ -18157,7 +18166,7 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
     detailPath,
     blocker: status === "failed" && !isReply ? "Standalone run failed before a parent task was linked." : "",
     permissionWarnings: owner ? permissionWarningsForAgent(owner, runtime, workspacePath) : [],
-    evidence: isReply ? { type: "reply", label: reply || "No reply was recorded." } : { type: "output", label: lastLine || "Run output is available from the local bridge." },
+    evidence: isReply ? { type: "reply", label: replySummary } : { type: "output", label: lastLine || "Run output is available from the local bridge." },
     nextAction: missionNextAction(status, { detailPath, ownerId: owner?.id, reply: isReply }),
     updatedAt: run.updatedAt || run.completedAt || run.startedAt || new Date().toISOString(),
   };
