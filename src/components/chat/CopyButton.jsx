@@ -17,6 +17,7 @@ export function CopyButton({ text, label = "Copy", className, size = "icon-sm" }
 
   async function copy(event) {
     event.stopPropagation();
+    event.preventDefault();
     const ok = await copyText(typeof text === "function" ? text() : text);
     setState(ok ? "copied" : "failed");
     window.clearTimeout(timer.current);

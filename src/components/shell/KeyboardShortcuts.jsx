@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
+/** Other parts of the app (the account menu) open the sheet with this event. */
+export const OPEN_EVENT = "squad:keyboard-shortcuts";
+export function openKeyboardShortcuts() {
+  window.dispatchEvent(new Event(OPEN_EVENT));
+}
+
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
 const MOD = isMac ? "⌘" : "Ctrl";
 
@@ -63,8 +69,13 @@ export function KeyboardShortcuts({ members = [], onMember }) {
         onMember?.(member.id);
       }
     }
+    const openSheet = () => setOpen(true);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener(OPEN_EVENT, openSheet);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(OPEN_EVENT, openSheet);
+    };
   }, [members, onMember]);
 
   return (

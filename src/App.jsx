@@ -37,6 +37,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  Keyboard,
   Activity,
   AlertTriangle,
   ArrowRight,
@@ -328,7 +329,7 @@ import { channelSlug } from "@/lib/channel-name";
 import { copyText } from "@/lib/copy-text";
 import { CopyButton } from "@/components/chat/CopyButton";
 import { JumpToLatest } from "@/components/chat/JumpToLatest";
-import { KeyboardShortcuts } from "@/components/shell/KeyboardShortcuts";
+import { KeyboardShortcuts, openKeyboardShortcuts } from "@/components/shell/KeyboardShortcuts";
 import { isHiddenStopped, useHiddenStopped } from "@/lib/hidden-stopped";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
@@ -11160,7 +11161,13 @@ function ChannelsPage({
                     </>
                   );
                 }}
-                emptyLabel={members.length ? copy.channelNoThreads : (
+                emptyLabel={members.length ? (
+                  // Say who is here and how a message reaches them.
+                  <>
+                    {copy.channelNoThreads}{" "}
+                    {`${members.slice(0, 3).map((member) => member.name).join(", ")}${members.length > 3 ? ` and ${members.length - 3} more` : ""} ${members.length === 1 ? "is" : "are"} in this channel. A message goes to everyone; start it with @${members[0].name} to ask one of them.`}
+                  </>
+                ) : (
                   // An empty channel can do nothing; say how to fix that here.
                   <>
                     {copy.channelNoMembers}{" "}
@@ -11233,6 +11240,7 @@ function ChannelsPage({
               ) : null}
               <MessageComposer
                 placeholder={formatCopy(copy.messageChannel || "Message #{name}", { name: channel.name })}
+                lastSent={[...(messagesByChannel[channel.id] || [])].reverse().find((message) => message.role === "user" && String(message.body || "").trim())?.body || ""}
                 mentionItems={mentionItems}
                 value={draft}
                 onValueChange={setDraft}
@@ -11901,6 +11909,8 @@ function MarkdownBlocks({ text, muted = false }) {
               <pre className="max-h-80 overflow-auto rounded-md border bg-background p-3 pr-9 font-mono text-xs leading-5 text-muted-foreground">
                 <code>{block.code}</code>
               </pre>
+              {/* The fence's language, so a reader knows a shell command from a config file. */}
+              {block.language ? <span className="pointer-events-none absolute right-9 top-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground/70 transition-opacity group-hover/code:opacity-0">{block.language}</span> : null}
               <CopyButton text={block.code} label="Copy code" className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100" />
             </div>
           );
@@ -13089,6 +13099,7 @@ function AccountMenuButton({
           <AccountMenuItem icon={Inbox} label={copy.needsYou || "Needs you"} onClick={() => choose(onMissionControl)} />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} />
           <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} />
+          <AccountMenuItem icon={Keyboard} label="Keyboard shortcuts" onClick={() => choose(openKeyboardShortcuts)} />
           {openAppInfo ? <AccountMenuItem icon={BookOpen} label={copy.aboutSquad || "About Autohand Squad"} onClick={() => choose(() => openAppInfo("about"))} /> : null}
           {openFeedback ? (
             <>
@@ -13824,6 +13835,16 @@ function Conversation({
   );
   const hasConversationMessages = visibleMessages.length > 0;
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
+  // When this member last answered, for the header while they are not working.
+  const lastReplyAt = useMemo(() => {
+    for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
+      const item = visibleMessages[index];
+      if (item.role === "user" || item.local || item.status === "loading") continue;
+      const at = item.completedAt || item.startedAt || item.createdAt;
+      if (at && Number.isFinite(Date.parse(at))) return at;
+    }
+    return "";
+  }, [visibleMessages]);
   const computerEvidenceSessions = useComputerUseEvidence(agent.id, chatSending, api);
   const computerEvidenceByMessage = useMemo(() => new Map(visibleMessages.map((message) => [message.id, evidenceForMessage(message, computerEvidenceSessions)])), [visibleMessages, computerEvidenceSessions]);
   // Stable message objects so memoized rows skip re-rendering while typing.
@@ -14673,7 +14694,12 @@ function Conversation({
           </Popover>
             <div className="-mt-4 ml-12 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               {runtime?.available ? (
-                <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="shrink-0 whitespace-nowrap" />
+                <>
+                  <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="shrink-0 whitespace-nowrap" />
+                  {!chatSending && lastReplyAt && !compact ? (
+                    <span className="hidden shrink-0 whitespace-nowrap sm:inline" title={new Date(lastReplyAt).toLocaleString()}>{`· replied ${formatRelativeTime(lastReplyAt, locale)}`}</span>
+                  ) : null}
+                </>
               ) : (
                 <>
                   <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />

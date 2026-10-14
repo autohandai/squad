@@ -34,6 +34,7 @@ export function MessageComposer({
   attachLabel = "Attach",
   hint = "",
   autoFocus = false,
+  lastSent = "",
 }) {
   const [internal, setInternal] = useState("");
   const text = value === undefined ? internal : value;
@@ -127,6 +128,14 @@ export function MessageComposer({
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent?.isComposing) {
       event.preventDefault();
       submit();
+      return;
+    }
+    // Up in an empty composer brings back your last message here, as in a
+    // member chat.
+    if (event.key === "ArrowUp" && !text.trim() && lastSent && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey) {
+      event.preventDefault();
+      setText(lastSent);
+      window.requestAnimationFrame(() => textareaRef.current?.setSelectionRange?.(lastSent.length, lastSent.length));
     }
   }
 

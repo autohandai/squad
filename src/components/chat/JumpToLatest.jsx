@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,12 @@ function scrollParentOf(node) {
  */
 export function JumpToLatest({ anchorRef, watch, label = "Jump to latest" }) {
   const [away, setAway] = useState(false);
+  // How many messages arrived since the reader scrolled up: "3 new".
+  const seenAtRef = useRef(watch);
+  useEffect(() => {
+    if (!away) seenAtRef.current = watch;
+  }, [away, watch]);
+  const arrived = away && typeof watch === "number" && typeof seenAtRef.current === "number" ? Math.max(0, watch - seenAtRef.current) : 0;
   useEffect(() => {
     const scroller = scrollParentOf(anchorRef.current);
     if (!scroller) return undefined;
@@ -43,7 +49,7 @@ export function JumpToLatest({ anchorRef, watch, label = "Jump to latest" }) {
         onClick={() => anchorRef.current?.scrollIntoView({ block: "end", behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ? "auto" : "smooth" })}
       >
         <ArrowDown className="size-3.5" />
-        {label}
+        {arrived ? `${arrived} new` : label}
       </Button>
     </div>
   );

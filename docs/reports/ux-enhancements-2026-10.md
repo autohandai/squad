@@ -42,3 +42,27 @@ the lane preview (lane build served locally, reads forwarded to the installed
 | 31 | Settings | Finding a setting without knowing its section | "Find a setting" above the section list matches names and what each section holds ("dark" → Appearance, "api key" → LLM Providers, "telegram" → Remote access); Enter opens the first match. |
 | 32 | Search (⌘K) | Using the palette from the keyboard | A hint row: ↑↓ move, Enter open, Esc close, ? all shortcuts. |
 | 33 | Member chat | Knowing the keys that are on no button | While the composer is focused and empty, one quiet line: Enter sends, Shift Enter for a new line, ↑ last message, / for commands. |
+| 34 | Member chat, Runs | Putting a run's output in a bug report | "Copy output" beside "Output · 8 lines", without opening or closing the disclosure. |
+| 35 | Channels | Starting in a new channel | An empty channel names who is in it, says a message reaches everyone, and that @Name asks one of them. |
+| 36 | Member chat, channels | Knowing something arrived while you read back | "Jump to latest" becomes "3 new" when messages arrive after you scrolled up. |
+| 37 | Member chat | "Is this member still on it?" | The header adds "· replied 1d ago" (full time on hover) while the member is not working. |
+| 38 | Replies | Telling a shell command from a config file | Code blocks show their fence language at the top right, giving way to Copy on hover. |
+| 39 | Account menu | Finding the shortcuts without knowing "?" | "Keyboard shortcuts" in the account menu opens the same sheet. |
+| 40 | Channels | Asking the channel again with a small change | Up in an empty channel composer brings back your last message in that channel. |
+
+## How it was checked
+
+Every row was exercised in the lane preview against the real 0.1.7 roster:
+the Squad search ("zzz" → the empty line; Recent → Noah first), Needs you
+(6 stopped → hide one → 5, summary followed, Show restored 6), Settings
+("api key" → LLM Providers, "telegram" → Remote access), Eva's memory search,
+Noah's history search ("install" → the install.sh reply), #general (Jump to
+latest after scrolling up; Up recalled the last channel message), Noah's chat
+(composer focused on open; Edit and resend put "hey" back; day lines read
+"Thursday 1 October" / "Today"; full-time tooltips), ⌘2 → Noah with the title
+"(2) Noah · Autohand Squad", `/channels/general` → #general.
+
+Two could not be exercised end to end in a read-only preview: "Reset to the
+level's defaults" (saving a member goes to the bridge, which the preview
+refuses; it calls the same function as choosing a level) and the empty channel
+line (every channel in this squad has messages).
