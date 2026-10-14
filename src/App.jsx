@@ -22291,125 +22291,92 @@ function AgentProjectsPage({ agent, runtime, workspaces = [], navigate, openTerm
     commitProjects(projects, path);
   }
 
+  // Flat, as DESIGN.md asks: it was a bordered card holding a second
+  // "Projects" heading, "1/5" and "4 Remaining" tiles that said the same
+  // thing, a boxed Add form, and one boxed card per folder whose name was a
+  // path ("Documents/autohand/web/prototypes/dark-web-cli") beside a "Default"
+  // badge and a disabled "Default" button.
+  const defaultName = workspaceName(currentWorkspace) || workspaceName(getAgentWorkspace(agent, runtime, workspaces)) || "";
   return (
     <div className="min-h-screen bg-background">
       <PageTitle title={copy.projects} />
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-        <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-          <div className="grid gap-5 border-b border-border/75 p-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:p-6">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="grid size-11 place-items-center rounded-md border border-primary/35 bg-primary/15 text-primary">
-                  <Folders className="size-5" />
-                </span>
-                <div className="min-w-0">
-                  <h2 className="text-2xl font-semibold tracking-normal">{copy.projects || "Projects"}</h2>
-                  <p className="mt-1 truncate text-sm text-muted-foreground">
-                    {agent.name} / {localizedRole(agent, copy)}
-                  </p>
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <p className="text-sm text-muted-foreground">
+          {`${projects.length} of ${maxProjects} folders`}
+          {defaultName ? ` · ${agent.name} works in ${defaultName} unless a message names another.` : ""}
+        </p>
+
+        <div className="divide-y divide-border/70 border-y border-border/70">
+          {projects.length ? (
+            projects.map((project) => {
+              const isDefault = project.path === currentWorkspace;
+              const name = workspaceName(project.path) || project.label || project.name;
+              return (
+                <div key={project.path} className="flex items-center gap-3 py-3">
+                  <FolderGit2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                      <span className="truncate font-medium">{name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {[/^git( ?repo)?$/i.test(project.kind || "") ? "Git repository" : project.kind, isDefault ? "default" : ""].filter(Boolean).join(" · ")}
+                      </span>
+                    </div>
+                    <code className="mt-0.5 block truncate text-xs text-muted-foreground">{project.path.replace(/^\/(?:Users|home)\/[^/]+/, "~")}</code>
+                  </div>
+                  {!isDefault ? (
+                    <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setDefaultProject(project.path)}>
+                      Make default
+                    </Button>
+                  ) : null}
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${name}`} onClick={() => removeProject(project.path)}>
+                    <X />
+                  </Button>
                 </div>
-              </div>
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <Metric label={copy.projects} value={`${projects.length}/${maxProjects}`} />
-                <Metric label="Remaining" value={String(remainingSlots)} />
-                {/* With no folder of its own the member works in the
-                    default folder; "none" contradicted the chat beside it. */}
-                <Metric label={copy.workspace} value={workspaceName(currentWorkspace) || `${workspaceName(getAgentWorkspace(agent, runtime, workspaces)) || "none"} (default)`} />
-              </div>
-            </div>
+              );
+            })
+          ) : (
+            <p className="py-4 text-sm text-muted-foreground">{agent.name} has no project folders yet. Add one below.</p>
+          )}
+        </div>
 
-            <form className="rounded-md border border-border/80 bg-background/65 p-4" onSubmit={addProject}>
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold">Add project</div>
-                <Badge variant="outline" className="rounded-md bg-background text-xs">
-                  max {maxProjects}
-                </Badge>
-              </div>
-              <div className="mt-4 grid gap-3">
-                <Select value={selectedOptionValue} onValueChange={setProjectDraft} disabled={atLimit || !workspaceChoices.length}>
-                  <SelectTrigger className="h-10 w-full bg-background">
-                    <FolderGit2 className="size-4 text-muted-foreground" />
-                    <SelectValue placeholder={copy.scanningLocalFolders || "Scanning local folders"} />
-                  </SelectTrigger>
-                  <SelectContent position="popper" className="max-h-[420px]">
-                    <SelectGroup>
-                      <SelectLabel>{copy.localFolders}</SelectLabel>
-                      {workspaceChoices.map((workspace) => (
-                        <SelectItem key={workspace.path} value={workspace.path}>
-                          {workspace.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <Input
-                  value={projectDraft}
-                  onChange={(event) => setProjectDraft(event.target.value)}
-                  placeholder="/Users/name/path/to/repository"
-                  disabled={atLimit}
-                  className="h-10 bg-background font-mono text-xs"
-                />
-                <Button type="submit" disabled={!canAddProject}>
-                  <Plus data-icon="inline-start" />
-                  Add
-                </Button>
-                {projectError ? <p className="text-xs text-destructive">{projectError}</p> : null}
-              </div>
-            </form>
+        <form className="flex flex-col gap-2" onSubmit={addProject}>
+          <div className="text-sm font-medium">Add a folder</div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Select value={selectedOptionValue} onValueChange={setProjectDraft} disabled={atLimit || !workspaceChoices.length}>
+              <SelectTrigger className="h-9 w-full sm:w-56">
+                <SelectValue placeholder={copy.scanningLocalFolders || "Scanning local folders"} />
+              </SelectTrigger>
+              <SelectContent position="popper" className="max-h-[420px]">
+                <SelectGroup>
+                  <SelectLabel>{copy.localFolders}</SelectLabel>
+                  {workspaceChoices.map((workspace) => (
+                    <SelectItem key={workspace.path} value={workspace.path}>
+                      {workspace.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Input
+              value={projectDraft}
+              onChange={(event) => setProjectDraft(event.target.value)}
+              placeholder="/Users/name/path/to/repository"
+              disabled={atLimit}
+              className="h-9 min-w-0 flex-1 font-mono text-xs"
+            />
+            <Button type="submit" variant="outline" disabled={!canAddProject}>
+              <Plus data-icon="inline-start" />
+              Add
+            </Button>
           </div>
+          {atLimit ? <p className="text-xs text-muted-foreground">{`${agent.name} has the most folders a member can have (${maxProjects}). Remove one to add another.`}</p> : null}
+          {projectError ? <p className="text-xs text-destructive">{projectError}</p> : null}
+        </form>
 
-          <div className="grid gap-4 p-5 lg:p-6">
-            {projects.length ? (
-              projects.map((project) => {
-                const isDefault = project.path === currentWorkspace;
-                return (
-                  <article
-                    key={project.path}
-                    className="grid gap-4 rounded-md border border-border/80 bg-background/65 p-4 md:grid-cols-[44px_minmax(0,1fr)_auto] md:items-center"
-                  >
-                    <span className="grid size-11 place-items-center rounded-md border border-border/80 bg-card text-primary">
-                      <FolderGit2 className="size-5" />
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="truncate text-sm font-semibold">{project.label || project.name}</h3>
-                        <Badge variant="secondary" className="rounded-md bg-muted text-[11px] capitalize text-muted-foreground">
-                          {project.kind}
-                        </Badge>
-                        {isDefault ? (
-                          <Badge variant="outline" className="rounded-md border-primary/35 bg-primary/10 text-[11px] text-primary">
-                            Default
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <code className="mt-2 block truncate text-xs text-muted-foreground">{project.path}</code>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                      <Button type="button" variant="outline" size="sm" disabled={isDefault} onClick={() => setDefaultProject(project.path)}>
-                        <GitBranch data-icon="inline-start" />
-                        Default
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${project.label || project.name}`} onClick={() => removeProject(project.path)}>
-                        <X />
-                      </Button>
-                    </div>
-                  </article>
-                );
-              })
-            ) : (
-              <EmptyBlock icon={Folders} title="No projects added" body={`${agent.name} has no associated repositories yet.`} />
-            )}
-          </div>
-        </section>
-
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="outline" onClick={() => openTerminal(agent)}>
+        <div>
+          <Button variant="outline" size="sm" onClick={() => openTerminal(agent)}>
             <TerminalSquare data-icon="inline-start" />
             {copy.openCli}
-          </Button>
-          <Button onClick={() => navigate(memberChatPath(agent.id))}>
-            <MessageSquareText data-icon="inline-start" />
-            {copy.backToChat}
           </Button>
         </div>
       </div>
