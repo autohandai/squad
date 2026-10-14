@@ -72,6 +72,7 @@ list to the section for that version.
 - A reply that was running when the page was reloaded or closed no longer spins forever: it is marked "stopped before it finished" with Retry. Retry no longer posts your question a second time. A message sent while Squad's local service is down says so in plain words instead of "Failed to fetch", and members show their initial when their picture cannot load.
 - A member that does not answer now fails with what to try (sign in with `autohand login`, check the model) instead of "chat timed out waiting for Autohand".
 - Channel settings open in a side panel, so Workflows, Repository, Export and Delete channel are no longer hidden below the fold. `/squad-members/<id>/chat` opens the chat, and unknown member pages open the member's Home.
+- Selected tabs, error cards and other coloured borders show their colour again; a global style had turned every coloured border grey. On a phone the chat header shows the member's status in full and the Squad buttons wrap instead of running off the screen. The start-up splash follows your theme and no longer fades over the app's own start-up screen.
 - Sidebar: a member row's tooltip no longer covers its own menu, and the ⋯ button stays visible while its menu is open.
 
 - The Model page of a Claude Code, Codex or ACP member shows that engine, its model and its settings instead of the workspace's Autohand provider, which those members never use.

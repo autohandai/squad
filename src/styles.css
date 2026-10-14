@@ -136,9 +136,14 @@
   --ring: #1b1b18;
 }
 
-* {
-  border-color: var(--border);
-  outline-color: color-mix(in srgb, var(--ring) 50%, transparent);
+/* In the base layer, so utilities win. Unlayered, this beat every
+   border-* colour class in the app: active tabs, error cards and the
+   permission ladder all drew in plain --border. */
+@layer base {
+  * {
+    border-color: var(--border);
+    outline-color: color-mix(in srgb, var(--ring) 50%, transparent);
+  }
 }
 
 html,

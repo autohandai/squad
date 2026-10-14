@@ -255,3 +255,4 @@
 - Seed data is a first-run default with nothing personal in it: no absolute paths, no fabricated tasks, memory, automations or activity, and no dates from before the install. A seed the person deletes stays deleted.
 - Numbers and charts about a member (activity calendar, active days, counts) are computed from what the member did. Never illustrate with a fixed pattern.
 - `Metric` is a value over a label with no frame; `EmptyBlock` has no border. A page section is a heading under one divider, not a card; do not nest framed blocks.
+- Global element rules in `src/styles.css` live in `@layer base`. Unlayered CSS beats every Tailwind v4 utility and silently disables them.

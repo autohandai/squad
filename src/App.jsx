@@ -14421,7 +14421,7 @@ function Conversation({
           </Popover>
             <div className="-mt-4 ml-12 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               {runtime?.available ? (
-                <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="min-w-0 truncate" />
+                <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="shrink-0 whitespace-nowrap" />
               ) : (
                 <>
                   <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
@@ -14429,8 +14429,10 @@ function Conversation({
                 </>
               )}
               {!compact ? <>
-                <span className="text-border">·</span>
-                <span className="min-w-0 max-w-40 truncate sm:max-w-[18rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
+                {/* On a phone the composer already names the folder; the
+                    status gets the room instead of both truncating. */}
+                <span className="hidden text-border sm:inline">·</span>
+                <span className="hidden min-w-0 max-w-[18rem] truncate sm:inline">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
                 <span className="hidden text-border sm:inline">·</span>
                 <span className="hidden min-w-0 max-w-48 truncate sm:inline" data-testid="chat-model-label">{memberModelLabel}</span>
                 <ContextGaugeMeta gauge={contextGauge} copy={copy} className="hidden sm:inline" separator={<span className="hidden text-border sm:inline">·</span>} />
@@ -16389,7 +16391,7 @@ function SquadDirectoryPage({
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <Button variant="outline" size="sm" onClick={() => navigate(`${MEMBER_ROUTE_PREFIX}/new`)}>
               <Plus data-icon="inline-start" />
               {copy.newMember || "New member"}
@@ -26486,16 +26488,12 @@ root.render(
 );
 
 // The boot screen in index.html has done its job once React has painted.
-// Two frames, so it fades over the mounted app rather than over nothing.
-requestAnimationFrame(() => {
-  requestAnimationFrame(() => {
-    const boot = document.getElementById("boot");
-    if (!boot) return;
-    if (boot.dataset.compact === "true") { boot.remove(); return; }
-    boot.setAttribute("data-leaving", "");
-    const remove = () => boot.remove();
-    boot.addEventListener("transitionend", remove, { once: true });
-    // A browser that skips the transition (reduced motion) never fires it.
-    setTimeout(remove, 400);
-  });
-});
+// React's own boot screen puts the same name in the same place, so the hand
+// over is a swap, not a fade: fading one centred title over another showed
+// both at once. A timer backs up the frames, which a hidden window does not
+// render, so the splash cannot outstay the app.
+{
+  const removeBoot = () => document.getElementById("boot")?.remove();
+  requestAnimationFrame(() => requestAnimationFrame(removeBoot));
+  setTimeout(removeBoot, 1500);
+}
