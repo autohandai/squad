@@ -36,3 +36,6 @@ the lane preview (lane build served locally, reads forwarded to the installed
 | 25 | Sidebar | Keeping the sidebar the way you arranged it | Folded channel sections and Direct messages stay folded after a reload. |
 | 26 | Needs you | Clearing stopped work you dealt with elsewhere | "Hide" on a stopped row; it stays hidden until that row changes (fails again, is retried), with "N stopped items are hidden. Show". The summary's count follows. |
 | 27 | Needs you | Going from the count to the items | Each part of the summary ("1 decision · 1 unread · 6 stopped") goes to its section; "working" opens In progress. |
+| 28 | Member, Memory | Finding one fact a member keeps | "What Eva knows" shows a count and, past six entries, a search field; Esc clears it, and an empty result says what found nothing. |
+| 29 | Member, History | Finding one event in a long trail | "Search this history" over the loaded records, saying when Load more would search further back. |
+| 30 | Member, Permissions | Undoing hand-tuned tool settings | "3 tools differ from the Level 4 defaults. Reset to the level's defaults": choosing the level you are already on did nothing, so there was no way back. |

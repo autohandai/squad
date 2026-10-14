@@ -22059,7 +22059,11 @@ function MemoryInboxPage({
   const hiddenRejectedCount = agentItems.filter((item) => item.status === "rejected" && item.isHidden).length;
   // Entries are {id, text, at, source} (ADR-0048); normalising here also
   // carries the legacy plain strings some saves still hold.
-  const activeMemory = normalizeMemoryEntries(agent.memory);
+  const [memoryQuery, setMemoryQuery] = useState("");
+  const memoryNeedle = memoryQuery.trim().toLowerCase();
+  const allActiveMemory = normalizeMemoryEntries(agent.memory);
+  // A member with dozens of entries needs a way to find one.
+  const activeMemory = memoryNeedle ? allActiveMemory.filter((entry) => String(entry.text || "").toLowerCase().includes(memoryNeedle)) : allActiveMemory;
 
   // What a member knows comes first, then what waits for you, then the
   // record. This was a "Memory Inbox" title with an icon tile, three "0"
@@ -22075,7 +22079,12 @@ function MemoryInboxPage({
         </p>
 
         <section className="grid gap-2" aria-labelledby="memory-active">
-          <h3 id="memory-active" className="text-sm font-semibold">{`What ${agent.name} knows`}</h3>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 id="memory-active" className="text-sm font-semibold">{`What ${agent.name} knows`}{allActiveMemory.length ? <span className="ml-2 font-normal text-muted-foreground">{allActiveMemory.length}</span> : null}</h3>
+            {allActiveMemory.length > 6 ? (
+              <Input value={memoryQuery} onChange={(event) => setMemoryQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setMemoryQuery(""); }} placeholder="Search memory" aria-label="Search memory" className="h-8 w-56 text-sm" />
+            ) : null}
+          </div>
           {activeMemory.length ? (
             <div className="divide-y divide-border/70 border-y border-border/70">
               {activeMemory.map((entry) => (
@@ -22086,7 +22095,7 @@ function MemoryInboxPage({
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">Nothing yet.</p>
+            <p className="text-sm text-muted-foreground">{memoryNeedle ? `Nothing ${agent.name} knows mentions \u201c${memoryQuery.trim()}\u201d.` : "Nothing yet."}</p>
           )}
         </section>
 
@@ -22852,6 +22861,23 @@ function PermissionLadderPanel({
       {workspaceOverrideCount ? (
         <p className="text-xs text-muted-foreground">{`${workspaceOverrideCount} folder${workspaceOverrideCount === 1 ? " has" : "s have"} its own settings for this member.`}</p>
       ) : null}
+      {(() => {
+        // After hand-tuning tools there was no way back: choosing the level
+        // you are already on does nothing. Say how far from the level's
+        // defaults the tools are, and put them back in one click.
+        const preset = permissionPresetForAutonomyLadder(activeLevel.id);
+        const changed = [
+          ...Object.entries(preset.modes || {}).filter(([id, mode]) => (permissions.modes?.[id] || mode) !== mode),
+          ...Object.entries(preset.builtInPolicies || {}).filter(([id, mode]) => (permissions.builtInPolicies?.[id] || mode) !== mode),
+        ].length;
+        if (!changed) return null;
+        return (
+          <p className="text-xs text-muted-foreground">
+            {`${changed} ${changed === 1 ? "tool differs" : "tools differ"} from the Level ${activeLevel.rank} defaults. `}
+            <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => onLadderChange(activeLevel.id)}>Reset to the level's defaults</button>
+          </p>
+        );
+      })()}
 
       <ToggleGroup
         type="single"
