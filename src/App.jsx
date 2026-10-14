@@ -325,6 +325,7 @@ import { parseLocalJson, writeLocalJson, compactChannelMessagesCache, isStorageQ
 import { MemberWorkspacePicker } from "@/components/chat/MemberWorkspacePicker";
 import { activityCalendar } from "@/lib/activity-calendar";
 import { channelSlug } from "@/lib/channel-name";
+import { copyText } from "@/lib/copy-text";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
@@ -23536,13 +23537,9 @@ function CompactAgentIdCard({ agent }) {
 
   async function copyIdCard() {
     const text = buildAgentIdCardText(agent);
-    try {
-      await navigator.clipboard?.writeText(text);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1400);
-    } catch {
-      setCopied(false);
-    }
+    const ok = await copyText(text);
+    setCopied(ok ? "copied" : "failed");
+    window.setTimeout(() => setCopied(false), 1400);
   }
 
   return (
@@ -23564,7 +23561,7 @@ function CompactAgentIdCard({ agent }) {
       </dl>
       <Button type="button" variant="outline" size="sm" className="mt-4 w-full" onClick={copyIdCard}>
         <ClipboardCheck data-icon="inline-start" />
-        {copied ? "Copied" : "Copy ID card"}
+        {copied === "copied" ? "Copied" : copied === "failed" ? "Could not copy" : "Copy ID card"}
       </Button>
     </aside>
   );

@@ -5,6 +5,7 @@ import { Field, FieldContent, FieldDescription, FieldTitle } from "@/components/
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { formatUsageCount, systemCountRows } from "@/lib/system-settings";
+import { copyText } from "@/lib/copy-text";
 
 function Row({ title, description, children, htmlFor }) {
   return (
@@ -90,13 +91,9 @@ export function SystemSettings({ api, locale = "en", copy = {}, onAutoCheckUpdat
   async function copyPath() {
     const path = summary?.dataFolder || "";
     if (!path) return;
-    try {
-      await navigator.clipboard?.writeText(path);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // The path is visible on the row; nothing else to do.
-    }
+    const ok = await copyText(path);
+    setCopied(ok ? "copied" : "failed");
+    window.setTimeout(() => setCopied(false), 1500);
   }
 
   const counts = systemCountRows(summary || {}, copy);
@@ -123,7 +120,7 @@ export function SystemSettings({ api, locale = "en", copy = {}, onAutoCheckUpdat
             {dataFolder || "…"}
           </code>
           <Button type="button" variant="ghost" size="sm" disabled={!dataFolder} onClick={copyPath}>
-            {copied ? copy.copied || "Copied" : copy.copyPath || "Copy path"}
+            {copied === "copied" ? copy.copied || "Copied" : copied === "failed" ? copy.copyFailed || "Select the path to copy it" : copy.copyPath || "Copy path"}
           </Button>
           <Button type="button" variant="outline" size="sm" disabled={!dataFolder || reveal.state === "opening"} onClick={revealFolder}>
             {summary?.revealLabel || copy.systemReveal || "Show in Finder"}
