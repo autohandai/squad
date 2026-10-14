@@ -65,6 +65,7 @@ list to the section for that version.
 
 ### Fixed
 
+- A paused member's dot in the sidebar is grey and says Paused, matching the Squad list. Before, it stayed green whenever the member's session was still open.
 - Adding a team keeps every member. Before, members drafted together were given the same id, replaced each other and only the last one remained.
 - A new install no longer comes with someone else's work: no `clients-pie-shop-nz` channel, no tasks "running" in a folder you never opened, no pending decision in Needs you, no active "Smoke test" automation, and the four starting members no longer point at a folder on another computer or claim days of activity. Deleting `#general` or `#release-reviews` now sticks. The full list of fixes from this pass, with causes, is in `docs/reports/bughunt-2026-10.md`.
 - The member page's activity calendar shows what that member actually did, ending today, instead of the same made-up year for everyone.

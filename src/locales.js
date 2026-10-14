@@ -246,6 +246,7 @@ const UI_COPY_BY_LANGUAGE = {
     presenceWorking: "Working",
     presenceOnline: "Online",
     presenceIdle: "Idle",
+    presencePaused: "Paused",
     presenceOffline: "Offline",
     presenceUnknown: "Unknown",
     presenceBridgeDown: "Unknown: the local bridge is not reachable",

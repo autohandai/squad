@@ -6,11 +6,15 @@
 // the UI needs (label, dot classes, sort order) and answers for members the
 // bridge has not seen, or cannot be asked because it is down.
 
-export const PRESENCE_ORDER = ["working", "online", "idle", "offline", "unknown"];
+export const PRESENCE_ORDER = ["working", "online", "idle", "paused", "offline", "unknown"];
 
 // Mirrors OFFLINE_MEMBER_STATUSES in src/App.jsx: a stored member status
 // that means "not available" regardless of processes.
 const OFFLINE_MEMBER_STATUSES = new Set(["offline", "archived", "disabled"]);
+// Mirrors memberStateId in src/App.jsx: the statuses the Squad list calls
+// Paused. A paused member's session can still be alive, so the bridge says
+// "online"; the dot used to go green beside a row that read Paused.
+const PAUSED_MEMBER_STATUSES = new Set(["paused", "suspended", "hold"]);
 
 // Colours follow DESIGN.md: accent for work in progress, green for
 // available, muted for idle and offline. Unknown draws no fill at all so a
@@ -18,6 +22,7 @@ const OFFLINE_MEMBER_STATUSES = new Set(["offline", "archived", "disabled"]);
 const STATES = {
   working: { copyKey: "presenceWorking", label: "Working", dotClassName: "bg-primary", textClassName: "text-primary", pulse: true, ring: false },
   online: { copyKey: "presenceOnline", label: "Online", dotClassName: "bg-emerald-500", textClassName: "text-emerald-700 dark:text-emerald-300", pulse: false, ring: false },
+  paused: { copyKey: "presencePaused", label: "Paused", dotClassName: "bg-slate-400", textClassName: "text-slate-600 dark:text-slate-300", pulse: false, ring: false },
   idle: { copyKey: "presenceIdle", label: "Idle", dotClassName: "bg-amber-500", textClassName: "text-amber-700 dark:text-amber-300", pulse: false, ring: false },
   offline: { copyKey: "presenceOffline", label: "Offline", dotClassName: "bg-muted-foreground/45", textClassName: "text-muted-foreground", pulse: false, ring: false },
   unknown: { copyKey: "presenceUnknown", label: "Unknown", dotClassName: "bg-transparent border border-dotted border-muted-foreground/70", textClassName: "text-muted-foreground", pulse: false, ring: true },
@@ -62,9 +67,12 @@ export function presenceMeta(state, copy = {}) {
 export function presenceFor(memberId, presenceMap, { bridgeReachable = true, memberStatus = "online" } = {}) {
   if (!bridgeReachable) return { state: "unknown", since: null, activeRuns: 0, sessionIdleMs: null };
   const entry = presenceMap && memberId ? presenceMap[String(memberId).trim()] : null;
-  if (entry?.state) return { since: null, activeRuns: 0, sessionIdleMs: null, ...entry, state: normalizePresenceState(entry.state) };
   const stored = String(memberStatus || "online").toLowerCase();
-  return { state: OFFLINE_MEMBER_STATUSES.has(stored) ? "offline" : "online", since: null, activeRuns: 0, sessionIdleMs: null };
+  // What the person set wins over what the processes say: the Squad list
+  // reads the stored status, and the dot beside it has to agree.
+  const override = PAUSED_MEMBER_STATUSES.has(stored) ? "paused" : OFFLINE_MEMBER_STATUSES.has(stored) ? "offline" : "";
+  if (entry?.state) return { since: null, activeRuns: 0, sessionIdleMs: null, ...entry, state: override || normalizePresenceState(entry.state) };
+  return { state: override || "online", since: null, activeRuns: 0, sessionIdleMs: null };
 }
 
 /** One sentence for tooltips: "Working · 2 runs" / "Idle for 4 min". */

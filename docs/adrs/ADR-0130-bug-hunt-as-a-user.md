@@ -83,7 +83,20 @@ the same way.
    Delete channel already had, rather than a dialog, so the list stays where
    it is.
 
+9. **What the person set beats what the processes say.** Driving the
+   installed app through CuaDriver showed James Hill as Paused in the Squad
+   list and green in the sidebar. The Squad list reads the stored status;
+   the dot read the bridge's presence, which reports a paused member whose
+   session is still open as online. `presenceFor()` now lets a stored
+   paused (or offline) status override the bridge entry, and a new
+   `paused` presence state uses the list's slate dot. A bridge outage still
+   reads unknown, since nothing about the member is known then.
+
 ## Consequences
+
+- Away (amber in the Squad list) is still shown by the dot as whatever the
+  bridge says. Presence has Idle, also amber, but a different word; folding
+  Away in needs a decision on whether Away and Idle are one state.
 
 - Installs that already saved the pie-shop channel, the seed tasks or the
   seed memory keep them: nothing is deleted from saved state. Only the

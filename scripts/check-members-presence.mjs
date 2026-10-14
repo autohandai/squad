@@ -106,7 +106,7 @@ assert.deepEqual(derivePresence({ sessions: [{ busy: true }], runs: [{ status: "
 
 // --- presence-states (browser side, pure) ---------------------------------
 
-assert.deepEqual(PRESENCE_ORDER, ["working", "online", "idle", "offline", "unknown"]);
+assert.deepEqual(PRESENCE_ORDER, ["working", "online", "idle", "paused", "offline", "unknown"]);
 assert.ok(presenceOrder("working") < presenceOrder("online") && presenceOrder("online") < presenceOrder("idle"));
 assert.equal(presenceOrder("nonsense"), PRESENCE_ORDER.indexOf("unknown"), "unknown state sorts last");
 
@@ -131,6 +131,13 @@ assert.equal(presenceOrder("nonsense"), PRESENCE_ORDER.indexOf("unknown"), "unkn
   assert.equal(presenceFor("iris", map, { memberStatus: "archived" }).state, "offline", "not in the map, archived → offline");
   assert.equal(presenceFor("iris", null).state, "online", "no map at all still answers");
   assert.equal(presenceFor("noah", map).activeRuns, 2);
+  // A paused member whose session is still alive: the bridge says online,
+  // the Squad list says Paused. The dot follows the list.
+  assert.equal(presenceFor("kai", map, { memberStatus: "paused" }).state, "paused", "stored paused beats a live map entry");
+  assert.equal(presenceFor("iris", map, { memberStatus: "hold" }).state, "paused", "not in the map, on hold → paused");
+  assert.equal(presenceFor("kai", map, { memberStatus: "archived" }).state, "offline", "stored offline beats a live map entry");
+  assert.equal(presenceFor("kai", map, { memberStatus: "paused", bridgeReachable: false }).state, "unknown", "bridge down still reads unknown");
+  assert.equal(presenceMeta("paused").label, "Paused");
   assert.equal(presenceDescription(map.noah), "Working · 2 runs");
   assert.equal(presenceDescription(map.kai), "Idle for 2 min");
   assert.equal(presenceDescription({ state: "online" }), "Online");
