@@ -22339,7 +22339,6 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
     });
   }, [defaultPermissionWorkspace, projectChoices, runtime, selectedWorkspace, workspaces]);
   const { modes: policyModes, allow: allowedCount, ask: askCount, block: blockedCount } = permissionModeCounts(permissions);
-  const autonomyScore = Math.round(((allowedCount * 2 + askCount) / (policyModes.length * 2)) * 100);
   const workspaceOverrideCount = permissionOverrideCount(agent.permissions);
 
   useEffect(() => {
@@ -22458,103 +22457,54 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
       <PageTitle title={localizedSectionLabel("permissions", copy)} />
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
         <ComputerUsePermissions member={agent} api={api} />
-        <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-          <div className="grid gap-5 border-b border-border/75 p-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:p-6">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="grid size-11 place-items-center rounded-md border border-primary/35 bg-primary/15 text-primary">
-                  <ShieldCheck className="size-5" />
-                </span>
-                <div className="min-w-0">
-                  <h2 className="text-2xl font-semibold tracking-normal">Agent permissions</h2>
-                  <p className="mt-1 truncate text-sm text-muted-foreground">
-                    {agent.name} / {localizedRole(agent, copy)} / {workspaceName(selectedWorkspace) || "workspace"}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <PermissionMetric icon={BadgeCheck} label="Autonomous tools" value={allowedCount} tone="text-primary" />
-                <PermissionMetric icon={KeyRound} label="Approval gates" value={askCount} tone="text-amber-700 dark:text-amber-200" />
-                <PermissionMetric icon={Ban} label="Blocked surfaces" value={blockedCount} tone="text-red-700 dark:text-red-200" />
-              </div>
-            </div>
-
-            <div className="rounded-md border border-border/80 bg-background/65 p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <div className="text-sm font-semibold">Autonomy profile</div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    Level {activeLadder.rank}: {activeLadder.label} / {autonomyScore}% coverage
-                  </div>
-                </div>
-                <Gauge className="size-5 text-primary" />
-              </div>
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-muted">
-                <div className="h-full rounded-full bg-primary" style={{ width: `${autonomyScore}%` }} />
-              </div>
-              <div className="mt-4 grid gap-2">
-                <Select value={permissions.permissionMode} onValueChange={updatePermissionMode}>
-                  <SelectTrigger className="h-9 w-full">
-                    <SlidersHorizontal className="size-4 text-muted-foreground" />
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectLabel>Permission mode</SelectLabel>
-                      {CLI_PERMISSION_MODE_OPTIONS.map((item) => (
-                        <SelectItem key={item.id} value={item.id}>
-                          {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="flex h-10 items-center justify-between gap-3 rounded-md border border-border/80 px-3 text-xs text-muted-foreground">
-                    Remember session
-                    <Switch
-                      checked={permissions.rememberSession}
-                      onCheckedChange={(rememberSession) => updatePermissions({ rememberSession })}
-                    />
-                  </label>
-                  <label className="flex h-10 items-center justify-between gap-3 rounded-md border border-border/80 px-3 text-xs text-muted-foreground">
-                    External URLs
-                    <Switch
-                      checked={permissions.allUrlsAllowed}
-                      onCheckedChange={(allUrlsAllowed) => updatePermissions({ allUrlsAllowed })}
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
+        {/* Flat, as the other member pages. This was a bordered card holding
+            an icon tile, a 2xl "Agent permissions" title, three boxed count
+            tiles, a nested "Autonomy profile" box with a progress bar and two
+            bordered switch boxes, and a three-cell runtime grid. */}
+        <section className="grid gap-4 border-b border-border/70 pb-5" aria-labelledby="agent-permissions-heading">
+          <div>
+            <h2 id="agent-permissions-heading" className="text-base font-semibold">{`What ${agent.name} may do in ${workspaceName(selectedWorkspace) || "this folder"}`}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {`Level ${activeLadder.rank}: ${activeLadder.label}. ${allowedCount} tools run freely, ${askCount} ask first, ${blockedCount} are blocked.`}
+            </p>
           </div>
-
-          <div className="grid gap-px bg-border/75 lg:grid-cols-3">
-            <PermissionRuntimeItem
-              icon={TerminalSquare}
-              label="CLI runtime"
-              value={runtime?.available ? "ready" : "offline"}
-              detail={engineVersion(runtime?.version) || runtime?.autohandPath || "local bridge"}
-            />
-            <PermissionRuntimeItem
-              icon={LockKeyhole}
-              label="Config scope"
-              value="isolated"
-              detail={`.autohand/agents/${agent.id}`}
-            />
-            <PermissionRuntimeItem
-              icon={GitBranch}
-              label="Workspace"
-              value={workspaceName(selectedWorkspace) || "selected"}
-              detail={selectedWorkspace || "No workspace selected"}
-            />
+          <div className="divide-y divide-border/70">
+            <div className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+              <span className="text-sm">Permission mode</span>
+              <Select value={permissions.permissionMode} onValueChange={updatePermissionMode}>
+                <SelectTrigger className="h-8 w-56">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectLabel>Permission mode</SelectLabel>
+                    {CLI_PERMISSION_MODE_OPTIONS.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-center justify-between gap-3 py-2.5 text-sm">
+              <span>Remember approvals for the session</span>
+              <Switch checked={permissions.rememberSession} onCheckedChange={(rememberSession) => updatePermissions({ rememberSession })} />
+            </label>
+            <label className="flex items-center justify-between gap-3 py-2.5 text-sm">
+              <span>Open any web address</span>
+              <Switch checked={permissions.allUrlsAllowed} onCheckedChange={(allUrlsAllowed) => updatePermissions({ allUrlsAllowed })} />
+            </label>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {`Autohand Code ${runtime?.available ? engineVersion(runtime?.version) || "ready" : "is not running"} · settings kept apart in ~/.autohand/agents/${agent.id} · folder ${(selectedWorkspace || "not chosen").replace(/^\/(?:Users|home)\/[^/]+/, "~")}`}
+          </p>
         </section>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-md border bg-card/75 p-1 lg:max-w-4xl lg:grid-cols-5">
+          <TabsList variant="line" className="h-8 flex-wrap justify-start">
             {PERMISSION_TABS.map((tabItem) => (
-              <TabsTrigger key={tabItem.id} value={tabItem.id} className="h-10 rounded-[6px] px-3 text-sm">
+              <TabsTrigger key={tabItem.id} value={tabItem.id} className="flex-none px-2 text-sm">
                 {tabItem.label}
               </TabsTrigger>
             ))}
@@ -22713,7 +22663,9 @@ function PermissionLadderPanel({
                 <SelectLabel>Workspace</SelectLabel>
                 {workspaceChoices.map((workspace) => (
                   <SelectItem key={workspace.path} value={workspace.path}>
-                    {workspace.label || workspaceName(workspace.path)}
+                    {/* The label was the path from home ("Documents/autohand/
+                        web/prototy…"), cut in the 300px field. */}
+                    {workspaceName(workspace.path) || workspace.label}
                   </SelectItem>
                 ))}
               </SelectGroup>
@@ -23297,31 +23249,6 @@ function PermissionConfigPreview({ permissions }) {
         {JSON.stringify(preview, null, 2)}
       </pre>
     </section>
-  );
-}
-
-function PermissionMetric({ icon: Icon, label, value, tone }) {
-  return (
-    <div className="rounded-md border border-border/80 bg-background/65 p-4">
-      <div className={cn("flex items-center gap-2 text-sm font-semibold", tone)}>
-        <Icon className="size-4" />
-        {value}
-      </div>
-      <div className="mt-2 text-xs text-muted-foreground">{label}</div>
-    </div>
-  );
-}
-
-function PermissionRuntimeItem({ icon: Icon, label, value, detail }) {
-  return (
-    <div className="bg-card p-4">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="size-4" />
-        {label}
-      </div>
-      <div className="mt-2 text-sm font-semibold">{value}</div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">{detail}</div>
-    </div>
   );
 }
 
