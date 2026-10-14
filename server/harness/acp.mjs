@@ -25,6 +25,7 @@ import { agentIdFromHarnessId, findAgentSync, harnessIdFor, isAcpHarnessId, laun
 import { guiSafeEnv, redactHome } from "./discovery.mjs";
 import { resolveAccess } from "./access.mjs";
 import { formatDuration } from "../../src/lib/duration.js";
+import { stopMessage } from "./stop-reason.mjs";
 
 export const transport = "acp";
 export const ACCESS_MODES = Object.freeze(["plan", "write", "full"]);
@@ -526,7 +527,7 @@ export function runAcpHarness({
         error = timeoutKind === "inactivity"
           ? `${label} stopped after ${formatDuration(inactivityMs)} without activity. Retry to continue.`
           : `${label} stopped after ${formatDuration(timeoutMs)} (maximum runtime). Retry to continue.`;
-      } else if (stopped) error = "chat stopped by the user";
+      } else if (stopped) error = stopMessage(signal);
       else if (stalled) error = `${label} did not answer initialize within ${formatDuration(firstEventTimeoutMs)}. Check that it starts in a terminal and retry.`;
       else if (failure) error = failure;
       else {

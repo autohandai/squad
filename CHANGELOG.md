@@ -73,6 +73,7 @@ list to the section for that version.
 - A member that does not answer now fails with what to try (sign in with `autohand login`, check the model) instead of "chat timed out waiting for Autohand".
 - Channel settings open in a side panel, so Workflows, Repository, Export and Delete channel are no longer hidden below the fold. `/squad-members/<id>/chat` opens the chat, and unknown member pages open the member's Home.
 - Selected tabs, error cards and other coloured borders show their colour again; a global style had turned every coloured border grey. On a phone the chat header shows the member's status in full and the Squad buttons wrap instead of running off the screen. The start-up splash follows your theme and no longer fades over the app's own start-up screen.
+- The engine version no longer shows Squad's own commit ("Autohand Code 0.8.2 (865b66e)"), and the Harness page names the CLI the bridge actually runs. A reply cut off by a reload is recorded as such, not as "stopped by the user". Tasks in a member's navigation opens their tasks, the Projects page shows the folder the member really works in, and the permission counts agree between the ID card and the Permissions page.
 - Sidebar: a member row's tooltip no longer covers its own menu, and the ⋯ button stays visible while its menu is open.
 
 - The Model page of a Claude Code, Codex or ACP member shows that engine, its model and its settings instead of the workspace's Autohand provider, which those members never use.

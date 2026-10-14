@@ -21753,6 +21753,7 @@ function MemoryInboxPage({
               title="Accepted memory"
               description="Durable memory with source evidence and review metadata."
               empty="No accepted memory records yet."
+              emptyBody="Proposals you accept move here with their source. What this member already knows is listed under Active profile memory."
               items={accepted}
               agents={agents}
               locale={locale}
@@ -21829,7 +21830,7 @@ function MemoryInboxPage({
   );
 }
 
-function MemoryInboxSection({ title, description, empty, items, agents, locale, navigate, onSaveEdit, onAccept, onReject }) {
+function MemoryInboxSection({ title, description, empty, emptyBody = "", items, agents, locale, navigate, onSaveEdit, onAccept, onReject }) {
   return (
     <section className="grid gap-3">
       <div>
@@ -21852,7 +21853,7 @@ function MemoryInboxSection({ title, description, empty, items, agents, locale, 
           ))}
         </div>
       ) : (
-        <EmptyBlock icon={BrainCog} title={empty} body="New proposed memories will wait here for review." />
+        <EmptyBlock icon={BrainCog} title={empty} body={emptyBody || "New proposed memories will wait here for review."} />
       )}
     </section>
   );
@@ -22129,7 +22130,7 @@ function AgentProjectsPage({ agent, runtime, workspaces = [], navigate, openTerm
                   <Folders className="size-5" />
                 </span>
                 <div className="min-w-0">
-                  <h2 className="text-2xl font-semibold tracking-normal">Repositories & Projects</h2>
+                  <h2 className="text-2xl font-semibold tracking-normal">{copy.projects || "Projects"}</h2>
                   <p className="mt-1 truncate text-sm text-muted-foreground">
                     {agent.name} / {localizedRole(agent, copy)}
                   </p>
@@ -22138,7 +22139,9 @@ function AgentProjectsPage({ agent, runtime, workspaces = [], navigate, openTerm
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <Metric label={copy.projects} value={`${projects.length}/${maxProjects}`} />
                 <Metric label="Remaining" value={String(remainingSlots)} />
-                <Metric label={copy.workspace} value={workspaceName(currentWorkspace) || "none"} />
+                {/* With no folder of its own the member works in the
+                    default folder; "none" contradicted the chat beside it. */}
+                <Metric label={copy.workspace} value={workspaceName(currentWorkspace) || `${workspaceName(getAgentWorkspace(agent, runtime, workspaces)) || "none"} (default)`} />
               </div>
             </div>
 
@@ -22260,13 +22263,7 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
       return true;
     });
   }, [defaultPermissionWorkspace, projectChoices, runtime, selectedWorkspace, workspaces]);
-  const policyModes = [
-    ...CLI_TOOL_PERMISSIONS.map((item) => permissions.modes[item.id]),
-    ...Object.values(permissions.builtInPolicies),
-  ];
-  const allowedCount = policyModes.filter((mode) => mode === "allow").length;
-  const askCount = policyModes.filter((mode) => mode === "ask").length;
-  const blockedCount = policyModes.filter((mode) => mode === "block").length;
+  const { modes: policyModes, allow: allowedCount, ask: askCount, block: blockedCount } = permissionModeCounts(permissions);
   const autonomyScore = Math.round(((allowedCount * 2 + askCount) / (policyModes.length * 2)) * 100);
   const workspaceOverrideCount = permissionOverrideCount(agent.permissions);
 
@@ -22383,7 +22380,7 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
 
   return (
     <div className="min-h-screen bg-background">
-      <PageTitle title="Permission" />
+      <PageTitle title={localizedSectionLabel("permissions", copy)} />
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
         <ComputerUsePermissions member={agent} api={api} />
         <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
@@ -23360,13 +23357,23 @@ function brainCardPreviewLines(value, limit = 4) {
     .slice(0, limit);
 }
 
+// One count for "how much can this member do alone", so the profile's ID card
+// and the Permissions page never disagree (they read 41/48/41 and 47/54/42
+// for the same member before; bug hunt 2026-10, #56).
+function permissionModeCounts(permissions) {
+  const modes = [...CLI_TOOL_PERMISSIONS.map((item) => permissions?.modes?.[item.id]), ...Object.values(permissions?.builtInPolicies || {})];
+  return {
+    modes,
+    allow: modes.filter((mode) => mode === "allow").length,
+    ask: modes.filter((mode) => mode === "ask").length,
+    block: modes.filter((mode) => mode === "block").length,
+  };
+}
+
 function permissionSummary(agent, workspace = agent?.workspace) {
   const permissions = resolveAgentPermissionsForWorkspace(agent, workspace);
   const ladder = autonomyLadderLevelMeta(permissions.ladderLevel);
-  const policyEntries = Object.entries(permissions.builtInPolicies || {});
-  const allowCount = policyEntries.filter(([, mode]) => mode === "allow").length;
-  const askCount = policyEntries.filter(([, mode]) => mode === "ask").length;
-  const blockCount = policyEntries.filter(([, mode]) => mode === "block").length;
+  const { allow: allowCount, ask: askCount, block: blockCount } = permissionModeCounts(permissions);
   return `Level ${ladder.rank}: ${ladder.label}. ${allowCount} tools run freely, ${askCount} ask first, ${blockCount} blocked`;
 }
 
@@ -23752,6 +23759,12 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
 
   useEffect(() => {
     setWorkRecordTab(initialWorkRecordTab);
+    // Tasks in the member's navigation opens this page on Work Record's
+    // Tasks tab, which sits far below the fold; without the scroll the
+    // click looked like it opened Home.
+    if (initialWorkRecordTab !== "timeline") {
+      requestAnimationFrame(() => document.getElementById("work-record")?.scrollIntoView({ block: "start" }));
+    }
   }, [agent.id, initialWorkRecordTab]);
 
   function launchProfileRecipe({ recipe, agentId, prompt }) {
@@ -23769,7 +23782,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
 
   return (
     <div className="min-h-screen bg-background">
-      <PageTitle title={copy.home} />
+      <PageTitle title={initialWorkRecordTab === "tasks" ? copy.tasks || "Tasks" : copy.home} />
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
         <section className="relative min-h-[210px] border-b border-border/70 pb-5">
           <div className="grid gap-5 md:grid-cols-[200px_minmax(0,1fr)] md:items-center">
@@ -23823,7 +23836,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
           <ProfileRecipes agent={agent} copy={copy} onLaunch={(recipe) => setProfileRecipeTarget(recipe)} />
         ) : null}
 
-        <Card className="gap-4 rounded-none border-0 border-t border-border/75 bg-transparent py-5 shadow-none">
+        <Card id="work-record" className="scroll-mt-16 gap-4 rounded-none border-0 border-t border-border/75 bg-transparent py-5 shadow-none">
           <Tabs value={workRecordTab} onValueChange={setWorkRecordTab}>
             <CardHeader className="flex-row items-center gap-4 px-0">
               <CardTitle className="text-lg">{copy.workRecord}</CardTitle>
