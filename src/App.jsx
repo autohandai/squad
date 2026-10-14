@@ -1979,7 +1979,7 @@ const MEMBER_SECTIONS = [
 
 const CUSTOM_ROLE_TEMPLATE = {
   id: "custom-role",
-    title: "Custom Role",
+    title: "Custom role",
     description: "",
     starter:
     "Act according to this squad member's bio. Keep work scoped, ask when the role is ambiguous, and report evidence clearly.",
@@ -19695,7 +19695,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
             </div>
             <Field>
               <FieldLabel>
-                Profile Avatar <span className="text-primary">*</span>
+                Picture
               </FieldLabel>
               {/* The member header shows the portrait a hundred pixels above.
                   Repeating it here was the same face twice on one screen. */}
@@ -19703,7 +19703,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
                 <input id="member-avatar-upload" type="file" accept={AVATAR_UPLOAD_ACCEPT} className="sr-only" onChange={uploadAvatar} />
                 <Button asChild variant="outline">
                   <label htmlFor="member-avatar-upload" className="cursor-pointer">
-                    Upload Avatar
+                    Upload a picture
                   </label>
                 </Button>
                 <span className="text-sm text-muted-foreground">PNG / JPG / WebP, max 2 MB</span>
@@ -19970,7 +19970,7 @@ function CustomRoleTemplateDialog({ open, onOpenChange, onCreate }) {
                 <input id="custom-role-avatar-upload" type="file" accept={AVATAR_UPLOAD_ACCEPT} className="sr-only" onChange={uploadAvatar} />
                 <Button asChild variant="ghost" className="text-muted-foreground hover:text-foreground">
                   <label htmlFor="custom-role-avatar-upload" className="cursor-pointer">
-                    Upload Avatar
+                    Upload a picture
                   </label>
                 </Button>
               </div>
@@ -20223,7 +20223,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
           <div className="grid gap-7 px-6 py-6 sm:px-8 lg:grid-cols-[280px_minmax(0,1fr)]">
             <section className="space-y-4">
               <Field>
-                <FieldLabel>Profile Avatar</FieldLabel>
+                <FieldLabel>Picture</FieldLabel>
                 <div className="flex items-center gap-4">
                   <RoleAvatar
                     roleId={agent?.employeeType || "custom-role"}
@@ -20240,7 +20240,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
                   />
                   <Button asChild variant="outline">
                     <label htmlFor={`profile-avatar-upload-${agent?.id || "member"}`} className="cursor-pointer">
-                      Upload Avatar
+                      Upload a picture
                     </label>
                   </Button>
                 </div>
@@ -20289,7 +20289,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
               </Field>
 
               <Field>
-                <FieldLabel>Operating Instructions</FieldLabel>
+                <FieldLabel>Operating instructions</FieldLabel>
                 <Textarea
                   value={draft.instructions}
                   onChange={(event) => updateDraft({ instructions: event.target.value })}
