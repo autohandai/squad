@@ -428,6 +428,8 @@ class RenderErrorBoundary extends React.Component {
   }
 }
 
+const CHAT_DRAFTS_KEY = "autohandSquad.v1.chatDrafts";
+
 const STORAGE_KEYS = {
   agents: "autohandSquad.v1.agents",
   // Members the person deleted. Without this the seed list silently puts a
@@ -4470,7 +4472,28 @@ function presenceRecordIsFresh(record, maxAgeMs) {
 
 function App() {
   const [route, setRoute] = useState(() => window.location.pathname + window.location.search);
-  const [chatDraftsByAgent, setChatDraftsByAgent] = useState(() => isSettingsDestination(window.location.pathname) ? readSettingsReturn()?.drafts || {} : {});
+  // Unsent drafts outlive a reload or a crash: typing a long message and
+  // losing it to a restart was the one thing the composer could not recover.
+  const [chatDraftsByAgent, setChatDraftsByAgent] = useState(() => {
+    if (isSettingsDestination(window.location.pathname)) return readSettingsReturn()?.drafts || {};
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(CHAT_DRAFTS_KEY) || "{}");
+      return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const kept = Object.fromEntries(Object.entries(chatDraftsByAgent || {}).filter(([, value]) => typeof value === "string" && value.trim()));
+        window.localStorage.setItem(CHAT_DRAFTS_KEY, JSON.stringify(kept));
+      } catch {
+        // Storage can be full or blocked; the draft stays in memory.
+      }
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [chatDraftsByAgent]);
   const [removedAgentIds, setRemovedAgentIds] = useState(() => {
     return [...removedIdSet(readStored(storageKeysFor("removedAgents"), []))];
   });
