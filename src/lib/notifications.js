@@ -16,7 +16,7 @@ export const NOTIFICATION_KINDS = [
   { key: "runFinished", label: "Run finished", detail: "A member completed a run while you were elsewhere." },
   { key: "runFailed", label: "Run failed", detail: "A run or reply ended with an error." },
   { key: "handoffPending", label: "Handoff waiting", detail: "A member handed work to a teammate and needs your go-ahead." },
-  { key: "approvalPending", label: "Approval waiting", detail: "A workflow step is paused for your approval." },
+  { key: "approvalPending", label: "Approval waiting", detail: "A workflow step, a folder a member asked to open, or a secret a member asked for is waiting for your answer." },
   { key: "mention", label: "Mentions", detail: "A member mentioned you in a channel." },
 ];
 

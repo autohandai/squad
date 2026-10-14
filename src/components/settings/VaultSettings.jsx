@@ -88,7 +88,8 @@ export function VaultSettings({ api, copy = {} }) {
           <FieldContent className="gap-1">
             <FieldTitle>{copy.vaultKey || "Key"}</FieldTitle>
             <FieldDescription role="status">
-              {state.locked ? state.error : vaultKeySourceLabel(state.keySource)}
+              {/* Two sentences: the key line has no full stop of its own. */}
+              {`${String(state.locked ? state.error : vaultKeySourceLabel(state.keySource)).replace(/[.\s]+$/, "")}.`}
               {" "}{copy.vaultKeyDetail || "Items are sealed with AES-256-GCM. Members see labels and masked hints, never a value."}
             </FieldDescription>
           </FieldContent>

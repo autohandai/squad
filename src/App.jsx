@@ -9785,6 +9785,7 @@ function App() {
               />
             ) : isSettings ? (
               <SettingsPage
+                agents={agents}
                 onBack={returnFromSettings}
                 onOnboarding={openOnboarding}
                 updates={updates}
@@ -24417,6 +24418,7 @@ function SettingsAnalyticsPage({ locale = DEFAULT_LOCALE, copy = getLocaleCopy(D
 }
 
 function SettingsPage({
+  agents = [],
   onBack,
   onOnboarding,
   updates = null,
@@ -24512,13 +24514,7 @@ function SettingsPage({
       ? formatCopy(copy.systemThemeDetail, { theme: activeThemeLabel })
       : formatCopy(copy.pinnedThemeDetail, { theme: activeThemeLabel });
   const bridgeHandoffRetryMode = normalizeHandoffRetryMode(runtime?.handoffs?.retryMode);
-  const effectiveHandoffRetryMode = resolveHandoffRetryMode(handoffSettings, runtime);
   const selectedHandoffRetryValue = handoffSettings?.retryMode || HANDOFF_RETRY_BRIDGE_DEFAULT;
-  const handoffRetryDetail = handoffSettings?.retryMode
-    ? handoffRetryModeDescription(effectiveHandoffRetryMode, copy)
-    : formatCopy(copy.handoffRetryBridgeDefaultDetail, {
-        mode: handoffRetryModeLabel(bridgeHandoffRetryMode, copy),
-      });
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
   const missionControlDetail = `${formatLocalizedNumber(counts.tasks || 0, activeLocale)} tracked ${
     counts.tasks === 1 ? "task" : "tasks"
@@ -24881,8 +24877,29 @@ function SettingsPage({
               <FieldTitle><label htmlFor="observe-projects">Observe assigned projects</label></FieldTitle>
               <FieldDescription>Idle members check their project folders and message you about concrete improvements. Checks pause during work and breaks; suggestions wait for your direction.</FieldDescription>
               <FieldDescription>Reviews run at most once an hour per member, up to four per member and twelve for the squad each day.</FieldDescription>
-              {projectObserver?.error ? <p role="status" className="text-xs text-destructive">{projectObserver.error}</p> : projectObserver?.snapshot ? <p className="text-xs text-muted-foreground">{projectObserver.snapshot.activeMemberId ? "A member is reviewing a project." : projectObserver.snapshot.running && improvementSettings.observeAssignedProjects ? "Watching assigned projects." : "Project observation is paused."}</p> : null}
-              {projectObserver?.snapshot?.observations?.filter(item => item.error || item.status === "unsupported").map(item => <p key={item.memberId + item.project} role="status" className="text-xs text-destructive">{item.error || item.unsupported?.message || item.reason}</p>)}
+              {(() => {
+                // One line per distinct problem, naming who it affects: the
+                // same sentence used to print once per member and project,
+                // under a status that still said "Watching assigned projects".
+                const observations = projectObserver?.snapshot?.observations || [];
+                const failing = observations.filter(item => item.error || item.status === "unsupported");
+                const problems = new Map();
+                for (const item of failing) {
+                  const message = item.error || item.unsupported?.message || item.reason || "";
+                  if (!message) continue;
+                  const names = problems.get(message) || new Set();
+                  const member = agents.find(agent => agent.id === item.memberId);
+                  if (member) names.add(member.name);
+                  problems.set(message, names);
+                }
+                const allFailing = observations.length > 0 && failing.length === observations.length;
+                return (
+                  <>
+                    {projectObserver?.error ? <p role="status" className="text-xs text-destructive">{projectObserver.error}</p> : projectObserver?.snapshot ? <p className="text-xs text-muted-foreground">{projectObserver.snapshot.activeMemberId ? "A member is reviewing a project." : projectObserver.snapshot.running && improvementSettings.observeAssignedProjects && !allFailing ? "Watching assigned projects." : allFailing ? "No project can be watched right now." : "Project observation is paused."}</p> : null}
+                    {[...problems].map(([message, names]) => <p key={message} role="status" className="text-xs text-destructive">{names.size ? `${[...names].join(", ")}: ` : ""}{message}</p>)}
+                  </>
+                );
+              })()}
             </FieldContent>
             <Switch id="observe-projects" checked={improvementSettings.observeAssignedProjects} onCheckedChange={checked => onImprovementSettingsChange?.({ ...improvementSettings, observeAssignedProjects: checked === true })} />
           </Field>
@@ -24891,7 +24908,9 @@ function SettingsPage({
     ),
     handoff: () => (
       <>
-        <SettingsSectionHeader title={copy.handoffRetryPolicy} description={handoffRetryDetail} />
+        {/* The first choice already names the bridge default; repeating it
+            here, plus an environment variable name, said it three times. */}
+        <SettingsSectionHeader title={copy.handoffRetryPolicy} description={copy.handoffRetryIntro || "What happens when work handed to a teammate fails partway."} />
         <div className="divide-y divide-border/65">
           {[HANDOFF_RETRY_BRIDGE_DEFAULT, ...HANDOFF_RETRY_MODES].map((mode) => (
             <HandoffRetryChoice
@@ -24904,12 +24923,6 @@ function SettingsPage({
             />
           ))}
         </div>
-        <p className="mt-4 text-xs text-muted-foreground">
-          {formatCopy(copy.handoffRetryEnvDefault, {
-            variable: "AUTOHAND_SQUAD_HANDOFF_RETRY_MODE",
-            mode: handoffRetryModeLabel(bridgeHandoffRetryMode, copy),
-          })}
-        </p>
       </>
     ),
     "mission-control": () => (
@@ -24932,7 +24945,9 @@ function SettingsPage({
     ),
     runtime: () => (
       <>
-        <SettingsSectionHeader title={copy.runtimeBridge} description={runtime?.version || copy.checkingRuntime} />
+        {/* The bridge is Squad's; 0.8.2 is the Autohand CLI it runs. Both
+            rows used to show the CLI's version as their own. */}
+        <SettingsSectionHeader title={copy.runtimeBridge} description={runtime ? `Autohand Squad ${runtime.squadVersion || ""} · Autohand Code ${runtime.version || "not found"}`.replace(/\s+·/, " ·") : copy.checkingRuntime} />
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="divide-y divide-border/65">
             <OutsideSessionsSettings api={api} />
@@ -24942,7 +24957,7 @@ function SettingsPage({
               onClick={(event) => handleLocalNavigation(event, "/extensions")}
             >
               <span className="min-w-0">
-                <span className="block font-medium">{copy.runtimeBridge}</span>
+                <span className="block font-medium">Autohand Code</span>
                 <span className="mt-1 block truncate text-sm text-muted-foreground">{runtime?.autohandPath || "Autohand path not found"}</span>
               </span>
               <ChevronRight className="hidden size-4 text-muted-foreground sm:block" />
@@ -24954,9 +24969,9 @@ function SettingsPage({
             >
               <span className="min-w-0">
                 <span className="block font-medium">{copy.analytics}</span>
-                <span className="mt-1 block truncate text-sm text-muted-foreground">{runtime?.version || copy.checkingRuntime}</span>
+                <span className="mt-1 block truncate text-sm text-muted-foreground">{copy.analyticsDetail || "Runs, usage and the services behind them."}</span>
               </span>
-              <ArrowUpRight className="hidden size-4 text-muted-foreground sm:block" />
+              <ChevronRight className="hidden size-4 text-muted-foreground sm:block" />
             </a>
             <Field orientation="horizontal" className="items-center justify-between gap-6 px-2 py-4">
               <FieldContent className="gap-1">
