@@ -827,3 +827,25 @@ no GitHub release was published.
   uninterrupted full CI run, a notarized build or a published GitHub release.
   No live newer GitHub installer was available or installed; publication stays
   pending the user's confirmation.
+
+### 0.1.7 release run, 2026-10-14
+
+The first `v0.1.7` tag run (GitHub Actions run 38529019645) failed before
+publishing; no release or asset was created. Three faults, all present since
+the 0.1.6 review candidate, which was built locally and never went through the
+release workflow:
+
+- Linux: `linux_restart_warning_commands` returned `Vec<Command>` without
+  importing `Command`; the Linux-only `cfg` block is not compiled on macOS, so
+  local builds never saw it. Fixed by naming `std::process::Command`. Not
+  compile-checked locally (no Linux target here); the next run is the check.
+- Windows: Computer Use staging called `tar` on a `D:\…` path. On the runner
+  Git Bash's GNU tar comes first on PATH and reads `D:` as a remote host
+  ("Cannot connect to D: resolve failed"). Staging now calls
+  `%SystemRoot%\System32\tar.exe` on Windows.
+- All platforms: the portable and installer packagers require `src/lib`
+  (workflows, member profiles) since 0.1.6, but the release workflow's web
+  bundle copied only `dist`, `server` and the top-level files. The bundle now
+  includes `src/lib`.
+
+The tag was moved to the fixed commit and the workflow re-run.
