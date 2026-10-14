@@ -22755,125 +22755,93 @@ function PermissionModeBadge({ mode }) {
   );
 }
 
-function PermissionSurfaceHeader({ icon: Icon, title, description, enabled, onEnabledChange, disabledMessage }) {
+function PermissionSurfaceHeader({ title, description, enabled, onEnabledChange, disabledMessage }) {
+  // A switch row, not a bordered card with an icon; the "disabled" note is a
+  // muted line instead of an amber box.
   return (
-    <section className="rounded-md border border-border/80 bg-card/75">
-      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-base font-semibold">
-            <Icon className="size-5 text-primary" />
-            {title}
-          </div>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-        </div>
+    <section className="grid gap-1 border-b border-border/70 pb-4">
+      <label className="flex items-start justify-between gap-4">
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold">{title}</span>
+          <span className="mt-0.5 block text-sm text-muted-foreground">{description}</span>
+        </span>
         <Switch checked={enabled} onCheckedChange={onEnabledChange} />
-      </div>
-      {!enabled ? (
-        <div className="mx-5 mb-5 rounded-md border border-amber-300 bg-amber-100 px-3 py-2 text-sm text-amber-900 dark:border-amber-400/35 dark:bg-amber-400/10 dark:text-amber-200">
-          {disabledMessage}
-        </div>
-      ) : null}
+      </label>
+      {!enabled ? <p className="text-xs text-amber-700 dark:text-amber-300">{disabledMessage}</p> : null}
     </section>
   );
 }
 
 function ToolGuardPanel({ permissions, updatePermissions, updateRule, updateShellEvasionRule }) {
+  // One column of headings and divider rows. Rule rows led with the rule id
+  // ("TOOL_CMD_FS_DESTRUCTION") in a wide mono column and squeezed what it
+  // does into a narrow one; groups and the Shell Evasion list were cards and
+  // tiles; a "Command lane" card showed two rows of fixed command chips with
+  // no label, the same for every member.
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="flex min-w-0 flex-col gap-5">
-        <PermissionSurfaceHeader
-          icon={ShieldAlert}
-          title="Enable Tool Guard"
-          description="Validate shell, web, and file tool parameters against Autohand Code CLI security rules. High-risk findings go through the approval flow."
-          enabled={permissions.toolGuardEnabled}
-          onEnabledChange={(toolGuardEnabled) => updatePermissions({ toolGuardEnabled })}
-          disabledMessage="Tool Guard is disabled; detector rules will not be evaluated."
-        />
+    <div className="flex max-w-4xl flex-col gap-6">
+      <PermissionSurfaceHeader
+        title="Tool Guard"
+        description="Checks shell, web and file actions against Autohand Code's security rules before they run. High-risk findings go to you for approval."
+        enabled={permissions.toolGuardEnabled}
+        onEnabledChange={(toolGuardEnabled) => updatePermissions({ toolGuardEnabled })}
+        disabledMessage="Tool Guard is off, so none of the rules below are checked."
+      />
 
-        {TOOL_GUARD_RULE_GROUPS.map((group) => (
-          <section key={group.id} className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-            <div className="flex items-center justify-between gap-3 border-b border-border/75 p-4">
-              <div className="font-semibold">{group.title}</div>
-              <Badge variant="outline" className="rounded-md bg-background text-xs">
-                {group.rules.length}
-              </Badge>
-            </div>
-            <div className="divide-y divide-border/70">
-              {group.rules.map(([id, severity, description]) => (
-                <PermissionRuleRow
-                  key={id}
-                  id={id}
-                  severity={severity}
-                  description={description}
-                  enabled={permissions.toolGuardRules[id]}
-                  onEnabledChange={(enabled) => updateRule(id, enabled)}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
-
-      <aside className="flex flex-col gap-5">
-        <section className="rounded-md border border-border/80 bg-card/75">
-          <div className="flex items-center justify-between gap-3 border-b border-border/75 p-4">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Command className="size-4 text-primary" />
-                Shell Evasion
-              </div>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                Quote, backslash, newline, and comment tricks that commonly bypass shell filters.
-              </p>
-            </div>
-            <Switch
-              checked={permissions.shellEvasionEnabled}
-              onCheckedChange={(shellEvasionEnabled) => updatePermissions({ shellEvasionEnabled })}
-            />
-          </div>
-          <div className="grid gap-3 p-4">
-            {SHELL_EVASION_RULES.map(([id, label, detail]) => (
-              <label key={id} className="grid gap-2 rounded-md border border-border/80 bg-background/65 p-3">
-                <span className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-semibold">{label}</span>
-                  <Switch
-                    checked={permissions.shellEvasionRules[id]}
-                    onCheckedChange={(enabled) => updateShellEvasionRule(id, enabled)}
-                  />
-                </span>
-                <span className="text-xs leading-5 text-muted-foreground">{detail}</span>
-              </label>
+      {TOOL_GUARD_RULE_GROUPS.map((group) => (
+        <section key={group.id} className="grid gap-2">
+          <h3 className="text-sm font-semibold">{group.title}</h3>
+          <div className="divide-y divide-border/70 border-y border-border/70">
+            {group.rules.map(([id, severity, description]) => (
+              <PermissionRuleRow
+                key={id}
+                id={id}
+                severity={severity}
+                description={description}
+                enabled={permissions.toolGuardRules[id]}
+                onEnabledChange={(enabled) => updateRule(id, enabled)}
+              />
             ))}
           </div>
         </section>
-        <CommandLaneCard />
-      </aside>
+      ))}
+
+      <section className="grid gap-2">
+        <label className="flex items-start justify-between gap-4">
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold">Shell evasion</span>
+            <span className="mt-0.5 block text-sm text-muted-foreground">Quote, backslash, newline and comment tricks that commonly slip past shell filters.</span>
+          </span>
+          <Switch checked={permissions.shellEvasionEnabled} onCheckedChange={(shellEvasionEnabled) => updatePermissions({ shellEvasionEnabled })} />
+        </label>
+        <div className="divide-y divide-border/70 border-y border-border/70">
+          {SHELL_EVASION_RULES.map(([id, label, detail]) => (
+            <label key={id} className="flex items-start justify-between gap-4 py-2.5">
+              <span className="min-w-0">
+                <span className="block text-sm">{label}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">{detail}</span>
+              </span>
+              <Switch checked={permissions.shellEvasionRules[id]} onCheckedChange={(enabled) => updateShellEvasionRule(id, enabled)} />
+            </label>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
 
 function PermissionRuleRow({ id, severity, description, enabled, onEnabledChange }) {
   return (
-    <div className="grid gap-3 p-4 lg:grid-cols-[minmax(220px,0.7fr)_120px_minmax(0,1fr)_80px] lg:items-center">
-      <div className="break-words font-mono text-sm font-semibold">{id}</div>
-      <SeverityBadge severity={severity} />
-      <p className="text-sm leading-6 text-muted-foreground">{description}</p>
+    <label className="flex items-start justify-between gap-4 py-2.5">
+      <span className="min-w-0">
+        <span className="block text-sm">{description}</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">
+          <span className={cn(severity === "critical" ? "text-red-700 dark:text-red-300" : severity === "high" ? "text-amber-700 dark:text-amber-300" : "")}>{String(severity || "").charAt(0).toUpperCase() + String(severity || "").slice(1)}</span>
+          {" · "}<code>{id}</code>
+        </span>
+      </span>
       <Switch checked={enabled} onCheckedChange={onEnabledChange} />
-    </div>
-  );
-}
-
-function SeverityBadge({ severity }) {
-  const tone = {
-    critical: "border-red-300 bg-red-100 text-red-800 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200",
-    high: "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-400/35 dark:bg-amber-400/10 dark:text-amber-200",
-    medium: "border-blue-300 bg-blue-100 text-blue-800 dark:border-blue-400/35 dark:bg-blue-500/10 dark:text-blue-200",
-  }[severity] || "border-border/80 bg-background text-muted-foreground";
-
-  return (
-    <Badge variant="outline" className={cn("w-fit rounded-md capitalize", tone)}>
-      {severity}
-    </Badge>
+    </label>
   );
 }
 
@@ -23134,31 +23102,6 @@ function ShellGuardrailCard() {
             </div>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">{rule.detail}</p>
           </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function CommandLaneCard() {
-  return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-4">
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <Command className="size-4 text-primary" />
-        Command lane
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {["rg", "cat", "sed", "bun test", "npm run build", "apply_patch"].map((item) => (
-          <span key={item} className="rounded-md border border-primary/25 bg-primary/10 px-2.5 py-1 font-mono text-[11px] text-primary">
-            {item}
-          </span>
-        ))}
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {["sudo", "rm -rf", "mkfs", "chmod 777"].map((item) => (
-          <span key={item} className="rounded-md border border-red-300 bg-red-100 px-2.5 py-1 font-mono text-[11px] text-red-800 dark:border-red-400/25 dark:bg-red-500/10 dark:text-red-200">
-            {item}
-          </span>
         ))}
       </div>
     </section>
