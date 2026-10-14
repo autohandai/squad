@@ -3789,9 +3789,20 @@ async function api(path, options = {}) {
   }
   if (!response.ok || !payload.success) {
     const route = String(path || "").split("?")[0];
-    throw new Error(payload.error || `${route} failed: ${response.status}`);
+    throw new Error(plainSystemError(payload.error) || `${route} failed: ${response.status}`);
   }
   return payload.data;
+}
+
+// Operating-system errors reached people verbatim ("ENOSPC: no space left on
+// device, mkdir '/private/tmp/…'"). Say what happened and what to do; the
+// original stays in the bridge's log.
+function plainSystemError(message) {
+  const text = String(message || "");
+  if (/\bENOSPC\b/.test(text)) return "This computer's disk is full, so Squad could not save this. Free some space and try again.";
+  if (/\b(?:EACCES|EPERM)\b/.test(text)) return "Squad is not allowed to write there. Check the folder's permissions and try again.";
+  if (/\bEMFILE\b/.test(text)) return "Too many files are open right now. Try again in a moment.";
+  return text;
 }
 
 // Stable so the settings row's effect runs once per open (ADR-0108).
