@@ -18423,7 +18423,11 @@ function formatLongDate(value, locale = DEFAULT_LOCALE) {
   }).format(date);
 }
 
-function formatRecordDate(value, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE)) {
+// Dates follow the system's region, not the translation: copy is en-US for
+// every English speaker, but an en-NZ Mac read "May 25 at 9:25 PM" in the
+// Execution panel beside "25 May" everywhere else. `undefined` lets Intl
+// use the system locale.
+function formatRecordDate(value, locale = undefined, copy = getLocaleCopy(DEFAULT_LOCALE)) {
   if (!value) return copy.never;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
@@ -18435,7 +18439,7 @@ function formatRecordDate(value, locale = DEFAULT_LOCALE, copy = getLocaleCopy(D
   }).format(date);
 }
 
-function formatAutomationDate(value, locale = DEFAULT_LOCALE) {
+function formatAutomationDate(value, locale = undefined) {
   if (!value) return "Never";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
@@ -24925,7 +24929,7 @@ function SettingsPage({
               <FieldTitle>{copy.workDetails || "Work details"}</FieldTitle>
               <FieldDescription>
                 {copy.workDetailsDetail ||
-                  "How much of a member's working shows under its reply. Summary keeps one line you can open; Always open expands it while the member works; Hidden leaves the reply on its own."}
+                  "How much of a member's working shows under their reply. Summary keeps one line you can open; Always open expands it while the member works; Hidden leaves the reply on its own."}
               </FieldDescription>
             </FieldContent>
             <Select value={normalizedChatSettings.workDetails} onValueChange={(value) => updateChatSetting("workDetails", value)}>
