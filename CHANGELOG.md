@@ -16,6 +16,7 @@ list to the section for that version.
 
 ### Changed
 
+- Navigation and controls no longer highlight on mouse drag; messages, errors, release notes, and input text can still be copied.
 - Claude execution uses Anthropic's Agent SDK with the installed Claude CLI on compatible versions. Replies, progress, sessions and cancellation stay inside Squad; older CLIs keep their existing compatibility path.
 
 ### Added

@@ -266,6 +266,22 @@ html[data-shell="desktop"] [data-tauri-drag-region] {
   cursor: default;
 }
 
+/* App chrome behaves like native controls. Content that people need to copy
+   opts back in; editable fields always retain normal selection. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+input, textarea, [contenteditable="true"], [data-selectable],
+[role="alert"], pre, code {
+  -webkit-user-select: text;
+  user-select: text;
+}
+button, button *, [role="button"], [role="menuitem"], select, nav, label {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 @layer base {
   /* Layered so utilities such as font-mono and text-sm still win on controls. */
   button,

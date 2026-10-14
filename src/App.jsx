@@ -11741,7 +11741,7 @@ function MarkdownBlocks({ text, muted = false }) {
   if (!blocks.length) return null;
 
   return (
-    <div className={cn("space-y-3 text-sm leading-6", muted ? "text-muted-foreground" : "text-foreground/88")}>
+    <div data-selectable className={cn("space-y-3 text-sm leading-6", muted ? "text-muted-foreground" : "text-foreground/88")}>
       {blocks.map((block, index) => {
         if (block.type === "heading") {
           const Heading = block.depth <= 2 ? "h3" : "h4";

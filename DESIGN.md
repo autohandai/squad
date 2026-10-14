@@ -17,6 +17,8 @@
 - Needs you is the primary destination for human attention and squad work. Preserve older Mission Control and Inbox routes as aliases; do not expose a second disconnected work destination.
 - Keep the tray/menu-bar menu action-focused. The only status block is the compact account/usage summary described under Desktop Shell; do not add further disabled summary lines when the same live details are available in submenus or app views.
 
+- App chrome, navigation, labels, and controls do not select with mouse dragging or Select all. Conversation bodies, release notes, errors, code, and editable fields remain selectable and copyable. Do not suppress selection by intercepting pointer or keyboard events.
+
 ## Squad Directory (landing surface)
 
 - Opening Autohand Squad lands on the Squad directory at `/squad` (the app root `/` redirects there). This is the team's home, not an individual member's chat.
