@@ -22846,107 +22846,90 @@ function PermissionRuleRow({ id, severity, description, enabled, onEnabledChange
 }
 
 function FileGuardPanel({ permissions, sensitivePathDraft, setSensitivePathDraft, addSensitivePath, removeSensitivePath, updatePermissions }) {
+  // One column. "URL fetches allowed" here was the same setting as "Open any
+  // web address" at the top of the page, under another name; a "Decision
+  // Scopes" card listed internal file names ("merged decision snapshot")
+  // that are not settings; the placeholder promised "Click to choose a
+  // directory" on a plain text field.
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="flex min-w-0 flex-col gap-5">
-        <PermissionSurfaceHeader
-          icon={FileCode2}
-          title="Enable File Guard"
-          description="Guard sensitive files and directories against read/write. Autohand Code CLI already has an immutable blacklist for secrets, credentials, private keys, and system paths."
-          enabled={permissions.fileGuardEnabled}
-          onEnabledChange={(fileGuardEnabled) => updatePermissions({ fileGuardEnabled })}
-          disabledMessage="File Guard is disabled; paths will not be evaluated before tool execution."
-        />
+    <div className="flex max-w-4xl flex-col gap-6">
+      <PermissionSurfaceHeader
+        title="File Guard"
+        description="Keeps the member away from sensitive files and folders, for reading and writing. Autohand Code already refuses secrets, credentials, private keys and system paths on its own."
+        enabled={permissions.fileGuardEnabled}
+        onEnabledChange={(fileGuardEnabled) => updatePermissions({ fileGuardEnabled })}
+        disabledMessage="File Guard is off, so the paths below are not checked."
+      />
 
-        <section className="rounded-md border border-border/80 bg-card/75 p-4">
-          <div className="text-sm font-semibold">Add Sensitive Path</div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-            <Input
-              value={sensitivePathDraft}
-              onChange={(event) => setSensitivePathDraft(event.target.value)}
-              placeholder="Click to choose a directory or type a path"
-              className="h-10 bg-background"
-            />
-            <Button type="button" onClick={addSensitivePath}>
-              <Plus data-icon="inline-start" />
-              Add
-            </Button>
-          </div>
-        </section>
+      <label className="flex items-start justify-between gap-4 border-b border-border/70 pb-4">
+        <span className="min-w-0">
+          <span className="block text-sm">Reach any path in the folder</span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">Off, the member asks before touching paths outside the files they are working on.</span>
+        </span>
+        <Switch checked={permissions.allPathsAllowed} onCheckedChange={(allPathsAllowed) => updatePermissions({ allPathsAllowed })} />
+      </label>
 
-        <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-          <div className="border-b border-border/75 p-4">
-            <div className="text-sm font-semibold">Sensitive Paths</div>
-            <p className="mt-1 text-xs text-muted-foreground">Maps to the CLI security blacklist, project settings, and directory access prompts.</p>
-          </div>
-          <div className="divide-y divide-border/70">
-            {permissions.sensitivePaths.map((pathValue) => (
-              <div key={pathValue} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-4">
-                <code className="truncate text-sm text-muted-foreground">{pathValue}</code>
-                <Button variant="ghost" size="icon-sm" aria-label={`Remove ${pathValue}`} onClick={() => removeSensitivePath(pathValue)}>
-                  <X />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <aside className="flex flex-col gap-5">
-        <section className="rounded-md border border-border/80 bg-card/75 p-4">
-          <div className="text-sm font-semibold">Path Access Controls</div>
-          <div className="mt-4 grid gap-2">
-            <label className="flex min-h-12 items-center justify-between gap-3 rounded-md border border-border/80 bg-background/65 px-3 text-sm">
-              All workspace paths allowed
-              <Switch
-                checked={permissions.allPathsAllowed}
-                onCheckedChange={(allPathsAllowed) => updatePermissions({ allPathsAllowed })}
-              />
-            </label>
-            <label className="flex min-h-12 items-center justify-between gap-3 rounded-md border border-border/80 bg-background/65 px-3 text-sm">
-              URL fetches allowed
-              <Switch
-                checked={permissions.allUrlsAllowed}
-                onCheckedChange={(allUrlsAllowed) => updatePermissions({ allUrlsAllowed })}
-              />
-            </label>
-          </div>
-        </section>
-        <PermissionScopeCard />
-      </aside>
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">Sensitive paths</h3>
+        <div className="divide-y divide-border/70 border-y border-border/70">
+          {permissions.sensitivePaths.map((pathValue) => (
+            <div key={pathValue} className="flex items-center justify-between gap-3 py-2">
+              <code className="truncate text-sm text-muted-foreground">{pathValue}</code>
+              <Button variant="ghost" size="icon-sm" aria-label={`Remove ${pathValue}`} onClick={() => removeSensitivePath(pathValue)}>
+                <X />
+              </Button>
+            </div>
+          ))}
+        </div>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            addSensitivePath();
+          }}
+        >
+          <Input
+            value={sensitivePathDraft}
+            onChange={(event) => setSensitivePathDraft(event.target.value)}
+            placeholder="A path or pattern, such as secrets/ or *.pem"
+            className="h-9 min-w-0 flex-1 font-mono text-xs"
+          />
+          <Button type="submit" variant="outline" disabled={!String(sensitivePathDraft || "").trim()}>
+            <Plus data-icon="inline-start" />
+            Add
+          </Button>
+        </form>
+      </section>
     </div>
   );
 }
 
 function BuiltInToolsPanel({ permissions, updatePermissions, updateBuiltInPolicy }) {
+  // Divider rows under headings, not two columns of cards; the switch said
+  // "Enable Built-in Tool Policy Management" and described itself in config
+  // keys (availableTools, excludedTools, allowPatterns, denyPatterns).
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex max-w-4xl flex-col gap-6">
       <PermissionSurfaceHeader
-        icon={WrenchIcon}
-        title="Enable Built-in Tool Policy Management"
-        description="Set allow, ask, or deny policies for Autohand Code CLI built-ins. This maps to availableTools, excludedTools, allowPatterns, and denyPatterns."
+        title="Built-in tool rules"
+        description="Choose, tool by tool, what Autohand Code's own tools may do without asking."
         enabled={permissions.builtInToolPolicyEnabled}
         onEnabledChange={(builtInToolPolicyEnabled) => updatePermissions({ builtInToolPolicyEnabled })}
-        disabledMessage="Built-in tool policies are disabled; the CLI falls back to context defaults and permission mode."
+        disabledMessage="Off: Autohand Code uses its defaults and the permission mode above."
       />
-
-      <div className="grid gap-5 xl:grid-cols-2">
-        {BUILT_IN_TOOL_POLICY_GROUPS.map((group) => (
-          <section key={group.id} className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-            <div className="border-b border-border/75 p-4">
-              <div className="text-sm font-semibold">{group.title}</div>
-            </div>
-            <div className="divide-y divide-border/70">
-              {group.tools.map(([tool]) => (
-                <div key={tool} className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_260px] sm:items-center">
-                  <code className="truncate text-sm">{tool}</code>
-                  <PermissionModeControl value={permissions.builtInPolicies[tool]} onChange={(mode) => updateBuiltInPolicy(tool, mode)} />
-                </div>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
+      {BUILT_IN_TOOL_POLICY_GROUPS.map((group) => (
+        <section key={group.id} className="grid gap-2">
+          <h3 className="text-sm font-semibold">{group.title}</h3>
+          <div className="divide-y divide-border/70 border-y border-border/70">
+            {group.tools.map(([tool]) => (
+              <div key={tool} className="flex flex-wrap items-center justify-between gap-3 py-2">
+                <code className="truncate text-sm">{tool}</code>
+                <div className="w-60"><PermissionModeControl value={permissions.builtInPolicies[tool]} onChange={(mode) => updateBuiltInPolicy(tool, mode)} /></div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
@@ -23059,27 +23042,6 @@ function ModelSecurityPanel({ permissions, updatePermissions, updateModelSecurit
 
 function WrenchIcon(props) {
   return <Settings {...props} />;
-}
-
-function PermissionScopeCard() {
-  return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-4">
-      <div className="text-sm font-semibold">Decision Scopes</div>
-      <div className="mt-4 grid gap-3">
-        {[
-          ["Session", ".autohand/session-permissions.json"],
-          ["Project", ".autohand/settings.local.json"],
-          ["User", "config.json permissions"],
-          ["Effective", "merged decision snapshot"],
-        ].map(([label, pathValue]) => (
-          <div key={label} className="rounded-md border border-border/80 bg-background/65 p-3">
-            <div className="text-sm font-semibold">{label}</div>
-            <code className="mt-2 block truncate text-xs text-muted-foreground">{pathValue}</code>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
 }
 
 function ShellGuardrailCard() {
