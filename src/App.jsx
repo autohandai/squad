@@ -1812,7 +1812,10 @@ const AUTONOMY_LADDER_LEVELS = [
   {
     id: "auto-merge-disabled",
     rank: 6,
-    label: "Auto-merge disabled",
+    // The top rung was named for what it forbids, so the ladder ended on a
+    // card reading "Auto-merge disabled", which looked like a switched-off
+    // option rather than a level you can pick.
+    label: "Release prep, no merge",
     shortLabel: "No merge",
     icon: LockKeyhole,
     permissionMode: "interactive",
@@ -5153,7 +5156,7 @@ function App() {
         messages: Object.values(messagesByChannel).flat(),
       }),
     }).catch((error) => {
-      setChannelOperationError(`Channel changes could not be saved: ${error.message}. Reconnect and try again.`);
+      setChannelOperationError(`Channel changes could not be saved: ${clause(error.message)}. Reconnect and try again.`);
     });
   }, [channels, channelThreads, messagesByChannel, channelsBridgeReady]);
 
@@ -7559,7 +7562,7 @@ function App() {
       setChannels(current => current.map(channel => channel.id === channelId ? next || channel : channel));
       setChannelOperationError("");
       return next;
-    } catch (error) { setChannelOperationError(`Channel changes could not be saved: ${error.message}. Try the action again.`); return null; }
+    } catch (error) { setChannelOperationError(`Channel changes could not be saved: ${clause(error.message)}. Try the action again.`); return null; }
   }
 
   async function toggleChannelMember(channelId, memberId) {
@@ -7570,12 +7573,12 @@ function App() {
       setChannels(current => current.map(item => item.id === channelId ? next || item : item));
       setChannelOperationError("");
       return next;
-    } catch (error) { setChannelOperationError(`Membership could not be saved: ${error.message}. Try the action again.`); return null; }
+    } catch (error) { setChannelOperationError(`Membership could not be saved: ${clause(error.message)}. Try the action again.`); return null; }
   }
 
   async function deleteChannel(channelId) {
     try { await api(`/api/channels/${encodeURIComponent(channelId)}`, { method: "DELETE" }); }
-    catch (error) { setChannelOperationError(`Channel could not be deleted: ${error.message}. Try again.`); return; }
+    catch (error) { setChannelOperationError(`Channel could not be deleted: ${clause(error.message)}. Try again.`); return; }
     setChannelOperationError("");
     removeSearchDocs([`channel:${channelId}`]).catch(() => {});
     setChannels((current) => current.filter((channel) => channel.id !== channelId));
@@ -8156,7 +8159,7 @@ function App() {
     } catch (error) {
       // The editor closes either way; a console line was the only trace that
       // the workflow was still there.
-      setChannelOperationError(`Workflow could not be deleted: ${error?.message || error}. Try again.`);
+      setChannelOperationError(`Workflow could not be deleted: ${clause(error?.message || error)}. Try again.`);
       return;
     }
     setChannelOperationError("");
@@ -11457,6 +11460,20 @@ function stringifyTraceValue(value) {
   }
 }
 
+// An error's own sentence inside ours: bridge errors end with a full stop,
+// and "…: ${error.message}. Try again." read "bridge.. Try again".
+function clause(value) {
+  return String(value ?? "").trim().replace(/[.\s]+$/, "");
+}
+
+// "1000k" for a million-token window read like a typo; past a million the
+// unit is M ("1M", "1.5M"), below it k ("200k").
+function contextWindowLabel(tokens) {
+  const value = Number(tokens) || 0;
+  if (value >= 999_500) return `${Number((value / 1_000_000).toFixed(1)).toString()}M`;
+  return `${Math.round(value / 1000)}k`;
+}
+
 function formatShortTime(value, locale = DEFAULT_LOCALE) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value || "");
@@ -12701,7 +12718,10 @@ function SidebarContent({
       renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
       onNavigate={{
         search: onSearch,
-        inbox: () => navigate(missionControlPath()),
+        // The row is called Needs you and carries the Needs you count; it
+        // used to reopen whichever tab was last used, so the badge said 1
+        // and the page showed All work with 28 rows.
+        inbox: () => navigate(missionControlPath({ view: "needs-you" })),
         agents: () => navigate(squadDirectoryPath()),
         channel: (channelId) => navigate(channelsPath(channelId)),
         member: (targetId) => navigate(memberChatPath(targetId)),
@@ -23831,14 +23851,25 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
 
 function ProfileModelSummary({ agent, providerSettings, navigate }) {
   const effectiveModel = effectiveModelForAgent(agent, providerSettings);
+  // Eva runs on Codex, yet Home said "Autohand AI / moa / workspace default"
+  // two rows above "Harness: Codex". Autohand's provider settings only apply
+  // when Autohand is the engine; otherwise the engine picks the model.
+  const harness = harnessForAgent(agent);
+  const otherEngine = harness.id && harness.id !== "autohand";
   return (
     <section className="border-b border-border/75 pb-5" aria-labelledby="profile-model-summary">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h3 id="profile-model-summary" className="text-base font-semibold">Model</h3>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            {providerSummaryLabel(effectiveModel)} / {effectiveModel.source === "agent" ? "agent override" : "workspace default"}
-            {effectiveModel.configured ? "" : " / not fully configured"}
+            {otherEngine ? (
+              <>{harnessLabel(harness.id)} / {String(harness.model || "").trim() || "the engine's default model"}</>
+            ) : (
+              <>
+                {providerSummaryLabel(effectiveModel)} / {effectiveModel.source === "agent" ? "agent override" : "workspace default"}
+                {effectiveModel.configured ? "" : " / not fully configured"}
+              </>
+            )}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "model"))}>
@@ -24782,13 +24813,8 @@ function SettingsPage({
                   onValueChange={(value) => updateThemePreset(surface, value)}
                 />
               ))}
-              {normalizedThemePreference.mode === THEME_MODE_SYSTEM ? (
-                <p className="text-xs text-muted-foreground lg:col-span-2">
-                  {formatCopy(copy.systemPreferenceSummary, {
-                    theme: systemTheme === THEME_MODE_LIGHT ? copy.light : copy.dark,
-                  })}
-                </p>
-              ) : null}
+              {/* "System preference is currently using Dark." repeated the Mode
+                  row's "Following system preference: Dark." one block up. */}
             </div>
           </div>
         </div>
@@ -24965,8 +24991,27 @@ function SettingsPage({
                 const observations = projectObserver?.snapshot?.observations || [];
                 const failing = observations.filter(item => item.error || item.status === "unsupported");
                 const problems = new Map();
+                // "ENOENT: no such file or directory, realpath '/Users/…/plan'"
+                // is a folder that was moved or deleted. Said as a sentence,
+                // once per member, naming the folders.
+                const missingByMember = new Map();
                 for (const item of failing) {
-                  const message = item.error || item.unsupported?.message || item.reason || "";
+                  const missing = /\bENOENT\b[^']*'([^']+)'/.exec(String(item.error || ""));
+                  if (!missing) continue;
+                  const member = agents.find(agent => agent.id === item.memberId);
+                  const key = member?.name || "A member";
+                  const folders = missingByMember.get(key) || new Set();
+                  folders.add(missing[1].split("/").filter(Boolean).pop() || missing[1]);
+                  missingByMember.set(key, folders);
+                }
+                for (const [name, folders] of missingByMember) {
+                  const list = [...folders];
+                  const named = list.length === 1 ? list[0] : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
+                  problems.set(`${list.length === 1 ? "The project folder" : "The project folders"} ${named} ${list.length === 1 ? "no longer exists" : "no longer exist"}. Put ${list.length === 1 ? "it" : "them"} back or remove ${list.length === 1 ? "it" : "them"} from ${name}'s projects.`, new Set([name]));
+                }
+                for (const item of failing) {
+                  if (/\bENOENT\b[^']*'[^']+'/.test(String(item.error || ""))) continue;
+                  const message = plainSystemError(item.error || item.unsupported?.message || item.reason || "");
                   if (!message) continue;
                   const names = problems.get(message) || new Set();
                   const member = agents.find(agent => agent.id === item.memberId);
@@ -25374,10 +25419,11 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                             value={provider.apiKey || ""}
                             onChange={(event) => updateProvider(definition.id, { apiKey: event.target.value })}
                             placeholder={
+                              // About 280px wide: longer hints were cut mid-word.
                               provider.apiKeyConfigured
-                                ? "Configured; enter a new key to replace"
+                                ? "Saved; type to replace"
                                 : definition.auth === "account"
-                                  ? "Uses your Autohand account unless set"
+                                  ? "Not needed when signed in"
                                   : "Enter API key"
                             }
                             className="h-10"
@@ -25396,7 +25442,7 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                               {provider.models.map((model) => (
                                 <SelectItem key={model.id} value={model.id}>
                                   {model.label}
-                                  {model.contextWindow ? ` · ${Math.round(model.contextWindow / 1000)}k` : ""}
+                                  {model.contextWindow ? ` · ${contextWindowLabel(model.contextWindow)}` : ""}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -26504,11 +26550,9 @@ function ThemePresetControl({ surface, value, active, copy, onValueChange }) {
   const selectedPreset = THEME_PRESET_MAP[surface].get(value) || presets[0];
   const Icon = surface === THEME_MODE_LIGHT ? Sun : Moon;
   const title = surface === THEME_MODE_LIGHT ? copy.lightTheme : copy.darkTheme;
-  const detail = active
-    ? copy.activeNow
-    : surface === THEME_MODE_LIGHT
-      ? copy.savedForLight
-      : copy.savedForDark;
+  // The Current badge already marks the active one; "Active now" under it
+  // said it twice and hid when the other palette applies.
+  const detail = surface === THEME_MODE_LIGHT ? copy.savedForLight : copy.savedForDark;
 
   return (
     <div className={cn("min-w-0 rounded-md py-1", active && "text-foreground")}>
