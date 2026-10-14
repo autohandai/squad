@@ -24165,8 +24165,9 @@ function FeedbackDialog({ kind = "feedback", open, route, onOpenChange }) {
   const [submitState, setSubmitState] = useState("idle");
   const [error, setError] = useState("");
   const isBug = kind === "bug";
-  const title = isBug ? "Report Bug" : "Give Feedback";
-  const canSubmit = submitState !== "submitting" && (Boolean(rating) || Boolean(description.trim()));
+  const title = isBug ? "Report a bug" : "Give feedback";
+  // A bug report is the description; a star rating says nothing about a bug.
+  const canSubmit = submitState !== "submitting" && (isBug ? Boolean(description.trim()) : Boolean(rating) || Boolean(description.trim()));
 
   useEffect(() => {
     if (!open) return undefined;
@@ -24264,6 +24265,7 @@ function FeedbackDialog({ kind = "feedback", open, route, onOpenChange }) {
         ) : (
           <form onSubmit={submitFeedback}>
             <div className="grid gap-6 px-6 py-5">
+              {isBug ? null : (
               <Field className="gap-3">
                 <FieldLabel>How would you rate your experience here today?</FieldLabel>
                 <ToggleGroup
@@ -24281,9 +24283,10 @@ function FeedbackDialog({ kind = "feedback", open, route, onOpenChange }) {
                   ))}
                 </ToggleGroup>
               </Field>
+              )}
 
               <Field className="gap-2">
-                <FieldLabel>Please tell us more...</FieldLabel>
+                <FieldLabel>{isBug ? "What went wrong?" : "Please tell us more…"}</FieldLabel>
                 <Textarea
                   value={description}
                   onChange={(event) => setDescription(event.target.value)}
