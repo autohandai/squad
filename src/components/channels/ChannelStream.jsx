@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { QUICK_REACTIONS, reactionName, searchReactions } from "@/lib/reactions";
+import { isNoTextReply } from "@/lib/chat-recovery";
 import { cn } from "@/lib/utils";
 
 export { QUICK_REACTIONS };
@@ -287,6 +288,7 @@ export function ChannelStream({
   onSetUpReactionFlow,
   setUpFlowLabel = "Make a reaction do something…",
   renderActions,
+  noTextLabel = "No reply text. Work details shows what ran.",
 }) {
   const ordered = useMemo(() => sortChannelMessages(messages), [messages]);
   const repliers = useMemo(() => repliersByUserMessage(ordered, agents), [ordered, agents]);
@@ -294,10 +296,18 @@ export function ChannelStream({
   const lastCount = useRef(0);
 
   useEffect(() => {
-    if (ordered.length !== lastCount.current) {
-      lastCount.current = ordered.length;
-      endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-    }
+    if (ordered.length === lastCount.current) return undefined;
+    const first = lastCount.current === 0;
+    lastCount.current = ordered.length;
+    // Opening #general in the installed app left it on 5 July: a smooth
+    // scroll on first paint aimed at where the end was before long replies
+    // laid out, and could be cut short. The first jump is instant and is
+    // repeated once layout settles; later messages still glide in.
+    endRef.current?.scrollIntoView({ block: "end", behavior: first ? "auto" : "smooth" });
+    if (!first) return undefined;
+    const frame = window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: "end", behavior: "auto" }));
+    const timer = window.setTimeout(() => endRef.current?.scrollIntoView({ block: "end", behavior: "auto" }), 250);
+    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
   }, [ordered.length]);
 
   if (!ordered.length) {
@@ -375,6 +385,8 @@ export function ChannelStream({
                     <span className="text-muted-foreground">
                       {name} {typingLabel}
                     </span>
+                  ) : isNoTextReply(message.body) ? (
+                    <span className="text-muted-foreground">{noTextLabel}</span>
                   ) : renderBody ? (
                     renderBody(message)
                   ) : (

@@ -121,3 +121,29 @@ export function recoverOrphanedChats(conversations, { presence = {}, streaming =
   }
   return next;
 }
+
+/**
+ * The fallback the bridge stores when a turn ends with no text: "Autohand
+ * returned no chat text." / "Noah returned no chat text.". It is a fact
+ * about the run, not something the member said, so it is drawn as a note.
+ */
+export function isNoTextReply(body) {
+  return /^[^\n]{1,80} returned no chat text\.?$/.test(String(body || "").trim());
+}
+
+// The engine's own retry chatter, written into the reply stream while it
+// recovers: "⚠ Session encountered an error: Rate limit exceeded. …" and
+// "Attempting recovery (1/5)...". Once the reply exists they are noise; if
+// the turn failed, the failure is reported on its own.
+const RECOVERY_NOTICE_RE = /^\s*(?:⚠️?\s*Session encountered an error:.*|Attempting recovery \(\d+\/\d+\)\.*\s*)$/;
+
+export function isRecoveryNotice(line) {
+  return RECOVERY_NOTICE_RE.test(String(line || ""));
+}
+
+/** The reply without the engine's transient recovery lines. */
+export function withoutRecoveryNotices(text) {
+  const value = String(text || "");
+  if (!/Session encountered an error|Attempting recovery \(/.test(value)) return value;
+  return value.split(/\r?\n/).filter((line) => !isRecoveryNotice(line)).join("\n").replace(/^\s*\n/, "");
+}

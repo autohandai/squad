@@ -360,7 +360,7 @@ import { CHAT_STREAM_CEILING_MS } from "@/lib/chat-timing";
 import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn, settingsPath, settingsSectionFromRoute, DEFAULT_SETTINGS_SECTION } from "@/lib/settings-navigation";
 import { SettingsShell, SettingsSectionHeader } from "@/components/settings/SettingsShell";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats } from "@/lib/chat-recovery";
+import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats } from "@/lib/chat-recovery";
 import { getAttentionBadgeClient } from "@/lib/attention-badge";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { CanvasList } from "@/components/canvases/CanvasList";
@@ -370,6 +370,7 @@ import { activityFromTrace, activityStats, classifyTool, normalizeActivity } fro
 import { ExecutionPanel } from "@/components/execution/ExecutionPanel";
 import { RunList } from "@/components/execution/RunList";
 import { latestFailedHandoff, latestHandoff, latestPendingHandoff, taskOwner } from "@/lib/handoffs";
+import { trimTitle } from "@/lib/execution-panel";
 import {
   commandsForHarness,
   composerTrigger,
@@ -11010,7 +11011,7 @@ function ChannelsPage({
                       {message.workflowRunId ? (
                         <WorkflowTag workflow={found?.workflow || { name: message.workflowName || "" }} run={found?.run} stepId={message.stepId} showName={message.role !== "system"} copy={copy} className="mb-1" />
                       ) : null}
-                      <MarkdownBlocks text={message.body || ""} />
+                      <MarkdownBlocks text={withoutRecoveryNotices(message.body || "")} />
                       {(message.attachments || []).map((attachment) => (
                         <MediaAttachment key={attachment.id} attachment={attachment} anchors={channelAnchors} onAnchor={addAnchorToDraft} copy={copy} />
                       ))}
@@ -11375,6 +11376,7 @@ function parseAgentBody(body) {
   }
 
   for (const line of String(body || "").split(/\r?\n/)) {
+    if (isRecoveryNotice(line)) continue;
     const step = parseStepLine(line);
     if (step) {
       steps.push(step);
@@ -15297,7 +15299,9 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
 
         <AgentTaskChecklist message={message} isLoading={isLoading} />
 
-        {hasVisibleAnswer && !isError ? (
+        {hasVisibleAnswer && !isError && isNoTextReply(view.answer) ? (
+          <p className="text-sm text-muted-foreground">No reply text. Work details shows what ran.</p>
+        ) : hasVisibleAnswer && !isError ? (
           <div className={cn("max-w-none text-foreground/95", compact ? "text-sm leading-6" : "text-[15px] leading-7")} >
             <MarkdownBlocks text={view.answer} />
           </div>
@@ -16984,7 +16988,9 @@ function MissionControlTable({ rows = [], title, evaluationStates, selectedRow, 
             {row.summary ? <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">{row.summary}</p> : null}
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               <MissionStatusPill status={row.status} copy={copy} />
-              {row.owner?.name ? <span className="truncate">{row.owner.name}</span> : null}
+              {/* A removed member's runs stay in history; the row named nobody
+                  and read as if the work had no owner. */}
+              {row.owner?.name ? <span className="truncate">{row.owner.name}</span> : row.run?.agentId || row.task?.agentId ? <span className="truncate italic">Removed member</span> : null}
               {row.repository ? <span className="truncate font-mono">{row.repository}</span> : null}
               {row.runtimeId ? <span className="truncate font-mono">{compactRecordId(row.runtimeId)}</span> : null}
               {evaluationStates?.get(row.id) ? <MissionEvaluationBadge state={evaluationStates.get(row.id)} copy={copy} /> : null}
@@ -17222,7 +17228,7 @@ function MissionDetailPanel({ row, locale = DEFAULT_LOCALE, copy = getLocaleCopy
             <span className="font-mono text-[11px] text-muted-foreground">{compactRecordId(row.task?.id || row.runtimeId || row.id)}</span>
           </div>
           <h2 id="mission-detail-title" className="text-pretty text-2xl font-semibold leading-7 text-foreground">{row.title}</h2>
-          <p className="mt-2 text-sm text-muted-foreground">{row.repository} / {row.owner?.name || "unassigned"}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{row.repository} / {row.owner?.name || (row.run?.agentId || row.task?.agentId ? "removed member" : "unassigned")}</p>
         </div>
         <MissionAnchor
           href={row.profilePath}
@@ -18186,7 +18192,9 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
   // came back, or the last line of output for a launched run.
   const isReply = run.mode === "chat" || run.kind === "chat";
   const lastLine = String((Array.isArray(run.logs) ? run.logs : []).at?.(-1)?.line || "").trim();
-  const reply = String(run.reply || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  // Cut on a word with an ellipsis: a hard 200-character slice ended Max's
+  // reply on "What matters most right now: follo".
+  const reply = trimTitle(String(run.reply || ""), 200);
   const title = (run.title && run.title !== run.command ? run.title : "") || (isReply ? "Chat reply" : "Launched run");
   // A reply that never came has a reason in its log; "No reply was recorded"
   // under a failed row hid it.

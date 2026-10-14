@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, withoutThinkingPlaceholder } from "../src/lib/chat-recovery.js";
+import { isNoTextReply, withoutRecoveryNotices } from "../src/lib/chat-recovery.js";
 const boot = "2026-10-01T04:00:00.000Z";
 const task = { id: "task", title: "Verify changes", status: "in_progress" };
 const old = { id: "old", role: "agent", body: "Work was in progress.", status: "loading", startedAt: "2026-10-01T03:00:00.000Z", progress: { items: [task] } };
@@ -82,4 +83,14 @@ console.log('Checkpoint result recovery passed: saved successful parent output j
   const goal = { eva: [{ ...convo.eva[1], goalId: 'g1' }] };
   assert.equal(recoverOrphanedChats(goal, { presence: idle, now: t0 + 60_000 }), goal, 'goals recover on their own');
   console.log('Orphaned reply recovery passed.');
+}
+
+{
+  const body = "⚠ Session encountered an error: Rate limit exceeded. Please wait a moment and try again, or choose a different model.\n  Attempting recovery (1/5)...\nHey team 👋\nIris here.";
+  assert.equal(withoutRecoveryNotices(body), "Hey team 👋\nIris here.", "the engine's retry chatter is not part of the reply");
+  assert.equal(withoutRecoveryNotices("Attempting recovery is my plan"), "Attempting recovery is my plan", "ordinary prose is left alone");
+  assert.ok(isNoTextReply("Autohand returned no chat text."));
+  assert.ok(isNoTextReply("Noah returned no chat text"));
+  assert.ok(!isNoTextReply("Noah returned no chat text. Then he said more."));
+  console.log("recovery notices and empty replies checked");
 }
