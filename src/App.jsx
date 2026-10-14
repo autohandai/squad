@@ -282,7 +282,7 @@ import { MediaAttachment } from "@/components/channels/MediaAttachment";
 import { AnchorChip } from "@/components/channels/AnchorChip";
 import { anchorsFromDraft, appendAnchorToken, frameKey, frameUrl, messageMediaContext, parseAnchorTokens, removeAnchorToken } from "@/lib/anchors";
 import { NeedsYouList } from "@/components/inbox/InboxPage";
-import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, workRowsInProgress, workAttentionCount, channelProposalRows, routineProposalRows, decisionRows, needsYouSummary } from "@/lib/work-attention";
+import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, stoppedWorkRows, workRowsInProgress, workAttentionCount, channelProposalRows, routineProposalRows, decisionRows, needsYouSummary } from "@/lib/work-attention";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { PreviousChats } from "@/components/chat/PreviousChats";
@@ -11477,6 +11477,10 @@ function messageDurationLabel(message) {
 }
 
 function durationFromMessage(message) {
+  // Recovery stamps an interrupted reply as finished when Squad came back,
+  // so start → "completed" is downtime, not work: Noah's cut-off reply read
+  // "5 hours 37 min". There is no honest duration to show.
+  if (message?.interrupted) return null;
   const explicit = Number(message?.durationMs ?? message?.trace?.durationMs);
   if (Number.isFinite(explicit) && explicit >= 0) return Math.round(explicit);
 
@@ -15265,7 +15269,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
   const needsSignIn = isError && /sign-in|autohand login|not signed in|rejected the account token/i.test(errorText);
 
   return (
-    <article data-message-id={message.id} className={cn("group transition-colors", !compact && "grid grid-cols-[auto,minmax(0,1fr)] gap-3")} aria-live={isLoading ? "polite" : undefined}>
+    <article data-message-id={message.id} className={cn("group transition-colors", !compact && "grid grid-cols-[auto_minmax(0,1fr)] gap-3")} aria-live={isLoading ? "polite" : undefined}>
       {!compact ? <AgentAvatar agent={agent} className="mt-0.5" /> : null}
       <div className="min-w-0">
         <div className="mb-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
@@ -16143,7 +16147,7 @@ function MissionControlPage({
   // what the page lists (ADR-0121): decisions, unread, stopped, working.
   const decisionCount = decisionRows(attention).length;
   const unreadCount = (attention.replies?.length || 0) + (attention.unreadChannels?.length || 0);
-  const stoppedCount = workRowsNeedingYou(allRows, attention.handoffs).length;
+  const stoppedCount = stoppedWorkRows(allRows, attention.handoffs, copy).length;
   const summary = needsYouSummary({ decisions: decisionCount, unread: unreadCount, stopped: stoppedCount, working: runningRows.length }, copy, (value) => formatLocalizedNumber(value, locale));
   const checksLabel = (row) => {
     const state = rowEvaluationStates.get(row.id);
@@ -16848,32 +16852,31 @@ function MissionPermissionWarnings({ agents = [], runtime, workspaces = [], navi
   if (!warningRows.length) return null;
 
   return (
-    <section className="border-y border-border/60 py-5" aria-labelledby="mission-permission-warnings">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 id="mission-permission-warnings" className="text-xl font-semibold text-foreground">Permission Warnings</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Autonomy, guard, and connector checks before risky work starts.</p>
-        </div>
-        <span className="text-xs font-medium uppercase text-amber-600 dark:text-amber-500">{warningRows.length} Warnings</span>
+    // Same shape as the other Needs you sections (InboxPage Section): small
+    // sentence-case heading, a bare count, divider rows. It was an xl
+    // "Permission Warnings" heading, "1 WARNINGS", and a grid of bordered cells.
+    <section className="border-b border-border/70 pb-5" aria-labelledby="mission-permission-warnings">
+      <div className="flex items-baseline justify-between gap-3 pb-1">
+        <h2 id="mission-permission-warnings" className="text-sm font-semibold text-foreground">Permission warnings</h2>
+        <span className="text-xs text-muted-foreground">{warningRows.length}</span>
       </div>
-      <div className="grid gap-0 md:grid-cols-2 xl:grid-cols-3">
+      <p className="pb-1 text-xs text-muted-foreground">Autonomy, guard, and connector checks before risky work starts.</p>
+      <div className="flex flex-col divide-y divide-border/60">
         {warningRows.slice(0, 6).map(({ agent, workspace, warning, ladder }) => (
           <MissionAnchor
             key={`${agent.id}-${workspace}-${warning.id}`}
             href={memberProfilePath(agent.id, "permissions")}
             navigate={navigate}
-            className="grid gap-3 border-t border-border/60 py-4 text-left transition-[background-color] hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring md:border-r md:px-4"
+            className="flex w-full items-start gap-3 rounded-md px-2 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <span className="flex min-w-0 items-center gap-3">
-              <AgentAvatar agent={agent} />
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold text-foreground">{agent.name}</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  Level {ladder.rank}: {ladder.label} / {workspaceName(workspace) || "workspace"}
-                </span>
+            <AgentAvatar agent={agent} className="size-6" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-foreground">
+                {agent.name}
+                <span className="font-normal text-muted-foreground"> · Level {ladder.rank}: {ladder.label} / {workspaceName(workspace) || "workspace"}</span>
               </span>
+              <span className="mt-0.5 block text-xs leading-5 text-amber-600 dark:text-amber-500">{warning.message}</span>
             </span>
-            <span className="border-l-2 border-amber-500/70 pl-3 text-xs leading-5 text-amber-600 dark:text-amber-500">{warning.message}</span>
           </MissionAnchor>
         ))}
       </div>
@@ -17017,7 +17020,10 @@ function MissionRiskAndEvidence({ row }) {
       {/* The same sentence twice in one row helped nobody. */}
       {row.evidence?.label && row.evidence.label !== row.summary ? (
         <div className="break-words text-xs leading-5 text-muted-foreground">
-          <span className="font-semibold text-foreground">{row.evidence.type}: </span>
+          {/* The type is a guess from words in the text. When the text names
+              its own kinds ("Command: … file change: …") the guess only
+              repeated one of them in front. */}
+          {/^\s*[a-z][a-z ]{1,24}:/i.test(row.evidence.label || "") ? null : <span className="font-semibold text-foreground">{row.evidence.type}: </span>}
           {row.evidence.label}
         </div>
       ) : null}
@@ -18116,7 +18122,7 @@ function buildMissionRows({ agents = [], tasks = [], runs = [], runtime, workspa
   const taskRows = tasks.map((task) => {
     const run = task.runtimeId ? runById.get(task.runtimeId) : null;
     if (run?.id) linkedRunIds.add(run.id);
-    return missionRowFromTask(task, run, agents, runtime, workspaces);
+    return missionRowFromTask(task, run, agents, runtime, workspaces, { runsKnown: runs.length > 0 });
   });
   const runRows = runs
     .filter((run) => run?.id && !linkedRunIds.has(run.id))
@@ -18127,12 +18133,13 @@ function buildMissionRows({ agents = [], tasks = [], runs = [], runtime, workspa
     .sort((left, right) => missionTime(right.updatedAt) - missionTime(left.updatedAt));
 }
 
-function missionRowFromTask(task, run, agents, runtime, workspaces) {
+function missionRowFromTask(task, run, agents, runtime, workspaces, { runsKnown = false } = {}) {
   const owner = taskOwner(task, agents) || agents.find((agent) => agent.id === task.agentId);
   const runtimeId = run?.id || task.runtimeId || "";
   const workspacePath = normalizePath(run?.workspace || owner?.workspace || missionWorkspacePath(task.project, workspaces));
   const repository = workspaceName(workspacePath) || task.project || "workspace";
-  const status = missionTaskStatus(task, run);
+  const orphan = orphanedTaskReason(task, run, { runsKnown });
+  const status = orphan ? "blocked" : missionTaskStatus(task, run);
   const detailPath = missionControlPath({ task: task.id });
   const runPath = missionControlPath({ run: runtimeId });
   const profilePath = owner ? memberProfilePath(owner.id, "home") : missionControlPath();
@@ -18156,7 +18163,7 @@ function missionRowFromTask(task, run, agents, runtime, workspaces) {
     runPath,
     workspaceLink: workspacePath ? workspacePathTarget : "",
     detailPath,
-    blocker: missionBlocker(task),
+    blocker: orphan || missionBlocker(task),
     permissionWarnings: owner ? permissionWarningsForAgent(owner, runtime, workspacePath) : [],
     evidence: missionLastEvidence(task, run),
     nextAction: missionNextAction(status, { detailPath, ownerId: owner?.id }),
@@ -18211,6 +18218,21 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
     nextAction: missionNextAction(status, { detailPath, ownerId: owner?.id, reply: isReply }),
     updatedAt: run.updatedAt || run.completedAt || run.startedAt || new Date().toISOString(),
   };
+}
+
+/**
+ * A task that still says running while nothing runs it. The installed app
+ * listed "Implement Agent Mission Control route" as Running since 26 May
+ * and counted it in "1 working": the task kept its own status after its run
+ * ended or was pruned. When the run is finished, or the bridge lists runs
+ * and this one is not among them, the task is stuck and says so.
+ */
+function orphanedTaskReason(task, run, { runsKnown = false } = {}) {
+  if (!["running", "launching"].includes(String(task?.status || "").toLowerCase()) || !task?.runtimeId) return "";
+  const runStatus = String(run?.status || "").toLowerCase();
+  if (run && ["running", "launching", "queued"].includes(runStatus)) return "";
+  if (run) return `Its run ${runStatus === "completed" ? "finished" : `ended (${runStatus || "no status"})`} but the task was never updated. Open the chat to check the result.`;
+  return runsKnown ? "Its run is no longer known to Squad, so nothing is working on it. Open the chat to pick it up again." : "";
 }
 
 function missionTaskStatus(task, run) {
@@ -18290,15 +18312,17 @@ function missionNextAction(status, { detailPath, ownerId, reply = false } = {}) 
   const chat = ownerId ? memberChatPath(ownerId) : detailPath;
   // A failed reply is retried in the conversation, where Retry already is;
   // Replay is for launched runs only.
-  if (status === "failed" && reply) return { id: "open", label: "Open chat", icon: Play, path: chat };
+  // "Open chat" goes to a conversation; a Play icon promised to start
+  // something and Workflow promised a handoff.
+  if (status === "failed" && reply) return { id: "open", label: "Open chat", icon: MessageSquareText, path: chat };
   if (status === "failed") return { id: "replay", label: "Replay", icon: RefreshCw, path: "" };
   if (status === "handoff-pending" || status === "pending") {
     const params = new URLSearchParams(String(detailPath || "").split("?")[1] || "");
     params.set("view", "needs-you");
     return { id: "review", label: "Review", icon: ClipboardCheck, path: `${missionControlPath()}?${params}` };
   }
-  if (status === "running" || status === "launching") return { id: "open", label: "Open chat", icon: Play, path: chat };
-  if (status === "blocked") return { id: "open", label: "Open chat", icon: Workflow, path: chat };
+  if (status === "running" || status === "launching") return { id: "open", label: "Open chat", icon: MessageSquareText, path: chat };
+  if (status === "blocked") return { id: "open", label: "Open chat", icon: MessageSquareText, path: chat };
   return { id: "details", label: "Details", icon: History, path: detailPath };
 }
 

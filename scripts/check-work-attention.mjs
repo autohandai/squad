@@ -95,6 +95,17 @@ for (const row of stopped) {
 }
 assert.equal(stopped[1].title, "chat reply", "a run whose title is its command line reads as a chat reply");
 assert.equal(stopped[4].reason, "The staging key is missing from the environment, so the webhook test cannot run.", "a task keeps its own blocker on one line");
+// The same question asked again after a failure is one row, the newest.
+{
+  const again = [
+    { id: "new", status: "failed", owner, run: { id: "a2", mode: "chat", title: "so, how many leads?", command: COMMAND }, updatedAt: "2026-10-14T09:00:00.000Z" },
+    { id: "old", status: "failed", owner, run: { id: "a1", mode: "chat", title: "So, how many leads? ", command: COMMAND }, updatedAt: "2026-10-14T03:00:00.000Z" },
+    { id: "other", status: "failed", owner: { id: "noah", name: "Noah" }, run: { id: "n1", mode: "chat", title: "so, how many leads?", command: COMMAND }, updatedAt: "2026-10-14T02:00:00.000Z" },
+    { id: "bare1", status: "failed", owner, run: { id: "b1", mode: "chat", title: COMMAND, command: COMMAND } },
+    { id: "bare2", status: "failed", owner, run: { id: "b2", mode: "chat", title: COMMAND, command: COMMAND } },
+  ];
+  assert.deepEqual(stoppedWorkRows(again, []).map((row) => row.id), ["new", "other", "bare1", "bare2"], "one row per member and question; untitled replies are not merged");
+}
 assert.equal(cutOnWord("short"), "short");
 assert.equal(cutOnWord("a".repeat(100)).length, 89, "a single long word is cut hard");
 

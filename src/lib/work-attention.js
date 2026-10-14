@@ -147,6 +147,10 @@ export function stoppedWorkKind(row = {}) {
  */
 export function stoppedWorkRows(rows = [], handoffs = [], copy = {}) {
   const labels = copy.statusLabels || {};
+  // Asking the same thing again after a failure left one row per attempt:
+  // Alex's "so, tell me how many leads…" sat on the page twice, both opening
+  // the same chat. Rows arrive newest first, so the first one is kept.
+  const seenQuestions = new Set();
   return workRowsNeedingYou(rows, handoffs).map((row) => {
     const kind = stoppedWorkKind(row);
     const run = row.run || {};
@@ -171,7 +175,13 @@ export function stoppedWorkRows(rows = [], handoffs = [], copy = {}) {
       reason,
       detailPath: row.detailPath || "",
       row,
+      repeatKey: kind === "chat" && rawTitle ? `${row.owner?.id || ""}\u0000${String(rawTitle).trim().toLowerCase()}` : "",
     };
+  }).filter((row) => {
+    if (!row.repeatKey) return true;
+    if (seenQuestions.has(row.repeatKey)) return false;
+    seenQuestions.add(row.repeatKey);
+    return true;
   });
 }
 
