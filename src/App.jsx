@@ -21417,17 +21417,14 @@ function AutohandModelPage({ agent, providerSettings, navigate, updateAgent }) {
   return (
     <div className="min-h-screen bg-background">
       <PageTitle title="Model" />
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-7 px-4 py-7 sm:px-6 lg:px-8">
-        <header className="border-b border-border/70 pb-7">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-7 px-4 py-6 sm:px-6 lg:px-8">
+        {/* The top bar already says Model; a second 3xl "Model" with the
+            member's name above it was the only member page doing that. */}
+        <header className="border-b border-border/70 pb-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
-              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-primary">
-                <Brain className="size-4" />
-                <span>{agent.name}</span>
-              </div>
-              <h2 className="text-3xl font-semibold tracking-normal">Model</h2>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Choose whether this squad member inherits the workspace default or runs with its own provider and model.
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                {`Whether ${agent.name} uses the workspace's default model or one of their own.`}
               </p>
             </div>
             <Button variant="outline" onClick={() => navigate("/settings?section=providers")}>
