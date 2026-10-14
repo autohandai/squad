@@ -6360,7 +6360,9 @@ function App() {
     for (const agent of agents) {
       const last = Date.parse(agentReads[agent.id] || "") || 0;
       const list = Array.isArray(messagesByAgent[agent.id]) ? messagesByAgent[agent.id] : [];
-      const count = list.filter((message) => message.role === "agent" && message.status !== "loading" && messageTimestampMs(message) > last).length;
+      // A new member's own introduction is not a reply anyone is waiting on;
+      // counting it put a "1" on every member a team added and on Needs you.
+      const count = list.filter((message) => message.role === "agent" && !message.introduction && message.status !== "loading" && messageTimestampMs(message) > last).length;
       if (count) map.set(agent.id, count);
     }
     return map;
