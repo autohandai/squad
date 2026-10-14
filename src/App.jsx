@@ -22603,85 +22603,67 @@ function PermissionLadderPanel({
   onLadderChange,
 }) {
   const activeLevel = autonomyLadderLevelMeta(permissions.ladderLevel);
-  const ActiveIcon = activeLevel.icon;
   const selectedWorkspaceValue = workspaceChoices.some((workspace) => workspace.path === selectedWorkspace)
     ? selectedWorkspace
     : undefined;
 
+  // Flat: was a bordered card holding an icon tile and a 2xl heading, a box
+  // titled "Workspace policy" about "normalized repository path" storage,
+  // and a tinted "0 workspace overrides saved" chip.
   return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-5 lg:p-6">
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+    <section className="grid gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="grid size-11 place-items-center rounded-md border border-primary/35 bg-primary/15 text-primary">
-              <ActiveIcon className="size-5" />
-            </span>
-            <div className="min-w-0">
-              <h3 className="text-xl font-semibold tracking-normal">Permission ladder</h3>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                Level {activeLevel.rank}: {activeLevel.label}. The ladder summarizes the exact tool matrix below; changing it updates the low-level policies for this workspace.
-              </p>
-            </div>
-          </div>
-
-          <ToggleGroup
-            type="single"
-            value={activeLevel.id}
-            onValueChange={(value) => value && onLadderChange(value)}
-            variant="outline"
-            className="mt-5 grid w-full grid-cols-2 items-stretch sm:grid-cols-3 xl:grid-cols-6"
-            spacing={0}
-          >
-            {AUTONOMY_LADDER_LEVELS.map((level) => {
-              const Icon = level.icon;
-              return (
-                <ToggleGroupItem
-                  key={level.id}
-                  value={level.id}
-                  aria-label={`Level ${level.rank}: ${level.label}`}
-                  className="h-auto min-h-20 flex-col items-start justify-start gap-2 px-3 py-3 text-left"
-                >
-                  <span className="flex w-full items-center justify-between gap-2">
-                    <span className="text-[11px] font-medium uppercase text-muted-foreground">L{level.rank}</span>
-                    <Icon className="size-3.5" />
-                  </span>
-                  <span className="w-full text-wrap text-sm font-semibold leading-4">{level.shortLabel}</span>
-                </ToggleGroupItem>
-              );
-            })}
-          </ToggleGroup>
-        </div>
-
-        <div className="rounded-md border border-border/80 bg-background/65 p-4">
-          <div className="text-sm font-semibold">Workspace policy</div>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Overrides are stored locally per squad member and normalized repository path.
+          <h3 className="text-sm font-semibold">Permission ladder</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {`Level ${activeLevel.rank}: ${activeLevel.label}. Choosing a level sets every tool below for this folder.`}
           </p>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Folder</span>
           <Select value={selectedWorkspaceValue} onValueChange={onWorkspaceChange} disabled={!workspaceChoices.length}>
-            <SelectTrigger className="mt-4 h-10 w-full bg-background">
-              <FolderGit2 className="size-4 text-muted-foreground" />
-              <SelectValue placeholder={workspaceName(selectedWorkspace) || "Select workspace"} />
+            <SelectTrigger className="h-8 w-48">
+              <SelectValue placeholder={workspaceName(selectedWorkspace) || "Select a folder"} />
             </SelectTrigger>
             <SelectContent position="popper" className="max-h-[420px]">
               <SelectGroup>
-                <SelectLabel>Workspace</SelectLabel>
+                <SelectLabel>Folder</SelectLabel>
                 {workspaceChoices.map((workspace) => (
                   <SelectItem key={workspace.path} value={workspace.path}>
-                    {/* The label was the path from home ("Documents/autohand/
-                        web/prototy…"), cut in the 300px field. */}
                     {workspaceName(workspace.path) || workspace.label}
                   </SelectItem>
                 ))}
               </SelectGroup>
             </SelectContent>
           </Select>
-          <div className="mt-3 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-            {workspaceOverrideCount} workspace override{workspaceOverrideCount === 1 ? "" : "s"} saved for this member.
-          </div>
         </div>
       </div>
+      {workspaceOverrideCount ? (
+        <p className="text-xs text-muted-foreground">{`${workspaceOverrideCount} folder${workspaceOverrideCount === 1 ? " has" : "s have"} its own settings for this member.`}</p>
+      ) : null}
 
-      <div className="mt-6 grid gap-5 border-t border-border/75 pt-5 lg:grid-cols-3">
+      <ToggleGroup
+        type="single"
+        value={activeLevel.id}
+        onValueChange={(value) => value && onLadderChange(value)}
+        variant="outline"
+        className="grid w-full grid-cols-2 items-stretch sm:grid-cols-3 xl:grid-cols-6"
+        spacing={0}
+      >
+        {AUTONOMY_LADDER_LEVELS.map((level) => (
+          <ToggleGroupItem
+            key={level.id}
+            value={level.id}
+            aria-label={`Level ${level.rank}: ${level.label}`}
+            className="h-auto flex-col items-start justify-start gap-0.5 px-3 py-2 text-left"
+          >
+            <span className="text-[11px] text-muted-foreground">Level {level.rank}</span>
+            <span className="w-full text-wrap text-sm font-medium leading-4">{level.label}</span>
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+
+      <div className="grid gap-5 border-t border-border/70 pt-4 lg:grid-cols-3">
         <PermissionCapabilityColumn title="Available now" items={activeLevel.available} tone="text-primary" />
         <PermissionCapabilityColumn title="Asks first" items={activeLevel.approvals} tone="text-amber-700 dark:text-amber-200" />
         <PermissionCapabilityColumn title="Blocked" items={activeLevel.blocked} tone="text-red-700 dark:text-red-200" />
