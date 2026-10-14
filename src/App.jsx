@@ -23245,9 +23245,9 @@ function PermissionConfigPreview({ permissions }) {
   };
 
   return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-4">
+    <section className="min-w-0 rounded-md border border-border/80 bg-card/75 p-4">
       <div className="flex items-center justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <div className="text-sm font-semibold">Autohand Code CLI config preview</div>
           <p className="mt-1 text-xs text-muted-foreground">A local mapping for the settings the CLI already understands.</p>
         </div>
