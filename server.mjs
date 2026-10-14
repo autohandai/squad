@@ -35,6 +35,7 @@ import { appendFile, chmod, copyFile, mkdir, mkdtemp, open, readdir, readFile, r
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { arch, homedir, platform as osPlatform, release as osRelease, tmpdir } from "node:os";
+import { clientClosedReason, stopMessage } from "./server/harness/stop-reason.mjs";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 import { listLocalSkills, localSkillRoots, readSkillFolder } from "./server/skills/local.mjs";
@@ -735,6 +736,16 @@ const vite = isDev
     }))
   : null;
 
+// The SDK's bundled CLI prints the git commit of the folder it runs in, so
+// asked from Squad's own checkout it reported Squad's commit as its build
+// ("Autohand Code 0.8.2 (865b66e)"). Asked from outside any repository it
+// prints "(unknown)", which says nothing either; that suffix is dropped.
+function cliVersionOutput(command) {
+  const result = spawnSync(command, ["--version"], { cwd: tmpdir(), encoding: "utf8", timeout: 5000, windowsHide: true });
+  const text = result.status === 0 ? result.stdout.trim() : "";
+  return text.replace(/\s*\(unknown\)$/i, "");
+}
+
 function commandOutput(command, commandArgs = []) {
   const result = spawnSync(command, commandArgs, {
     cwd: rootDir,
@@ -919,7 +930,7 @@ function autohandSupportsFlag(flag) {
 function getRuntime() {
   const resolved = resolveAutohandBinaryDetailed();
   const autohandPath = resolved.path;
-  const version = autohandPath ? commandOutput(autohandPath, ["--version"]) : "";
+  const version = autohandPath ? cliVersionOutput(autohandPath) : "";
   const vendored = vendoredAutohandCliInfo();
   return {
     autohandPath,
@@ -980,7 +991,7 @@ function autohandReadinessContext() {
   return {
     bundledPath,
     accountEmail: account.email || "",
-    version: bundledPath ? commandOutput(bundledPath, ["--version"]).trim() : "",
+    version: bundledPath ? cliVersionOutput(bundledPath) : "",
     authReady: autohandAuthUsable(readAutohandAuth(userConfigPath)),
   };
 }
@@ -6231,7 +6242,7 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
     ? new Promise((_, reject) => {
         abortHandler = () => {
           stopped = true;
-          reject(new Error("chat stopped by the user"));
+          reject(new Error(stopMessage(signal)));
         };
         if (signal.aborted) abortHandler();
         else signal.addEventListener("abort", abortHandler, { once: true });
@@ -6246,7 +6257,7 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
       }
       if (signal?.aborted) {
         stopped = true;
-        throw new Error("chat stopped by the user");
+        throw new Error(stopMessage(signal));
       }
       events.push(event);
       armInactivity();
@@ -6601,7 +6612,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
       stream.send("sdk", {
         type: "status",
         status: "sdk_startup_failed",
-        label: "SDK bridge did not produce events; trying CLI transport...",
+        label: `SDK bridge did not produce events (${String(error?.message || error || "no reason given").replace(/\s+/g, " ").slice(0, 200)}); trying CLI transport...`,
         timestamp: new Date().toISOString(),
       });
       throw new SdkBridgeStartupError(`SDK prompt failed before producing events: ${error.message}`, error);
@@ -6859,7 +6870,7 @@ async function streamChatWithExternalHarness(payload, { stream, signal, startedA
   const prepared = await prepareExternalHarness(payload);
   await memberAvailability.assertCanWork(payload);
   if (!prepared.prompt) throw new Error("prompt is required");
-  if (signal?.aborted) throw new Error("chat stopped by the user");
+  if (signal?.aborted) throw new Error(stopMessage(signal));
   const channelContext = channelContextFromPayload(payload);
   if (channelContext) {
     await recordChannelDispatch(channelContext, { prompt: prepared.prompt, agentId: payload.agentId || prepared.agentRuntime.agentId });
@@ -7162,11 +7173,14 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
     }
 
     const timer = setTimeout(() => {
-      stopChildWithError("chat timed out waiting for Autohand");
+      // Say what happened and what to try; "chat timed out waiting for
+      // Autohand" left people guessing (bug hunt 2026-10, #44).
+      const silent = !String(stdout || "").trim();
+      stopChildWithError(`Autohand Code did not answer within ${Math.round(timeoutMs / 1000)} seconds${silent ? " and printed nothing" : ""}. Run \`autohand login\` in a terminal if you have not recently, check the model on this member's Model page, then Retry.`);
     }, timeoutMs);
 
     abortHandler = () => {
-      stopChildWithError("chat stopped by the user");
+      stopChildWithError(stopMessage(signal));
     };
     if (signal?.aborted) {
       abortHandler();
@@ -7567,7 +7581,7 @@ async function recallForTurn(payload) {
 }
 
 async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.now() }) {
-  if (signal?.aborted) throw new Error("chat stopped by the user");
+  if (signal?.aborted) throw new Error(stopMessage(signal));
   await memberAvailability.assertCanWork(payload);
   payload = { ...payload, _recall: await recallForTurn(payload), _workPlan: await workPlanForTurn(payload) };
   stream = withWorkProgress(stream);
@@ -7579,7 +7593,7 @@ async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.
   const { args, displayArgs, workspace, prompt, agentRuntime } = await autohandArgs({ ...payload, mode: "prompt", dryRun: false });
   if (!prompt) throw new Error("prompt is required");
   assertAutohandAuth(agentRuntime);
-  if (signal?.aborted) throw new Error("chat stopped by the user");
+  if (signal?.aborted) throw new Error(stopMessage(signal));
   const channelContext = channelContextFromPayload(payload);
   if (channelContext) await recordChannelDispatch(channelContext, { prompt, agentId: payload.agentId || agentRuntime.agentId });
   const requestedTimeout = Number(payload.timeoutMs);
@@ -7606,7 +7620,7 @@ async function streamChat(payload, res) {
   const controller = new AbortController();
   const unregister = registerChat(String(payload.agentId || payload.agent?.id || ''), controller);
   let streamOpen = true;
-  const abortStream = () => { if (streamOpen && !controller.signal.aborted) controller.abort(); };
+  const abortStream = () => { if (streamOpen && !controller.signal.aborted) controller.abort(clientClosedReason()); };
   res.on("close", abortStream);
   try {
     const result = await executeChatTurn(payload, { stream, signal: controller.signal, startedAt });
@@ -7615,7 +7629,9 @@ async function streamChat(payload, res) {
     const message = error instanceof Error ? error.message : String(error);
     stream.send("error", { error: message, completedAt: new Date().toISOString(), durationMs: Date.now() - startedAt,
       ...(error instanceof ChatRuntimeError && error.details ? cleanWorkResult(error.details) : {}) });
-    return { status: "failed", preview: message.slice(0, 140) };
+    // A turn the person stopped, or whose page closed, did not fail: saying
+    // "failed" raised a "could not reply" notification for their own Stop.
+    return { status: controller.signal.aborted ? "stopped" : "failed", preview: message.slice(0, 140) };
   } finally {
     streamOpen = false; res.off("close", abortStream); unregister(); stream.end();
   }

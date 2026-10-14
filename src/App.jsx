@@ -1,4 +1,4 @@
-import React, { createContext, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import React, { Fragment, createContext, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectObserver } from "@/lib/use-project-observer";
 import { onDesktopMenu } from "@/lib/desktop-menu";
 import { FirstRun } from "@/components/onboarding/FirstRun";
@@ -39,6 +39,7 @@ import {
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   ArrowUpRight,
   ArrowLeft,
   BadgeCheck,
@@ -124,7 +125,6 @@ import {
   Zap,
 } from "lucide-react";
 import {
-  buildActivity,
   extensionRows,
   initialAgents,
   initialAutomations,
@@ -223,6 +223,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
+  SheetTrigger,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -281,7 +282,7 @@ import { MediaAttachment } from "@/components/channels/MediaAttachment";
 import { AnchorChip } from "@/components/channels/AnchorChip";
 import { anchorsFromDraft, appendAnchorToken, frameKey, frameUrl, messageMediaContext, parseAnchorTokens, removeAnchorToken } from "@/lib/anchors";
 import { NeedsYouList } from "@/components/inbox/InboxPage";
-import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, workRowsInProgress, workAttentionCount, channelProposalRows, routineProposalRows, decisionRows, needsYouSummary } from "@/lib/work-attention";
+import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, stoppedWorkRows, workRowsInProgress, workAttentionCount, channelProposalRows, routineProposalRows, decisionRows, needsYouSummary } from "@/lib/work-attention";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { PreviousChats } from "@/components/chat/PreviousChats";
@@ -322,11 +323,14 @@ import { takeTable } from "@/lib/markdown-table";
 import { MEMBER_DESIGNER_ID, editDraftRole } from "@/lib/member-draft";
 import { parseLocalJson, writeLocalJson, compactChannelMessagesCache, isStorageQuotaError } from "@/lib/local-cache";
 import { MemberWorkspacePicker } from "@/components/chat/MemberWorkspacePicker";
-import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
+import { activityCalendar } from "@/lib/activity-calendar";
+import { channelSlug } from "@/lib/channel-name";
+import { copyText } from "@/lib/copy-text";
+import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
-import { blankGreeting, blankMemberDraft, isBlankMember, personalityFileContent, profileNoteFor, profileReceipts, replyWithoutReceipts, unappliedProfileReceipts } from "@/lib/member-shaping";
+import { PROFILE_LIMITS, blankGreeting, blankMemberDraft, isBlankMember, personalityFileContent, profileNoteFor, profileReceipts, replyWithoutReceipts, unappliedProfileReceipts } from "@/lib/member-shaping";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -358,7 +362,7 @@ import { CHAT_STREAM_CEILING_MS } from "@/lib/chat-timing";
 import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn, settingsPath, settingsSectionFromRoute, DEFAULT_SETTINGS_SECTION } from "@/lib/settings-navigation";
 import { SettingsShell, SettingsSectionHeader } from "@/components/settings/SettingsShell";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs } from "@/lib/chat-recovery";
+import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns } from "@/lib/chat-recovery";
 import { getAttentionBadgeClient } from "@/lib/attention-badge";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { CanvasList } from "@/components/canvases/CanvasList";
@@ -368,6 +372,7 @@ import { activityFromTrace, activityStats, classifyTool, normalizeActivity } fro
 import { ExecutionPanel } from "@/components/execution/ExecutionPanel";
 import { RunList } from "@/components/execution/RunList";
 import { latestFailedHandoff, latestHandoff, latestPendingHandoff, taskOwner } from "@/lib/handoffs";
+import { markOrphanedTasks, orphanedTaskReason, trimTitle } from "@/lib/execution-panel";
 import {
   commandsForHarness,
   composerTrigger,
@@ -379,6 +384,7 @@ import {
   slashCommandFrom,
 } from "@/lib/composer-syntax";
 import {
+  engineVersion,
   ACCESS_IDS,
   accessOption,
   derivedAccess,
@@ -426,6 +432,8 @@ class RenderErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
+
+const CHAT_DRAFTS_KEY = "autohandSquad.v1.chatDrafts";
 
 const STORAGE_KEYS = {
   agents: "autohandSquad.v1.agents",
@@ -1399,158 +1407,6 @@ const CHANNEL_VISIBILITY_OPTIONS = [
   { id: CHANNEL_VISIBILITY_PUBLIC, icon: Globe2, labelKey: "channelPublic", detailKey: "channelPublicDetail" },
   { id: CHANNEL_VISIBILITY_PRIVATE, icon: Lock, labelKey: "channelPrivate", detailKey: "channelPrivateDetail" },
 ];
-const RECOVERED_PIE_SHOP_CHANNEL_ID = "channel-6eb6c6df-afc4-48c4-bac5-b3ceb9fe3e55";
-const RECOVERED_PIE_SHOP_WORKSPACE = "/Users/igorcosta/Documents/autohand/demo/pieshop";
-const RECOVERED_CHANNELS = [
-  {
-    id: RECOVERED_PIE_SHOP_CHANNEL_ID,
-    name: "clients-pie-shop-nz",
-    visibility: CHANNEL_VISIBILITY_PUBLIC,
-    memberIds: ["b3bc502e795a", "asq_noah_frontend", "asq_iris_reviewer", "asq_kai_devops"],
-    creatorId: "codex-live-test",
-    autoModeDefault: true,
-    createdAt: "2026-07-05T01:19:04.493Z",
-    updatedAt: "2026-07-05T10:09:47.000Z",
-  },
-];
-const RECOVERED_CHANNEL_THREADS = [
-  {
-    id: "thread_live_pieshop_mr73s27l",
-    channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-    parentMessageId: "thread_live_pieshop_mr73s27l-root",
-    title: "Build a static NZ pie shop website",
-    creatorId: "codex-live-test",
-    memberIds: ["asq_noah_frontend"],
-    autoMode: false,
-    selfJudge: false,
-    replyCount: 1,
-    createdAt: "2026-07-05T01:19:04.498Z",
-    updatedAt: "2026-07-05T01:27:47.553Z",
-  },
-  {
-    id: "thread_live_pieshop_openrouter_mr74gsz5",
-    channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-    parentMessageId: "thread_live_pieshop_openrouter_mr74gsz5-root",
-    title: "OpenRouter live static NZ pie shop build",
-    creatorId: "codex-live-test",
-    memberIds: ["asq_noah_frontend", "b3bc502e795a", "asq_iris_reviewer", "asq_kai_devops"],
-    autoMode: false,
-    selfJudge: false,
-    replyCount: 4,
-    createdAt: "2026-07-05T01:38:18.955Z",
-    updatedAt: "2026-07-05T02:08:00.000Z",
-  },
-];
-const RECOVERED_CHANNEL_MESSAGES = {
-  [RECOVERED_PIE_SHOP_CHANNEL_ID]: [
-    {
-      id: "thread_live_pieshop_mr73s27l-root",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "user",
-      body: "Build a static NZ pie shop website",
-      status: "complete",
-      time: "13:19",
-      threadId: "thread_live_pieshop_mr73s27l",
-      parentMessageId: "",
-      createdAt: "2026-07-05T01:19:04.498Z",
-      updatedAt: "2026-07-05T01:19:04.498Z",
-    },
-    {
-      id: "thread_live_pieshop_mr73s27l-recovered",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "agent",
-      agentId: "asq_noah_frontend",
-      body: "Recovered from local run evidence: the first pie-shop run created the project direction, but its full reply bodies were not persisted to the channel log. The later OpenRouter thread below contains the actionable implementation, QA, review, and serving handoff.",
-      status: "complete",
-      time: "13:27",
-      threadId: "thread_live_pieshop_mr73s27l",
-      parentMessageId: "thread_live_pieshop_mr73s27l-root",
-      workspace: RECOVERED_PIE_SHOP_WORKSPACE,
-      transport: "recovered",
-      createdAt: "2026-07-05T01:27:47.553Z",
-      updatedAt: "2026-07-05T01:27:47.553Z",
-    },
-    {
-      id: "thread_live_pieshop_openrouter_mr74gsz5-root",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "user",
-      body: "OpenRouter live static NZ pie shop build",
-      status: "complete",
-      time: "13:38",
-      threadId: "thread_live_pieshop_openrouter_mr74gsz5",
-      parentMessageId: "",
-      createdAt: "2026-07-05T01:38:18.955Z",
-      updatedAt: "2026-07-05T01:38:18.955Z",
-    },
-    {
-      id: "thread_live_pieshop_openrouter_mr74gsz5-noah",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "agent",
-      agentId: "asq_noah_frontend",
-      body: "Noah implementation handoff: built the static site workspace with index.html, styles.css, script.js, and README.md. The page links the CSS and JS, includes menu filter buttons, pie cards with data-type values, and an order modal wired by orderBtn, closeBtn, and orderModal.",
-      status: "complete",
-      time: "13:48",
-      threadId: "thread_live_pieshop_openrouter_mr74gsz5",
-      parentMessageId: "thread_live_pieshop_openrouter_mr74gsz5-root",
-      workspace: RECOVERED_PIE_SHOP_WORKSPACE,
-      transport: "recovered",
-      createdAt: "2026-07-05T01:48:00.000Z",
-      updatedAt: "2026-07-05T01:48:00.000Z",
-    },
-    {
-      id: "thread_live_pieshop_openrouter_mr74gsz5-eva",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "agent",
-      agentId: "b3bc502e795a",
-      body: "Eva QA handoff: verified index.html, styles.css, script.js, and README.md are present; HTML links the assets; the script selectors match orderBtn, closeBtn, and orderModal; README includes local run commands.",
-      status: "complete",
-      time: "13:55",
-      threadId: "thread_live_pieshop_openrouter_mr74gsz5",
-      parentMessageId: "thread_live_pieshop_openrouter_mr74gsz5-root",
-      workspace: RECOVERED_PIE_SHOP_WORKSPACE,
-      transport: "recovered",
-      createdAt: "2026-07-05T01:55:00.000Z",
-      updatedAt: "2026-07-05T01:55:00.000Z",
-    },
-    {
-      id: "thread_live_pieshop_openrouter_mr74gsz5-iris",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "agent",
-      agentId: "asq_iris_reviewer",
-      body: "Iris review handoff: reviewed the evidence after the fixes. The site structure uses semantic sections, selector guards, active filter state, modal focus and escape handling, and README serving commands. Residual risk is limited to deeper browser/manual accessibility testing beyond the static checks.",
-      status: "complete",
-      time: "14:03",
-      threadId: "thread_live_pieshop_openrouter_mr74gsz5",
-      parentMessageId: "thread_live_pieshop_openrouter_mr74gsz5-root",
-      workspace: RECOVERED_PIE_SHOP_WORKSPACE,
-      transport: "recovered",
-      createdAt: "2026-07-05T02:03:00.000Z",
-      updatedAt: "2026-07-05T02:03:00.000Z",
-    },
-    {
-      id: "thread_live_pieshop_openrouter_mr74gsz5-kai",
-      channelId: RECOVERED_PIE_SHOP_CHANNEL_ID,
-      channelName: "clients-pie-shop-nz",
-      role: "agent",
-      agentId: "asq_kai_devops",
-      body: "Kai serving handoff: the static site is ready to serve from /Users/igorcosta/Documents/autohand/demo/pieshop. Verified local URL used port 4174 because 4173 was already occupied. Commands: cd /Users/igorcosta/Documents/autohand/demo/pieshop; python3 -m http.server 4174 --bind 127.0.0.1; open http://127.0.0.1:4174.",
-      status: "complete",
-      time: "14:08",
-      threadId: "thread_live_pieshop_openrouter_mr74gsz5",
-      parentMessageId: "thread_live_pieshop_openrouter_mr74gsz5-root",
-      workspace: RECOVERED_PIE_SHOP_WORKSPACE,
-      transport: "recovered",
-      createdAt: "2026-07-05T02:08:00.000Z",
-      updatedAt: "2026-07-05T02:08:00.000Z",
-    },
-  ],
-};
 const ONBOARDING_ROUTE = "/welcome";
 const MEMBER_ROUTE_PREFIX = "/squad-members";
 const SQUAD_WORKSPACE_DIR_NAME = ".autohandsquad";
@@ -1600,18 +1456,22 @@ const PERMISSION_LEVELS = [
   {
     id: "allow",
     label: "Allow",
+    text: "text-primary",
     tone: "border-primary/35 bg-primary/15 text-primary",
     indicator: "bg-primary",
   },
   {
     id: "ask",
     label: "Ask",
+    text: "text-amber-700 dark:text-amber-200",
     tone: "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-400/35 dark:bg-amber-400/10 dark:text-amber-200",
     indicator: "bg-amber-500 dark:bg-amber-300",
   },
   {
     id: "block",
-    label: "Deny",
+    // "Deny" here, "Blocked" in the column headings and in the summary: one word.
+    label: "Blocked",
+    text: "text-red-700 dark:text-red-200",
     tone: "border-red-300 bg-red-100 text-red-800 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200",
     indicator: "bg-red-500 dark:bg-red-300",
   },
@@ -1766,29 +1626,44 @@ const SHELL_GUARDRAILS = [
     id: "workspace-fence",
     label: "Workspace fence",
     state: "On",
-    detail: "Commands stay scoped to the selected repository unless outside access is granted.",
+    detail: "Whether commands stay inside the selected folder.",
   },
   {
     id: "destructive-approval",
     label: "Destructive commands",
     state: "Blocked",
-    detail: "Disk wipes, privilege escalation, recursive deletion, and host service changes stay blocked.",
+    detail: "Disk wipes, privilege escalation, recursive deletion and host service changes.",
   },
   {
     id: "network-approval",
     label: "External network",
     state: "Ask",
-    detail: "Registry installs, web lookups, tunnels, and remote publishing require approval.",
+    detail: "Registry installs, web lookups, tunnels and remote publishing.",
   },
   {
     id: "git-approval",
     label: "Git remote writes",
     state: "Ask",
-    detail: "Commit creation, force operations, branch rewrites, and push actions stay gated.",
+    detail: "Commits, force operations, branch rewrites and pushes.",
   },
 ];
 
 const CLI_TOOL_PERMISSIONS = CLI_PERMISSION_GROUPS.flatMap((group) => group.items);
+
+/** The guardrails with the state this member's settings actually give them. */
+function shellGuardrailRows(permissions) {
+  const modes = permissions?.modes || {};
+  const word = (mode) => (mode === "allow" ? "Allowed" : mode === "ask" ? "Ask first" : "Blocked");
+  const tone = (mode) => (mode === "allow" ? "text-primary" : mode === "ask" ? "text-amber-700 dark:text-amber-300" : "text-red-700 dark:text-red-300");
+  const network = [modes["web.fetch"], modes["shell.package"]].includes("allow") ? "allow" : [modes["web.fetch"], modes["shell.package"]].includes("ask") ? "ask" : "block";
+  const live = {
+    "workspace-fence": permissions?.allPathsAllowed ? { state: "Off", tone: "text-amber-700 dark:text-amber-300" } : { state: "On", tone: "text-primary" },
+    "destructive-approval": { state: word(modes["shell.destructive"] || "block"), tone: tone(modes["shell.destructive"] || "block") },
+    "network-approval": { state: word(network), tone: tone(network) },
+    "git-approval": { state: word(modes["shell.git_write"] || "ask"), tone: tone(modes["shell.git_write"] || "ask") },
+  };
+  return SHELL_GUARDRAILS.map((rule) => ({ ...rule, ...(live[rule.id] || {}) }));
+}
 
 const PERMISSION_TABS = [
   { id: "ladder", label: "Ladder" },
@@ -1959,7 +1834,10 @@ const AUTONOMY_LADDER_LEVELS = [
   {
     id: "auto-merge-disabled",
     rank: 6,
-    label: "Auto-merge disabled",
+    // The top rung was named for what it forbids, so the ladder ended on a
+    // card reading "Auto-merge disabled", which looked like a switched-off
+    // option rather than a level you can pick.
+    label: "Release prep, no merge",
     shortLabel: "No merge",
     icon: LockKeyhole,
     permissionMode: "interactive",
@@ -2120,15 +1998,15 @@ const MEMBER_SECTIONS = [
   { id: "history", label: "History", icon: History },
   { id: "model", label: "Model", icon: Brain },
   { id: "harness", label: "Harness", icon: Cpu },
-  { id: "skill", label: "Skill", icon: Sparkles },
-  { id: "connector", label: "Connector", icon: Unplug },
-  { id: "im", label: "IM", icon: MessageSquareText },
-  { id: "permissions", label: "Permission", icon: ShieldAlert },
+  { id: "skill", label: "Skills", icon: Sparkles },
+  { id: "connector", label: "Connectors", icon: Unplug },
+  { id: "im", label: "Messaging", icon: MessageSquareText },
+  { id: "permissions", label: "Permissions", icon: ShieldAlert },
 ];
 
 const CUSTOM_ROLE_TEMPLATE = {
   id: "custom-role",
-    title: "Custom Role",
+    title: "Custom role",
     description: "",
     starter:
     "Act according to this squad member's bio. Keep work scoped, ask when the role is ambiguous, and report evidence clearly.",
@@ -2807,10 +2685,6 @@ function getThemePreset(preference, surface) {
   return THEME_PRESET_MAP[normalizedSurface].get(presetId) || THEME_PRESETS[normalizedSurface][0];
 }
 
-function createSquadMemberId() {
-  return `${SQUAD_MEMBER_ID_PREFIX}${Date.now().toString(36)}`;
-}
-
 function createAutomationId() {
   return `tr_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -3058,6 +2932,8 @@ function formatBrainCardForPrompt(agent) {
   ].join("\n\n");
 }
 
+const AVATAR_VERSION = 2;
+
 function normalizeAgentCopy(agent) {
   if (!agent || typeof agent !== "object") return agent;
   const projects = normalizeAgentProjects(agent.projects, agent.workspace);
@@ -3068,9 +2944,13 @@ function normalizeAgentCopy(agent) {
     description: String(agent.description || ""),
     instructions: String(agent.instructions || ""),
     skills: normalizeSkillList(agent.skills),
-    avatar: /^\/avatars\/[a-z0-9-]+\.(jpg|jpeg|webp)$/i.test(String(agent.avatar || ""))
+    // Members saved before bird avatars carried a role portrait; they move to
+    // a bird once. A portrait picked since (New member still offers them) is
+    // a choice and stays: without the version it was swapped on every load.
+    avatar: agent.avatarVersion !== AVATAR_VERSION && /^\/avatars\/[a-z0-9-]+\.(jpg|jpeg|webp)$/i.test(String(agent.avatar || ""))
       ? birdAvatarForRole(agent.employeeType, agent.role, agent.id)
       : agent.avatar,
+    avatarVersion: AVATAR_VERSION,
     skillSource: agent.skillSource || AUTOHAND_SKILLS_REGISTRY_URL,
     stats: agent.stats
       ? {
@@ -3333,11 +3213,10 @@ function normalizeChannelCopy(channel) {
 function mergeSeedChannels(stored) {
   const records = (Array.isArray(stored) ? stored : []).map(normalizeChannelCopy).filter(Boolean);
   const seen = new Set(records.map((channel) => channel.id));
-  return [
-    ...records,
-    ...initialChannels.filter((channel) => !seen.has(channel.id)).map(normalizeChannelCopy).filter(Boolean),
-    ...RECOVERED_CHANNELS.filter((channel) => !seen.has(channel.id)).map(normalizeChannelCopy).filter(Boolean),
-  ];
+  // Seed channels are a first-run default (readStored hands them over when
+  // nothing is saved); once channels are saved, a deleted one stays deleted.
+  if (Array.isArray(stored)) return records;
+  return [...records, ...initialChannels.filter((channel) => !seen.has(channel.id)).map(normalizeChannelCopy).filter(Boolean)];
 }
 
 function normalizeChannelThreadCopy(thread) {
@@ -3395,27 +3274,11 @@ function normalizeChannelMessagesCopy(messagesByChannel) {
 }
 
 function mergeSeedChannelThreads(stored) {
-  const next = normalizeChannelThreadsCopy(stored);
-  for (const seed of RECOVERED_CHANNEL_THREADS.map(normalizeChannelThreadCopy).filter(Boolean)) {
-    const existing = next[seed.channelId] || [];
-    if (existing.some((thread) => thread.id === seed.id)) continue;
-    next[seed.channelId] = [...existing, seed];
-  }
-  return next;
+  return normalizeChannelThreadsCopy(stored);
 }
 
 function mergeSeedChannelMessages(stored) {
-  const next = normalizeChannelMessagesCopy(stored);
-  const seedMessages = normalizeChannelMessagesCopy(RECOVERED_CHANNEL_MESSAGES);
-  for (const [channelId, messages] of Object.entries(seedMessages)) {
-    const existing = next[channelId] || [];
-    const byId = new Map(existing.map((message) => [message.id, message]));
-    for (const message of messages) {
-      if (!byId.has(message.id)) byId.set(message.id, message);
-    }
-    next[channelId] = Array.from(byId.values());
-  }
-  return next;
+  return normalizeChannelMessagesCopy(stored);
 }
 
 const CHANNEL_MENTION_PATTERN = /@([A-Za-z0-9][A-Za-z0-9._-]*)/g;
@@ -3688,7 +3551,16 @@ function projectMemoryPatchForAgent(item, agent, runtime) {
 
 function memberSectionFromRoute(route) {
   const match = route.match(/^\/squad-members\/[^/?#]+\/([^/?#]+)/);
-  return match?.[1] || "home";
+  const section = match?.[1] || "home";
+  // An address someone typed or kept ("…/chat", an old section name) opens
+  // the member's Home rather than an empty placeholder page.
+  return MEMBER_SECTIONS.some((item) => item.id === section) ? section : "home";
+}
+
+/** "/squad-members/<id>/chat" is where people expect the chat to be. */
+function memberChatRedirect(route) {
+  const match = String(route || "").match(/^\/squad-members\/([^/?#]+)\/(?:chat|conversation|messages)\/?(?:[?#]|$)/);
+  return match && match[1] !== "new" ? memberChatPath(decodeURIComponent(match[1])) : "";
 }
 
 function memberAutomationIdFromRoute(route) {
@@ -3913,8 +3785,21 @@ function highlightSearchHit(find, { attempts = 40, delay = 350 } = {}) {
   };
 }
 
+// A fetch that never reached the bridge rejects with the browser's own words
+// ("Failed to fetch", "Load failed"), which is what a person used to read
+// under "Could not answer". Say what happened instead; an abort stays an abort.
+const BRIDGE_UNREACHABLE_MESSAGE = "Squad's local service did not answer, so this was not sent. Retry once it is back; nothing was lost.";
+async function bridgeFetch(path, init) {
+  try {
+    return await fetch(path, init);
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    throw Object.assign(new Error(BRIDGE_UNREACHABLE_MESSAGE), { code: "bridge-unreachable", cause: error });
+  }
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await bridgeFetch(path, {
     headers: { accept: "application/json", "content-type": "application/json" },
     ...options,
   });
@@ -3931,9 +3816,20 @@ async function api(path, options = {}) {
   }
   if (!response.ok || !payload.success) {
     const route = String(path || "").split("?")[0];
-    throw new Error(payload.error || `${route} failed: ${response.status}`);
+    throw new Error(plainSystemError(payload.error) || `${route} failed: ${response.status}`);
   }
   return payload.data;
+}
+
+// Operating-system errors reached people verbatim ("ENOSPC: no space left on
+// device, mkdir '/private/tmp/…'"). Say what happened and what to do; the
+// original stays in the bridge's log.
+function plainSystemError(message) {
+  const text = String(message || "");
+  if (/\bENOSPC\b/.test(text)) return "This computer's disk is full, so Squad could not save this. Free some space and try again.";
+  if (/\b(?:EACCES|EPERM)\b/.test(text)) return "Squad is not allowed to write there. Check the folder's permissions and try again.";
+  if (/\bEMFILE\b/.test(text)) return "Too many files are open right now. Try again in a moment.";
+  return text;
 }
 
 // Stable so the settings row's effect runs once per open (ADR-0108).
@@ -4012,7 +3908,7 @@ function parseServerEventBlock(block) {
 }
 
 async function streamApi(path, options = {}, onEvent) {
-  const response = await fetch(path, {
+  const response = await bridgeFetch(path, {
     headers: { accept: "text/event-stream", "content-type": "application/json" },
     ...options,
   });
@@ -4614,7 +4510,28 @@ function presenceRecordIsFresh(record, maxAgeMs) {
 
 function App() {
   const [route, setRoute] = useState(() => window.location.pathname + window.location.search);
-  const [chatDraftsByAgent, setChatDraftsByAgent] = useState(() => isSettingsDestination(window.location.pathname) ? readSettingsReturn()?.drafts || {} : {});
+  // Unsent drafts outlive a reload or a crash: typing a long message and
+  // losing it to a restart was the one thing the composer could not recover.
+  const [chatDraftsByAgent, setChatDraftsByAgent] = useState(() => {
+    if (isSettingsDestination(window.location.pathname)) return readSettingsReturn()?.drafts || {};
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(CHAT_DRAFTS_KEY) || "{}");
+      return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const kept = Object.fromEntries(Object.entries(chatDraftsByAgent || {}).filter(([, value]) => typeof value === "string" && value.trim()));
+        window.localStorage.setItem(CHAT_DRAFTS_KEY, JSON.stringify(kept));
+      } catch {
+        // Storage can be full or blocked; the draft stays in memory.
+      }
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [chatDraftsByAgent]);
   const [removedAgentIds, setRemovedAgentIds] = useState(() => {
     return [...removedIdSet(readStored(storageKeysFor("removedAgents"), []))];
   });
@@ -4848,6 +4765,11 @@ function App() {
   );
   const localeCopy = useMemo(() => getLocaleCopy(localeResolution.locale), [localeResolution.locale]);
   useEffect(() => { identifySquadTelemetry(runtime?.account); }, [runtime?.account]);
+  // A reply closed as interrupted whose run actually finished gets its answer
+  // back once the runs list arrives (bug hunt, desktop pass #32).
+  useEffect(() => {
+    if (runs.length) setMessagesByAgent((current) => restoreRepliesFromRuns(current, runs));
+  }, [runs]);
   useEffect(() => {
     if (runtime?.serverStartedAt) {
       setMessagesByAgent((current) => recoverInterruptedChats(current, runtime.serverStartedAt));
@@ -5284,8 +5206,12 @@ function App() {
         threads: Object.values(channelThreads).flat(),
         messages: Object.values(messagesByChannel).flat(),
       }),
+    }).then(() => {
+      // A later sync that lands clears the earlier failure; it used to sit
+      // over every page, Settings included, until some other channel action.
+      setChannelOperationError((current) => (current.startsWith("Channel changes could not be saved") ? "" : current));
     }).catch((error) => {
-      setChannelOperationError(`Channel changes could not be saved: ${error.message}. Reconnect and try again.`);
+      setChannelOperationError(`Channel changes could not be saved: ${clause(error.message)}. Reconnect and try again.`);
     });
   }, [channels, channelThreads, messagesByChannel, channelsBridgeReady]);
 
@@ -6128,6 +6054,10 @@ function App() {
       }
       setPresenceMap(presence);
       setBridgeReachable(true);
+      // A reply this page is not streaming, for a member the bridge says is
+      // not running anything, has ended without its final update.
+      const streaming = new Set([...chatMembersRef.current.entries()].filter(([, count]) => count > 0).map(([id]) => id));
+      setMessagesByAgent((current) => recoverOrphanedChats(current, { presence, streaming }));
     } catch {
       // Keep the last map; every dot shows Unknown while the bridge is down.
       setBridgeReachable(false);
@@ -6524,7 +6454,9 @@ function App() {
     for (const agent of agents) {
       const last = Date.parse(agentReads[agent.id] || "") || 0;
       const list = Array.isArray(messagesByAgent[agent.id]) ? messagesByAgent[agent.id] : [];
-      const count = list.filter((message) => message.role === "agent" && message.status !== "loading" && messageTimestampMs(message) > last).length;
+      // A new member's own introduction is not a reply anyone is waiting on;
+      // counting it put a "1" on every member a team added and on Needs you.
+      const count = list.filter((message) => message.role === "agent" && !message.introduction && message.status !== "loading" && messageTimestampMs(message) > last).length;
       if (count) map.set(agent.id, count);
     }
     return map;
@@ -6762,6 +6694,13 @@ function App() {
     }
   };
   useEffect(() => onDesktopMenu((action) => desktopMenuRef.current?.(action)), []);
+
+  useEffect(() => {
+    const target = memberChatRedirect(route);
+    if (!target) return;
+    window.history.replaceState(window.history.state, "", target);
+    setRoute(target);
+  }, [route]);
 
   function navigate(path) {
     const state = {};
@@ -7381,7 +7320,10 @@ function App() {
       return { queued: true, item };
     }
     touchAgent(agentId, startedAt);
-    appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time, startedAt, requestId, ...checkpoint });
+    // Retry answers the same question again: the failed reply steps aside and
+    // the question is not posted a second time.
+    if (launch.retryOf) updateMessage(agentId, launch.retryOf, { superseded: true });
+    else appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time, startedAt, requestId, ...checkpoint });
 
     // A member on a break declines rather than silently queueing the work.
     const availability = memberAvailability(agent, localeCopy);
@@ -7675,7 +7617,7 @@ function App() {
       setChannels(current => current.map(channel => channel.id === channelId ? next || channel : channel));
       setChannelOperationError("");
       return next;
-    } catch (error) { setChannelOperationError(`Channel changes could not be saved: ${error.message}. Try the action again.`); return null; }
+    } catch (error) { setChannelOperationError(`Channel changes could not be saved: ${clause(error.message)}. Try the action again.`); return null; }
   }
 
   async function toggleChannelMember(channelId, memberId) {
@@ -7686,12 +7628,12 @@ function App() {
       setChannels(current => current.map(item => item.id === channelId ? next || item : item));
       setChannelOperationError("");
       return next;
-    } catch (error) { setChannelOperationError(`Membership could not be saved: ${error.message}. Try the action again.`); return null; }
+    } catch (error) { setChannelOperationError(`Membership could not be saved: ${clause(error.message)}. Try the action again.`); return null; }
   }
 
   async function deleteChannel(channelId) {
     try { await api(`/api/channels/${encodeURIComponent(channelId)}`, { method: "DELETE" }); }
-    catch (error) { setChannelOperationError(`Channel could not be deleted: ${error.message}. Try again.`); return; }
+    catch (error) { setChannelOperationError(`Channel could not be deleted: ${clause(error.message)}. Try again.`); return; }
     setChannelOperationError("");
     removeSearchDocs([`channel:${channelId}`]).catch(() => {});
     setChannels((current) => current.filter((channel) => channel.id !== channelId));
@@ -8270,9 +8212,12 @@ function App() {
     try {
       await api(workflowPath(channelId, workflowId), { method: "DELETE" });
     } catch (error) {
-      console.warn(`Workflow could not be deleted: ${error?.message || error}`);
+      // The editor closes either way; a console line was the only trace that
+      // the workflow was still there.
+      setChannelOperationError(`Workflow could not be deleted: ${clause(error?.message || error)}. Try again.`);
       return;
     }
+    setChannelOperationError("");
     setWorkflowsByChannel((current) => ({ ...current, [channelId]: (current[channelId] || []).filter((item) => item.id !== workflowId) }));
   }
 
@@ -8635,7 +8580,10 @@ function App() {
       id,
       harness: normalizeHarnessAssignmentCopy(draft.harness),
       staffId: `member-${String(agents.length + 1).padStart(3, "0")}`,
-      name: draft.name.trim(),
+      // The same limit a member shaped in chat has (PROFILE_LIMITS.name), and
+      // the same rule: a name already in the squad becomes "Eva 2", because
+      // two Evas make @Eva and the sidebar ambiguous.
+      name: uniqueName(draft.name.trim().slice(0, PROFILE_LIMITS.name), membersRef.current.filter((member) => member.id !== id).map((member) => member.name)),
       role: draft.role,
       status: "online",
       createdAt: timestamp,
@@ -8665,6 +8613,7 @@ function App() {
     };
     const agent = {
       ...baseAgent,
+      avatarVersion: AVATAR_VERSION,
       profileFiles: buildAgentProfileFiles({ ...baseAgent, profileFiles: draft.profileFiles }),
     };
     function publishAgent(created) {
@@ -9595,7 +9544,7 @@ function App() {
             queue={memberQueues[member.id]} contextGauge={memberContext[member.id]} onQueueAction={controlMemberQueue}
             routineProposals={routineProposals.filter((proposal) => proposal.memberId === member.id)} onRoutineDecision={decideRoutineProposal} onRoutineSync={syncAutomationRoutine} workPlan={workPlanFor(member.id)}
             openTerminal={openTerminal} navigate={quickNavigate} taskPanelOpen={taskPanelOpen} setTaskPanelOpen={setTaskPanelOpen}
-            tasks={tasks.filter((task) => taskBelongsToAgent(task, member.id))} automations={automations.filter((item) => automationBelongsToAgent(item, member.id))}
+            tasks={markOrphanedTasks(tasks.filter((task) => taskBelongsToAgent(task, member.id)), runs)} automations={automations.filter((item) => automationBelongsToAgent(item, member.id))}
             setAutomations={setAutomations} runAutomation={runAutomation} updateAgent={updateAgent} chatSettings={chatSettings}
             harnesses={harnesses} harnessesLoading={harnessesLoading} onRefreshHarnesses={() => refreshHarnesses(true)}
             handoffRetryMode={resolveHandoffRetryMode(handoffSettings, runtime)} onCreateHandoff={createHandoff} onCollaborationResult={recordCollaborationResult}
@@ -9761,7 +9710,14 @@ function App() {
           />}
           <main className="app-main min-w-0">
             {bridgeLine ? <div role="status" aria-live="polite" data-testid="bridge-status" className="px-6 py-2 text-xs text-muted-foreground">{bridgeLine}</div> : null}
-            {channelOperationError ? <div role="alert" className="px-6 py-3 text-sm text-destructive">{channelOperationError}</div> : null}
+            {channelOperationError ? (
+              <div role="alert" className="flex items-start gap-3 px-6 py-3 text-sm text-destructive">
+                <span className="min-w-0 flex-1">{channelOperationError}</span>
+                <Button type="button" variant="ghost" size="icon-sm" className="size-6 shrink-0 text-muted-foreground" aria-label="Dismiss" onClick={() => setChannelOperationError("")}>
+                  <X className="size-3.5" />
+                </Button>
+              </div>
+            ) : null}
             <AgentChannelProposals proposals={agentChannelActions.filter(action => action.status === "proposed")} members={agents} onDecision={decideChannelProposal} />
             <VaultRequests vault={vaultRequests} members={agents} copy={localeCopy} />
             {isSettings ? null : <MobileTopbar
@@ -9934,6 +9890,7 @@ function App() {
               />
             ) : isSettings ? (
               <SettingsPage
+                agents={agents}
                 onBack={returnFromSettings}
                 onOnboarding={openOnboarding}
                 updates={updates}
@@ -9995,7 +9952,7 @@ function App() {
                 copy={localeCopy}
                 existingMemberIds={agents.map(agent => agent.id)}
                 presets={presetTemplates}
-                onCreate={(draft, options) => createAgent(draft, { ...options, ...(onboardingIsIncomplete(onboardingState) ? { completeOnboarding: true, prompt: firstPromptFor(draft.role, workspaceLabel(draft.workspace, workspaces), draft.description) } : {}) })}
+                onCreate={(draft, options) => createAgent(draft, { ...options, ...(onboardingIsIncomplete(onboardingState) ? { completeOnboarding: true, prompt: firstPromptFor(draft.role, workspaceName(draft.workspace) || workspaceLabel(draft.workspace, workspaces)) } : {}) })}
                 onCancel={() => navigate(onboardingIsIncomplete(onboardingState) ? "/welcome" : "/conversations/new")}
                 defaultWorkspace={requestedWorkspace || fallbackWorkspace}
                 workspaceRoot={runtime?.workspaceRoot}
@@ -10008,7 +9965,7 @@ function App() {
                 agent={activeAgent}
                 agents={agents}
                 section={activeSection}
-                tasks={tasks.filter((task) => taskBelongsToAgent(task, activeAgent?.id))}
+                tasks={markOrphanedTasks(tasks.filter((task) => taskBelongsToAgent(task, activeAgent?.id)), runs)}
                 automations={activeAutomations}
                 setAutomations={setAutomations}
                 routines={routines}
@@ -10084,7 +10041,7 @@ function App() {
                 navigate={navigate}
                 taskPanelOpen={taskPanelOpen}
                 setTaskPanelOpen={setTaskPanelOpen}
-                tasks={tasks.filter((task) => taskBelongsToAgent(task, activeAgent?.id))}
+                tasks={markOrphanedTasks(tasks.filter((task) => taskBelongsToAgent(task, activeAgent?.id)), runs)}
                 automations={activeAutomations}
                 setAutomations={setAutomations}
                 runAutomation={runAutomation}
@@ -10875,13 +10832,13 @@ function ChannelsPage({
               </TooltipTrigger>
               <TooltipContent>{copy.manageChannelMembers}</TooltipContent>
             </Tooltip>
-            <Popover>
+            <Sheet>
               {/* The channel's live setup reads in the header rather than
                   hiding behind a gear: a bound repository and workflows are
                   otherwise invisible to anyone who does not open icons. The
                   text is part of the trigger, and absent when there is
                   nothing to say. */}
-              <PopoverTrigger asChild>
+              <SheetTrigger asChild>
                 <Button
                   variant="ghost"
                   size={channelSetupSummary ? "sm" : "icon-sm"}
@@ -10891,9 +10848,16 @@ function ChannelsPage({
                   {channelSetupSummary ? <span className="min-w-0 truncate text-xs">{channelSetupSummary}</span> : null}
                   <Settings className="size-4 shrink-0" />
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-72 max-h-[min(34rem,calc(100vh-6rem))] overflow-y-auto overscroll-contain p-3">
-                <div className="flex flex-col gap-3">
+              </SheetTrigger>
+              {/* A side sheet, not a popover: the settings run to about 1,070 px
+                  and a 34rem popover hid Workflows, Repository and Delete
+                  channel below a scroll nobody could see. */}
+              <SheetContent closeLabel={copy.close} className="w-full gap-0 overflow-y-auto border-border/80 p-0 sm:max-w-md">
+                <SheetHeader className="border-b border-border/60 px-5 py-4">
+                  <SheetTitle>#{channel.name}</SheetTitle>
+                  <SheetDescription>{copy.settings || "Channel settings"}</SheetDescription>
+                </SheetHeader>
+                <div className="flex flex-col gap-3 px-5 py-4">
                   <ChannelDetailsSettings key={channel.id} channel={channel} members={agents} loadAutoAvailability={loadResponderAvailability} onSave={patch => onUpdateChannel?.(channel.id, patch)} />
                   <Separator />
                   <label className="flex items-center justify-between gap-3 text-sm" htmlFor={`auto-mode-${channel.id}`}>
@@ -10998,8 +10962,8 @@ function ChannelsPage({
                     {deleteArmed ? `${copy.deleteChannel}?` : copy.deleteChannel}
                   </Button>
                 </div>
-              </PopoverContent>
-            </Popover>
+              </SheetContent>
+            </Sheet>
           </header>
 
           {/* Members as divider rows with a check, not a wall of tinted chips.
@@ -11114,7 +11078,7 @@ function ChannelsPage({
                       {message.workflowRunId ? (
                         <WorkflowTag workflow={found?.workflow || { name: message.workflowName || "" }} run={found?.run} stepId={message.stepId} showName={message.role !== "system"} copy={copy} className="mb-1" />
                       ) : null}
-                      <MarkdownBlocks text={message.body || ""} />
+                      <MarkdownBlocks text={withoutRecoveryNotices(message.body || "")} />
                       {(message.attachments || []).map((attachment) => (
                         <MediaAttachment key={attachment.id} attachment={attachment} anchors={channelAnchors} onAnchor={addAnchorToDraft} copy={copy} />
                       ))}
@@ -11133,7 +11097,15 @@ function ChannelsPage({
                 onReact={onReact}
                 onReply={(message) => setReplyTo(message)}
                 renderActions={(message) => ((message.role === "agent" || message.agentId) && String(message.body || "").trim() ? <ReadAloudButton compact text={message.body} message={message} api={api} copy={copy} /> : null)}
-                emptyLabel={members.length ? copy.channelNoThreads : copy.channelNoMembers}
+                emptyLabel={members.length ? copy.channelNoThreads : (
+                  // An empty channel can do nothing; say how to fix that here.
+                  <>
+                    {copy.channelNoMembers}{" "}
+                    <button type="button" className="font-medium text-foreground underline-offset-4 hover:underline" onClick={() => setManageMembersOpen(true)}>
+                      {copy.addChannelMembers || "Add members"}
+                    </button>
+                  </>
+                )}
                 newLabel={copy.newMessages || "New"}
                 typingLabel={copy.isTyping || "is typing…"}
               />
@@ -11471,6 +11443,7 @@ function parseAgentBody(body) {
   }
 
   for (const line of String(body || "").split(/\r?\n/)) {
+    if (isRecoveryNotice(line)) continue;
     const step = parseStepLine(line);
     if (step) {
       steps.push(step);
@@ -11551,6 +11524,32 @@ function stringifyTraceValue(value) {
   }
 }
 
+// An error's own sentence inside ours: bridge errors end with a full stop,
+// and "…: ${error.message}. Try again." read "bridge.. Try again".
+function clause(value) {
+  return String(value ?? "").trim().replace(/[.\s]+$/, "");
+}
+
+// "1000k" for a million-token window read like a typo; past a million the
+// unit is M ("1M", "1.5M"), below it k ("200k").
+function contextWindowLabel(tokens) {
+  const value = Number(tokens) || 0;
+  if (value >= 999_500) return `${Number((value / 1_000_000).toFixed(1)).toString()}M`;
+  return `${Math.round(value / 1000)}k`;
+}
+
+// The day a chat message belongs to, in the channel stream's wording
+// ("Tuesday, 14 October"); empty when the message carries no timestamp.
+function chatDayLabel(message, locale = DEFAULT_LOCALE) {
+  const ms = Date.parse(message?.startedAt || message?.createdAt || message?.completedAt || "");
+  if (!Number.isFinite(ms)) return "";
+  try {
+    return new Date(ms).toLocaleDateString(locale, { weekday: "long", month: "long", day: "numeric" });
+  } catch {
+    return new Date(ms).toDateString();
+  }
+}
+
 function formatShortTime(value, locale = DEFAULT_LOCALE) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value || "");
@@ -11573,6 +11572,10 @@ function messageDurationLabel(message) {
 }
 
 function durationFromMessage(message) {
+  // Recovery stamps an interrupted reply as finished when Squad came back,
+  // so start → "completed" is downtime, not work: Noah's cut-off reply read
+  // "5 hours 37 min". There is no honest duration to show.
+  if (message?.interrupted) return null;
   const explicit = Number(message?.durationMs ?? message?.trace?.durationMs);
   if (Number.isFinite(explicit) && explicit >= 0) return Math.round(explicit);
 
@@ -12231,7 +12234,7 @@ function ChannelCreateDialog({
 
   async function submitCreate(event) {
     event.preventDefault();
-    const name = draftName.trim();
+    const name = channelSlug(draftName).replace(/^-+|-+$/g, "");
     if (!name || submittingRef.current) return;
     submittingRef.current = true;
     setCreating(true);
@@ -12269,7 +12272,7 @@ function ChannelCreateDialog({
               placeholder={copy.channelNamePlaceholder}
               autoFocus
               disabled={creating}
-              onChange={(event) => setDraftName(event.target.value)}
+              onChange={(event) => setDraftName(channelSlug(event.target.value))}
             />
           </div>
 
@@ -12496,7 +12499,7 @@ function CollapsedSidebarRail({
                 isSquadDirectory && "bg-accent text-foreground"
               )}
               onClick={() => navigate(squadDirectoryPath())}
-              aria-label={`Squad directory, ${visibleAgents.length} members`}
+              aria-label={`Squad directory, ${visibleAgents.length} ${visibleAgents.length === 1 ? "member" : "members"}`}
             >
               <Users className="size-4" />
             </Button>
@@ -12514,7 +12517,7 @@ function CollapsedSidebarRail({
                 isChannelsRoute && "bg-accent text-foreground"
               )}
               onClick={() => navigate(channelsPath())}
-              aria-label={`${copy.channels}, ${channelCount} channels`}
+              aria-label={`${copy.channels}, ${channelCount} ${channelCount === 1 ? "channel" : "channels"}`}
             >
               <Hash className="size-4" />
               <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[9px] font-semibold text-primary-foreground">
@@ -12802,7 +12805,10 @@ function SidebarContent({
       renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
       onNavigate={{
         search: onSearch,
-        inbox: () => navigate(missionControlPath()),
+        // The row is called Needs you and carries the Needs you count; it
+        // used to reopen whichever tab was last used, so the badge said 1
+        // and the page showed All work with 28 rows.
+        inbox: () => navigate(missionControlPath({ view: "needs-you" })),
         agents: () => navigate(squadDirectoryPath()),
         channel: (channelId) => navigate(channelsPath(channelId)),
         member: (targetId) => navigate(memberChatPath(targetId)),
@@ -12987,9 +12993,10 @@ function AccountMenuButton({
             </div>
           </div>
           <DropdownMenuSeparator />
-          <AccountMenuItem icon={Monitor} label={copy.needsYou || "Needs you"} onClick={() => choose(onMissionControl)} hasChevron />
-          <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} hasChevron />
-          <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} hasChevron />
+          {/* Plain links: a › here promised a submenu that never opened. */}
+          <AccountMenuItem icon={Inbox} label={copy.needsYou || "Needs you"} onClick={() => choose(onMissionControl)} />
+          <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} />
+          <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} />
           {openAppInfo ? <AccountMenuItem icon={BookOpen} label={copy.aboutSquad || "About Autohand Squad"} onClick={() => choose(() => openAppInfo("about"))} /> : null}
           {openFeedback ? (
             <>
@@ -13005,7 +13012,7 @@ function AccountMenuButton({
   );
 }
 
-function AccountMenuItem({ icon: Icon, label, onClick, hasChevron = false, disabled = false }) {
+function AccountMenuItem({ icon: Icon, label, onClick, disabled = false }) {
   return (
     <DropdownMenuItem
       disabled={disabled}
@@ -13014,7 +13021,6 @@ function AccountMenuItem({ icon: Icon, label, onClick, hasChevron = false, disab
     >
       <Icon className="size-4" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {hasChevron ? <ChevronRight className="size-4 text-muted-foreground" /> : null}
     </DropdownMenuItem>
   );
 }
@@ -13325,8 +13331,10 @@ function AgentAvatar({ agent, large = false, className }) {
           }}
         />
       ) : null}
-      <AvatarFallback className="rounded-full bg-primary/12 text-primary">
-        <CircleUserRound className={large ? "size-12" : "size-5"} aria-hidden="true" />
+      <AvatarFallback className={cn("rounded-full bg-primary/12 font-medium text-primary", large ? "text-3xl" : "text-xs")}>
+        {/* The member's initial, so a picture that cannot load (the bridge is
+            away, the file moved) still says who this is. */}
+        {String(agent?.name || "").trim().charAt(0).toUpperCase() || <CircleUserRound className={large ? "size-12" : "size-5"} aria-hidden="true" />}
       </AvatarFallback>
     </Avatar>
   );
@@ -13719,7 +13727,7 @@ function Conversation({
   }, [canvasItems, commandItems, fileMentionItems, memberMentionItems, mentionKind, skillItems]);
   const mentionOpen = Boolean(mentionState);
   const visibleMessages = useMemo(
-    () => messages.filter((message) => !(message?.id === "m1" && message?.role === "agent" && message?.time === "Ready")),
+    () => messages.filter((message) => !message?.superseded && !(message?.id === "m1" && message?.role === "agent" && message?.time === "Ready")),
     [messages]
   );
   const hasConversationMessages = visibleMessages.length > 0;
@@ -13728,6 +13736,14 @@ function Conversation({
   const computerEvidenceByMessage = useMemo(() => new Map(visibleMessages.map((message) => [message.id, evidenceForMessage(message, computerEvidenceSessions)])), [visibleMessages, computerEvidenceSessions]);
   // Stable message objects so memoized rows skip re-rendering while typing.
   const localizedMessages = useMemo(() => visibleMessages.map((message) => localizedMessage(message, agent, copy)), [visibleMessages, agent, copy]);
+  // Older questions carry only a clock time; they belong to the day of the
+  // reply that follows, so the day line sits above the question, not
+  // between it and its answer.
+  const messageDays = useMemo(() => {
+    const days = localizedMessages.map((message) => chatDayLabel(message, locale));
+    for (let index = days.length - 2; index >= 0; index -= 1) if (!days[index]) days[index] = days[index + 1];
+    return days;
+  }, [localizedMessages, locale]);
   useEffect(() => {
     const normalizedWorkspace = normalizeSquadWorkspacePath(workspace, runtime);
     if (normalizedWorkspace && normalizedWorkspace !== workspace) {
@@ -14034,6 +14050,7 @@ function Conversation({
           access: sourceLaunch.access || access,
           mode: sourceLaunch.mode,
           requestId: sourceLaunch.requestId,
+          retryOf: sourceLaunch.retryOf,
           collaboration: sourceLaunch.collaboration,
           canvases: targetAgentId === agent.id ? canvases : [],
           signal: controller.signal,
@@ -14171,7 +14188,7 @@ function Conversation({
     const index = visibleMessages.findIndex((item) => item.id === message.id);
     const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
     if (!previousUser?.body) return;
-    sendPromptNow({ prompt: previousUser.body, workspace, policy, model, effort, access, retry: true, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
+    sendPromptNow({ prompt: previousUser.body, workspace, policy, model, effort, access, retry: true, retryOf: message.id, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
   };
 
   function postLocalNote(body, status = "note") {
@@ -14525,7 +14542,7 @@ function Conversation({
           </Popover>
             <div className="-mt-4 ml-12 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               {runtime?.available ? (
-                <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="min-w-0 truncate" />
+                <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="shrink-0 whitespace-nowrap" />
               ) : (
                 <>
                   <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
@@ -14533,8 +14550,10 @@ function Conversation({
                 </>
               )}
               {!compact ? <>
-                <span className="text-border">·</span>
-                <span className="min-w-0 max-w-40 truncate sm:max-w-[18rem]">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
+                {/* On a phone the composer already names the folder; the
+                    status gets the room instead of both truncating. */}
+                <span className="hidden text-border sm:inline">·</span>
+                <span className="hidden min-w-0 max-w-[18rem] truncate sm:inline">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
                 <span className="hidden text-border sm:inline">·</span>
                 <span className="hidden min-w-0 max-w-48 truncate sm:inline" data-testid="chat-model-label">{memberModelLabel}</span>
                 <ContextGaugeMeta gauge={contextGauge} copy={copy} className="hidden sm:inline" separator={<span className="hidden text-border sm:inline">·</span>} />
@@ -14589,7 +14608,8 @@ function Conversation({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          {stopMember && !["offline", "unknown"].includes(entryForPresence(agent).state) ? (
+          {/* Stop only means something while there is work to end. */}
+          {stopMember && (chatSending || runningCount > 0) && !["offline", "unknown"].includes(entryForPresence(agent).state) ? (
             <StopMemberButton member={agent} onStop={stopMember} iconOnly copy={copy} disabled={!runtime?.available} />
           ) : null}
           <Button variant="outline" size="sm" className="h-8" onClick={startFreshChat}>
@@ -14633,19 +14653,19 @@ function Conversation({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon-sm" aria-label={copy.taskList} onClick={() => openPanel("tasks")}>
-                <History />
+                <ListChecks />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{copy.taskList}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" className="relative" aria-label={copy.current} onClick={() => openPanel("runs")}>
+              <Button variant="ghost" size="icon-sm" className="relative" aria-label={copy.runsPanel || "Runs"} onClick={() => openPanel("runs")}>
                 <CircleDot className={cn(runningCount && "text-primary")} />
                 {runningCount ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary" aria-hidden="true" /> : null}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{copy.current}</TooltipContent>
+            <TooltipContent>{runningCount ? `${copy.runsPanel || "Runs"} · ${runningCount} running` : copy.runsPanel || "Runs"}</TooltipContent>
           </Tooltip>
           </> : null}
           {menu}
@@ -14699,20 +14719,34 @@ function Conversation({
                   </Alert>
                 ) : null}
                 <div className="flex flex-col gap-6">
-                  {localizedMessages.map((message) => (
-                    <SquadMessage
-                      key={message.id}
-                      agent={agent}
-                      message={message}
-                      computerEvidence={computerEvidenceByMessage.get(message.id)}
-                      copy={copy}
-                      chatSettings={chatSettings}
-                      onRetry={retryMessage}
-                      onFolderAccess={decideFolderAccess}
-                      onScheduleOffer={decideScheduleOffer}
-                      memberBusy={Boolean(chatSending)}
-                    />
-                  ))}
+                  {/* Noah's chat showed "04:25 PM" above "01:39 AM" with nothing
+                      to say they were different days; channels mark each day. */}
+                  {localizedMessages.map((message, index) => {
+                    const day = messageDays[index];
+                    const previous = index ? messageDays[index - 1] : "";
+                    return (
+                      <Fragment key={message.id}>
+                        {day && day !== previous ? (
+                          <div className="-mb-2 flex items-center gap-3" role="separator" aria-label={day}>
+                            <span className="h-px flex-1 bg-border" />
+                            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{day}</span>
+                            <span className="h-px flex-1 bg-border" />
+                          </div>
+                        ) : null}
+                        <SquadMessage
+                          agent={agent}
+                          message={message}
+                          computerEvidence={computerEvidenceByMessage.get(message.id)}
+                          copy={copy}
+                          chatSettings={chatSettings}
+                          onRetry={retryMessage}
+                          onFolderAccess={decideFolderAccess}
+                          onScheduleOffer={decideScheduleOffer}
+                          memberBusy={Boolean(chatSending)}
+                        />
+                      </Fragment>
+                    );
+                  })}
                   <div ref={messagesEndRef} aria-hidden="true" />
                 </div>
               </>
@@ -14997,7 +15031,7 @@ function Conversation({
           {/* What the member is doing right now, in the same place the channel
               composer says it. Without this, a reply in progress looks like
               nothing happening. */}
-          <p className="min-h-5 px-3 pb-2 text-xs text-muted-foreground sm:px-5" aria-live="polite">
+          <p className="mx-auto mt-1.5 min-h-4 w-full max-w-3xl px-3 text-xs text-muted-foreground" aria-live="polite">
             {chatSending ? liveActivityLabel : ""}
           </p>
         </form>
@@ -15299,6 +15333,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
   const elapsedMs = useElapsedMs(message.startedAt, isLoading);
   const durationMs = isLoading ? elapsedMs : durationFromMessage(message);
   const durationLabel = durationMs === null ? "" : formatDuration(durationMs);
+  const { activity: workActivity } = useMessageActivity(message, isLoading);
   const hasVisibleAnswer = Boolean(view.answer && !isThinkingPlaceholder);
   const showRawOutput = normalizedChatSettings.displayCliOutput && hasRawOutput;
   const showProgressPlaceholder = isLoading && !hasVisibleAnswer;
@@ -15310,7 +15345,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
   const needsSignIn = isError && /sign-in|autohand login|not signed in|rejected the account token/i.test(errorText);
 
   return (
-    <article data-message-id={message.id} className={cn("group transition-colors", !compact && "grid grid-cols-[auto,minmax(0,1fr)] gap-3")} aria-live={isLoading ? "polite" : undefined}>
+    <article data-message-id={message.id} className={cn("group transition-colors", !compact && "grid grid-cols-[auto_minmax(0,1fr)] gap-3")} aria-live={isLoading ? "polite" : undefined}>
       {!compact ? <AgentAvatar agent={agent} className="mt-0.5" /> : null}
       <div className="min-w-0">
         <div className="mb-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
@@ -15321,7 +15356,9 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
               <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
               {durationLabel ? `${durationLabel}` : "Working"}
             </span>
-          ) : durationLabel && !compact ? (
+          ) : durationLabel && !compact && (normalizedChatSettings.workDetails === "hidden" || !workActivity.length) ? (
+            // With Work details shown, its summary line already ends in the
+            // duration ("Work details · 1 step · 38 sec"); the header said it too.
             <span>{durationLabel}</span>
           ) : null}
           {!compact && message.effectiveModel ? <span className="hidden truncate sm:inline">· {replyModelLabel(message.effectiveModel, providerSummaryLabel)}</span> : null}
@@ -15338,7 +15375,9 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
 
         <AgentTaskChecklist message={message} isLoading={isLoading} />
 
-        {hasVisibleAnswer && !isError ? (
+        {hasVisibleAnswer && !isError && isNoTextReply(view.answer) ? (
+          <p className="text-sm text-muted-foreground">No reply text. Work details shows what ran.</p>
+        ) : hasVisibleAnswer && !isError ? (
           <div className={cn("max-w-none text-foreground/95", compact ? "text-sm leading-6" : "text-[15px] leading-7")} >
             <MarkdownBlocks text={view.answer} />
           </div>
@@ -15490,8 +15529,8 @@ function RawTraceBlock({ raw }) {
 
 function Metric({ label, value }) {
   return (
-    <div className="min-w-0 rounded-lg border bg-muted/35 p-3">
-      <div className="min-w-0 truncate text-sm font-semibold">{value}</div>
+    <div className="min-w-0">
+      <div className="min-w-0 truncate text-lg font-semibold tabular-nums">{value}</div>
       <div className="mt-1 text-xs text-muted-foreground">{label}</div>
     </div>
   );
@@ -16188,7 +16227,7 @@ function MissionControlPage({
   // what the page lists (ADR-0121): decisions, unread, stopped, working.
   const decisionCount = decisionRows(attention).length;
   const unreadCount = (attention.replies?.length || 0) + (attention.unreadChannels?.length || 0);
-  const stoppedCount = workRowsNeedingYou(allRows, attention.handoffs).length;
+  const stoppedCount = stoppedWorkRows(allRows, attention.handoffs, copy).length;
   const summary = needsYouSummary({ decisions: decisionCount, unread: unreadCount, stopped: stoppedCount, working: runningRows.length }, copy, (value) => formatLocalizedNumber(value, locale));
   const checksLabel = (row) => {
     const state = rowEvaluationStates.get(row.id);
@@ -16492,7 +16531,7 @@ function SquadDirectoryPage({
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <Button variant="outline" size="sm" onClick={() => navigate(`${MEMBER_ROUTE_PREFIX}/new`)}>
               <Plus data-icon="inline-start" />
               {copy.newMember || "New member"}
@@ -16893,32 +16932,31 @@ function MissionPermissionWarnings({ agents = [], runtime, workspaces = [], navi
   if (!warningRows.length) return null;
 
   return (
-    <section className="border-y border-border/60 py-5" aria-labelledby="mission-permission-warnings">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 id="mission-permission-warnings" className="text-xl font-semibold text-foreground">Permission Warnings</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Autonomy, guard, and connector checks before risky work starts.</p>
-        </div>
-        <span className="text-xs font-medium uppercase text-amber-600 dark:text-amber-500">{warningRows.length} Warnings</span>
+    // Same shape as the other Needs you sections (InboxPage Section): small
+    // sentence-case heading, a bare count, divider rows. It was an xl
+    // "Permission Warnings" heading, "1 WARNINGS", and a grid of bordered cells.
+    <section className="border-b border-border/70 pb-5" aria-labelledby="mission-permission-warnings">
+      <div className="flex items-baseline justify-between gap-3 pb-1">
+        <h2 id="mission-permission-warnings" className="text-sm font-semibold text-foreground">Permission warnings</h2>
+        <span className="text-xs text-muted-foreground">{warningRows.length}</span>
       </div>
-      <div className="grid gap-0 md:grid-cols-2 xl:grid-cols-3">
+      <p className="pb-1 text-xs text-muted-foreground">Autonomy, guard, and connector checks before risky work starts.</p>
+      <div className="flex flex-col divide-y divide-border/60">
         {warningRows.slice(0, 6).map(({ agent, workspace, warning, ladder }) => (
           <MissionAnchor
             key={`${agent.id}-${workspace}-${warning.id}`}
             href={memberProfilePath(agent.id, "permissions")}
             navigate={navigate}
-            className="grid gap-3 border-t border-border/60 py-4 text-left transition-[background-color] hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring md:border-r md:px-4"
+            className="flex w-full items-start gap-3 rounded-md px-2 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <span className="flex min-w-0 items-center gap-3">
-              <AgentAvatar agent={agent} />
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold text-foreground">{agent.name}</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  Level {ladder.rank}: {ladder.label} / {workspaceName(workspace) || "workspace"}
-                </span>
+            <AgentAvatar agent={agent} className="size-6" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-foreground">
+                {agent.name}
+                <span className="font-normal text-muted-foreground"> · Level {ladder.rank}: {ladder.label} / {workspaceName(workspace) || "workspace"}</span>
               </span>
+              <span className="mt-0.5 block text-xs leading-5 text-amber-600 dark:text-amber-500">{warning.message}</span>
             </span>
-            <span className="border-l-2 border-amber-500/70 pl-3 text-xs leading-5 text-amber-600 dark:text-amber-500">{warning.message}</span>
           </MissionAnchor>
         ))}
       </div>
@@ -17026,7 +17064,9 @@ function MissionControlTable({ rows = [], title, evaluationStates, selectedRow, 
             {row.summary ? <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">{row.summary}</p> : null}
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               <MissionStatusPill status={row.status} copy={copy} />
-              {row.owner?.name ? <span className="truncate">{row.owner.name}</span> : null}
+              {/* A removed member's runs stay in history; the row named nobody
+                  and read as if the work had no owner. */}
+              {row.owner?.name ? <span className="truncate">{row.owner.name}</span> : row.run?.agentId || row.task?.agentId ? <span className="truncate italic">Removed member</span> : null}
               {row.repository ? <span className="truncate font-mono">{row.repository}</span> : null}
               {row.runtimeId ? <span className="truncate font-mono">{compactRecordId(row.runtimeId)}</span> : null}
               {evaluationStates?.get(row.id) ? <MissionEvaluationBadge state={evaluationStates.get(row.id)} copy={copy} /> : null}
@@ -17059,10 +17099,16 @@ function MissionRiskAndEvidence({ row }) {
           {permissionWarning.message}
         </div>
       ) : null}
-      <div className="break-words text-xs leading-5 text-muted-foreground">
-        <span className="font-semibold text-foreground">{row.evidence.type}: </span>
-        {row.evidence.label}
-      </div>
+      {/* The same sentence twice in one row helped nobody. */}
+      {row.evidence?.label && row.evidence.label !== row.summary ? (
+        <div className="break-words text-xs leading-5 text-muted-foreground">
+          {/* The type is a guess from words in the text. When the text names
+              its own kinds ("Command: … file change: …") the guess only
+              repeated one of them in front. */}
+          {/^\s*[a-z][a-z ]{1,24}:/i.test(row.evidence.label || "") ? null : <span className="font-semibold text-foreground">{row.evidence.type}: </span>}
+          {row.evidence.label}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -17258,7 +17304,7 @@ function MissionDetailPanel({ row, locale = DEFAULT_LOCALE, copy = getLocaleCopy
             <span className="font-mono text-[11px] text-muted-foreground">{compactRecordId(row.task?.id || row.runtimeId || row.id)}</span>
           </div>
           <h2 id="mission-detail-title" className="text-pretty text-2xl font-semibold leading-7 text-foreground">{row.title}</h2>
-          <p className="mt-2 text-sm text-muted-foreground">{row.repository} / {row.owner?.name || "unassigned"}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{row.repository} / {row.owner?.name || (row.run?.agentId || row.task?.agentId ? "removed member" : "unassigned")}</p>
         </div>
         <MissionAnchor
           href={row.profilePath}
@@ -18158,7 +18204,7 @@ function buildMissionRows({ agents = [], tasks = [], runs = [], runtime, workspa
   const taskRows = tasks.map((task) => {
     const run = task.runtimeId ? runById.get(task.runtimeId) : null;
     if (run?.id) linkedRunIds.add(run.id);
-    return missionRowFromTask(task, run, agents, runtime, workspaces);
+    return missionRowFromTask(task, run, agents, runtime, workspaces, { runsKnown: runs.length > 0 });
   });
   const runRows = runs
     .filter((run) => run?.id && !linkedRunIds.has(run.id))
@@ -18169,12 +18215,13 @@ function buildMissionRows({ agents = [], tasks = [], runs = [], runtime, workspa
     .sort((left, right) => missionTime(right.updatedAt) - missionTime(left.updatedAt));
 }
 
-function missionRowFromTask(task, run, agents, runtime, workspaces) {
+function missionRowFromTask(task, run, agents, runtime, workspaces, { runsKnown = false } = {}) {
   const owner = taskOwner(task, agents) || agents.find((agent) => agent.id === task.agentId);
   const runtimeId = run?.id || task.runtimeId || "";
   const workspacePath = normalizePath(run?.workspace || owner?.workspace || missionWorkspacePath(task.project, workspaces));
   const repository = workspaceName(workspacePath) || task.project || "workspace";
-  const status = missionTaskStatus(task, run);
+  const orphan = orphanedTaskReason(task, run, { runsKnown });
+  const status = orphan ? "blocked" : missionTaskStatus(task, run);
   const detailPath = missionControlPath({ task: task.id });
   const runPath = missionControlPath({ run: runtimeId });
   const profilePath = owner ? memberProfilePath(owner.id, "home") : missionControlPath();
@@ -18198,7 +18245,7 @@ function missionRowFromTask(task, run, agents, runtime, workspaces) {
     runPath,
     workspaceLink: workspacePath ? workspacePathTarget : "",
     detailPath,
-    blocker: missionBlocker(task),
+    blocker: orphan || missionBlocker(task),
     permissionWarnings: owner ? permissionWarningsForAgent(owner, runtime, workspacePath) : [],
     evidence: missionLastEvidence(task, run),
     nextAction: missionNextAction(status, { detailPath, ownerId: owner?.id }),
@@ -18221,8 +18268,16 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
   // came back, or the last line of output for a launched run.
   const isReply = run.mode === "chat" || run.kind === "chat";
   const lastLine = String((Array.isArray(run.logs) ? run.logs : []).at?.(-1)?.line || "").trim();
-  const reply = String(run.reply || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  // Cut on a word with an ellipsis: a hard 200-character slice ended Max's
+  // reply on "What matters most right now: follo".
+  const reply = trimTitle(String(run.reply || ""), 200);
   const title = (run.title && run.title !== run.command ? run.title : "") || (isReply ? "Chat reply" : "Launched run");
+  // A reply that never came has a reason in its log; "No reply was recorded"
+  // under a failed row hid it.
+  const failureReason = isReply && !reply && ["failed", "stopped", "interrupted"].includes(run.status)
+    ? String([...(Array.isArray(run.logs) ? run.logs : [])].reverse().find((entry) => entry?.source === "stderr" && String(entry.line || "").trim())?.line || "").replace(/^\[Autohand Squad\]\s*/, "").replace(/\s+/g, " ").trim().slice(0, 240)
+    : "";
+  const replySummary = reply || failureReason || (run.status === "stopped" ? "Stopped before a reply." : "No reply was recorded.");
 
   return {
     id: `run-${run.id}`,
@@ -18231,7 +18286,7 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
     run,
     owner,
     title,
-    summary: isReply ? reply || "No reply was recorded." : lastLine || "Run output is available from the local bridge.",
+    summary: isReply ? replySummary : lastLine || "Run output is available from the local bridge.",
     status,
     runtimeId: run.id,
     repository,
@@ -18243,7 +18298,7 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
     detailPath,
     blocker: status === "failed" && !isReply ? "Standalone run failed before a parent task was linked." : "",
     permissionWarnings: owner ? permissionWarningsForAgent(owner, runtime, workspacePath) : [],
-    evidence: isReply ? { type: "reply", label: reply || "No reply was recorded." } : { type: "output", label: lastLine || "Run output is available from the local bridge." },
+    evidence: isReply ? { type: "reply", label: replySummary } : { type: "output", label: lastLine || "Run output is available from the local bridge." },
     nextAction: missionNextAction(status, { detailPath, ownerId: owner?.id, reply: isReply }),
     updatedAt: run.updatedAt || run.completedAt || run.startedAt || new Date().toISOString(),
   };
@@ -18326,15 +18381,17 @@ function missionNextAction(status, { detailPath, ownerId, reply = false } = {}) 
   const chat = ownerId ? memberChatPath(ownerId) : detailPath;
   // A failed reply is retried in the conversation, where Retry already is;
   // Replay is for launched runs only.
-  if (status === "failed" && reply) return { id: "open", label: "Open chat", icon: Play, path: chat };
+  // "Open chat" goes to a conversation; a Play icon promised to start
+  // something and Workflow promised a handoff.
+  if (status === "failed" && reply) return { id: "open", label: "Open chat", icon: MessageSquareText, path: chat };
   if (status === "failed") return { id: "replay", label: "Replay", icon: RefreshCw, path: "" };
   if (status === "handoff-pending" || status === "pending") {
     const params = new URLSearchParams(String(detailPath || "").split("?")[1] || "");
     params.set("view", "needs-you");
     return { id: "review", label: "Review", icon: ClipboardCheck, path: `${missionControlPath()}?${params}` };
   }
-  if (status === "running" || status === "launching") return { id: "open", label: "Open chat", icon: Play, path: chat };
-  if (status === "blocked") return { id: "open", label: "Open chat", icon: Workflow, path: chat };
+  if (status === "running" || status === "launching") return { id: "open", label: "Open chat", icon: MessageSquareText, path: chat };
+  if (status === "blocked") return { id: "open", label: "Open chat", icon: MessageSquareText, path: chat };
   return { id: "details", label: "Details", icon: History, path: detailPath };
 }
 
@@ -18363,7 +18420,11 @@ function formatLongDate(value, locale = DEFAULT_LOCALE) {
   }).format(date);
 }
 
-function formatRecordDate(value, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE)) {
+// Dates follow the system's region, not the translation: copy is en-US for
+// every English speaker, but an en-NZ Mac read "May 25 at 9:25 PM" in the
+// Execution panel beside "25 May" everywhere else. `undefined` lets Intl
+// use the system locale.
+function formatRecordDate(value, locale = undefined, copy = getLocaleCopy(DEFAULT_LOCALE)) {
   if (!value) return copy.never;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
@@ -18375,7 +18436,7 @@ function formatRecordDate(value, locale = DEFAULT_LOCALE, copy = getLocaleCopy(D
   }).format(date);
 }
 
-function formatAutomationDate(value, locale = DEFAULT_LOCALE) {
+function formatAutomationDate(value, locale = undefined) {
   if (!value) return "Never";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
@@ -18520,9 +18581,9 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
         ))}
       </dl>
       <div className="mt-3 border-t border-border/60 pt-3">
-        <Button type="button" size="sm" className="w-full" onClick={onViewProfile}>
+        <Button type="button" variant="outline" size="sm" className="w-full" onClick={onViewProfile}>
           View profile
-          <ArrowUpRight data-icon="inline-end" />
+          <ArrowRight data-icon="inline-end" />
         </Button>
       </div>
     </PopoverContent>
@@ -18547,7 +18608,7 @@ function HandoffTimelinePanel({ tasks = [], agents = [], locale = DEFAULT_LOCALE
   }
 
   return (
-    <section className="rounded-md border bg-muted/20 p-4" aria-label="Handoff timeline">
+    <section className="border-t border-border/60 pt-4" aria-label="Handoff timeline">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold">Handoff timeline</h3>
@@ -18581,72 +18642,59 @@ function HandoffTimelinePanel({ tasks = [], agents = [], locale = DEFAULT_LOCALE
   );
 }
 
-function WorkRecordTasksTable({ tasks, copy = getLocaleCopy(DEFAULT_LOCALE), locale = DEFAULT_LOCALE }) {
+// Divider rows, as the rest of the member pages. These were bordered tables
+// with a tinted header, truncated ids ("task_go...ewer"), pill badges in
+// Title Case ("Handoff Pending") and US dates on an en-NZ Mac; the empty
+// state named Eva on every member's page.
+function WorkRecordTasksTable({ tasks, agent, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   if (!tasks.length) {
-    return <EmptyBlock icon={LayoutList} title={copy.noTasksYet} body={formatCopy(copy.tasksAppearAfterChatWork, { name: "Eva" })} />;
+    return <p className="py-4 text-sm text-muted-foreground">{formatCopy(copy.tasksAppearAfterChatWork, { name: agent?.name || "this member" })}</p>;
   }
-
   return (
-    <div className="overflow-hidden rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/55">
-            <TableHead className="w-[150px]">ID</TableHead>
-            <TableHead>{copy.name}</TableHead>
-            <TableHead className="w-[160px]">{copy.source}</TableHead>
-            <TableHead className="w-[150px]">{copy.status}</TableHead>
-            <TableHead className="w-[180px]">{copy.created}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {tasks.map((task) => (
-            <TableRow key={task.id}>
-              <TableCell className="font-mono text-muted-foreground">{compactRecordId(task.id)}</TableCell>
-              <TableCell className="max-w-[520px] truncate font-medium">{task.title}</TableCell>
-              <TableCell>
-                <Badge variant="secondary" className="rounded-md bg-muted text-muted-foreground">
-                  {taskSourceLabel(task.source, copy)}
-                </Badge>
-              </TableCell>
-              <TableCell><StatusBadge status={task.status} copy={copy} /></TableCell>
-              <TableCell>{formatRecordDate(task.createdAt || task.updatedAt, locale, copy)}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="divide-y divide-border/70 border-y border-border/70">
+      {tasks.map((task) => {
+        const bad = task.status === "failed" || task.status === "blocked";
+        return (
+          <div key={task.id} className="flex items-baseline gap-3 py-2.5 text-sm" title={task.id}>
+            <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              <span className={cn(bad && "text-destructive")}>{sentenceCase(statusLabel(task.status, copy))}</span>
+              {" · "}{taskSourceLabel(task.source, copy)}
+              {" · "}{formatRecordDate(task.createdAt || task.updatedAt, undefined, copy)}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function WorkRecordAutomationsTable({ automations, copy = getLocaleCopy(DEFAULT_LOCALE), locale = DEFAULT_LOCALE }) {
+function WorkRecordAutomationsTable({ automations, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   if (!automations.length) {
-    return <EmptyBlock icon={Workflow} title={copy.noAutomationsYet} body={copy.scheduledLocalAutohandWork} />;
+    return <p className="py-4 text-sm text-muted-foreground">{copy.scheduledLocalAutohandWork}</p>;
   }
-
   return (
-    <div className="overflow-hidden rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/55">
-            <TableHead>{copy.name}</TableHead>
-            <TableHead className="w-[160px]">Run Count</TableHead>
-            <TableHead className="w-[220px]">{copy.created}</TableHead>
-            <TableHead className="w-[220px]">Last Run</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {automations.map((automation) => (
-            <TableRow key={automation.id}>
-              <TableCell className="font-medium">{automation.name}</TableCell>
-              <TableCell>{automation.runCount ?? (automation.lastRun && automation.lastRun !== "Never" ? 1 : 0)}</TableCell>
-              <TableCell>{formatRecordDate(automation.createdAt, locale, copy)}</TableCell>
-              <TableCell>{formatRecordDate(automation.lastRun, locale, copy)}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="divide-y divide-border/70 border-y border-border/70">
+      {automations.map((automation) => {
+        const runs = automation.runCount ?? (automation.lastRun && automation.lastRun !== "Never" ? 1 : 0);
+        return (
+          <div key={automation.id} className="flex items-baseline gap-3 py-2.5 text-sm">
+            <span className="min-w-0 flex-1 truncate font-medium">{automation.name}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {runs === 1 ? "1 run" : `${runs} runs`}
+              {" · last "}{automation.lastRun && automation.lastRun !== "Never" ? formatRecordDate(automation.lastRun, undefined, copy) : "never"}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+/** "Handoff Pending" → "Handoff pending": status words are words, not titles. */
+function sentenceCase(value) {
+  const text = String(value || "");
+  return text ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase() : text;
 }
 
 
@@ -18859,12 +18907,7 @@ function RecipeCatalogDialog({
                 >
                   <div className="flex w-full flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-foreground">{recipe.name}</span>
-                    <Badge variant="outline" className="rounded-md text-[11px]">{level.shortLabel || level.label}</Badge>
-                    {role ? (
-                      <Badge variant="secondary" className="rounded-md text-[11px]">{formatCopy(text.forRole, { role: role.title })}</Badge>
-                    ) : (
-                      <Badge variant="secondary" className="rounded-md text-[11px]">{text.general}</Badge>
-                    )}
+                    <span className="text-xs text-muted-foreground">Level {level.rank}: {level.label} · {role ? formatCopy(text.forRole, { role: role.title }) : text.general}</span>
                   </div>
                   <p className="text-sm leading-6 text-muted-foreground">{recipe.description}</p>
                 </button>
@@ -18890,7 +18933,7 @@ function RecipeCatalogDialog({
 
 function EmptyBlock({ icon: Icon, title, body }) {
   return (
-    <Empty className="border">
+    <Empty className="py-8">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <Icon />
@@ -19503,9 +19546,20 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
   const isValid = Boolean(selectedTemplate && draft.name.trim() && draft.description.trim() && draft.instructions.trim() && (!isCustomRole || draft.role.trim()));
 
   const toggleTemplate = useCallback((id) => {
-    setTemplateId((current) => (current === id ? "" : id));
+    const picked = templateId !== id;
+    setTemplateId(picked ? id : "");
     setAvatarError("");
-  }, []);
+    // Picking a role used to leave the sixteen-row list open with the filled
+    // form below it, out of sight; close the list and bring the form up.
+    requestAnimationFrame(() => {
+      if (!picked) return;
+      setRolesOpen(false);
+      requestAnimationFrame(() => {
+        nameInputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+        nameInputRef.current?.focus({ preventScroll: true });
+      });
+    });
+  }, [templateId]);
 
   function selectCustomRole() {
     setCustomTemplateDialogOpen(true);
@@ -19701,6 +19755,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
               <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <Input
                   id="member-name"
+                  maxLength={PROFILE_LIMITS.name}
                   ref={nameInputRef}
                   value={draft.name}
                   placeholder={copyText.memberNamePlaceholder || "Name this member"}
@@ -19723,7 +19778,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
             </div>
             <Field>
               <FieldLabel>
-                Profile Avatar <span className="text-primary">*</span>
+                Picture
               </FieldLabel>
               {/* The member header shows the portrait a hundred pixels above.
                   Repeating it here was the same face twice on one screen. */}
@@ -19731,7 +19786,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
                 <input id="member-avatar-upload" type="file" accept={AVATAR_UPLOAD_ACCEPT} className="sr-only" onChange={uploadAvatar} />
                 <Button asChild variant="outline">
                   <label htmlFor="member-avatar-upload" className="cursor-pointer">
-                    Upload Avatar
+                    Upload a picture
                   </label>
                 </Button>
                 <span className="text-sm text-muted-foreground">PNG / JPG / WebP, max 2 MB</span>
@@ -19998,7 +20053,7 @@ function CustomRoleTemplateDialog({ open, onOpenChange, onCreate }) {
                 <input id="custom-role-avatar-upload" type="file" accept={AVATAR_UPLOAD_ACCEPT} className="sr-only" onChange={uploadAvatar} />
                 <Button asChild variant="ghost" className="text-muted-foreground hover:text-foreground">
                   <label htmlFor="custom-role-avatar-upload" className="cursor-pointer">
-                    Upload Avatar
+                    Upload a picture
                   </label>
                 </Button>
               </div>
@@ -20226,7 +20281,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
     if (!isValid) return;
 
     onSave(profilePatchFor(agent, {
-      name: draft.name,
+      name: String(draft.name || "").trim().slice(0, PROFILE_LIMITS.name),
       role: draft.role,
       description: draft.description,
       instructions: draft.instructions,
@@ -20251,7 +20306,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
           <div className="grid gap-7 px-6 py-6 sm:px-8 lg:grid-cols-[280px_minmax(0,1fr)]">
             <section className="space-y-4">
               <Field>
-                <FieldLabel>Profile Avatar</FieldLabel>
+                <FieldLabel>Picture</FieldLabel>
                 <div className="flex items-center gap-4">
                   <RoleAvatar
                     roleId={agent?.employeeType || "custom-role"}
@@ -20268,7 +20323,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
                   />
                   <Button asChild variant="outline">
                     <label htmlFor={`profile-avatar-upload-${agent?.id || "member"}`} className="cursor-pointer">
-                      Upload Avatar
+                      Upload a picture
                     </label>
                   </Button>
                 </div>
@@ -20287,6 +20342,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
                   </FieldLabel>
                   <Input
                     value={draft.name}
+                    maxLength={PROFILE_LIMITS.name}
                     onChange={(event) => updateDraft({ name: event.target.value })}
                     placeholder="Enter squad member name"
                     className="h-11 bg-card"
@@ -20316,7 +20372,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
               </Field>
 
               <Field>
-                <FieldLabel>Operating Instructions</FieldLabel>
+                <FieldLabel>Operating instructions</FieldLabel>
                 <Textarea
                   value={draft.instructions}
                   onChange={(event) => updateDraft({ instructions: event.target.value })}
@@ -20501,27 +20557,24 @@ function AutomationsPage({
   }
 
   return (
+    // Same header as the other member pages (a slim top bar, one line under
+    // it). This one had a 4xl "Automations" title of its own and a tinted
+    // blue notice box.
     <div className="min-h-screen bg-background">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-10 sm:px-6 lg:px-8 lg:py-14">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h1 className="text-4xl font-semibold tracking-normal">{copy.automations}</h1>
-            <p className="mt-3 max-w-2xl text-base text-muted-foreground">
-              Create automations that can be triggered on schedule or manually anytime.
-            </p>
-          </div>
-          <Button className="w-fit" onClick={openCreate}>
-            <Plus data-icon="inline-start" />
-            New
-          </Button>
+      <PageTitle title={copy.automations} />
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-2xl text-sm text-muted-foreground">
+            Work this member runs on a schedule, from a webhook or by hand.
+            {automations.length ? " Scheduled ones run on the bridge while your computer is awake, even with Squad closed; one marked “needs Squad open” waits for the app." : ""}
+          </p>
+          {automations.length ? (
+            <Button variant="outline" size="sm" className="w-fit" onClick={openCreate}>
+              <Plus data-icon="inline-start" />
+              New automation
+            </Button>
+          ) : null}
         </div>
-
-        {automations.length ? (
-          <Alert className="border-blue-500/60 bg-blue-950/25 text-blue-100 dark:bg-blue-950/25">
-            <InfoIcon />
-            <AlertDescription>Scheduled automations run on the bridge while your computer is awake, even with Squad closed; a routine marked “needs Squad open” waits for the app.</AlertDescription>
-          </Alert>
-        ) : null}
         {routineError ? <p role="alert" className="text-sm text-destructive">{routineError}</p> : null}
 
         {automations.length ? (
@@ -20568,22 +20621,15 @@ function InfoIcon() {
 }
 
 function AutomationEmptyState({ onCreate }) {
+  // One sentence and the action (DESIGN.md), not a dashed icon tile in a
+  // 460px-tall centred block with the button somewhere else.
   return (
-    <div className="grid min-h-[460px] place-items-center">
-      <div className="flex max-w-md flex-col items-center text-center">
-        <button
-          type="button"
-          className="grid size-20 place-items-center rounded-md border border-dashed border-border/90 text-muted-foreground transition-colors hover:border-primary/70 hover:text-primary"
-          onClick={onCreate}
-          aria-label="Create automation"
-        >
-          <Clock3 className="size-8" />
-        </button>
-        <h2 className="mt-7 text-xl font-semibold">No automations yet</h2>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Create an automation to run squad members on a schedule, webhook, or API call.
-        </p>
-      </div>
+    <div className="flex flex-col items-start gap-3 border-y border-border/70 py-5">
+      <p className="text-sm text-muted-foreground">No automations yet. Set one up to have this member run something on a schedule, a webhook or an API call.</p>
+      <Button variant="outline" size="sm" onClick={onCreate}>
+        <Plus data-icon="inline-start" />
+        New automation
+      </Button>
     </div>
   );
 }
@@ -21368,17 +21414,14 @@ function AutohandModelPage({ agent, providerSettings, navigate, updateAgent }) {
   return (
     <div className="min-h-screen bg-background">
       <PageTitle title="Model" />
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-7 px-4 py-7 sm:px-6 lg:px-8">
-        <header className="border-b border-border/70 pb-7">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-7 px-4 py-6 sm:px-6 lg:px-8">
+        {/* The top bar already says Model; a second 3xl "Model" with the
+            member's name above it was the only member page doing that. */}
+        <header className="border-b border-border/70 pb-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
-              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-primary">
-                <Brain className="size-4" />
-                <span>{agent.name}</span>
-              </div>
-              <h2 className="text-3xl font-semibold tracking-normal">Model</h2>
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Choose whether this squad member inherits the workspace default or runs with its own provider and model.
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                {`Whether ${agent.name} uses the workspace's default model or one of their own.`}
               </p>
             </div>
             <Button variant="outline" onClick={() => navigate("/settings?section=providers")}>
@@ -21594,6 +21637,14 @@ function SquadMemberSectionPage({
     );
   }
 
+  // Skills the bridge recorded as installed are also in the member's memory
+  // ("Autohand Skill Installed: <name>"); the browser's copy of the member
+  // often never got `skillInstall`, so every skill read "install pending"
+  // while Memory said each was added and the folder held all four.
+  const installedFromMemory = new Set(normalizeMemoryEntries(agent.memory)
+    .map((entry) => /^\s*autohand skill installed:\s*(.+)$/i.exec(entry.text || "")?.[1]?.trim())
+    .filter(Boolean));
+  const tools = Array.isArray(agent?.tools) ? agent.tools : [];
   const rows = {
     triggers: automations.map((automation) => ({
       label: automation.name,
@@ -21604,52 +21655,46 @@ function SquadMemberSectionPage({
       value: `${task.status} / ${task.updatedAt}`,
     })),
     skill: agent.skills.map((skill) => {
-      const installed = agent.skillInstall?.installed?.some((item) => item.id === skill);
+      const installed = agent.skillInstall?.installed?.some((item) => item.id === skill) || installedFromMemory.has(skill);
       const failed = agent.skillInstall?.failed?.some((item) => item.id === skill);
       return {
         label: skill,
-        value: failed ? "install failed" : installed ? "installed from skilled.autohand.ai" : "install pending",
+        value: failed ? "Install failed" : installed ? "Installed from skilled.autohand.ai" : "Not installed yet",
+        tone: failed ? "destructive" : "",
       };
     }),
-    connector: [{ label: "GitHub", value: "ready" }, { label: "Browser", value: "ready" }],
+    // Was a fixed "GitHub ready / Browser ready" for every member, whatever
+    // was configured. The member's own tools are listed as they are.
+    // "isolated" and "wired" are the bridge's words; said for a person.
+    connector: tools.map((tool) => ({ label: tool.name || tool.id || "Tool", value: ({ isolated: "Ready · runs in its own session", wired: "Ready · connected", ready: "Ready" })[String(tool.status || "").toLowerCase()] || sentenceCase(tool.status || "not checked") })),
     im: [{ label: "Direct conversation", value: "enabled" }],
   }[section] || [];
+  const emptyText = {
+    triggers: "No automations yet.",
+    task: copy.noTasksYet || "No tasks yet.",
+    skill: `${agent.name} has no skills yet.`,
+    connector: `${agent.name} has no connector tools of their own. Shared connectors are in Settings → Connectors.`,
+  }[section] || "Nothing here yet.";
 
+  // A flat list, as the other member pages: this was a card with a second
+  // title, its own Back to chat, a grid of boxed tiles, and a footer with
+  // Open CLI and a primary Home.
   return (
     <div className="min-h-screen bg-background">
       <PageTitle title={sectionLabel} />
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-        <Card className="rounded-md border-border/80 bg-card/75 shadow-none">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Icon />
-              {sectionLabel}
-            </CardTitle>
-            <CardDescription>{agent.name} / {localizedRole(agent, copy)}</CardDescription>
-            <CardAction>
-              <Button variant="outline" onClick={() => navigate(memberChatPath(agent.id))}>
-                <MessageSquareText data-icon="inline-start" />
-                {copy.backToChat}
-              </Button>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-2">
-            {rows.length ? rows.map((row) => (
-              <div key={`${row.label}-${row.value}`} className="rounded-md border bg-muted/25 p-4">
-                <div className="truncate text-sm font-semibold">{row.label}</div>
-                <div className="mt-2 truncate text-xs text-muted-foreground">{row.value}</div>
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6 lg:px-8">
+        {rows.length ? (
+          <div className="divide-y divide-border/70 border-y border-border/70">
+            {rows.map((row) => (
+              <div key={`${row.label}-${row.value}`} className="flex items-baseline gap-3 py-2.5 text-sm">
+                <span className="min-w-0 flex-1 truncate font-medium">{row.label}</span>
+                <span className={cn("shrink-0 text-xs text-muted-foreground", row.tone === "destructive" && "text-destructive")}>{row.value}</span>
               </div>
-            )) : <EmptyBlock icon={Icon} title={`${copy.noTasksYet}`} body={`${agent.name} / ${sectionLabel}`} />}
-          </CardContent>
-          <CardFooter className="justify-end gap-2 border-t">
-            <Button variant="outline" onClick={() => openTerminal(agent)}>
-              <TerminalSquare data-icon="inline-start" />
-              {copy.openCli}
-            </Button>
-            <Button onClick={() => navigate(memberProfilePath(agent.id, "home"))}>{copy.home}</Button>
-          </CardFooter>
-        </Card>
-
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">{emptyText}</p>
+        )}
       </div>
     </div>
   );
@@ -21805,132 +21850,97 @@ function MemoryInboxPage({
   // carries the legacy plain strings some saves still hold.
   const activeMemory = normalizeMemoryEntries(agent.memory);
 
+  // What a member knows comes first, then what waits for you, then the
+  // record. This was a "Memory Inbox" title with an icon tile, three "0"
+  // tiles, three centred icon empty states stacked down the page and a
+  // boxed sidebar (with its own Open CLI and Home buttons) holding what the
+  // member actually knows.
   return (
     <div className="min-h-screen bg-background">
       <PageTitle title="Memory" />
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
-        <section className="border-b border-border/75 pb-6">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="grid size-11 place-items-center rounded-md border border-primary/35 bg-primary/15 text-primary">
-                  <BrainCog className="size-5" />
-                </span>
-                <div className="min-w-0">
-                  <h2 className="text-2xl font-semibold tracking-normal">Memory Inbox</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {agent.name} / {localizedRole(agent, copy)} / reviewed before durable memory
-                  </p>
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
+        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+          {`What ${agent.name} remembers between chats. New memories are proposed first and wait for you; nothing a member proposes is used until you accept it.`}
+        </p>
+
+        <section className="grid gap-2" aria-labelledby="memory-active">
+          <h3 id="memory-active" className="text-sm font-semibold">{`What ${agent.name} knows`}</h3>
+          {activeMemory.length ? (
+            <div className="divide-y divide-border/70 border-y border-border/70">
+              {activeMemory.map((entry) => (
+                <div key={entry.id} className="flex items-baseline gap-3 py-2.5 text-sm">
+                  <span className="min-w-0 flex-1">{memoryEntryLine(entry)}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{entry.at ? formatRelativeTime(entry.at, locale) : ""}</span>
                 </div>
-              </div>
-              <p className="mt-5 max-w-3xl text-sm leading-6 text-muted-foreground">
-                Proposed memories stay here until a person accepts them. Accepted records keep their source, confidence,
-                timestamp, scope, and evidence; rejected records stay out of active memory.
-              </p>
+              ))}
             </div>
-            <div className="grid min-w-0 grid-cols-3 gap-3 sm:min-w-[420px]">
-              <Metric label="Pending" value={formatLocalizedNumber(pending.length, locale)} />
-              <Metric label="Accepted" value={formatLocalizedNumber(accepted.length, locale)} />
-              <Metric label="Rejected" value={formatLocalizedNumber(rejected.length, locale)} />
-            </div>
-          </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Nothing yet.</p>
+          )}
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="grid gap-6">
-            <MemoryInboxSection
-              title="Pending review"
-              description="Accept, edit, reject, or change scope before this becomes durable memory."
-              empty="No pending memory proposals for this member."
-              items={pending}
-              agents={agents}
-              locale={locale}
-              navigate={navigate}
-              onSaveEdit={onSaveEdit}
-              onAccept={onAccept}
-              onReject={onReject}
-            />
-            <MemoryInboxSection
-              title="Accepted memory"
-              description="Durable memory with source evidence and review metadata."
-              empty="No accepted memory records yet."
-              items={accepted}
-              agents={agents}
-              locale={locale}
-              navigate={navigate}
-            />
-            <section className="grid gap-3">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <h3 className="text-lg font-semibold">Rejected audit</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">Rejected memories remain auditable locally and never enter active memory.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {hiddenRejectedCount ? (
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setShowHiddenAudit((current) => !current)}>
-                      {showHiddenAudit ? "Hide hidden" : `Show hidden (${hiddenRejectedCount})`}
-                    </Button>
-                  ) : null}
-                  {hiddenRejectedCount ? (
-                    <Button type="button" variant="outline" size="sm" onClick={onPurgeHiddenRejected}>
-                      <Trash2 data-icon="inline-start" />
-                      Purge hidden
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-              {rejected.length ? (
-                <div className="grid gap-3">
-                  {rejected.map((item) => (
-                    <MemoryProposalRow
-                      key={item.id}
-                      item={item}
-                      agents={agents}
-                      locale={locale}
-                      navigate={navigate}
-                      onHideRejected={onHideRejected}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <EmptyBlock icon={BrainCog} title="No rejected proposals" body="Rejected or hidden memory proposals will appear here for this session." />
-              )}
-            </section>
-          </div>
+        {pending.length ? (
+          <MemoryInboxSection
+            title={`Waiting for you · ${pending.length}`}
+            description="Accept, edit or reject each one before it becomes memory."
+            empty=""
+            items={pending}
+            agents={agents}
+            locale={locale}
+            navigate={navigate}
+            onSaveEdit={onSaveEdit}
+            onAccept={onAccept}
+            onReject={onReject}
+          />
+        ) : null}
 
-          <aside className="grid h-fit gap-4 rounded-md border border-border/80 bg-card/75 p-4">
-            <div>
-              <h3 className="text-sm font-semibold">Active profile memory</h3>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                These are the entries currently written into this member's generated MEMORY.md profile context.
-              </p>
+        <section className="grid gap-2" aria-labelledby="memory-history">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h3 id="memory-history" className="text-sm font-semibold">Reviewed</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              {hiddenRejectedCount ? (
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowHiddenAudit((current) => !current)}>
+                  {showHiddenAudit ? "Hide hidden" : `Show hidden (${hiddenRejectedCount})`}
+                </Button>
+              ) : null}
+              {hiddenRejectedCount ? (
+                <Button type="button" variant="ghost" size="sm" onClick={onPurgeHiddenRejected}>
+                  <Trash2 data-icon="inline-start" />
+                  Purge hidden
+                </Button>
+              ) : null}
             </div>
-            <div className="grid max-h-[420px] gap-2 overflow-auto pr-1">
-              {activeMemory.length ? (
-                activeMemory.map((entry) => (
-                  <div key={entry.id} className="rounded-md border border-border/80 bg-background/65 p-3">
-                    <div className="text-sm leading-5">{entry.text}</div>
-                    {entry.source ? <div className="mt-1 text-xs text-muted-foreground">{entry.source}</div> : null}
-                  </div>
-                ))
-              ) : (
-                <p className="text-sm text-muted-foreground">No active memory yet.</p>
-              )}
+          </div>
+          {accepted.length || rejected.length ? (
+            <div className="grid gap-3">
+              {[...accepted, ...rejected].map((item) => (
+                <MemoryProposalRow
+                  key={item.id}
+                  item={item}
+                  agents={agents}
+                  locale={locale}
+                  navigate={navigate}
+                  onHideRejected={item.status === "rejected" ? onHideRejected : undefined}
+                />
+              ))}
             </div>
-            <Separator />
-            <Button variant="outline" onClick={() => openTerminal(agent)}>
-              <TerminalSquare data-icon="inline-start" />
-              {copy.openCli}
-            </Button>
-            <Button onClick={() => navigate(memberProfilePath(agent.id, "home"))}>{copy.home}</Button>
-          </aside>
+          ) : (
+            <p className="text-sm text-muted-foreground">{pending.length ? "Nothing reviewed yet." : `No proposals yet. When ${agent.name} wants to remember something, it waits here for you.`}</p>
+          )}
         </section>
       </div>
     </div>
   );
 }
 
-function MemoryInboxSection({ title, description, empty, items, agents, locale, navigate, onSaveEdit, onAccept, onReject }) {
+/** "Autohand Skill Installed: x" reads as "Skill added: x"; other entries as written. */
+function memoryEntryLine(entry) {
+  const skill = /^\s*autohand skill installed:\s*(.+)$/i.exec(entry?.text || "");
+  if (!skill) return entry?.text || "";
+  return <><span className="text-muted-foreground">Skill added: </span><span className="font-medium">{skill[1]}</span></>;
+}
+
+function MemoryInboxSection({ title, description, empty, emptyBody = "", items, agents, locale, navigate, onSaveEdit, onAccept, onReject }) {
   return (
     <section className="grid gap-3">
       <div>
@@ -21953,7 +21963,7 @@ function MemoryInboxSection({ title, description, empty, items, agents, locale, 
           ))}
         </div>
       ) : (
-        <EmptyBlock icon={BrainCog} title={empty} body="New proposed memories will wait here for review." />
+        <EmptyBlock icon={BrainCog} title={empty} body={emptyBody || "New proposed memories will wait here for review."} />
       )}
     </section>
   );
@@ -22218,123 +22228,92 @@ function AgentProjectsPage({ agent, runtime, workspaces = [], navigate, openTerm
     commitProjects(projects, path);
   }
 
+  // Flat, as DESIGN.md asks: it was a bordered card holding a second
+  // "Projects" heading, "1/5" and "4 Remaining" tiles that said the same
+  // thing, a boxed Add form, and one boxed card per folder whose name was a
+  // path ("Documents/autohand/web/prototypes/dark-web-cli") beside a "Default"
+  // badge and a disabled "Default" button.
+  const defaultName = workspaceName(currentWorkspace) || workspaceName(getAgentWorkspace(agent, runtime, workspaces)) || "";
   return (
     <div className="min-h-screen bg-background">
       <PageTitle title={copy.projects} />
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-        <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-          <div className="grid gap-5 border-b border-border/75 p-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:p-6">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="grid size-11 place-items-center rounded-md border border-primary/35 bg-primary/15 text-primary">
-                  <Folders className="size-5" />
-                </span>
-                <div className="min-w-0">
-                  <h2 className="text-2xl font-semibold tracking-normal">Repositories & Projects</h2>
-                  <p className="mt-1 truncate text-sm text-muted-foreground">
-                    {agent.name} / {localizedRole(agent, copy)}
-                  </p>
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <p className="text-sm text-muted-foreground">
+          {`${projects.length} of ${maxProjects} folders`}
+          {defaultName ? ` · ${agent.name} works in ${defaultName} unless a message names another.` : ""}
+        </p>
+
+        <div className="divide-y divide-border/70 border-y border-border/70">
+          {projects.length ? (
+            projects.map((project) => {
+              const isDefault = project.path === currentWorkspace;
+              const name = workspaceName(project.path) || project.label || project.name;
+              return (
+                <div key={project.path} className="flex items-center gap-3 py-3">
+                  <FolderGit2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                      <span className="truncate font-medium">{name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {[/^git( ?repo)?$/i.test(project.kind || "") ? "Git repository" : project.kind, isDefault ? "default" : ""].filter(Boolean).join(" · ")}
+                      </span>
+                    </div>
+                    <code className="mt-0.5 block truncate text-xs text-muted-foreground">{project.path.replace(/^\/(?:Users|home)\/[^/]+/, "~")}</code>
+                  </div>
+                  {!isDefault ? (
+                    <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setDefaultProject(project.path)}>
+                      Make default
+                    </Button>
+                  ) : null}
+                  <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${name}`} onClick={() => removeProject(project.path)}>
+                    <X />
+                  </Button>
                 </div>
-              </div>
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <Metric label={copy.projects} value={`${projects.length}/${maxProjects}`} />
-                <Metric label="Remaining" value={String(remainingSlots)} />
-                <Metric label={copy.workspace} value={workspaceName(currentWorkspace) || "none"} />
-              </div>
-            </div>
+              );
+            })
+          ) : (
+            <p className="py-4 text-sm text-muted-foreground">{agent.name} has no project folders yet. Add one below.</p>
+          )}
+        </div>
 
-            <form className="rounded-md border border-border/80 bg-background/65 p-4" onSubmit={addProject}>
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold">Add project</div>
-                <Badge variant="outline" className="rounded-md bg-background text-xs">
-                  max {maxProjects}
-                </Badge>
-              </div>
-              <div className="mt-4 grid gap-3">
-                <Select value={selectedOptionValue} onValueChange={setProjectDraft} disabled={atLimit || !workspaceChoices.length}>
-                  <SelectTrigger className="h-10 w-full bg-background">
-                    <FolderGit2 className="size-4 text-muted-foreground" />
-                    <SelectValue placeholder={copy.scanningLocalFolders || "Scanning local folders"} />
-                  </SelectTrigger>
-                  <SelectContent position="popper" className="max-h-[420px]">
-                    <SelectGroup>
-                      <SelectLabel>{copy.localFolders}</SelectLabel>
-                      {workspaceChoices.map((workspace) => (
-                        <SelectItem key={workspace.path} value={workspace.path}>
-                          {workspace.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <Input
-                  value={projectDraft}
-                  onChange={(event) => setProjectDraft(event.target.value)}
-                  placeholder="/Users/name/path/to/repository"
-                  disabled={atLimit}
-                  className="h-10 bg-background font-mono text-xs"
-                />
-                <Button type="submit" disabled={!canAddProject}>
-                  <Plus data-icon="inline-start" />
-                  Add
-                </Button>
-                {projectError ? <p className="text-xs text-destructive">{projectError}</p> : null}
-              </div>
-            </form>
+        <form className="flex flex-col gap-2" onSubmit={addProject}>
+          <div className="text-sm font-medium">Add a folder</div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Select value={selectedOptionValue} onValueChange={setProjectDraft} disabled={atLimit || !workspaceChoices.length}>
+              <SelectTrigger className="h-9 w-full sm:w-56">
+                <SelectValue placeholder={copy.scanningLocalFolders || "Scanning local folders"} />
+              </SelectTrigger>
+              <SelectContent position="popper" className="max-h-[420px]">
+                <SelectGroup>
+                  <SelectLabel>{copy.localFolders}</SelectLabel>
+                  {workspaceChoices.map((workspace) => (
+                    <SelectItem key={workspace.path} value={workspace.path}>
+                      {workspace.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Input
+              value={projectDraft}
+              onChange={(event) => setProjectDraft(event.target.value)}
+              placeholder="/Users/name/path/to/repository"
+              disabled={atLimit}
+              className="h-9 min-w-0 flex-1 font-mono text-xs"
+            />
+            <Button type="submit" variant="outline" disabled={!canAddProject}>
+              <Plus data-icon="inline-start" />
+              Add
+            </Button>
           </div>
+          {atLimit ? <p className="text-xs text-muted-foreground">{`${agent.name} has the most folders a member can have (${maxProjects}). Remove one to add another.`}</p> : null}
+          {projectError ? <p className="text-xs text-destructive">{projectError}</p> : null}
+        </form>
 
-          <div className="grid gap-4 p-5 lg:p-6">
-            {projects.length ? (
-              projects.map((project) => {
-                const isDefault = project.path === currentWorkspace;
-                return (
-                  <article
-                    key={project.path}
-                    className="grid gap-4 rounded-md border border-border/80 bg-background/65 p-4 md:grid-cols-[44px_minmax(0,1fr)_auto] md:items-center"
-                  >
-                    <span className="grid size-11 place-items-center rounded-md border border-border/80 bg-card text-primary">
-                      <FolderGit2 className="size-5" />
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="truncate text-sm font-semibold">{project.label || project.name}</h3>
-                        <Badge variant="secondary" className="rounded-md bg-muted text-[11px] capitalize text-muted-foreground">
-                          {project.kind}
-                        </Badge>
-                        {isDefault ? (
-                          <Badge variant="outline" className="rounded-md border-primary/35 bg-primary/10 text-[11px] text-primary">
-                            Default
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <code className="mt-2 block truncate text-xs text-muted-foreground">{project.path}</code>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                      <Button type="button" variant="outline" size="sm" disabled={isDefault} onClick={() => setDefaultProject(project.path)}>
-                        <GitBranch data-icon="inline-start" />
-                        Default
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${project.label || project.name}`} onClick={() => removeProject(project.path)}>
-                        <X />
-                      </Button>
-                    </div>
-                  </article>
-                );
-              })
-            ) : (
-              <EmptyBlock icon={Folders} title="No projects added" body={`${agent.name} has no associated repositories yet.`} />
-            )}
-          </div>
-        </section>
-
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="outline" onClick={() => openTerminal(agent)}>
+        <div>
+          <Button variant="outline" size="sm" onClick={() => openTerminal(agent)}>
             <TerminalSquare data-icon="inline-start" />
             {copy.openCli}
-          </Button>
-          <Button onClick={() => navigate(memberChatPath(agent.id))}>
-            <MessageSquareText data-icon="inline-start" />
-            {copy.backToChat}
           </Button>
         </div>
       </div>
@@ -22361,14 +22340,7 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
       return true;
     });
   }, [defaultPermissionWorkspace, projectChoices, runtime, selectedWorkspace, workspaces]);
-  const policyModes = [
-    ...CLI_TOOL_PERMISSIONS.map((item) => permissions.modes[item.id]),
-    ...Object.values(permissions.builtInPolicies),
-  ];
-  const allowedCount = policyModes.filter((mode) => mode === "allow").length;
-  const askCount = policyModes.filter((mode) => mode === "ask").length;
-  const blockedCount = policyModes.filter((mode) => mode === "block").length;
-  const autonomyScore = Math.round(((allowedCount * 2 + askCount) / (policyModes.length * 2)) * 100);
+  const { modes: policyModes, allow: allowedCount, ask: askCount, block: blockedCount } = permissionModeCounts(permissions);
   const workspaceOverrideCount = permissionOverrideCount(agent.permissions);
 
   useEffect(() => {
@@ -22484,106 +22456,57 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
 
   return (
     <div className="min-h-screen bg-background">
-      <PageTitle title="Permission" />
+      <PageTitle title={localizedSectionLabel("permissions", copy)} />
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
         <ComputerUsePermissions member={agent} api={api} />
-        <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-          <div className="grid gap-5 border-b border-border/75 p-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:p-6">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="grid size-11 place-items-center rounded-md border border-primary/35 bg-primary/15 text-primary">
-                  <ShieldCheck className="size-5" />
-                </span>
-                <div className="min-w-0">
-                  <h2 className="text-2xl font-semibold tracking-normal">Agent permissions</h2>
-                  <p className="mt-1 truncate text-sm text-muted-foreground">
-                    {agent.name} / {localizedRole(agent, copy)} / {workspaceName(selectedWorkspace) || "workspace"}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <PermissionMetric icon={BadgeCheck} label="Autonomous tools" value={allowedCount} tone="text-primary" />
-                <PermissionMetric icon={KeyRound} label="Approval gates" value={askCount} tone="text-amber-700 dark:text-amber-200" />
-                <PermissionMetric icon={Ban} label="Blocked surfaces" value={blockedCount} tone="text-red-700 dark:text-red-200" />
-              </div>
-            </div>
-
-            <div className="rounded-md border border-border/80 bg-background/65 p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <div className="text-sm font-semibold">Autonomy profile</div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    Level {activeLadder.rank}: {activeLadder.label} / {autonomyScore}% coverage
-                  </div>
-                </div>
-                <Gauge className="size-5 text-primary" />
-              </div>
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-muted">
-                <div className="h-full rounded-full bg-primary" style={{ width: `${autonomyScore}%` }} />
-              </div>
-              <div className="mt-4 grid gap-2">
-                <Select value={permissions.permissionMode} onValueChange={updatePermissionMode}>
-                  <SelectTrigger className="h-9 w-full">
-                    <SlidersHorizontal className="size-4 text-muted-foreground" />
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectLabel>Permission mode</SelectLabel>
-                      {CLI_PERMISSION_MODE_OPTIONS.map((item) => (
-                        <SelectItem key={item.id} value={item.id}>
-                          {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="flex h-10 items-center justify-between gap-3 rounded-md border border-border/80 px-3 text-xs text-muted-foreground">
-                    Remember session
-                    <Switch
-                      checked={permissions.rememberSession}
-                      onCheckedChange={(rememberSession) => updatePermissions({ rememberSession })}
-                    />
-                  </label>
-                  <label className="flex h-10 items-center justify-between gap-3 rounded-md border border-border/80 px-3 text-xs text-muted-foreground">
-                    External URLs
-                    <Switch
-                      checked={permissions.allUrlsAllowed}
-                      onCheckedChange={(allUrlsAllowed) => updatePermissions({ allUrlsAllowed })}
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
+        {/* Flat, as the other member pages. This was a bordered card holding
+            an icon tile, a 2xl "Agent permissions" title, three boxed count
+            tiles, a nested "Autonomy profile" box with a progress bar and two
+            bordered switch boxes, and a three-cell runtime grid. */}
+        <section className="grid gap-4 border-b border-border/70 pb-5" aria-labelledby="agent-permissions-heading">
+          <div>
+            <h2 id="agent-permissions-heading" className="text-base font-semibold">{`What ${agent.name} may do in ${workspaceName(selectedWorkspace) || "this folder"}`}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {`Level ${activeLadder.rank}: ${activeLadder.label}. ${allowedCount} tools run freely, ${askCount} ask first, ${blockedCount} are blocked.`}
+            </p>
           </div>
-
-          <div className="grid gap-px bg-border/75 lg:grid-cols-3">
-            <PermissionRuntimeItem
-              icon={TerminalSquare}
-              label="CLI runtime"
-              value={runtime?.available ? "ready" : "offline"}
-              detail={runtime?.version || runtime?.autohandPath || "local bridge"}
-            />
-            <PermissionRuntimeItem
-              icon={LockKeyhole}
-              label="Config scope"
-              value="isolated"
-              detail={`.autohand/agents/${agent.id}`}
-            />
-            <PermissionRuntimeItem
-              icon={GitBranch}
-              label="Workspace"
-              value={workspaceName(selectedWorkspace) || "selected"}
-              detail={selectedWorkspace || "No workspace selected"}
-            />
+          <div className="divide-y divide-border/70">
+            <div className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+              <span className="text-sm">Permission mode</span>
+              <Select value={permissions.permissionMode} onValueChange={updatePermissionMode}>
+                <SelectTrigger className="h-8 w-56">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectLabel>Permission mode</SelectLabel>
+                    {CLI_PERMISSION_MODE_OPTIONS.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-center justify-between gap-3 py-2.5 text-sm">
+              <span>Remember approvals for the session</span>
+              <Switch checked={permissions.rememberSession} onCheckedChange={(rememberSession) => updatePermissions({ rememberSession })} />
+            </label>
+            <label className="flex items-center justify-between gap-3 py-2.5 text-sm">
+              <span>Open any web address</span>
+              <Switch checked={permissions.allUrlsAllowed} onCheckedChange={(allUrlsAllowed) => updatePermissions({ allUrlsAllowed })} />
+            </label>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {`Autohand Code ${runtime?.available ? engineVersion(runtime?.version) || "ready" : "is not running"} · settings kept apart in ~/.autohand/agents/${agent.id} · folder ${(selectedWorkspace || "not chosen").replace(/^\/(?:Users|home)\/[^/]+/, "~")}`}
+          </p>
         </section>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-md border bg-card/75 p-1 lg:max-w-4xl lg:grid-cols-5">
+          <TabsList variant="line" className="h-8 flex-wrap justify-start">
             {PERMISSION_TABS.map((tabItem) => (
-              <TabsTrigger key={tabItem.id} value={tabItem.id} className="h-10 rounded-[6px] px-3 text-sm">
+              <TabsTrigger key={tabItem.id} value={tabItem.id} className="flex-none px-2 text-sm">
                 {tabItem.label}
               </TabsTrigger>
             ))}
@@ -22647,22 +22570,24 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
           </TabsContent>
         </Tabs>
 
-        <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        {/* Guardrails show this member's actual settings. They were four
+            fixed badges ("Destructive commands · Blocked") that stayed the
+            same after the tool was set to Allow; an "Isolation" card printed
+            environment flags; Open CLI and Chat repeated the sidebar. */}
+        <section className="grid max-w-4xl gap-2">
+          <h3 className="text-sm font-semibold">Guardrails in effect</h3>
+          <div className="divide-y divide-border/70 border-y border-border/70">
+            {shellGuardrailRows(permissions).map((rule) => (
+              <div key={rule.id} className="flex items-baseline justify-between gap-4 py-2.5">
+                <span className="min-w-0">
+                  <span className="block text-sm">{rule.label}</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">{rule.detail}</span>
+                </span>
+                <span className={cn("shrink-0 text-xs font-medium", rule.tone)}>{rule.state}</span>
+              </div>
+            ))}
+          </div>
           <PermissionConfigPreview permissions={permissions} />
-          <aside className="flex flex-col gap-5">
-            <ShellGuardrailCard />
-            <IsolationCard agent={agent} />
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => openTerminal(agent)}>
-                <TerminalSquare data-icon="inline-start" />
-                {copy.openCli}
-              </Button>
-              <Button className="flex-1" onClick={() => navigate(memberChatPath(agent.id))}>
-                <MessageSquareText data-icon="inline-start" />
-                {copy.chat}
-              </Button>
-            </div>
-          </aside>
         </section>
       </div>
     </div>
@@ -22678,83 +22603,67 @@ function PermissionLadderPanel({
   onLadderChange,
 }) {
   const activeLevel = autonomyLadderLevelMeta(permissions.ladderLevel);
-  const ActiveIcon = activeLevel.icon;
   const selectedWorkspaceValue = workspaceChoices.some((workspace) => workspace.path === selectedWorkspace)
     ? selectedWorkspace
     : undefined;
 
+  // Flat: was a bordered card holding an icon tile and a 2xl heading, a box
+  // titled "Workspace policy" about "normalized repository path" storage,
+  // and a tinted "0 workspace overrides saved" chip.
   return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-5 lg:p-6">
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+    <section className="grid gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="grid size-11 place-items-center rounded-md border border-primary/35 bg-primary/15 text-primary">
-              <ActiveIcon className="size-5" />
-            </span>
-            <div className="min-w-0">
-              <h3 className="text-xl font-semibold tracking-normal">Permission ladder</h3>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                Level {activeLevel.rank}: {activeLevel.label}. The ladder summarizes the exact tool matrix below; changing it updates the low-level policies for this workspace.
-              </p>
-            </div>
-          </div>
-
-          <ToggleGroup
-            type="single"
-            value={activeLevel.id}
-            onValueChange={(value) => value && onLadderChange(value)}
-            variant="outline"
-            className="mt-5 grid w-full grid-cols-2 items-stretch sm:grid-cols-3 xl:grid-cols-6"
-            spacing={0}
-          >
-            {AUTONOMY_LADDER_LEVELS.map((level) => {
-              const Icon = level.icon;
-              return (
-                <ToggleGroupItem
-                  key={level.id}
-                  value={level.id}
-                  aria-label={`Level ${level.rank}: ${level.label}`}
-                  className="h-auto min-h-20 flex-col items-start justify-start gap-2 px-3 py-3 text-left"
-                >
-                  <span className="flex w-full items-center justify-between gap-2">
-                    <span className="text-[11px] font-medium uppercase text-muted-foreground">L{level.rank}</span>
-                    <Icon className="size-3.5" />
-                  </span>
-                  <span className="w-full text-wrap text-sm font-semibold leading-4">{level.shortLabel}</span>
-                </ToggleGroupItem>
-              );
-            })}
-          </ToggleGroup>
-        </div>
-
-        <div className="rounded-md border border-border/80 bg-background/65 p-4">
-          <div className="text-sm font-semibold">Workspace policy</div>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Overrides are stored locally per squad member and normalized repository path.
+          <h3 className="text-sm font-semibold">Permission ladder</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {`Level ${activeLevel.rank}: ${activeLevel.label}. Choosing a level sets every tool below for this folder.`}
           </p>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Folder</span>
           <Select value={selectedWorkspaceValue} onValueChange={onWorkspaceChange} disabled={!workspaceChoices.length}>
-            <SelectTrigger className="mt-4 h-10 w-full bg-background">
-              <FolderGit2 className="size-4 text-muted-foreground" />
-              <SelectValue placeholder={workspaceName(selectedWorkspace) || "Select workspace"} />
+            <SelectTrigger className="h-8 w-48">
+              <SelectValue placeholder={workspaceName(selectedWorkspace) || "Select a folder"} />
             </SelectTrigger>
             <SelectContent position="popper" className="max-h-[420px]">
               <SelectGroup>
-                <SelectLabel>Workspace</SelectLabel>
+                <SelectLabel>Folder</SelectLabel>
                 {workspaceChoices.map((workspace) => (
                   <SelectItem key={workspace.path} value={workspace.path}>
-                    {workspace.label || workspaceName(workspace.path)}
+                    {workspaceName(workspace.path) || workspace.label}
                   </SelectItem>
                 ))}
               </SelectGroup>
             </SelectContent>
           </Select>
-          <div className="mt-3 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-            {workspaceOverrideCount} workspace override{workspaceOverrideCount === 1 ? "" : "s"} saved for this member.
-          </div>
         </div>
       </div>
+      {workspaceOverrideCount ? (
+        <p className="text-xs text-muted-foreground">{`${workspaceOverrideCount} folder${workspaceOverrideCount === 1 ? " has" : "s have"} its own settings for this member.`}</p>
+      ) : null}
 
-      <div className="mt-6 grid gap-5 border-t border-border/75 pt-5 lg:grid-cols-3">
+      <ToggleGroup
+        type="single"
+        value={activeLevel.id}
+        onValueChange={(value) => value && onLadderChange(value)}
+        variant="outline"
+        className="grid w-full grid-cols-2 items-stretch sm:grid-cols-3 xl:grid-cols-6"
+        spacing={0}
+      >
+        {AUTONOMY_LADDER_LEVELS.map((level) => (
+          <ToggleGroupItem
+            key={level.id}
+            value={level.id}
+            aria-label={`Level ${level.rank}: ${level.label}`}
+            className="h-auto flex-col items-start justify-start gap-0.5 px-3 py-2 text-left"
+          >
+            <span className="text-[11px] text-muted-foreground">Level {level.rank}</span>
+            <span className="w-full text-wrap text-sm font-medium leading-4">{level.label}</span>
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+
+      <div className="grid gap-5 border-t border-border/70 pt-4 lg:grid-cols-3">
         <PermissionCapabilityColumn title="Available now" items={activeLevel.available} tone="text-primary" />
         <PermissionCapabilityColumn title="Asks first" items={activeLevel.approvals} tone="text-amber-700 dark:text-amber-200" />
         <PermissionCapabilityColumn title="Blocked" items={activeLevel.blocked} tone="text-red-700 dark:text-red-200" />
@@ -22771,7 +22680,8 @@ function PermissionCapabilityColumn({ title, items = [], tone }) {
         {items.map((item) => (
           <div key={item} className="flex min-w-0 items-start gap-2 text-sm leading-5 text-muted-foreground">
             <span className="mt-2 size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />
-            <span className="min-w-0 text-wrap">{item}</span>
+            {/* Items came in mixed case ("Read/search", "scoped patches"). */}
+            <span className="min-w-0 text-wrap">{String(item).charAt(0).toUpperCase() + String(item).slice(1)}</span>
           </div>
         ))}
       </div>
@@ -22790,7 +22700,7 @@ function permissionRunExamples(permissions) {
       title: "Blocked destructive command",
       command: "rm -rf .git",
       mode: destructiveMode,
-      detail: `Level ${ladder.rank} keeps shell.destructive ${destructiveMode}. Disk wipes, privilege escalation, and recursive deletion do not run automatically.`,
+      detail: `At Level ${ladder.rank}, destructive commands are ${destructiveMode === "block" ? "blocked" : destructiveMode === "ask" ? "asked about first" : "allowed"}. Disk wipes, privilege escalation, and recursive deletion do not run automatically.`,
     },
     {
       id: "approval",
@@ -22812,30 +22722,22 @@ function permissionRunExamples(permissions) {
 }
 
 function PermissionRunExamplePanel({ permissions }) {
+  // Divider rows, not three boxed cards with pill badges and a second
+  // "auto-merge off" badge repeating the third card.
   return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold">Run warnings</h3>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            These examples show what happens before a run crosses the current ladder boundary.
-          </p>
-        </div>
-        <Badge variant="outline" className="rounded-md bg-background">
-          auto-merge off
-        </Badge>
+    <section className="grid gap-2 border-t border-border/70 pt-5">
+      <div>
+        <h3 className="text-sm font-semibold">What happens at the edge of this level</h3>
+        <p className="mt-1 text-sm text-muted-foreground">Three examples of a run reaching past what the member may do.</p>
       </div>
-      <div className="mt-5 grid gap-3 lg:grid-cols-3">
+      <div className="divide-y divide-border/70 border-y border-border/70">
         {permissionRunExamples(permissions).map((example) => (
-          <div key={example.id} className="rounded-md border border-border/80 bg-background/65 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-semibold">{example.title}</div>
-              <PermissionModeBadge mode={example.mode} />
+          <div key={example.id} className="grid gap-1 py-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)] sm:gap-4">
+            <div>
+              <div className="text-sm font-medium">{example.title}</div>
+              <code className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">{example.command}</code>
             </div>
-            <code className="mt-3 block truncate rounded-md bg-muted/45 px-3 py-2 font-mono text-xs text-muted-foreground">
-              {example.command}
-            </code>
-            <p className="mt-3 text-xs leading-5 text-muted-foreground">{example.detail}</p>
+            <p className="text-sm text-muted-foreground"><span className={cn("font-medium", permissionLevelMeta(example.mode).text)}>{permissionLevelMeta(example.mode).label}.</span> {example.detail}</p>
           </div>
         ))}
       </div>
@@ -22853,433 +22755,262 @@ function PermissionModeBadge({ mode }) {
   );
 }
 
-function PermissionSurfaceHeader({ icon: Icon, title, description, enabled, onEnabledChange, disabledMessage }) {
+function PermissionSurfaceHeader({ title, description, enabled, onEnabledChange, disabledMessage }) {
+  // A switch row, not a bordered card with an icon; the "disabled" note is a
+  // muted line instead of an amber box.
   return (
-    <section className="rounded-md border border-border/80 bg-card/75">
-      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-base font-semibold">
-            <Icon className="size-5 text-primary" />
-            {title}
-          </div>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-        </div>
+    <section className="grid gap-1 border-b border-border/70 pb-4">
+      <label className="flex items-start justify-between gap-4">
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold">{title}</span>
+          <span className="mt-0.5 block text-sm text-muted-foreground">{description}</span>
+        </span>
         <Switch checked={enabled} onCheckedChange={onEnabledChange} />
-      </div>
-      {!enabled ? (
-        <div className="mx-5 mb-5 rounded-md border border-amber-300 bg-amber-100 px-3 py-2 text-sm text-amber-900 dark:border-amber-400/35 dark:bg-amber-400/10 dark:text-amber-200">
-          {disabledMessage}
-        </div>
-      ) : null}
+      </label>
+      {!enabled ? <p className="text-xs text-amber-700 dark:text-amber-300">{disabledMessage}</p> : null}
     </section>
   );
 }
 
 function ToolGuardPanel({ permissions, updatePermissions, updateRule, updateShellEvasionRule }) {
+  // One column of headings and divider rows. Rule rows led with the rule id
+  // ("TOOL_CMD_FS_DESTRUCTION") in a wide mono column and squeezed what it
+  // does into a narrow one; groups and the Shell Evasion list were cards and
+  // tiles; a "Command lane" card showed two rows of fixed command chips with
+  // no label, the same for every member.
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="flex min-w-0 flex-col gap-5">
-        <PermissionSurfaceHeader
-          icon={ShieldAlert}
-          title="Enable Tool Guard"
-          description="Validate shell, web, and file tool parameters against Autohand Code CLI security rules. High-risk findings go through the approval flow."
-          enabled={permissions.toolGuardEnabled}
-          onEnabledChange={(toolGuardEnabled) => updatePermissions({ toolGuardEnabled })}
-          disabledMessage="Tool Guard is disabled; detector rules will not be evaluated."
-        />
+    <div className="flex max-w-4xl flex-col gap-6">
+      <PermissionSurfaceHeader
+        title="Tool Guard"
+        description="Checks shell, web and file actions against Autohand Code's security rules before they run. High-risk findings go to you for approval."
+        enabled={permissions.toolGuardEnabled}
+        onEnabledChange={(toolGuardEnabled) => updatePermissions({ toolGuardEnabled })}
+        disabledMessage="Tool Guard is off, so none of the rules below are checked."
+      />
 
-        {TOOL_GUARD_RULE_GROUPS.map((group) => (
-          <section key={group.id} className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-            <div className="flex items-center justify-between gap-3 border-b border-border/75 p-4">
-              <div className="font-semibold">{group.title}</div>
-              <Badge variant="outline" className="rounded-md bg-background text-xs">
-                {group.rules.length}
-              </Badge>
-            </div>
-            <div className="divide-y divide-border/70">
-              {group.rules.map(([id, severity, description]) => (
-                <PermissionRuleRow
-                  key={id}
-                  id={id}
-                  severity={severity}
-                  description={description}
-                  enabled={permissions.toolGuardRules[id]}
-                  onEnabledChange={(enabled) => updateRule(id, enabled)}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
-
-      <aside className="flex flex-col gap-5">
-        <section className="rounded-md border border-border/80 bg-card/75">
-          <div className="flex items-center justify-between gap-3 border-b border-border/75 p-4">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Command className="size-4 text-primary" />
-                Shell Evasion
-              </div>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                Quote, backslash, newline, and comment tricks that commonly bypass shell filters.
-              </p>
-            </div>
-            <Switch
-              checked={permissions.shellEvasionEnabled}
-              onCheckedChange={(shellEvasionEnabled) => updatePermissions({ shellEvasionEnabled })}
-            />
-          </div>
-          <div className="grid gap-3 p-4">
-            {SHELL_EVASION_RULES.map(([id, label, detail]) => (
-              <label key={id} className="grid gap-2 rounded-md border border-border/80 bg-background/65 p-3">
-                <span className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-semibold">{label}</span>
-                  <Switch
-                    checked={permissions.shellEvasionRules[id]}
-                    onCheckedChange={(enabled) => updateShellEvasionRule(id, enabled)}
-                  />
-                </span>
-                <span className="text-xs leading-5 text-muted-foreground">{detail}</span>
-              </label>
+      {TOOL_GUARD_RULE_GROUPS.map((group) => (
+        <section key={group.id} className="grid gap-2">
+          <h3 className="text-sm font-semibold">{group.title}</h3>
+          <div className="divide-y divide-border/70 border-y border-border/70">
+            {group.rules.map(([id, severity, description]) => (
+              <PermissionRuleRow
+                key={id}
+                id={id}
+                severity={severity}
+                description={description}
+                enabled={permissions.toolGuardRules[id]}
+                onEnabledChange={(enabled) => updateRule(id, enabled)}
+              />
             ))}
           </div>
         </section>
-        <CommandLaneCard />
-      </aside>
+      ))}
+
+      <section className="grid gap-2">
+        <label className="flex items-start justify-between gap-4">
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold">Shell evasion</span>
+            <span className="mt-0.5 block text-sm text-muted-foreground">Quote, backslash, newline and comment tricks that commonly slip past shell filters.</span>
+          </span>
+          <Switch checked={permissions.shellEvasionEnabled} onCheckedChange={(shellEvasionEnabled) => updatePermissions({ shellEvasionEnabled })} />
+        </label>
+        <div className="divide-y divide-border/70 border-y border-border/70">
+          {SHELL_EVASION_RULES.map(([id, label, detail]) => (
+            <label key={id} className="flex items-start justify-between gap-4 py-2.5">
+              <span className="min-w-0">
+                <span className="block text-sm">{label}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">{detail}</span>
+              </span>
+              <Switch checked={permissions.shellEvasionRules[id]} onCheckedChange={(enabled) => updateShellEvasionRule(id, enabled)} />
+            </label>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
 
 function PermissionRuleRow({ id, severity, description, enabled, onEnabledChange }) {
   return (
-    <div className="grid gap-3 p-4 lg:grid-cols-[minmax(220px,0.7fr)_120px_minmax(0,1fr)_80px] lg:items-center">
-      <div className="break-words font-mono text-sm font-semibold">{id}</div>
-      <SeverityBadge severity={severity} />
-      <p className="text-sm leading-6 text-muted-foreground">{description}</p>
+    <label className="flex items-start justify-between gap-4 py-2.5">
+      <span className="min-w-0">
+        <span className="block text-sm">{description}</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">
+          <span className={cn(severity === "critical" ? "text-red-700 dark:text-red-300" : severity === "high" ? "text-amber-700 dark:text-amber-300" : "")}>{String(severity || "").charAt(0).toUpperCase() + String(severity || "").slice(1)}</span>
+          {" · "}<code>{id}</code>
+        </span>
+      </span>
       <Switch checked={enabled} onCheckedChange={onEnabledChange} />
-    </div>
-  );
-}
-
-function SeverityBadge({ severity }) {
-  const tone = {
-    critical: "border-red-300 bg-red-100 text-red-800 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200",
-    high: "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-400/35 dark:bg-amber-400/10 dark:text-amber-200",
-    medium: "border-blue-300 bg-blue-100 text-blue-800 dark:border-blue-400/35 dark:bg-blue-500/10 dark:text-blue-200",
-  }[severity] || "border-border/80 bg-background text-muted-foreground";
-
-  return (
-    <Badge variant="outline" className={cn("w-fit rounded-md capitalize", tone)}>
-      {severity}
-    </Badge>
+    </label>
   );
 }
 
 function FileGuardPanel({ permissions, sensitivePathDraft, setSensitivePathDraft, addSensitivePath, removeSensitivePath, updatePermissions }) {
+  // One column. "URL fetches allowed" here was the same setting as "Open any
+  // web address" at the top of the page, under another name; a "Decision
+  // Scopes" card listed internal file names ("merged decision snapshot")
+  // that are not settings; the placeholder promised "Click to choose a
+  // directory" on a plain text field.
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="flex min-w-0 flex-col gap-5">
-        <PermissionSurfaceHeader
-          icon={FileCode2}
-          title="Enable File Guard"
-          description="Guard sensitive files and directories against read/write. Autohand Code CLI already has an immutable blacklist for secrets, credentials, private keys, and system paths."
-          enabled={permissions.fileGuardEnabled}
-          onEnabledChange={(fileGuardEnabled) => updatePermissions({ fileGuardEnabled })}
-          disabledMessage="File Guard is disabled; paths will not be evaluated before tool execution."
-        />
+    <div className="flex max-w-4xl flex-col gap-6">
+      <PermissionSurfaceHeader
+        title="File Guard"
+        description="Keeps the member away from sensitive files and folders, for reading and writing. Autohand Code already refuses secrets, credentials, private keys and system paths on its own."
+        enabled={permissions.fileGuardEnabled}
+        onEnabledChange={(fileGuardEnabled) => updatePermissions({ fileGuardEnabled })}
+        disabledMessage="File Guard is off, so the paths below are not checked."
+      />
 
-        <section className="rounded-md border border-border/80 bg-card/75 p-4">
-          <div className="text-sm font-semibold">Add Sensitive Path</div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-            <Input
-              value={sensitivePathDraft}
-              onChange={(event) => setSensitivePathDraft(event.target.value)}
-              placeholder="Click to choose a directory or type a path"
-              className="h-10 bg-background"
-            />
-            <Button type="button" onClick={addSensitivePath}>
-              <Plus data-icon="inline-start" />
-              Add
-            </Button>
-          </div>
-        </section>
+      <label className="flex items-start justify-between gap-4 border-b border-border/70 pb-4">
+        <span className="min-w-0">
+          <span className="block text-sm">Reach any path in the folder</span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">Off, the member asks before touching paths outside the files they are working on.</span>
+        </span>
+        <Switch checked={permissions.allPathsAllowed} onCheckedChange={(allPathsAllowed) => updatePermissions({ allPathsAllowed })} />
+      </label>
 
-        <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-          <div className="border-b border-border/75 p-4">
-            <div className="text-sm font-semibold">Sensitive Paths</div>
-            <p className="mt-1 text-xs text-muted-foreground">Maps to the CLI security blacklist, project settings, and directory access prompts.</p>
-          </div>
-          <div className="divide-y divide-border/70">
-            {permissions.sensitivePaths.map((pathValue) => (
-              <div key={pathValue} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-4">
-                <code className="truncate text-sm text-muted-foreground">{pathValue}</code>
-                <Button variant="ghost" size="icon-sm" aria-label={`Remove ${pathValue}`} onClick={() => removeSensitivePath(pathValue)}>
-                  <X />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <aside className="flex flex-col gap-5">
-        <section className="rounded-md border border-border/80 bg-card/75 p-4">
-          <div className="text-sm font-semibold">Path Access Controls</div>
-          <div className="mt-4 grid gap-2">
-            <label className="flex min-h-12 items-center justify-between gap-3 rounded-md border border-border/80 bg-background/65 px-3 text-sm">
-              All workspace paths allowed
-              <Switch
-                checked={permissions.allPathsAllowed}
-                onCheckedChange={(allPathsAllowed) => updatePermissions({ allPathsAllowed })}
-              />
-            </label>
-            <label className="flex min-h-12 items-center justify-between gap-3 rounded-md border border-border/80 bg-background/65 px-3 text-sm">
-              URL fetches allowed
-              <Switch
-                checked={permissions.allUrlsAllowed}
-                onCheckedChange={(allUrlsAllowed) => updatePermissions({ allUrlsAllowed })}
-              />
-            </label>
-          </div>
-        </section>
-        <PermissionScopeCard />
-      </aside>
+      <section className="grid gap-2">
+        <h3 className="text-sm font-semibold">Sensitive paths</h3>
+        <div className="divide-y divide-border/70 border-y border-border/70">
+          {permissions.sensitivePaths.map((pathValue) => (
+            <div key={pathValue} className="flex items-center justify-between gap-3 py-2">
+              <code className="truncate text-sm text-muted-foreground">{pathValue}</code>
+              <Button variant="ghost" size="icon-sm" aria-label={`Remove ${pathValue}`} onClick={() => removeSensitivePath(pathValue)}>
+                <X />
+              </Button>
+            </div>
+          ))}
+        </div>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            addSensitivePath();
+          }}
+        >
+          <Input
+            value={sensitivePathDraft}
+            onChange={(event) => setSensitivePathDraft(event.target.value)}
+            placeholder="A path or pattern, such as secrets/ or *.pem"
+            className="h-9 min-w-0 flex-1 font-mono text-xs"
+          />
+          <Button type="submit" variant="outline" disabled={!String(sensitivePathDraft || "").trim()}>
+            <Plus data-icon="inline-start" />
+            Add
+          </Button>
+        </form>
+      </section>
     </div>
   );
 }
 
 function BuiltInToolsPanel({ permissions, updatePermissions, updateBuiltInPolicy }) {
+  // Divider rows under headings, not two columns of cards; the switch said
+  // "Enable Built-in Tool Policy Management" and described itself in config
+  // keys (availableTools, excludedTools, allowPatterns, denyPatterns).
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex max-w-4xl flex-col gap-6">
       <PermissionSurfaceHeader
-        icon={WrenchIcon}
-        title="Enable Built-in Tool Policy Management"
-        description="Set allow, ask, or deny policies for Autohand Code CLI built-ins. This maps to availableTools, excludedTools, allowPatterns, and denyPatterns."
+        title="Built-in tool rules"
+        description="Choose, tool by tool, what Autohand Code's own tools may do without asking."
         enabled={permissions.builtInToolPolicyEnabled}
         onEnabledChange={(builtInToolPolicyEnabled) => updatePermissions({ builtInToolPolicyEnabled })}
-        disabledMessage="Built-in tool policies are disabled; the CLI falls back to context defaults and permission mode."
+        disabledMessage="Off: Autohand Code uses its defaults and the permission mode above."
       />
-
-      <div className="grid gap-5 xl:grid-cols-2">
-        {BUILT_IN_TOOL_POLICY_GROUPS.map((group) => (
-          <section key={group.id} className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-            <div className="border-b border-border/75 p-4">
-              <div className="text-sm font-semibold">{group.title}</div>
-            </div>
-            <div className="divide-y divide-border/70">
-              {group.tools.map(([tool]) => (
-                <div key={tool} className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_260px] sm:items-center">
-                  <code className="truncate text-sm">{tool}</code>
-                  <PermissionModeControl value={permissions.builtInPolicies[tool]} onChange={(mode) => updateBuiltInPolicy(tool, mode)} />
-                </div>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
+      {BUILT_IN_TOOL_POLICY_GROUPS.map((group) => (
+        <section key={group.id} className="grid gap-2">
+          <h3 className="text-sm font-semibold">{group.title}</h3>
+          <div className="divide-y divide-border/70 border-y border-border/70">
+            {group.tools.map(([tool]) => (
+              <div key={tool} className="flex flex-wrap items-center justify-between gap-3 py-2">
+                <code className="truncate text-sm">{tool}</code>
+                <div className="w-60"><PermissionModeControl value={permissions.builtInPolicies[tool]} onChange={(mode) => updateBuiltInPolicy(tool, mode)} /></div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
 
 function ModelSecurityPanel({ permissions, updatePermissions, updateModelSecurity }) {
   const modelSecurity = permissions.modelSecurity;
-
+  const off = !permissions.modelSecurityEnabled;
+  // Flat rows. The fields stayed editable with Model Security off, so it
+  // looked as if a provider were already required; options were raw values
+  // ("autohandai", "normal", "auto"); a "CLI mapping" card printed
+  // "LLMRequest.thinkingLevel: normal".
+  const providerName = (id) => ({ autohandai: "Autohand AI", openrouter: "OpenRouter", openai: "OpenAI", anthropic: "Anthropic", ollama: "Ollama", gemini: "Google Gemini" }[id] || id);
+  const row = (label, control) => (
+    <div className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+      <span className={cn("text-sm", off && "text-muted-foreground")}>{label}</span>
+      <div className="w-56">{control}</div>
+    </div>
+  );
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="flex min-w-0 flex-col gap-5">
-        <PermissionSurfaceHeader
-          icon={Brain}
-          title="Enable Model Security"
-          description="Lock the agent to approved providers, model IDs, thinking levels, and tool-choice behavior for enterprise or high-trust runs."
-          enabled={permissions.modelSecurityEnabled}
-          onEnabledChange={(modelSecurityEnabled) => updatePermissions({ modelSecurityEnabled })}
-          disabledMessage="Model Security is disabled. Users can freely select any configured model."
-        />
-
-        <section className="rounded-md border border-border/80 bg-card/75 p-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field>
-              <FieldLabel>Required provider</FieldLabel>
-              <Select value={modelSecurity.provider} onValueChange={(provider) => updateModelSecurity("provider", provider)}>
-                <SelectTrigger className="mt-2 h-10 bg-background">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectLabel>Provider</SelectLabel>
-                    {MODEL_PROVIDER_OPTIONS.map((provider) => (
-                      <SelectItem key={provider} value={provider}>
-                        {provider}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field>
-              <FieldLabel>Required model</FieldLabel>
-              <Input
-                value={modelSecurity.model}
-                onChange={(event) => updateModelSecurity("model", event.target.value)}
-                className="mt-2 h-10 bg-background"
-              />
-            </Field>
-
-            <Field>
-              <FieldLabel>Thinking level</FieldLabel>
-              <Select value={modelSecurity.thinkingLevel} onValueChange={(thinkingLevel) => updateModelSecurity("thinkingLevel", thinkingLevel)}>
-                <SelectTrigger className="mt-2 h-10 bg-background">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">none</SelectItem>
-                  <SelectItem value="normal">normal</SelectItem>
-                  <SelectItem value="extended">extended</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field>
-              <FieldLabel>Tool choice</FieldLabel>
-              <Select value={modelSecurity.toolChoice} onValueChange={(toolChoice) => updateModelSecurity("toolChoice", toolChoice)}>
-                <SelectTrigger className="mt-2 h-10 bg-background">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">auto</SelectItem>
-                  <SelectItem value="required">required</SelectItem>
-                  <SelectItem value="none">none</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-        </section>
+    <div className="flex max-w-4xl flex-col gap-6">
+      <PermissionSurfaceHeader
+        title="Model security"
+        description="Holds this member to one provider, model, thinking level and tool behaviour, for runs that must not change model."
+        enabled={permissions.modelSecurityEnabled}
+        onEnabledChange={(modelSecurityEnabled) => updatePermissions({ modelSecurityEnabled })}
+        disabledMessage="Off: the member uses whichever model is chosen for them."
+      />
+      <div className="divide-y divide-border/70 border-y border-border/70">
+        {row("Provider", (
+          <Select value={modelSecurity.provider} onValueChange={(provider) => updateModelSecurity("provider", provider)} disabled={off}>
+            <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectLabel>Provider</SelectLabel>
+                {MODEL_PROVIDER_OPTIONS.map((provider) => (
+                  <SelectItem key={provider} value={provider}>{providerName(provider)}</SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        ))}
+        {row("Model", (
+          <Input value={modelSecurity.model} onChange={(event) => updateModelSecurity("model", event.target.value)} disabled={off} className="h-8" placeholder="auto, or a model id" />
+        ))}
+        {row("Thinking", (
+          <Select value={modelSecurity.thinkingLevel} onValueChange={(thinkingLevel) => updateModelSecurity("thinkingLevel", thinkingLevel)} disabled={off}>
+            <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Off</SelectItem>
+              <SelectItem value="normal">Normal</SelectItem>
+              <SelectItem value="extended">Extended</SelectItem>
+            </SelectContent>
+          </Select>
+        ))}
+        {row("Tools", (
+          <Select value={modelSecurity.toolChoice} onValueChange={(toolChoice) => updateModelSecurity("toolChoice", toolChoice)} disabled={off}>
+            <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">When useful</SelectItem>
+              <SelectItem value="required">Always use a tool</SelectItem>
+              <SelectItem value="none">Never use tools</SelectItem>
+            </SelectContent>
+          </Select>
+        ))}
+        {[
+          ["lockModelSelector", "Hide the model picker in chat"],
+          ["requireNativeToolCalling", "Only models with native tool calling"],
+          ["requireConfiguredSearchProvider", "Only with a configured web search"],
+        ].map(([key, label]) => (
+          <label key={key} className="flex items-center justify-between gap-3 py-2.5">
+            <span className={cn("text-sm", off && "text-muted-foreground")}>{label}</span>
+            <Switch checked={Boolean(modelSecurity[key])} onCheckedChange={(value) => updateModelSecurity(key, value)} disabled={off} />
+          </label>
+        ))}
       </div>
-
-      <aside className="flex flex-col gap-5">
-        <section className="rounded-md border border-border/80 bg-card/75 p-4">
-          <div className="text-sm font-semibold">Runtime Locks</div>
-          <div className="mt-4 grid gap-2">
-            {[
-              ["lockModelSelector", "Lock model selector"],
-              ["requireNativeToolCalling", "Require native tool calling"],
-              ["requireConfiguredSearchProvider", "Require configured web search"],
-            ].map(([key, label]) => (
-              <label key={key} className="flex min-h-12 items-center justify-between gap-3 rounded-md border border-border/80 bg-background/65 px-3 text-sm">
-                {label}
-                <Switch checked={Boolean(modelSecurity[key])} onCheckedChange={(value) => updateModelSecurity(key, value)} />
-              </label>
-            ))}
-          </div>
-        </section>
-        <section className="rounded-md border border-border/80 bg-card/75 p-4">
-          <div className="text-sm font-semibold">CLI mapping</div>
-          <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
-            <code className="rounded-md border bg-background p-3">provider: {modelSecurity.provider}</code>
-            <code className="rounded-md border bg-background p-3">{modelSecurity.provider}.model: {modelSecurity.model}</code>
-            <code className="rounded-md border bg-background p-3">LLMRequest.thinkingLevel: {modelSecurity.thinkingLevel}</code>
-            <code className="rounded-md border bg-background p-3">LLMRequest.toolChoice: {modelSecurity.toolChoice}</code>
-          </div>
-        </section>
-      </aside>
     </div>
   );
 }
 
 function WrenchIcon(props) {
   return <Settings {...props} />;
-}
-
-function PermissionScopeCard() {
-  return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-4">
-      <div className="text-sm font-semibold">Decision Scopes</div>
-      <div className="mt-4 grid gap-3">
-        {[
-          ["Session", ".autohand/session-permissions.json"],
-          ["Project", ".autohand/settings.local.json"],
-          ["User", "config.json permissions"],
-          ["Effective", "merged decision snapshot"],
-        ].map(([label, pathValue]) => (
-          <div key={label} className="rounded-md border border-border/80 bg-background/65 p-3">
-            <div className="text-sm font-semibold">{label}</div>
-            <code className="mt-2 block truncate text-xs text-muted-foreground">{pathValue}</code>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ShellGuardrailCard() {
-  return (
-    <section className="rounded-md border border-border/80 bg-card/75">
-      <div className="border-b border-border/75 p-4">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <Hammer className="size-4 text-primary" />
-          Shell guardrails
-        </div>
-      </div>
-      <div className="divide-y divide-border/70">
-        {SHELL_GUARDRAILS.map((rule) => (
-          <div key={rule.id} className="p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-semibold">{rule.label}</div>
-              <Badge variant="outline" className="rounded-md bg-background text-[11px]">
-                {rule.state}
-              </Badge>
-            </div>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">{rule.detail}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function CommandLaneCard() {
-  return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-4">
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <Command className="size-4 text-primary" />
-        Command lane
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {["rg", "cat", "sed", "bun test", "npm run build", "apply_patch"].map((item) => (
-          <span key={item} className="rounded-md border border-primary/25 bg-primary/10 px-2.5 py-1 font-mono text-[11px] text-primary">
-            {item}
-          </span>
-        ))}
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {["sudo", "rm -rf", "mkfs", "chmod 777"].map((item) => (
-          <span key={item} className="rounded-md border border-red-300 bg-red-100 px-2.5 py-1 font-mono text-[11px] text-red-800 dark:border-red-400/25 dark:bg-red-500/10 dark:text-red-200">
-            {item}
-          </span>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function IsolationCard({ agent }) {
-  return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-4">
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <Shield className="size-4 text-primary" />
-        Isolation
-      </div>
-      <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
-        <code className="overflow-hidden text-ellipsis rounded-md border bg-background p-3">
-          AUTOHAND_HOME=.autohand/agents/{agent.id}
-        </code>
-        <code className="overflow-hidden text-ellipsis rounded-md border bg-background p-3">
-          --config .autohand/agents/{agent.id}/config.json
-        </code>
-      </div>
-    </section>
-  );
 }
 
 function PermissionConfigPreview({ permissions }) {
@@ -23313,66 +23044,29 @@ function PermissionConfigPreview({ permissions }) {
     },
   };
 
+  // The engine's raw config is for checking, not reading: it was a 320px
+  // block of JSON open on the page. Now a disclosure.
   return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold">Autohand Code CLI config preview</div>
-          <p className="mt-1 text-xs text-muted-foreground">A local mapping for the settings the CLI already understands.</p>
-        </div>
-        <Badge variant="outline" className="rounded-md bg-background text-xs">config.json</Badge>
-      </div>
-      <pre className="mt-4 max-h-[320px] overflow-auto rounded-md border bg-background p-4 text-xs leading-5 text-muted-foreground">
+    <details className="min-w-0 text-sm">
+      <summary className="cursor-pointer text-muted-foreground hover:text-foreground">What Autohand Code receives (config.json)</summary>
+      <pre className="mt-2 max-h-[320px] overflow-auto rounded-md bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
         {JSON.stringify(preview, null, 2)}
       </pre>
-    </section>
-  );
-}
-
-function PermissionMetric({ icon: Icon, label, value, tone }) {
-  return (
-    <div className="rounded-md border border-border/80 bg-background/65 p-4">
-      <div className={cn("flex items-center gap-2 text-sm font-semibold", tone)}>
-        <Icon className="size-4" />
-        {value}
-      </div>
-      <div className="mt-2 text-xs text-muted-foreground">{label}</div>
-    </div>
-  );
-}
-
-function PermissionRuntimeItem({ icon: Icon, label, value, detail }) {
-  return (
-    <div className="bg-card p-4">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="size-4" />
-        {label}
-      </div>
-      <div className="mt-2 text-sm font-semibold">{value}</div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">{detail}</div>
-    </div>
+    </details>
   );
 }
 
 function PermissionToolGroup({ group, modes, onModeChange }) {
-  const Icon = group.icon;
   const allowed = group.items.filter((item) => modes[item.id] === "allow").length;
-
+  // A heading and divider rows, not a bordered card with a "2/5 autonomous"
+  // badge (said as a sentence now).
   return (
-    <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-      <div className="flex flex-col gap-3 border-b border-border/75 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-base font-semibold">
-            <Icon className="size-5 text-primary" />
-            {group.title}
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">{group.description}</p>
-        </div>
-        <Badge variant="outline" className="w-fit rounded-md bg-background text-xs">
-          {allowed}/{group.items.length} autonomous
-        </Badge>
+    <section className="grid gap-2">
+      <div>
+        <h3 className="text-sm font-semibold">{group.title}</h3>
+        <p className="mt-0.5 text-sm text-muted-foreground">{`${group.description} ${allowed} of ${group.items.length} run without asking.`}</p>
       </div>
-      <div className="divide-y divide-border/70">
+      <div className="divide-y divide-border/70 border-y border-border/70">
         {group.items.map((item) => (
           <PermissionToolRow
             key={item.id}
@@ -23387,36 +23081,23 @@ function PermissionToolGroup({ group, modes, onModeChange }) {
 }
 
 function PermissionToolRow({ item, mode, onModeChange }) {
-  const meta = permissionLevelMeta(mode);
-
+  // The mode was shown twice (a pill beside the name and the selected
+  // segment), and under the name a fixed word from the tool's defaults
+  // ("Approval", "Autonomous") that stopped matching as soon as you changed
+  // the control. Examples were bordered code chips that read like connected
+  // services ("Figma", "Cloudflare").
   return (
-    <div className="grid gap-4 p-4 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,1fr)_260px] lg:items-center">
+    <div className="grid gap-3 py-3 lg:grid-cols-[minmax(0,1fr)_15rem] lg:items-center">
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="font-semibold">{item.name}</div>
-          <span className={cn("inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium", meta.tone)}>
-            <span className={cn("size-1.5 rounded-full", meta.indicator)} />
-            {meta.label}
-          </span>
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-sm font-medium">{item.name}</span>
+          <code className="text-xs text-muted-foreground">{item.target}</code>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-mono">{item.target}</span>
-          <span>/</span>
-          <span>{item.autonomy}</span>
-        </div>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          {item.description}
+          {item.examples?.length ? <span className="text-xs">{` For example: ${item.examples.join(", ")}.`}</span> : null}
+        </p>
       </div>
-
-      <div className="min-w-0">
-        <p className="text-sm leading-6 text-muted-foreground">{item.description}</p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {item.examples.map((example) => (
-            <span key={example} className="rounded-md border border-border/80 bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
-              {example}
-            </span>
-          ))}
-        </div>
-      </div>
-
       <PermissionModeControl value={mode} onChange={onModeChange} />
     </div>
   );
@@ -23461,13 +23142,24 @@ function brainCardPreviewLines(value, limit = 4) {
     .slice(0, limit);
 }
 
+// One count for "how much can this member do alone", so the profile's ID card
+// and the Permissions page never disagree (they read 41/48/41 and 47/54/42
+// for the same member before; bug hunt 2026-10, #56).
+function permissionModeCounts(permissions) {
+  const modes = [...CLI_TOOL_PERMISSIONS.map((item) => permissions?.modes?.[item.id]), ...Object.values(permissions?.builtInPolicies || {})];
+  return {
+    modes,
+    allow: modes.filter((mode) => mode === "allow").length,
+    ask: modes.filter((mode) => mode === "ask").length,
+    block: modes.filter((mode) => mode === "block").length,
+  };
+}
+
 function permissionSummary(agent, workspace = agent?.workspace) {
   const permissions = resolveAgentPermissionsForWorkspace(agent, workspace);
   const ladder = autonomyLadderLevelMeta(permissions.ladderLevel);
-  const policyEntries = Object.entries(permissions.builtInPolicies || {});
-  const allowCount = policyEntries.filter(([, mode]) => mode === "allow").length;
-  const blockCount = policyEntries.filter(([, mode]) => mode === "block").length;
-  return `Level ${ladder.rank}: ${ladder.label}, ${allowCount} autonomous tools, ${blockCount} blocked`;
+  const { allow: allowCount, ask: askCount, block: blockCount } = permissionModeCounts(permissions);
+  return `Level ${ladder.rank}: ${ladder.label}. ${allowCount} tools run freely, ${askCount} ask first, ${blockCount} blocked`;
 }
 
 function capabilityLevel(agent) {
@@ -23487,8 +23179,8 @@ function connectorReadiness(agent) {
 
 function toolCategorySummary(agent) {
   const brainCard = brainCardForAgent(agent);
-  const fromBrainCard = brainCardPreviewLines(brainCard.allowedTools, 3).map((line) => line.replace(/^[-\d.]+\s*/, ""));
-  if (fromBrainCard.length) return fromBrainCard.join("; ");
+  const fromBrainCard = brainCardPreviewLines(brainCard.allowedTools, 3).map((line) => line.replace(/^[-\d.]+\s*/, "").replace(/[.;]+$/, ""));
+  if (fromBrainCard.length) return `${fromBrainCard.join("; ")}.`;
   const tools = Array.isArray(agent?.tools) ? agent.tools.map((tool) => tool.name).filter(Boolean) : [];
   return tools.length ? tools.join(", ") : "Autohand CLI and installed profile skills";
 }
@@ -23513,18 +23205,31 @@ function buildAgentIdCardText(agent) {
 
 function BrainCardFieldBlock({ field, value }) {
   const lines = brainCardPreviewLines(value, 12);
+  // Authors write these as "- item" or "1. item"; show a list, not the dashes.
+  const marker = /^(?:[-*•]|\d+[.)])\s+/;
+  const listed = lines.length > 0 && lines.every((line) => marker.test(line));
+  const ordered = listed && /^\d/.test(lines[0]);
+  const List = ordered ? "ol" : "ul";
   return (
-    <section className="rounded-md border bg-background/55 p-4">
+    <section className="border-t border-border/60 pt-3">
       <h4 className="text-sm font-semibold text-foreground">{field.label}</h4>
-      <div className="mt-3 space-y-2 text-sm leading-6 text-muted-foreground">
-        {lines.length ? (
-          lines.map((line, index) => (
-            <p key={`${field.id}-${index}`} className="whitespace-pre-wrap">
-              {line}
-            </p>
-          ))
-        ) : (
+      <div className="mt-2 text-sm leading-6 text-muted-foreground">
+        {!lines.length ? (
           <p>Not configured.</p>
+        ) : listed ? (
+          <List className={cn("space-y-1 pl-5", ordered ? "list-decimal" : "list-disc")}>
+            {lines.map((line, index) => (
+              <li key={`${field.id}-${index}`}>{line.replace(marker, "")}</li>
+            ))}
+          </List>
+        ) : (
+          <div className="space-y-2">
+            {lines.map((line, index) => (
+              <p key={`${field.id}-${index}`} className="whitespace-pre-wrap">
+                {line}
+              </p>
+            ))}
+          </div>
         )}
       </div>
     </section>
@@ -23533,7 +23238,6 @@ function BrainCardFieldBlock({ field, value }) {
 
 function CompactAgentIdCard({ agent }) {
   const [copied, setCopied] = useState(false);
-  const brainCard = brainCardForAgent(agent);
   const rows = [
     { label: "Capability", value: capabilityLevel(agent) },
     { label: "Autonomy", value: permissionSummary(agent, agent?.workspace) },
@@ -23543,17 +23247,13 @@ function CompactAgentIdCard({ agent }) {
 
   async function copyIdCard() {
     const text = buildAgentIdCardText(agent);
-    try {
-      await navigator.clipboard?.writeText(text);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1400);
-    } catch {
-      setCopied(false);
-    }
+    const ok = await copyText(text);
+    setCopied(ok ? "copied" : "failed");
+    window.setTimeout(() => setCopied(false), 1400);
   }
 
   return (
-    <aside className="rounded-md border bg-muted/20 p-4">
+    <aside className="lg:border-l lg:border-border/60 lg:pl-5">
       <div className="flex items-start gap-3">
         <AgentAvatar agent={agent} className="size-11" />
         <div className="min-w-0">
@@ -23561,21 +23261,17 @@ function CompactAgentIdCard({ agent }) {
           <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{agent.staffId || agent.id}</div>
         </div>
       </div>
-      <div className="mt-4 grid gap-3">
+      <dl className="mt-4 divide-y divide-border/60">
         {rows.map((row) => (
-          <div key={row.label} className="rounded-md bg-background/70 p-3">
-            <div className="text-[11px] font-medium uppercase text-muted-foreground">{row.label}</div>
-            <div className="mt-1 text-sm leading-5">{row.value}</div>
+          <div key={row.label} className="py-2.5">
+            <dt className="text-xs text-muted-foreground">{row.label}</dt>
+            <dd className="mt-0.5 text-sm leading-5">{row.value}</dd>
           </div>
         ))}
-      </div>
-      <div className="mt-3 rounded-md bg-background/70 p-3">
-        <div className="text-[11px] font-medium uppercase text-muted-foreground">Memory policy</div>
-        <p className="mt-1 max-h-28 overflow-auto text-sm leading-5 text-muted-foreground">{brainCard.memoryPolicy}</p>
-      </div>
+      </dl>
       <Button type="button" variant="outline" size="sm" className="mt-4 w-full" onClick={copyIdCard}>
         <ClipboardCheck data-icon="inline-start" />
-        {copied ? "Copied" : "Copy ID card"}
+        {copied === "copied" ? "Copied" : copied === "failed" ? "Could not copy" : "Copy ID card"}
       </Button>
     </aside>
   );
@@ -23587,8 +23283,10 @@ function ProfilePermissionLadder({ agent, runtime, workspaces = [], navigate, co
   const activeLevel = autonomyLadderLevelMeta(permissions.ladderLevel);
   const warnings = permissionWarningsForAgent(agent, runtime, workspace);
 
+  // border-b only: the header above already ends in a rule, so a top
+  // border drew two lines 22px apart.
   return (
-    <section className="border-y border-border/75 py-5" aria-labelledby="profile-permission-ladder">
+    <section className="border-b border-border/75 py-5" aria-labelledby="profile-permission-ladder">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h3 id="profile-permission-ladder" className="text-base font-semibold">Permission ladder</h3>
@@ -23607,9 +23305,11 @@ function ProfilePermissionLadder({ agent, runtime, workspaces = [], navigate, co
           return (
             <div
               key={level.id}
+              aria-current={selected ? "step" : undefined}
               className={cn(
-                "min-h-16 rounded-md border px-3 py-2",
-                selected ? "border-primary/45 bg-primary/10 text-foreground" : "border-border/70 bg-muted/20 text-muted-foreground"
+                "border-t-2 pt-2 transition-colors",
+                level.rank <= activeLevel.rank ? "border-primary/70" : "border-border/70",
+                selected ? "text-foreground" : "text-muted-foreground"
               )}
             >
               <div className="text-[11px] font-medium uppercase">Level {level.rank}</div>
@@ -23631,8 +23331,8 @@ function ProfilePermissionLadder({ agent, runtime, workspaces = [], navigate, co
 function BrainCardPanel({ agent, onEdit }) {
   const brainCard = brainCardForAgent(agent);
   return (
-    <Card className="rounded-md border-border/80 bg-card/75 shadow-none" id="brain-card">
-      <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <Card className="gap-4 rounded-none border-0 border-t border-border/75 bg-transparent py-5 shadow-none" id="brain-card">
+      <CardHeader className="gap-3 px-0 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <Brain className="size-5 text-primary" />
@@ -23647,8 +23347,8 @@ function BrainCardPanel({ agent, onEdit }) {
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="grid gap-3 md:grid-cols-2">
+      <CardContent className="grid gap-5 px-0 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="grid content-start gap-x-6 gap-y-4 md:grid-cols-2">
           {brainCardFields.map((field) => (
             <BrainCardFieldBlock key={field.id} field={field} value={brainCard[field.id]} />
           ))}
@@ -23671,7 +23371,7 @@ function ProfileHarnessSummary({ agent, harnesses = [], navigate }) {
           <h3 id="profile-harness-summary" className="text-base font-semibold">Harness</h3>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
             {harnessLabel(assignment.id)}
-            {readiness?.version ? ` ${readiness.version}` : ""}
+            {readiness?.version ? ` ${engineVersion(readiness.version)}` : ""}
             {" / "}
             <span className={readinessTone(readiness?.status)}>{readinessLabel(readiness?.status)}</span>
             {assignment.model ? ` / ${assignment.model}` : ""}
@@ -23752,16 +23452,15 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
           >
             {copy.save || "Save"}
           </Button>
-          <Button variant="ghost" onClick={() => navigate(memberProfilePath(agent.id, "home"))}>
-            {copy.close || "Close"}
-          </Button>
+          {/* "Close" beside Save went to Home: on a page, not a dialog, there
+              was nothing to close and it read as Cancel. The sidebar has Home. */}
         </div>
         <Separator />
         <div>
           <h2 className="text-lg font-semibold">{copy.runsOn || "Runs on"}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {copy.runsOnDescription ||
-              `${agent.name} runs on this machine unless you point it at another bridge. The work happens there; the conversation stays here.`}
+              `${agent.name} runs on this machine unless you point them at another bridge. The work happens there; the conversation stays here.`}
           </p>
         </div>
         <RunsOnSettings
@@ -23786,7 +23485,7 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
               <dt className="font-medium">{item.label}</dt>
               <dd className="text-muted-foreground">
                 <span className={readinessTone(item.status)}>{readinessLabel(item.status)}</span>
-                {item.version ? ` · ${item.version}` : ""}
+                {item.version ? ` · ${engineVersion(item.version)}` : ""}
                 {item.executable ? ` · ${item.executable}` : ""}
                 {item.setup ? (
                   <>
@@ -23808,14 +23507,25 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
 
 function ProfileModelSummary({ agent, providerSettings, navigate }) {
   const effectiveModel = effectiveModelForAgent(agent, providerSettings);
+  // Eva runs on Codex, yet Home said "Autohand AI / moa / workspace default"
+  // two rows above "Harness: Codex". Autohand's provider settings only apply
+  // when Autohand is the engine; otherwise the engine picks the model.
+  const harness = harnessForAgent(agent);
+  const otherEngine = harness.id && harness.id !== "autohand";
   return (
     <section className="border-b border-border/75 pb-5" aria-labelledby="profile-model-summary">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h3 id="profile-model-summary" className="text-base font-semibold">Model</h3>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            {providerSummaryLabel(effectiveModel)} / {effectiveModel.source === "agent" ? "agent override" : "workspace default"}
-            {effectiveModel.configured ? "" : " / not fully configured"}
+            {otherEngine ? (
+              <>{harnessLabel(harness.id)} / {String(harness.model || "").trim() || "the engine's default model"}</>
+            ) : (
+              <>
+                {providerSummaryLabel(effectiveModel)} / {effectiveModel.source === "agent" ? "agent override" : "workspace default"}
+                {effectiveModel.configured ? "" : " / not fully configured"}
+              </>
+            )}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "model"))}>
@@ -23829,7 +23539,12 @@ function ProfileModelSummary({ agent, providerSettings, navigate }) {
 
 function Profile({ agent, agents = [], tasks, automations, runtime, workspaces = [], runs, providerSettings, navigate, openTerminal, updateAgent, startAutohand, initialWorkRecordTab = "timeline", locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), harnesses = [] }) {
   const { entryFor: entryForPresence, stopMember } = usePresence();
-  const activity = useMemo(() => buildActivity(), []);
+  const activity = useMemo(() => {
+    const stamps = [];
+    for (const run of runs || []) if (run?.agentId === agent.id) stamps.push(run.startedAt || run.finishedAt);
+    for (const task of tasks || []) if ([task?.agentId, task?.currentOwnerId].includes(agent.id)) stamps.push(task.updatedAt || task.createdAt);
+    return activityCalendar(stamps, { locale });
+  }, [runs, tasks, agent.id, locale]);
   const [workRecordTab, setWorkRecordTab] = useState(initialWorkRecordTab);
   const [profileEditOpen, setProfileEditOpen] = useState(false);
   // Goal 09: recipe launch from the member profile.
@@ -23837,6 +23552,12 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
 
   useEffect(() => {
     setWorkRecordTab(initialWorkRecordTab);
+    // Tasks in the member's navigation opens this page on Work Record's
+    // Tasks tab, which sits far below the fold; without the scroll the
+    // click looked like it opened Home.
+    if (initialWorkRecordTab !== "timeline") {
+      requestAnimationFrame(() => document.getElementById("work-record")?.scrollIntoView({ block: "start" }));
+    }
   }, [agent.id, initialWorkRecordTab]);
 
   function launchProfileRecipe({ recipe, agentId, prompt }) {
@@ -23854,7 +23575,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
 
   return (
     <div className="min-h-screen bg-background">
-      <PageTitle title={copy.home} />
+      <PageTitle title={initialWorkRecordTab === "tasks" ? copy.tasks || "Tasks" : copy.home} />
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
         <section className="relative min-h-[210px] border-b border-border/70 pb-5">
           <div className="grid gap-5 md:grid-cols-[200px_minmax(0,1fr)] md:items-center">
@@ -23880,7 +23601,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                   <Settings data-icon="inline-start" />
                   {copy.edit}
                 </Button>
-                {stopMember ? <StopMemberButton member={agent} onStop={stopMember} copy={copy} /> : null}
+                {stopMember && (entryForPresence(agent).state === "working" || (runs || []).some((run) => run.agentId === agent.id && LIVE_RUN_STATUSES.has(run.status))) ? <StopMemberButton member={agent} onStop={stopMember} copy={copy} /> : null}
                 <Button variant="outline" size="sm" onClick={() => navigate(memberChatPath(agent.id))}>
                   <MessageSquareText data-icon="inline-start" />
                   {copy.chat}
@@ -23908,9 +23629,9 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
           <ProfileRecipes agent={agent} copy={copy} onLaunch={(recipe) => setProfileRecipeTarget(recipe)} />
         ) : null}
 
-        <Card className="rounded-md border-border/80 bg-card/75 shadow-none">
+        <Card id="work-record" className="scroll-mt-16 gap-4 rounded-none border-0 border-t border-border/75 bg-transparent py-5 shadow-none">
           <Tabs value={workRecordTab} onValueChange={setWorkRecordTab}>
-            <CardHeader className="flex-row items-center gap-4">
+            <CardHeader className="flex-row items-center gap-4 px-0">
               <CardTitle className="text-lg">{copy.workRecord}</CardTitle>
               <TabsList variant="line" className="h-auto flex-wrap justify-start gap-2 bg-transparent p-0">
                 <TabsTrigger value="timeline" className="h-9 flex-none px-3">
@@ -23918,7 +23639,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                   {copy.timelineView}
                 </TabsTrigger>
                 <TabsTrigger value="tasks" className="h-9 flex-none px-3">
-                  <History data-icon="inline-start" />
+                  <ListChecks data-icon="inline-start" />
                   {copy.tasks}
                 </TabsTrigger>
                 <TabsTrigger value="automations" className="h-9 flex-none px-3">
@@ -23926,73 +23647,67 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                   {copy.automations}
                 </TabsTrigger>
               </TabsList>
-              <CardAction>
-                <Button variant="ghost" size="icon-sm" aria-label={copy.closeWorkRecord}>
-                  <X />
-                </Button>
-              </CardAction>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-0">
               <TabsContent value="timeline" className="m-0 flex flex-col gap-4">
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <Metric label={copy.activeDays} value={`${formatLocalizedNumber(agent.stats.activeDays ?? 0, locale)}d`} />
+                  <Metric label={copy.activeDays} value={`${formatLocalizedNumber(activity.activeDays, locale)}d`} />
                   <Metric label={copy.automations} value={formatLocalizedNumber(automations.length || agent.stats.automations || 0, locale)} />
                   <Metric label={copy.tasks} value={formatLocalizedNumber(tasks.length || agent.stats.tasks || 0, locale)} />
-                  <Metric label={copy.projects} value={formatLocalizedNumber(agent.stats.projects || 0, locale)} />
+                  <Metric label={copy.projects} value={formatLocalizedNumber(Array.isArray(agent.projects) ? agent.projects.length : agent.stats.projects || 0, locale)} />
                 </div>
                 <HandoffTimelinePanel tasks={tasks} agents={agents} locale={locale} copy={copy} />
-                <ActivityHeatmap values={activity} />
+                <ActivityHeatmap calendar={activity} />
               </TabsContent>
               <TabsContent value="tasks" className="m-0">
-                <WorkRecordTasksTable tasks={tasks} copy={copy} locale={locale} />
+                <WorkRecordTasksTable tasks={tasks} agent={agent} copy={copy} />
               </TabsContent>
               <TabsContent value="automations" className="m-0">
-                <WorkRecordAutomationsTable automations={automations} copy={copy} locale={locale} />
+                <WorkRecordAutomationsTable automations={automations} copy={copy} />
               </TabsContent>
             </CardContent>
           </Tabs>
         </Card>
 
-        <Card className="rounded-md border-border/80 bg-card/75 shadow-none">
-          <CardHeader className="flex-row items-center gap-3">
+        <Card className="gap-3 rounded-none border-0 border-t border-border/75 bg-transparent py-5 shadow-none">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 px-0">
             <CardTitle>{copy.memoryGrowth}</CardTitle>
             <Button variant="ghost" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "memory"))}>
               {copy.viewAllMemory}
               <ChevronRight data-icon="inline-end" />
             </Button>
-            <CardAction>
-              <Button variant="ghost" size="icon-sm" aria-label={copy.closeMemory}>
-                <X />
-              </Button>
-            </CardAction>
           </CardHeader>
-          <CardContent className="grid min-h-72 gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
-            <div className="grid place-items-center text-sm text-muted-foreground">{copy.noMemoryUpdatesYet}</div>
+          <CardContent className="px-0">
+            {!normalizeMemoryEntries(agent.memory).length ? (
+              <p className="py-6 text-sm text-muted-foreground">{copy.noMemoryUpdatesYet}</p>
+            ) : (
             <div>
               <div className="mb-4 text-sm font-semibold text-muted-foreground">{copy.recentlyLearned}</div>
               <div className="flex flex-col gap-3">
                 {/* Memory entries are {id, text, at, source} (ADR-0048). This read
                     them as "topic: detail" strings and called .split on each, which
                     crashed the whole page the moment a member had any memory. */}
+                {/* "Autohand Skill Installed: react-component-architecture" with
+                    "autohand-squad-skill" under it, four times, each beside the
+                    same tinted sparkle tile. Said once: "Skill added:" and the
+                    skill name; sources that are internal ids are not shown. */}
                 {normalizeMemoryEntries(agent.memory).map((entry) => (
-                  <div key={entry.id} className="grid grid-cols-[40px_minmax(0,1fr)_80px] items-center gap-3">
-                    <span className="grid size-9 place-items-center rounded-md bg-[#211b40] text-[#8472ff]">
-                      <Sparkles />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold">{entry.text}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{entry.source || "autohand-squad-skill"}</span>
-                    </span>
-                    <span className="text-right text-xs text-muted-foreground">{entry.at ? formatRelativeTime(entry.at, locale) : ""}</span>
+                  <div key={entry.id} className="flex items-baseline gap-3 text-sm">
+                    <span className="min-w-0 flex-1 truncate">{memoryEntryLine(entry)}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{entry.at ? formatRelativeTime(entry.at, locale) : ""}</span>
                   </div>
                 ))}
               </div>
             </div>
+            )}
           </CardContent>
         </Card>
 
         <div className="grid gap-5 lg:grid-cols-[1fr_1.1fr]">
-          <RunList runs={runs} tasks={tasks} agents={agents} copy={copy} locale={locale} AgentAvatar={AgentAvatar} api={api} />
+          <section className="min-w-0">
+            <h3 className="mb-2 text-base font-semibold">{copy.runsPanel || "Runs"}</h3>
+            <RunList runs={runs} tasks={tasks} agents={agents} copy={copy} locale={locale} AgentAvatar={AgentAvatar} api={api} />
+          </section>
           <AutomationSummary automations={automations} copy={copy} />
         </div>
       </div>
@@ -24000,7 +23715,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
         agent={agent}
         open={profileEditOpen}
         onOpenChange={setProfileEditOpen}
-        onSave={(patch) => updateAgent?.(agent.id, patch)}
+        onSave={(patch) => updateAgent?.(agent.id, patch?.name ? { ...patch, name: uniqueName(patch.name, agents.filter((member) => member.id !== agent.id).map((member) => member.name)) } : patch)}
       />
 
       <RecipeLaunchDialog
@@ -24040,8 +23755,9 @@ function ProfileRecipes({ agent, copy = getLocaleCopy(DEFAULT_LOCALE), onLaunch 
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">{recipe.name}</span>
-                  <Badge variant="outline" className="rounded-md text-[11px]">{level.shortLabel || level.label}</Badge>
-                  <Badge variant="secondary" className="rounded-md text-[11px]">{recipe.roleId ? text.roleSpecific : text.general}</Badge>
+                  {/* The level's short label is a verb ("Edit" for Level 4), so
+                      as a chip beside the name it read as an Edit button. */}
+                  <span className="text-xs text-muted-foreground">Level {level.rank}: {level.label} · {recipe.roleId ? text.roleSpecific : text.general}</span>
                 </div>
                 <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{recipe.description}</p>
               </div>
@@ -24057,22 +23773,26 @@ function ProfileRecipes({ agent, copy = getLocaleCopy(DEFAULT_LOCALE), onLaunch 
   );
 }
 
-function ActivityHeatmap({ values }) {
-  const months = ["May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May"];
-  const cells = Array.from({ length: 286 }, (_, index) => {
-    const reverseIndex = values.length - 1 - (285 - index);
-    return reverseIndex >= 0 ? values[reverseIndex] : 0;
-  });
+function ActivityHeatmap({ calendar }) {
+  const { weeks, months, activeDays } = calendar;
+  const shade = (value) => cn(
+    "size-3 rounded-[3px]",
+    value === 0 && "bg-muted-foreground/15 dark:bg-muted/35",
+    value === 1 && "bg-primary/35",
+    value === 2 && "bg-primary/65",
+    value === 3 && "bg-primary"
+  );
+  const dayLabel = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" });
   return (
-    <div className="overflow-x-auto rounded-md border border-border/80 bg-muted/25 p-4">
-      <div className="min-w-[760px]">
-        <div className="ml-14 grid [grid-template-columns:repeat(13,minmax(0,1fr))] text-center text-xs text-muted-foreground">
-          {months.map((month, index) => (
-            <span key={`${month}-${index}`}>{month}</span>
+    <div className="overflow-x-auto border-t border-border/60 pt-4">
+      <div className="w-max min-w-full">
+        <div className="ml-11 grid gap-1.5 text-xs text-muted-foreground" style={{ gridTemplateColumns: `repeat(${weeks.length}, 0.75rem)` }}>
+          {months.map((month) => (
+            <span key={`${month.label}-${month.week}`} className="whitespace-nowrap" style={{ gridColumnStart: month.week + 1 }}>{month.label}</span>
           ))}
         </div>
-        <div className="mt-3 grid grid-cols-[44px_minmax(0,1fr)] gap-3">
-          <div className="grid grid-rows-7 text-xs text-muted-foreground">
+        <div className="mt-2 flex gap-3">
+          <div className="grid w-8 grid-rows-7 gap-1.5 text-[11px] leading-3 text-muted-foreground">
             <span />
             <span>Mon</span>
             <span />
@@ -24082,36 +23802,22 @@ function ActivityHeatmap({ values }) {
             <span />
           </div>
           <div className="grid grid-flow-col grid-rows-7 gap-1.5">
-            {cells.map((value, index) => (
-              <span
-                key={`${index}-${value}`}
-                className={cn(
-                  "size-3 rounded-[3px]",
-                  value === 0 && "bg-muted-foreground/15 dark:bg-muted/35",
-                  value === 1 && "bg-primary/35",
-                  value === 2 && "bg-primary/65",
-                  value === 3 && "bg-primary"
-                )}
-                title={`Day ${index + 1}: level ${value}`}
-              />
+            {weeks.flatMap((week, weekIndex) => week.map((cell, day) =>
+              cell ? (
+                <span key={`${weekIndex}-${day}`} className={shade(cell.level)} title={`${dayLabel.format(cell.date)}: ${cell.count ? `${cell.count} ${cell.count === 1 ? "thing" : "things"} done` : "nothing"}`} />
+              ) : (
+                <span key={`${weekIndex}-${day}`} className="size-3" aria-hidden="true" />
+              )
             ))}
           </div>
         </div>
-        <div className="mt-6 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-          <span>Less</span>
-          {[0, 1, 2, 3].map((value) => (
-            <span
-              key={value}
-              className={cn(
-                "size-3 rounded-[3px]",
-                value === 0 && "bg-muted-foreground/15 dark:bg-muted/35",
-                value === 1 && "bg-primary/35",
-                value === 2 && "bg-primary/65",
-                value === 3 && "bg-primary"
-              )}
-            />
-          ))}
-          <span>More</span>
+        <div className="mt-4 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>{activeDays ? `Active on ${activeDays} ${activeDays === 1 ? "day" : "days"}` : "No activity yet"}</span>
+          <span className="flex items-center gap-1.5">
+            <span>Less</span>
+            {[0, 1, 2, 3].map((value) => <span key={value} className={shade(value)} />)}
+            <span>More</span>
+          </span>
         </div>
       </div>
     </div>
@@ -24120,32 +23826,28 @@ function ActivityHeatmap({ values }) {
 
 function AutomationSummary({ automations, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   return (
-    <Card className="border-border/80 bg-card/75">
-      <CardHeader>
+    <Card className="gap-2 rounded-none border-0 bg-transparent py-0 shadow-none">
+      <CardHeader className="px-0">
         <CardTitle>{copy.automations}</CardTitle>
         <CardDescription>{copy.scheduledLocalAutohandWork}</CardDescription>
       </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{copy.name}</TableHead>
-              <TableHead>{copy.schedule}</TableHead>
-              <TableHead>{copy.target}</TableHead>
-              <TableHead>{copy.status}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      {/* An empty four-column table (Name, Schedule, Target, Status) over
+          "No automations yet" said nothing a sentence would not. */}
+      <CardContent className="px-0">
+        {!automations.length ? (
+          <p className="text-sm text-muted-foreground">{copy.noAutomationsYet || "No automations yet"}.</p>
+        ) : (
+          <div className="divide-y divide-border/70 border-y border-border/70">
             {automations.map((automation) => (
-              <TableRow key={automation.id}>
-                <TableCell className="font-medium">{automation.name}</TableCell>
-                <TableCell>{automationScheduleLabel(automation)}</TableCell>
-                <TableCell>{workspaceName(automation.workspace) || automation.target}</TableCell>
-                <TableCell><StatusBadge status={automation.status} copy={copy} /></TableCell>
-              </TableRow>
+              <div key={automation.id} className="flex items-baseline gap-3 py-2.5 text-sm">
+                <span className="min-w-0 flex-1 truncate font-medium">{automation.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {[automationScheduleLabel(automation), workspaceName(automation.workspace) || automation.target, sentenceCase(statusLabel(automation.status, copy))].filter(Boolean).join(" · ")}
+                </span>
+              </div>
             ))}
-          </TableBody>
-        </Table>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -24211,8 +23913,9 @@ function FeedbackDialog({ kind = "feedback", open, route, onOpenChange }) {
   const [submitState, setSubmitState] = useState("idle");
   const [error, setError] = useState("");
   const isBug = kind === "bug";
-  const title = isBug ? "Report Bug" : "Give Feedback";
-  const canSubmit = submitState !== "submitting" && (Boolean(rating) || Boolean(description.trim()));
+  const title = isBug ? "Report a bug" : "Give feedback";
+  // A bug report is the description; a star rating says nothing about a bug.
+  const canSubmit = submitState !== "submitting" && (isBug ? Boolean(description.trim()) : Boolean(rating) || Boolean(description.trim()));
 
   useEffect(() => {
     if (!open) return undefined;
@@ -24310,6 +24013,7 @@ function FeedbackDialog({ kind = "feedback", open, route, onOpenChange }) {
         ) : (
           <form onSubmit={submitFeedback}>
             <div className="grid gap-6 px-6 py-5">
+              {isBug ? null : (
               <Field className="gap-3">
                 <FieldLabel>How would you rate your experience here today?</FieldLabel>
                 <ToggleGroup
@@ -24327,9 +24031,10 @@ function FeedbackDialog({ kind = "feedback", open, route, onOpenChange }) {
                   ))}
                 </ToggleGroup>
               </Field>
+              )}
 
               <Field className="gap-2">
-                <FieldLabel>Please tell us more...</FieldLabel>
+                <FieldLabel>{isBug ? "What went wrong?" : "Please tell us more…"}</FieldLabel>
                 <Textarea
                   value={description}
                   onChange={(event) => setDescription(event.target.value)}
@@ -24462,7 +24167,7 @@ function FeedbackAttachmentPreview({
 function SettingsAnalyticsPage({ locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   return (
     <div className="min-h-screen bg-background">
-      <PageTitle title="Usage" />
+      <PageTitle title={copy?.analytics || "Analytics"} />
       <div className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 lg:px-8">
         <AnalyticsPanel active locale={locale} />
       </div>
@@ -24471,6 +24176,7 @@ function SettingsAnalyticsPage({ locale = DEFAULT_LOCALE, copy = getLocaleCopy(D
 }
 
 function SettingsPage({
+  agents = [],
   onBack,
   onOnboarding,
   updates = null,
@@ -24568,13 +24274,7 @@ function SettingsPage({
       ? formatCopy(copy.systemThemeDetail, { theme: activeThemeLabel })
       : formatCopy(copy.pinnedThemeDetail, { theme: activeThemeLabel });
   const bridgeHandoffRetryMode = normalizeHandoffRetryMode(runtime?.handoffs?.retryMode);
-  const effectiveHandoffRetryMode = resolveHandoffRetryMode(handoffSettings, runtime);
   const selectedHandoffRetryValue = handoffSettings?.retryMode || HANDOFF_RETRY_BRIDGE_DEFAULT;
-  const handoffRetryDetail = handoffSettings?.retryMode
-    ? handoffRetryModeDescription(effectiveHandoffRetryMode, copy)
-    : formatCopy(copy.handoffRetryBridgeDefaultDetail, {
-        mode: handoffRetryModeLabel(bridgeHandoffRetryMode, copy),
-      });
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
   const missionControlDetail = `${formatLocalizedNumber(counts.tasks || 0, activeLocale)} tracked ${
     counts.tasks === 1 ? "task" : "tasks"
@@ -24761,13 +24461,8 @@ function SettingsPage({
                   onValueChange={(value) => updateThemePreset(surface, value)}
                 />
               ))}
-              {normalizedThemePreference.mode === THEME_MODE_SYSTEM ? (
-                <p className="text-xs text-muted-foreground lg:col-span-2">
-                  {formatCopy(copy.systemPreferenceSummary, {
-                    theme: systemTheme === THEME_MODE_LIGHT ? copy.light : copy.dark,
-                  })}
-                </p>
-              ) : null}
+              {/* "System preference is currently using Dark." repeated the Mode
+                  row's "Following system preference: Dark." one block up. */}
             </div>
           </div>
         </div>
@@ -24834,7 +24529,7 @@ function SettingsPage({
               <FieldTitle>{copy.workDetails || "Work details"}</FieldTitle>
               <FieldDescription>
                 {copy.workDetailsDetail ||
-                  "How much of a member's working shows under its reply. Summary keeps one line you can open; Always open expands it while the member works; Hidden leaves the reply on its own."}
+                  "How much of a member's working shows under their reply. Summary keeps one line you can open; Always open expands it while the member works; Hidden leaves the reply on its own."}
               </FieldDescription>
             </FieldContent>
             <Select value={normalizedChatSettings.workDetails} onValueChange={(value) => updateChatSetting("workDetails", value)}>
@@ -24937,8 +24632,48 @@ function SettingsPage({
               <FieldTitle><label htmlFor="observe-projects">Observe assigned projects</label></FieldTitle>
               <FieldDescription>Idle members check their project folders and message you about concrete improvements. Checks pause during work and breaks; suggestions wait for your direction.</FieldDescription>
               <FieldDescription>Reviews run at most once an hour per member, up to four per member and twelve for the squad each day.</FieldDescription>
-              {projectObserver?.error ? <p role="status" className="text-xs text-destructive">{projectObserver.error}</p> : projectObserver?.snapshot ? <p className="text-xs text-muted-foreground">{projectObserver.snapshot.activeMemberId ? "A member is reviewing a project." : projectObserver.snapshot.running && improvementSettings.observeAssignedProjects ? "Watching assigned projects." : "Project observation is paused."}</p> : null}
-              {projectObserver?.snapshot?.observations?.filter(item => item.error || item.status === "unsupported").map(item => <p key={item.memberId + item.project} role="status" className="text-xs text-destructive">{item.error || item.unsupported?.message || item.reason}</p>)}
+              {(() => {
+                // One line per distinct problem, naming who it affects: the
+                // same sentence used to print once per member and project,
+                // under a status that still said "Watching assigned projects".
+                const observations = projectObserver?.snapshot?.observations || [];
+                const failing = observations.filter(item => item.error || item.status === "unsupported");
+                const problems = new Map();
+                // "ENOENT: no such file or directory, realpath '/Users/…/plan'"
+                // is a folder that was moved or deleted. Said as a sentence,
+                // once per member, naming the folders.
+                const missingByMember = new Map();
+                for (const item of failing) {
+                  const missing = /\bENOENT\b[^']*'([^']+)'/.exec(String(item.error || ""));
+                  if (!missing) continue;
+                  const member = agents.find(agent => agent.id === item.memberId);
+                  const key = member?.name || "A member";
+                  const folders = missingByMember.get(key) || new Set();
+                  folders.add(missing[1].split("/").filter(Boolean).pop() || missing[1]);
+                  missingByMember.set(key, folders);
+                }
+                for (const [name, folders] of missingByMember) {
+                  const list = [...folders];
+                  const named = list.length === 1 ? list[0] : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
+                  problems.set(`${list.length === 1 ? "The project folder" : "The project folders"} ${named} ${list.length === 1 ? "no longer exists" : "no longer exist"}. Put ${list.length === 1 ? "it" : "them"} back or remove ${list.length === 1 ? "it" : "them"} from ${name}'s projects.`, new Set([name]));
+                }
+                for (const item of failing) {
+                  if (/\bENOENT\b[^']*'[^']+'/.test(String(item.error || ""))) continue;
+                  const message = plainSystemError(item.error || item.unsupported?.message || item.reason || "");
+                  if (!message) continue;
+                  const names = problems.get(message) || new Set();
+                  const member = agents.find(agent => agent.id === item.memberId);
+                  if (member) names.add(member.name);
+                  problems.set(message, names);
+                }
+                const allFailing = observations.length > 0 && failing.length === observations.length;
+                return (
+                  <>
+                    {projectObserver?.error ? <p role="status" className="text-xs text-destructive">{projectObserver.error}</p> : projectObserver?.snapshot ? <p className="text-xs text-muted-foreground">{projectObserver.snapshot.activeMemberId ? "A member is reviewing a project." : projectObserver.snapshot.running && improvementSettings.observeAssignedProjects && !allFailing ? "Watching assigned projects." : allFailing ? "No project can be watched right now." : "Project observation is paused."}</p> : null}
+                    {[...problems].map(([message, names]) => <p key={message} role="status" className="text-xs text-destructive">{names.size ? `${[...names].join(", ")}: ` : ""}{message}</p>)}
+                  </>
+                );
+              })()}
             </FieldContent>
             <Switch id="observe-projects" checked={improvementSettings.observeAssignedProjects} onCheckedChange={checked => onImprovementSettingsChange?.({ ...improvementSettings, observeAssignedProjects: checked === true })} />
           </Field>
@@ -24947,7 +24682,9 @@ function SettingsPage({
     ),
     handoff: () => (
       <>
-        <SettingsSectionHeader title={copy.handoffRetryPolicy} description={handoffRetryDetail} />
+        {/* The first choice already names the bridge default; repeating it
+            here, plus an environment variable name, said it three times. */}
+        <SettingsSectionHeader title={copy.handoffRetryPolicy} description={copy.handoffRetryIntro || "What happens when work handed to a teammate fails partway."} />
         <div className="divide-y divide-border/65">
           {[HANDOFF_RETRY_BRIDGE_DEFAULT, ...HANDOFF_RETRY_MODES].map((mode) => (
             <HandoffRetryChoice
@@ -24960,12 +24697,6 @@ function SettingsPage({
             />
           ))}
         </div>
-        <p className="mt-4 text-xs text-muted-foreground">
-          {formatCopy(copy.handoffRetryEnvDefault, {
-            variable: "AUTOHAND_SQUAD_HANDOFF_RETRY_MODE",
-            mode: handoffRetryModeLabel(bridgeHandoffRetryMode, copy),
-          })}
-        </p>
       </>
     ),
     "mission-control": () => (
@@ -24988,7 +24719,9 @@ function SettingsPage({
     ),
     runtime: () => (
       <>
-        <SettingsSectionHeader title={copy.runtimeBridge} description={runtime?.version || copy.checkingRuntime} />
+        {/* The bridge is Squad's; 0.8.2 is the Autohand CLI it runs. Both
+            rows used to show the CLI's version as their own. */}
+        <SettingsSectionHeader title={copy.runtimeBridge} description={runtime ? `Autohand Squad ${runtime.squadVersion || ""} · Autohand Code ${engineVersion(runtime.version) || "not found"}`.replace(/\s+·/, " ·") : copy.checkingRuntime} />
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="divide-y divide-border/65">
             <OutsideSessionsSettings api={api} />
@@ -24998,7 +24731,7 @@ function SettingsPage({
               onClick={(event) => handleLocalNavigation(event, "/extensions")}
             >
               <span className="min-w-0">
-                <span className="block font-medium">{copy.runtimeBridge}</span>
+                <span className="block font-medium">Autohand Code</span>
                 <span className="mt-1 block truncate text-sm text-muted-foreground">{runtime?.autohandPath || "Autohand path not found"}</span>
               </span>
               <ChevronRight className="hidden size-4 text-muted-foreground sm:block" />
@@ -25010,9 +24743,9 @@ function SettingsPage({
             >
               <span className="min-w-0">
                 <span className="block font-medium">{copy.analytics}</span>
-                <span className="mt-1 block truncate text-sm text-muted-foreground">{runtime?.version || copy.checkingRuntime}</span>
+                <span className="mt-1 block truncate text-sm text-muted-foreground">{copy.analyticsDetail || "Runs, usage and the services behind them."}</span>
               </span>
-              <ArrowUpRight className="hidden size-4 text-muted-foreground sm:block" />
+              <ChevronRight className="hidden size-4 text-muted-foreground sm:block" />
             </a>
             <Field orientation="horizontal" className="items-center justify-between gap-6 px-2 py-4">
               <FieldContent className="gap-1">
@@ -25033,13 +24766,11 @@ function SettingsPage({
 
           <div className="min-w-0">
             <div className="text-sm font-medium">{copy.localStorage}</div>
+            {/* Four tinted code tiles (autohandSquad.v1.theme, …locale,
+                …chatSettings, …handoffSettings) sat under a sentence that
+                named agents and messages, which they did not list. The
+                sentence is what a person needs; the key names are internals. */}
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{copy.localStorageDescription}</p>
-            <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
-              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.theme}</code>
-              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.locale}</code>
-              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.chatSettings}</code>
-              <code translate="no" className="block min-w-0 truncate rounded-md bg-muted/35 px-2.5 py-2">{STORAGE_KEYS.handoffSettings}</code>
-            </div>
           </div>
         </div>
       </>
@@ -25334,10 +25065,11 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                             value={provider.apiKey || ""}
                             onChange={(event) => updateProvider(definition.id, { apiKey: event.target.value })}
                             placeholder={
+                              // About 280px wide: longer hints were cut mid-word.
                               provider.apiKeyConfigured
-                                ? "Configured; enter a new key to replace"
+                                ? "Saved; type to replace"
                                 : definition.auth === "account"
-                                  ? "Uses your Autohand account unless set"
+                                  ? "Not needed when signed in"
                                   : "Enter API key"
                             }
                             className="h-10"
@@ -25356,7 +25088,7 @@ function ProviderSettingsPanel({ providerSettings, providerSettingsError = "", o
                               {provider.models.map((model) => (
                                 <SelectItem key={model.id} value={model.id}>
                                   {model.label}
-                                  {model.contextWindow ? ` · ${Math.round(model.contextWindow / 1000)}k` : ""}
+                                  {model.contextWindow ? ` · ${contextWindowLabel(model.contextWindow)}` : ""}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -25589,10 +25321,12 @@ function AnalyticsPanel({ active, locale }) {
       tone: "primary",
     },
     {
-      label: "Queue volume",
+      // The bridge's queueVolume counts queue items and every run, finished
+      // ones included; under "Queue volume 2" it read "0 queued".
+      label: "Work handled",
       value: queueVolume,
       detail: `${formatAnalyticsNumber(work.scheduledJobs ?? 0, locale)} scheduled`,
-      meta: `${formatAnalyticsNumber(work.queueDepth ?? 0, locale)} queued`,
+      meta: `${formatAnalyticsNumber(work.queueDepth ?? 0, locale)} waiting now`,
       meter: Math.min(queueVolume * 12, 100),
       icon: LayoutList,
       tone: "chart",
@@ -25601,7 +25335,7 @@ function AnalyticsPanel({ active, locale }) {
       label: "Failure rate",
       value: formatAnalyticsPercent(work.failureRate),
       detail: recentErrors.length
-        ? `${formatAnalyticsNumber(recentErrors.length, locale)} recent failures`
+        ? `${formatAnalyticsNumber(recentErrors.length, locale)} recent ${recentErrors.length === 1 ? "failure" : "failures"}`
         : `${formatAnalyticsNumber(work.failedRuns ?? 0, locale)} failed runs`,
       meta: `${formatAnalyticsNumber(work.completedRuns ?? 0, locale)} completed`,
       meter: failureRatePercent,
@@ -25666,7 +25400,7 @@ function AnalyticsPanel({ active, locale }) {
           <ShieldAlert />
           <AlertTitle>Recent upstream failures detected</AlertTitle>
           <AlertDescription>
-            {formatAnalyticsNumber(recentErrors.length, locale)} recent failure signals are present even though the aggregate error counter is {formatAnalyticsNumber(telemetryErrorCount, locale)}.
+            {recentErrors.length === 1 ? "1 recent failure signal is" : `${formatAnalyticsNumber(recentErrors.length, locale)} recent failure signals are`} present even though the aggregate error counter is {formatAnalyticsNumber(telemetryErrorCount, locale)}.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -25705,7 +25439,7 @@ function AnalyticsPanel({ active, locale }) {
             detail={`${runningServices} of ${serviceRows.length} services reporting`}
           />
           <AnalyticsHeroStat label="Latest snapshot" value={generatedAt} detail={runtimeVersion} />
-          <AnalyticsHeroStat label="Last signal" value={latestSignal} detail={`${formatAnalyticsNumber(telemetryEvents, locale)} events observed`} />
+          <AnalyticsHeroStat label="Last signal" value={latestSignal} detail={`${formatAnalyticsNumber(telemetryEvents, locale)} ${telemetryEvents === 1 ? "event" : "events"} observed`} />
         </CardContent>
       </Card>
 
@@ -26462,11 +26196,9 @@ function ThemePresetControl({ surface, value, active, copy, onValueChange }) {
   const selectedPreset = THEME_PRESET_MAP[surface].get(value) || presets[0];
   const Icon = surface === THEME_MODE_LIGHT ? Sun : Moon;
   const title = surface === THEME_MODE_LIGHT ? copy.lightTheme : copy.darkTheme;
-  const detail = active
-    ? copy.activeNow
-    : surface === THEME_MODE_LIGHT
-      ? copy.savedForLight
-      : copy.savedForDark;
+  // The Current badge already marks the active one; "Active now" under it
+  // said it twice and hid when the other palette applies.
+  const detail = surface === THEME_MODE_LIGHT ? copy.savedForLight : copy.savedForDark;
 
   return (
     <div className={cn("min-w-0 rounded-md py-1", active && "text-foreground")}>
@@ -26572,7 +26304,20 @@ function InformationWindow({ page }) {
     for (const token of THEME_TOKEN_NAMES) html.style.setProperty(`--${token}`, skin.tokens?.[token] || preset.tokens[token]);
     for (const [key, fallback] of Object.entries(SKIN_VAR_DEFAULTS)) html.style.setProperty(key, skin.vars?.[key] ?? fallback);
   }, [appearance, systemMode]);
-  return <AppInformation page={page} api={api} renderMarkdown={(text) => <MarkdownBlocks text={text} />} onCheckUpdates={() => window.location.assign("/settings?section=updates&check=1")} />;
+  // The desktop shell opens these pages in their own window. In a browser they
+  // replace the app, which left no way back but the browser's own button.
+  const inDesktopShell = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  return (
+    <>
+      {inDesktopShell ? null : (
+        <a href="/" className="fixed left-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground">
+          <ArrowLeft className="size-4" aria-hidden="true" />
+          Back to Squad
+        </a>
+      )}
+      <AppInformation page={page} api={api} renderMarkdown={(text) => <MarkdownBlocks text={text} />} onCheckUpdates={() => window.location.assign("/settings?section=updates&check=1")} />
+    </>
+  );
 }
 
 const informationPage = window.location.pathname.match(/^\/app-info\/(about|policies|changelog|licenses)$/)?.[1];
@@ -26584,16 +26329,12 @@ root.render(
 );
 
 // The boot screen in index.html has done its job once React has painted.
-// Two frames, so it fades over the mounted app rather than over nothing.
-requestAnimationFrame(() => {
-  requestAnimationFrame(() => {
-    const boot = document.getElementById("boot");
-    if (!boot) return;
-    if (boot.dataset.compact === "true") { boot.remove(); return; }
-    boot.setAttribute("data-leaving", "");
-    const remove = () => boot.remove();
-    boot.addEventListener("transitionend", remove, { once: true });
-    // A browser that skips the transition (reduced motion) never fires it.
-    setTimeout(remove, 400);
-  });
-});
+// React's own boot screen puts the same name in the same place, so the hand
+// over is a swap, not a fade: fading one centred title over another showed
+// both at once. A timer backs up the frames, which a hidden window does not
+// render, so the splash cannot outstay the app.
+{
+  const removeBoot = () => document.getElementById("boot")?.remove();
+  requestAnimationFrame(() => requestAnimationFrame(removeBoot));
+  setTimeout(removeBoot, 1500);
+}

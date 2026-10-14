@@ -30,7 +30,10 @@ export const setup = {
  * `context` is injected by server.mjs: { bundledPath, authReady, version }.
  */
 export async function detect({ explicitPath = "", context = {} } = {}) {
-  const executable = findExecutable(executableName, { explicitPath }) || String(context.bundledPath || "");
+  // The same order the bridge runs with (server.mjs resolveAutohandBinary):
+  // an explicit path, then the binary Squad ships, then PATH. Preferring PATH
+  // here described a CLI the bridge was not using (bug hunt 2026-10, #55).
+  const executable = (explicitPath ? findExecutable(executableName, { explicitPath }) : "") || String(context.bundledPath || "") || findExecutable(executableName, { explicitPath });
   if (!executable) {
     return {
       status: "not-detected",

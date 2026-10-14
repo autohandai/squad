@@ -122,7 +122,7 @@
 
 ## Workspace Shell (Buzz-style)
 
-- Presence dots have five states: accent and breathing while working, green online, amber idle, grey offline, and a dotted ring when the bridge is unreachable. Only working animates. Stop sits with the chat header actions and on the profile, confirming in a small popover.
+- Presence dots have six states: accent and breathing while working, green online, amber idle, slate paused, grey offline, and a dotted ring when the bridge is unreachable. Only working animates. A status the person set (paused, offline) wins over what the bridge reports, so the dot never disagrees with the Squad list beside it. Stop sits with the chat header actions and on the profile, confirming in a small popover.
 - When the local bridge is away, the app says so in one muted line at the top of the main area ("Squad's local service is restarting. Replies and queues continue once it is back.") and nothing else changes: no overlay, no dialog, no dead screen. The line appears only after a moment away and leaves on its own when the bridge answers (ADR-0123).
 - The primary sidebar is a Slack-like workspace rail: a **Search everything** control (⌘K / Ctrl K), Needs you, Squad, channel sections grouped by the channel's `section` (default "Channels"), then **Direct messages** listing members with presence dots and unread counts, and the account footer. No cards, no tinted panels; unread state is a bold row plus a small dot or count.
 - Channel pages are flat, chronological streams: a `# name` header with member count and a settings popover, day separators, a red **New** divider at the last-read boundary, author + time, mention chips for targeted members, emoji reactions with counts, and quick actions on hover. Thread replies render inline under their root with a subtle indent instead of a stacked thread block.
@@ -255,3 +255,16 @@
 - The Automations editor's Schedule section is a divider list of label-and-control rows (Repeat, the kind's own fields, Time zone, Run limit, Next). The next three dates come from the bridge and read as plain text lines; no calendar widget, no card.
 - A scheduled automation's row carries one quiet meta line: a status dot, last run and outcome, next run, and "Needs Squad open" in amber when the bridge cannot run it alone. The detail page lists recorded occurrences (including skipped and missed) as divider rows.
 - A schedule proposal from chat is a divider section at the top of the member's chat: who proposes what, the rule in words with its time zone, the next three dates as small text, then Decline and Confirm. No card frame, no tinted fill; nothing is scheduled until Confirm.
+- Seed data is a first-run default with nothing personal in it: no absolute paths, no fabricated tasks, memory, automations or activity, and no dates from before the install. A seed the person deletes stays deleted.
+- Numbers and charts about a member (activity calendar, active days, counts) are computed from what the member did. Never illustrate with a fixed pattern.
+- `Metric` is a value over a label with no frame; `EmptyBlock` has no border. A page section is a heading under one divider, not a card; do not nest framed blocks.
+- Global element rules in `src/styles.css` live in `@layer base`. Unlayered CSS beats every Tailwind v4 utility and silently disables them.
+- A › chevron in a menu means a submenu. Menu items that navigate carry no chevron.
+- An empty state that blocks the page (a channel with no members) carries the one action that fixes it.
+- A remove that cannot be undone (a saved login, a connector, a previous chat, a channel) asks on the first click and acts on the second; leaving the button cancels.
+- Errors from the operating system are rewritten as a sentence with what to do; raw codes such as ENOSPC stay in the bridge log.
+- A status a person set (paused, offline, a tool mode, a guardrail) is shown from that setting, never from a fixed label or a process's guess; if the two can disagree, the setting wins.
+- Internal identifiers stay out of copy: no rule ids as titles, config keys as descriptions, storage paths as settings, or engine words ("isolated", "wired") as statuses. Show the plain meaning; keep the id in a tooltip or a small code line.
+- A member is "they", never "it".
+- Disabled controls look disabled as a pair: a disabled outline button uses muted text like a disabled primary.
+- Dates follow the system region (pass no locale to Intl), not the translation locale.

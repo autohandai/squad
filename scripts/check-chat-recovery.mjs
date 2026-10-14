@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, withoutThinkingPlaceholder } from "../src/lib/chat-recovery.js";
+import { isNoTextReply, restoreRepliesFromRuns, withoutRecoveryNotices } from "../src/lib/chat-recovery.js";
 const boot = "2026-10-01T04:00:00.000Z";
 const task = { id: "task", title: "Verify changes", status: "in_progress" };
 const old = { id: "old", role: "agent", body: "Work was in progress.", status: "loading", startedAt: "2026-10-01T03:00:00.000Z", progress: { items: [task] } };
@@ -64,3 +65,54 @@ const ownFailure=[{...dependencyTask,handoffs:[{...qa,ownCompletedAt:''},review]
 const malformedHandoffs=[{...acceptedTask,handoffs:[{...accepted,id:undefined},null,{status:'pending'}],assignments:[{}]}];
 const safe=recoverInterruptedHandoffs(malformedHandoffs,boot)[0];assert.equal(safe.handoffs[1],null);assert.equal(safe.handoffs[2].status,'pending');assert.equal(safe.assignments[0].status,undefined);
 console.log('Checkpoint result recovery passed: saved successful parent output joins completed child receipts without re-execution; unresolved, empty, and own-failed results stay blocked.');
+
+// A reply left "loading" by a reload is closed once the bridge says nothing is running (bug hunt #42).
+{
+  const { recoverOrphanedChats, ORPHANED_REPLY_NOTE } = await import('../src/lib/chat-recovery.js');
+  const t0 = Date.parse('2026-10-14T00:00:00Z');
+  const convo = { eva: [{ id: 'q', role: 'user', body: 'hi', startedAt: '2026-10-14T00:00:00Z' }, { id: 'a', role: 'agent', status: 'loading', body: 'Eva is thinking...', startedAt: '2026-10-14T00:00:00Z' }] };
+  const idle = { eva: { state: 'idle', activeRuns: 0 } };
+  const closed = recoverOrphanedChats(convo, { presence: idle, now: t0 + 60_000 });
+  assert.equal(closed.eva[1].status, 'error'); assert.equal(closed.eva[1].interrupted, true);
+  assert.equal(closed.eva[1].body, ORPHANED_REPLY_NOTE, 'the placeholder is replaced by the note');
+  assert.equal(closed.eva[0], convo.eva[0], 'the question is untouched');
+  assert.equal(recoverOrphanedChats(convo, { presence: { eva: { state: 'working', activeRuns: 1 } }, now: t0 + 60_000 }), convo, 'a working member keeps its reply');
+  assert.equal(recoverOrphanedChats(convo, { presence: idle, streaming: new Set(['eva']), now: t0 + 60_000 }), convo, 'this page streaming it keeps it');
+  assert.equal(recoverOrphanedChats(convo, { presence: idle, now: t0 + 5_000 }), convo, 'a reply just sent is given time to register');
+  assert.equal(recoverOrphanedChats(convo, { presence: {}, now: t0 + 60_000 }), convo, 'unknown presence decides nothing');
+  const goal = { eva: [{ ...convo.eva[1], goalId: 'g1' }] };
+  assert.equal(recoverOrphanedChats(goal, { presence: idle, now: t0 + 60_000 }), goal, 'goals recover on their own');
+  console.log('Orphaned reply recovery passed.');
+}
+
+{
+  const body = "⚠ Session encountered an error: Rate limit exceeded. Please wait a moment and try again, or choose a different model.\n  Attempting recovery (1/5)...\nHey team 👋\nIris here.";
+  assert.equal(withoutRecoveryNotices(body), "Hey team 👋\nIris here.", "the engine's retry chatter is not part of the reply");
+  assert.equal(withoutRecoveryNotices("Attempting recovery is my plan"), "Attempting recovery is my plan", "ordinary prose is left alone");
+  assert.ok(isNoTextReply("Autohand returned no chat text."));
+  assert.ok(isNoTextReply("Noah returned no chat text"));
+  assert.ok(!isNoTextReply("Noah returned no chat text. Then he said more."));
+  console.log("recovery notices and empty replies checked");
+}
+
+{
+  // Noah's 1:39 AM reply: closed as interrupted, but its run finished with an answer.
+  const conversations = { noah: [
+    { id: "u1", role: "user", body: "hey", startedAt: "2026-10-13T12:39:04.000Z" },
+    { id: "a1", role: "agent", status: "error", interrupted: true, body: "This request was interrupted when Squad restarted. No final update was received. Retry to continue.", startedAt: "2026-10-13T12:39:04.300Z" },
+    { id: "a2", role: "agent", status: "error", interrupted: true, body: "interrupted", startedAt: "2026-10-12T04:25:00.000Z" },
+  ] };
+  const runs = [
+    { id: "r1", agentId: "noah", mode: "chat", status: "completed", startedAt: "2026-10-13T12:39:04.598Z", finishedAt: "2026-10-13T12:39:42.975Z", reply: "Hey Igor — Noah here." },
+    { id: "r2", agentId: "noah", mode: "chat", status: "failed", startedAt: "2026-10-12T04:25:01.000Z", reply: "" },
+    { id: "r3", agentId: "eva", mode: "chat", status: "completed", startedAt: "2026-10-12T04:25:02.000Z", reply: "not Noah's" },
+  ];
+  const next = restoreRepliesFromRuns(conversations, runs);
+  assert.equal(next.noah[1].status, "complete");
+  assert.equal(next.noah[1].body, "Hey Igor — Noah here.");
+  assert.equal(next.noah[1].recoveredFromRun, "r1");
+  assert.equal(next.noah[1].durationMs, 38377);
+  assert.equal(next.noah[2].status, "error", "a failed run, or another member's run, restores nothing");
+  assert.equal(restoreRepliesFromRuns(next, runs), next, "a restored reply is not restored twice");
+  console.log("interrupted replies restored from finished runs");
+}

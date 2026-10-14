@@ -91,3 +91,103 @@ export function recoverCompletedHandoffParents(tasks, at = new Date().toISOStrin
   });
   return { tasks: returns.length ? next : tasks, returns };
 }
+
+export const ORPHANED_REPLY_NOTE = "This reply stopped before it finished, most likely because the page was reloaded or closed while it was running. Retry to ask again.";
+
+/**
+ * A reply still marked "loading" that nobody is producing any more: this page
+ * is not streaming it (`streaming` holds the member ids it is streaming for)
+ * and the bridge says the member has no live run. Closing or reloading the
+ * page ends the turn on the bridge, so without this the reply spun forever
+ * (bug hunt 2026-10, #42). `graceMs` covers the moment between sending and
+ * the bridge registering the run.
+ */
+export function recoverOrphanedChats(conversations, { presence = {}, streaming = new Set(), now = Date.now(), graceMs = 20_000 } = {}) {
+  let next = conversations;
+  for (const [memberId, messages] of Object.entries(conversations || {})) {
+    if (!Array.isArray(messages) || streaming.has(memberId)) continue;
+    const entry = presence?.[memberId];
+    if (!entry || entry.state === "working" || Number(entry.activeRuns) > 0) continue;
+    let changed = false;
+    const recovered = messages.map((message) => {
+      const beganAt = Date.parse(message?.startedAt || "");
+      if (message?.status !== "loading" || message.goalId || message.role === "user" || !Number.isFinite(beganAt) || now - beganAt < graceMs) return message;
+      changed = true;
+      return { ...message, status: "error", interrupted: true, activityLabel: "", completedAt: new Date(now).toISOString(),
+        body: `${withoutThinkingPlaceholder(message.body)}\n\n${ORPHANED_REPLY_NOTE}`.trim(),
+        ...(message.progress ? { progress: { ...message.progress, outcome: "interrupted" } } : {}) };
+    });
+    if (changed) { if (next === conversations) next = { ...conversations }; next[memberId] = recovered; }
+  }
+  return next;
+}
+
+/**
+ * The fallback the bridge stores when a turn ends with no text: "Autohand
+ * returned no chat text." / "Noah returned no chat text.". It is a fact
+ * about the run, not something the member said, so it is drawn as a note.
+ */
+export function isNoTextReply(body) {
+  return /^[^\n]{1,80} returned no chat text\.?$/.test(String(body || "").trim());
+}
+
+// The engine's own retry chatter, written into the reply stream while it
+// recovers: "⚠ Session encountered an error: Rate limit exceeded. …" and
+// "Attempting recovery (1/5)...". Once the reply exists they are noise; if
+// the turn failed, the failure is reported on its own.
+const RECOVERY_NOTICE_RE = /^\s*(?:⚠️?\s*Session encountered an error:.*|Attempting recovery \(\d+\/\d+\)\.*\s*)$/;
+
+export function isRecoveryNotice(line) {
+  return RECOVERY_NOTICE_RE.test(String(line || ""));
+}
+
+/** The reply without the engine's transient recovery lines. */
+export function withoutRecoveryNotices(text) {
+  const value = String(text || "");
+  if (!/Session encountered an error|Attempting recovery \(/.test(value)) return value;
+  return value.split(/\r?\n/).filter((line) => !isRecoveryNotice(line)).join("\n").replace(/^\s*\n/, "");
+}
+
+/**
+ * A reply marked interrupted whose run in fact finished. A restart (or the
+ * orphan sweep) closes a reply that was still "loading" in the browser, but
+ * the bridge may have completed the turn: Noah's 1:39 AM "hey" ran 38s and
+ * answered "Hey Igor — Noah here, frontend…", while the chat said
+ * "interrupted when Squad restarted" with a Retry. When the runs list has a
+ * completed chat run for the same member that started within two minutes of
+ * the reply, the reply gets the run's answer back.
+ */
+export function restoreRepliesFromRuns(conversations, runs = [], { windowMs = 120_000 } = {}) {
+  const finished = (Array.isArray(runs) ? runs : []).filter((run) =>
+    (run?.mode === "chat" || run?.kind === "chat") && run.status === "completed" && String(run.reply || "").trim() && Number.isFinite(Date.parse(run.startedAt || "")));
+  if (!finished.length) return conversations;
+  let next = conversations;
+  for (const [memberId, messages] of Object.entries(conversations || {})) {
+    if (!Array.isArray(messages)) continue;
+    const used = new Set(messages.map((message) => message?.recoveredFromRun).filter(Boolean));
+    let changed = false;
+    const restored = messages.map((message) => {
+      if (!message?.interrupted || message.status !== "error" || message.role === "user") return message;
+      const beganAt = Date.parse(message.startedAt || "");
+      if (!Number.isFinite(beganAt)) return message;
+      const run = finished.find((item) => item.agentId === memberId && !used.has(item.id) && Math.abs(Date.parse(item.startedAt) - beganAt) <= windowMs);
+      if (!run) return message;
+      used.add(run.id);
+      changed = true;
+      const startedMs = Date.parse(run.startedAt);
+      const finishedMs = Date.parse(run.finishedAt || run.completedAt || "");
+      return {
+        ...message,
+        status: "complete",
+        interrupted: false,
+        recoveredFromRun: run.id,
+        body: withoutRecoveryNotices(String(run.reply).trim()),
+        completedAt: run.finishedAt || run.completedAt || message.completedAt,
+        ...(Number.isFinite(finishedMs) && finishedMs >= startedMs ? { durationMs: finishedMs - startedMs } : {}),
+        ...(message.progress ? { progress: { ...message.progress, outcome: "completed" } } : {}),
+      };
+    });
+    if (changed) { if (next === conversations) next = { ...conversations }; next[memberId] = restored; }
+  }
+  return next;
+}

@@ -44,7 +44,7 @@ export function KeepWorkingSwitch({ api, memberId, memberName = "This member", c
         <div className="min-w-0">
           <label htmlFor={id} className="text-sm font-medium">{copy.keepWorkingLabel || "Keep working between messages"}</label>
           <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-            {(copy.keepWorkingHint || "When {name} is idle, it starts the next open task on its plan, or a goal a restart cut short, one at a time. Your next message stops it.").replace("{name}", memberName)}
+            {(copy.keepWorkingHint || "When {name} is idle, they start the next open task on their plan, or a goal a restart cut short, one at a time. Your next message stops it.").replace("{name}", memberName)}
           </p>
         </div>
         <Switch id={id} checked={enabled} disabled={busy || !state} onCheckedChange={(checked) => save({ enabled: checked })} aria-label={copy.keepWorkingLabel || "Keep working between messages"} />

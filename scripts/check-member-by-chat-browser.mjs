@@ -178,7 +178,7 @@ try {
   await save("squad-page-actions.png");
 
   // 2. The sidebar's Direct messages "+": Chat with a new member, first.
-  const opened = await cdp.evaluate(`(() => { const header = [...document.querySelectorAll('aside *')].find((el) => el.children.length === 0 && /^Direct messages$/i.test((el.textContent || '').trim())); let node = header; while (node && !node.querySelector('button[aria-label="Create"]')) node = node.parentElement; const plus = node && node.querySelector('button[aria-label="Create"]'); if (!plus) return false; plus.click(); return true; })()`);
+  const opened = await cdp.evaluate(`(() => { const header = [...document.querySelectorAll('aside *')].find((el) => el.children.length === 0 && /^Direct messages$/i.test((el.textContent || '').trim())); let node = header; while (node && !node.querySelector('button[aria-label="Add a member or team"]')) node = node.parentElement; const plus = node && node.querySelector('button[aria-label="Add a member or team"]'); if (!plus) return false; plus.click(); return true; })()`);
   assert.ok(opened, "the Direct messages + opens");
   await waitFor(async () => cdp.evaluate(`Boolean(document.querySelector('[data-testid="chat-new-member-menu"]'))`), "the create menu");
   const order = await cdp.evaluate(`[...document.querySelector('[data-testid="chat-new-member-menu"]').parentElement.querySelectorAll('button')].map((el) => el.textContent.trim())`);

@@ -260,3 +260,14 @@ assert.equal(getAdapter('codex').id, 'codex');
 }
 
 console.log('Harness adapter checks passed.');
+
+// A reload is not the person pressing Stop (bug hunt 2026-10, #52).
+{
+  const { stopMessage, clientClosedReason } = await import("../server/harness/stop-reason.mjs");
+  const pressed = new AbortController(); pressed.abort();
+  const closed = new AbortController(); closed.abort(clientClosedReason());
+  assert.equal(stopMessage(pressed.signal), "chat stopped by the user");
+  assert.match(stopMessage(closed.signal), /page that asked for it was closed or reloaded/);
+  assert.equal(stopMessage(undefined), "chat stopped by the user");
+  console.log("stop reasons: a closed page and a pressed Stop read differently");
+}

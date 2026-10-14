@@ -57,7 +57,7 @@ export function WorkPlanList({ tasks = [], member, copy = {}, now = Date.now(), 
         />
       ) : null}
       {!open.length && !adding ? (
-        <EmptyLine>{(copy.workPlanEmpty || "Nothing planned yet. Tell {name} what to do, in plain English, and its plan appears here.").replace("{name}", name)}</EmptyLine>
+        <EmptyLine>{(copy.workPlanEmpty || "Nothing planned yet. Tell {name} what to do, in plain English, and the plan appears here.").replace("{name}", name)}</EmptyLine>
       ) : (
         <div className="divide-y divide-border/70">
           {open.map((task) => (

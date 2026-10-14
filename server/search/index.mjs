@@ -328,7 +328,9 @@ export function openSearchIndex(stateDir, { fts = "auto" } = {}) {
           rows = [];
         }
         return rows.map((row) => {
-          const snippet = row.body_snippet && row.body_snippet.includes("<mark>") ? row.body_snippet : row.title_hit?.includes("<mark>") ? row.title_hit : row.body_snippet || row.title;
+          // A title-only match used to show the highlighted title again as the
+          // snippet ("Eva / Eva"); the body says what the row is about.
+          const snippet = row.body_snippet && (row.body_snippet.includes("<mark>") || row.body_snippet.trim()) ? row.body_snippet : row.title_hit?.includes("<mark>") ? row.title_hit : row.title;
           const score = Number.isFinite(row.rank) ? Number((-row.rank).toPrecision(6)) : 0;
           return rowToResult(row, snippet, score);
         });
@@ -351,7 +353,7 @@ export function openSearchIndex(stateDir, { fts = "auto" } = {}) {
       const rows = stmt.all(...params);
       return rows.map((row) => {
         const bodyHit = terms.some((term) => row.body.toLowerCase().includes(term));
-        const snippet = bodyHit ? markSnippet(row.body, terms) : markSnippet(row.title, terms);
+        const snippet = bodyHit || String(row.body || "").trim() ? markSnippet(row.body, terms) : markSnippet(row.title, terms);
         return rowToResult(row, snippet, Number(row.title_score) + 1);
       });
     },

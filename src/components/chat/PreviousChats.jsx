@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 export function PreviousChats({ chats = [], loading = false, onLoad, onOpen, onRemove, disabled = false, copy = {}, locale = "en-US", className = "" }) {
   const [open, setOpen] = useState(false);
   const [busyId, setBusyId] = useState("");
+  const [armedId, setArmedId] = useState("");
   const list = sortChats(chats);
   const label = copy.previousChats || "Previous chats";
 
@@ -79,16 +80,24 @@ export function PreviousChats({ chats = [], loading = false, onLoad, onOpen, onR
                       {chat.resumable ? "" : ` · ${copy.chatSessionGone || "new engine session"}`}
                     </span>
                   </button>
+                  {/* One click on a small bin used to delete a whole
+                      conversation for good; the first click now asks, as
+                      Delete channel does. */}
                   <Button
                     type="button"
                     variant="ghost"
-                    size="icon-sm"
-                    className="mt-0.5 text-muted-foreground"
-                    aria-label={`${copy.removePreviousChat || "Remove"} ${chat.title || ""}`.trim()}
+                    size={armedId === chat.id ? "sm" : "icon-sm"}
+                    className={cn("mt-0.5 text-muted-foreground", armedId === chat.id && "text-destructive hover:text-destructive")}
+                    aria-label={armedId === chat.id ? `${copy.confirmRemovePreviousChat || "Remove for good?"} ${chat.title || ""}`.trim() : `${copy.removePreviousChat || "Remove"} ${chat.title || ""}`.trim()}
                     disabled={busyId === chat.id}
-                    onClick={() => act(chat, onRemove)}
+                    onBlur={() => setArmedId((current) => (current === chat.id ? "" : current))}
+                    onClick={() => {
+                      if (armedId !== chat.id) { setArmedId(chat.id); return; }
+                      setArmedId("");
+                      void act(chat, onRemove);
+                    }}
                   >
-                    <Trash2 />
+                    {armedId === chat.id ? copy.confirmRemoveShort || "Remove?" : <Trash2 />}
                   </Button>
                 </li>
               ))}

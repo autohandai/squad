@@ -87,3 +87,12 @@ const seed = [{ id: "eva", name: "Eva" }, { id: "noah", name: "Noah" }];
 }
 
 console.log("check-member-roster: ok");
+
+// Ids drafted in one tight loop must not collide (bug hunt 2026-10, #76).
+{
+  const { createSquadMemberId } = await import("../src/lib/member-roster.js");
+  const ids = Array.from({ length: 500 }, () => createSquadMemberId());
+  assert.equal(new Set(ids).size, ids.length, "500 ids made in one loop are all different");
+  assert.ok(ids.every((id) => /^asq_[a-z0-9]+$/.test(id)), "ids are lower-case base 36 after the prefix");
+  console.log("member ids: 500 made in one loop, none collide");
+}

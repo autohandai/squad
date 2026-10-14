@@ -90,12 +90,13 @@ function StoppedRow({ row, time, checks, selected, copy, navigate, onReplay, rep
         {row.reason ? <span className="mt-0.5 block truncate text-xs text-muted-foreground">{row.reason}</span> : null}
       </button>
       <span className="shrink-0 text-xs text-muted-foreground">
-        <span className={cn("[&::first-letter]:uppercase", bad && "text-destructive")}>{row.statusLabel}</span>
+        {/* ::first-letter needs a block box; on a plain span "failed" stayed lower-case. */}
+        <span className={cn("inline-block [&::first-letter]:uppercase", bad && "text-destructive")}>{row.statusLabel}</span>
         {time ? ` · ${time}` : ""}
         {checks ? ` · ${checks}` : ""}
       </span>
       {row.action === "replay" && !onReplay ? null : (
-        <Button variant="ghost" size="sm" className="shrink-0" disabled={replaying} onClick={act}>
+        <Button variant="ghost" size="sm" className="min-w-[7.5rem] shrink-0 justify-end" disabled={replaying} onClick={act}>
           {row.action === "replay" ? <RefreshCw className={cn("size-3.5", replaying && "animate-spin")} aria-hidden="true" /> : null}
           {replaying ? copy.replayStarting || "Starting…" : actionLabel}
         </Button>

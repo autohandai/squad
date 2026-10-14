@@ -52,10 +52,12 @@ export function ComputerUsePermissions({ member, api }) {
         </div>
         <span className="text-sm text-muted-foreground">{scope === "control" ? "Control allowed" : scope === "observe" ? "Observe allowed" : "Not allowed"}</span>
       </div>
+      {/* Outside the desktop app the System Settings sentence asked for a
+          step the browser cannot take, right above "open the desktop app".
+          One instruction: the one that can be followed from here. */}
       <p className="mt-3 text-sm text-muted-foreground" role="status">
-        {!current ? "Checking readiness…" : current.readinessError ? current.readinessError : !current.available ? "Computer Use readiness could not be confirmed. Check that this Squad build includes the engine and macOS permission host." : ready ? "macOS permissions are ready." : "Allow Squad Computer Use in System Settings → Privacy & Security → Accessibility and Screen Recording, then check again."}
+        {!native ? "Open this member’s Permissions page in the Squad desktop app to allow Computer Use." : !current ? "Checking readiness…" : current.readinessError ? current.readinessError : !current.available ? "Computer Use readiness could not be confirmed. Check that this Squad build includes the engine and macOS permission host." : ready ? "macOS permissions are ready." : "Allow Squad Computer Use in System Settings → Privacy & Security → Accessibility and Screen Recording, then check again."}
       </p>
-      {!native ? <p className="mt-2 text-sm text-muted-foreground">Open this member’s Permissions page in the Squad desktop app to allow Computer Use.</p> : null}
       {setupOpened && !ready ? <p className="mt-2 text-sm text-muted-foreground">Finish the macOS permission prompts, then check again. Opening setup does not grant access to this member.</p> : null}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {(current?.bundled === true || current?.available) && !ready && native ? <Button size="sm" variant="outline" disabled={busy} onClick={setup}>Set up macOS permissions</Button> : null}

@@ -81,8 +81,8 @@ export function systemCountRows(summary = {}, copy = {}) {
   return [
     { id: "members", label: copy.systemMembers || "Members", value: summary.members },
     { id: "channels", label: copy.systemChannels || "Channels", value: summary.channels },
-    { id: "threads", label: copy.systemThreads || "Threads", value: summary.threads },
-    { id: "messages", label: copy.systemMessages || "Messages", value: summary.messages },
+    { id: "threads", label: copy.systemThreads || "Channel threads", value: summary.threads },
+    { id: "messages", label: copy.systemMessages || "Channel messages", value: summary.messages },
     { id: "memoryEntries", label: copy.systemMemoryEntries || "Memory entries", value: summary.memoryEntries },
   ];
 }

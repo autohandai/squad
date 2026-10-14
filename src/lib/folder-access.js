@@ -64,7 +64,7 @@ export function projectsWithFolder(agent, folder, { now = new Date().toISOString
   const projects = Array.isArray(agent?.projects) ? agent.projects : [];
   if (projects.some((project) => String(project?.path || "") === folder)) return projects;
   const name = folder.split(/[\\/]/).filter(Boolean).pop() || folder;
-  return [...projects, { id: `folder_${Date.now().toString(36)}`, name, label: folder, path: folder, kind: "folder", addedAt: now }];
+  return [...projects, { id: `folder_${Date.now().toString(36)}${projects.length.toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, label: folder, path: folder, kind: "folder", addedAt: now }];
 }
 
 /** The follow-up that lets the member carry on once the folder is allowed. */

@@ -11,7 +11,7 @@ export const NOTIFY_MODES = ["long", "all", "off"];
 export function notifyModeLabel(mode, copy = {}) {
   switch (mode) {
     case "all": return copy.remoteNotifyAll || "Everything";
-    case "off": return copy.remoteNotifyOff || "Off";
+    case "off": return copy.remoteNotifyOff || "Only what needs me";
     default: return copy.remoteNotifyLong || "Long work";
   }
 }

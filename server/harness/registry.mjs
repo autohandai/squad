@@ -63,6 +63,7 @@ export function isExternalHarness(idOrAssignment) {
 
 /** Persisted member field. Missing or malformed input maps to Autohand. */
 import { normalizeAccess, normalizeEffort } from "./access.mjs";
+import { stopMessage } from "./stop-reason.mjs";
 export { ACCESS_IDS, normalizeAccess, normalizeEffort, resolveAccess } from "./access.mjs";
 
 export function normalizeHarnessAssignment(input) {
@@ -369,7 +370,7 @@ function runCliHarness({
       else if (timedOut) failure = timeoutKind === 'inactivity'
         ? `${adapter.label} stopped after ${formatDuration(inactivityMs)} without activity. Retry to continue.`
         : `${adapter.label} stopped after ${formatDuration(timeoutMs)} (maximum runtime). Retry to continue.`;
-      else if (stopped) failure = "chat stopped by the user";
+      else if (stopped) failure = stopMessage(signal);
       else if (stalled) failure = `${adapter.label} produced no events within ${formatDuration(firstEventTimeoutMs)}. Check its sign-in and retry.`;
       else {
         const errorEvent = events.find((event) => event.type === "error");
