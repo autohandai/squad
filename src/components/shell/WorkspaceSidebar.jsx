@@ -270,7 +270,7 @@ export function WorkspaceSidebar({
                 onNewTeam={onNavigate.createTeam}
                 onTemplates={onNavigate.templates}
                 trigger={
-                  <Button variant="ghost" size="icon-sm" className="size-6" aria-label={copy.createLabel || "Create"}>
+                  <Button variant="ghost" size="icon-sm" className="size-6" aria-label={copy.addMemberLabel || "Add a member or team"}>
                     <Plus className="size-3.5" />
                   </Button>
                 }

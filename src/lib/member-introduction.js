@@ -140,7 +140,9 @@ const INSTRUCTION_VERBS = new Set([
 
 /** A configuration line turned into something the member could say aloud. */
 export function asMemberSpeech(value, copy = {}) {
-  const line = inMemberVoice(value);
+  // Brain cards are often written as lists; a leading "- " or "1." is not
+  // something a member says, and it hid the verb from the check below.
+  const line = inMemberVoice(String(value || "").replace(/^\s*(?:[-*•]|\d+[.)])\s+/, ""));
   if (!line) return "";
   const words = line.split(/\s+/);
   const lead = words[0].toLowerCase().replace(/[^a-z']/g, "");

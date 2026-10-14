@@ -256,3 +256,5 @@
 - Numbers and charts about a member (activity calendar, active days, counts) are computed from what the member did. Never illustrate with a fixed pattern.
 - `Metric` is a value over a label with no frame; `EmptyBlock` has no border. A page section is a heading under one divider, not a card; do not nest framed blocks.
 - Global element rules in `src/styles.css` live in `@layer base`. Unlayered CSS beats every Tailwind v4 utility and silently disables them.
+- A › chevron in a menu means a submenu. Menu items that navigate carry no chevron.
+- An empty state that blocks the page (a channel with no members) carries the one action that fixes it.

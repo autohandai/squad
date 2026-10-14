@@ -7584,7 +7584,9 @@ async function streamChat(payload, res) {
     const message = error instanceof Error ? error.message : String(error);
     stream.send("error", { error: message, completedAt: new Date().toISOString(), durationMs: Date.now() - startedAt,
       ...(error instanceof ChatRuntimeError && error.details ? cleanWorkResult(error.details) : {}) });
-    return { status: "failed", preview: message.slice(0, 140) };
+    // A turn the person stopped, or whose page closed, did not fail: saying
+    // "failed" raised a "could not reply" notification for their own Stop.
+    return { status: controller.signal.aborted ? "stopped" : "failed", preview: message.slice(0, 140) };
   } finally {
     streamOpen = false; res.off("close", abortStream); unregister(); stream.end();
   }

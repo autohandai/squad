@@ -324,6 +324,7 @@ import { MEMBER_DESIGNER_ID, editDraftRole } from "@/lib/member-draft";
 import { parseLocalJson, writeLocalJson, compactChannelMessagesCache, isStorageQuotaError } from "@/lib/local-cache";
 import { MemberWorkspacePicker } from "@/components/chat/MemberWorkspacePicker";
 import { activityCalendar } from "@/lib/activity-calendar";
+import { channelSlug } from "@/lib/channel-name";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
@@ -2906,6 +2907,8 @@ function formatBrainCardForPrompt(agent) {
   ].join("\n\n");
 }
 
+const AVATAR_VERSION = 2;
+
 function normalizeAgentCopy(agent) {
   if (!agent || typeof agent !== "object") return agent;
   const projects = normalizeAgentProjects(agent.projects, agent.workspace);
@@ -2916,9 +2919,13 @@ function normalizeAgentCopy(agent) {
     description: String(agent.description || ""),
     instructions: String(agent.instructions || ""),
     skills: normalizeSkillList(agent.skills),
-    avatar: /^\/avatars\/[a-z0-9-]+\.(jpg|jpeg|webp)$/i.test(String(agent.avatar || ""))
+    // Members saved before bird avatars carried a role portrait; they move to
+    // a bird once. A portrait picked since (New member still offers them) is
+    // a choice and stays: without the version it was swapped on every load.
+    avatar: agent.avatarVersion !== AVATAR_VERSION && /^\/avatars\/[a-z0-9-]+\.(jpg|jpeg|webp)$/i.test(String(agent.avatar || ""))
       ? birdAvatarForRole(agent.employeeType, agent.role, agent.id)
       : agent.avatar,
+    avatarVersion: AVATAR_VERSION,
     skillSource: agent.skillSource || AUTOHAND_SKILLS_REGISTRY_URL,
     stats: agent.stats
       ? {
@@ -8508,6 +8515,7 @@ function App() {
     };
     const agent = {
       ...baseAgent,
+      avatarVersion: AVATAR_VERSION,
       profileFiles: buildAgentProfileFiles({ ...baseAgent, profileFiles: draft.profileFiles }),
     };
     function publishAgent(created) {
@@ -9836,7 +9844,7 @@ function App() {
                 copy={localeCopy}
                 existingMemberIds={agents.map(agent => agent.id)}
                 presets={presetTemplates}
-                onCreate={(draft, options) => createAgent(draft, { ...options, ...(onboardingIsIncomplete(onboardingState) ? { completeOnboarding: true, prompt: firstPromptFor(draft.role, workspaceLabel(draft.workspace, workspaces), draft.description) } : {}) })}
+                onCreate={(draft, options) => createAgent(draft, { ...options, ...(onboardingIsIncomplete(onboardingState) ? { completeOnboarding: true, prompt: firstPromptFor(draft.role, workspaceName(draft.workspace) || workspaceLabel(draft.workspace, workspaces)) } : {}) })}
                 onCancel={() => navigate(onboardingIsIncomplete(onboardingState) ? "/welcome" : "/conversations/new")}
                 defaultWorkspace={requestedWorkspace || fallbackWorkspace}
                 workspaceRoot={runtime?.workspaceRoot}
@@ -10981,7 +10989,15 @@ function ChannelsPage({
                 onReact={onReact}
                 onReply={(message) => setReplyTo(message)}
                 renderActions={(message) => ((message.role === "agent" || message.agentId) && String(message.body || "").trim() ? <ReadAloudButton compact text={message.body} message={message} api={api} copy={copy} /> : null)}
-                emptyLabel={members.length ? copy.channelNoThreads : copy.channelNoMembers}
+                emptyLabel={members.length ? copy.channelNoThreads : (
+                  // An empty channel can do nothing; say how to fix that here.
+                  <>
+                    {copy.channelNoMembers}{" "}
+                    <button type="button" className="font-medium text-foreground underline-offset-4 hover:underline" onClick={() => setManageMembersOpen(true)}>
+                      {copy.addChannelMembers || "Add members"}
+                    </button>
+                  </>
+                )}
                 newLabel={copy.newMessages || "New"}
                 typingLabel={copy.isTyping || "is typing…"}
               />
@@ -12079,7 +12095,7 @@ function ChannelCreateDialog({
 
   async function submitCreate(event) {
     event.preventDefault();
-    const name = draftName.trim();
+    const name = channelSlug(draftName).replace(/^-+|-+$/g, "");
     if (!name || submittingRef.current) return;
     submittingRef.current = true;
     setCreating(true);
@@ -12117,7 +12133,7 @@ function ChannelCreateDialog({
               placeholder={copy.channelNamePlaceholder}
               autoFocus
               disabled={creating}
-              onChange={(event) => setDraftName(event.target.value)}
+              onChange={(event) => setDraftName(channelSlug(event.target.value))}
             />
           </div>
 
@@ -12881,9 +12897,10 @@ function AccountMenuButton({
             </div>
           </div>
           <DropdownMenuSeparator />
-          <AccountMenuItem icon={Monitor} label={copy.needsYou || "Needs you"} onClick={() => choose(onMissionControl)} hasChevron />
-          <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} hasChevron />
-          <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} hasChevron />
+          {/* Plain links: a › here promised a submenu that never opened. */}
+          <AccountMenuItem icon={Inbox} label={copy.needsYou || "Needs you"} onClick={() => choose(onMissionControl)} />
+          <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} />
+          <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} />
           {openAppInfo ? <AccountMenuItem icon={BookOpen} label={copy.aboutSquad || "About Autohand Squad"} onClick={() => choose(() => openAppInfo("about"))} /> : null}
           {openFeedback ? (
             <>
@@ -12899,7 +12916,7 @@ function AccountMenuButton({
   );
 }
 
-function AccountMenuItem({ icon: Icon, label, onClick, hasChevron = false, disabled = false }) {
+function AccountMenuItem({ icon: Icon, label, onClick, disabled = false }) {
   return (
     <DropdownMenuItem
       disabled={disabled}
@@ -12908,7 +12925,6 @@ function AccountMenuItem({ icon: Icon, label, onClick, hasChevron = false, disab
     >
       <Icon className="size-4" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {hasChevron ? <ChevronRight className="size-4 text-muted-foreground" /> : null}
     </DropdownMenuItem>
   );
 }
@@ -19402,9 +19418,20 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
   const isValid = Boolean(selectedTemplate && draft.name.trim() && draft.description.trim() && draft.instructions.trim() && (!isCustomRole || draft.role.trim()));
 
   const toggleTemplate = useCallback((id) => {
-    setTemplateId((current) => (current === id ? "" : id));
+    const picked = templateId !== id;
+    setTemplateId(picked ? id : "");
     setAvatarError("");
-  }, []);
+    // Picking a role used to leave the sixteen-row list open with the filled
+    // form below it, out of sight; close the list and bring the form up.
+    requestAnimationFrame(() => {
+      if (!picked) return;
+      setRolesOpen(false);
+      requestAnimationFrame(() => {
+        nameInputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+        nameInputRef.current?.focus({ preventScroll: true });
+      });
+    });
+  }, [templateId]);
 
   function selectCustomRole() {
     setCustomTemplateDialogOpen(true);
