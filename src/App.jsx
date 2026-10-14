@@ -360,7 +360,7 @@ import { CHAT_STREAM_CEILING_MS } from "@/lib/chat-timing";
 import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn, settingsPath, settingsSectionFromRoute, DEFAULT_SETTINGS_SECTION } from "@/lib/settings-navigation";
 import { SettingsShell, SettingsSectionHeader } from "@/components/settings/SettingsShell";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats } from "@/lib/chat-recovery";
+import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns } from "@/lib/chat-recovery";
 import { getAttentionBadgeClient } from "@/lib/attention-badge";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { CanvasList } from "@/components/canvases/CanvasList";
@@ -370,7 +370,7 @@ import { activityFromTrace, activityStats, classifyTool, normalizeActivity } fro
 import { ExecutionPanel } from "@/components/execution/ExecutionPanel";
 import { RunList } from "@/components/execution/RunList";
 import { latestFailedHandoff, latestHandoff, latestPendingHandoff, taskOwner } from "@/lib/handoffs";
-import { trimTitle } from "@/lib/execution-panel";
+import { markOrphanedTasks, orphanedTaskReason, trimTitle } from "@/lib/execution-panel";
 import {
   commandsForHarness,
   composerTrigger,
@@ -4719,6 +4719,11 @@ function App() {
   );
   const localeCopy = useMemo(() => getLocaleCopy(localeResolution.locale), [localeResolution.locale]);
   useEffect(() => { identifySquadTelemetry(runtime?.account); }, [runtime?.account]);
+  // A reply closed as interrupted whose run actually finished gets its answer
+  // back once the runs list arrives (bug hunt, desktop pass #32).
+  useEffect(() => {
+    if (runs.length) setMessagesByAgent((current) => restoreRepliesFromRuns(current, runs));
+  }, [runs]);
   useEffect(() => {
     if (runtime?.serverStartedAt) {
       setMessagesByAgent((current) => recoverInterruptedChats(current, runtime.serverStartedAt));
@@ -9493,7 +9498,7 @@ function App() {
             queue={memberQueues[member.id]} contextGauge={memberContext[member.id]} onQueueAction={controlMemberQueue}
             routineProposals={routineProposals.filter((proposal) => proposal.memberId === member.id)} onRoutineDecision={decideRoutineProposal} onRoutineSync={syncAutomationRoutine} workPlan={workPlanFor(member.id)}
             openTerminal={openTerminal} navigate={quickNavigate} taskPanelOpen={taskPanelOpen} setTaskPanelOpen={setTaskPanelOpen}
-            tasks={tasks.filter((task) => taskBelongsToAgent(task, member.id))} automations={automations.filter((item) => automationBelongsToAgent(item, member.id))}
+            tasks={markOrphanedTasks(tasks.filter((task) => taskBelongsToAgent(task, member.id)), runs)} automations={automations.filter((item) => automationBelongsToAgent(item, member.id))}
             setAutomations={setAutomations} runAutomation={runAutomation} updateAgent={updateAgent} chatSettings={chatSettings}
             harnesses={harnesses} harnessesLoading={harnessesLoading} onRefreshHarnesses={() => refreshHarnesses(true)}
             handoffRetryMode={resolveHandoffRetryMode(handoffSettings, runtime)} onCreateHandoff={createHandoff} onCollaborationResult={recordCollaborationResult}
@@ -9912,7 +9917,7 @@ function App() {
                 agent={activeAgent}
                 agents={agents}
                 section={activeSection}
-                tasks={tasks.filter((task) => taskBelongsToAgent(task, activeAgent?.id))}
+                tasks={markOrphanedTasks(tasks.filter((task) => taskBelongsToAgent(task, activeAgent?.id)), runs)}
                 automations={activeAutomations}
                 setAutomations={setAutomations}
                 routines={routines}
@@ -9988,7 +9993,7 @@ function App() {
                 navigate={navigate}
                 taskPanelOpen={taskPanelOpen}
                 setTaskPanelOpen={setTaskPanelOpen}
-                tasks={tasks.filter((task) => taskBelongsToAgent(task, activeAgent?.id))}
+                tasks={markOrphanedTasks(tasks.filter((task) => taskBelongsToAgent(task, activeAgent?.id)), runs)}
                 automations={activeAutomations}
                 setAutomations={setAutomations}
                 runAutomation={runAutomation}
@@ -15331,6 +15336,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
   const elapsedMs = useElapsedMs(message.startedAt, isLoading);
   const durationMs = isLoading ? elapsedMs : durationFromMessage(message);
   const durationLabel = durationMs === null ? "" : formatDuration(durationMs);
+  const { activity: workActivity } = useMessageActivity(message, isLoading);
   const hasVisibleAnswer = Boolean(view.answer && !isThinkingPlaceholder);
   const showRawOutput = normalizedChatSettings.displayCliOutput && hasRawOutput;
   const showProgressPlaceholder = isLoading && !hasVisibleAnswer;
@@ -15353,7 +15359,9 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
               <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
               {durationLabel ? `${durationLabel}` : "Working"}
             </span>
-          ) : durationLabel && !compact ? (
+          ) : durationLabel && !compact && (normalizedChatSettings.workDetails === "hidden" || !workActivity.length) ? (
+            // With Work details shown, its summary line already ends in the
+            // duration ("Work details · 1 step · 38 sec"); the header said it too.
             <span>{durationLabel}</span>
           ) : null}
           {!compact && message.effectiveModel ? <span className="hidden truncate sm:inline">· {replyModelLabel(message.effectiveModel, providerSummaryLabel)}</span> : null}
@@ -18297,21 +18305,6 @@ function missionRowFromRun(run, agents, runtime, workspaces) {
     nextAction: missionNextAction(status, { detailPath, ownerId: owner?.id, reply: isReply }),
     updatedAt: run.updatedAt || run.completedAt || run.startedAt || new Date().toISOString(),
   };
-}
-
-/**
- * A task that still says running while nothing runs it. The installed app
- * listed "Implement Agent Mission Control route" as Running since 26 May
- * and counted it in "1 working": the task kept its own status after its run
- * ended or was pruned. When the run is finished, or the bridge lists runs
- * and this one is not among them, the task is stuck and says so.
- */
-function orphanedTaskReason(task, run, { runsKnown = false } = {}) {
-  if (!["running", "launching"].includes(String(task?.status || "").toLowerCase()) || !task?.runtimeId) return "";
-  const runStatus = String(run?.status || "").toLowerCase();
-  if (run && ["running", "launching", "queued"].includes(runStatus)) return "";
-  if (run) return `Its run ${runStatus === "completed" ? "finished" : `ended (${runStatus || "no status"})`} but the task was never updated. Open the chat to check the result.`;
-  return runsKnown ? "Its run is no longer known to Squad, so nothing is working on it. Open the chat to pick it up again." : "";
 }
 
 function missionTaskStatus(task, run) {

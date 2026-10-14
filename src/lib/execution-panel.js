@@ -148,3 +148,29 @@ export function compactRecordId(id) {
   if (value.length <= 14) return value;
   return `${value.slice(0, 7)}...${value.slice(-4)}`;
 }
+
+/**
+ * A task that still says running while nothing runs it. The installed app
+ * listed "Implement Agent Mission Control route" as Running since 26 May
+ * (Needs you and the Execution panel's Now list): the task kept its own
+ * status after its run ended or was pruned. When the run is finished, or the
+ * bridge lists runs and this one is not among them, the task is stuck and
+ * says so. `runs` must be the full list, not one member's.
+ */
+export function orphanedTaskReason(task, run, { runsKnown = false } = {}) {
+  if (!["running", "launching"].includes(String(task?.status || "").toLowerCase()) || !task?.runtimeId) return "";
+  const runStatus = String(run?.status || "").toLowerCase();
+  if (run && LIVE_RUN_STATUSES.has(runStatus)) return "";
+  if (run) return `Its run ${runStatus === "completed" ? "finished" : `ended (${runStatus || "no status"})`} but the task was never updated. Open the chat to check the result.`;
+  return runsKnown ? "Its run is no longer known to Squad, so nothing is working on it. Open the chat to pick it up again." : "";
+}
+
+/** Tasks with stuck running ones shown as blocked, with the reason. */
+export function markOrphanedTasks(tasks = [], runs = []) {
+  const list = Array.isArray(runs) ? runs : [];
+  const byId = new Map(list.map((run) => [run?.id, run]));
+  return (Array.isArray(tasks) ? tasks : []).map((task) => {
+    const reason = orphanedTaskReason(task, byId.get(task?.runtimeId), { runsKnown: list.length > 0 });
+    return reason ? { ...task, status: "blocked", blocker: reason, orphanedRun: true } : task;
+  });
+}

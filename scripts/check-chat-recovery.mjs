@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, withoutThinkingPlaceholder } from "../src/lib/chat-recovery.js";
-import { isNoTextReply, withoutRecoveryNotices } from "../src/lib/chat-recovery.js";
+import { isNoTextReply, restoreRepliesFromRuns, withoutRecoveryNotices } from "../src/lib/chat-recovery.js";
 const boot = "2026-10-01T04:00:00.000Z";
 const task = { id: "task", title: "Verify changes", status: "in_progress" };
 const old = { id: "old", role: "agent", body: "Work was in progress.", status: "loading", startedAt: "2026-10-01T03:00:00.000Z", progress: { items: [task] } };
@@ -93,4 +93,26 @@ console.log('Checkpoint result recovery passed: saved successful parent output j
   assert.ok(isNoTextReply("Noah returned no chat text"));
   assert.ok(!isNoTextReply("Noah returned no chat text. Then he said more."));
   console.log("recovery notices and empty replies checked");
+}
+
+{
+  // Noah's 1:39 AM reply: closed as interrupted, but its run finished with an answer.
+  const conversations = { noah: [
+    { id: "u1", role: "user", body: "hey", startedAt: "2026-10-13T12:39:04.000Z" },
+    { id: "a1", role: "agent", status: "error", interrupted: true, body: "This request was interrupted when Squad restarted. No final update was received. Retry to continue.", startedAt: "2026-10-13T12:39:04.300Z" },
+    { id: "a2", role: "agent", status: "error", interrupted: true, body: "interrupted", startedAt: "2026-10-12T04:25:00.000Z" },
+  ] };
+  const runs = [
+    { id: "r1", agentId: "noah", mode: "chat", status: "completed", startedAt: "2026-10-13T12:39:04.598Z", finishedAt: "2026-10-13T12:39:42.975Z", reply: "Hey Igor — Noah here." },
+    { id: "r2", agentId: "noah", mode: "chat", status: "failed", startedAt: "2026-10-12T04:25:01.000Z", reply: "" },
+    { id: "r3", agentId: "eva", mode: "chat", status: "completed", startedAt: "2026-10-12T04:25:02.000Z", reply: "not Noah's" },
+  ];
+  const next = restoreRepliesFromRuns(conversations, runs);
+  assert.equal(next.noah[1].status, "complete");
+  assert.equal(next.noah[1].body, "Hey Igor — Noah here.");
+  assert.equal(next.noah[1].recoveredFromRun, "r1");
+  assert.equal(next.noah[1].durationMs, 38377);
+  assert.equal(next.noah[2].status, "error", "a failed run, or another member's run, restores nothing");
+  assert.equal(restoreRepliesFromRuns(next, runs), next, "a restored reply is not restored twice");
+  console.log("interrupted replies restored from finished runs");
 }

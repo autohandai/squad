@@ -147,3 +147,47 @@ export function withoutRecoveryNotices(text) {
   if (!/Session encountered an error|Attempting recovery \(/.test(value)) return value;
   return value.split(/\r?\n/).filter((line) => !isRecoveryNotice(line)).join("\n").replace(/^\s*\n/, "");
 }
+
+/**
+ * A reply marked interrupted whose run in fact finished. A restart (or the
+ * orphan sweep) closes a reply that was still "loading" in the browser, but
+ * the bridge may have completed the turn: Noah's 1:39 AM "hey" ran 38s and
+ * answered "Hey Igor — Noah here, frontend…", while the chat said
+ * "interrupted when Squad restarted" with a Retry. When the runs list has a
+ * completed chat run for the same member that started within two minutes of
+ * the reply, the reply gets the run's answer back.
+ */
+export function restoreRepliesFromRuns(conversations, runs = [], { windowMs = 120_000 } = {}) {
+  const finished = (Array.isArray(runs) ? runs : []).filter((run) =>
+    (run?.mode === "chat" || run?.kind === "chat") && run.status === "completed" && String(run.reply || "").trim() && Number.isFinite(Date.parse(run.startedAt || "")));
+  if (!finished.length) return conversations;
+  let next = conversations;
+  for (const [memberId, messages] of Object.entries(conversations || {})) {
+    if (!Array.isArray(messages)) continue;
+    const used = new Set(messages.map((message) => message?.recoveredFromRun).filter(Boolean));
+    let changed = false;
+    const restored = messages.map((message) => {
+      if (!message?.interrupted || message.status !== "error" || message.role === "user") return message;
+      const beganAt = Date.parse(message.startedAt || "");
+      if (!Number.isFinite(beganAt)) return message;
+      const run = finished.find((item) => item.agentId === memberId && !used.has(item.id) && Math.abs(Date.parse(item.startedAt) - beganAt) <= windowMs);
+      if (!run) return message;
+      used.add(run.id);
+      changed = true;
+      const startedMs = Date.parse(run.startedAt);
+      const finishedMs = Date.parse(run.finishedAt || run.completedAt || "");
+      return {
+        ...message,
+        status: "complete",
+        interrupted: false,
+        recoveredFromRun: run.id,
+        body: withoutRecoveryNotices(String(run.reply).trim()),
+        completedAt: run.finishedAt || run.completedAt || message.completedAt,
+        ...(Number.isFinite(finishedMs) && finishedMs >= startedMs ? { durationMs: finishedMs - startedMs } : {}),
+        ...(message.progress ? { progress: { ...message.progress, outcome: "completed" } } : {}),
+      };
+    });
+    if (changed) { if (next === conversations) next = { ...conversations }; next[memberId] = restored; }
+  }
+  return next;
+}
