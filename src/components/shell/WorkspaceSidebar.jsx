@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Bot, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Plus, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Bot, CheckCheck, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Pencil, Plus, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -8,6 +8,11 @@ import { CreateMenu } from "@/components/teams/CreateMenu";
 import { cn } from "@/lib/utils";
 
 export const DEFAULT_CHANNEL_SECTION = "Channels";
+
+const FOLDS_KEY = "autohandSquad.v1.sidebarFolds";
+function readFolds() {
+  try { return JSON.parse(window.localStorage.getItem(FOLDS_KEY) || "{}") || {}; } catch { return {}; }
+}
 
 function sectionOf(channel) {
   const value = String(channel?.section || "").trim();
@@ -84,10 +89,10 @@ function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, 
   );
 }
 
-function SectionHeader({ label, expanded, onToggle, action }) {
+function SectionHeader({ label, expanded, onToggle, action, hiddenUnread = 0 }) {
   const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
-    <div className="mt-4 flex items-center gap-1 px-1">
+    <div className="group/section mt-4 flex items-center gap-1 px-1">
       <button
         type="button"
         className="flex h-6 min-w-0 flex-1 items-center gap-1 rounded px-1 text-xs font-medium text-muted-foreground hover:text-foreground"
@@ -96,6 +101,8 @@ function SectionHeader({ label, expanded, onToggle, action }) {
       >
         <Chevron className="size-3 shrink-0" aria-hidden="true" />
         <span className="truncate">{label}</span>
+        {/* A collapsed section still says something is waiting inside it. */}
+        {!expanded && hiddenUnread ? <span className="ml-1 shrink-0 font-semibold text-foreground">{hiddenUnread} unread</span> : null}
       </button>
       {action}
     </div>
@@ -125,6 +132,7 @@ export function WorkspaceSidebar({
   searchTrailing = null,
   workspaceSwitcher = null,
   renderMemberMenu = null,
+  draftAgentIds = new Set(),
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const sections = useMemo(() => {
@@ -136,8 +144,12 @@ export function WorkspaceSidebar({
     }
     return Array.from(groups.entries());
   }, [channels]);
-  const [collapsedSections, setCollapsedSections] = useState({});
-  const [dmsExpanded, setDmsExpanded] = useState(true);
+  // Which sections are folded is remembered: it reset on every reload.
+  const [collapsedSections, setCollapsedSections] = useState(() => readFolds().sections || {});
+  const [dmsExpanded, setDmsExpanded] = useState(() => readFolds().dms !== false);
+  useEffect(() => {
+    try { window.localStorage.setItem(FOLDS_KEY, JSON.stringify({ sections: collapsedSections, dms: dmsExpanded })); } catch { /* storage may be off */ }
+  }, [collapsedSections, dmsExpanded]);
 
   function toggleSection(name) {
     setCollapsedSections((current) => ({ ...current, [name]: !current[name] }));
@@ -223,12 +235,21 @@ export function WorkspaceSidebar({
                   label={name}
                   expanded={expanded}
                   onToggle={() => toggleSection(name)}
+                  hiddenUnread={sectionChannels.filter((channel) => unreadChannelIds.has(channel.id)).length}
                   action={
-                    index === sections.length - 1 ? (
-                      <Button variant="ghost" size="icon-sm" className="size-6" aria-label={copy.createChannel || "Create channel"} onClick={onNavigate.createChannel}>
-                        <Plus className="size-3.5" />
-                      </Button>
-                    ) : null
+                    <>
+                      {/* Mark the whole section read, without opening each channel. */}
+                      {onNavigate.markChannelsRead && sectionChannels.some((channel) => unreadChannelIds.has(channel.id)) ? (
+                        <Button variant="ghost" size="icon-sm" className="size-6 opacity-0 transition-opacity group-hover/section:opacity-100 focus-visible:opacity-100" aria-label={`Mark ${name} read`} title={`Mark ${name} read`} onClick={() => onNavigate.markChannelsRead(sectionChannels.map((channel) => channel.id))}>
+                          <CheckCheck className="size-3.5" />
+                        </Button>
+                      ) : null}
+                      {index === sections.length - 1 ? (
+                        <Button variant="ghost" size="icon-sm" className="size-6" aria-label={copy.createChannel || "Create channel"} onClick={onNavigate.createChannel}>
+                          <Plus className="size-3.5" />
+                        </Button>
+                      ) : null}
+                    </>
                   }
                 />
                 {expanded ? (
@@ -259,6 +280,7 @@ export function WorkspaceSidebar({
           label={copy.directMessages || "Direct messages"}
           expanded={dmsExpanded}
           onToggle={() => setDmsExpanded((open) => !open)}
+          hiddenUnread={visibleAgents.filter((agent) => (unreadCountByAgent.get(agent.id) || 0) > 0).length}
           action={
             onNavigate.createTeam || onNavigate.templates ? (
               // The same plus, now a short menu: Chat with a new member (ADR-0126),
@@ -310,7 +332,14 @@ export function WorkspaceSidebar({
                         ) : null}
                       </>
                     }
-                    trailing={<UnreadCount count={isActive ? 0 : unread} />}
+                    trailing={
+                      !isActive && !unread && draftAgentIds.has(agent.id) ? (
+                        // An unsent message is waiting in this chat.
+                        <Pencil className="size-3 text-muted-foreground" aria-label="Unsent draft" />
+                      ) : (
+                        <UnreadCount count={isActive ? 0 : unread} />
+                      )
+                    }
                     menu={renderMemberMenu ? renderMemberMenu(agent) : null}
                     tooltip={memberTooltip(agent, presence)}
                   />

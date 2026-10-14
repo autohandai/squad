@@ -6642,6 +6642,11 @@ function App() {
     [inboxReplies, inboxUnreadChannels, inboxHandoffs, inboxApprovals, inboxMemory, inboxVault, inboxFolders, inboxChannelProposals, inboxRoutines]
   );
   const inboxCount = workAttentionCount(inboxAttention) + (sidebarCounts.permissionWarnings || 0);
+  const markChannelsRead = useCallback((ids) => {
+    const now = new Date().toISOString();
+    setChannelReads((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, now])) }));
+  }, []);
+  const draftAgentIds = useMemo(() => new Set(Object.entries(chatDraftsByAgent || {}).filter(([, value]) => typeof value === "string" && value.trim()).map(([id]) => id)), [chatDraftsByAgent]);
   // navigate() is redefined each render; a ref keeps the shortcut listener stable.
   const navigateRef = useRef(null);
   navigateRef.current = navigate;
@@ -9739,6 +9744,8 @@ function App() {
             onCreateChannel={createChannel}
             createChannelRequest={createChannelRequest}
             unreadChannelIds={unreadChannelIds}
+            onMarkChannelsRead={markChannelsRead}
+            draftAgentIds={draftAgentIds}
             unreadCountByAgent={unreadCountByAgent}
             inboxCount={inboxCount}
             onSearch={() => setSearchOpen(true)}
@@ -10180,6 +10187,8 @@ function App() {
               onAnalytics={openAnalytics}
               onCreateChannel={createChannel}
               unreadChannelIds={unreadChannelIds}
+              onMarkChannelsRead={markChannelsRead}
+              draftAgentIds={draftAgentIds}
               unreadCountByAgent={unreadCountByAgent}
               inboxCount={inboxCount}
               onSearch={() => {
@@ -12808,6 +12817,8 @@ function SidebarContent({
   onCreateTeam,
   onChatNewMember,
   onTemplates,
+  onMarkChannelsRead,
+  draftAgentIds = new Set(),
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const { entryFor: entryForPresence } = usePresence();
@@ -12873,6 +12884,7 @@ function SidebarContent({
       agents={orderMembers(visibleAgents)}
       channels={channels}
       active={sidebarActiveTarget(route, activeAgent)}
+      draftAgentIds={draftAgentIds}
       unreadChannelIds={unreadChannelIds}
       unreadCountByAgent={unreadCountByAgent}
       inboxCount={inboxCount}
@@ -12891,6 +12903,7 @@ function SidebarContent({
         channel: (channelId) => navigate(channelsPath(channelId)),
         member: (targetId) => navigate(memberChatPath(targetId)),
         createChannel: () => setCreateChannelOpen(true),
+        markChannelsRead: onMarkChannelsRead,
         createMember: () => navigate(`${MEMBER_ROUTE_PREFIX}/new`),
         createTeam: onCreateTeam,
         chatNewMember: onChatNewMember,

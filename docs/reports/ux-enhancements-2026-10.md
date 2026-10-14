@@ -30,3 +30,7 @@ the lane preview (lane build served locally, reads forwarded to the installed
 | 19 | Squad | A search that finds nobody | "No member matches “zzz”." with Clear search (or Show everyone for a status filter), instead of a centred icon block. |
 | 20 | Squad | Finding who is on what | Search also matches the line a member is working on ("handoff" finds Iris). |
 | 21 | Squad | Seeing who was active lately, or scanning by name | Sort: As arranged, Recent, A–Z, remembered between visits. |
+| 22 | Sidebar | Coming back to a half-written message | A pencil on a direct message that holds an unsent draft (drafts already survived; nothing said where they were). |
+| 23 | Sidebar | Folding a section away without missing anything | A collapsed section says "N unread" beside its name. |
+| 24 | Sidebar | Catching up on a channel section at once | "Mark read" on a section's header while any of its channels is unread. |
+| 25 | Sidebar | Keeping the sidebar the way you arranged it | Folded channel sections and Direct messages stay folded after a reload. |
