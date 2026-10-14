@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-14
+
+This release also carries everything listed under 0.1.6, which was built for local review and never published on GitHub.
+
 ### Added
 
 - In-app update downloads show real progress, can be cancelled, and stay ready while you keep working. On writable macOS installs, Install and restart replaces the app after work finishes, preserves your data, and keeps the previous app for recovery. Other installs open their verified system installer. Compact sidebars show new releases too.
@@ -352,7 +356,8 @@ Local review candidate; GitHub publication is pending user confirmation.
 - Installable desktop release pipeline with signed and notarised builds when
   credentials are present.
 
-[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/autohandai/squad/compare/v0.1.5...v0.1.7
 [0.1.5]: https://github.com/autohandai/squad/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/autohandai/squad/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/autohandai/squad/compare/v0.1.2...v0.1.3
