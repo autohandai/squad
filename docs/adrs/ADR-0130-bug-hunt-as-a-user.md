@@ -112,8 +112,9 @@ the same way.
   other work (an Xcode device-support copy and a Lima VM disk). Several
   fixes from 83 to 100 were found by reading code and checked with the
   existing check scripts and text probes of the running page rather than
-  screenshots. Bug 88 (unique names) was not exercised end to end: the
-  member save it depends on failed for lack of disk.
+  screenshots. Bug 88 (unique names) was exercised once disk space came
+  back: saving a new member named "Eva" in a squad that already had an Eva
+  stored "Eva 2"; `check:search` passed on the same run (50,000 records).
 - The checks that listed seed task ids (`check-inbox-browser`,
   `verify-work-profile-browser`, `verify-goals-browser`) still map over the
   seed arrays, which are now empty. `verify-channel-browser` no longer
