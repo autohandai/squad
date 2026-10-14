@@ -18923,12 +18923,7 @@ function RecipeCatalogDialog({
                 >
                   <div className="flex w-full flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-foreground">{recipe.name}</span>
-                    <Badge variant="outline" className="rounded-md text-[11px]">{level.shortLabel || level.label}</Badge>
-                    {role ? (
-                      <Badge variant="secondary" className="rounded-md text-[11px]">{formatCopy(text.forRole, { role: role.title })}</Badge>
-                    ) : (
-                      <Badge variant="secondary" className="rounded-md text-[11px]">{text.general}</Badge>
-                    )}
+                    <span className="text-xs text-muted-foreground">Level {level.rank}: {level.label} · {role ? formatCopy(text.forRole, { role: role.title }) : text.general}</span>
                   </div>
                   <p className="text-sm leading-6 text-muted-foreground">{recipe.description}</p>
                 </button>
@@ -23676,8 +23671,10 @@ function ProfilePermissionLadder({ agent, runtime, workspaces = [], navigate, co
   const activeLevel = autonomyLadderLevelMeta(permissions.ladderLevel);
   const warnings = permissionWarningsForAgent(agent, runtime, workspace);
 
+  // border-b only: the header above already ends in a rule, so a top
+  // border drew two lines 22px apart.
   return (
-    <section className="border-y border-border/75 py-5" aria-labelledby="profile-permission-ladder">
+    <section className="border-b border-border/75 py-5" aria-labelledby="profile-permission-ladder">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h3 id="profile-permission-ladder" className="text-base font-semibold">Permission ladder</h3>
@@ -23762,7 +23759,7 @@ function ProfileHarnessSummary({ agent, harnesses = [], navigate }) {
           <h3 id="profile-harness-summary" className="text-base font-semibold">Harness</h3>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
             {harnessLabel(assignment.id)}
-            {readiness?.version ? ` ${readiness.version}` : ""}
+            {readiness?.version ? ` ${engineVersion(readiness.version)}` : ""}
             {" / "}
             <span className={readinessTone(readiness?.status)}>{readinessLabel(readiness?.status)}</span>
             {assignment.model ? ` / ${assignment.model}` : ""}
@@ -24149,8 +24146,9 @@ function ProfileRecipes({ agent, copy = getLocaleCopy(DEFAULT_LOCALE), onLaunch 
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">{recipe.name}</span>
-                  <Badge variant="outline" className="rounded-md text-[11px]">{level.shortLabel || level.label}</Badge>
-                  <Badge variant="secondary" className="rounded-md text-[11px]">{recipe.roleId ? text.roleSpecific : text.general}</Badge>
+                  {/* The level's short label is a verb ("Edit" for Level 4), so
+                      as a chip beside the name it read as an Edit button. */}
+                  <span className="text-xs text-muted-foreground">Level {level.rank}: {level.label} · {recipe.roleId ? text.roleSpecific : text.general}</span>
                 </div>
                 <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">{recipe.description}</p>
               </div>
