@@ -325,7 +325,7 @@ import { parseLocalJson, writeLocalJson, compactChannelMessagesCache, isStorageQ
 import { MemberWorkspacePicker } from "@/components/chat/MemberWorkspacePicker";
 import { activityCalendar } from "@/lib/activity-calendar";
 import { channelSlug } from "@/lib/channel-name";
-import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
+import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
@@ -2654,10 +2654,6 @@ function getThemePreset(preference, surface) {
   const normalizedSurface = normalizeThemeSurface(surface);
   const presetId = normalizedPreference[`${normalizedSurface}Theme`];
   return THEME_PRESET_MAP[normalizedSurface].get(presetId) || THEME_PRESETS[normalizedSurface][0];
-}
-
-function createSquadMemberId() {
-  return `${SQUAD_MEMBER_ID_PREFIX}${Date.now().toString(36)}`;
 }
 
 function createAutomationId() {

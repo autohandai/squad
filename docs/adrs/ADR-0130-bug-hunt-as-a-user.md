@@ -69,6 +69,15 @@ the same way.
    popover capped at 34rem hid Workflows, Repository, Export and Delete below
    a scroll with no visible cue.
 
+7. **Member ids carry randomness.** Adding a four-person team kept one
+   member. The ids were `asq_` + `Date.now()` in base 36, and the team
+   builder drafts every member in one loop: all four landed in the same
+   millisecond, shared an id, replaced each other in the list and were
+   provisioned into one runtime folder. After the change, the next team's
+   three ids were `asq_mv7dv2lb1bvz8271`, `asq_mv7dv2lb1g0bga3a` and
+   `asq_mv7dv2lb137u2mby`: the same millisecond prefix, which is the
+   evidence for the diagnosis, with distinct suffixes.
+
 ## Consequences
 
 - Installs that already saved the pie-shop channel, the seed tasks or the
@@ -89,6 +98,11 @@ the same way.
   was not diagnosed further. Squad now names the SDK's failure reason in the
   run and gives a next step in the timeout message, but still waits the full
   timeout on the CLI fallback.
+- Teams added before this change lost their members for good; the lost
+  members' choices are not recoverable from the shared folder.
+- Other ids built from the time alone (channel threads, local notes) were
+  left as they are: each is made once per action and includes another id, so
+  a collision needs two actions in one millisecond.
 - The checks that listed seed task ids (`check-inbox-browser`,
   `verify-work-profile-browser`, `verify-goals-browser`) still map over the
   seed arrays, which are now empty. `verify-channel-browser` no longer

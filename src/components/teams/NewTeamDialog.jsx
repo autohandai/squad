@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { OBJECTIVE_LIMIT, proposalProblems, proposeTeam, updateProposal } from "@/lib/team-builder";
 import { cn } from "@/lib/utils";
+import { readableSkill } from "@/lib/member-suggestions";
 
 /**
  * New team (ADR-0118): one question, the team's primary objective, and the
@@ -104,7 +105,7 @@ export function NewTeamDialog({ open, onOpenChange, agents = [], roleTemplates =
                           <span className={cn("truncate text-sm", member.selected ? "font-medium" : "text-muted-foreground")}>{member.role}</span>
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">{member.purpose}</p>
-                        {member.skills.length ? <p className="mt-0.5 truncate text-xs text-muted-foreground/80">{member.skills.join(" · ")}</p> : null}
+                        {member.skills.length ? <p className="mt-0.5 truncate text-xs text-muted-foreground/80">{member.skills.map(readableSkill).join(" · ")}</p> : null}
                       </div>
                       {proposal.leadKey === member.key ? (
                         <span className="mt-1.5 shrink-0 text-xs font-medium text-foreground underline underline-offset-4">{copy.lead || "Lead"}</span>

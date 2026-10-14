@@ -13,6 +13,20 @@ export const SQUAD_MEMBER_ID_PREFIX = "asq_";
 export const LEGACY_SQUAD_MEMBER_ID_PREFIXES = Object.freeze(["wk_"]);
 
 /** One spelling for a member id, with the old prefix carried forward. */
+/**
+ * A new member's id. The time alone is not enough: a team of four is drafted
+ * in one loop within the same millisecond, the ids collided, and each member
+ * replaced the one before it, three of four lost and sharing one runtime
+ * folder (bug hunt 2026-10, #76). Lower-case base 36, as the bridge's folder
+ * names allow.
+ */
+export function createSquadMemberId() {
+  const random = typeof crypto !== "undefined" && crypto.getRandomValues
+    ? Array.from(crypto.getRandomValues(new Uint32Array(2)), (part) => part.toString(36)).join("")
+    : Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  return `${SQUAD_MEMBER_ID_PREFIX}${Date.now().toString(36)}${random.slice(0, 8)}`;
+}
+
 export function normalizeSquadMemberId(id) {
   const value = String(id || "").trim();
   const legacyPrefix = LEGACY_SQUAD_MEMBER_ID_PREFIXES.find((prefix) => value.startsWith(prefix));

@@ -65,6 +65,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Adding a team keeps every member. Before, members drafted together were given the same id, replaced each other and only the last one remained.
 - A new install no longer comes with someone else's work: no `clients-pie-shop-nz` channel, no tasks "running" in a folder you never opened, no pending decision in Needs you, no active "Smoke test" automation, and the four starting members no longer point at a folder on another computer or claim days of activity. Deleting `#general` or `#release-reviews` now sticks. The full list of fixes from this pass, with causes, is in `docs/reports/bughunt-2026-10.md`.
 - The member page's activity calendar shows what that member actually did, ending today, instead of the same made-up year for everyone.
 - Chat header: Stop appears only while something is running; Task list has its own icon; the runs button is called Runs. Suggested prompts read as sentences ("With testing strategies in mind…", "As an Operations Lead…").
@@ -76,6 +77,7 @@ list to the section for that version.
 - The engine version no longer shows Squad's own commit ("Autohand Code 0.8.2 (865b66e)"), and the Harness page names the CLI the bridge actually runs. A reply cut off by a reload is recorded as such, not as "stopped by the user". Tasks in a member's navigation opens their tasks, the Projects page shows the folder the member really works in, and the permission counts agree between the ID card and the Permissions page.
 - New member: picking a ready-made role brings the filled-in form into view, the new member's first message no longer contains a stray "- " or your bio in parentheses, and a picked portrait no longer turns into a bird after a reload. Channel names are made one word as you type ("launch-plan"), and an empty channel offers Add members. Search shows the message, not the member's name twice. Stopping a reply no longer sends you a "could not reply" notification. The account menu loses chevrons that promised submenus.
 - Settings say what they do: Approval waiting names folder and secret requests too, the Vault key line is two sentences, Self-improvement shows each observation problem once with who it affects, Handoff retry stops repeating the default three times, Runtime bridge shows Squad's and Autohand Code's versions separately, Telegram's quietest option is "Only what needs me", and System counts channel messages under that name.
+- New team lists skills by name rather than id.
 - Sidebar: a member row's tooltip no longer covers its own menu, and the ⋯ button stays visible while its menu is open.
 
 - The Model page of a Claude Code, Codex or ACP member shows that engine, its model and its settings instead of the workspace's Autohand provider, which those members never use.
