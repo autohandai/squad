@@ -357,7 +357,7 @@ const UI_COPY_BY_LANGUAGE = {
     installedFromSkillRegistry: "Installed from skilled.autohand.ai",
     latest: "Latest",
     learnedEntries: "{count} learned entries",
-    localChat: "Local Chat",
+    localChat: "Local chat",
     localCliReady: "local CLI ready",
     localFolders: "Local folders",
     localToolsAvailable: "{count} local tools available",

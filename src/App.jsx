@@ -18645,72 +18645,59 @@ function HandoffTimelinePanel({ tasks = [], agents = [], locale = DEFAULT_LOCALE
   );
 }
 
-function WorkRecordTasksTable({ tasks, copy = getLocaleCopy(DEFAULT_LOCALE), locale = DEFAULT_LOCALE }) {
+// Divider rows, as the rest of the member pages. These were bordered tables
+// with a tinted header, truncated ids ("task_go...ewer"), pill badges in
+// Title Case ("Handoff Pending") and US dates on an en-NZ Mac; the empty
+// state named Eva on every member's page.
+function WorkRecordTasksTable({ tasks, agent, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   if (!tasks.length) {
-    return <EmptyBlock icon={LayoutList} title={copy.noTasksYet} body={formatCopy(copy.tasksAppearAfterChatWork, { name: "Eva" })} />;
+    return <p className="py-4 text-sm text-muted-foreground">{formatCopy(copy.tasksAppearAfterChatWork, { name: agent?.name || "this member" })}</p>;
   }
-
   return (
-    <div className="overflow-hidden rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/55">
-            <TableHead className="w-[150px]">ID</TableHead>
-            <TableHead>{copy.name}</TableHead>
-            <TableHead className="w-[160px]">{copy.source}</TableHead>
-            <TableHead className="w-[150px]">{copy.status}</TableHead>
-            <TableHead className="w-[180px]">{copy.created}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {tasks.map((task) => (
-            <TableRow key={task.id}>
-              <TableCell className="font-mono text-muted-foreground">{compactRecordId(task.id)}</TableCell>
-              <TableCell className="max-w-[520px] truncate font-medium">{task.title}</TableCell>
-              <TableCell>
-                <Badge variant="secondary" className="rounded-md bg-muted text-muted-foreground">
-                  {taskSourceLabel(task.source, copy)}
-                </Badge>
-              </TableCell>
-              <TableCell><StatusBadge status={task.status} copy={copy} /></TableCell>
-              <TableCell>{formatRecordDate(task.createdAt || task.updatedAt, locale, copy)}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="divide-y divide-border/70 border-y border-border/70">
+      {tasks.map((task) => {
+        const bad = task.status === "failed" || task.status === "blocked";
+        return (
+          <div key={task.id} className="flex items-baseline gap-3 py-2.5 text-sm" title={task.id}>
+            <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              <span className={cn(bad && "text-destructive")}>{sentenceCase(statusLabel(task.status, copy))}</span>
+              {" · "}{taskSourceLabel(task.source, copy)}
+              {" · "}{formatRecordDate(task.createdAt || task.updatedAt, undefined, copy)}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function WorkRecordAutomationsTable({ automations, copy = getLocaleCopy(DEFAULT_LOCALE), locale = DEFAULT_LOCALE }) {
+function WorkRecordAutomationsTable({ automations, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   if (!automations.length) {
-    return <EmptyBlock icon={Workflow} title={copy.noAutomationsYet} body={copy.scheduledLocalAutohandWork} />;
+    return <p className="py-4 text-sm text-muted-foreground">{copy.scheduledLocalAutohandWork}</p>;
   }
-
   return (
-    <div className="overflow-hidden rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/55">
-            <TableHead>{copy.name}</TableHead>
-            <TableHead className="w-[160px]">Run Count</TableHead>
-            <TableHead className="w-[220px]">{copy.created}</TableHead>
-            <TableHead className="w-[220px]">Last Run</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {automations.map((automation) => (
-            <TableRow key={automation.id}>
-              <TableCell className="font-medium">{automation.name}</TableCell>
-              <TableCell>{automation.runCount ?? (automation.lastRun && automation.lastRun !== "Never" ? 1 : 0)}</TableCell>
-              <TableCell>{formatRecordDate(automation.createdAt, locale, copy)}</TableCell>
-              <TableCell>{formatRecordDate(automation.lastRun, locale, copy)}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="divide-y divide-border/70 border-y border-border/70">
+      {automations.map((automation) => {
+        const runs = automation.runCount ?? (automation.lastRun && automation.lastRun !== "Never" ? 1 : 0);
+        return (
+          <div key={automation.id} className="flex items-baseline gap-3 py-2.5 text-sm">
+            <span className="min-w-0 flex-1 truncate font-medium">{automation.name}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {runs === 1 ? "1 run" : `${runs} runs`}
+              {" · last "}{automation.lastRun && automation.lastRun !== "Never" ? formatRecordDate(automation.lastRun, undefined, copy) : "never"}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+/** "Handoff Pending" → "Handoff pending": status words are words, not titles. */
+function sentenceCase(value) {
+  const text = String(value || "");
+  return text ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase() : text;
 }
 
 
@@ -24006,10 +23993,10 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                 <ActivityHeatmap calendar={activity} />
               </TabsContent>
               <TabsContent value="tasks" className="m-0">
-                <WorkRecordTasksTable tasks={tasks} copy={copy} locale={locale} />
+                <WorkRecordTasksTable tasks={tasks} agent={agent} copy={copy} />
               </TabsContent>
               <TabsContent value="automations" className="m-0">
-                <WorkRecordAutomationsTable automations={automations} copy={copy} locale={locale} />
+                <WorkRecordAutomationsTable automations={automations} copy={copy} />
               </TabsContent>
             </CardContent>
           </Tabs>
@@ -24033,18 +24020,23 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                 {/* Memory entries are {id, text, at, source} (ADR-0048). This read
                     them as "topic: detail" strings and called .split on each, which
                     crashed the whole page the moment a member had any memory. */}
-                {normalizeMemoryEntries(agent.memory).map((entry) => (
-                  <div key={entry.id} className="grid grid-cols-[40px_minmax(0,1fr)_80px] items-center gap-3">
-                    <span className="grid size-9 place-items-center rounded-md bg-primary/10 text-primary">
-                      <Sparkles />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold">{entry.text}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{entry.source || "autohand-squad-skill"}</span>
-                    </span>
-                    <span className="text-right text-xs text-muted-foreground">{entry.at ? formatRelativeTime(entry.at, locale) : ""}</span>
-                  </div>
-                ))}
+                {/* "Autohand Skill Installed: react-component-architecture" with
+                    "autohand-squad-skill" under it, four times, each beside the
+                    same tinted sparkle tile. Said once: "Skill added:" and the
+                    skill name; sources that are internal ids are not shown. */}
+                {normalizeMemoryEntries(agent.memory).map((entry) => {
+                  const skill = /^\s*autohand skill installed:\s*(.+)$/i.exec(entry.text || "");
+                  const source = entry.source && !/^autohand-squad-skill$/.test(entry.source) ? entry.source : "";
+                  return (
+                    <div key={entry.id} className="flex items-baseline gap-3 text-sm">
+                      <span className="min-w-0 flex-1 truncate">
+                        {skill ? <><span className="text-muted-foreground">Skill added: </span><span className="font-medium">{skill[1]}</span></> : <span className="font-medium">{entry.text}</span>}
+                        {source ? <span className="text-xs text-muted-foreground"> · {source}</span> : null}
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{entry.at ? formatRelativeTime(entry.at, locale) : ""}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
             )}
@@ -24179,32 +24171,23 @@ function AutomationSummary({ automations, copy = getLocaleCopy(DEFAULT_LOCALE) }
         <CardTitle>{copy.automations}</CardTitle>
         <CardDescription>{copy.scheduledLocalAutohandWork}</CardDescription>
       </CardHeader>
+      {/* An empty four-column table (Name, Schedule, Target, Status) over
+          "No automations yet" said nothing a sentence would not. */}
       <CardContent className="px-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{copy.name}</TableHead>
-              <TableHead>{copy.schedule}</TableHead>
-              <TableHead>{copy.target}</TableHead>
-              <TableHead>{copy.status}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {!automations.length ? (
-              <TableRow>
-                <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">{copy.noAutomationsYet || "No automations yet"}</TableCell>
-              </TableRow>
-            ) : null}
+        {!automations.length ? (
+          <p className="text-sm text-muted-foreground">{copy.noAutomationsYet || "No automations yet"}.</p>
+        ) : (
+          <div className="divide-y divide-border/70 border-y border-border/70">
             {automations.map((automation) => (
-              <TableRow key={automation.id}>
-                <TableCell className="font-medium">{automation.name}</TableCell>
-                <TableCell>{automationScheduleLabel(automation)}</TableCell>
-                <TableCell>{workspaceName(automation.workspace) || automation.target}</TableCell>
-                <TableCell><StatusBadge status={automation.status} copy={copy} /></TableCell>
-              </TableRow>
+              <div key={automation.id} className="flex items-baseline gap-3 py-2.5 text-sm">
+                <span className="min-w-0 flex-1 truncate font-medium">{automation.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {[automationScheduleLabel(automation), workspaceName(automation.workspace) || automation.target, sentenceCase(statusLabel(automation.status, copy))].filter(Boolean).join(" · ")}
+                </span>
+              </div>
             ))}
-          </TableBody>
-        </Table>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
