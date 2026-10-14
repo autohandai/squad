@@ -8506,8 +8506,10 @@ function App() {
       id,
       harness: normalizeHarnessAssignmentCopy(draft.harness),
       staffId: `member-${String(agents.length + 1).padStart(3, "0")}`,
-      // The same limit a member shaped in chat has (PROFILE_LIMITS.name).
-      name: draft.name.trim().slice(0, PROFILE_LIMITS.name),
+      // The same limit a member shaped in chat has (PROFILE_LIMITS.name), and
+      // the same rule: a name already in the squad becomes "Eva 2", because
+      // two Evas make @Eva and the sidebar ambiguous.
+      name: uniqueName(draft.name.trim().slice(0, PROFILE_LIMITS.name), membersRef.current.filter((member) => member.id !== id).map((member) => member.name)),
       role: draft.role,
       status: "online",
       createdAt: timestamp,
@@ -23985,7 +23987,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
         agent={agent}
         open={profileEditOpen}
         onOpenChange={setProfileEditOpen}
-        onSave={(patch) => updateAgent?.(agent.id, patch)}
+        onSave={(patch) => updateAgent?.(agent.id, patch?.name ? { ...patch, name: uniqueName(patch.name, agents.filter((member) => member.id !== agent.id).map((member) => member.name)) } : patch)}
       />
 
       <RecipeLaunchDialog
