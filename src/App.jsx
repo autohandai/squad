@@ -1454,18 +1454,22 @@ const PERMISSION_LEVELS = [
   {
     id: "allow",
     label: "Allow",
+    text: "text-primary",
     tone: "border-primary/35 bg-primary/15 text-primary",
     indicator: "bg-primary",
   },
   {
     id: "ask",
     label: "Ask",
+    text: "text-amber-700 dark:text-amber-200",
     tone: "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-400/35 dark:bg-amber-400/10 dark:text-amber-200",
     indicator: "bg-amber-500 dark:bg-amber-300",
   },
   {
     id: "block",
-    label: "Deny",
+    // "Deny" here, "Blocked" in the column headings and in the summary: one word.
+    label: "Blocked",
+    text: "text-red-700 dark:text-red-200",
     tone: "border-red-300 bg-red-100 text-red-800 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200",
     indicator: "bg-red-500 dark:bg-red-300",
   },
@@ -22694,7 +22698,8 @@ function PermissionCapabilityColumn({ title, items = [], tone }) {
         {items.map((item) => (
           <div key={item} className="flex min-w-0 items-start gap-2 text-sm leading-5 text-muted-foreground">
             <span className="mt-2 size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />
-            <span className="min-w-0 text-wrap">{item}</span>
+            {/* Items came in mixed case ("Read/search", "scoped patches"). */}
+            <span className="min-w-0 text-wrap">{String(item).charAt(0).toUpperCase() + String(item).slice(1)}</span>
           </div>
         ))}
       </div>
@@ -22713,7 +22718,7 @@ function permissionRunExamples(permissions) {
       title: "Blocked destructive command",
       command: "rm -rf .git",
       mode: destructiveMode,
-      detail: `Level ${ladder.rank} keeps shell.destructive ${destructiveMode}. Disk wipes, privilege escalation, and recursive deletion do not run automatically.`,
+      detail: `At Level ${ladder.rank}, destructive commands are ${destructiveMode === "block" ? "blocked" : destructiveMode === "ask" ? "asked about first" : "allowed"}. Disk wipes, privilege escalation, and recursive deletion do not run automatically.`,
     },
     {
       id: "approval",
@@ -22735,30 +22740,22 @@ function permissionRunExamples(permissions) {
 }
 
 function PermissionRunExamplePanel({ permissions }) {
+  // Divider rows, not three boxed cards with pill badges and a second
+  // "auto-merge off" badge repeating the third card.
   return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold">Run warnings</h3>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            These examples show what happens before a run crosses the current ladder boundary.
-          </p>
-        </div>
-        <Badge variant="outline" className="rounded-md bg-background">
-          auto-merge off
-        </Badge>
+    <section className="grid gap-2 border-t border-border/70 pt-5">
+      <div>
+        <h3 className="text-sm font-semibold">What happens at the edge of this level</h3>
+        <p className="mt-1 text-sm text-muted-foreground">Three examples of a run reaching past what the member may do.</p>
       </div>
-      <div className="mt-5 grid gap-3 lg:grid-cols-3">
+      <div className="divide-y divide-border/70 border-y border-border/70">
         {permissionRunExamples(permissions).map((example) => (
-          <div key={example.id} className="rounded-md border border-border/80 bg-background/65 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-semibold">{example.title}</div>
-              <PermissionModeBadge mode={example.mode} />
+          <div key={example.id} className="grid gap-1 py-3 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)] sm:gap-4">
+            <div>
+              <div className="text-sm font-medium">{example.title}</div>
+              <code className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">{example.command}</code>
             </div>
-            <code className="mt-3 block truncate rounded-md bg-muted/45 px-3 py-2 font-mono text-xs text-muted-foreground">
-              {example.command}
-            </code>
-            <p className="mt-3 text-xs leading-5 text-muted-foreground">{example.detail}</p>
+            <p className="text-sm text-muted-foreground"><span className={cn("font-medium", permissionLevelMeta(example.mode).text)}>{permissionLevelMeta(example.mode).label}.</span> {example.detail}</p>
           </div>
         ))}
       </div>
@@ -23236,41 +23233,29 @@ function PermissionConfigPreview({ permissions }) {
     },
   };
 
+  // The engine's raw config is for checking, not reading: it was a 320px
+  // block of JSON open on the page. Now a disclosure.
   return (
-    <section className="min-w-0 rounded-md border border-border/80 bg-card/75 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-semibold">Autohand Code CLI config preview</div>
-          <p className="mt-1 text-xs text-muted-foreground">A local mapping for the settings the CLI already understands.</p>
-        </div>
-        <Badge variant="outline" className="rounded-md bg-background text-xs">config.json</Badge>
-      </div>
-      <pre className="mt-4 max-h-[320px] overflow-auto rounded-md border bg-background p-4 text-xs leading-5 text-muted-foreground">
+    <details className="min-w-0 text-sm">
+      <summary className="cursor-pointer text-muted-foreground hover:text-foreground">What Autohand Code receives (config.json)</summary>
+      <pre className="mt-2 max-h-[320px] overflow-auto rounded-md bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
         {JSON.stringify(preview, null, 2)}
       </pre>
-    </section>
+    </details>
   );
 }
 
 function PermissionToolGroup({ group, modes, onModeChange }) {
-  const Icon = group.icon;
   const allowed = group.items.filter((item) => modes[item.id] === "allow").length;
-
+  // A heading and divider rows, not a bordered card with a "2/5 autonomous"
+  // badge (said as a sentence now).
   return (
-    <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-      <div className="flex flex-col gap-3 border-b border-border/75 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-base font-semibold">
-            <Icon className="size-5 text-primary" />
-            {group.title}
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">{group.description}</p>
-        </div>
-        <Badge variant="outline" className="w-fit rounded-md bg-background text-xs">
-          {allowed}/{group.items.length} autonomous
-        </Badge>
+    <section className="grid gap-2">
+      <div>
+        <h3 className="text-sm font-semibold">{group.title}</h3>
+        <p className="mt-0.5 text-sm text-muted-foreground">{`${group.description} ${allowed} of ${group.items.length} run without asking.`}</p>
       </div>
-      <div className="divide-y divide-border/70">
+      <div className="divide-y divide-border/70 border-y border-border/70">
         {group.items.map((item) => (
           <PermissionToolRow
             key={item.id}
@@ -23285,36 +23270,23 @@ function PermissionToolGroup({ group, modes, onModeChange }) {
 }
 
 function PermissionToolRow({ item, mode, onModeChange }) {
-  const meta = permissionLevelMeta(mode);
-
+  // The mode was shown twice (a pill beside the name and the selected
+  // segment), and under the name a fixed word from the tool's defaults
+  // ("Approval", "Autonomous") that stopped matching as soon as you changed
+  // the control. Examples were bordered code chips that read like connected
+  // services ("Figma", "Cloudflare").
   return (
-    <div className="grid gap-4 p-4 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,1fr)_260px] lg:items-center">
+    <div className="grid gap-3 py-3 lg:grid-cols-[minmax(0,1fr)_15rem] lg:items-center">
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="font-semibold">{item.name}</div>
-          <span className={cn("inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium", meta.tone)}>
-            <span className={cn("size-1.5 rounded-full", meta.indicator)} />
-            {meta.label}
-          </span>
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-sm font-medium">{item.name}</span>
+          <code className="text-xs text-muted-foreground">{item.target}</code>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-mono">{item.target}</span>
-          <span>/</span>
-          <span>{item.autonomy}</span>
-        </div>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          {item.description}
+          {item.examples?.length ? <span className="text-xs">{` For example: ${item.examples.join(", ")}.`}</span> : null}
+        </p>
       </div>
-
-      <div className="min-w-0">
-        <p className="text-sm leading-6 text-muted-foreground">{item.description}</p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {item.examples.map((example) => (
-            <span key={example} className="rounded-md border border-border/80 bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
-              {example}
-            </span>
-          ))}
-        </div>
-      </div>
-
       <PermissionModeControl value={mode} onChange={onModeChange} />
     </div>
   );
