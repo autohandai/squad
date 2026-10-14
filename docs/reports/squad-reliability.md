@@ -691,3 +691,37 @@ passed; the running app-info receipt matches. The app is open on Alex’s chat.
 The previous bundle and pre-repair SQLite state are retained for rollback.
 This is an ad-hoc-signed local review build. A live long-running provider turn,
 notarization, other platforms and a GitHub release were not performed here.
+
+### Account menu and Settings return review, 2026-10-13
+
+The gear menu now uses the shared portaled dropdown, escaping the sidebar’s
+stacking context and staying within the window. Settings has a Back arrow that
+restores the originating path, query and fragment. Member-chat drafts survive
+the detour, including section changes and a Settings reload. Direct Settings
+links without an origin return to Squad. These decisions are recorded in
+ADR-0087 and ADR-0088.
+
+The rendered browser regression passed Autohand light/dark, Soft and Grut in
+both sidebar layouts, plus all three skins in a narrow window. It verified
+actual menu pointer targets and selection, keyboard navigation, Escape focus,
+member/directory/work/profile return, draft restoration, section/reload return
+and the direct-link fallback, without browser errors or provider execution.
+JSX/import, skin token, bridge-import and production build checks also passed.
+Artifacts are under `.codex-artifacts/local-0.1.6/account-settings/`.
+
+The installed 0.1.6 candidate was built at `2026-10-13T07:07:00.333Z`, from
+`3b08d851f26d436e7055d18c13686e45a008f6f4` plus the working changes. Its executable
+SHA-256 is `70a234312b8463ad031ff81f686ebbbf7c38720e6594f26346339ac6fbcd4c9a`.
+Strict signature verification and comparison of 344 packaged runtime files
+passed; the running app-info endpoint matches the installed receipt.
+
+Fresh SQLite and channel-state backups, and the immediately previous bundle,
+were retained before replacement. After opening the updated app, all nine
+member identities and roles and all 69 previously saved member-message IDs
+remained. The eight channels, 22 threads and 93 channel messages were identical;
+the whole file hash changed because revision/time metadata and one channel
+action changed during subsequent activity. The new native account menu exposed
+its actions through accessibility. The user resumed using the updated app
+during that probe, so native Settings-return activation was not claimed.
+
+This is an ad-hoc-signed local review build. No GitHub release was published.

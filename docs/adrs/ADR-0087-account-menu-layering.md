@@ -41,6 +41,12 @@ The pre-fix run failed the pointer-target assertion in Soft with no modal open.
 The fixture runs Autohand light/dark, Soft and Grut, in both sidebar layouts,
 and checks all skins in a narrow window. Provider execution is prohibited.
 
+The completed run passed all eight desktop skin/theme/sidebar combinations,
+three narrow-window skin checks, keyboard selection and Escape focus return.
+The installed native candidate exposed the new account menu and its actions
+through macOS accessibility. Native pointer hit testing is not substituted for
+the browser check; the user resumed interacting with the app during the probe.
+
 ## Consequences
 
 - The account menu sits above the chat page and composer without raising the

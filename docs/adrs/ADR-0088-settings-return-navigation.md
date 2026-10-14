@@ -40,6 +40,13 @@ Fresh-document tokens distinguish a completed reload from the old page still
 being visible while navigation starts. An isolated bridge prevents these
 checks from touching the user’s history or invoking a provider.
 
+The completed browser run passed each originating route, the Settings
+section/reload case, draft restoration, keyboard entry and direct-link fallback
+with no browser errors. The new local native package was installed and its
+running receipt matched the verified bundle. Settings return was exercised in
+the browser fixture; a native return probe was not completed while the user
+resumed using the app.
+
 ## Consequences
 
 - Back has a known destination rather than guessing or walking an arbitrary
