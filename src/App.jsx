@@ -21854,130 +21854,94 @@ function MemoryInboxPage({
   // carries the legacy plain strings some saves still hold.
   const activeMemory = normalizeMemoryEntries(agent.memory);
 
+  // What a member knows comes first, then what waits for you, then the
+  // record. This was a "Memory Inbox" title with an icon tile, three "0"
+  // tiles, three centred icon empty states stacked down the page and a
+  // boxed sidebar (with its own Open CLI and Home buttons) holding what the
+  // member actually knows.
   return (
     <div className="min-h-screen bg-background">
       <PageTitle title="Memory" />
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
-        <section className="border-b border-border/75 pb-6">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="grid size-11 place-items-center rounded-md border border-primary/35 bg-primary/15 text-primary">
-                  <BrainCog className="size-5" />
-                </span>
-                <div className="min-w-0">
-                  <h2 className="text-2xl font-semibold tracking-normal">Memory Inbox</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {agent.name} / {localizedRole(agent, copy)} / reviewed before durable memory
-                  </p>
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
+        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+          {`What ${agent.name} remembers between chats. New memories are proposed first and wait for you; nothing a member proposes is used until you accept it.`}
+        </p>
+
+        <section className="grid gap-2" aria-labelledby="memory-active">
+          <h3 id="memory-active" className="text-sm font-semibold">{`What ${agent.name} knows`}</h3>
+          {activeMemory.length ? (
+            <div className="divide-y divide-border/70 border-y border-border/70">
+              {activeMemory.map((entry) => (
+                <div key={entry.id} className="flex items-baseline gap-3 py-2.5 text-sm">
+                  <span className="min-w-0 flex-1">{memoryEntryLine(entry)}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{entry.at ? formatRelativeTime(entry.at, locale) : ""}</span>
                 </div>
-              </div>
-              <p className="mt-5 max-w-3xl text-sm leading-6 text-muted-foreground">
-                Proposed memories stay here until a person accepts them. Accepted records keep their source, confidence,
-                timestamp, scope, and evidence; rejected records stay out of active memory.
-              </p>
+              ))}
             </div>
-            <div className="grid min-w-0 grid-cols-3 gap-3 sm:min-w-[420px]">
-              <Metric label="Pending" value={formatLocalizedNumber(pending.length, locale)} />
-              <Metric label="Accepted" value={formatLocalizedNumber(accepted.length, locale)} />
-              <Metric label="Rejected" value={formatLocalizedNumber(rejected.length, locale)} />
-            </div>
-          </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Nothing yet.</p>
+          )}
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="grid gap-6">
-            <MemoryInboxSection
-              title="Pending review"
-              description="Accept, edit, reject, or change scope before this becomes durable memory."
-              empty="No pending memory proposals for this member."
-              items={pending}
-              agents={agents}
-              locale={locale}
-              navigate={navigate}
-              onSaveEdit={onSaveEdit}
-              onAccept={onAccept}
-              onReject={onReject}
-            />
-            <MemoryInboxSection
-              title="Accepted memory"
-              description="Durable memory with source evidence and review metadata."
-              empty="No accepted memory records yet."
-              emptyBody="Proposals you accept move here with their source. What this member already knows is listed under Active profile memory."
-              items={accepted}
-              agents={agents}
-              locale={locale}
-              navigate={navigate}
-            />
-            <section className="grid gap-3">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <h3 className="text-lg font-semibold">Rejected audit</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">Rejected memories remain auditable locally and never enter active memory.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {hiddenRejectedCount ? (
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setShowHiddenAudit((current) => !current)}>
-                      {showHiddenAudit ? "Hide hidden" : `Show hidden (${hiddenRejectedCount})`}
-                    </Button>
-                  ) : null}
-                  {hiddenRejectedCount ? (
-                    <Button type="button" variant="outline" size="sm" onClick={onPurgeHiddenRejected}>
-                      <Trash2 data-icon="inline-start" />
-                      Purge hidden
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-              {rejected.length ? (
-                <div className="grid gap-3">
-                  {rejected.map((item) => (
-                    <MemoryProposalRow
-                      key={item.id}
-                      item={item}
-                      agents={agents}
-                      locale={locale}
-                      navigate={navigate}
-                      onHideRejected={onHideRejected}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <EmptyBlock icon={BrainCog} title="No rejected proposals" body="Rejected or hidden memory proposals will appear here for this session." />
-              )}
-            </section>
-          </div>
+        {pending.length ? (
+          <MemoryInboxSection
+            title={`Waiting for you · ${pending.length}`}
+            description="Accept, edit or reject each one before it becomes memory."
+            empty=""
+            items={pending}
+            agents={agents}
+            locale={locale}
+            navigate={navigate}
+            onSaveEdit={onSaveEdit}
+            onAccept={onAccept}
+            onReject={onReject}
+          />
+        ) : null}
 
-          <aside className="grid h-fit gap-4 rounded-md border border-border/80 bg-card/75 p-4">
-            <div>
-              <h3 className="text-sm font-semibold">Active profile memory</h3>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                These are the entries currently written into this member's generated MEMORY.md profile context.
-              </p>
+        <section className="grid gap-2" aria-labelledby="memory-history">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h3 id="memory-history" className="text-sm font-semibold">Reviewed</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              {hiddenRejectedCount ? (
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowHiddenAudit((current) => !current)}>
+                  {showHiddenAudit ? "Hide hidden" : `Show hidden (${hiddenRejectedCount})`}
+                </Button>
+              ) : null}
+              {hiddenRejectedCount ? (
+                <Button type="button" variant="ghost" size="sm" onClick={onPurgeHiddenRejected}>
+                  <Trash2 data-icon="inline-start" />
+                  Purge hidden
+                </Button>
+              ) : null}
             </div>
-            <div className="grid max-h-[420px] gap-2 overflow-auto pr-1">
-              {activeMemory.length ? (
-                activeMemory.map((entry) => (
-                  <div key={entry.id} className="rounded-md border border-border/80 bg-background/65 p-3">
-                    <div className="text-sm leading-5">{entry.text}</div>
-                    {entry.source ? <div className="mt-1 text-xs text-muted-foreground">{entry.source}</div> : null}
-                  </div>
-                ))
-              ) : (
-                <p className="text-sm text-muted-foreground">No active memory yet.</p>
-              )}
+          </div>
+          {accepted.length || rejected.length ? (
+            <div className="grid gap-3">
+              {[...accepted, ...rejected].map((item) => (
+                <MemoryProposalRow
+                  key={item.id}
+                  item={item}
+                  agents={agents}
+                  locale={locale}
+                  navigate={navigate}
+                  onHideRejected={item.status === "rejected" ? onHideRejected : undefined}
+                />
+              ))}
             </div>
-            <Separator />
-            <Button variant="outline" onClick={() => openTerminal(agent)}>
-              <TerminalSquare data-icon="inline-start" />
-              {copy.openCli}
-            </Button>
-            <Button onClick={() => navigate(memberProfilePath(agent.id, "home"))}>{copy.home}</Button>
-          </aside>
+          ) : (
+            <p className="text-sm text-muted-foreground">{pending.length ? "Nothing reviewed yet." : `No proposals yet. When ${agent.name} wants to remember something, it waits here for you.`}</p>
+          )}
         </section>
       </div>
     </div>
   );
+}
+
+/** "Autohand Skill Installed: x" reads as "Skill added: x"; other entries as written. */
+function memoryEntryLine(entry) {
+  const skill = /^\s*autohand skill installed:\s*(.+)$/i.exec(entry?.text || "");
+  if (!skill) return entry?.text || "";
+  return <><span className="text-muted-foreground">Skill added: </span><span className="font-medium">{skill[1]}</span></>;
 }
 
 function MemoryInboxSection({ title, description, empty, emptyBody = "", items, agents, locale, navigate, onSaveEdit, onAccept, onReject }) {
@@ -24024,19 +23988,12 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
                     "autohand-squad-skill" under it, four times, each beside the
                     same tinted sparkle tile. Said once: "Skill added:" and the
                     skill name; sources that are internal ids are not shown. */}
-                {normalizeMemoryEntries(agent.memory).map((entry) => {
-                  const skill = /^\s*autohand skill installed:\s*(.+)$/i.exec(entry.text || "");
-                  const source = entry.source && !/^autohand-squad-skill$/.test(entry.source) ? entry.source : "";
-                  return (
-                    <div key={entry.id} className="flex items-baseline gap-3 text-sm">
-                      <span className="min-w-0 flex-1 truncate">
-                        {skill ? <><span className="text-muted-foreground">Skill added: </span><span className="font-medium">{skill[1]}</span></> : <span className="font-medium">{entry.text}</span>}
-                        {source ? <span className="text-xs text-muted-foreground"> · {source}</span> : null}
-                      </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{entry.at ? formatRelativeTime(entry.at, locale) : ""}</span>
-                    </div>
-                  );
-                })}
+                {normalizeMemoryEntries(agent.memory).map((entry) => (
+                  <div key={entry.id} className="flex items-baseline gap-3 text-sm">
+                    <span className="min-w-0 flex-1 truncate">{memoryEntryLine(entry)}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{entry.at ? formatRelativeTime(entry.at, locale) : ""}</span>
+                  </div>
+                ))}
               </div>
             </div>
             )}
