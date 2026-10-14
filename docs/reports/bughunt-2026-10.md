@@ -104,3 +104,4 @@ are in the order found.
 | 94 | Execution panel | Pressing Stop on a run that could not be stopped did nothing visible; the row stayed live with no reason given. | The error was swallowed on purpose ("the list refreshes"). | The row says "Could not stop this run: <reason>". |
 | 95 | Execution panel | A run with one line of output read "Output · 1 lines". | Fixed plural. | "Output · 1 line". |
 | 96 | Execution panel | A run that had finished without output still said "Waiting for output…". | The empty label ignored whether the run was live. | Finished runs with nothing read "No output". |
+| 97 | Execution panel | A run still going after three hours showed "180m" at the end of its row. | Live runs always used whole minutes. | "3h 0m" from an hour on. |

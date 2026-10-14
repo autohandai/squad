@@ -41,6 +41,8 @@ export function runTimeLabel(run, { now = Date.now(), locale = "en-US" } = {}) {
   const minutes = Math.floor(Math.max(0, now - started) / 60_000);
   if (isLiveRun(run) || minutes < 60) {
     if (minutes < 1) return "now";
+    // A run still going after hours read "180m".
+    if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
     return `${minutes}m`;
   }
   try {
