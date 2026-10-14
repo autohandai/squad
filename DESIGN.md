@@ -268,3 +268,7 @@
 - A member is "they", never "it".
 - Disabled controls look disabled as a pair: a disabled outline button uses muted text like a disabled primary.
 - Dates follow the system region (pass no locale to Intl), not the translation locale.
+- Keyboard shortcuts use ⌘ on macOS and Ctrl elsewhere, never act while focus is in a text field, and are all listed in the Keyboard shortcuts sheet ("?" or the account menu). A new shortcut is added to that sheet in the same change.
+- Copy controls are quiet icon buttons that appear on hover or focus, turn into a check when the copy worked, and say "Could not copy" when it did not.
+- Long scrolling conversations offer "Jump to latest" once the reader is a screen up, and say "N new" when messages arrived meanwhile; they never pull the reader down on their own.
+- Search fields that filter a page ("Search members", "Search memory", "Search this history", "Find a setting") clear with Esc and, when nothing matches, say what found nothing and offer the way back.
