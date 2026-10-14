@@ -328,6 +328,7 @@ import { channelSlug } from "@/lib/channel-name";
 import { copyText } from "@/lib/copy-text";
 import { CopyButton } from "@/components/chat/CopyButton";
 import { JumpToLatest } from "@/components/chat/JumpToLatest";
+import { KeyboardShortcuts } from "@/components/shell/KeyboardShortcuts";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
@@ -5165,6 +5166,20 @@ function App() {
     refreshHarnesses(false);
   }, []);
 
+  // A channel address by name ("/channels/general", "/channels/%23general")
+  // opens that channel. Only ids worked, so a typed or shared address showed
+  // "Select a channel".
+  useEffect(() => {
+    const id = channelIdFromRoute(route);
+    if (!id || channels.some((channel) => channel.id === id)) return;
+    const wanted = id.replace(/^#/, "").toLowerCase();
+    const match = channels.find((channel) => String(channel.name || "").toLowerCase() === wanted);
+    if (!match) return;
+    const next = channelsPath(match.id) + (route.includes("?") ? `?${route.split("?")[1]}` : "");
+    window.history.replaceState(window.history.state, "", next);
+    setRoute(next);
+  }, [route, channels]);
+
   // Unread bookkeeping: the channel you are looking at is always read; the
   // NEW divider uses the read marker captured when the channel was opened.
   useEffect(() => {
@@ -6627,6 +6642,31 @@ function App() {
     [inboxReplies, inboxUnreadChannels, inboxHandoffs, inboxApprovals, inboxMemory, inboxVault, inboxFolders, inboxChannelProposals, inboxRoutines]
   );
   const inboxCount = workAttentionCount(inboxAttention) + (sidebarCounts.permissionWarnings || 0);
+  // navigate() is redefined each render; a ref keeps the shortcut listener stable.
+  const navigateRef = useRef(null);
+  navigateRef.current = navigate;
+  const openMemberChatFromShortcut = useCallback((id) => navigateRef.current?.(memberChatPath(id)), []);
+  const shortcutMembers = useMemo(() => orderMembers(agents.filter((agent) => agent?.id && agent?.name)), [agents]);
+
+  // The window and tab say where you are and whether anything waits:
+  // "(2) Noah · Autohand Squad". Every view used to read "Autohand Squad",
+  // so a background tab or the Window menu could not tell them apart.
+  useEffect(() => {
+    const path = route.split("?")[0];
+    let page = "";
+    if (path.startsWith(CHANNELS_ROUTE)) {
+      const channel = channels.find((item) => item.id === channelIdFromRoute(route));
+      page = channel ? `#${channel.name}` : "Channels";
+    } else if (path === SQUAD_DIRECTORY_ROUTE) page = "Squad";
+    else if (isWorkRoute(path)) page = "Needs you";
+    else if (path.startsWith("/settings")) page = "Settings";
+    else if (path.startsWith("/conversations") || path.startsWith(MEMBER_ROUTE_PREFIX)) {
+      const id = new URLSearchParams(route.split("?")[1] || "").get("member") || (path.match(/^\/squad-members\/([^/]+)/)?.[1] ?? "");
+      const member = agents.find((item) => item.id === decodeURIComponent(id));
+      page = member?.name || "";
+    }
+    document.title = `${inboxCount ? `(${inboxCount}) ` : ""}${page ? `${page} · ` : ""}Autohand Squad`;
+  }, [route, channels, agents, inboxCount]);
   const attentionBadge = useMemo(() => getAttentionBadgeClient(), []);
   useEffect(() => {
     if (!attentionBadge || !bridgeAnswered || runtime?.bridgeUnavailable) return;
@@ -10087,6 +10127,7 @@ function App() {
           }}
         />
 
+        <KeyboardShortcuts members={shortcutMembers} onMember={openMemberChatFromShortcut} />
         <SearchCommand
           open={searchOpen}
           onOpenChange={setSearchOpen}
@@ -16526,6 +16567,26 @@ function SquadDirectoryPage({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [pendingDelete, setPendingDelete] = useState(null);
+  // Roster order: as arranged (pinned first), by most recent activity, or by
+  // name. Remembered, because the reason to change it outlives one visit.
+  const [sortBy, setSortBy] = useState(() => readStored("autohandSquad.v1.squadSort", "arranged"));
+  function chooseSort(next) {
+    setSortBy(next);
+    try { window.localStorage.setItem("autohandSquad.v1.squadSort", JSON.stringify(next)); } catch { /* storage may be off */ }
+  }
+  const searchRef = useRef(null);
+  // "/" anywhere on the page puts the cursor in member search; Esc clears it.
+  useEffect(() => {
+    function onKey(event) {
+      const tag = event.target?.tagName;
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey || tag === "INPUT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
+      if (!searchRef.current) return;
+      event.preventDefault();
+      searchRef.current.focus();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function handleSetState(agentId, stateId) {
     updateAgent?.(agentId, { status: stateId, updatedAt: new Date().toISOString() });
@@ -16574,12 +16635,16 @@ function SquadDirectoryPage({
       localizedRole(agent, copy),
       agent.staffId,
       workspaceName(getAgentWorkspace(agent, runtime, workspaces)),
+      // What the row says they are on, so "handoff" finds Iris.
+      state.currentRow?.title,
     ]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
     return haystack.includes(normalizedQuery);
   });
+  if (sortBy === "recent") filteredMembers.sort((a, b) => (Date.parse(b.state.lastActive || "") || 0) - (Date.parse(a.state.lastActive || "") || 0));
+  else if (sortBy === "name") filteredMembers.sort((a, b) => String(a.agent.name).localeCompare(String(b.agent.name), undefined, { sensitivity: "base" }));
 
   // Squad is the roster: who is on the team and every control that changes
   // it. Work is the log. The two pages listed the same people with nearly the
@@ -16639,10 +16704,17 @@ function SquadDirectoryPage({
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-border/60 py-2.5 text-xs">
           {members.length > 8 ? (
             <Input
+              ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={copy.searchMembers || "Search members"}
-              aria-label="Search squad members"
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                setQuery("");
+                event.currentTarget.blur();
+              }}
+              placeholder={copy.searchMembers ? `${copy.searchMembers}  /` : "Search members  /"}
+              aria-label="Search squad members (press / to focus)"
               className="h-8 w-full text-xs sm:w-[220px]"
             />
           ) : null}
@@ -16662,6 +16734,20 @@ function SquadDirectoryPage({
               {option.count === undefined ? null : <span className="ml-1.5 tabular-nums">{formatLocalizedNumber(option.count, locale)}</span>}
             </button>
           ))}
+          <span className="ml-auto flex items-center gap-3">
+            <span className="text-muted-foreground">Sort</span>
+            {[["arranged", "As arranged"], ["recent", "Recent"], ["name", "A–Z"]].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={sortBy === id}
+                onClick={() => chooseSort(id)}
+                className={cn("underline-offset-4 transition-colors hover:text-foreground", sortBy === id ? "font-medium text-foreground underline" : "text-muted-foreground")}
+              >
+                {label}
+              </button>
+            ))}
+          </span>
         </div>
 
         {filteredMembers.length || (showBuildRows && preparingCount) ? (
@@ -16707,17 +16793,19 @@ function SquadDirectoryPage({
             </ul>
           </section>
         ) : (
-          <div className="mt-10">
-            <EmptyBlock
-              icon={Users}
-              title={query || filter !== "all" ? "No members match" : "No squad members yet"}
-              body={
-                query || filter !== "all"
-                  ? "Try a different search or clear the status filter."
-                  : "Create your first squad member to start delegating local engineering work."
-              }
-            />
-          </div>
+          query || filter !== "all" ? (
+            // Say what found nothing, and undo it in one click.
+            <div className="flex flex-wrap items-center gap-3 py-6 text-sm text-muted-foreground">
+              <span>{query ? `No member matches “${query.trim()}”${filter !== "all" ? ` among ${filterOptions.find((option) => option.id === filter)?.label?.toLowerCase() || filter} members` : ""}.` : "No members have this status."}</span>
+              <Button type="button" variant="ghost" size="sm" onClick={() => { setQuery(""); setFilter("all"); }}>
+                {query ? "Clear search" : "Show everyone"}
+              </Button>
+            </div>
+          ) : (
+            <div className="mt-10">
+              <EmptyBlock icon={Users} title="No squad members yet" body="Create your first squad member to start delegating local engineering work." />
+            </div>
+          )
         )}
 
         <HiddenMembersGroup

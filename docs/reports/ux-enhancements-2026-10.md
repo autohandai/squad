@@ -20,3 +20,13 @@ the lane preview (lane build served locally, reads forwarded to the installed
 | 9 | Member chat | "When did I ask this?" | Hovering a message time shows the full date and time. |
 | 10 | Channels | Same, in channels | The same tooltip on channel message times. |
 | 11 | Member chat, channels | Scanning recent days | Day lines say "Today" and "Yesterday". |
+| 12 | Everywhere | Learning what the app answers to | "?" opens a Keyboard shortcuts sheet: search, direct messages, sending, steering, recall, mentions, commands. |
+| 13 | Everywhere | Moving between the people you talk to most | ⌘1–⌘9 (Ctrl on Windows and Linux) opens the nth direct message, in sidebar order. |
+| 14 | Window, tab | Telling Squad windows and tabs apart | The title names the page: "Noah · Autohand Squad", "#general · …", "Needs you · …", "Settings · …". |
+| 15 | Window, tab | Seeing there is something waiting without switching | The title starts with the Needs you count: "(2) …". |
+| 16 | Channels | Opening a channel from a typed or shared address | `/channels/general` (or `%23general`) opens #general; only internal ids worked before. |
+| 17 | Squad | Finding a member quickly | "/" anywhere on the page puts the cursor in member search; the field says so. |
+| 18 | Squad | Getting back to the full roster | Esc in member search clears it. |
+| 19 | Squad | A search that finds nobody | "No member matches “zzz”." with Clear search (or Show everyone for a status filter), instead of a centred icon block. |
+| 20 | Squad | Finding who is on what | Search also matches the line a member is working on ("handoff" finds Iris). |
+| 21 | Squad | Seeing who was active lately, or scanning by name | Sort: As arranged, Recent, A–Z, remembered between visits. |
