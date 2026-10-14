@@ -21635,6 +21635,14 @@ function SquadMemberSectionPage({
     );
   }
 
+  // Skills the bridge recorded as installed are also in the member's memory
+  // ("Autohand Skill Installed: <name>"); the browser's copy of the member
+  // often never got `skillInstall`, so every skill read "install pending"
+  // while Memory said each was added and the folder held all four.
+  const installedFromMemory = new Set(normalizeMemoryEntries(agent.memory)
+    .map((entry) => /^\s*autohand skill installed:\s*(.+)$/i.exec(entry.text || "")?.[1]?.trim())
+    .filter(Boolean));
+  const tools = Array.isArray(agent?.tools) ? agent.tools : [];
   const rows = {
     triggers: automations.map((automation) => ({
       label: automation.name,
@@ -21645,52 +21653,46 @@ function SquadMemberSectionPage({
       value: `${task.status} / ${task.updatedAt}`,
     })),
     skill: agent.skills.map((skill) => {
-      const installed = agent.skillInstall?.installed?.some((item) => item.id === skill);
+      const installed = agent.skillInstall?.installed?.some((item) => item.id === skill) || installedFromMemory.has(skill);
       const failed = agent.skillInstall?.failed?.some((item) => item.id === skill);
       return {
         label: skill,
-        value: failed ? "install failed" : installed ? "installed from skilled.autohand.ai" : "install pending",
+        value: failed ? "Install failed" : installed ? "Installed from skilled.autohand.ai" : "Not installed yet",
+        tone: failed ? "destructive" : "",
       };
     }),
-    connector: [{ label: "GitHub", value: "ready" }, { label: "Browser", value: "ready" }],
+    // Was a fixed "GitHub ready / Browser ready" for every member, whatever
+    // was configured. The member's own tools are listed as they are.
+    // "isolated" and "wired" are the bridge's words; said for a person.
+    connector: tools.map((tool) => ({ label: tool.name || tool.id || "Tool", value: ({ isolated: "Ready · runs in its own session", wired: "Ready · connected", ready: "Ready" })[String(tool.status || "").toLowerCase()] || sentenceCase(tool.status || "not checked") })),
     im: [{ label: "Direct conversation", value: "enabled" }],
   }[section] || [];
+  const emptyText = {
+    triggers: "No automations yet.",
+    task: copy.noTasksYet || "No tasks yet.",
+    skill: `${agent.name} has no skills yet.`,
+    connector: `${agent.name} has no connector tools of their own. Shared connectors are in Settings → Connectors.`,
+  }[section] || "Nothing here yet.";
 
+  // A flat list, as the other member pages: this was a card with a second
+  // title, its own Back to chat, a grid of boxed tiles, and a footer with
+  // Open CLI and a primary Home.
   return (
     <div className="min-h-screen bg-background">
       <PageTitle title={sectionLabel} />
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-        <Card className="rounded-md border-border/80 bg-card/75 shadow-none">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Icon />
-              {sectionLabel}
-            </CardTitle>
-            <CardDescription>{agent.name} / {localizedRole(agent, copy)}</CardDescription>
-            <CardAction>
-              <Button variant="outline" onClick={() => navigate(memberChatPath(agent.id))}>
-                <MessageSquareText data-icon="inline-start" />
-                {copy.backToChat}
-              </Button>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="grid gap-3 md:grid-cols-2">
-            {rows.length ? rows.map((row) => (
-              <div key={`${row.label}-${row.value}`} className="rounded-md border bg-muted/25 p-4">
-                <div className="truncate text-sm font-semibold">{row.label}</div>
-                <div className="mt-2 truncate text-xs text-muted-foreground">{row.value}</div>
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 sm:px-6 lg:px-8">
+        {rows.length ? (
+          <div className="divide-y divide-border/70 border-y border-border/70">
+            {rows.map((row) => (
+              <div key={`${row.label}-${row.value}`} className="flex items-baseline gap-3 py-2.5 text-sm">
+                <span className="min-w-0 flex-1 truncate font-medium">{row.label}</span>
+                <span className={cn("shrink-0 text-xs text-muted-foreground", row.tone === "destructive" && "text-destructive")}>{row.value}</span>
               </div>
-            )) : <EmptyBlock icon={Icon} title={`${copy.noTasksYet}`} body={`${agent.name} / ${sectionLabel}`} />}
-          </CardContent>
-          <CardFooter className="justify-end gap-2 border-t">
-            <Button variant="outline" onClick={() => openTerminal(agent)}>
-              <TerminalSquare data-icon="inline-start" />
-              {copy.openCli}
-            </Button>
-            <Button onClick={() => navigate(memberProfilePath(agent.id, "home"))}>{copy.home}</Button>
-          </CardFooter>
-        </Card>
-
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">{emptyText}</p>
+        )}
       </div>
     </div>
   );
