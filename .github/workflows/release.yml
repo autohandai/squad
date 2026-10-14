@@ -156,6 +156,10 @@ jobs:
           mkdir -p release/web/runtime release/web-staging
           web_asset="autohand-squad-web-${{ needs.setup.outputs.version }}.tar.gz"
           cp -R dist server server.mjs package.json bun.lock README.md release/web-staging/
+          # The bridge imports shared modules from src/lib (workflows, member
+          # profiles); the portable and installer packagers require them.
+          mkdir -p release/web-staging/src
+          cp -R src/lib release/web-staging/src/
           node -e "const fs = require('fs'); const file = process.argv[1]; const metadata = JSON.parse(fs.readFileSync(file, 'utf8')); metadata.version = process.argv[2]; fs.writeFileSync(file, JSON.stringify(metadata, null, 2) + '\n');" \
             release/web-staging/package.json \
             '${{ needs.setup.outputs.version }}'
