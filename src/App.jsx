@@ -329,7 +329,7 @@ import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMem
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
-import { blankGreeting, blankMemberDraft, isBlankMember, personalityFileContent, profileNoteFor, profileReceipts, replyWithoutReceipts, unappliedProfileReceipts } from "@/lib/member-shaping";
+import { PROFILE_LIMITS, blankGreeting, blankMemberDraft, isBlankMember, personalityFileContent, profileNoteFor, profileReceipts, replyWithoutReceipts, unappliedProfileReceipts } from "@/lib/member-shaping";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -8506,7 +8506,8 @@ function App() {
       id,
       harness: normalizeHarnessAssignmentCopy(draft.harness),
       staffId: `member-${String(agents.length + 1).padStart(3, "0")}`,
-      name: draft.name.trim(),
+      // The same limit a member shaped in chat has (PROFILE_LIMITS.name).
+      name: draft.name.trim().slice(0, PROFILE_LIMITS.name),
       role: draft.role,
       status: "online",
       createdAt: timestamp,
@@ -19658,6 +19659,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
               <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <Input
                   id="member-name"
+                  maxLength={PROFILE_LIMITS.name}
                   ref={nameInputRef}
                   value={draft.name}
                   placeholder={copyText.memberNamePlaceholder || "Name this member"}
@@ -20183,7 +20185,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
     if (!isValid) return;
 
     onSave(profilePatchFor(agent, {
-      name: draft.name,
+      name: String(draft.name || "").trim().slice(0, PROFILE_LIMITS.name),
       role: draft.role,
       description: draft.description,
       instructions: draft.instructions,
@@ -20244,6 +20246,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
                   </FieldLabel>
                   <Input
                     value={draft.name}
+                    maxLength={PROFILE_LIMITS.name}
                     onChange={(event) => updateDraft({ name: event.target.value })}
                     placeholder="Enter squad member name"
                     className="h-11 bg-card"
