@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { QUICK_REACTIONS, reactionName, searchReactions } from "@/lib/reactions";
 import { isNoTextReply } from "@/lib/chat-recovery";
+import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { cn } from "@/lib/utils";
 
 export { QUICK_REACTIONS };
@@ -105,7 +106,21 @@ function timestampOf(message) {
 
 function dayKey(ms, locale) {
   if (!ms) return "";
+  const day = new Date(ms).toDateString();
+  if (day === new Date().toDateString()) return "Today";
+  if (day === new Date(Date.now() - 86_400_000).toDateString()) return "Yesterday";
   return new Date(ms).toLocaleDateString(locale, { weekday: "long", month: "long", day: "numeric" });
+}
+
+/** The full date and time, for the tooltip on a message's clock time. */
+function fullTime(message) {
+  const ms = timestampOf(message);
+  if (!ms) return undefined;
+  try {
+    return new Date(ms).toLocaleString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" });
+  } catch {
+    return undefined;
+  }
 }
 
 function timeLabel(message, locale) {
@@ -364,7 +379,7 @@ export function ChannelStream({
             >
               <div className="w-8 shrink-0">
                 {compact ? (
-                  <span className="hidden text-[10px] text-muted-foreground group-hover:block">{timeLabel(message, locale)}</span>
+                  <span className="hidden text-[10px] text-muted-foreground group-hover:block" title={fullTime(message)}>{timeLabel(message, locale)}</span>
                 ) : renderAvatar ? (
                   renderAvatar(message)
                 ) : (
@@ -375,7 +390,7 @@ export function ChannelStream({
                 {!compact ? (
                   <div className="flex flex-wrap items-baseline gap-2">
                     <span className="text-sm font-semibold leading-5">{name}</span>
-                    <span className="text-xs text-muted-foreground">{timeLabel(message, locale)}</span>
+                    <span className="text-xs text-muted-foreground" title={fullTime(message)}>{timeLabel(message, locale)}</span>
                     {loading ? <Spinner className="size-3" /> : null}
                   </div>
                 ) : null}
@@ -419,6 +434,7 @@ export function ChannelStream({
         );
       })}
       <div ref={endRef} />
+      <JumpToLatest anchorRef={endRef} watch={ordered.length} />
     </div>
   );
 }

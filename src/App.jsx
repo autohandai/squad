@@ -326,6 +326,8 @@ import { MemberWorkspacePicker } from "@/components/chat/MemberWorkspacePicker";
 import { activityCalendar } from "@/lib/activity-calendar";
 import { channelSlug } from "@/lib/channel-name";
 import { copyText } from "@/lib/copy-text";
+import { CopyButton } from "@/components/chat/CopyButton";
+import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
@@ -11096,7 +11098,17 @@ function ChannelsPage({
                 authorName={(message) => (message.role === "system" && message.workflowRunId ? message.workflowName || copy.workflow || "Workflow" : channelMessageAuthorName(message, agents, accountProfile.name))}
                 onReact={onReact}
                 onReply={(message) => setReplyTo(message)}
-                renderActions={(message) => ((message.role === "agent" || message.agentId) && String(message.body || "").trim() ? <ReadAloudButton compact text={message.body} message={message} api={api} copy={copy} /> : null)}
+                renderActions={(message) => {
+                  const body = String(message.body || "").trim();
+                  if (!body || message.status === "loading") return null;
+                  const agentMessage = message.role === "agent" || message.agentId;
+                  return (
+                    <>
+                      {agentMessage ? <ReadAloudButton compact text={message.body} message={message} api={api} copy={copy} /> : null}
+                      <CopyButton text={withoutRecoveryNotices(message.body || "")} label="Copy message" />
+                    </>
+                  );
+                }}
                 emptyLabel={members.length ? copy.channelNoThreads : (
                   // An empty channel can do nothing; say how to fix that here.
                   <>
@@ -11543,10 +11555,30 @@ function contextWindowLabel(tokens) {
 function chatDayLabel(message, locale = DEFAULT_LOCALE) {
   const ms = Date.parse(message?.startedAt || message?.createdAt || message?.completedAt || "");
   if (!Number.isFinite(ms)) return "";
+  // The two days people mean most are said as words.
+  const day = new Date(ms).toDateString();
+  if (day === new Date().toDateString()) return "Today";
+  if (day === new Date(Date.now() - 86_400_000).toDateString()) return "Yesterday";
   try {
     return new Date(ms).toLocaleDateString(locale, { weekday: "long", month: "long", day: "numeric" });
   } catch {
     return new Date(ms).toDateString();
+  }
+}
+
+// A message's own moment, for the tooltip on its clock time: the list only
+// shows "04:25 PM", which says nothing about the day once it is not today.
+function messageIsoTime(message) {
+  const ms = Date.parse(message?.startedAt || message?.createdAt || message?.completedAt || "");
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+}
+function messageFullTime(message) {
+  const iso = messageIsoTime(message);
+  if (!iso) return undefined;
+  try {
+    return new Date(iso).toLocaleString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" });
+  } catch {
+    return iso;
   }
 }
 
@@ -11811,10 +11843,15 @@ function MarkdownBlocks({ text, muted = false }) {
           );
         }
         if (block.type === "code") {
+          // A copy control on every code block: commands and snippets are the
+          // part of a reply people most often take elsewhere.
           return (
-            <pre key={index} className="max-h-80 overflow-auto rounded-md border bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
-              <code>{block.code}</code>
-            </pre>
+            <div key={index} className="group/code relative">
+              <pre className="max-h-80 overflow-auto rounded-md border bg-background p-3 pr-9 font-mono text-xs leading-5 text-muted-foreground">
+                <code>{block.code}</code>
+              </pre>
+              <CopyButton text={block.code} label="Copy code" className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100" />
+            </div>
           );
         }
         if (block.type === "table") {
@@ -13881,6 +13918,16 @@ function Conversation({
       if (wantsPlainEnter) {
         event.preventDefault();
         void submit(event);
+        return;
+      }
+      // Up in an empty composer brings back the last thing you sent, as in a
+      // terminal: asking again with one word changed no longer means retyping.
+      if (event.key === "ArrowUp" && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey && !livePrompt()) {
+        const last = [...visibleMessages].reverse().find((item) => item.role === "user" && String(item.body || "").trim());
+        if (last) {
+          event.preventDefault();
+          editPrompt(last.body);
+        }
       }
       return;
     }
@@ -14190,6 +14237,35 @@ function Conversation({
     if (!previousUser?.body) return;
     sendPromptNow({ prompt: previousUser.body, workspace, policy, model, effort, access, retry: true, retryOf: message.id, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
   };
+
+  // Put text in the composer with the caret at the end, ready to change.
+  function editPrompt(text) {
+    const value = String(text || "");
+    updatePrompt(value);
+    window.requestAnimationFrame(() => {
+      promptRef.current?.focus();
+      promptRef.current?.setSelectionRange?.(value.length, value.length);
+    });
+  }
+
+  // "Edit and resend" on a failed reply: the question goes back into the
+  // composer instead of being sent again unchanged, for when the wording or
+  // the folder was the problem.
+  const editResendRef = useRef(null);
+  const editResend = useCallback((message) => editResendRef.current?.(message), []);
+  editResendRef.current = function editResendNow(message) {
+    const index = visibleMessages.findIndex((item) => item.id === message.id);
+    const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
+    if (previousUser?.body) editPrompt(previousUser.body);
+  };
+
+  // Opening a member's chat puts the cursor in their composer.
+  useEffect(() => {
+    if (compact) return undefined;
+    const frame = window.requestAnimationFrame(() => promptRef.current?.focus({ preventScroll: true }));
+    return () => window.cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.id]);
 
   function postLocalNote(body, status = "note") {
     onLocalMessage?.(agent.id, {
@@ -14740,6 +14816,7 @@ function Conversation({
                           copy={copy}
                           chatSettings={chatSettings}
                           onRetry={retryMessage}
+                          onEditResend={editResend}
                           onFolderAccess={decideFolderAccess}
                           onScheduleOffer={decideScheduleOffer}
                           memberBusy={Boolean(chatSending)}
@@ -14748,6 +14825,7 @@ function Conversation({
                     );
                   })}
                   <div ref={messagesEndRef} aria-hidden="true" />
+                  <JumpToLatest anchorRef={messagesEndRef} watch={localizedMessages.length} />
                 </div>
               </>
             ) : (
@@ -15309,21 +15387,21 @@ function LaunchPermissionWarnings({ warnings = [] }) {
 }
 
 
-const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onFolderAccess, onScheduleOffer, memberBusy = false }) {
+const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onEditResend, onFolderAccess, onScheduleOffer, memberBusy = false }) {
   const isUser = message.role === "user";
-  if (!isUser) return <AgentResponseMessage compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} memberBusy={memberBusy} />;
+  if (!isUser) return <AgentResponseMessage compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onEditResend={onEditResend} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} memberBusy={memberBusy} />;
 
   return (
     <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
       <div className={cn("max-w-[min(40rem,88%)] bg-muted text-foreground", compact ? "rounded-md px-2.5 py-1.5 text-sm leading-5" : "rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] leading-6")}>
         <MarkdownBlocks text={message.body} />
       </div>
-      <time className="pr-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">{message.time}</time>
+      <time className="pr-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" title={messageFullTime(message)} dateTime={messageIsoTime(message)}>{message.time}</time>
     </article>
   );
 });
 
-function AgentResponseMessage({ agent, message, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onFolderAccess, onScheduleOffer, memberBusy = false }) {
+function AgentResponseMessage({ agent, message, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onEditResend, onFolderAccess, onScheduleOffer, memberBusy = false }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
   // Trace normalisation and body parsing are the expensive part of a row.
   const view = useMemo(() => buildAgentResponseView(message), [message]);
@@ -15350,7 +15428,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
       <div className="min-w-0">
         <div className="mb-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
           <span className="text-sm font-semibold text-foreground">{message.authorName || agent.name}</span>
-          {!compact ? <time>{message.time}</time> : null}
+          {!compact ? <time title={messageFullTime(message)} dateTime={messageIsoTime(message)}>{message.time}</time> : null}
           {isLoading && !compact ? (
             <span className="inline-flex items-center gap-1 text-primary">
               <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
@@ -15364,6 +15442,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
           {!compact && message.effectiveModel ? <span className="hidden truncate sm:inline">· {replyModelLabel(message.effectiveModel, providerSummaryLabel)}</span> : null}
           {message.status === "stopped" ? <span>· Stopped</span> : null}
           {hasVisibleAnswer && !isError ? <ReadAloudButton text={view.answer} message={message} api={api} auto={Boolean(agent.readAloud)} compact={compact} copy={copy} /> : null}
+          {hasVisibleAnswer && !isError && !isLoading ? <CopyButton text={view.answer} label="Copy reply" className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" /> : null}
         </div>
 
         {showProgressPlaceholder && !taskProgressFromMessage(message)?.items?.length ? (
@@ -15392,6 +15471,11 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
                 <Button type="button" size="sm" variant="outline" onClick={() => onRetry(message)}>
                   <RefreshCw data-icon="inline-start" />
                   Retry
+                </Button>
+              ) : null}
+              {onEditResend && !message.handoffId ? (
+                <Button type="button" size="sm" variant="ghost" onClick={() => onEditResend(message)}>
+                  Edit and resend
                 </Button>
               ) : null}
               {needsSignIn ? (
