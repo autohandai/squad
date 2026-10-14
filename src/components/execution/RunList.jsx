@@ -89,10 +89,12 @@ function RunRow({ run, agent, linked, copy, locale, now, AgentAvatar, api, onHan
   async function stop() {
     if (!api || stopping) return;
     setStopping(true);
+    setRetry((current) => ({ ...current, note: "" }));
     try {
       await api(`/api/runs/${encodeURIComponent(run.id)}/stop`, { method: "POST" });
-    } catch {
-      // The list refreshes from the bridge; a failed stop leaves the row live.
+    } catch (error) {
+      // A failed stop used to leave the row live with no word of why.
+      setRetry((current) => ({ ...current, note: `${copy.stopFailed || "Could not stop this run"}: ${error?.message || "the bridge did not answer"}` }));
     } finally {
       setStopping(false);
     }
@@ -181,9 +183,15 @@ export function RunActivity({ run, copy = {}, api, initialOpen = false }) {
   const useHistory = finished && history?.runId === run.id;
   const items = useHistory ? history.items : localItems;
   const raw = useHistory ? history.raw : logs;
-  const summary = logs.length
-    ? String(copy.runOutputLines || "Output · {count} lines").replace("{count}", String(logs.length))
-    : copy.runWaitingForOutput || "Waiting for output…";
+  // "Output · 1 lines", and "Waiting for output…" under a run that had
+  // already finished with none, both read wrong.
+  const summary = logs.length === 1
+    ? copy.runOutputLine || "Output · 1 line"
+    : logs.length
+      ? String(copy.runOutputLines || "Output · {count} lines").replace("{count}", String(logs.length))
+      : finished
+        ? copy.runNoOutput || "No output"
+        : copy.runWaitingForOutput || "Waiting for output…";
 
   return (
     <details className="mt-0.5 text-xs" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
