@@ -34,3 +34,5 @@ the lane preview (lane build served locally, reads forwarded to the installed
 | 23 | Sidebar | Folding a section away without missing anything | A collapsed section says "N unread" beside its name. |
 | 24 | Sidebar | Catching up on a channel section at once | "Mark read" on a section's header while any of its channels is unread. |
 | 25 | Sidebar | Keeping the sidebar the way you arranged it | Folded channel sections and Direct messages stay folded after a reload. |
+| 26 | Needs you | Clearing stopped work you dealt with elsewhere | "Hide" on a stopped row; it stays hidden until that row changes (fails again, is retried), with "N stopped items are hidden. Show". The summary's count follows. |
+| 27 | Needs you | Going from the count to the items | Each part of the summary ("1 decision · 1 unread · 6 stopped") goes to its section; "working" opens In progress. |

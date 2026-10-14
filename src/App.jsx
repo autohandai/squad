@@ -329,6 +329,7 @@ import { copyText } from "@/lib/copy-text";
 import { CopyButton } from "@/components/chat/CopyButton";
 import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { KeyboardShortcuts } from "@/components/shell/KeyboardShortcuts";
+import { isHiddenStopped, useHiddenStopped } from "@/lib/hidden-stopped";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
@@ -16365,7 +16366,8 @@ function MissionControlPage({
   // what the page lists (ADR-0121): decisions, unread, stopped, working.
   const decisionCount = decisionRows(attention).length;
   const unreadCount = (attention.replies?.length || 0) + (attention.unreadChannels?.length || 0);
-  const stoppedCount = stoppedWorkRows(allRows, attention.handoffs, copy).length;
+  const [hiddenStopped] = useHiddenStopped();
+  const stoppedCount = stoppedWorkRows(allRows, attention.handoffs, copy).filter((row) => !isHiddenStopped(row, hiddenStopped)).length;
   const summary = needsYouSummary({ decisions: decisionCount, unread: unreadCount, stopped: stoppedCount, working: runningRows.length }, copy, (value) => formatLocalizedNumber(value, locale));
   const checksLabel = (row) => {
     const state = rowEvaluationStates.get(row.id);
@@ -16382,7 +16384,31 @@ function MissionControlPage({
               <Inbox className="size-4 text-muted-foreground" aria-hidden="true" />
               {copy.needsYou || "Needs you"}
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
+            {/* Each part of the summary goes to what it counts: the section
+                below, or In progress for "working". */}
+            <p className="mt-1 text-sm text-muted-foreground">
+              {summary.split(" \u00b7 ").map((part, index) => {
+                const target = /decision/.test(part) ? "needs-you-decisions" : /unread/.test(part) ? "needs-you-unread" : /stopped/.test(part) ? "needs-you-stopped" : /working/.test(part) ? "in-progress" : "";
+                return (
+                  <Fragment key={part}>
+                    {index ? " \u00b7 " : ""}
+                    {target ? (
+                      <button
+                        type="button"
+                        className="underline-offset-4 hover:text-foreground hover:underline"
+                        onClick={() => {
+                          if (target === "in-progress") return setView("in-progress");
+                          if (view !== "needs-you") setView("needs-you");
+                          window.requestAnimationFrame(() => document.querySelector(`[data-testid="${target}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
+                        }}
+                      >
+                        {part}
+                      </button>
+                    ) : part}
+                  </Fragment>
+                );
+              })}
+            </p>
           </div>
           <div className="flex items-center gap-2">
           {view === "needs-you" && ((attention.replies?.length || 0) + (attention.unreadChannels?.length || 0)) > 0 ? (
