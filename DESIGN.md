@@ -258,3 +258,5 @@
 - Global element rules in `src/styles.css` live in `@layer base`. Unlayered CSS beats every Tailwind v4 utility and silently disables them.
 - A › chevron in a menu means a submenu. Menu items that navigate carry no chevron.
 - An empty state that blocks the page (a channel with no members) carries the one action that fixes it.
+- A remove that cannot be undone (a saved login, a connector, a previous chat, a channel) asks on the first click and acts on the second; leaving the button cancels.
+- Errors from the operating system are rewritten as a sentence with what to do; raw codes such as ENOSPC stay in the bridge log.

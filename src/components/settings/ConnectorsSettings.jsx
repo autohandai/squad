@@ -194,6 +194,7 @@ export function ConnectorsSettings({ connectors = [], onCreate, onUpdate, onDele
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState({});
   const [errors, setErrors] = useState({});
+  const [armedId, setArmedId] = useState("");
 
   async function run(id, action, operation) {
     setBusy((current) => ({ ...current, [id]: action }));
@@ -227,8 +228,21 @@ export function ConnectorsSettings({ connectors = [], onCreate, onUpdate, onDele
             <Button size="sm" variant="ghost" disabled={Boolean(busy[connector.id])} onClick={() => { setAdding(false); setEditingId(editingId === connector.id ? "" : connector.id); }}>
               {copy.edit || "Edit"}
             </Button>
-            <Button size="sm" variant="ghost" disabled={Boolean(busy[connector.id])} onClick={() => run(connector.id, "delete", () => onDelete(connector.id))}>
-              {copy.remove || "Remove"}
+            {/* Removing a connector drops its command, arguments and secrets
+                with it; the first click asks, as Vault and Delete channel do. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              className={cn(armedId === connector.id && "text-destructive hover:text-destructive")}
+              disabled={Boolean(busy[connector.id])}
+              onBlur={() => setArmedId((current) => (current === connector.id ? "" : current))}
+              onClick={() => {
+                if (armedId !== connector.id) { setArmedId(connector.id); return; }
+                setArmedId("");
+                void run(connector.id, "delete", () => onDelete(connector.id));
+              }}
+            >
+              {armedId === connector.id ? copy.confirmRemove || "Remove for good?" : copy.remove || "Remove"}
             </Button>
             <Switch checked={connector.enabled} disabled={Boolean(busy[connector.id])} onCheckedChange={(checked) => run(connector.id, "toggle", () => onToggle(connector.id, checked))} aria-label={connector.name} />
           </Row>

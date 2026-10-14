@@ -106,3 +106,5 @@ are in the order found.
 | 96 | Execution panel | A run that had finished without output still said "Waiting for output…". | The empty label ignored whether the run was live. | Finished runs with nothing read "No output". |
 | 97 | Execution panel | A run still going after three hours showed "180m" at the end of its row. | Live runs always used whole minutes. | "3h 0m" from an hour on. |
 | 98 | Settings, vault | One click on Remove deleted a saved login, card or set of personal details for good. | A direct delete. | The first click turns the button into "Remove for good?"; a second removes; moving away cancels. |
+| 99 | Settings, connectors | One click on Remove deleted a custom connector with its command, arguments and secrets. | A direct delete. | The first click turns the button into "Remove for good?"; a second removes. |
+| 100 | Channels, workflows | When a workflow could not be deleted, the editor closed and the workflow stayed, with nothing on screen to say why. | The failure went to the browser console only. | The channel shows "Workflow could not be deleted: <reason>. Try again." |

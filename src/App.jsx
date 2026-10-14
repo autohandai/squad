@@ -8153,9 +8153,12 @@ function App() {
     try {
       await api(workflowPath(channelId, workflowId), { method: "DELETE" });
     } catch (error) {
-      console.warn(`Workflow could not be deleted: ${error?.message || error}`);
+      // The editor closes either way; a console line was the only trace that
+      // the workflow was still there.
+      setChannelOperationError(`Workflow could not be deleted: ${error?.message || error}. Try again.`);
       return;
     }
+    setChannelOperationError("");
     setWorkflowsByChannel((current) => ({ ...current, [channelId]: (current[channelId] || []).filter((item) => item.id !== workflowId) }));
   }
 

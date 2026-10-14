@@ -78,6 +78,11 @@ the same way.
    `asq_mv7dv2lb137u2mby`: the same millisecond prefix, which is the
    evidence for the diagnosis, with distinct suffixes.
 
+8. **Irreversible removes ask first, inline.** Previous chats, vault items
+   and connectors deleted on one click. They now use the two-step button
+   Delete channel already had, rather than a dialog, so the list stays where
+   it is.
+
 ## Consequences
 
 - Installs that already saved the pie-shop channel, the seed tasks or the
@@ -103,6 +108,12 @@ the same way.
 - Other ids built from the time alone (channel threads, local notes) were
   left as they are: each is made once per action and includes another id, so
   a collision needs two actions in one millisecond.
+- From bug 84 on, the disk on the test machine sat at 0–200 MB, filled by
+  other work (an Xcode device-support copy and a Lima VM disk). Several
+  fixes from 83 to 100 were found by reading code and checked with the
+  existing check scripts and text probes of the running page rather than
+  screenshots. Bug 88 (unique names) was not exercised end to end: the
+  member save it depends on failed for lack of disk.
 - The checks that listed seed task ids (`check-inbox-browser`,
   `verify-work-profile-browser`, `verify-goals-browser`) still map over the
   seed arrays, which are now empty. `verify-channel-browser` no longer
