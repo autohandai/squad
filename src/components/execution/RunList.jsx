@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Workflow } from "lucide-react";
 
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
+import { CopyButton } from "@/components/chat/CopyButton";
 import { Button } from "@/components/ui/button";
 import { normalizeActivity } from "@/lib/activity";
 import { groupRunsByDay, isLiveRun, runMetaParts, runStatusWord, runTimeLabel, trimTitle } from "@/lib/execution-panel";
@@ -195,7 +196,11 @@ export function RunActivity({ run, copy = {}, api, initialOpen = false }) {
 
   return (
     <details className="mt-0.5 text-xs" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="inline-block cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">{summary}</summary>
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+        {summary}
+        {/* The output, as text, for a bug report or a terminal. */}
+        {raw.length ? <CopyButton text={() => raw.map((entry) => (typeof entry === "string" ? entry : entry?.line ?? "")).join("\n")} label="Copy output" className="size-5" /> : null}
+      </summary>
       {run.command ? <code className="mt-2 block truncate font-mono text-[11px] text-muted-foreground">{run.command}</code> : null}
       <ActivityFeed items={items} raw={raw} showRaw={showRaw} onToggleRaw={() => setShowRaw((value) => !value)} copy={copy} className="mt-2" />
     </details>

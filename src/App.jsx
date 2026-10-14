@@ -37,6 +37,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  Keyboard,
   Activity,
   AlertTriangle,
   ArrowRight,
@@ -326,6 +327,10 @@ import { MemberWorkspacePicker } from "@/components/chat/MemberWorkspacePicker";
 import { activityCalendar } from "@/lib/activity-calendar";
 import { channelSlug } from "@/lib/channel-name";
 import { copyText } from "@/lib/copy-text";
+import { CopyButton } from "@/components/chat/CopyButton";
+import { JumpToLatest } from "@/components/chat/JumpToLatest";
+import { KeyboardShortcuts, openKeyboardShortcuts } from "@/components/shell/KeyboardShortcuts";
+import { isHiddenStopped, useHiddenStopped } from "@/lib/hidden-stopped";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
@@ -5163,6 +5168,20 @@ function App() {
     refreshHarnesses(false);
   }, []);
 
+  // A channel address by name ("/channels/general", "/channels/%23general")
+  // opens that channel. Only ids worked, so a typed or shared address showed
+  // "Select a channel".
+  useEffect(() => {
+    const id = channelIdFromRoute(route);
+    if (!id || channels.some((channel) => channel.id === id)) return;
+    const wanted = id.replace(/^#/, "").toLowerCase();
+    const match = channels.find((channel) => String(channel.name || "").toLowerCase() === wanted);
+    if (!match) return;
+    const next = channelsPath(match.id) + (route.includes("?") ? `?${route.split("?")[1]}` : "");
+    window.history.replaceState(window.history.state, "", next);
+    setRoute(next);
+  }, [route, channels]);
+
   // Unread bookkeeping: the channel you are looking at is always read; the
   // NEW divider uses the read marker captured when the channel was opened.
   useEffect(() => {
@@ -6625,6 +6644,36 @@ function App() {
     [inboxReplies, inboxUnreadChannels, inboxHandoffs, inboxApprovals, inboxMemory, inboxVault, inboxFolders, inboxChannelProposals, inboxRoutines]
   );
   const inboxCount = workAttentionCount(inboxAttention) + (sidebarCounts.permissionWarnings || 0);
+  const markChannelsRead = useCallback((ids) => {
+    const now = new Date().toISOString();
+    setChannelReads((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, now])) }));
+  }, []);
+  const draftAgentIds = useMemo(() => new Set(Object.entries(chatDraftsByAgent || {}).filter(([, value]) => typeof value === "string" && value.trim()).map(([id]) => id)), [chatDraftsByAgent]);
+  // navigate() is redefined each render; a ref keeps the shortcut listener stable.
+  const navigateRef = useRef(null);
+  navigateRef.current = navigate;
+  const openMemberChatFromShortcut = useCallback((id) => navigateRef.current?.(memberChatPath(id)), []);
+  const shortcutMembers = useMemo(() => orderMembers(agents.filter((agent) => agent?.id && agent?.name)), [agents]);
+
+  // The window and tab say where you are and whether anything waits:
+  // "(2) Noah · Autohand Squad". Every view used to read "Autohand Squad",
+  // so a background tab or the Window menu could not tell them apart.
+  useEffect(() => {
+    const path = route.split("?")[0];
+    let page = "";
+    if (path.startsWith(CHANNELS_ROUTE)) {
+      const channel = channels.find((item) => item.id === channelIdFromRoute(route));
+      page = channel ? `#${channel.name}` : "Channels";
+    } else if (path === SQUAD_DIRECTORY_ROUTE) page = "Squad";
+    else if (isWorkRoute(path)) page = "Needs you";
+    else if (path.startsWith("/settings")) page = "Settings";
+    else if (path.startsWith("/conversations") || path.startsWith(MEMBER_ROUTE_PREFIX)) {
+      const id = new URLSearchParams(route.split("?")[1] || "").get("member") || (path.match(/^\/squad-members\/([^/]+)/)?.[1] ?? "");
+      const member = agents.find((item) => item.id === decodeURIComponent(id));
+      page = member?.name || "";
+    }
+    document.title = `${inboxCount ? `(${inboxCount}) ` : ""}${page ? `${page} · ` : ""}Autohand Squad`;
+  }, [route, channels, agents, inboxCount]);
   const attentionBadge = useMemo(() => getAttentionBadgeClient(), []);
   useEffect(() => {
     if (!attentionBadge || !bridgeAnswered || runtime?.bridgeUnavailable) return;
@@ -9697,6 +9746,8 @@ function App() {
             onCreateChannel={createChannel}
             createChannelRequest={createChannelRequest}
             unreadChannelIds={unreadChannelIds}
+            onMarkChannelsRead={markChannelsRead}
+            draftAgentIds={draftAgentIds}
             unreadCountByAgent={unreadCountByAgent}
             inboxCount={inboxCount}
             onSearch={() => setSearchOpen(true)}
@@ -10085,6 +10136,7 @@ function App() {
           }}
         />
 
+        <KeyboardShortcuts members={shortcutMembers} onMember={openMemberChatFromShortcut} />
         <SearchCommand
           open={searchOpen}
           onOpenChange={setSearchOpen}
@@ -10137,6 +10189,8 @@ function App() {
               onAnalytics={openAnalytics}
               onCreateChannel={createChannel}
               unreadChannelIds={unreadChannelIds}
+              onMarkChannelsRead={markChannelsRead}
+              draftAgentIds={draftAgentIds}
               unreadCountByAgent={unreadCountByAgent}
               inboxCount={inboxCount}
               onSearch={() => {
@@ -11096,8 +11150,24 @@ function ChannelsPage({
                 authorName={(message) => (message.role === "system" && message.workflowRunId ? message.workflowName || copy.workflow || "Workflow" : channelMessageAuthorName(message, agents, accountProfile.name))}
                 onReact={onReact}
                 onReply={(message) => setReplyTo(message)}
-                renderActions={(message) => ((message.role === "agent" || message.agentId) && String(message.body || "").trim() ? <ReadAloudButton compact text={message.body} message={message} api={api} copy={copy} /> : null)}
-                emptyLabel={members.length ? copy.channelNoThreads : (
+                renderActions={(message) => {
+                  const body = String(message.body || "").trim();
+                  if (!body || message.status === "loading") return null;
+                  const agentMessage = message.role === "agent" || message.agentId;
+                  return (
+                    <>
+                      {agentMessage ? <ReadAloudButton compact text={message.body} message={message} api={api} copy={copy} /> : null}
+                      <CopyButton text={withoutRecoveryNotices(message.body || "")} label="Copy message" />
+                    </>
+                  );
+                }}
+                emptyLabel={members.length ? (
+                  // Say who is here and how a message reaches them.
+                  <>
+                    {copy.channelNoThreads}{" "}
+                    {`${members.slice(0, 3).map((member) => member.name).join(", ")}${members.length > 3 ? ` and ${members.length - 3} more` : ""} ${members.length === 1 ? "is" : "are"} in this channel. A message goes to everyone; start it with @${members[0].name} to ask one of them.`}
+                  </>
+                ) : (
                   // An empty channel can do nothing; say how to fix that here.
                   <>
                     {copy.channelNoMembers}{" "}
@@ -11170,6 +11240,7 @@ function ChannelsPage({
               ) : null}
               <MessageComposer
                 placeholder={formatCopy(copy.messageChannel || "Message #{name}", { name: channel.name })}
+                lastSent={[...(messagesByChannel[channel.id] || [])].reverse().find((message) => message.role === "user" && String(message.body || "").trim())?.body || ""}
                 mentionItems={mentionItems}
                 value={draft}
                 onValueChange={setDraft}
@@ -11543,10 +11614,30 @@ function contextWindowLabel(tokens) {
 function chatDayLabel(message, locale = DEFAULT_LOCALE) {
   const ms = Date.parse(message?.startedAt || message?.createdAt || message?.completedAt || "");
   if (!Number.isFinite(ms)) return "";
+  // The two days people mean most are said as words.
+  const day = new Date(ms).toDateString();
+  if (day === new Date().toDateString()) return "Today";
+  if (day === new Date(Date.now() - 86_400_000).toDateString()) return "Yesterday";
   try {
     return new Date(ms).toLocaleDateString(locale, { weekday: "long", month: "long", day: "numeric" });
   } catch {
     return new Date(ms).toDateString();
+  }
+}
+
+// A message's own moment, for the tooltip on its clock time: the list only
+// shows "04:25 PM", which says nothing about the day once it is not today.
+function messageIsoTime(message) {
+  const ms = Date.parse(message?.startedAt || message?.createdAt || message?.completedAt || "");
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+}
+function messageFullTime(message) {
+  const iso = messageIsoTime(message);
+  if (!iso) return undefined;
+  try {
+    return new Date(iso).toLocaleString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" });
+  } catch {
+    return iso;
   }
 }
 
@@ -11811,10 +11902,17 @@ function MarkdownBlocks({ text, muted = false }) {
           );
         }
         if (block.type === "code") {
+          // A copy control on every code block: commands and snippets are the
+          // part of a reply people most often take elsewhere.
           return (
-            <pre key={index} className="max-h-80 overflow-auto rounded-md border bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
-              <code>{block.code}</code>
-            </pre>
+            <div key={index} className="group/code relative">
+              <pre className="max-h-80 overflow-auto rounded-md border bg-background p-3 pr-9 font-mono text-xs leading-5 text-muted-foreground">
+                <code>{block.code}</code>
+              </pre>
+              {/* The fence's language, so a reader knows a shell command from a config file. */}
+              {block.language ? <span className="pointer-events-none absolute right-9 top-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground/70 transition-opacity group-hover/code:opacity-0">{block.language}</span> : null}
+              <CopyButton text={block.code} label="Copy code" className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100" />
+            </div>
           );
         }
         if (block.type === "table") {
@@ -12730,6 +12828,8 @@ function SidebarContent({
   onCreateTeam,
   onChatNewMember,
   onTemplates,
+  onMarkChannelsRead,
+  draftAgentIds = new Set(),
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const { entryFor: entryForPresence } = usePresence();
@@ -12795,6 +12895,7 @@ function SidebarContent({
       agents={orderMembers(visibleAgents)}
       channels={channels}
       active={sidebarActiveTarget(route, activeAgent)}
+      draftAgentIds={draftAgentIds}
       unreadChannelIds={unreadChannelIds}
       unreadCountByAgent={unreadCountByAgent}
       inboxCount={inboxCount}
@@ -12813,6 +12914,7 @@ function SidebarContent({
         channel: (channelId) => navigate(channelsPath(channelId)),
         member: (targetId) => navigate(memberChatPath(targetId)),
         createChannel: () => setCreateChannelOpen(true),
+        markChannelsRead: onMarkChannelsRead,
         createMember: () => navigate(`${MEMBER_ROUTE_PREFIX}/new`),
         createTeam: onCreateTeam,
         chatNewMember: onChatNewMember,
@@ -12997,6 +13099,7 @@ function AccountMenuButton({
           <AccountMenuItem icon={Inbox} label={copy.needsYou || "Needs you"} onClick={() => choose(onMissionControl)} />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} />
           <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} />
+          <AccountMenuItem icon={Keyboard} label="Keyboard shortcuts" onClick={() => choose(openKeyboardShortcuts)} />
           {openAppInfo ? <AccountMenuItem icon={BookOpen} label={copy.aboutSquad || "About Autohand Squad"} onClick={() => choose(() => openAppInfo("about"))} /> : null}
           {openFeedback ? (
             <>
@@ -13732,6 +13835,16 @@ function Conversation({
   );
   const hasConversationMessages = visibleMessages.length > 0;
   const latestVisibleMessage = visibleMessages[visibleMessages.length - 1];
+  // When this member last answered, for the header while they are not working.
+  const lastReplyAt = useMemo(() => {
+    for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
+      const item = visibleMessages[index];
+      if (item.role === "user" || item.local || item.status === "loading") continue;
+      const at = item.completedAt || item.startedAt || item.createdAt;
+      if (at && Number.isFinite(Date.parse(at))) return at;
+    }
+    return "";
+  }, [visibleMessages]);
   const computerEvidenceSessions = useComputerUseEvidence(agent.id, chatSending, api);
   const computerEvidenceByMessage = useMemo(() => new Map(visibleMessages.map((message) => [message.id, evidenceForMessage(message, computerEvidenceSessions)])), [visibleMessages, computerEvidenceSessions]);
   // Stable message objects so memoized rows skip re-rendering while typing.
@@ -13881,6 +13994,16 @@ function Conversation({
       if (wantsPlainEnter) {
         event.preventDefault();
         void submit(event);
+        return;
+      }
+      // Up in an empty composer brings back the last thing you sent, as in a
+      // terminal: asking again with one word changed no longer means retyping.
+      if (event.key === "ArrowUp" && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey && !livePrompt()) {
+        const last = [...visibleMessages].reverse().find((item) => item.role === "user" && String(item.body || "").trim());
+        if (last) {
+          event.preventDefault();
+          editPrompt(last.body);
+        }
       }
       return;
     }
@@ -14190,6 +14313,35 @@ function Conversation({
     if (!previousUser?.body) return;
     sendPromptNow({ prompt: previousUser.body, workspace, policy, model, effort, access, retry: true, retryOf: message.id, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
   };
+
+  // Put text in the composer with the caret at the end, ready to change.
+  function editPrompt(text) {
+    const value = String(text || "");
+    updatePrompt(value);
+    window.requestAnimationFrame(() => {
+      promptRef.current?.focus();
+      promptRef.current?.setSelectionRange?.(value.length, value.length);
+    });
+  }
+
+  // "Edit and resend" on a failed reply: the question goes back into the
+  // composer instead of being sent again unchanged, for when the wording or
+  // the folder was the problem.
+  const editResendRef = useRef(null);
+  const editResend = useCallback((message) => editResendRef.current?.(message), []);
+  editResendRef.current = function editResendNow(message) {
+    const index = visibleMessages.findIndex((item) => item.id === message.id);
+    const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
+    if (previousUser?.body) editPrompt(previousUser.body);
+  };
+
+  // Opening a member's chat puts the cursor in their composer.
+  useEffect(() => {
+    if (compact) return undefined;
+    const frame = window.requestAnimationFrame(() => promptRef.current?.focus({ preventScroll: true }));
+    return () => window.cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.id]);
 
   function postLocalNote(body, status = "note") {
     onLocalMessage?.(agent.id, {
@@ -14542,7 +14694,12 @@ function Conversation({
           </Popover>
             <div className="-mt-4 ml-12 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               {runtime?.available ? (
-                <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="shrink-0 whitespace-nowrap" />
+                <>
+                  <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="shrink-0 whitespace-nowrap" />
+                  {!chatSending && lastReplyAt && !compact ? (
+                    <span className="hidden shrink-0 whitespace-nowrap sm:inline" title={new Date(lastReplyAt).toLocaleString()}>{`· replied ${formatRelativeTime(lastReplyAt, locale)}`}</span>
+                  ) : null}
+                </>
               ) : (
                 <>
                   <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
@@ -14740,6 +14897,7 @@ function Conversation({
                           copy={copy}
                           chatSettings={chatSettings}
                           onRetry={retryMessage}
+                          onEditResend={editResend}
                           onFolderAccess={decideFolderAccess}
                           onScheduleOffer={decideScheduleOffer}
                           memberBusy={Boolean(chatSending)}
@@ -14748,6 +14906,7 @@ function Conversation({
                     );
                   })}
                   <div ref={messagesEndRef} aria-hidden="true" />
+                  <JumpToLatest anchorRef={messagesEndRef} watch={localizedMessages.length} />
                 </div>
               </>
             ) : (
@@ -14798,8 +14957,13 @@ function Conversation({
                   onDraft={updatePrompt}
                   onKeyDown={handlePromptKeyDown}
                   placeholder={formatCopy(copy.talkToPlaceholder, { name: agent.name })}
-                  className="max-h-64 min-h-[3.25rem] resize-none border-0 bg-transparent px-3.5 py-3 text-base leading-6 shadow-none focus-visible:ring-0 md:text-[15px]"
+                  className="peer max-h-64 min-h-[3.25rem] resize-none border-0 bg-transparent px-3.5 py-3 text-base leading-6 shadow-none focus-visible:ring-0 md:text-[15px]"
                 />
+                {/* Only while the composer is focused and empty: the keys that
+                    are not on any button. */}
+                <p className="pointer-events-none hidden px-3.5 pb-1 text-[11px] text-muted-foreground peer-placeholder-shown:peer-focus:block" aria-hidden="true">
+                  Enter sends · Shift Enter for a new line · ↑ brings back your last message · / for commands
+                </p>
               </div>
               <div className="flex min-w-0 items-center gap-1.5 px-1 pb-1 sm:gap-2">
               <MemberWorkspacePicker
@@ -15309,21 +15473,21 @@ function LaunchPermissionWarnings({ warnings = [] }) {
 }
 
 
-const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onFolderAccess, onScheduleOffer, memberBusy = false }) {
+const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onEditResend, onFolderAccess, onScheduleOffer, memberBusy = false }) {
   const isUser = message.role === "user";
-  if (!isUser) return <AgentResponseMessage compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} memberBusy={memberBusy} />;
+  if (!isUser) return <AgentResponseMessage compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onEditResend={onEditResend} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} memberBusy={memberBusy} />;
 
   return (
     <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
       <div className={cn("max-w-[min(40rem,88%)] bg-muted text-foreground", compact ? "rounded-md px-2.5 py-1.5 text-sm leading-5" : "rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] leading-6")}>
         <MarkdownBlocks text={message.body} />
       </div>
-      <time className="pr-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">{message.time}</time>
+      <time className="pr-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" title={messageFullTime(message)} dateTime={messageIsoTime(message)}>{message.time}</time>
     </article>
   );
 });
 
-function AgentResponseMessage({ agent, message, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onFolderAccess, onScheduleOffer, memberBusy = false }) {
+function AgentResponseMessage({ agent, message, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onEditResend, onFolderAccess, onScheduleOffer, memberBusy = false }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
   // Trace normalisation and body parsing are the expensive part of a row.
   const view = useMemo(() => buildAgentResponseView(message), [message]);
@@ -15350,7 +15514,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
       <div className="min-w-0">
         <div className="mb-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
           <span className="text-sm font-semibold text-foreground">{message.authorName || agent.name}</span>
-          {!compact ? <time>{message.time}</time> : null}
+          {!compact ? <time title={messageFullTime(message)} dateTime={messageIsoTime(message)}>{message.time}</time> : null}
           {isLoading && !compact ? (
             <span className="inline-flex items-center gap-1 text-primary">
               <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
@@ -15364,6 +15528,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
           {!compact && message.effectiveModel ? <span className="hidden truncate sm:inline">· {replyModelLabel(message.effectiveModel, providerSummaryLabel)}</span> : null}
           {message.status === "stopped" ? <span>· Stopped</span> : null}
           {hasVisibleAnswer && !isError ? <ReadAloudButton text={view.answer} message={message} api={api} auto={Boolean(agent.readAloud)} compact={compact} copy={copy} /> : null}
+          {hasVisibleAnswer && !isError && !isLoading ? <CopyButton text={view.answer} label="Copy reply" className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" /> : null}
         </div>
 
         {showProgressPlaceholder && !taskProgressFromMessage(message)?.items?.length ? (
@@ -15392,6 +15557,11 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
                 <Button type="button" size="sm" variant="outline" onClick={() => onRetry(message)}>
                   <RefreshCw data-icon="inline-start" />
                   Retry
+                </Button>
+              ) : null}
+              {onEditResend && !message.handoffId ? (
+                <Button type="button" size="sm" variant="ghost" onClick={() => onEditResend(message)}>
+                  Edit and resend
                 </Button>
               ) : null}
               {needsSignIn ? (
@@ -16227,7 +16397,8 @@ function MissionControlPage({
   // what the page lists (ADR-0121): decisions, unread, stopped, working.
   const decisionCount = decisionRows(attention).length;
   const unreadCount = (attention.replies?.length || 0) + (attention.unreadChannels?.length || 0);
-  const stoppedCount = stoppedWorkRows(allRows, attention.handoffs, copy).length;
+  const [hiddenStopped] = useHiddenStopped();
+  const stoppedCount = stoppedWorkRows(allRows, attention.handoffs, copy).filter((row) => !isHiddenStopped(row, hiddenStopped)).length;
   const summary = needsYouSummary({ decisions: decisionCount, unread: unreadCount, stopped: stoppedCount, working: runningRows.length }, copy, (value) => formatLocalizedNumber(value, locale));
   const checksLabel = (row) => {
     const state = rowEvaluationStates.get(row.id);
@@ -16244,7 +16415,31 @@ function MissionControlPage({
               <Inbox className="size-4 text-muted-foreground" aria-hidden="true" />
               {copy.needsYou || "Needs you"}
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">{summary}</p>
+            {/* Each part of the summary goes to what it counts: the section
+                below, or In progress for "working". */}
+            <p className="mt-1 text-sm text-muted-foreground">
+              {summary.split(" \u00b7 ").map((part, index) => {
+                const target = /decision/.test(part) ? "needs-you-decisions" : /unread/.test(part) ? "needs-you-unread" : /stopped/.test(part) ? "needs-you-stopped" : /working/.test(part) ? "in-progress" : "";
+                return (
+                  <Fragment key={part}>
+                    {index ? " \u00b7 " : ""}
+                    {target ? (
+                      <button
+                        type="button"
+                        className="underline-offset-4 hover:text-foreground hover:underline"
+                        onClick={() => {
+                          if (target === "in-progress") return setView("in-progress");
+                          if (view !== "needs-you") setView("needs-you");
+                          window.requestAnimationFrame(() => document.querySelector(`[data-testid="${target}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
+                        }}
+                      >
+                        {part}
+                      </button>
+                    ) : part}
+                  </Fragment>
+                );
+              })}
+            </p>
           </div>
           <div className="flex items-center gap-2">
           {view === "needs-you" && ((attention.replies?.length || 0) + (attention.unreadChannels?.length || 0)) > 0 ? (
@@ -16442,6 +16637,26 @@ function SquadDirectoryPage({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [pendingDelete, setPendingDelete] = useState(null);
+  // Roster order: as arranged (pinned first), by most recent activity, or by
+  // name. Remembered, because the reason to change it outlives one visit.
+  const [sortBy, setSortBy] = useState(() => readStored("autohandSquad.v1.squadSort", "arranged"));
+  function chooseSort(next) {
+    setSortBy(next);
+    try { window.localStorage.setItem("autohandSquad.v1.squadSort", JSON.stringify(next)); } catch { /* storage may be off */ }
+  }
+  const searchRef = useRef(null);
+  // "/" anywhere on the page puts the cursor in member search; Esc clears it.
+  useEffect(() => {
+    function onKey(event) {
+      const tag = event.target?.tagName;
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey || tag === "INPUT" || tag === "TEXTAREA" || event.target?.isContentEditable) return;
+      if (!searchRef.current) return;
+      event.preventDefault();
+      searchRef.current.focus();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function handleSetState(agentId, stateId) {
     updateAgent?.(agentId, { status: stateId, updatedAt: new Date().toISOString() });
@@ -16490,12 +16705,16 @@ function SquadDirectoryPage({
       localizedRole(agent, copy),
       agent.staffId,
       workspaceName(getAgentWorkspace(agent, runtime, workspaces)),
+      // What the row says they are on, so "handoff" finds Iris.
+      state.currentRow?.title,
     ]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
     return haystack.includes(normalizedQuery);
   });
+  if (sortBy === "recent") filteredMembers.sort((a, b) => (Date.parse(b.state.lastActive || "") || 0) - (Date.parse(a.state.lastActive || "") || 0));
+  else if (sortBy === "name") filteredMembers.sort((a, b) => String(a.agent.name).localeCompare(String(b.agent.name), undefined, { sensitivity: "base" }));
 
   // Squad is the roster: who is on the team and every control that changes
   // it. Work is the log. The two pages listed the same people with nearly the
@@ -16555,10 +16774,17 @@ function SquadDirectoryPage({
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-border/60 py-2.5 text-xs">
           {members.length > 8 ? (
             <Input
+              ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={copy.searchMembers || "Search members"}
-              aria-label="Search squad members"
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                setQuery("");
+                event.currentTarget.blur();
+              }}
+              placeholder={copy.searchMembers ? `${copy.searchMembers}  /` : "Search members  /"}
+              aria-label="Search squad members (press / to focus)"
               className="h-8 w-full text-xs sm:w-[220px]"
             />
           ) : null}
@@ -16578,6 +16804,20 @@ function SquadDirectoryPage({
               {option.count === undefined ? null : <span className="ml-1.5 tabular-nums">{formatLocalizedNumber(option.count, locale)}</span>}
             </button>
           ))}
+          <span className="ml-auto flex items-center gap-3">
+            <span className="text-muted-foreground">Sort</span>
+            {[["arranged", "As arranged"], ["recent", "Recent"], ["name", "A–Z"]].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={sortBy === id}
+                onClick={() => chooseSort(id)}
+                className={cn("underline-offset-4 transition-colors hover:text-foreground", sortBy === id ? "font-medium text-foreground underline" : "text-muted-foreground")}
+              >
+                {label}
+              </button>
+            ))}
+          </span>
         </div>
 
         {filteredMembers.length || (showBuildRows && preparingCount) ? (
@@ -16623,17 +16863,19 @@ function SquadDirectoryPage({
             </ul>
           </section>
         ) : (
-          <div className="mt-10">
-            <EmptyBlock
-              icon={Users}
-              title={query || filter !== "all" ? "No members match" : "No squad members yet"}
-              body={
-                query || filter !== "all"
-                  ? "Try a different search or clear the status filter."
-                  : "Create your first squad member to start delegating local engineering work."
-              }
-            />
-          </div>
+          query || filter !== "all" ? (
+            // Say what found nothing, and undo it in one click.
+            <div className="flex flex-wrap items-center gap-3 py-6 text-sm text-muted-foreground">
+              <span>{query ? `No member matches “${query.trim()}”${filter !== "all" ? ` among ${filterOptions.find((option) => option.id === filter)?.label?.toLowerCase() || filter} members` : ""}.` : "No members have this status."}</span>
+              <Button type="button" variant="ghost" size="sm" onClick={() => { setQuery(""); setFilter("all"); }}>
+                {query ? "Clear search" : "Show everyone"}
+              </Button>
+            </div>
+          ) : (
+            <div className="mt-10">
+              <EmptyBlock icon={Users} title="No squad members yet" body="Create your first squad member to start delegating local engineering work." />
+            </div>
+          )
         )}
 
         <HiddenMembersGroup
@@ -21848,7 +22090,11 @@ function MemoryInboxPage({
   const hiddenRejectedCount = agentItems.filter((item) => item.status === "rejected" && item.isHidden).length;
   // Entries are {id, text, at, source} (ADR-0048); normalising here also
   // carries the legacy plain strings some saves still hold.
-  const activeMemory = normalizeMemoryEntries(agent.memory);
+  const [memoryQuery, setMemoryQuery] = useState("");
+  const memoryNeedle = memoryQuery.trim().toLowerCase();
+  const allActiveMemory = normalizeMemoryEntries(agent.memory);
+  // A member with dozens of entries needs a way to find one.
+  const activeMemory = memoryNeedle ? allActiveMemory.filter((entry) => String(entry.text || "").toLowerCase().includes(memoryNeedle)) : allActiveMemory;
 
   // What a member knows comes first, then what waits for you, then the
   // record. This was a "Memory Inbox" title with an icon tile, three "0"
@@ -21864,7 +22110,12 @@ function MemoryInboxPage({
         </p>
 
         <section className="grid gap-2" aria-labelledby="memory-active">
-          <h3 id="memory-active" className="text-sm font-semibold">{`What ${agent.name} knows`}</h3>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 id="memory-active" className="text-sm font-semibold">{`What ${agent.name} knows`}{allActiveMemory.length ? <span className="ml-2 font-normal text-muted-foreground">{allActiveMemory.length}</span> : null}</h3>
+            {allActiveMemory.length > 6 ? (
+              <Input value={memoryQuery} onChange={(event) => setMemoryQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setMemoryQuery(""); }} placeholder="Search memory" aria-label="Search memory" className="h-8 w-56 text-sm" />
+            ) : null}
+          </div>
           {activeMemory.length ? (
             <div className="divide-y divide-border/70 border-y border-border/70">
               {activeMemory.map((entry) => (
@@ -21875,7 +22126,7 @@ function MemoryInboxPage({
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">Nothing yet.</p>
+            <p className="text-sm text-muted-foreground">{memoryNeedle ? `Nothing ${agent.name} knows mentions \u201c${memoryQuery.trim()}\u201d.` : "Nothing yet."}</p>
           )}
         </section>
 
@@ -22641,6 +22892,23 @@ function PermissionLadderPanel({
       {workspaceOverrideCount ? (
         <p className="text-xs text-muted-foreground">{`${workspaceOverrideCount} folder${workspaceOverrideCount === 1 ? " has" : "s have"} its own settings for this member.`}</p>
       ) : null}
+      {(() => {
+        // After hand-tuning tools there was no way back: choosing the level
+        // you are already on does nothing. Say how far from the level's
+        // defaults the tools are, and put them back in one click.
+        const preset = permissionPresetForAutonomyLadder(activeLevel.id);
+        const changed = [
+          ...Object.entries(preset.modes || {}).filter(([id, mode]) => (permissions.modes?.[id] || mode) !== mode),
+          ...Object.entries(preset.builtInPolicies || {}).filter(([id, mode]) => (permissions.builtInPolicies?.[id] || mode) !== mode),
+        ].length;
+        if (!changed) return null;
+        return (
+          <p className="text-xs text-muted-foreground">
+            {`${changed} ${changed === 1 ? "tool differs" : "tools differ"} from the Level ${activeLevel.rank} defaults. `}
+            <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => onLadderChange(activeLevel.id)}>Reset to the level's defaults</button>
+          </p>
+        );
+      })()}
 
       <ToggleGroup
         type="single"

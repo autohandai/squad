@@ -3,6 +3,7 @@ import { ArrowRight, Bot, BrainCog, CalendarClock, FolderOpen, Hash, Inbox, KeyR
 import { GroupLabel, StatusDot } from "@/components/execution/bits";
 import { Button } from "@/components/ui/button";
 import { DECISION_KINDS, decisionRows, stoppedWorkRows, unreadRows } from "@/lib/work-attention";
+import { isHiddenStopped, useHiddenStopped } from "@/lib/hidden-stopped";
 import { cn } from "@/lib/utils";
 
 /**
@@ -70,7 +71,7 @@ function UnreadRow({ row, time, onOpen }) {
  * status dot, the member, the person's question, "failed · 2m ago", and
  * the one action the record deserves. Never the command line.
  */
-function StoppedRow({ row, time, checks, selected, copy, navigate, onReplay, replaying }) {
+function StoppedRow({ row, time, checks, selected, copy, navigate, onReplay, replaying, onHide }) {
   const bad = row.status === "failed" || row.status === "blocked";
   const actionLabel = row.action === "retry-chat" ? copy.retryInChat || "Retry in chat" : row.action === "replay" ? copy.replay || "Replay" : copy.openChat || "Open chat";
   function act() {
@@ -79,7 +80,7 @@ function StoppedRow({ row, time, checks, selected, copy, navigate, onReplay, rep
     return row.memberId ? navigate.member?.(row.memberId) : navigate.work?.(row);
   }
   return (
-    <div data-row-kind="stopped" data-stopped-kind={row.kind} className={cn("flex items-center gap-3 py-2.5 pr-1", selected ? "border-l-2 border-l-foreground/40 pl-3" : "pl-2")}>
+    <div data-row-kind="stopped" data-stopped-kind={row.kind} className={cn("group flex items-center gap-3 py-2.5 pr-1", selected ? "border-l-2 border-l-foreground/40 pl-3" : "pl-2")}>
       <StatusDot status={row.status} />
       <button type="button" className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:underline" onClick={() => navigate.work?.(row)}>
         <span className="block truncate text-sm">
@@ -95,6 +96,12 @@ function StoppedRow({ row, time, checks, selected, copy, navigate, onReplay, rep
         {time ? ` · ${time}` : ""}
         {checks ? ` · ${checks}` : ""}
       </span>
+      {/* Dealt with it elsewhere: hide it until it changes. */}
+      {onHide ? (
+        <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" onClick={onHide} aria-label={`Hide ${row.title}`}>
+          {copy.hide || "Hide"}
+        </Button>
+      ) : null}
       {row.action === "replay" && !onReplay ? null : (
         <Button variant="ghost" size="sm" className="min-w-[7.5rem] shrink-0 justify-end" disabled={replaying} onClick={act}>
           {row.action === "replay" ? <RefreshCw className={cn("size-3.5", replaying && "animate-spin")} aria-hidden="true" /> : null}
@@ -126,7 +133,10 @@ export function NeedsYouList({
 }) {
   const decisions = decisionRows({ approvals, vaultRequests, folderRequests, handoffs, channelProposals, routineProposals, memoryProposals }, copy);
   const unread = unreadRows({ replies, unreadChannels });
-  const stopped = stoppedWorkRows(rows, handoffs, copy);
+  const allStopped = stoppedWorkRows(rows, handoffs, copy);
+  const [hiddenStopped, hideStopped, unhideStopped] = useHiddenStopped();
+  const stopped = allStopped.filter((row) => !isHiddenStopped(row, hiddenStopped));
+  const hiddenCount = allStopped.length - stopped.length;
   const kindLabel = {
     approval: copy.inboxApprovals || "Approvals",
     vault: copy.inboxVault || "Vault",
@@ -188,9 +198,16 @@ export function NeedsYouList({
               navigate={navigate}
               onReplay={onReplay}
               replaying={replayingRowId === row.id}
+              onHide={() => hideStopped(row)}
             />
           ))}
         </div>
+        {hiddenCount ? (
+          <p className="px-2 pt-2 text-xs text-muted-foreground">
+            {hiddenCount === 1 ? "1 stopped item is hidden." : `${hiddenCount} stopped items are hidden.`}{" "}
+            <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={unhideStopped}>Show</button>
+          </p>
+        ) : null}
       </Section>
     </div>
   );

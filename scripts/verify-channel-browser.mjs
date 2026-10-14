@@ -418,7 +418,8 @@ async function main() {
         input.dispatchEvent(new Event('input', { bubbles: true }));
         const dialog = input.closest('[role="dialog"]');
         for (const label of ['Aroha', 'Tane']) {
-          const button = Array.from(dialog.querySelectorAll('button')).find((item) => item.textContent.trim() === label);
+          const button = Array.from(dialog.querySelectorAll('button')).find((item) => item.textContent.trim() === label || item.textContent.trim() === label.charAt(0) + label);
+          if (!button) throw new Error('Create channel dialog has no member ' + label + '; it lists: ' + Array.from(dialog.querySelectorAll('button')).map((item) => item.textContent.trim()).filter(Boolean).join(' | '));
           button.click();
         }
       })()
@@ -427,7 +428,7 @@ async function main() {
       (() => {
         const dialog = document.querySelector('[role="dialog"]');
         return ['Aroha', 'Tane'].every((label) => {
-          const button = Array.from(dialog.querySelectorAll('button')).find((item) => item.textContent.trim() === label);
+          const button = Array.from(dialog.querySelectorAll('button')).find((item) => item.textContent.trim() === label || item.textContent.trim() === label.charAt(0) + label);
           return button?.getAttribute('aria-pressed') === 'true';
         });
       })()

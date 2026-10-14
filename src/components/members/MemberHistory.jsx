@@ -1,6 +1,9 @@
 import { ArrowRightLeft, BrainCog, Download, FilePen, MessageSquareText, Play, ShieldCheck, Sparkles, TerminalSquare } from "lucide-react";
 
+import { useState } from "react";
+
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   HISTORY_FILTERS,
   groupRecordsByDay,
@@ -54,7 +57,12 @@ export function MemberHistory({
   now,
 }) {
   const active = normalizeFilter(filter);
-  const groups = groupRecordsByDay(records, { locale, copy, now });
+  // Find one thing in a long trail ("install.sh", "Robert"), across what is
+  // loaded; Load more widens it.
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const shown = needle ? records.filter((record) => recordSummary(record, copy).toLowerCase().includes(needle)) : records;
+  const groups = groupRecordsByDay(shown, { locale, copy, now });
   const empty = !groups.length && !loading;
 
   return (
@@ -97,7 +105,15 @@ export function MemberHistory({
         })}
       </div>
 
-      {empty ? (
+      {records.length > 8 ? (
+        <Input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setQuery(""); }} placeholder="Search this history" aria-label="Search history" className="h-8 max-w-xs text-sm" />
+      ) : null}
+
+      {empty && needle ? (
+        <p className="py-6 text-sm text-muted-foreground">
+          {`Nothing loaded matches \u201c${query.trim()}\u201d.`}{hasMore ? " Load more to search further back." : ""}
+        </p>
+      ) : empty ? (
         <p className="py-6 text-sm text-muted-foreground">
           {active === "all"
             ? copy.historyEmpty || "Nothing recorded yet. Runs, replies, edits, shell commands, handoffs, and approvals will appear here."

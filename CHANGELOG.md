@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- Forty everyday improvements, listed in `docs/reports/ux-enhancements-2026-10.md`. Copy buttons on code blocks, replies, channel messages and run output; Jump to latest in long chats and channels (with "3 new"); Up brings back your last message; Edit and resend on a failed reply; Today and Yesterday on day lines and full dates on hover; a Keyboard shortcuts sheet ("?"), ⌘1–9 for direct messages and "/" to search members; the window title names the page and the Needs you count; channels open by name; Squad search and Recent / A–Z sorting; draft markers, folded-section unread counts and Mark read in the sidebar; hide stopped work you have handled; search in Memory, History and Settings; and Reset to the level's defaults on Permissions.
+
 ## [0.1.7] - 2026-10-14
 
 This release also carries everything listed under 0.1.6, which was built for local review and never published on GitHub.

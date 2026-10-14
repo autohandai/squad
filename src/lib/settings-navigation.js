@@ -81,3 +81,36 @@ export function settingsSectionFromRoute(route, hash = '') {
   const candidate = params.get('section') || fromPath || fromHash;
   return isSettingsSection(candidate) ? candidate : DEFAULT_SETTINGS_SECTION;
 }
+
+// Words people look for, mapped to the section that holds them. The Settings
+// filter matches these as well as section names, so "dark" finds Appearance
+// and "api key" finds LLM Providers.
+export const SETTINGS_KEYWORDS = Object.freeze({
+  setup: 'setup guide getting started onboarding first',
+  appearance: 'theme dark light colour color skin palette font look',
+  language: 'language locale translation english portuguese spanish region',
+  providers: 'llm provider model api key openai anthropic openrouter ollama gemini default model',
+  chat: 'chat replies work details cli output streaming composer',
+  notifications: 'notifications alerts sound badge desktop notify',
+  voice: 'voice read aloud speech elevenlabs tts microphone dictation',
+  vault: 'vault password login card secrets credentials personal details',
+  improvement: 'self-improvement observer review projects learning',
+  handoff: 'handoff retry checkpoint teammate',
+  'mission-control': 'needs you work inbox stopped',
+  runtime: 'runtime bridge cli engine sessions outside hooks storage version',
+  relay: 'relay sync cloud channels remote',
+  'remote-access': 'remote access phone telegram tunnel pairing',
+  connectors: 'connectors mcp servers web research tools',
+  updates: 'updates version upgrade release download install',
+  system: 'system data folder storage counts reveal automatic checks',
+});
+
+/** Sections whose name or keywords contain every word of the query. */
+export function filterSettingsSections(sections = [], query = '') {
+  const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return sections;
+  return sections.filter((section) => {
+    const haystack = `${section.label || ''} ${SETTINGS_KEYWORDS[section.id] || ''}`.toLowerCase();
+    return words.every((word) => haystack.includes(word));
+  });
+}
