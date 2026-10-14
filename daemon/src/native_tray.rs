@@ -641,7 +641,7 @@ fn confirm_restart_with_active_work(warning: &RestartWorkWarning) -> Result<bool
 }
 
 #[cfg(target_os = "linux")]
-fn linux_restart_warning_commands(warning: &RestartWorkWarning) -> Vec<Command> {
+fn linux_restart_warning_commands(warning: &RestartWorkWarning) -> Vec<std::process::Command> {
     let message = warning.message();
     let mut zenity = crate::cli::non_bridge_command("zenity");
     zenity.args([
