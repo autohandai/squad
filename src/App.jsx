@@ -20573,27 +20573,24 @@ function AutomationsPage({
   }
 
   return (
+    // Same header as the other member pages (a slim top bar, one line under
+    // it). This one had a 4xl "Automations" title of its own and a tinted
+    // blue notice box.
     <div className="min-h-screen bg-background">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-10 sm:px-6 lg:px-8 lg:py-14">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h1 className="text-4xl font-semibold tracking-normal">{copy.automations}</h1>
-            <p className="mt-3 max-w-2xl text-base text-muted-foreground">
-              Create automations that can be triggered on schedule or manually anytime.
-            </p>
-          </div>
-          <Button className="w-fit" onClick={openCreate}>
-            <Plus data-icon="inline-start" />
-            New
-          </Button>
+      <PageTitle title={copy.automations} />
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-2xl text-sm text-muted-foreground">
+            Work this member runs on a schedule, from a webhook or by hand.
+            {automations.length ? " Scheduled ones run on the bridge while your computer is awake, even with Squad closed; one marked “needs Squad open” waits for the app." : ""}
+          </p>
+          {automations.length ? (
+            <Button variant="outline" size="sm" className="w-fit" onClick={openCreate}>
+              <Plus data-icon="inline-start" />
+              New automation
+            </Button>
+          ) : null}
         </div>
-
-        {automations.length ? (
-          <Alert className="border-blue-500/60 bg-blue-950/25 text-blue-100 dark:bg-blue-950/25">
-            <InfoIcon />
-            <AlertDescription>Scheduled automations run on the bridge while your computer is awake, even with Squad closed; a routine marked “needs Squad open” waits for the app.</AlertDescription>
-          </Alert>
-        ) : null}
         {routineError ? <p role="alert" className="text-sm text-destructive">{routineError}</p> : null}
 
         {automations.length ? (
@@ -20640,22 +20637,15 @@ function InfoIcon() {
 }
 
 function AutomationEmptyState({ onCreate }) {
+  // One sentence and the action (DESIGN.md), not a dashed icon tile in a
+  // 460px-tall centred block with the button somewhere else.
   return (
-    <div className="grid min-h-[460px] place-items-center">
-      <div className="flex max-w-md flex-col items-center text-center">
-        <button
-          type="button"
-          className="grid size-20 place-items-center rounded-md border border-dashed border-border/90 text-muted-foreground transition-colors hover:border-primary/70 hover:text-primary"
-          onClick={onCreate}
-          aria-label="Create automation"
-        >
-          <Clock3 className="size-8" />
-        </button>
-        <h2 className="mt-7 text-xl font-semibold">No automations yet</h2>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Create an automation to run squad members on a schedule, webhook, or API call.
-        </p>
-      </div>
+    <div className="flex flex-col items-start gap-3 border-y border-border/70 py-5">
+      <p className="text-sm text-muted-foreground">No automations yet. Set one up to have this member run something on a schedule, a webhook or an API call.</p>
+      <Button variant="outline" size="sm" onClick={onCreate}>
+        <Plus data-icon="inline-start" />
+        New automation
+      </Button>
     </div>
   );
 }
