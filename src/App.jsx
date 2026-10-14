@@ -1624,29 +1624,44 @@ const SHELL_GUARDRAILS = [
     id: "workspace-fence",
     label: "Workspace fence",
     state: "On",
-    detail: "Commands stay scoped to the selected repository unless outside access is granted.",
+    detail: "Whether commands stay inside the selected folder.",
   },
   {
     id: "destructive-approval",
     label: "Destructive commands",
     state: "Blocked",
-    detail: "Disk wipes, privilege escalation, recursive deletion, and host service changes stay blocked.",
+    detail: "Disk wipes, privilege escalation, recursive deletion and host service changes.",
   },
   {
     id: "network-approval",
     label: "External network",
     state: "Ask",
-    detail: "Registry installs, web lookups, tunnels, and remote publishing require approval.",
+    detail: "Registry installs, web lookups, tunnels and remote publishing.",
   },
   {
     id: "git-approval",
     label: "Git remote writes",
     state: "Ask",
-    detail: "Commit creation, force operations, branch rewrites, and push actions stay gated.",
+    detail: "Commits, force operations, branch rewrites and pushes.",
   },
 ];
 
 const CLI_TOOL_PERMISSIONS = CLI_PERMISSION_GROUPS.flatMap((group) => group.items);
+
+/** The guardrails with the state this member's settings actually give them. */
+function shellGuardrailRows(permissions) {
+  const modes = permissions?.modes || {};
+  const word = (mode) => (mode === "allow" ? "Allowed" : mode === "ask" ? "Ask first" : "Blocked");
+  const tone = (mode) => (mode === "allow" ? "text-primary" : mode === "ask" ? "text-amber-700 dark:text-amber-300" : "text-red-700 dark:text-red-300");
+  const network = [modes["web.fetch"], modes["shell.package"]].includes("allow") ? "allow" : [modes["web.fetch"], modes["shell.package"]].includes("ask") ? "ask" : "block";
+  const live = {
+    "workspace-fence": permissions?.allPathsAllowed ? { state: "Off", tone: "text-amber-700 dark:text-amber-300" } : { state: "On", tone: "text-primary" },
+    "destructive-approval": { state: word(modes["shell.destructive"] || "block"), tone: tone(modes["shell.destructive"] || "block") },
+    "network-approval": { state: word(network), tone: tone(network) },
+    "git-approval": { state: word(modes["shell.git_write"] || "ask"), tone: tone(modes["shell.git_write"] || "ask") },
+  };
+  return SHELL_GUARDRAILS.map((rule) => ({ ...rule, ...(live[rule.id] || {}) }));
+}
 
 const PERMISSION_TABS = [
   { id: "ladder", label: "Ladder" },
@@ -22572,22 +22587,24 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
           </TabsContent>
         </Tabs>
 
-        <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        {/* Guardrails show this member's actual settings. They were four
+            fixed badges ("Destructive commands · Blocked") that stayed the
+            same after the tool was set to Allow; an "Isolation" card printed
+            environment flags; Open CLI and Chat repeated the sidebar. */}
+        <section className="grid max-w-4xl gap-2">
+          <h3 className="text-sm font-semibold">Guardrails in effect</h3>
+          <div className="divide-y divide-border/70 border-y border-border/70">
+            {shellGuardrailRows(permissions).map((rule) => (
+              <div key={rule.id} className="flex items-baseline justify-between gap-4 py-2.5">
+                <span className="min-w-0">
+                  <span className="block text-sm">{rule.label}</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">{rule.detail}</span>
+                </span>
+                <span className={cn("shrink-0 text-xs font-medium", rule.tone)}>{rule.state}</span>
+              </div>
+            ))}
+          </div>
           <PermissionConfigPreview permissions={permissions} />
-          <aside className="flex flex-col gap-5">
-            <ShellGuardrailCard />
-            <IsolationCard agent={agent} />
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => openTerminal(agent)}>
-                <TerminalSquare data-icon="inline-start" />
-                {copy.openCli}
-              </Button>
-              <Button className="flex-1" onClick={() => navigate(memberChatPath(agent.id))}>
-                <MessageSquareText data-icon="inline-start" />
-                {copy.chat}
-              </Button>
-            </div>
-          </aside>
         </section>
       </div>
     </div>
@@ -22936,157 +22953,81 @@ function BuiltInToolsPanel({ permissions, updatePermissions, updateBuiltInPolicy
 
 function ModelSecurityPanel({ permissions, updatePermissions, updateModelSecurity }) {
   const modelSecurity = permissions.modelSecurity;
-
+  const off = !permissions.modelSecurityEnabled;
+  // Flat rows. The fields stayed editable with Model Security off, so it
+  // looked as if a provider were already required; options were raw values
+  // ("autohandai", "normal", "auto"); a "CLI mapping" card printed
+  // "LLMRequest.thinkingLevel: normal".
+  const providerName = (id) => ({ autohandai: "Autohand AI", openrouter: "OpenRouter", openai: "OpenAI", anthropic: "Anthropic", ollama: "Ollama", gemini: "Google Gemini" }[id] || id);
+  const row = (label, control) => (
+    <div className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+      <span className={cn("text-sm", off && "text-muted-foreground")}>{label}</span>
+      <div className="w-56">{control}</div>
+    </div>
+  );
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="flex min-w-0 flex-col gap-5">
-        <PermissionSurfaceHeader
-          icon={Brain}
-          title="Enable Model Security"
-          description="Lock the agent to approved providers, model IDs, thinking levels, and tool-choice behavior for enterprise or high-trust runs."
-          enabled={permissions.modelSecurityEnabled}
-          onEnabledChange={(modelSecurityEnabled) => updatePermissions({ modelSecurityEnabled })}
-          disabledMessage="Model Security is disabled. Users can freely select any configured model."
-        />
-
-        <section className="rounded-md border border-border/80 bg-card/75 p-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field>
-              <FieldLabel>Required provider</FieldLabel>
-              <Select value={modelSecurity.provider} onValueChange={(provider) => updateModelSecurity("provider", provider)}>
-                <SelectTrigger className="mt-2 h-10 bg-background">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectLabel>Provider</SelectLabel>
-                    {MODEL_PROVIDER_OPTIONS.map((provider) => (
-                      <SelectItem key={provider} value={provider}>
-                        {provider}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field>
-              <FieldLabel>Required model</FieldLabel>
-              <Input
-                value={modelSecurity.model}
-                onChange={(event) => updateModelSecurity("model", event.target.value)}
-                className="mt-2 h-10 bg-background"
-              />
-            </Field>
-
-            <Field>
-              <FieldLabel>Thinking level</FieldLabel>
-              <Select value={modelSecurity.thinkingLevel} onValueChange={(thinkingLevel) => updateModelSecurity("thinkingLevel", thinkingLevel)}>
-                <SelectTrigger className="mt-2 h-10 bg-background">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">none</SelectItem>
-                  <SelectItem value="normal">normal</SelectItem>
-                  <SelectItem value="extended">extended</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field>
-              <FieldLabel>Tool choice</FieldLabel>
-              <Select value={modelSecurity.toolChoice} onValueChange={(toolChoice) => updateModelSecurity("toolChoice", toolChoice)}>
-                <SelectTrigger className="mt-2 h-10 bg-background">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">auto</SelectItem>
-                  <SelectItem value="required">required</SelectItem>
-                  <SelectItem value="none">none</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-        </section>
+    <div className="flex max-w-4xl flex-col gap-6">
+      <PermissionSurfaceHeader
+        title="Model security"
+        description="Holds this member to one provider, model, thinking level and tool behaviour, for runs that must not change model."
+        enabled={permissions.modelSecurityEnabled}
+        onEnabledChange={(modelSecurityEnabled) => updatePermissions({ modelSecurityEnabled })}
+        disabledMessage="Off: the member uses whichever model is chosen for them."
+      />
+      <div className="divide-y divide-border/70 border-y border-border/70">
+        {row("Provider", (
+          <Select value={modelSecurity.provider} onValueChange={(provider) => updateModelSecurity("provider", provider)} disabled={off}>
+            <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectLabel>Provider</SelectLabel>
+                {MODEL_PROVIDER_OPTIONS.map((provider) => (
+                  <SelectItem key={provider} value={provider}>{providerName(provider)}</SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        ))}
+        {row("Model", (
+          <Input value={modelSecurity.model} onChange={(event) => updateModelSecurity("model", event.target.value)} disabled={off} className="h-8" placeholder="auto, or a model id" />
+        ))}
+        {row("Thinking", (
+          <Select value={modelSecurity.thinkingLevel} onValueChange={(thinkingLevel) => updateModelSecurity("thinkingLevel", thinkingLevel)} disabled={off}>
+            <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Off</SelectItem>
+              <SelectItem value="normal">Normal</SelectItem>
+              <SelectItem value="extended">Extended</SelectItem>
+            </SelectContent>
+          </Select>
+        ))}
+        {row("Tools", (
+          <Select value={modelSecurity.toolChoice} onValueChange={(toolChoice) => updateModelSecurity("toolChoice", toolChoice)} disabled={off}>
+            <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">When useful</SelectItem>
+              <SelectItem value="required">Always use a tool</SelectItem>
+              <SelectItem value="none">Never use tools</SelectItem>
+            </SelectContent>
+          </Select>
+        ))}
+        {[
+          ["lockModelSelector", "Hide the model picker in chat"],
+          ["requireNativeToolCalling", "Only models with native tool calling"],
+          ["requireConfiguredSearchProvider", "Only with a configured web search"],
+        ].map(([key, label]) => (
+          <label key={key} className="flex items-center justify-between gap-3 py-2.5">
+            <span className={cn("text-sm", off && "text-muted-foreground")}>{label}</span>
+            <Switch checked={Boolean(modelSecurity[key])} onCheckedChange={(value) => updateModelSecurity(key, value)} disabled={off} />
+          </label>
+        ))}
       </div>
-
-      <aside className="flex flex-col gap-5">
-        <section className="rounded-md border border-border/80 bg-card/75 p-4">
-          <div className="text-sm font-semibold">Runtime Locks</div>
-          <div className="mt-4 grid gap-2">
-            {[
-              ["lockModelSelector", "Lock model selector"],
-              ["requireNativeToolCalling", "Require native tool calling"],
-              ["requireConfiguredSearchProvider", "Require configured web search"],
-            ].map(([key, label]) => (
-              <label key={key} className="flex min-h-12 items-center justify-between gap-3 rounded-md border border-border/80 bg-background/65 px-3 text-sm">
-                {label}
-                <Switch checked={Boolean(modelSecurity[key])} onCheckedChange={(value) => updateModelSecurity(key, value)} />
-              </label>
-            ))}
-          </div>
-        </section>
-        <section className="rounded-md border border-border/80 bg-card/75 p-4">
-          <div className="text-sm font-semibold">CLI mapping</div>
-          <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
-            <code className="rounded-md border bg-background p-3">provider: {modelSecurity.provider}</code>
-            <code className="rounded-md border bg-background p-3">{modelSecurity.provider}.model: {modelSecurity.model}</code>
-            <code className="rounded-md border bg-background p-3">LLMRequest.thinkingLevel: {modelSecurity.thinkingLevel}</code>
-            <code className="rounded-md border bg-background p-3">LLMRequest.toolChoice: {modelSecurity.toolChoice}</code>
-          </div>
-        </section>
-      </aside>
     </div>
   );
 }
 
 function WrenchIcon(props) {
   return <Settings {...props} />;
-}
-
-function ShellGuardrailCard() {
-  return (
-    <section className="rounded-md border border-border/80 bg-card/75">
-      <div className="border-b border-border/75 p-4">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <Hammer className="size-4 text-primary" />
-          Shell guardrails
-        </div>
-      </div>
-      <div className="divide-y divide-border/70">
-        {SHELL_GUARDRAILS.map((rule) => (
-          <div key={rule.id} className="p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-semibold">{rule.label}</div>
-              <Badge variant="outline" className="rounded-md bg-background text-[11px]">
-                {rule.state}
-              </Badge>
-            </div>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">{rule.detail}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function IsolationCard({ agent }) {
-  return (
-    <section className="rounded-md border border-border/80 bg-card/75 p-4">
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <Shield className="size-4 text-primary" />
-        Isolation
-      </div>
-      <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
-        <code className="overflow-hidden text-ellipsis rounded-md border bg-background p-3">
-          AUTOHAND_HOME=.autohand/agents/{agent.id}
-        </code>
-        <code className="overflow-hidden text-ellipsis rounded-md border bg-background p-3">
-          --config .autohand/agents/{agent.id}/config.json
-        </code>
-      </div>
-    </section>
-  );
 }
 
 function PermissionConfigPreview({ permissions }) {

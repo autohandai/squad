@@ -92,7 +92,46 @@ the same way.
    `paused` presence state uses the list's slate dot. A bridge outage still
    reads unknown, since nothing about the member is known then.
 
+10. **A second pass drives the installed app, and fixes land on the lane.**
+    Once macOS granted CuaDriver Accessibility and Screen Recording, the
+    installed Squad (0.1.6, built from `main`) was driven through CuaDriver
+    and every finding was traced to code in this lane. The installed app
+    does not contain the lane, so screens were checked in a read-only
+    preview: the lane's build served from a scratch folder, `GET /api/*`
+    forwarded to the installed bridge, every write refused (the proxy logged
+    the refused calls), and the browser seeded with a copy of the installed
+    app's local storage. That is why the preview shows "Channel changes could
+    not be saved: Read-only preview…": it is the preview refusing a write,
+    which also exposed #20 and #27. The 100 findings are in
+    `docs/reports/bughunt-desktop-2026-10.md`.
+
+11. **What a person set wins over what the processes report.** A paused
+    member's dot (#1), a task whose run ended (#12, #33) and a reply whose
+    run finished (#32) were all shown from the stale side. Each now reads
+    the authoritative record: stored status, run status, run history.
+
+12. **Member pages are flat.** Projects, Automations, Memory, Skills,
+    Connectors, Messaging, Permissions and the Work record were rebuilt as
+    headings, one-sentence summaries and divider rows; cards, count tiles,
+    repeated titles and in-page Home/Back/Open CLI buttons were removed
+    (#39–#54, #68–#71, #74–#100). Settings that only described internal
+    storage or config keys were removed or reworded.
+
 ## Consequences
+
+- Driving the app showed how CuaDriver meets this app: background clicks
+  reach the window but not the web view, and the web view exposes no
+  accessibility tree beyond the window chrome (a full walk times out after
+  20 s). Every desktop action had to be a foreground pixel click off a
+  screenshot, and screenshots taken while the window was behind another
+  were stale frames, which twice looked like bugs (a clipped panel, a
+  wrong sidebar highlight) until re-captured with the window raised.
+- A Chrome preview window crashed whenever an in-app link navigated; the
+  same build in Safari and in headless Chrome did not. It was not reproduced
+  as an app bug and is not counted.
+- The installed app still runs `main`. None of the 200 fixes reach it until
+  the lane is merged, built and reinstalled.
+- Away (amber) members are still drawn from presence; see #1.
 
 - Away (amber in the Squad list) is still shown by the dot as whatever the
   bridge says. Presence has Idle, also amber, but a different word; folding

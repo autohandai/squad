@@ -260,3 +260,8 @@
 - An empty state that blocks the page (a channel with no members) carries the one action that fixes it.
 - A remove that cannot be undone (a saved login, a connector, a previous chat, a channel) asks on the first click and acts on the second; leaving the button cancels.
 - Errors from the operating system are rewritten as a sentence with what to do; raw codes such as ENOSPC stay in the bridge log.
+- A status a person set (paused, offline, a tool mode, a guardrail) is shown from that setting, never from a fixed label or a process's guess; if the two can disagree, the setting wins.
+- Internal identifiers stay out of copy: no rule ids as titles, config keys as descriptions, storage paths as settings, or engine words ("isolated", "wired") as statuses. Show the plain meaning; keep the id in a tooltip or a small code line.
+- A member is "they", never "it".
+- Disabled controls look disabled as a pair: a disabled outline button uses muted text like a disabled primary.
+- Dates follow the system region (pass no locale to Intl), not the translation locale.

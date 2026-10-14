@@ -65,6 +65,7 @@ list to the section for that version.
 
 ### Fixed
 
+- A second bug-hunt pass on the installed desktop app fixed 100 more things, listed with causes in `docs/reports/bughunt-desktop-2026-10.md`. The ones you are most likely to notice: a reply cut off by a restart gets its answer back when the member had in fact finished; a task stuck on "Running" for months now shows as stopped; channels open at the newest message; Needs you opens on Needs you; member History reads as plain sentences; Skills show as installed; the Permissions guardrails show your real settings; and the member pages are plain lists instead of cards.
 - A paused member's dot in the sidebar is grey and says Paused, matching the Squad list. Before, it stayed green whenever the member's session was still open.
 - Adding a team keeps every member. Before, members drafted together were given the same id, replaced each other and only the last one remained.
 - A new install no longer comes with someone else's work: no `clients-pie-shop-nz` channel, no tasks "running" in a folder you never opened, no pending decision in Needs you, no active "Smoke test" automation, and the four starting members no longer point at a folder on another computer or claim days of activity. Deleting `#general` or `#release-reviews` now sticks. The full list of fixes from this pass, with causes, is in `docs/reports/bughunt-2026-10.md`.
