@@ -165,15 +165,26 @@ export function buildArgs({ prompt, workspace, model, permissions = {}, policy =
     args.push("--color", "never");
     display.push("--color", "never");
   }
+  const sandbox = sandboxFor(permissions.permissionMode, policy, access);
   if (!resumeId) {
     args.push("-C", workspace);
     display.push("-C", workspace);
-    const sandbox = sandboxFor(permissions.permissionMode, policy, access);
     args.push("--sandbox", sandbox);
     display.push("--sandbox", sandbox);
     for (const dir of addDirs) {
       args.push("--add-dir", dir);
       display.push("--add-dir", "<dir>");
+    }
+  } else {
+    // A resumed thread does not keep its sandbox: live on 2026-10-18 the
+    // second turn of a workspace-write thread ran read-only, and its extra
+    // folders were gone. `exec resume` has no --sandbox or --add-dir, so the
+    // same choices travel as config overrides on every turn.
+    args.push("-c", `sandbox_mode="${sandbox}"`);
+    display.push("-c", `sandbox_mode="${sandbox}"`);
+    if (sandbox === "workspace-write" && addDirs.length) {
+      args.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(addDirs)}`);
+      display.push("-c", "sandbox_workspace_write.writable_roots=<dirs>");
     }
   }
   if (model) {

@@ -76,7 +76,11 @@ assert.equal(getAdapter('codex').id, 'codex');
 
   const resumed = codexAdapter.buildArgs({ prompt: 'again', workspace: '/w', resumeId: 'thread-1', permissions: { permissionMode: 'unrestricted' } });
   assert.deepEqual(resumed.args.slice(0, 3), ['exec', 'resume', 'thread-1']);
-  assert.ok(!resumed.args.includes('--sandbox'), 'resume keeps the thread sandbox');
+  assert.ok(!resumed.args.includes('--sandbox'), 'exec resume has no --sandbox');
+  assert.ok(resumed.args.includes('sandbox_mode="danger-full-access"'), 'the access still applies on a resumed thread');
+  const resumedWrite = codexAdapter.buildArgs({ prompt: 'again', workspace: '/w', resumeId: 'thread-1', access: 'write', addDirs: ['/x', '/y'] });
+  assert.ok(resumedWrite.args.includes('sandbox_mode="workspace-write"'), 'a write-access member keeps writing after its first turn (it ran read-only, live 2026-10-18)');
+  assert.ok(resumedWrite.args.includes('sandbox_workspace_write.writable_roots=["/x","/y"]'), 'and keeps its extra folders');
   assert.ok(!resumed.args.includes('--color'), "exec resume rejects --color (Codex 0.162.1: unexpected argument '--color' found)");
   const unrestricted = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'unrestricted' } });
   assert.equal(unrestricted.args[unrestricted.args.indexOf('--sandbox') + 1], 'danger-full-access');
@@ -93,7 +97,7 @@ assert.equal(getAdapter('codex').id, 'codex');
   const badEffort = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', effort: 'turbo' });
   assert.ok(!badEffort.args.includes('-c'), 'an effort Codex does not document is not sent');
   const resumedEffort = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', resumeId: 't', effort: 'xhigh' });
-  assert.equal(resumedEffort.args[resumedEffort.args.indexOf('-c') + 1], 'model_reasoning_effort="xhigh"', 'effort still applies on a resumed thread');
+  assert.ok(resumedEffort.args.includes('model_reasoning_effort="xhigh"'), 'effort still applies on a resumed thread');
   assert.deepEqual(codexAdapter.parseCodexConfig('model = "gpt-6.1-sol"\nmodel_reasoning_effort = "xhigh"\n[tui]\nmodel = "other"\n'), { model: 'gpt-6.1-sol', effort: 'xhigh' }, 'only top-level keys count');
   assert.deepEqual(codexAdapter.parseCodexConfig(''), { model: '', effort: '' });
 }
