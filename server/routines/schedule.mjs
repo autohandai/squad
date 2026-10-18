@@ -157,10 +157,48 @@ export function parseDate(value) {
   return { year, month, day };
 }
 
+const LOOSE_TIME = /^(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$/i;
+
+/**
+ * A time as people and models write it: "17:00", "9:30", "5pm", "7:30 PM",
+ * "17.30". Null when it is none of those. Before this, anything but HH:MM
+ * became 09:00 without a word, so "remind me at 5pm" fired at nine.
+ */
+export function parseLooseTime(value) {
+  const exact = parseTime(value);
+  if (exact) return exact;
+  const match = LOOSE_TIME.exec(text(value, 12));
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = match[2] ? Number(match[2]) : 0;
+  const suffix = (match[3] || "").replace(/\./g, "").toLowerCase();
+  if (!suffix && !match[2]) return null;
+  if (suffix && (hour < 1 || hour > 12)) return null;
+  if (suffix === "pm" && hour < 12) hour += 12;
+  if (suffix === "am" && hour === 12) hour = 0;
+  return hour <= 23 && minute <= 59 ? { hour, minute } : null;
+}
+
 function normalizeTime(value, fallback = "09:00") {
-  const parsed = parseTime(value);
+  const parsed = parseLooseTime(value);
   if (!parsed) return fallback;
   return `${String(parsed.hour).padStart(2, "0")}:${String(parsed.minute).padStart(2, "0")}`;
+}
+
+/**
+ * What a schedule from chat says that normalising would silently change:
+ * an unknown kind (it became Mon–Fri) or a time that is not a time (it
+ * became 09:00). "daily" is read as every day. Returns { schedule, problems }.
+ */
+export function strictScheduleInput(input) {
+  const source = input && typeof input === "object" && !Array.isArray(input) ? { ...input } : {};
+  const problems = [];
+  if (source.kind === "daily") Object.assign(source, { kind: "weekdays", days: [0, 1, 2, 3, 4, 5, 6] });
+  if (!SCHEDULE_KINDS.includes(source.kind)) problems.push(`kind must be one of ${SCHEDULE_KINDS.join(", ")}${source.kind ? ` (not "${String(source.kind).slice(0, 20)}")` : ""}`);
+  for (const key of ["time", "startTime"]) {
+    if (source[key] !== undefined && source[key] !== "" && !parseLooseTime(source[key])) problems.push(`${key} must be HH:MM in 24-hour time (not "${String(source[key]).slice(0, 20)}")`);
+  }
+  return { schedule: source, problems };
 }
 
 export function normalizeSchedule(input = {}, { defaultTimeZone = "UTC" } = {}) {

@@ -39,6 +39,7 @@ import {
   nextOccurrence,
   nextOccurrences,
   normalizeSchedule,
+  strictScheduleInput,
   validateSchedule,
   wallClockNow,
 } from "../routines/schedule.mjs";
@@ -341,6 +342,7 @@ async function proposeSchedule({ id, context, raw, digest, signal, declined }) {
     return receiptOf(existing);
   }
   const timeZone = raw.timezone || raw.timeZone || raw.schedule?.timeZone || "";
+  const strict = strictScheduleInput(raw.schedule);
   const record = normalizeProposal({
     id,
     memberId: context.actorId,
@@ -349,7 +351,7 @@ async function proposeSchedule({ id, context, raw, digest, signal, declined }) {
     digest,
     title: raw.title,
     instructions: raw.instructions,
-    schedule: { ...(raw.schedule && typeof raw.schedule === "object" ? raw.schedule : {}), timeZone },
+    schedule: { ...strict.schedule, timeZone },
     destination: context.destination,
     status: "proposed",
     createdAt: now.toISOString(),
@@ -365,6 +367,7 @@ async function proposeSchedule({ id, context, raw, digest, signal, declined }) {
     if (!record.title) throw new Error("give the proposed routine a title");
     if (!record.instructions) throw new Error("say what the routine should do");
     if (!isValidTimeZone(timeZone)) throw new Error("an IANA timezone such as Europe/London is required");
+    if (strict.problems.length) throw new Error(`the schedule is not clear: ${strict.problems.join("; ")}`);
     if (record.schedule.kind === "interval" && !record.schedule.startDate) {
       const wall = wallClockNow(timeZone, now);
       record.schedule = normalizeSchedule({ ...record.schedule, startDate: wall.date, startTime: wall.time });

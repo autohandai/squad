@@ -25,6 +25,8 @@ import {
   nextOccurrences,
   normalizeSchedule,
   parseCron,
+  parseLooseTime,
+  strictScheduleInput,
   validateSchedule,
   wallToUtc,
 } from "../server/routines/schedule.mjs";
@@ -129,6 +131,16 @@ await check("the rule in words", () => {
   assert.equal(describeSchedule(normalizeSchedule({ kind: "yearly", month: 1, day: 1 })), "Yearly on 1 Jan at 09:00");
   assert.equal(describeSchedule(normalizeSchedule({ kind: "interval", everyMinutes: 120, startDate: "2026-10-13", startTime: "09:00" })), "Every 2 hours from 13 Oct 2026 09:00");
   assert.equal(describeSchedule(normalizeSchedule({ kind: "once", date: "2026-10-14", time: "18:30" })), "Once on 14 Oct 2026 at 18:30");
+});
+await check("times as people write them, never a silent 09:00", () => {
+  assert.equal(normalizeSchedule({ kind: "once", date: "2026-10-20", time: "5pm" }).time, "17:00");
+  assert.equal(normalizeSchedule({ kind: "once", date: "2026-10-20", time: "7:30 PM" }).time, "19:30");
+  assert.equal(normalizeSchedule({ kind: "once", date: "2026-10-20", time: "17.30" }).time, "17:30");
+  assert.equal(normalizeSchedule({ kind: "once", date: "2026-10-20", time: "12am" }).time, "00:00");
+  assert.equal(parseLooseTime("13pm"), null);
+  assert.equal(parseLooseTime("9"), null);
+  assert.deepEqual(strictScheduleInput({ kind: "daily", time: "08:00" }).schedule.days, [0, 1, 2, 3, 4, 5, 6]);
+  assert.equal(strictScheduleInput({ kind: "fortnightly" }).problems.length, 1);
 });
 await check("a once routine reads Done only after it ran", () => {
   const once = { enabled: true, nextAt: null, schedule: { kind: "once" }, runs: [] };
@@ -342,6 +354,20 @@ try {
     assert.equal(forged.channelActions[0].status, "failed");
     assert.match(forged.channelActions[0].message, /only contain/);
     assert.equal((await bridge.api("/api/routines/proposals?status=proposed")).data.proposals.filter((item) => item.memberId === "routine-a").length, 1);
+  });
+
+  await check("a proposal's \"daily\" and \"5pm\" mean what they say; an unknown kind or time is refused, not turned into Mon–Fri 09:00", async () => {
+    const run = async (requestId, schedule) => (await finishedRun((await bridge.api("/api/runs", "POST", { agentId: "routine-a", agent: member("routine-a"), workspace, mode: "prompt", requestId, prompt: `REQUEST:${JSON.stringify({ type: "schedule", title: "Water", instructions: "Remind the person to drink water", schedule, timezone: "UTC" })}` })).data.id)).channelActions[0];
+    const daily = await run("propose-daily", { kind: "daily", time: "5pm" });
+    assert.equal(daily.status, "proposed", daily.message);
+    assert.match(daily.message, /Every day at 17:00/);
+    const weekly = await run("propose-weekly", { kind: "weekly", time: "09:00" });
+    assert.equal(weekly.status, "failed");
+    assert.match(weekly.message, /kind must be one of/);
+    const noon = await run("propose-noon", { kind: "weekdays", days: [1], time: "noonish" });
+    assert.equal(noon.status, "failed");
+    assert.match(noon.message, /time must be HH:MM/);
+    await bridge.api(`/api/routines/proposals/${daily.id}/decline`, "POST", {});
   });
 
   await check("Decline records the decision; Confirm creates the routine once", async () => {
