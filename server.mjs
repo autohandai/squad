@@ -7338,6 +7338,9 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
     agentRuntime,
     permissions,
     model,
+    // Codex names no model in its events; with none chosen it runs the one in
+    // the person's config.toml, and the reply said nothing ("model": "").
+    displayModel: model || String(readiness.defaults?.model || ""),
     access,
     effort,
     resumeId,
@@ -7464,7 +7467,7 @@ function externalHarnessResult(prepared, output, { startedAt, payload }) {
     configPath: agentRuntime.configPath,
     displayConfigPath: agentRuntime.displayConfigPath,
     agentHome: agentRuntime.agentHome,
-    effectiveModel: { provider: adapter.vendor.toLowerCase(), model: output.effectiveModel || [...output.events].reverse().find(event => event.type === 'agent_start' && event.model)?.model || prepared.model || '' },
+    effectiveModel: { provider: adapter.vendor.toLowerCase(), model: output.effectiveModel || [...output.events].reverse().find(event => event.type === 'agent_start' && event.model)?.model || prepared.displayModel || '' },
     skillInstall: agentRuntime.skillInstall,
       ...skillRuntimeResult(agentRuntime),
     profileDocs: agentRuntime.profileDocs,
@@ -7508,7 +7511,7 @@ async function streamChatWithExternalHarness(payload, { stream, signal, startedA
   stream.send("start", {
     startedAt: new Date(startedAt).toISOString(),
     workspace: prepared.workspace,
-    effectiveModel: { provider: prepared.adapter.vendor.toLowerCase(), model: prepared.model },
+    effectiveModel: { provider: prepared.adapter.vendor.toLowerCase(), model: prepared.displayModel },
     harness: prepared.adapter.id,
     harnessVersion: prepared.readiness.version || "",
     channel: channelContext,
@@ -7563,7 +7566,7 @@ async function startExternalHarnessRun(payload) {
     configPath: agentRuntime.configPath,
     displayConfigPath: agentRuntime.displayConfigPath,
     agentHome: agentRuntime.agentHome,
-    effectiveModel: { provider: adapter.vendor.toLowerCase(), model: prepared.model },
+    effectiveModel: { provider: adapter.vendor.toLowerCase(), model: prepared.displayModel },
     skillInstall: agentRuntime.skillInstall,
       ...skillRuntimeResult(agentRuntime),
     profileDocs: agentRuntime.profileDocs,
