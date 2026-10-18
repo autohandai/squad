@@ -32,6 +32,7 @@ import {
 } from "../server/routines/schedule.mjs";
 import { normalizeRoutine, upsertRun, activeRun, lastRun } from "../server/routines/store.mjs";
 import { routineNextLabel } from "../src/lib/routines.js";
+import { automationsForRoutines, reconcileRoutineRuns, routineDraft, routineNextLabel, scheduleFromDraft } from "../src/lib/routines.js";
 
 const failures = [];
 let checks = 0;
@@ -51,6 +52,18 @@ const isoList = (schedule, after, count = 3) => nextOccurrences(normalizeSchedul
 
 // ---------------------------------------------------------------------------
 // Part one: schedule arithmetic
+
+await check("a new once draft defaults to the next 09:00 that is still ahead", () => {
+  const draftAt = (iso) => ({ ...routineDraft(null, { timeZone: "Pacific/Auckland", now: new Date(iso) }), kind: "once" });
+  // 08:59 in Auckland: today still works.
+  assert.equal(draftAt("2026-10-18T19:59:00Z").date, "2026-10-19");
+  // 11:00 and 23:59: today's 09:00 has passed and the bridge refuses it, so tomorrow.
+  for (const iso of ["2026-10-18T22:00:00Z", "2026-10-19T10:59:00Z"]) {
+    const schedule = normalizeSchedule(scheduleFromDraft(draftAt(iso)));
+    assert.ok(nextOccurrences(schedule, new Date(iso), 1).length, `${iso}: ${JSON.stringify(schedule)}`);
+  }
+  assert.equal(draftAt("2026-12-31T22:00:00Z").date, "2027-01-02");
+});
 
 await check("weekdays Mon-Fri at 09:00 in New York skips the weekend", () => {
   assert.deepEqual(isoList({ kind: "weekdays", days: [1, 2, 3, 4, 5], time: "09:00", timeZone: "America/New_York" }, "2026-10-30T20:00:00Z"), ["2026-11-02T14:00:00.000Z", "2026-11-03T14:00:00.000Z", "2026-11-04T14:00:00.000Z"]);

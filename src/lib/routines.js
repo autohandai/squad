@@ -47,26 +47,35 @@ export function timeZoneChoices() {
   }
 }
 
-function todayIn(timeZone) {
+function todayIn(timeZone, now = new Date()) {
   try {
-    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
     return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour === "24" ? "00" : parts.hour}:${parts.minute}` };
   } catch {
-    const now = new Date();
     return { date: now.toISOString().slice(0, 10), time: "09:00" };
   }
 }
 
+// The first day `time` is still ahead: today before it, tomorrow after. A
+// once draft defaulted to today at 09:00 all day, and from 09:00 on the
+// bridge refused it as already passed.
+function nextDateAt(time, today) {
+  if (today.time < time) return today.date;
+  const [year, month, day] = today.date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+}
+
 /** An editor draft with every field present, from a saved schedule or nothing. */
-export function routineDraft(schedule = null, { timeZone = browserTimeZone(), maxRunMinutes = 0 } = {}) {
+export function routineDraft(schedule = null, { timeZone = browserTimeZone(), maxRunMinutes = 0, now = new Date() } = {}) {
   const source = schedule && typeof schedule === "object" ? schedule : {};
   const zone = source.timeZone || timeZone;
-  const today = todayIn(zone);
+  const today = todayIn(zone, now);
+  const time = source.time || "09:00";
   return {
     kind: ROUTINE_KINDS.some((kind) => kind.id === source.kind) ? source.kind : "manual",
     timeZone: zone,
-    time: source.time || "09:00",
-    date: source.date || today.date,
+    time,
+    date: source.date || nextDateAt(time, today),
     days: Array.isArray(source.days) && source.days.length ? source.days : [1, 2, 3, 4, 5],
     everyMinutes: Number(source.everyMinutes) || 60,
     startDate: source.startDate || today.date,
