@@ -6,6 +6,7 @@ import { guiSafeEnv } from './discovery.mjs';
 import { formatDuration } from '../../src/lib/duration.js';
 import { fallbackCandidates, limitCooldown, MAX_MODEL_SWITCHES, modelIds, modelLimit } from './claude-model-recovery.mjs';
 import { attachmentLogReplacer, claudePromptInput } from '../attachments.mjs';
+import { stopMessage } from './stop-reason.mjs';
 
 const routingWrites = new Map();
 const recoveryPrompt = 'Continue the interrupted task from this conversation, from the last unfinished step. The previous model reached its model-specific usage limit. Preserve completed work; do not repeat completed tool calls or resubmit completed actions.';
@@ -104,7 +105,7 @@ async function sdkAttempt({ adapter, options, prompt, timeoutMs, inactivityMs, f
     if (event.type !== 'error') { try { onEvent(event); } catch {} }
   };
   try {
-    if (signal?.aborted) { abort(); throw new Error('chat stopped by the user'); }
+    if (signal?.aborted) { abort(); throw new Error(stopMessage(signal)); }
     signal?.addEventListener('abort', abort, { once: true });
     timer = setTimeout(() => { timeoutKind = 'runtime'; controller.abort(); }, timeoutMs);
     idle();
@@ -129,7 +130,8 @@ async function sdkAttempt({ adapter, options, prompt, timeoutMs, inactivityMs, f
     if (controller.signal.aborted) throw new Error('aborted');
     return { events, rawStdout: rawMessages.join('\n'), rawStderr, model, errorCode, rateLimitInfo, models: await modelsPromise, error: failure, resumeId: state.resumeId, exitCode: failure ? 1 : 0, stopped, timedOut: false, stalled: false, durationMs: Date.now() - startedAt };
   } catch (error) {
-    const reason = stopped ? 'chat stopped by the user' : timeoutKind
+    // A reload is not a Stop (bug hunt 2026-10, #52); the CLI path already said so.
+    const reason = stopped ? stopMessage(signal) : timeoutKind
       ? timeoutKind === 'inactivity' ? `Claude Code stopped after ${formatDuration(inactivityMs)} without activity. Retry to continue.` : `Claude Code stopped after ${formatDuration(timeoutMs)} (maximum runtime). Retry to continue.`
       : stalled ? `Claude Code produced no events within ${formatDuration(firstEventTimeoutMs)}. Check its sign-in and retry.` : failure || error?.message || String(error);
     return { events, rawStdout: rawMessages.join('\n'), rawStderr, model, errorCode, rateLimitInfo, models: discoveredModels, error: reason, resumeId: state.resumeId, exitCode: 1, stopped, timedOut: Boolean(timeoutKind), stalled, durationMs: Date.now() - startedAt };

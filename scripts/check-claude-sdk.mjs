@@ -6,6 +6,7 @@ import * as adapter from '../server/harness/claude.mjs';
 import { claudeSdkOptions, runClaudeSdk } from '../server/harness/claude-sdk.mjs';
 import { fallbackCandidates, limitCooldown, modelLimit } from '../server/harness/claude-model-recovery.mjs';
 import { stageClaudeSdk } from './stage-claude-sdk.mjs';
+import { clientClosedReason } from '../server/harness/stop-reason.mjs';
 import { pathToFileURL } from 'node:url';
 
 assert.equal(modelLimit('Usage limit reached.', { status: 'rejected', rateLimitType: 'five_hour' }, 'rate_limit'), null);
@@ -94,6 +95,11 @@ try {
   const stopped = await run({ modelRecoveryPath: '', signal: controller.signal });
   assert.equal(stopped.stopped, true);
   assert.match(stopped.error, /stopped by the user/);
+  const closing = new AbortController();
+  setTimeout(() => closing.abort(clientClosedReason()), 50);
+  const reloaded = await run({ modelRecoveryPath: '', signal: closing.signal });
+  assert.equal(reloaded.stopped, true);
+  assert.match(reloaded.error, /page that asked for it was closed or reloaded/, 'a closed page is not blamed on the person');
   mode = 'silent';
   const idle = await run({ modelRecoveryPath: '', inactivityMs: 40 });
   assert.equal(idle.timedOut, true);
