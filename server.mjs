@@ -119,7 +119,19 @@ function emitRunFinished(run) {
     // A routine's reply is the point of it ("Igor, call Sam now"), so the
     // notification carries it instead of "Open the conversation to review".
     ...(run.routineId ? { routine: true, preview: String(run.reply || "").replace(/\s+/g, " ").trim().slice(0, 400) } : {}),
+    ...(run.quiet ? { quiet: true } : {}),
   });
+}
+
+// Runs the person did not start and does not wait on: the always-on agenda
+// ("never a card, banner or notification", ADR-0125) and a New Automation
+// draft, whose answer the dialog itself shows. Up to the daily cap of agenda
+// runs each posted "finished" to the desktop.
+// Keyed on the agenda and the draft flags, not on ephemeralSession as the
+// lane had it: on main a scheduled routine run is ephemeral too, and its
+// notification (the reminder itself) must still post.
+function quietRun(payload) {
+  return Boolean(payload?.agenda || payload?.automationDraft === true);
 }
 
 // Remote members (docs/integration/remote.md): a member registered under
@@ -7584,6 +7596,7 @@ async function startExternalHarnessRun(payload) {
     recipeId: typeof payload.recipeId === "string" && payload.recipeId ? payload.recipeId : null,
     canvasId: typeof payload.canvasId === "string" && payload.canvasId ? payload.canvasId : null,
     routineId: typeof payload.routineId === "string" ? payload.routineId : "",
+    quiet: quietRun(payload),
     workspace,
     configPath: agentRuntime.configPath,
     displayConfigPath: agentRuntime.displayConfigPath,
@@ -7721,6 +7734,7 @@ async function startPreparedRun(payload) {
     recipeId: typeof payload.recipeId === "string" && payload.recipeId ? payload.recipeId : null,
     canvasId: typeof payload.canvasId === "string" && payload.canvasId ? payload.canvasId : null,
     routineId: typeof payload.routineId === "string" ? payload.routineId : "",
+    quiet: quietRun(payload),
     workspace,
     configPath: agentRuntime.configPath,
     displayConfigPath: agentRuntime.displayConfigPath,

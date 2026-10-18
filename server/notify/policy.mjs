@@ -43,6 +43,8 @@ export function settingKeyFor(event) {
   const status = String(event?.status || "").toLowerCase();
   switch (name) {
     case "run.finished":
+      // An always-on agenda run or an automation draft (ADR-0125) stays quiet.
+      if (event?.quiet) return null;
       if (status === "failed") return "runFailed";
       if (status === "completed") return "runFinished";
       return null;

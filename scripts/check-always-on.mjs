@@ -118,7 +118,7 @@ const agenda = async (id) => (await api(`/api/agenda/${id}`)).data;
 async function startBridge() {
   bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: rootDir,
-    env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider', AUTOHAND_SQUAD_AGENDA_TICK_MS: '250', AUTOHAND_SQUAD_AGENDA_IDLE_MS: String(IDLE_MS), AUTOHAND_SQUAD_DRAFT_TIMEOUT_MS: '20000' },
+    env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider', AUTOHAND_SQUAD_AGENDA_TICK_MS: '250', AUTOHAND_SQUAD_AGENDA_IDLE_MS: String(IDLE_MS), AUTOHAND_SQUAD_DRAFT_TIMEOUT_MS: '20000', AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: 'macos' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   bridge.stdout.on('data', (d) => { logs += d; }); bridge.stderr.on('data', (d) => { logs += d; });
@@ -241,6 +241,8 @@ process.exit(0);
   check('(iv) after the idle period the next task starts', (secondStart.current?.title || secondStart.last?.title) === t2.title, JSON.stringify(secondStart));
   const secondDone = await until(async () => { const state = await agenda('ops'); return state.current === null && state.last?.title === t2.title ? state : null; }, 'the second item finished');
   check('(iv) it finished and the line can say so', secondDone.last.status === 'completed', JSON.stringify(secondDone.last));
+  const feed = (await api('/api/notifications')).data.items;
+  check('(iv) the agenda\'s runs post no notification ("never a card, banner or notification")', !feed.some((item) => /On its own/.test(item.title)), JSON.stringify(feed.map((item) => item.title)));
   await api('/api/work', { memberId: 'ops', title: 'A third thing' });
   await delay(1500);
   const capped = await agenda('ops');

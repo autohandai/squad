@@ -45,6 +45,7 @@ assert.deepEqual(normalizeNotificationSettings({ mention: 0, bogus: true }), { .
 assert.equal(settingKeyFor({ name: "run.finished", status: "completed" }), "runFinished");
 assert.equal(settingKeyFor({ name: "run.finished", status: "failed" }), "runFailed");
 assert.equal(settingKeyFor({ name: "run.finished", status: "stopped" }), null, "a run the user stopped never notifies");
+assert.equal(settingKeyFor({ name: "run.finished", status: "completed", quiet: true }), null, "an agenda run or automation draft never notifies");
 assert.equal(settingKeyFor({ name: "chat.finished", status: "completed" }), null, "a completed chat reply never notifies");
 assert.equal(settingKeyFor({ name: "chat.finished", status: "failed" }), "runFailed");
 assert.equal(settingKeyFor({ name: "handoff.pending" }), "handoffPending");
