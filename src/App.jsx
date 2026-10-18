@@ -19547,14 +19547,30 @@ function buildAgentProfileFiles(agent) {
       };
     }
     const file = provided.get(section.id);
+    const content = file?.content || defaultProfileFileContent(agent, section.id);
     return {
       section: section.id,
       fileName: file?.fileName || section.fileName,
       originalFileName: file?.originalFileName || file?.fileName || "",
-      content: file?.content || defaultProfileFileContent(agent, section.id),
+      content: section.id === "memory" && file?.content && file.source !== "generated" ? withSavedMemory(content, agent) : content,
       source: file?.source || "generated",
     };
   });
+}
+
+// A MEMORY.md the person wrote (starter notes, an imported file) is kept as
+// written, and only a generated one was rebuilt from the member's memory, so
+// on a member made with starter notes nothing accepted or remembered ever
+// reached MEMORY.md, the file the engine reads. What is missing is appended
+// under "Saved memory", rebuilt each time so a forgotten entry leaves it;
+// what the person's own text already says is not repeated.
+const SAVED_MEMORY_HEADING = "\n\n## Saved memory\n";
+function withSavedMemory(content, agent) {
+  const text = String(content || "").split(SAVED_MEMORY_HEADING)[0].trimEnd();
+  const lower = text.toLowerCase();
+  const missing = normalizeMemoryEntries(agent?.memory).map((entry) => entry.text).filter((item) => !lower.includes(item.toLowerCase()));
+  if (!missing.length) return text;
+  return `${text}${SAVED_MEMORY_HEADING}${missing.map((item) => `- ${item}`).join("\n")}`;
 }
 
 function profileEditDraftFromAgent(agent) {
