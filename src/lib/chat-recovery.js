@@ -141,11 +141,27 @@ export function isRecoveryNotice(line) {
   return RECOVERY_NOTICE_RE.test(String(line || ""));
 }
 
-/** The reply without the engine's transient recovery lines. */
+/** The reply without the engine's transient recovery lines or its reflection preamble. */
 export function withoutRecoveryNotices(text) {
-  const value = String(text || "");
+  const value = withoutReflectionPreamble(text);
   if (!/Session encountered an error|Attempting recovery \(/.test(value)) return value;
   return value.split(/\r?\n/).filter((line) => !isRecoveryNotice(line)).join("\n").replace(/^\s*\n/, "");
+}
+
+// The Autohand CLI refuses a tool call until the model has "reflected" on the
+// previous results, so the model opens its messages with a paragraph
+// "Reflection: The diff confirms…" and the last one becomes the reply. In the
+// person's own #general it reached teammates too: Noah was handed
+// "Iris wrote: Reflection: I have the commit list but no dates yet…". The
+// paragraph (and a "---" rule after it) is dropped when an answer follows; a
+// reply that is only a reflection keeps its words without the label.
+const REFLECTION_PREAMBLE_RE = /^\s*Reflection:[ \t]*/;
+
+export function withoutReflectionPreamble(text) {
+  const value = String(text || "");
+  if (!REFLECTION_PREAMBLE_RE.test(value)) return value;
+  const rest = value.replace(/^\s*Reflection:[^\n]*(?:\n(?!\s*\n)[^\n]*)*/, "").replace(/^\s*\n(?:\s*-{3,}\s*\n)?/, "").replace(/^\s+/, "");
+  return rest ? rest : value.replace(REFLECTION_PREAMBLE_RE, "");
 }
 
 /**
@@ -198,15 +214,3 @@ export function restoreRepliesFromRuns(conversations, runs = [], { windowMs = 12
   return next;
 }
 
-// Autohand asks the model to reflect on tool results, and some models write
-// that note into the answer: Iris's #general check-in opened with
-// "Reflection: I have the commit list but no dates yet…" before the reply.
-// The note is dropped when an answer follows it; a reply that is only the
-// note is kept, since it is all the member said.
-export function withoutReflectionPreamble(text) {
-  const value = String(text || "");
-  const match = value.match(/^\s*Reflection:[^\n]*(?:\n(?!\s*\n)[^\n]*)*\n\s*\n/);
-  if (!match) return value;
-  const rest = value.slice(match[0].length).trim();
-  return rest ? rest : value;
-}

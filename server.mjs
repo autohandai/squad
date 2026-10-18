@@ -77,7 +77,7 @@ import { channelReplyState, normalizeChannelReplyMode } from "./src/lib/channel-
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
 import { memberProfileDefaults } from "./src/lib/member-profiles.js";
 import { CHAT_TURN_CEILING_MS } from "./src/lib/chat-timing.js";
-import { withoutReflectionPreamble } from "./src/lib/chat-recovery.js";
+import { withoutRecoveryNotices } from "./src/lib/chat-recovery.js";
 import {
   DEFAULT_HARNESS_ID,
   HarnessNotReadyError,
@@ -6624,15 +6624,18 @@ function sdkTraceFromEvents(events, rawStdout = "", rawStderr = "") {
   };
 }
 
+// The engine's own notes (Autohand's "Reflection:" paragraph, its retry
+// lines) are removed here, before the reply reaches the chat, a channel or a
+// teammate it is relayed to.
 function sdkReplyFromEvents(events, rawStdout = "") {
   const lastMessageEnd = [...events].reverse().find((event) => event?.type === "message_end" && event.content);
-  if (lastMessageEnd?.content) return withoutReflectionPreamble(String(lastMessageEnd.content).trim());
+  if (lastMessageEnd?.content) return withoutRecoveryNotices(String(lastMessageEnd.content).trim()).trim();
   const text = events
     .filter((event) => event?.type === "message_update" && event.delta)
     .map((event) => event.delta)
     .join("")
     .trim();
-  return text || rawStdout.trim();
+  return withoutRecoveryNotices(text || rawStdout.trim()).trim();
 }
 
 function chatStreamEventFromSdkEvent(event) {

@@ -388,7 +388,7 @@ import { CHAT_STREAM_CEILING_MS } from "@/lib/chat-timing";
 import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn, settingsPath, settingsSectionFromRoute, DEFAULT_SETTINGS_SECTION } from "@/lib/settings-navigation";
 import { SettingsShell, SettingsSectionHeader } from "@/components/settings/SettingsShell";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns } from "@/lib/chat-recovery";
+import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, withoutReflectionPreamble, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns } from "@/lib/chat-recovery";
 import { getAttentionBadgeClient } from "@/lib/attention-badge";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { CanvasList } from "@/components/canvases/CanvasList";
@@ -11314,7 +11314,7 @@ function ChannelsPage({
                       {message.workflowRunId ? (
                         <WorkflowTag workflow={found?.workflow || { name: message.workflowName || "" }} run={found?.run} stepId={message.stepId} showName={message.role !== "system"} copy={copy} className="mb-1" />
                       ) : null}
-                      <MarkdownBlocks text={withoutRecoveryNotices(message.body || "")} />
+                      <MarkdownBlocks text={message.role === "user" ? message.body || "" : withoutRecoveryNotices(message.body || "")} />
                       {(message.attachments || []).map((attachment) => (
                         <MediaAttachment key={attachment.id} attachment={attachment} anchors={channelAnchors} onAnchor={addAnchorToDraft} copy={copy} />
                       ))}
@@ -11339,7 +11339,7 @@ function ChannelsPage({
                   return (
                     <>
                       {agentMessage ? <ReadAloudButton compact text={message.body} message={message} api={api} copy={copy} /> : null}
-                      <CopyButton text={withoutRecoveryNotices(message.body || "")} label="Copy message" />
+                      <CopyButton text={message.role === "user" ? message.body || "" : withoutRecoveryNotices(message.body || "")} label="Copy message" />
                     </>
                   );
                 }}
@@ -11692,7 +11692,7 @@ function parseAgentBody(body) {
     };
   }
 
-  for (const line of String(body || "").split(/\r?\n/)) {
+  for (const line of withoutReflectionPreamble(body).split(/\r?\n/)) {
     if (isRecoveryNotice(line)) continue;
     const step = parseStepLine(line);
     if (step) {

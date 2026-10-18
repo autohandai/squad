@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { QUICK_REACTIONS, reactionName, searchReactions } from "@/lib/reactions";
 import { isNoTextReply } from "@/lib/chat-recovery";
 import { channelReplyIndex, channelThreadSummary, isChannelPlaceholder, normalizeChannelReplyMode } from "@/lib/channel-replies";
+import { isNoTextReply, withoutRecoveryNotices } from "@/lib/chat-recovery";
 import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { cn } from "@/lib/utils";
 import { fallbackLabel } from "@/lib/model-routing";
@@ -390,7 +391,7 @@ export function ChannelStream({
                   ) : renderBody ? (
                     renderBody(message)
                   ) : (
-                    <span className="whitespace-pre-wrap break-words">{message.body}</span>
+                    <span className="whitespace-pre-wrap break-words">{message.role === "user" ? message.body : withoutRecoveryNotices(message.body)}</span>
                   )}
                 </div>
                 <ReactionRow
