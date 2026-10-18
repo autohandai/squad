@@ -141,8 +141,10 @@ export class AutohandSDK {
   assert.equal((await api('/api/goals/'+sdkStarted.data.goalId)).data.status,'paused');
 
   const detached=await fetch(origin+'/api/chat/stream',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload('detached','SLOW fixture'),mode:'goal'})});
-  const reader=detached.body.getReader();const first=await reader.read();
-  const firstEvent=new TextDecoder().decode(first.value);
+  // The stream opens with a ": connected" comment written separately, so the
+  // first read can hold only that; read until the first data event arrives.
+  const reader=detached.body.getReader();const decoder=new TextDecoder();let firstEvent='';
+  while(!/\ndata: .*\n\n/.test(firstEvent)){const chunk=await reader.read();assert.ok(!chunk.done,'detached stream ended before its goal event');firstEvent+=decoder.decode(chunk.value,{stream:true});}
   const detachedId=JSON.parse(firstEvent.split('\ndata: ')[1].split('\n\n')[0]).id;
   await reader.cancel();
   const detachedGoal=await until(async()=>{const g=(await api('/api/goals/'+detachedId)).data;return g.status==='completed'?g:null;},'goal after browser disconnect');
