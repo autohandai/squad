@@ -197,3 +197,16 @@ export function restoreRepliesFromRuns(conversations, runs = [], { windowMs = 12
   }
   return next;
 }
+
+// Autohand asks the model to reflect on tool results, and some models write
+// that note into the answer: Iris's #general check-in opened with
+// "Reflection: I have the commit list but no dates yet…" before the reply.
+// The note is dropped when an answer follows it; a reply that is only the
+// note is kept, since it is all the member said.
+export function withoutReflectionPreamble(text) {
+  const value = String(text || "");
+  const match = value.match(/^\s*Reflection:[^\n]*(?:\n(?!\s*\n)[^\n]*)*\n\s*\n/);
+  if (!match) return value;
+  const rest = value.slice(match[0].length).trim();
+  return rest ? rest : value;
+}

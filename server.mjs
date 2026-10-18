@@ -77,6 +77,7 @@ import { channelReplyState, normalizeChannelReplyMode } from "./src/lib/channel-
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
 import { memberProfileDefaults } from "./src/lib/member-profiles.js";
 import { CHAT_TURN_CEILING_MS } from "./src/lib/chat-timing.js";
+import { withoutReflectionPreamble } from "./src/lib/chat-recovery.js";
 import {
   DEFAULT_HARNESS_ID,
   HarnessNotReadyError,
@@ -6625,7 +6626,7 @@ function sdkTraceFromEvents(events, rawStdout = "", rawStderr = "") {
 
 function sdkReplyFromEvents(events, rawStdout = "") {
   const lastMessageEnd = [...events].reverse().find((event) => event?.type === "message_end" && event.content);
-  if (lastMessageEnd?.content) return String(lastMessageEnd.content).trim();
+  if (lastMessageEnd?.content) return withoutReflectionPreamble(String(lastMessageEnd.content).trim());
   const text = events
     .filter((event) => event?.type === "message_update" && event.delta)
     .map((event) => event.delta)

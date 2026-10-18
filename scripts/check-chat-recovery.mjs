@@ -126,3 +126,40 @@ console.log('Checkpoint result recovery passed: saved successful parent output j
   assert.equal(restoreRepliesFromRuns(stoppedThenAsked, own).noah[0].body, "Mine.", "the reply's own run restores it");
   console.log("interrupted replies restored from finished runs");
 }
+
+// Channel replies left "typing…" by a reload or restart are settled from
+// their runs (bug hunt 2026-10, channels).
+{
+  const { settleChannelReplies } = await import("../src/lib/chat-recovery.js");
+  const now = Date.parse("2026-10-18T10:00:00.000Z");
+  const typing = (id, startedAt = "2026-10-18T09:00:00.000Z") => ({ id, role: "agent", agentId: "kai", status: "loading", body: "Kai is typing...", startedAt });
+  const byChannel = { general: [{ id: "root", role: "user", status: "complete", body: "hi" }, typing("done"), typing("stopped"), typing("live"), typing("gone"), typing("young", "2026-10-18T09:59:55.000Z"), typing("mine")], other: [{ id: "x", role: "agent", status: "complete", body: "ok" }] };
+  const runs = [
+    { id: "r1", requestId: "done", status: "completed", reply: "Shipped.", finishedAt: "2026-10-18T09:01:00.000Z" },
+    { id: "r2", requestId: "stopped", status: "stopped", reply: "" },
+    { id: "r3", requestId: "live", status: "running" },
+  ];
+  const settled = settleChannelReplies(byChannel, { runs, streaming: new Set(["mine"]), now });
+  const byId = Object.fromEntries(settled.general.map((message) => [message.id, message]));
+  assert.equal(byId.done.status, "complete"); assert.equal(byId.done.body, "Shipped."); assert.equal(byId.done.recoveredFromRun, "r1");
+  assert.equal(byId.stopped.status, "error"); assert.equal(byId.stopped.interrupted, true); assert.doesNotMatch(byId.stopped.body, /typing/); assert.match(byId.stopped.body, /reloaded or closed/);
+  assert.equal(byId.live, byChannel.general[3]);
+  assert.equal(byId.gone.status, "error");
+  assert.equal(byId.young, byChannel.general[5]);
+  assert.equal(byId.mine, byChannel.general[6]);
+  assert.equal(settled.other, byChannel.other);
+  assert.equal(settleChannelReplies(settled, { runs, streaming: new Set(["mine"]), now }), settled);
+  console.log("Channel replies settled: finished runs restore the answer, stopped and missing runs close, live and streamed replies are left.");
+}
+
+// A model's "Reflection:" note before the answer is not part of the reply
+// (Iris in #general, 2026-09-28).
+{
+  const { withoutReflectionPreamble } = await import("../src/lib/chat-recovery.js");
+  const iris = "Reflection: I have the commit list but no dates yet. The `git_log` tool doesn't expose dates in its output, and shell/run_command are denied by the permission policy, so I can't get timestamps that way. I'll answer from what I can verify: the commit history and the two uncommitted diffs.\n\nFrom my side, here's what's on the board today:\n\n**Committed work (main, 12 ahead of origin):**";
+  assert.equal(withoutReflectionPreamble(iris), "From my side, here's what's on the board today:\n\n**Committed work (main, 12 ahead of origin):**");
+  const only = "Reflection: The file stats confirm the QA-relevant test files were modified today.\n\n";
+  assert.equal(withoutReflectionPreamble(only), only);
+  assert.equal(withoutReflectionPreamble("Shipped.\n\nReflection: noted"), "Shipped.\n\nReflection: noted");
+  console.log("Reflection preambles dropped when an answer follows; a reflection-only reply is kept.");
+}
