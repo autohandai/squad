@@ -614,10 +614,13 @@ async function deliverTeamMessage({ from, to, message, depth, ancestorIds = [], 
       teamMessage: { deliveryId, fromId: from.id, fromName: from.name, ancestorIds },
     });
   } catch (error) {
+    emitBridgeEvent("chat.finished", { memberId: to.id, status: "failed", channelId: channel?.channelId || "", threadId: channel?.threadId || "", preview: String(error?.message || error).slice(0, 140), teamFromName: from.name || "" });
     await post({ id: `${deliveryId}-reply`, agentId: to.id, authorName: to.name, body: `${to.name} could not answer: ${error?.message || error}`, status: "error", relayFromAgentId: from.id });
     throw error;
   }
   const reply = String(result?.reply || "").trim();
+  // The answer is the teammate's work too: it was missing from its History.
+  emitBridgeEvent("chat.finished", { memberId: to.id, status: result?.declined ? "failed" : "completed", channelId: channel?.channelId || "", threadId: channel?.threadId || "", runId: result?.runId || "", preview: reply.slice(0, 140), teamFromName: from.name || "" });
   await post({ id: `${deliveryId}-reply`, agentId: to.id, authorName: to.name, body: reply || `${to.name} returned no chat text.`, status: result?.declined ? "error" : "complete", relayFromAgentId: from.id, transport: result?.transport || "" });
   return result;
 }

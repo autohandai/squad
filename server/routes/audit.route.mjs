@@ -53,8 +53,13 @@ function summaryFor(event, kind) {
       return `${event.status === "failed" ? "Run failed" : event.status === "stopped" ? "Run stopped" : "Run finished"}${title ? `: ${title}` : ""}`;
     case "member.stopped":
       return `Stopped${Number(event.stoppedRuns) ? ` (${event.stoppedRuns} run${Number(event.stoppedRuns) === 1 ? "" : "s"})` : ""}`;
-    case "chat.finished":
-      return `${event.status === "failed" ? "Reply failed" : "Replied"}${event.channelId ? " in channel" : ""}${preview ? `: ${preview}` : ""}`;
+    case "chat.finished": {
+      // A stopped turn read "Replied: chat stopped by the user"; a reply to a
+      // teammate's squad_message (ADR-0134) names who asked.
+      const asker = text(event.teamFromName, 80);
+      const lead = event.status === "failed" ? "Reply failed" : event.status === "stopped" ? "Reply stopped" : asker ? `Answered ${asker}` : "Replied";
+      return `${lead}${event.channelId ? " in channel" : ""}${preview && event.status !== "stopped" ? `: ${preview}` : ""}`;
+    }
     case "mention.received":
       return `Mentioned${preview ? `: ${preview}` : ""}`;
     case "shell.ran":

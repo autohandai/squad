@@ -179,6 +179,8 @@ await step("every documented bridge event maps to exactly one attributed record"
   assert.equal(decodeRecord(produced[6]).refs.messageId, "m_1");
   assert.equal(decodeRecord(recordFromEvent({ name: "run.finished", runId: "run_1", memberId: "asq_kai", status: "failed", at: iso(0) })).severityNumber, 13);
   assert.equal(recordFromEvent({ name: "chat.finished", memberId: "", status: "failed", preview: "boom", at: iso(0) }), null, "no member, no record");
+  assert.equal(decodeRecord(recordFromEvent({ name: "chat.finished", memberId: "asq_kai", status: "stopped", preview: "chat stopped by the user", at: iso(0) })).summary, "Reply stopped", "a stopped turn is not \"Replied: chat stopped by the user\"");
+  assert.equal(decodeRecord(recordFromEvent({ name: "chat.finished", memberId: "asq_eva", status: "completed", preview: "The build is green.", teamFromName: "Noah", at: iso(0) })).summary, "Answered Noah: The build is green.", "a teammate's answer names who asked");
   assert.equal(recordFromEvent({ name: "approval.pending", workflowId: "wf", runId: "run_unknown", at: iso(0) }, { memberFor }), null, "unknown run, no record");
   assert.equal(recordFromEvent({ name: "bridge.started", memberId: "asq_kai" }), null, "unmapped events are ignored");
   assert.equal(recordFromEvent(null), null);
