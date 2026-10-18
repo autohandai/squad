@@ -163,13 +163,17 @@ const PERIOD_TIME = { morning: "09:00", afternoon: "14:00", evening: "18:00", ni
 const GUARD = /^(?:do|does|did|don't|do not|never|stop|should|would|could|can|is|are|was|were|will|why|what|when|how|who)\b/i;
 
 function timeIn(sentence) {
-  const explicit = sentence.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b/i);
+  // "6:30pm" and "6.30pm" alike: "every evening at 6.30pm" was read as "at 6",
+  // and became 06:00.
+  const explicit = sentence.match(/\bat\s+(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?(?![\d:])/i);
   if (explicit) {
     let hour = Number(explicit[1]);
     const minute = explicit[2] ? Number(explicit[2]) : 0;
     const suffix = (explicit[3] || "").replace(/\./g, "").toLowerCase();
     if (suffix === "pm" && hour < 12) hour += 12;
     if (suffix === "am" && hour === 12) hour = 0;
+    // "every evening at 6" means 18:00, not 06:00.
+    if (!suffix && hour < 12 && /\b(?:afternoon|evening|night)s?\b/i.test(sentence)) hour += 12;
     if (hour > 23 || minute > 59) return "";
     return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
   }
@@ -177,11 +181,20 @@ function timeIn(sentence) {
   return period ? PERIOD_TIME[period[1].toLowerCase()] : "";
 }
 
+// "on the 15th", "the 3rd of each month": the day a monthly schedule names.
+// Without it "every month on the 15th" became the 1st.
+function dayOfMonthIn(sentence) {
+  const match = sentence.match(/\b(?:on\s+)?the\s+(\d{1,2})(?:st|nd|rd|th)\b/i);
+  const day = match ? Number(match[1]) : 0;
+  return day >= 1 && day <= 31 ? day : 0;
+}
+
 function sentenceAround(text, index) {
   const before = text.slice(0, index);
   const after = text.slice(index);
   const start = Math.max(before.lastIndexOf(". "), before.lastIndexOf("\n"), before.lastIndexOf("! "), before.lastIndexOf("? ")) + 1;
-  const endMatch = after.match(/[.!?\n]/);
+  // A full stop ends the sentence only before a space or the end, so "6.30pm" stays whole.
+  const endMatch = after.match(/[.!?](?=\s|$)|\n/);
   const end = index + (endMatch ? endMatch.index : after.length);
   return text.slice(start, end).trim();
 }
@@ -189,7 +202,7 @@ function sentenceAround(text, index) {
 function titleFrom(sentence, phrase) {
   const stripped = sentence
     .replace(new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), " ")
-    .replace(/\b(?:please|can you|could you|i want you to|i need you to|you should|make sure( to| you)?|from now on|going forward|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|in the\s+(?:morning|afternoon|evening)|(?:every|each)\s+\w+)\b/gi, " ")
+    .replace(/\b(?:please|can you|could you|i want you to|i need you to|you should|make sure( to| you)?|from now on|going forward|at\s+\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?|(?:on\s+)?the\s+\d{1,2}(?:st|nd|rd|th)|in the\s+(?:morning|afternoon|evening)|(?:every|each)\s+\w+)\b/gi, " ")
     .replace(/^\W+|\W+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -221,7 +234,7 @@ export function detectRecurringWork(text) {
     { re: /\b(?:every|each)\s+hour\b|\bhourly\b/i, build: () => ({ kind: "interval", everyMinutes: 60 }) },
     { re: /\bweekly\b|\b(?:every|each)\s+week\b|\bonce\s+a\s+week\b/i, build: (m, s) => ({ kind: "weekdays", days: [1], time: timeIn(s) || "09:00" }) },
     { re: /\b(?:end|last day)\s+of\s+(?:the|every|each)\s+month\b/i, build: (m, s) => ({ kind: "monthly", day: "last", time: timeIn(s) || "09:00" }) },
-    { re: /\bmonthly\b|\b(?:every|each)\s+month\b|\bonce\s+a\s+month\b|\bfirst\s+of\s+(?:the|every|each)\s+month\b/i, build: (m, s) => ({ kind: "monthly", day: 1, time: timeIn(s) || "09:00" }) },
+    { re: /\bmonthly\b|\b(?:every|each)\s+month\b|\bonce\s+a\s+month\b|\bfirst\s+of\s+(?:the|every|each)\s+month\b/i, build: (m, s) => ({ kind: "monthly", day: dayOfMonthIn(s) || 1, time: timeIn(s) || "09:00" }) },
   ];
   for (const rule of rules) {
     const match = source.match(rule.re);

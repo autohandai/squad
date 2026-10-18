@@ -49,6 +49,13 @@ check('every 2 hours → interval 120 minutes', hours && hours.schedule.kind ===
 const monthly = detectRecurringWork('at the end of the month reconcile the invoices');
 check('end of the month → monthly on the last day', monthly && monthly.schedule.kind === 'monthly' && monthly.schedule.day === 'last', JSON.stringify(monthly));
 check('weekly → Monday', detectRecurringWork('send me a weekly summary')?.schedule.days.join() === '1');
+// "6.30pm" was read as "at 6" (06:00) and cut the sentence at the dot.
+const dotted = detectRecurringWork('Every evening at 6.30pm send the summary');
+check('"6.30pm" is 18:30 and the title is the work', dotted?.schedule.time === '18:30' && dotted.title === 'Send the summary', JSON.stringify(dotted));
+check('"every evening at 6" is 18:00, not 06:00', detectRecurringWork('every evening at 6 send the summary')?.schedule.time === '18:00');
+check('"every morning at 7" stays 07:00', detectRecurringWork('every morning at 7 summarise the news')?.schedule.time === '07:00');
+const fifteenth = detectRecurringWork('every month on the 15th send the invoices');
+check('"every month on the 15th" is the 15th, not the 1st', fifteenth?.schedule.day === 15 && fifteenth.title === 'Send the invoices', JSON.stringify(fifteenth));
 check('a question is not an instruction', detectRecurringWork('Do you check replies every day?') === null);
 check('a negation is not an instruction', detectRecurringWork("Don't send the batch every day, only once.") === null);
 check('plain work has no schedule', detectRecurringWork('Draft the partner email and send it to me.') === null);
