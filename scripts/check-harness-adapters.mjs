@@ -170,6 +170,11 @@ assert.equal(getAdapter('codex').id, 'codex');
   const failed = codexAdapter.parseLine(JSON.stringify({ type: 'turn.failed', error: { message: 'boom' } }), state);
   assert.equal(failed[0].type, 'error');
   assert.equal(codexAdapter.parseLine('not json', state)[0].type, 'raw');
+  // MCP calls as Codex 0.162.1 reported them live (2026-10-18): the tool's text, and the refusal in words.
+  const mcpOk = codexAdapter.parseLine(JSON.stringify({ type: 'item.completed', item: { id: 'i5', type: 'mcp_tool_call', server: 'autohand-squad', tool: 'squad_team', arguments: {}, result: { content: [{ type: 'text', text: '{"you":{"name":"Probe"}}' }] }, error: null, status: 'completed' } }), state).at(-1);
+  assert.equal(mcpOk.output, '{"you":{"name":"Probe"}}', 'an MCP result is the text the tool returned');
+  const mcpFailed = codexAdapter.parseLine(JSON.stringify({ type: 'item.completed', item: { id: 'i6', type: 'mcp_tool_call', server: 'autohand-squad', tool: 'squad_team', arguments: {}, result: null, error: { message: 'MCP tool call requires approval, but approval policy is never' }, status: 'failed' } }), state).at(-1);
+  assert.equal(mcpFailed.error, 'MCP tool call requires approval, but approval policy is never', 'a failed MCP call says why, not [object Object]');
 }
 
 // --- claude parsing -----------------------------------------------------------

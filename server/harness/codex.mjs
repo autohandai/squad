@@ -245,7 +245,11 @@ function itemOutput(item) {
         .map((change) => `${change.kind || "update"} ${change.path || ""}`.trim())
         .join("\n");
     case "mcp_tool_call":
-      return typeof item.result === "string" ? item.result : item.result ? JSON.stringify(item.result) : "";
+      // Codex 0.162 sends { result: { content: [{ type: "text", text }] },
+      // error: { message } }; the text is what the tool said.
+      if (typeof item.result === "string") return item.result;
+      if (Array.isArray(item.result?.content)) return item.result.content.map((block) => (block?.type === "text" ? String(block.text || "") : "")).filter(Boolean).join("\n") || JSON.stringify(item.result);
+      return item.result ? JSON.stringify(item.result) : "";
     case "web_search":
       return String(item.query || "");
     default:
@@ -347,7 +351,8 @@ export function parseLine(line, state) {
       toolName,
       success,
       output: success ? itemOutput(item) : "",
-      error: success ? "" : itemOutput(item) || item.error || `${toolName} failed`,
+      // A failed MCP call carries `error: { message }`; the run log read "[object Object]".
+      error: success ? "" : itemOutput(item) || (typeof item.error === "string" ? item.error : item.error?.message) || `${toolName} failed`,
       timestamp,
     });
     return events;
