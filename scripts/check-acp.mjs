@@ -21,7 +21,7 @@ import { access as fsAccess, chmod, mkdir, mkdtemp, readFile, rm, writeFile } fr
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { agentIdFromHarnessId, harnessIdFor, isAcpHarnessId, launchFor, normalizeAgent, normalizeRegistry, platformTarget } from '../server/acp/registry.mjs';
-import { acpMcpServers, contentText, decidePermission, eventsFromUpdate, isInsideDirs, newAcpState } from '../server/harness/acp.mjs';
+import { acpMcpServers, contentText, decidePermission, eventsFromUpdate, forHarnessId, isInsideDirs, newAcpState } from '../server/harness/acp.mjs';
 import { getAdapter, normalizeHarnessAssignment, normalizeHarnessId } from '../server/harness/index.mjs';
 import { normalizeHarnessSessions } from '../server/chats/sessions.mjs';
 import { accessOption, harnessLabel, harnessOption, harnessTakesModel, isAcpHarnessId as clientIsAcp, normalizeHarnessId as clientNormalize, registerAcpAgents } from '../src/lib/harness.js';
@@ -71,6 +71,13 @@ assert.deepEqual([launch.command, launch.args], ['/bin/opencode', ['acp']]);
 assert.equal(launchFor(byId.opencode, { find, platform: 'linux-x86_64' }).detail, 'OpenCode has no build for linux-x86_64.');
 launch = launchFor(byId['autohand-acp'], { find, context: { autohandPath: '/app/autohand' } });
 assert.deepEqual([launch.command, launch.args], ['/app/autohand', ['--acp']], 'Autohand Code (ACP) runs the bundled CLI with --acp');
+{
+  // The chooser called Autohand (ACP) ready, with no version, while Autohand itself was not signed in.
+  const signedOut = await forHarnessId('autohand-acp').detect({ context: { autohandPath: '/app/autohand', autohandVersion: '0.9.7', autohandAuthReady: false } });
+  assert.equal(signedOut.status, 'setup-required', 'Autohand (ACP) needs the same sign-in as Autohand');
+  assert.equal(signedOut.version, '0.9.7', 'and reports the CLI version');
+  assert.equal((await forHarnessId('autohand-acp').detect({ context: { autohandPath: '/app/autohand', autohandVersion: '0.9.7', autohandAuthReady: true } })).status, 'ready');
+}
 launch = launchFor(byId.gemini, { find, explicitPath: '/fake/agent' });
 assert.deepEqual([launch.command, launch.kind, launch.installed], ['/fake/agent', 'explicit', true], 'an explicit executable path wins');
 assert.match(platformTarget('darwin', 'arm64'), /^darwin-aarch64$/); assert.equal(platformTarget('win32', 'x64'), 'windows-x86_64');

@@ -113,9 +113,22 @@ async function detect(adapter, { explicitPath = "", context = {} } = {}) {
     };
   }
   adapter.executableName = launch.executableName || agent.id;
+  const version = agent.id === "autohand-acp" ? String(context.autohandVersion || agent.version || "") : agent.version;
+  if (agent.id === "autohand-acp" && context.autohandAuthReady === false) {
+    return {
+      status: "setup-required",
+      version,
+      executable: redactHome(launch.command),
+      executablePath: launch.command,
+      detail: "Autohand is installed but not signed in.",
+      setup: "autohand login",
+      signIn: { label: "Sign in with your Autohand account", alternative: "or add an Autohand AI API key in Settings" },
+      agent: summary,
+    };
+  }
   return {
     status: "ready",
-    version: agent.version,
+    version,
     executable: redactHome(launch.command),
     executablePath: launch.command,
     launchArgs: launch.args,

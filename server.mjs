@@ -1265,6 +1265,12 @@ function harnessContextFor(id) {
   if (id === DEFAULT_HARNESS_ID) return autohandReadinessContext();
   // ACP agents (ADR-0122): the registry cache lives in the squad state dir
   // and `autohand-acp` runs the same CLI the Autohand engine uses.
+  if (id === "autohand-acp") {
+    // The same CLI, so the same version and sign-in: the chooser called it
+    // ready, with no version, while Autohand itself said "not signed in".
+    const autohand = autohandReadinessContext();
+    return { squadStateDir, autohandPath: autohand.bundledPath, autohandVersion: autohand.version, autohandAuthReady: autohand.authReady };
+  }
   if (id === "acp" || isAcpHarness(id)) return { squadStateDir, autohandPath: resolveAutohandBinary() };
   return {};
 }
