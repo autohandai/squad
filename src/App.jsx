@@ -8916,7 +8916,9 @@ function App() {
     const effectiveLaunchModel = recipeOverrides?.model || launch.model;
 
     touchAgent(agentId, now.toISOString());
-    appendMessage(agentId, { id: `${taskId}-u`, role: "user", body: prompt, time });
+    // A routine's run is not something the person said; its reply arrives
+    // in the conversation on its own (reconcileRoutineRuns).
+    if (!launch.routineRunId) appendMessage(agentId, { id: `${taskId}-u`, role: "user", body: prompt, time });
     setTasks((current) => [
       {
         id: taskId,
@@ -9002,9 +9004,10 @@ function App() {
         method: "POST",
         body: JSON.stringify({
           agentId,
-          title: prompt,
+          title: launch.title || prompt,
           prompt,
           workspace: selectedWorkspace,
+          ...(launch.routineId ? { routineId: launch.routineId } : {}),
           mode: effectiveMode,
           policy: effectivePolicy,
           model: effectiveLaunchModel,
