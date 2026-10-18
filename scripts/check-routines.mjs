@@ -277,6 +277,10 @@ try {
     const queued = (await routineById(routineC.id)).runs[0];
     assert.equal(queued.status, "queued");
     assert.equal(queued.dispatch, "app");
+    // Two Squad windows poll the same list: only the first claim starts it.
+    assert.equal((await bridge.api(`/api/routines/runs/${pending.runId}/claim`, "POST", {})).status, 200);
+    assert.equal((await bridge.api(`/api/routines/runs/${pending.runId}/claim`, "POST", {})).status, 409, "a second window cannot take the same run");
+    assert.equal((await bridge.api("/api/routines/pending")).data.dispatches.some((d) => d.runId === pending.runId), false, "a claimed run is not offered again");
     const started = await bridge.api(`/api/routines/runs/${pending.runId}/started`, "POST", { memberRunId: "app-run-1" });
     assert.equal(started.success, true, JSON.stringify(started));
     assert.equal(started.data.runs[0].status, "running");

@@ -8666,8 +8666,20 @@ function App() {
   async function dispatchRoutineRun(dispatch) {
     if (!dispatch?.runId || dispatchedRoutineRunsRef.current.has(dispatch.runId)) return;
     dispatchedRoutineRunsRef.current.add(dispatch.runId);
+    // Another Squad window may have taken it already (desktop app and a tab).
+    try {
+      await api(`/api/routines/runs/${encodeURIComponent(dispatch.runId)}/claim`, { method: "POST", body: "{}" });
+    } catch {
+      return;
+    }
+    // startAutohand falls back to the open member; a routine of a member
+    // that is gone must not run as whoever is on screen.
+    if (!membersRef.current.some((member) => member.id === dispatch.memberId)) {
+      await api(`/api/routines/runs/${encodeURIComponent(dispatch.runId)}/finished`, { method: "POST", body: JSON.stringify({ status: "failed", reason: "This member is no longer in the squad." }) }).catch(() => {});
+      return;
+    }
     const member = membersRef.current.find(item => item.id === dispatch.memberId);
-    const run = await startAutohand(dispatch.memberId, { prompt: dispatch.prompt, workspace: dispatch.workspace, mode: "auto", modeLabel: "Auto", policy: member?.launch?.policy || "yes", model: dispatch.model || "", dryRun: false });
+    const run = await startAutohand(dispatch.memberId, { prompt: dispatch.prompt, workspace: dispatch.workspace, mode: "auto", modeLabel: "Auto", policy: member?.launch?.policy || "yes", model: dispatch.model || "", dryRun: false, routineRunId: dispatch.runId, routineId: dispatch.routineId, title: dispatch.title });
     try {
       if (run?.id) await api(`/api/routines/runs/${encodeURIComponent(dispatch.runId)}/started`, { method: "POST", body: JSON.stringify({ memberRunId: run.id }) });
       else await api(`/api/routines/runs/${encodeURIComponent(dispatch.runId)}/finished`, { method: "POST", body: JSON.stringify({ status: "failed", preview: "Autohand did not start from the app." }) });

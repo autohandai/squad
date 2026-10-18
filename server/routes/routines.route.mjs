@@ -544,7 +544,9 @@ export async function init(ctx) {
 
 const ROUTINE = /^\/api\/routines\/([^/]+)$/;
 const ROUTINE_RUN = /^\/api\/routines\/([^/]+)\/run$/;
-const RUN_STEP = /^\/api\/routines\/runs\/([^/]+)\/(started|finished)$/;
+const RUN_STEP = /^\/api\/routines\/runs\/([^/]+)\/(claim|started|finished)$/;
+// How long a claimed app dispatch may take to report its member run.
+const CLAIM_MS = 2 * 60_000;
 const PROPOSAL_DECISION = /^\/api\/routines\/proposals\/([^/]+)\/(confirm|decline)$/;
 
 function decode(value) {
@@ -633,7 +635,7 @@ export async function handle(req, res, url, ctx) {
   if (path === "/api/routines/pending" && req.method === "GET") {
     const dispatches = [];
     for (const routine of store.routines()) {
-      for (const run of routine.runs || []) if (run.status === "queued" && run.dispatch === "app") dispatches.push(describeDispatch(routine, run));
+      for (const run of routine.runs || []) if (run.status === "queued" && run.dispatch === "app" && !(run.claimedAt && now.getTime() - Date.parse(run.claimedAt) < CLAIM_MS)) dispatches.push(describeDispatch(routine, run));
     }
     return ok(ctx, res, 200, { dispatches });
   }
@@ -665,6 +667,15 @@ export async function handle(req, res, url, ctx) {
     if (!routine || !run) return fail(ctx, res, 404, "routine run not found");
     const body = await ctx.readBody(req);
     const nowIso = now.toISOString();
+    if (match[2] === "claim") {
+      // Two Squad windows (the desktop app and a browser tab) both polled
+      // the pending list and both started the run: the person got the
+      // reminder twice. The first claim wins; the other gets 409.
+      if (run.status !== "queued" || (run.claimedAt && now.getTime() - Date.parse(run.claimedAt) < CLAIM_MS)) return fail(ctx, res, 409, run.status === "queued" ? "another Squad window is starting this run" : `run is ${run.status}`);
+      store.replaceRoutine(settleRun(routine, run, { claimedAt: nowIso }));
+      await store.save();
+      return ok(ctx, res, 200, { claimed: true });
+    }
     if (match[2] === "started") {
       if (run.status !== "queued") return fail(ctx, res, 409, `run is ${run.status}`);
       const started = { ...run, status: "running", startedAt: nowIso, memberRunId: String(body?.memberRunId || ""), reason: "" };

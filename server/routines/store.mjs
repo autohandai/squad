@@ -63,6 +63,8 @@ export function normalizeRun(input, routineId = "") {
     status: RUN_STATUSES.includes(source.status) ? source.status : "failed",
     dispatch: ["bridge", "app"].includes(source.dispatch) ? source.dispatch : "",
     memberRunId: text(source.memberRunId, 80),
+    // When a Squad window took an app dispatch; another window leaves it.
+    claimedAt: iso(source.claimedAt),
     reason: text(source.reason, 400),
     preview: text(source.preview, 400),
     reply: text(source.reply, 12000),
