@@ -14857,11 +14857,12 @@ function Conversation({
         {replySheet}
         {currentGoal ? <div className="shrink-0 px-3"><MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /></div> : null}
         <ScrollArea className="min-h-0 flex-1">
-          <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} className="px-3 sm:px-3" />
           <div className="flex flex-col gap-4 px-3 py-3">
             {hasConversationMessages ? localizedMessages.map((message) => (
               <SquadMessage key={message.id} compact agent={agent} message={message} thread={replyThreads.find(thread => thread.parentMessageId === message.id)} onReply={setReplyRoot} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} onPermissionDecision={decidePermission} onQuestionAnswer={answerQuestion} onTeamProposal={decideTeamProposal} memberBusy={Boolean(chatSending)} />
             )) : <p className="py-3 text-sm text-muted-foreground">Send a message to {agent.name}.</p>}
+            {/* Under the reply that proposed it, where the person is reading. */}
+            <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} className="px-0 sm:px-0" />
             <div ref={messagesEndRef} aria-hidden="true" />
           </div>
         </ScrollArea>
@@ -15092,7 +15093,7 @@ function Conversation({
         ) : (
         <ScrollArea className="min-h-0 flex-1">
           {!compact ? <MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /> : null}
-          <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} />
+          {!hasConversationMessages ? <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} /> : null}
           <div
             className={cn(
               "mx-auto flex w-full max-w-3xl flex-col px-4 py-6 pb-36 sm:px-6",
@@ -15143,6 +15144,10 @@ function Conversation({
                       </Fragment>
                     );
                   })}
+                  {/* Schedule proposals sit under the conversation, where the
+                      reply that proposed one was just read; at the top of a
+                      long chat they were thousands of pixels out of view. */}
+                  <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} className="max-w-none px-0 sm:px-0" />
                   <div ref={messagesEndRef} aria-hidden="true" />
                   <JumpToLatest anchorRef={messagesEndRef} watch={localizedMessages.length} />
                 </div>
