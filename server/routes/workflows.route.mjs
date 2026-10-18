@@ -92,10 +92,11 @@ function configuredTickMs() {
  * (saved profile or a registered channel-action copy) and the run needs a
  * workspace; the run advances from the bridge's own run.finished event.
  */
-export async function startBridgeMemberRun(ctx, { memberId, agent = undefined, prompt, workspace, title, channelId = "", channel = null, transport = undefined, timeoutMs = undefined, marker = {} }) {
+export async function startBridgeMemberRun(ctx, { memberId, agent = undefined, profile = "", prompt, workspace, title, channelId = "", channel = null, transport = undefined, timeoutMs = undefined, marker = {} }) {
   return ctx.startRun({
     agentId: memberId,
     ...(agent ? { agent } : {}),
+    ...(profile ? { profile } : {}),
     prompt,
     workspace,
     title,

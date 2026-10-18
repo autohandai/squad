@@ -160,9 +160,10 @@ const bridge = await startBridge({
     // SQUAD_ACTION line so the reply carries a proposal.
     await writeFile(entry, `import { existsSync, appendFileSync } from 'node:fs';
 export class AutohandSDK {
+ constructor(options) { this.options = options || {}; }
  async start() {} async interrupt() {} async close() {}
  async *streamPrompt({ message }) {
-  appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ message, at: new Date().toISOString() }) + '\\n');
+  appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ message, system: this.options.appendSystemPrompt || '', at: new Date().toISOString() }) + '\\n');
   const hold = message.match(/HOLD:([a-z-]+)/);
   yield { type: 'message_start' };
   if (hold) { const release = ${JSON.stringify(directory)} + '/release-' + hold[1]; while (!existsSync(release)) { await new Promise(resolve => setTimeout(resolve, 200)); yield { type: 'heartbeat' }; } }
@@ -170,7 +171,7 @@ export class AutohandSDK {
   yield { type: 'message_end', content: request ? 'Happy to set that up.\\nSQUAD_ACTION: ' + request[1] : 'Routine work done.' };
  }
 }`);
-    return { AUTOHAND_AGENT_SDK_ENTRY: entry, AUTOHAND_AGENT_SDK_DIR: directory, AUTOHAND_SQUAD_SCHEDULER_CLOCK: CLOCK_START, AUTOHAND_SQUAD_SCHEDULER_TICK_MS: "400" };
+    return { AUTOHAND_AGENT_SDK_ENTRY: entry, AUTOHAND_AGENT_SDK_DIR: directory, AUTOHAND_SQUAD_SCHEDULER_CLOCK: CLOCK_START, AUTOHAND_SQUAD_SCHEDULER_TICK_MS: "400", AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: "macos" };
   },
 });
 
@@ -186,7 +187,7 @@ try {
   // The bridge learns a member from any chat or run; warm up two members so
   // their routines can run with the app closed.
   for (const id of ["routine-a", "routine-b"]) {
-    const warm = await bridge.api("/api/runs", "POST", { agentId: id, agent: member(id), workspace, mode: "prompt", requestId: `warm-${id}`, prompt: `warm up ${id}` });
+    const warm = await bridge.api("/api/runs", "POST", { agentId: id, agent: member(id), profile: `PERSONA:${id}`, workspace, mode: "prompt", requestId: `warm-${id}`, prompt: `warm up ${id}` });
     assert.equal(warm.success, true, JSON.stringify(warm));
     await finishedRun(warm.data.id);
   }
@@ -234,7 +235,12 @@ try {
     assert.equal(run.dispatch, "bridge");
     assert.ok(run.memberRunId, "the bridge run id is recorded");
     assert.equal(fired.nextAt, "2026-10-13T09:02:00.000Z");
-    await until(async () => (await calls()).some((call) => call.message.includes("HOLD:alpha do the routine work")), "adapter received the routine instructions");
+    const call = await until(async () => (await calls()).find((item) => item.message.includes("HOLD:alpha do the routine work")), "adapter received the routine instructions");
+    // Bare instructions read as a new request (live, 2026-10-18: "When should
+    // I remind Igor…?"), so the run says it is the routine, due now.
+    assert.match(call.message, /scheduled routine “Every minute hold” is due now/);
+    assert.match(call.message, /do not propose a schedule/);
+    assert.match(call.system, /PERSONA:routine-a/, "the routine run carries the member's own profile");
     const live = await bridge.api(`/api/runs/${run.memberRunId}`);
     assert.equal(live.data.status, "running");
   });
@@ -242,7 +248,7 @@ try {
   await check("a member the bridge does not know gets an app dispatch instead", async () => {
     const pending = await until(async () => { const p = await bridge.api("/api/routines/pending"); return p.data.dispatches.find((d) => d.routineId === routineC.id) || false; }, "routine C queued for the app", 30000);
     assert.equal(pending.memberId, "routine-c");
-    assert.equal(pending.prompt, "app dispatched work");
+    assert.match(pending.prompt, /due now[\s\S]*app dispatched work/);
     const queued = (await routineById(routineC.id)).runs[0];
     assert.equal(queued.status, "queued");
     assert.equal(queued.dispatch, "app");

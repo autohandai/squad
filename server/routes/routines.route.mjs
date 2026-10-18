@@ -94,8 +94,19 @@ function canRunOnBridge(routine, known) {
   return Boolean(routine.workspace) && known.has(routine.memberId);
 }
 
+// The run's prompt says the routine is due now. The bare instructions read
+// as a new request: live on 2026-10-18 a once routine "Remind Igor to call
+// Sam about the contract." made the Codex member answer "When should I
+// remind Igor…?" and add a task, so the reminder never reached anyone.
 function routinePrompt(routine) {
-  return routine.instructions;
+  const zone = routine.schedule?.timeZone || "UTC";
+  return [
+    `Your scheduled routine “${routine.title}” is due now (${describeSchedule(routine.schedule)}, ${zone}). Do it now:`,
+    "",
+    routine.instructions,
+    "",
+    "This is the scheduled run itself, not a request to set something up: do not propose a schedule, do not add a task for it, and do not ask when. Your reply is delivered to the person in your direct messages, so write it to them; for a reminder, the reply is the reminder.",
+  ].join("\n");
 }
 
 function isoOrNull(date) {
@@ -157,6 +168,8 @@ async function startRoutineRun(ctx, routine, { trigger, scheduledFor, now, known
       const memberRun = await startBridgeMemberRun(ctx, {
         memberId: routine.memberId,
         agent: access?.agent,
+        // The member's own profile, as the agenda and team deliveries pass it.
+        profile: access?.profile || "",
         prompt: routinePrompt(routine),
         workspace: routine.workspace,
         title: routine.title,
