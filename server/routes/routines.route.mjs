@@ -114,13 +114,20 @@ function publicRoutine(routine, known, now = schedulerNow()) {
   };
 }
 
+// A once routine whose time has already passed would be saved, never run,
+// and read "Done" on its row. The editor defaults Once to today at 09:00,
+// and a reminder confirmed after its time was created and never fired.
+function passedOnce(schedule, now) {
+  return schedule.kind === "once" && !validateSchedule(schedule).length && !nextOccurrence(schedule, now) ? ["schedule.date (that time has already passed)"] : [];
+}
+
 function publicProposal(proposal, now = schedulerNow()) {
   return {
     ...proposal,
     description: describeSchedule(proposal.schedule),
     timeZone: proposal.schedule?.timeZone || "",
     next: proposal.status === "proposed" ? nextOccurrences(proposal.schedule, now, 3).map((date) => date.toISOString()) : [],
-    expired: Boolean(proposal.expiresAt && proposal.expiresAt < now.toISOString()),
+    expired: Boolean(proposal.expiresAt && proposal.expiresAt < now.toISOString()) || (proposal.status === "proposed" && passedOnce(proposal.schedule, now).length > 0),
   };
 }
 
@@ -391,6 +398,7 @@ async function decideProposal(ctx, id, confirm) {
     routine = routineInputFrom({ memberId: proposal.memberId, title: proposal.title, instructions: proposal.instructions, workspace: proposal.workspace, schedule: proposal.schedule, enabled: true }, null, { now: nowIso });
     const problems = [...validateRoutine(routine), ...validateSchedule(routine.schedule)];
     if (problems.length) throw Object.assign(new Error(`the proposal is incomplete: ${problems.join(", ")}`), { status: 409 });
+    if (passedOnce(routine.schedule, now).length) throw Object.assign(new Error("its time has already passed; ask the member to propose a new time"), { status: 409 });
     routine = { ...routine, destination: proposal.destination, source: "chat", proposalId: proposal.id, nextAt: isoOrNull(nextOccurrence(routine.schedule, now)) };
     store.replaceRoutine(routine);
     store.replaceProposal({ ...proposal, status: "confirmed", routineId: routine.id, message: "You confirmed this routine.", decidedAt: nowIso, updatedAt: nowIso });
@@ -569,7 +577,7 @@ export async function handle(req, res, url, ctx) {
     const imported = body?.legacyAutomationId && store.routines().find(item => item.legacyAutomationId === body.legacyAutomationId && item.memberId === body.memberId);
     if (imported) return ok(ctx, res, 200, publicRoutine(imported, await knownMembers(ctx), now));
     const routine = routineInputFrom(body, null, { now: now.toISOString(), defaultTimeZone: body?.timeZone });
-    const problems = [...validateRoutine(routine), ...validateSchedule(routine.schedule).map((field) => `schedule.${field}`)];
+    const problems = [...validateRoutine(routine), ...validateSchedule(routine.schedule).map((field) => `schedule.${field}`), ...passedOnce(routine.schedule, now)];
     if (problems.length) return fail(ctx, res, 400, `routine is incomplete: ${problems.join(", ")}`);
     if (store.routine(routine.id)) return fail(ctx, res, 409, "routine id already exists");
     const saved = store.replaceRoutine({ ...routine, nextAt: isoOrNull(nextOccurrence(routine.schedule, now)) });
@@ -680,9 +688,9 @@ export async function handle(req, res, url, ctx) {
     if (req.method === "PUT" || req.method === "PATCH") {
       const body = withIntervalAnchor(await ctx.readBody(req), now);
       const routine = routineInputFrom(body, existing, { now: now.toISOString(), defaultTimeZone: body?.timeZone });
-      const problems = [...validateRoutine(routine), ...validateSchedule(routine.schedule).map((field) => `schedule.${field}`)];
-      if (problems.length) return fail(ctx, res, 400, `routine is incomplete: ${problems.join(", ")}`);
       const scheduleChanged = JSON.stringify(routine.schedule) !== JSON.stringify(existing.schedule) || (routine.enabled && !existing.enabled);
+      const problems = [...validateRoutine(routine), ...validateSchedule(routine.schedule).map((field) => `schedule.${field}`), ...(scheduleChanged ? passedOnce(routine.schedule, now) : [])];
+      if (problems.length) return fail(ctx, res, 400, `routine is incomplete: ${problems.join(", ")}`);
       const saved = store.replaceRoutine({ ...routine, nextAt: scheduleChanged ? isoOrNull(nextOccurrence(routine.schedule, now)) : existing.nextAt });
       await store.save();
       changed(ctx);

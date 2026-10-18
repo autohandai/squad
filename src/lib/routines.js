@@ -181,7 +181,8 @@ export function routineNextLabel(routine, locale = undefined) {
   if (!routine) return "";
   if (!routine.enabled) return "Paused";
   if (routine.activeRun) return routine.activeRun.status === "queued" ? "Waiting for Squad to open" : "Running now";
-  if (!routine.nextAt) return routine.schedule?.kind === "once" ? "Done" : "No upcoming run";
+  // "Done" only for a once routine that ran; one saved after its time never did.
+  if (!routine.nextAt) return routine.schedule?.kind === "once" ? (routine.lastRun || (routine.runs || []).length ? "Done" : "Its time has passed; it never ran") : "No upcoming run";
   return `Next ${formatInZone(routine.nextAt, routine.schedule?.timeZone, locale)}`;
 }
 

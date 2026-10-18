@@ -29,6 +29,7 @@ import {
   wallToUtc,
 } from "../server/routines/schedule.mjs";
 import { normalizeRoutine, upsertRun, activeRun, lastRun } from "../server/routines/store.mjs";
+import { routineNextLabel } from "../src/lib/routines.js";
 
 const failures = [];
 let checks = 0;
@@ -129,6 +130,11 @@ await check("the rule in words", () => {
   assert.equal(describeSchedule(normalizeSchedule({ kind: "interval", everyMinutes: 120, startDate: "2026-10-13", startTime: "09:00" })), "Every 2 hours from 13 Oct 2026 09:00");
   assert.equal(describeSchedule(normalizeSchedule({ kind: "once", date: "2026-10-14", time: "18:30" })), "Once on 14 Oct 2026 at 18:30");
 });
+await check("a once routine reads Done only after it ran", () => {
+  const once = { enabled: true, nextAt: null, schedule: { kind: "once" }, runs: [] };
+  assert.match(routineNextLabel(once), /passed; it never ran/);
+  assert.equal(routineNextLabel({ ...once, lastRun: { status: "completed" }, runs: [{ status: "completed" }] }), "Done");
+});
 await check("routine records keep at most forty runs and expose active and last run", () => {
   let routine = normalizeRoutine({ memberId: "m", title: "t", instructions: "i", schedule: { kind: "weekdays" } });
   for (let index = 0; index < 45; index += 1) routine = upsertRun(routine, { id: `r${index}`, routineId: routine.id, status: "completed", trigger: "schedule" });
@@ -205,6 +211,10 @@ try {
     const bad = await bridge.api("/api/routines", "POST", { memberId: "routine-a", title: "Broken", instructions: "x", workspace, schedule: { kind: "cron", cron: "nope", timeZone: "UTC" } });
     assert.equal(bad.status, 400);
     assert.match(bad.error, /schedule\.cron/);
+    // The editor defaults Once to today at 09:00; at 09:00:50 that has passed.
+    const past = await bridge.api("/api/routines", "POST", { memberId: "routine-a", title: "Too late", instructions: "x", workspace, schedule: { kind: "once", date: "2026-10-13", time: "09:00", timeZone: "UTC" } });
+    assert.equal(past.status, 400, "a once routine whose time has passed is refused, not saved to never run");
+    assert.match(past.error, /already passed/);
   });
 
   await check("preview computes the rule and the next three dates on the bridge", async () => {
@@ -347,6 +357,19 @@ try {
     const again = await bridge.api(`/api/routines/proposals/${proposalId}/confirm`, "POST", {});
     assert.equal(again.data.routine.id, confirmed.data.routine.id, "confirming twice does not create a second routine");
     assert.equal((await routinesFor("routine-a")).length, before + 1);
+  });
+
+  await check("a once proposal confirmed after its time is refused, not created to never fire", async () => {
+    const at = new Date(Date.parse((await bridge.api("/api/routines")).data.now) + 60_000);
+    const time = at.toISOString().slice(11, 16);
+    const proposed = await finishedRun((await bridge.api("/api/runs", "POST", { agentId: "routine-a", agent: member("routine-a"), workspace, mode: "prompt", requestId: "propose-late", prompt: `REQUEST:${JSON.stringify({ type: "schedule", title: "Call Sam", instructions: "Remind the person to call Sam", schedule: { kind: "once", date: "2026-10-13", time }, timezone: "UTC" })}` })).data.id);
+    const id = proposed.channelActions[0].id;
+    assert.equal(proposed.channelActions[0].status, "proposed");
+    await until(async () => (await bridge.api("/api/routines/proposals")).data.proposals.find((item) => item.id === id)?.expired, "the reminder time passes", 150000);
+    const late = await bridge.api(`/api/routines/proposals/${id}/confirm`, "POST", {});
+    assert.equal(late.status, 409);
+    assert.match(late.error, /already passed/);
+    assert.equal((await routinesFor("routine-a")).some((routine) => routine.title === "Call Sam"), false);
   });
 
   await check("routines, run history and decisions survive a restart", async () => {
