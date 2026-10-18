@@ -23,6 +23,18 @@ export function KeepWorkingSwitch({ api, memberId, memberName = "This member", c
     return () => { cancelled = true; };
   }, [api, memberId]);
 
+  // The bridge says why nothing started ("Give this member a folder…",
+  // "Today's limit… is reached"); read it again while the switch is on.
+  const on = Boolean(state?.enabled);
+  useEffect(() => {
+    if (!on) return undefined;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      api(`/api/agenda/${encodeURIComponent(memberId)}`).then((data) => { if (!cancelled) setState(data); }).catch(() => {});
+    }, 20_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api, memberId, on]);
+
   async function save(patch) {
     setBusy(true);
     setError("");
@@ -65,6 +77,7 @@ export function KeepWorkingSwitch({ api, memberId, memberName = "This member", c
           <span>{(copy.keepWorkingToday || "a day · {count} today").replace("{count}", String(state?.today?.count || 0))}</span>
         </div>
       ) : null}
+      {enabled && !state?.current && state?.waiting ? <p className="mt-1 text-xs text-muted-foreground" data-testid="keep-working-waiting">{(copy.keepWorkingWaiting || "Not working on its own right now: {reason}").replace("{reason}", state.waiting)}</p> : null}
       {error ? <p className="mt-1 text-xs text-destructive">{error}</p> : null}
     </div>
   );
