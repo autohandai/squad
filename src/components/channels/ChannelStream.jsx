@@ -11,6 +11,7 @@ import { QUICK_REACTIONS, reactionName, searchReactions } from "@/lib/reactions"
 import { isNoTextReply } from "@/lib/chat-recovery";
 import { channelReplyIndex, channelThreadSummary, isChannelPlaceholder, normalizeChannelReplyMode } from "@/lib/channel-replies";
 import { isNoTextReply, withoutRecoveryNotices } from "@/lib/chat-recovery";
+import { targetChipMemberIds } from "@/lib/channel-mentions";
 import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { cn } from "@/lib/utils";
 import { fallbackLabel } from "@/lib/model-routing";
@@ -160,7 +161,9 @@ function MentionChips({ message, agents, userName, channelMemberIds = [] }) {
   // Whole-channel messages are the default; chips only mark targeted members.
   if (label === "channel" || label === "thread recipients") return null;
   if (channelMemberIds.length && ids.length >= channelMemberIds.length && ids.every((id) => channelMemberIds.includes(id))) return null;
-  const names = ids.map((id) => agents.find((agent) => agent.id === id)?.name).filter(Boolean);
+  const shown = targetChipMemberIds(message, agents);
+  if (ids.length && !shown.length) return null;
+  const names = shown.map((id) => agents.find((agent) => agent.id === id)?.name).filter(Boolean);
   const chips = names.length ? names : label ? [label.replace(/^@/, "")] : [];
   if (!chips.length) return null;
   return (
