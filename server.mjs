@@ -8098,7 +8098,7 @@ function appendChatRunEvent(run, event) {
       appendLog(run, "permission", `${event.title || "Permission requested"}${event.content ? `: ${event.content}` : ""}`);
       return;
     case "error":
-      appendLog(run, "stderr", event.error || "Agent stream failed");
+      appendErrorOnce(run, event.error || "Agent stream failed");
       return;
     case "status":
       if (event.label) appendLog(run, "system", event.label);
@@ -8107,6 +8107,19 @@ function appendChatRunEvent(run, event) {
     default:
       return;
   }
+}
+
+// Claude Code reports one refusal as the assistant's error and again as the
+// result's, and the turn's own failure repeats it: the person's History read
+// "You've hit your session limit · resets 8pm" three times in a row.
+const loggedRunErrors = new WeakMap();
+function appendErrorOnce(run, message) {
+  const text = String(message || "").trim();
+  const seen = loggedRunErrors.get(run) || new Set();
+  loggedRunErrors.set(run, seen);
+  if (!text || seen.has(text)) return;
+  seen.add(text);
+  appendLog(run, "stderr", text);
 }
 
 function finishChatRun(run, { result = null, error = null, aborted = false } = {}) {
@@ -8139,7 +8152,7 @@ function finishChatRun(run, { result = null, error = null, aborted = false } = {
     run.durationMs = Date.parse(finishedAt) - Date.parse(run.startedAt);
     run.status = stoppedAlready || aborted || isAbortError(error) ? "stopped" : "failed";
     run.exitCode = run.status === "failed" ? 1 : null;
-    if (error && run.status === "failed") appendLog(run, "stderr", error.message || String(error));
+    if (error && run.status === "failed") appendErrorOnce(run, error.message || String(error));
   }
   run.finishedAt = finishedAt;
   if (run.kind === "run") emitRunFinished(run);
