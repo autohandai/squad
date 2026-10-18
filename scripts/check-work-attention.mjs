@@ -4,6 +4,7 @@ import {
   cutOnWord,
   decisionRows,
   needsYouSummary,
+  memoryProposalRows,
   routineProposalRows,
   stoppedWorkRows,
   unreadRows,
@@ -62,6 +63,14 @@ assert.equal(list.find((row) => row.kind === "routine").title, "Alex proposes a 
 assert.equal(list.find((row) => row.kind === "routine").detail, "Every weekday at 09:00 · Pacific/Auckland");
 assert.equal(list.find((row) => row.kind === "handoff").who, "Noah → Iris");
 assert.equal(list.length, workAttentionCount({ approvals: [{}, {}], vaultRequests: [{}, {}], folderRequests: [{}], handoffs: [{}], channelProposals: [{}], routineProposals: [{}], memoryProposals: [{}] }), "the badge counts exactly the decision rows");
+
+// ---- memory proposals say who wants to remember what, not the scope id
+const memoryRows = memoryProposalRows([
+  { id: "m1", status: "pending", ownerAgentId: "alex", scope: "team", content: "Release notes go in CHANGELOG.md.", updatedAt: "2026-10-14T08:00:00.000Z" },
+  { id: "m2", status: "pending", ownerAgentId: "noah", scope: "project", projectLabel: "api", content: "Run the API tests with --runInBand." },
+  { id: "m3", status: "accepted", ownerAgentId: "alex", scope: "personal", content: "Done." },
+], members);
+assert.deepEqual(memoryRows.map((row) => [row.title, row.detail, row.who]), [["Alex wants to remember: Release notes go in CHANGELOG.md.", "Team memory", "Alex"], ["Noah wants to remember: Run the API tests with --runInBand.", "Project memory · api", "Noah"]]);
 
 // ---- unread: replies and channels as one list, newest first
 const unread = unreadRows({ replies: [{ id: "reply-alex", agentId: "alex", name: "Alex", count: 2, preview: "Done.", at: "2026-10-14T09:00:00.000Z" }], unreadChannels: [{ channel: { id: "ops", name: "ops" }, preview: "Waiting for approval", latestAt: "2026-10-14T09:30:00.000Z" }] });

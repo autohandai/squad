@@ -59,6 +59,30 @@ export function channelProposalRows(actions = [], members = []) {
 }
 
 /** Needs-you rows for routines a member proposed from chat (ADR-0110). */
+const MEMORY_SCOPE_LABELS = { personal: "Personal", project: "Project", team: "Team" };
+
+/**
+ * Pending memory proposals as decision rows: who wants to remember what. The
+ * row's title was the bare scope id ("personal", "team") with the text below
+ * it, so a Needs you row read "personal" and did not say whose it was.
+ */
+export function memoryProposalRows(items = [], members = []) {
+  const nameOf = (id) => members.find((member) => member.id === id)?.name || "A member";
+  return (Array.isArray(items) ? items : [])
+    .filter((item) => item?.status === "pending")
+    .map((item) => {
+      const ownerId = item.ownerAgentId || item.agentId;
+      return {
+        id: item.id,
+        item,
+        title: `${nameOf(ownerId)} wants to remember: ${cutOnWord(item.content || "", 72)}`,
+        detail: [`${MEMORY_SCOPE_LABELS[item.scope] || "Personal"} memory`, item.scope === "project" ? item.projectLabel : ""].filter(Boolean).join(" · "),
+        who: nameOf(ownerId),
+        at: item.updatedAt || item.createdAt || "",
+      };
+    });
+}
+
 export function routineProposalRows(proposals = [], members = []) {
   const nameOf = (id) => members.find((member) => member.id === id)?.name || "A member";
   return (Array.isArray(proposals) ? proposals : [])

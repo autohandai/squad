@@ -288,7 +288,7 @@ import { MediaAttachment } from "@/components/channels/MediaAttachment";
 import { AnchorChip } from "@/components/channels/AnchorChip";
 import { anchorsFromDraft, appendAnchorToken, frameKey, frameUrl, messageMediaContext, parseAnchorTokens, removeAnchorToken } from "@/lib/anchors";
 import { NeedsYouList } from "@/components/inbox/InboxPage";
-import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, stoppedWorkRows, workRowsInProgress, workAttentionCount, channelProposalRows, routineProposalRows, decisionRows, needsYouSummary } from "@/lib/work-attention";
+import { WORK_VIEW_STORAGE_KEY, workViewForRoute, workRowsNeedingYou, stoppedWorkRows, workRowsInProgress, workAttentionCount, channelProposalRows, routineProposalRows, memoryProposalRows, decisionRows, needsYouSummary } from "@/lib/work-attention";
 import { HarnessSelect } from "@/components/members/HarnessSelect";
 import { MemberHistory } from "@/components/members/MemberHistory";
 import { PreviousChats } from "@/components/chat/PreviousChats";
@@ -6525,13 +6525,7 @@ function App() {
   // surface where the Approve / Confirm controls already live.
   const inboxChannelProposals = useMemo(() => channelProposalRows(agentChannelActions, agents), [agentChannelActions, agents]);
   const inboxRoutines = useMemo(() => routineProposalRows(routineProposals, agents), [routineProposals, agents]);
-  const inboxMemory = useMemo(
-    () =>
-      memoryInbox
-        .filter((item) => item?.status === "pending")
-        .map((item) => ({ id: item.id, item, title: item.projectLabel || item.scope || "Memory proposal", detail: item.content || "", at: item.updatedAt || item.createdAt || "" })),
-    [memoryInbox]
-  );
+  const inboxMemory = useMemo(() => memoryProposalRows(memoryInbox, agents), [memoryInbox, agents]);
   // The Inbox has always described itself as "Replies, handoffs, and
   // proposals that need you", and it carried everything except replies. A
   // member answering you in a direct message put a count on its sidebar row
