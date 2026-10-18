@@ -222,6 +222,15 @@ try {
     const several = await pick('rules', 'can someone fix the arm64 build?');
     assert.equal(several.data.rule, 'auto-everyone'); assert.deepEqual([...several.data.memberIds].sort(), [...roster].sort());
     assert.equal(fake.requests, before + 1); record('auto: "several" at 0.9', before);
+    // An address or a channel project is not a mention, so Auto still picks
+    // (before, either one skipped the pick as "mentions win" with nobody named).
+    await bridge.api('/api/channels/rules', 'PATCH', { projects: [{ name: 'deploy-tools', path: process.cwd() }] });
+    before = fake.requests; fake.behaviour = 'member';
+    for (const text of ['mail release@example.com about the arm64 build', 'the arm64 build in @deploy-tools is red']) {
+      const picked = await pick('rules', text);
+      assert.equal(picked.data.rule, 'auto', `${text}: ${picked.data.reason}`); assert.deepEqual(picked.data.memberIds, ['noah']);
+    }
+    assert.equal(fake.requests, before + 2); record('auto: an address and a project are not mentions (2 messages)', before);
     before = fake.requests; fake.behaviour = 'low';
     const low = await pick('rules', 'can someone fix the arm64 build?');
     assert.equal(low.data.rule, 'auto-fallback'); assert.deepEqual(low.data.memberIds, ['iris']); assert.equal(low.data.responder.reason, 'low confidence');

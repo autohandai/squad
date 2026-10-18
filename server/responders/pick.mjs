@@ -147,7 +147,7 @@ export function createResponderPicker({ resolveProvider, autohandBaseUrl = "", t
    * `roster` is [{ id, name, role, purpose }] limited to channel members.
    */
   async function pick({ channel, roster, message, lines = [] }) {
-    const mentions = resolveMentions(message, roster);
+    const mentions = resolveMentions(message, roster, { projects: channel?.projects });
     const base = { channelId: channel.id, mentions, requests: 0, latencyMs: 0 };
     if (!needsResponderPick(mentions, channel)) {
       const resolution = resolveResponderRecipients({ mentions, channel, pick: null });
