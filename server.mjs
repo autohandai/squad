@@ -7308,6 +7308,11 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
         const values = [`${prefix}.command=${JSON.stringify(server.command)}`, `${prefix}.args=${JSON.stringify(server.args)}`, `${prefix}.env={${Object.entries(server.env).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(",")}}`];
         // A teammate's reply can take most of a minute; Codex's default tool timeout is 60 s.
         if (server.name === TEAM_MCP_SERVER_NAME) values.push(`${prefix}.tool_timeout_sec=120`);
+        // codex exec runs with approval "never", so a tool that needs approval
+        // is refused outright: live, 2026-10-18, a write-access member's
+        // squad_team failed with "MCP tool call requires approval, but
+        // approval policy is never". Squad's servers enforce their own grants.
+        values.push(`${prefix}.default_tools_approval_mode="approve"`);
         for (const value of values) built.args.unshift("-c", value);
       }
       built.displayArgs.unshift("-c", "<squad-managed-mcp-config>");

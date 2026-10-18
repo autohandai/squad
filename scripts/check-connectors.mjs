@@ -284,7 +284,7 @@ console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture clau
   assert.ok(!claudeSeen[1].contents.some(isConnectorConfig), 'a blocked member gets no connectors --mcp-config');
   assert.equal((await stat(claudeSeen[0].configs[0])).mode & 0o777, 0o600);
   assert.deepEqual(claudeMcpConfig([{ serverName: 'squad-connector-x', kind: 'url', transport: 'sse', url: 'https://x.example/sse', headers: { Authorization: 'Bearer t' } }]), { mcpServers: { 'squad-connector-x': { type: 'sse', url: 'https://x.example/sse', headers: { Authorization: 'Bearer t' } } } });
-  assert.deepEqual(codexConfigArgs([{ serverName: 'squad-connector-x', kind: 'url', url: 'https://x.example/mcp', headers: { Authorization: 'Bearer t' } }]), ['-c', 'mcp_servers.squad-connector-x.url="https://x.example/mcp"', '-c', 'mcp_servers.squad-connector-x.http_headers={"Authorization"="Bearer t"}']);
+  assert.deepEqual(codexConfigArgs([{ serverName: 'squad-connector-x', kind: 'url', url: 'https://x.example/mcp', headers: { Authorization: 'Bearer t' } }]), ['-c', 'mcp_servers.squad-connector-x.url="https://x.example/mcp"', '-c', 'mcp_servers.squad-connector-x.http_headers={"Authorization"="Bearer t"}', '-c', 'mcp_servers.squad-connector-x.default_tools_approval_mode="approve"'], 'an allowed connector is approved: codex exec cannot ask');
 
   // --- the state survives a bridge restart; delete removes a connector ---
   await stop(); start(); await until(async () => (await api('/api/connectors')).success);

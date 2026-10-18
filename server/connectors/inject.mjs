@@ -83,6 +83,10 @@ export function codexConfigArgs(specs) {
       args.push('-c', `${prefix}.url=${JSON.stringify(spec.url)}`);
       if (Object.keys(spec.headers || {}).length) args.push('-c', `${prefix}.http_headers=${tomlTable(spec.headers)}`);
     }
+    // Only an "allow" connector is injected, and codex exec cannot ask: without
+    // this a tool that needs approval is refused ("requires approval, but
+    // approval policy is never").
+    args.push('-c', `${prefix}.default_tools_approval_mode="approve"`);
   }
   return args;
 }
