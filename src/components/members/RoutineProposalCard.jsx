@@ -10,9 +10,14 @@ import { cn } from "@/lib/utils";
 // quiet divider section at the top of the member's chat, like channel
 // proposals: no card frame, no tinted fill.
 
-export function RoutineProposalCard({ proposals = [], members = [], onDecision, locale, className, copy = {} }) {
+const EXPIRED_SHOWN_MS = 24 * 60 * 60_000;
+
+export function RoutineProposalCard({ proposals: all = [], members = [], onDecision, locale, className, copy = {} }) {
   const [pending, setPending] = useState("");
   const [error, setError] = useState("");
+  // The card sits under the conversation; an expired proposal says so for a
+  // day and then stops following every new message.
+  const proposals = all.filter((proposal) => !proposal.expired || !proposal.expiresAt || Date.now() - Date.parse(proposal.expiresAt) < EXPIRED_SHOWN_MS);
   if (!proposals.length) return null;
 
   async function decide(id, decision) {
