@@ -7355,7 +7355,7 @@ function App() {
       parentTask = handoffResult.task;
       const receiverPrompt = buildCollaborationRecipientPrompt(handoffResult, originalPrompt, workspaces);
       deliveries.push(Promise.resolve(
-        sendChat(target.id, {
+        sendHandoffWhenFree(target, {
           prompt: receiverPrompt,
           workspace: handoffResult.workspace || workspace,
           hop: hop + 1,
@@ -7382,6 +7382,28 @@ function App() {
         }));
     }
     return Promise.all(deliveries);
+  }
+
+  // A receiver that is busy used to decline at once ("already working on
+  // another request") and nothing retried, so a handoff to a member who was
+  // answering a channel reply was lost. It now waits for them, as the team
+  // server's squad_message does (ADR-0134), and gives up after ten minutes.
+  async function sendHandoffWhenFree(target, launch) {
+    const deadline = Date.now() + HANDOFF_BUSY_WAIT_MS;
+    for (;;) {
+      let busy = Boolean(chatMembersRef.current.get(target.id));
+      if (!busy) {
+        try {
+          const entry = (await api("/api/members/presence"))?.presence?.[target.id];
+          busy = entry?.state === "working" || Number(entry?.activeRuns) > 0;
+        } catch {
+          // Presence unknown: send, and the bridge declines if it must.
+        }
+      }
+      if (!busy) return sendChat(target.id, launch);
+      if (Date.now() > deadline) return { declined: "busy", reply: `${target.name} stayed busy for ten minutes, so the handoff was not delivered. Ask again when ${target.name} is free.` };
+      await new Promise((resolve) => window.setTimeout(resolve, HANDOFF_BUSY_POLL_MS));
+    }
   }
 
   async function sendChat(agentId, launch) {
@@ -12282,6 +12304,9 @@ function mentionedChannelProjects(text, channel) {
 
 // Maximum member-to-member delegation depth from a direct chat.
 const DM_DELEGATION_MAX_HOPS = 2;
+// How long a handoff waits for a busy receiver, and how often it looks.
+const HANDOFF_BUSY_WAIT_MS = 10 * 60 * 1000;
+const HANDOFF_BUSY_POLL_MS = 3000;
 // Member routines (ADR-0110): the schedule proposal format. The zone is the
 // browser's and stable per machine, so it does not churn the session key.
 const SCHEDULE_ACTION_INSTRUCTION = scheduleActionInstruction(browserTimeZone());

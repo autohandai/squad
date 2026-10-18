@@ -188,30 +188,32 @@ await check('parallel mentions from the original member share one parent task','
   assert.equal((await tasks(browser))[0].currentOwnerId,'asq_cycle_noah');
   assert.equal((await turns(bridge)).length,3);assert.deepEqual(browser.errors,[]);
 });
-await check('a busy recipient declines a second handoff and can retry after its current request finishes','busy',async(bridge,browser)=>{
+await check('a busy recipient keeps a second handoff waiting and takes it when its current request finishes','busy',async(bridge,browser)=>{
   await enter(bridge,browser,{member:'asq_cycle_eva',prompt:'BUSY_MARKER: hold this independent request.'});
   await until(async()=> (await turns(bridge)).some(turn=>turn.prompt.includes('BUSY_MARKER')),'independent recipient request active');
   const competing=await bridge.api('/api/chat','POST',{agentId:'asq_cycle_eva',agent:{id:'asq_cycle_eva',name:'Tester'},prompt:'Concurrent receiving request',workspace:join(process.cwd(),'.codex-artifacts','reliability','collaboration-project'),collaboration:{role:'receiver'}});
   assert.equal(competing.success,true,JSON.stringify(competing));assert.equal(competing.data.declined,'busy','The bridge must reject a busy handoff from another client too.');
   assert.equal((await turns(bridge)).filter(turn=>turn.name==='Tester').length,1);
-  // Normal sidebar navigation retains the app and the in-flight request.
-  // A full page navigation instead disconnects and stops the previous stream.
-  await browser.click('Implementer');
-  await until(()=>browser.evaluate(`location.search.includes('member=asq_cycle_noah')`),'source selected from sidebar');
+  // In-app navigation retains the app and the in-flight request; a full page
+  // navigation instead disconnects and stops the previous stream. The sidebar
+  // no longer lists the source by its role ("Missing button: Implementer" on
+  // main too), so this navigates the way the app's own links do.
+  await browser.evaluate(`history.pushState({},'','/conversations/new?member=asq_cycle_noah');dispatchEvent(new PopStateEvent('popstate'));true`);
+  await until(()=>browser.evaluate(`location.search.includes('member=asq_cycle_noah')`),'source selected in the app');
   await browser.fill('main textarea','Implement the scoped check and ask Tester for independent QA.');
   await until(()=>browser.evaluate(`!!document.querySelector('button[aria-label="Send chat message"]:not(:disabled)')`),'source send ready');
   await browser.click('Send chat message');
-  await until(async()=> (await tasks(browser))[0]?.handoffs.some(handoff=>handoff.status==='failed'),'busy handoff refused');
-  const refused=(await tasks(browser))[0];assert.equal(refused.status,'blocked');assert.match(refused.handoffs[0].failureReason,/already working/);
+  await until(async()=> (await tasks(browser))[0]?.handoffs?.length===1,'handoff created while the recipient is busy');
+  // Bug hunt 2026-10: the handoff used to fail at once with "already working"
+  // and needed a Retry checkpoint; it now waits for the recipient.
+  await new Promise(resolve=>setTimeout(resolve,4000));
+  const waiting=(await tasks(browser))[0];assert.notEqual(waiting.handoffs[0].status,'failed','A busy recipient must not refuse the handoff.');
   assert.equal((await turns(bridge)).filter(turn=>turn.name==='Tester').length,1,'A busy recipient must not receive a second runtime execution.');
   await writeFile(join(bridge.directory,'release-qa'),'continue');
   await until(async()=> (await messages(browser)).asq_cycle_eva.some(message=>message.body==='BUSY_REQUEST_FINISHED'),'busy request finished');
   await writeFile(join(bridge.directory,'release-review'),'continue');
-  await reopen(bridge,browser,'/conversations/new?member=asq_cycle_noah&panel=tasks');
-  await until(()=>browser.evaluate(`Array.from(document.querySelectorAll('button')).some(button=>button.textContent.trim()==='Retry checkpoint')`),'busy checkpoint retry');
-  await browser.click('Retry checkpoint');
-  await until(async()=> (await tasks(browser))[0]?.status==='completed','busy checkpoint resumed explicitly');
-  assert.equal((await tasks(browser))[0].id,refused.id);assert.equal((await turns(bridge)).filter(turn=>turn.name==='Tester').length,2);
+  await until(async()=> (await tasks(browser))[0]?.status==='completed','waiting handoff delivered once the recipient was free',30000);
+  assert.equal((await tasks(browser))[0].id,waiting.id);assert.equal((await turns(bridge)).filter(turn=>turn.name==='Tester').length,2);
   assert.deepEqual(browser.errors,[]);
 });
 await check('interrupted accepted review is blocked after browser closure and bridge restart','chain',async(bridge,browser)=>{
