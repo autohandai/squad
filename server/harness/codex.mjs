@@ -292,6 +292,13 @@ export function parseLine(line, state) {
     return [{ type: "error", message: event?.error?.message || "Codex turn failed", timestamp }];
   }
   if (type === "error") {
+    // Codex reports its own stream retries as top-level errors ("Reconnecting...
+    // 2/5 (stream disconnected before completion…)") and then finishes the
+    // turn. Read as fatal, a network blip discarded a completed reply.
+    if (/^\s*Reconnecting\b/i.test(String(event.message || ""))) {
+      state.warnings.push(String(event.message));
+      return [{ type: "tool_update", toolId: "codex-warning", toolName: "Codex", output: String(event.message), stream: "stderr", timestamp }];
+    }
     return [{ type: "error", message: event.message || "Codex error", timestamp }];
   }
   const item = event?.item;
