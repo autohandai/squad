@@ -279,6 +279,12 @@ process.exit(0);
   assert.ok(profileText.includes('Personality:\nDry, direct, no filler.'), 'PERSONALITY.md content is inline');
   assert.ok(profileText.includes('Durable memory (MEMORY.md):\nThe NZ shortlist is built by scripts/nz_shortlist.py.'), 'MEMORY.md content is inline');
   assert.ok(profileText.includes('Profile map:'), 'and the profile map still points at the files');
+  const longMemory = ['# Memory', ...Array.from({ length: 120 }, (_, i) => `- Autohand Skill Installed: skill-number-${i}`), '- Learnt today: the staging deploy needs the VPN.'].join('\n');
+  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'And now?'), agent: { ...member('alex'), profileFiles: [{ section: 'memory', fileName: 'MEMORY.md', content: longMemory }] } }) })).text();
+  const longArgs = (await calls()).at(-1).args;
+  const longText = longArgs[longArgs.indexOf('--append-system-prompt') + 1] || '';
+  assert.ok(longText.includes('- Learnt today: the staging deploy needs the VPN.'), 'a long MEMORY.md keeps its newest entry inline');
+  assert.ok(longText.includes('(older entries are in MEMORY.md)') && !longText.includes('skill-number-0\n'), 'and says the oldest were left in the file');
   // 3d. Claude Code's own plans folder is always an --add-dir (ADR-0116).
   const plansDir = join(directory, 'claude', 'plans');
   assert.ok(profiled.includes('--add-dir') && profiled[profiled.indexOf('--add-dir') + 1] !== undefined);
@@ -306,7 +312,7 @@ process.exit(0);
 
   // 5. Finished runs survive a restart.
   const before = (await api('/api/runs')).data.filter((run) => run.agentId === 'alex');
-  assert.equal(before.length, 7);
+  assert.equal(before.length, 8);
   await delay(700); // the history write is debounced
   await stopBridge();
   await startBridge();

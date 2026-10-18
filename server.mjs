@@ -3423,6 +3423,18 @@ function observeRuntimeSkillEvent(agentRuntime, event) {
   return { type: 'skill_attachment', receipt, timestamp: receipt.at };
 }
 
+// MEMORY.md grows at the end, so a cut keeps the end. The first 4000
+// characters were kept, which dropped the newest entries first: a member
+// with a few dozen "Skill installed" lines never saw what it learnt today.
+function newestMemoryText(memory, limit) {
+  const text = String(memory || "");
+  if (text.length <= limit) return text;
+  const note = "(older entries are in MEMORY.md)\n";
+  const tail = text.slice(text.length - (limit - note.length));
+  const lineStart = tail.indexOf("\n");
+  return `${note}${lineStart >= 0 && lineStart < 200 ? tail.slice(lineStart + 1) : tail}`;
+}
+
 function runtimeMemberInstructions(agentRuntime) {
   const agent = agentRuntime.agent || {};
   const persona = agent.profileFiles?.find(file => file.section === "persona")?.content || "";
@@ -3439,7 +3451,7 @@ function runtimeMemberInstructions(agentRuntime) {
     agent.description ? `Responsibilities: ${agent.description}` : "",
     agent.instructions ? `Operating instructions: ${String(agent.instructions).slice(0, 4000)}` : "",
     persona ? `Personality:\n${String(persona).slice(0, 5000)}` : "",
-    memory.trim() ? `Durable memory (MEMORY.md):\n${String(memory).slice(0, 4000)}` : "",
+    memory.trim() ? `Durable memory (MEMORY.md):\n${newestMemoryText(memory, 4000)}` : "",
     ...brainCardFieldDefinitions.map(field => `${field.label}: ${String(brain[field.id] || "").slice(0, 1500)}`),
     `Selected workspace: ${agentRuntime.workspace}`,
     "The .autohand/ folder inside a workspace is the engine's own memory and tools, not project code: ignore it when reviewing the project and never report it as something to fix.",
