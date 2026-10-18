@@ -133,8 +133,13 @@ function timeLabel(message, locale) {
   return message?.time || "";
 }
 
+// A reply dispatched in the same millisecond as its prompt sorted before it
+// by id ("thread_x-asq_kai…" < "thread_x-root") and was drawn under the
+// previous thread; on a tie the message a reply answers comes first.
+const isThreadReply = (message) => Boolean(message?.parentMessageId) && !String(message?.id).endsWith("-root");
+
 export function sortChannelMessages(messages = []) {
-  return [...messages].sort((a, b) => timestampOf(a) - timestampOf(b) || String(a.id).localeCompare(String(b.id)));
+  return [...messages].sort((a, b) => timestampOf(a) - timestampOf(b) || Number(isThreadReply(a)) - Number(isThreadReply(b)) || String(a.id).localeCompare(String(b.id)));
 }
 
 function Divider({ label, emphasis = false }) {
