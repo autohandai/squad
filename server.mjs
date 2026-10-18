@@ -116,6 +116,9 @@ function emitRunFinished(run) {
     status: run.status,
     title: run.title || "",
     workspace: run.workspace || "",
+    // A routine's reply is the point of it ("Igor, call Sam now"), so the
+    // notification carries it instead of "Open the conversation to review".
+    ...(run.routineId ? { routine: true, preview: String(run.reply || "").replace(/\s+/g, " ").trim().slice(0, 400) } : {}),
   });
 }
 
@@ -7580,6 +7583,7 @@ async function startExternalHarnessRun(payload) {
     channel: channelContext,
     recipeId: typeof payload.recipeId === "string" && payload.recipeId ? payload.recipeId : null,
     canvasId: typeof payload.canvasId === "string" && payload.canvasId ? payload.canvasId : null,
+    routineId: typeof payload.routineId === "string" ? payload.routineId : "",
     workspace,
     configPath: agentRuntime.configPath,
     displayConfigPath: agentRuntime.displayConfigPath,
@@ -7716,6 +7720,7 @@ async function startPreparedRun(payload) {
     // timeline and done-criteria checks can reference the recipe by id.
     recipeId: typeof payload.recipeId === "string" && payload.recipeId ? payload.recipeId : null,
     canvasId: typeof payload.canvasId === "string" && payload.canvasId ? payload.canvasId : null,
+    routineId: typeof payload.routineId === "string" ? payload.routineId : "",
     workspace,
     configPath: agentRuntime.configPath,
     displayConfigPath: agentRuntime.displayConfigPath,

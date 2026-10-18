@@ -181,6 +181,10 @@ export function notificationFor(event, { appUrl = "http://127.0.0.1:19821", memb
       if (status === "failed") {
         title = task ? `${member} failed · ${task}` : `${member} failed`;
         body = workspace ? `The run in ${workspace} ended with an error. Open the conversation for details.` : "The run ended with an error. Open the conversation for details.";
+      } else if (event?.routine && clip(event?.preview, 140)) {
+        // A scheduled run: say what the member said (a reminder is its reply).
+        title = task ? `${member} · ${task}` : member;
+        body = clip(event.preview, 140);
       } else {
         title = task ? `${member} finished · ${task}` : `${member} finished`;
         body = workspace ? `Done in ${workspace}. Open the conversation to review the result.` : "Open the conversation to review the result.";

@@ -92,6 +92,14 @@ copy = notificationFor({ ...finished, status: "failed" }, { appUrl, ...names });
 assert.equal(copy.title, "Kai failed · Fix CI");
 assert.match(copy.body, /ended with an error/);
 
+// A routine's run (a reminder) carries what the member said.
+copy = notificationFor({ ...finished, title: "Call Sam", routine: true, preview: "Igor, this is your reminder: call Sam about the contract." }, { appUrl, ...names });
+assert.equal(copy.title, "Kai · Call Sam");
+assert.equal(copy.body, "Igor, this is your reminder: call Sam about the contract.");
+assert.equal(copy.route, "/conversations/new?member=asq_kai");
+copy = notificationFor({ ...finished, routine: true, preview: "" }, { appUrl, ...names });
+assert.equal(copy.title, "Kai finished · Fix CI", "a routine run with no reply keeps the plain copy");
+
 copy = notificationFor({ name: "chat.finished", at, memberId: "asq_eva", status: "failed", channelId: "ch_ci", preview: "401 unauthorized" }, { appUrl, ...names });
 assert.equal(copy.title, "Eva could not reply in #ci");
 assert.equal(copy.body, "401 unauthorized");
