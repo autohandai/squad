@@ -155,8 +155,16 @@ export function buildArgs({ prompt, workspace, model, permissions = {}, policy =
     args.push("resume", resumeId);
     display.push("resume", "<thread>");
   }
-  args.push("--json", "--skip-git-repo-check", "--color", "never");
-  display.push("--json", "--skip-git-repo-check", "--color", "never");
+  args.push("--json", "--skip-git-repo-check");
+  display.push("--json", "--skip-git-repo-check");
+  // `exec resume` has no --color (Codex 0.162.1: "unexpected argument
+  // '--color' found"), so every resumed turn failed, was taken for a stale
+  // session and started over: a Codex member forgot each conversation after
+  // its first message. JSON output has no colour to turn off anyway.
+  if (!resumeId) {
+    args.push("--color", "never");
+    display.push("--color", "never");
+  }
   if (!resumeId) {
     args.push("-C", workspace);
     display.push("-C", workspace);

@@ -77,6 +77,7 @@ assert.equal(getAdapter('codex').id, 'codex');
   const resumed = codexAdapter.buildArgs({ prompt: 'again', workspace: '/w', resumeId: 'thread-1', permissions: { permissionMode: 'unrestricted' } });
   assert.deepEqual(resumed.args.slice(0, 3), ['exec', 'resume', 'thread-1']);
   assert.ok(!resumed.args.includes('--sandbox'), 'resume keeps the thread sandbox');
+  assert.ok(!resumed.args.includes('--color'), "exec resume rejects --color (Codex 0.162.1: unexpected argument '--color' found)");
   const unrestricted = codexAdapter.buildArgs({ prompt: 'x', workspace: '/w', permissions: { permissionMode: 'unrestricted' } });
   assert.equal(unrestricted.args[unrestricted.args.indexOf('--sandbox') + 1], 'danger-full-access');
 
