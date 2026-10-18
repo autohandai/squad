@@ -344,11 +344,9 @@ import { CopyButton } from "@/components/chat/CopyButton";
 import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { KeyboardShortcuts, openKeyboardShortcuts } from "@/components/shell/KeyboardShortcuts";
 import { isHiddenStopped, useHiddenStopped } from "@/lib/hidden-stopped";
-import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
+import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet, memberIdFromRoute, mergeSeedAgents } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, SQUAD_UNREACHABLE_TOOLS, builtInPoliciesForRank, managedToolPolicies } from "@/lib/permission-policy";
 import { looksLikeCredential } from "@/lib/secret-scan";
-import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, memberIdFromRoute, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
-import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
 import { MEMBER_PROFILE_FIELDS, PROFILE_LIMITS, blankGreeting, blankMemberDraft, isBlankMember, memberProfileRevision, mergeMemberProfile, personalityFileContent, profileNoteFor, profileReceipts, replyWithoutReceipts, teamNoteReceipts, unappliedProfileReceipts } from "@/lib/member-shaping";
@@ -388,8 +386,7 @@ import { CHAT_STREAM_CEILING_MS } from "@/lib/chat-timing";
 import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn, settingsPath, settingsSectionFromRoute, DEFAULT_SETTINGS_SECTION } from "@/lib/settings-navigation";
 import { SettingsShell, SettingsSectionHeader } from "@/components/settings/SettingsShell";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, withoutReflectionPreamble, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns } from "@/lib/chat-recovery";
-import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns, settleChannelReplies } from "@/lib/chat-recovery";
+import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, withoutReflectionPreamble, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns, settleChannelReplies } from "@/lib/chat-recovery";
 import { getAttentionBadgeClient } from "@/lib/attention-badge";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { CanvasList } from "@/components/canvases/CanvasList";
@@ -7010,9 +7007,16 @@ function App() {
     );
   }
 
-  async function acceptMemoryProposal(itemId) {
+  async function acceptMemoryProposal(itemId, edit = {}) {
     const timestamp = new Date().toISOString();
-    const target = memoryInbox.find((item) => item.id === itemId);
+    const found = memoryInbox.find((item) => item.id === itemId);
+    // What the person left in the box is what they accept.
+    const editedContent = String(edit.content ?? "").trim();
+    const target = found && {
+      ...found,
+      ...(Number.isFinite(edit.confidence) ? { confidence: edit.confidence } : {}),
+      ...(editedContent && editedContent !== found.content ? { content: editedContent, editHistory: [...(found.editHistory || []), { at: timestamp, before: found.content, after: editedContent }] } : {}),
+    };
     const ownerAgent = agents.find((agent) => agent.id === target?.ownerAgentId);
     const projectPatch =
       normalizeMemoryScope(target?.scope) === "project" && !target?.projectKey
@@ -22330,12 +22334,6 @@ function MemberHistoryPage({ agent, copy = getLocaleCopy(DEFAULT_LOCALE), locale
   );
 }
 
-function memoryStatusTone(status) {
-  if (status === "accepted") return "border-primary/35 bg-primary/10 text-primary";
-  if (status === "rejected") return "border-destructive/35 bg-destructive/10 text-destructive";
-  return "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-400/35 dark:bg-amber-400/10 dark:text-amber-200";
-}
-
 function memoryScopeLabel(scope) {
   return MEMORY_SCOPES.find((item) => item.id === scope)?.label || scope;
 }
@@ -22467,7 +22465,7 @@ function MemoryInboxPage({
             </div>
           </div>
           {accepted.length || rejected.length ? (
-            <div className="grid gap-3">
+            <div className="divide-y divide-border/70 border-y border-border/70">
               {[...accepted, ...rejected].map((item) => (
                 <MemoryProposalRow
                   key={item.id}
@@ -22499,11 +22497,11 @@ function MemoryInboxSection({ title, description, empty, emptyBody = "", items, 
   return (
     <section className="grid gap-3">
       <div>
-        <h3 className="text-lg font-semibold">{title}</h3>
+        <h3 className="text-sm font-semibold">{title}</h3>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       </div>
       {items.length ? (
-        <div className="grid gap-3">
+        <div className="divide-y divide-border/70 border-y border-border/70">
           {items.map((item) => (
             <MemoryProposalRow
               key={item.id}
@@ -22524,6 +22522,10 @@ function MemoryInboxSection({ title, description, empty, emptyBody = "", items, 
   );
 }
 
+// One divider row per proposal. Reviewed ones read as a line of text and a
+// muted meta line; a pending one adds its edit controls beside the text. It
+// was a bordered card with tinted status chips, a nested "Before edit" box
+// and a boxed "Accepted …" note, a card wall against DESIGN.md.
 function MemoryProposalRow({ item, agents = [], locale = DEFAULT_LOCALE, navigate, onSaveEdit, onAccept, onReject, onHideRejected }) {
   const [draftContent, setDraftContent] = useState(item.content);
   const [draftConfidence, setDraftConfidence] = useState(String(Math.round((Number(item.confidence) || 0) * 100)));
@@ -22539,163 +22541,132 @@ function MemoryProposalRow({ item, agents = [], locale = DEFAULT_LOCALE, navigat
     setRejectReason(item.rejectReason || "");
   }, [item.confidence, item.content, item.id, item.rejectReason]);
 
-  function saveEdit() {
+  function draftEdit() {
     const confidence = Number(draftConfidence);
-    onSaveEdit?.(item.id, {
+    return {
       content: draftContent,
       scope: item.scope,
       confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(100, confidence)) / 100 : item.confidence,
-    });
+    };
   }
 
   function changeScope(scope) {
     onSaveEdit?.(item.id, { scope });
   }
 
+  const meta = [
+    item.status === "accepted"
+      ? `Accepted ${formatRecordDate(item.acceptedAt || item.updatedAt, locale)}`
+      : item.status === "rejected"
+        ? `Rejected ${formatRecordDate(item.rejectedAt || item.updatedAt, locale)}`
+        : `Proposed ${formatRecordDate(item.updatedAt, locale)}`,
+    `${memoryScopeLabel(item.scope)} memory`,
+    `confidence ${memoryConfidenceLabel(item.confidence)}`,
+    memoryOwnerName(item, agents),
+    item.scope === "project" && item.projectKey ? item.projectLabel || workspaceName(item.projectKey) : "",
+  ].filter(Boolean);
+
   return (
-    <article className={cn("rounded-md border border-border/80 bg-card/75 p-4", item.isHidden && "opacity-70")}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline" className={cn("rounded-md capitalize", memoryStatusTone(item.status))}>
-              {item.status}
-            </Badge>
-            <Badge variant="secondary" className="rounded-md bg-muted text-muted-foreground">
-              {memoryScopeLabel(item.scope)}
-            </Badge>
-            <span className="text-xs text-muted-foreground">
-              Confidence {memoryConfidenceLabel(item.confidence)}
-            </span>
-          </div>
-          <div className="mt-2 text-xs text-muted-foreground">
-            Owner: {memoryOwnerName(item, agents)} / Updated {formatRecordDate(item.updatedAt, locale)}
-          </div>
-          {item.scope === "project" && item.projectKey ? (
-            <div className="mt-1 truncate text-xs text-muted-foreground">
-              Project: {item.projectLabel || workspaceName(item.projectKey)} / {item.projectKey}
-            </div>
+    <article className={cn("grid gap-4 py-4", canEdit && "lg:grid-cols-[minmax(0,1fr)_260px]", item.isHidden && "opacity-70")}>
+      <div className="min-w-0">
+        {canEdit ? (
+          <Textarea
+            value={draftContent}
+            onChange={(event) => setDraftContent(event.target.value)}
+            aria-label="Proposed memory"
+            className="min-h-20 resize-y bg-background leading-6"
+          />
+        ) : (
+          <p className={cn("whitespace-pre-wrap text-sm leading-6", item.status === "rejected" && "text-muted-foreground line-through decoration-muted-foreground/40")}>{item.content}</p>
+        )}
+        {hasBeforeAfter ? (
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{`Edited from: “${item.originalContent}”`}</p>
+        ) : null}
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>{meta.join(" · ")}</span>
+          <MissionAnchor href={sourceHref} navigate={navigate} className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline">
+            <ArrowUpRight className="size-3" />
+            {item.source?.label || "Source"}
+          </MissionAnchor>
+          {item.status === "rejected" && onHideRejected && !item.isHidden ? (
+            <button type="button" className="text-foreground underline-offset-4 hover:underline" onClick={() => onHideRejected(item.id)}>Hide</button>
           ) : null}
+          {item.isHidden ? <span>hidden</span> : null}
         </div>
-        <MissionAnchor
-          href={sourceHref}
-          navigate={navigate}
-          className="inline-flex h-8 items-center gap-2 rounded-md px-2 text-sm text-primary transition-colors hover:bg-primary/10"
-        >
-          <ArrowUpRight className="size-4" />
-          {item.source?.label || "Source"}
-        </MissionAnchor>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          <span className="font-medium text-foreground">Evidence:</span> {item.evidence || "No evidence recorded."}
+        </p>
+        {item.confidenceRationale ? (
+          <p className="text-sm leading-6 text-muted-foreground">
+            <span className="font-medium text-foreground">Rationale:</span> {item.confidenceRationale}
+          </p>
+        ) : null}
+        {canEdit && sourceWarning ? (
+          <p className="mt-1 text-sm leading-6 text-amber-700 dark:text-amber-300">{sourceWarning}</p>
+        ) : null}
+        {item.rejectReason ? (
+          <p className="text-sm leading-6 text-muted-foreground">
+            <span className="font-medium text-foreground">Rejection reason:</span> {item.rejectReason}
+          </p>
+        ) : null}
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
-        <div className="min-w-0">
-          {canEdit ? (
-            <Textarea
-              value={draftContent}
-              onChange={(event) => setDraftContent(event.target.value)}
-              className="min-h-24 resize-y bg-background leading-6"
-            />
-          ) : (
-            <p className="whitespace-pre-wrap text-sm leading-6">{item.content}</p>
-          )}
-          {hasBeforeAfter ? (
-            <div className="mt-3 grid gap-2 rounded-md border border-border/70 bg-background/55 p-3 text-sm">
-              <div>
-                <div className="text-[11px] font-medium uppercase text-muted-foreground">Before edit</div>
-                <p className="mt-1 text-muted-foreground">{item.originalContent}</p>
-              </div>
-              <div>
-                <div className="text-[11px] font-medium uppercase text-muted-foreground">After edit</div>
-                <p className="mt-1">{item.content}</p>
-              </div>
-            </div>
-          ) : null}
-          <div className="mt-3 text-sm leading-6 text-muted-foreground">
-            <span className="font-semibold text-foreground">Evidence:</span> {item.evidence || "No evidence recorded."}
-          </div>
-          {item.confidenceRationale ? (
-            <div className="mt-2 text-sm leading-6 text-muted-foreground">
-              <span className="font-semibold text-foreground">Rationale:</span> {item.confidenceRationale}
-            </div>
-          ) : null}
-          {sourceWarning ? (
-            <div className="mt-2 rounded-md border border-amber-300 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-900 dark:border-amber-400/35 dark:bg-amber-400/10 dark:text-amber-200">
-              {sourceWarning}
-            </div>
-          ) : null}
-          {item.rejectReason ? (
-            <div className="mt-2 text-sm leading-6 text-muted-foreground">
-              <span className="font-semibold text-foreground">Rejection reason:</span> {item.rejectReason}
-            </div>
-          ) : null}
-        </div>
-
+      {canEdit ? (
         <div className="grid content-start gap-3">
-          {canEdit ? (
-            <>
-              <Field className="gap-2">
-                <FieldLabel>Scope</FieldLabel>
-                <Select value={item.scope} onValueChange={changeScope}>
-                  <SelectTrigger className="h-9 w-full bg-background">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectLabel>Memory scope</SelectLabel>
-                      {MEMORY_SCOPES.map((scope) => (
-                        <SelectItem key={scope.id} value={scope.id}>
-                          {scope.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <FieldDescription>{MEMORY_SCOPES.find((scope) => scope.id === item.scope)?.detail}</FieldDescription>
-              </Field>
-              <Field className="gap-2">
-                <FieldLabel>Confidence</FieldLabel>
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={draftConfidence}
-                    onChange={(event) => setDraftConfidence(event.target.value)}
-                    className="h-9 bg-background"
-                  />
-                  <span className="shrink-0 text-sm text-muted-foreground">%</span>
-                </div>
-                <FieldDescription>User-reviewed confidence for the accepted memory record.</FieldDescription>
-              </Field>
-              <Button type="button" variant="outline" onClick={saveEdit}>
-                <PencilLine data-icon="inline-start" />
-                Edit
-              </Button>
-              <Button type="button" onClick={() => onAccept?.(item.id)}>
-                <BadgeCheck data-icon="inline-start" />
-                Accept
-              </Button>
-              <Field className="gap-2">
-                <FieldLabel>Reject reason</FieldLabel>
-                <Input value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder="Optional audit note" />
-              </Field>
-              <Button type="button" variant="outline" onClick={() => onReject?.(item.id, rejectReason)}>
-                <Ban data-icon="inline-start" />
-                Reject
-              </Button>
-            </>
-          ) : item.status === "rejected" ? (
-            <Button type="button" variant="outline" onClick={() => onHideRejected?.(item.id)} disabled={item.isHidden}>
-              <X data-icon="inline-start" />
-              {item.isHidden ? "Hidden from default view" : "Hide"}
-            </Button>
-          ) : (
-            <div className="rounded-md border border-border/70 bg-background/55 p-3 text-xs leading-5 text-muted-foreground">
-              Accepted {formatRecordDate(item.acceptedAt || item.updatedAt, locale)} as {memoryScopeLabel(item.scope).toLowerCase()} memory.
+          <Field className="gap-2">
+            <FieldLabel>Scope</FieldLabel>
+            <Select value={item.scope} onValueChange={changeScope}>
+              <SelectTrigger className="h-9 w-full bg-background">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectLabel>Memory scope</SelectLabel>
+                  {MEMORY_SCOPES.map((scope) => (
+                    <SelectItem key={scope.id} value={scope.id}>
+                      {scope.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FieldDescription>{MEMORY_SCOPES.find((scope) => scope.id === item.scope)?.detail}</FieldDescription>
+          </Field>
+          <Field className="gap-2">
+            <FieldLabel>Confidence</FieldLabel>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                value={draftConfidence}
+                onChange={(event) => setDraftConfidence(event.target.value)}
+                className="h-9 bg-background"
+              />
+              <span className="shrink-0 text-sm text-muted-foreground">%</span>
             </div>
-          )}
+          </Field>
+          {/* Accept takes what is in the box: an edit nobody saved first
+              used to be dropped and the original text accepted. */}
+          <Button type="button" onClick={() => onAccept?.(item.id, draftEdit())}>
+            <BadgeCheck data-icon="inline-start" />
+            Accept
+          </Button>
+          <Button type="button" variant="outline" onClick={() => onSaveEdit?.(item.id, draftEdit())} disabled={draftContent.trim() === item.content && draftConfidence === String(Math.round((Number(item.confidence) || 0) * 100))}>
+            <PencilLine data-icon="inline-start" />
+            Save edit
+          </Button>
+          <Field className="gap-2">
+            <FieldLabel>Reject reason</FieldLabel>
+            <Input value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder="Optional audit note" />
+          </Field>
+          <Button type="button" variant="outline" onClick={() => onReject?.(item.id, rejectReason)}>
+            <Ban data-icon="inline-start" />
+            Reject
+          </Button>
         </div>
-      </div>
+      ) : null}
     </article>
   );
 }
