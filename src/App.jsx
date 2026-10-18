@@ -12182,12 +12182,17 @@ function buildAgentProfile(agent, workspace) {
     .join("\n");
 }
 
+// The newest eight, without the provisioning lines ("Created from Autohand
+// Squad.", "Autohand Skill Installed: x"). The first eight were sent, which
+// for a member with a few skills was only those lines: a handoff never
+// carried anything the member had learnt.
+const PROVISIONING_MEMORY = /^(created from autohand squad\.?|autohand skills? (source|installed):)/i;
 function collaborationMemoryLines(agent, label) {
-  const memory = normalizeMemoryEntries(agent?.memory);
+  const memory = normalizeMemoryEntries(agent?.memory).filter((entry) => !PROVISIONING_MEMORY.test(entry.text));
   if (!memory.length) return [`${label} memory: none saved yet.`];
   return [
     `${label} memory:`,
-    ...memory.slice(0, 8).map((entry) => `- ${entry.text}`),
+    ...memory.slice(-8).map((entry) => `- ${entry.text}`),
   ];
 }
 
