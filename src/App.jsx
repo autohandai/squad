@@ -3049,7 +3049,14 @@ function normalizeMemoryProposal(item, fallbackAgentId = "") {
   const content = String(item.content || item.editedContent || item.proposedContent || "").trim();
   if (!content) return null;
   const status = normalizeMemoryStatus(item.status);
-  const createdAt = String(item.createdAt || item.proposedAt || new Date().toISOString());
+  // The normaliser dropped createdAt, so the bridge stamped every proposal
+  // "now" on each save and it read as newer than its own review. A stamp
+  // already rewritten that way is pulled back to the earliest one recorded.
+  const stamps = [item.createdAt || item.proposedAt, item.updatedAt, item.acceptedAt, item.rejectedAt]
+    .map((value) => String(value || ""))
+    .filter((value) => Number.isFinite(Date.parse(value)))
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  const createdAt = stamps[0] || new Date().toISOString();
   const ownerAgentId = normalizeSquadMemberId(item.ownerAgentId || item.agentId || fallbackAgentId);
   const confidence = Number(item.confidence);
   const source = item.source && typeof item.source === "object" ? item.source : {};
@@ -3078,6 +3085,7 @@ function normalizeMemoryProposal(item, fallbackAgentId = "") {
     isHidden: item.isHidden === true,
     acceptedAt: item.acceptedAt || "",
     rejectedAt: item.rejectedAt || "",
+    createdAt,
     updatedAt: String(item.updatedAt || item.acceptedAt || item.rejectedAt || createdAt),
   };
 }
