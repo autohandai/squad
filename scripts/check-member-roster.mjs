@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 
 import { initialAgents } from "../src/data.js";
-import { mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "../src/lib/member-roster.js";
+import { memberIdFromRoute, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "../src/lib/member-roster.js";
 
 const seed = [{ id: "eva", name: "Eva" }, { id: "noah", name: "Noah" }];
 
@@ -67,6 +67,17 @@ const seed = [{ id: "eva", name: "Eva" }, { id: "noah", name: "Noah" }];
   list = rememberRemovedAgent(list, "wk_eva");
   assert.equal(list.length, 2, "one entry per member, legacy spelling folded in");
   assert.equal(rememberRemovedAgent(list, "").length, 2, "an empty id records nothing");
+}
+
+{
+  // The member a link names, so a link to one this browser does not have
+  // says so instead of opening the first member's page.
+  assert.equal(memberIdFromRoute("/squad-members/asq_mv73h879/memory"), "asq_mv73h879");
+  assert.equal(memberIdFromRoute("/conversations/new?member=asq_mv73h879"), "asq_mv73h879");
+  assert.equal(memberIdFromRoute("/conversations/new?squadMember=wk_abc#end"), "asq_abc");
+  assert.equal(memberIdFromRoute("/squad-members/new"), "", "the new-member page names nobody");
+  assert.equal(memberIdFromRoute("/conversations/new"), "");
+  assert.equal(memberIdFromRoute(null), "");
 }
 
 {

@@ -6360,6 +6360,10 @@ function App() {
   }, [agents, route]);
 
   const activeAgent = agents.find((agent) => agent.id === activeAgentId) || agents[0];
+  // A link naming a member this browser does not have (removed, or made in
+  // another window) must not open agents[0] under that link.
+  const routeMemberId = memberIdFromRoute(route);
+  const routeMemberMissing = Boolean(routeMemberId) && !agents.some((agent) => agent.id === routeMemberId);
 
   // What a member did since this conversation was last opened. The facts come
   // from the audit trail, so the briefing and the member's own opening words
@@ -10198,6 +10202,8 @@ function App() {
                 harnessesLoading={harnessesLoading}
                 onRefreshHarnesses={() => refreshHarnesses(true)}
               />
+            ) : !isExtensions && routeMemberMissing ? (
+              <MemberNotFound memberId={routeMemberId} onBack={() => navigate(squadDirectoryPath())} />
             ) : isProfile && activeAgent ? (
               <SquadMemberPage
                 agent={activeAgent}
@@ -19395,6 +19401,23 @@ function RecipeCatalogDialog({
         copy={copy}
       />
     </>
+  );
+}
+
+// A member link that names nobody on this squad: say so, never show the
+// first member in its place.
+function MemberNotFound({ memberId, onBack }) {
+  return (
+    <div className="min-h-screen bg-background">
+      <PageTitle title="Member not found" />
+      <div className="mx-auto flex w-full max-w-3xl flex-col items-start gap-3 px-4 py-10 sm:px-6">
+        <h2 className="text-lg font-semibold">This member is not on your squad</h2>
+        <p className="text-sm leading-6 text-muted-foreground">
+          {`No member with the id ${memberId} is in this window. It may have been removed, or added in another window that has not synced here.`}
+        </p>
+        <Button type="button" variant="outline" size="sm" onClick={onBack}>Go to Squad</Button>
+      </div>
+    </div>
   );
 }
 

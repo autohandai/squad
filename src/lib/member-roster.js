@@ -66,3 +66,20 @@ export function rememberRemovedAgent(removedIds, agentId) {
   if (!id || list.some((entry) => normalizeSquadMemberId(entry) === id)) return list;
   return [...list, id];
 }
+
+/**
+ * The member a route names, or "": `/squad-members/<id>/…` or
+ * `?member=<id>` (`squadMember` is the older spelling). The app fell back to
+ * the first member when this id was not on the squad, so a link to a member
+ * this browser does not have opened Eva's page and Eva's chat, and a message
+ * typed there went to Eva (bug hunt 2026-10, memory and identity).
+ */
+export function memberIdFromRoute(route) {
+  const value = String(route || "");
+  const profile = value.match(/^\/squad-members\/([^/?#]+)/)?.[1] || "";
+  if (profile === "new") return "";
+  let decoded = profile;
+  try { decoded = decodeURIComponent(profile); } catch {}
+  const params = new URLSearchParams(value.split("?")[1]?.split("#")[0] || "");
+  return normalizeSquadMemberId(decoded || params.get("member") || params.get("squadMember") || "");
+}
