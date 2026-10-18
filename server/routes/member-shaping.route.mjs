@@ -47,15 +47,21 @@ export function patchedMemberCopy(agent, patch) {
  * text every bridge-started turn opens with: routines, Telegram, queued
  * work, channel purposes) kept "Name: Max" after Max became Robert, so the
  * member was told both names until the window next saved it (bug hunt
- * 2026-10). Instructions are not rewritten here: the copy's own
- * `instructions` travel beside the profile on those turns.
+ * 2026-10). Changed instructions replace the old ones up to the brain card
+ * that follows them (src/App.jsx buildAgentProfile), or join just before it.
  */
+const BRAIN_CARD_HEADER = "\nBrain card fields for this run:";
 export function patchedProfileText(profile, patch) {
   let text = String(profile || "");
   if (!text) return text;
   const line = (label, value) => { text = text.replace(new RegExp(`^${label}: .*$`, "m"), () => `${label}: ${String(value).replace(/\s+/g, " ").trim()}`); };
   if (patch.name) line("Name", patch.name);
   if (patch.role) line("Role", patch.role);
+  if (typeof patch.instructions === "string" && patch.instructions.trim() && text.includes(BRAIN_CARD_HEADER)) {
+    const next = `Operating instructions: ${patch.instructions.trim()}`;
+    const current = /^Operating instructions: [\s\S]*?(?=\nBrain card fields for this run:)/m;
+    text = current.test(text) ? text.replace(current, () => next) : text.replace(BRAIN_CARD_HEADER, () => `\n${next}${BRAIN_CARD_HEADER}`);
+  }
   return text;
 }
 

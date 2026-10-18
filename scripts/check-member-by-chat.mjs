@@ -65,6 +65,9 @@ const copied = patchedMemberCopy({ id: 'n', name: 'New member', role: '', profil
 check('the bridge copy takes the patch, personality as PERSONALITY.md', copied.name === 'Alex' && copied.role === 'GTM Leader' && copied.profileFiles.length === 2 && copied.profileFiles.find((f) => f.section === 'persona').content.includes('Direct.') && copied.profileFiles.some((f) => f.content === 'keep'));
 const header = 'Autohand Squad member profile\nAgent ID: asq_max\nName: Max\nRole: X Growth\nOperating instructions: Role: keep this.\nName: in a brain card stays';
 check('the bridge profile text takes the new name and role in its header only', patchedProfileText(header, { name: 'Robert', role: 'QA $& Lead' }) === 'Autohand Squad member profile\nAgent ID: asq_max\nName: Robert\nRole: QA $& Lead\nOperating instructions: Role: keep this.\nName: in a brain card stays' && patchedProfileText(header, { skills: ['x'] }) === header && patchedProfileText('', { name: 'R' }) === '');
+const withCard = 'Name: Max\nRole: X Growth\nOperating instructions: Old line one.\nOld line two.\nBrain card fields for this run:\n\nPurpose:\nGrow.';
+check('changed instructions replace the old ones in the bridge profile text, up to the brain card', patchedProfileText(withCard, { instructions: 'Post twice a day.' }) === 'Name: Max\nRole: X Growth\nOperating instructions: Post twice a day.\nBrain card fields for this run:\n\nPurpose:\nGrow.');
+check('and join a profile that had none', patchedProfileText('Name: New member\nRole: x\nBrain card fields for this run:\n\nP', { instructions: 'Be brief.' }) === 'Name: New member\nRole: x\nOperating instructions: Be brief.\nBrain card fields for this run:\n\nP');
 console.log(`Member-by-chat pure checks passed (${checks}): blank, names, greeting, role requests, instruction, validation, identity, receipt line, browser helpers.`);
 
 // ---------- bridge ----------
