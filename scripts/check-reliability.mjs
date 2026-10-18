@@ -68,6 +68,10 @@ assert.equal(classifyColdStart({ output: out({ timedOut: true }), durationMs: 10
   assert.equal(looksLikeStaleSession(stale), true);
   assert.equal(looksLikeStaleSession(out({ rawStderr: bun })), false, 'the Bun crash never looks like a stale session');
   assert.equal(looksLikeStaleSession(out({ error: '' })), false);
+  // Codex 0.162.1's answer to `exec resume <id> ... --color never`, live on 2026-10-18.
+  const rejected = out({ rawStderr: "error: unexpected argument '--color' found\n\n  tip: a similar argument exists: '--yolo'\n\nUsage: codex exec resume --json --skip-git-repo-check <SESSION_ID> [PROMPT]\n", exitCode: 2 });
+  assert.equal(looksLikeStaleSession(rejected), false, 'a rejected flag is not a stale session, though its usage line says resume');
+  assert.equal(classifyColdStart({ adapterLabel: 'Codex', output: rejected, durationMs: 40, freeBytes: {} }).kind, 'bad-flag', 'it is reported as the rejected command it is');
 }
 assert.equal(substantiveEvents([{ type: 'raw' }, { type: 'tool_update' }, null, { type: 'usage' }]).length, 1);
 {

@@ -23,7 +23,7 @@ export const COLD_START_RETRY_DELAY_MS = 750;
 
 const SESSION_RE = /no conversation found|session (?:id|not found)|thread (?:id|not found)|resume/i;
 const SIGN_IN_RE = /not logged in|please run \/login|run `?claude auth login|authentication(?: failed| required| error)|unauthorized|invalid api key|no api key|sign in|login required|not signed in|auth(?:entication)? token/i;
-const BAD_FLAG_RE = /unknown option|unrecognized (?:option|argument)|invalid (?:option|argument|value)|error: option|too many arguments|missing required argument|expected argument|unknown command|usage:/i;
+const BAD_FLAG_RE = /unknown option|unrecognized (?:option|argument)|unexpected argument|invalid (?:option|argument|value)|error: option|too many arguments|missing required argument|expected argument|unknown command|usage:/i;
 const DISK_RE = /no space left|enospc|disk full|not enough space|out of disk/i;
 const MISSING_RE = /\benoent\b|command not found|no such file or directory|not found on this machine|cannot execute binary|exec format error|\beacces\b|permission denied/i;
 const RUNTIME_CRASH_RE = /an unknown error occurred|\(unexpected\)|segmentation fault|bus error|illegal instruction|abort trap|out of memory|cannot allocate memory|\benomem\b|\beagain\b|resource temporarily unavailable/i;
@@ -81,6 +81,10 @@ export function engineHome(adapterId, { env = process.env, homeDir = "", agentHo
 export function looksLikeStaleSession(output) {
   if (!output || !output.error) return false;
   const stderr = text(output.rawStderr);
+  // A rejected option is not a missing session, even when the usage line it
+  // prints says "codex exec resume": that match wiped every Codex member's
+  // thread when `exec resume` stopped accepting --color.
+  if (/unexpected argument|unknown option|unrecognized (?:option|argument)/i.test(stderr)) return false;
   const errorEvent = substantiveEvents(output.events).find((event) => event.type === "error");
   if (SESSION_RE.test(stderr) || SESSION_RE.test(text(errorEvent?.message))) return true;
   return false;
