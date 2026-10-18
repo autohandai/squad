@@ -346,6 +346,9 @@ import { KeyboardShortcuts, openKeyboardShortcuts } from "@/components/shell/Key
 import { isHiddenStopped, useHiddenStopped } from "@/lib/hidden-stopped";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, SQUAD_UNREACHABLE_TOOLS, builtInPoliciesForRank, managedToolPolicies } from "@/lib/permission-policy";
+import { looksLikeCredential } from "@/lib/secret-scan";
+import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, memberIdFromRoute, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
+import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
 import { MEMBER_PROFILE_FIELDS, PROFILE_LIMITS, blankGreeting, blankMemberDraft, isBlankMember, memberProfileRevision, mergeMemberProfile, personalityFileContent, profileNoteFor, profileReceipts, replyWithoutReceipts, teamNoteReceipts, unappliedProfileReceipts } from "@/lib/member-shaping";
@@ -7000,6 +7003,13 @@ function App() {
       isHidden: false,
     });
     if (!accepted) return;
+    // Memory goes into every prompt of the member (and, for Team, of every
+    // member). Team memory refused keys on the bridge; a Personal or Project
+    // proposal holding one was accepted into MEMORY.md as it was.
+    if (looksLikeCredential(accepted.content)) {
+      setChannelOperationError("That memory contains a password or key. Edit it out first; secrets belong in the vault, never in memory.");
+      return;
+    }
 
     // Team scope is the team's memory on the bridge (ADR-0134), which every
     // member reads on every engine. It used to land in the owner's memory
