@@ -142,7 +142,7 @@ export function buildWorkPlanBlock(sources = {}, { now = Date.now(), budget = WO
   }
 
   const intro = `${WORK_PLAN_HEADING} (facts from Squad, not memory; answer "what are you working on" from this and keep it current with task actions):`;
-  const body = sections.length ? sections.join("\n\n") : "Nothing is planned: no open tasks, no routines, no goals, no queued follow-ups. If the person describes work for you, add tasks; if it recurs, propose the schedule as well.";
+  const body = sections.length ? sections.join("\n\n") : "Nothing is planned: no open tasks, no routines, no goals, no queued follow-ups. If the person describes work for you, add tasks; if it recurs or is a reminder, propose the schedule instead.";
   let text = `${intro}\n${body}`;
   if (text.length > budget) text = `${text.slice(0, budget - 1)}…`;
   return { text, counts };
