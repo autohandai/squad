@@ -389,6 +389,7 @@ import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, reme
 import { SettingsShell, SettingsSectionHeader } from "@/components/settings/SettingsShell";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, withoutReflectionPreamble, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns } from "@/lib/chat-recovery";
+import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns, settleChannelReplies } from "@/lib/chat-recovery";
 import { getAttentionBadgeClient } from "@/lib/attention-badge";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { CanvasList } from "@/components/canvases/CanvasList";
@@ -4439,6 +4440,8 @@ function App() {
   tasksRef.current = tasks;
   const handoffRetriesRef = useRef(new Set());
   const chatMembersRef = useRef(new Map());
+  // Channel reply message ids this page is streaming right now.
+  const channelStreamsRef = useRef(new Set());
   const [localAutomations, setAutomations] = useState(() => {
     const storedAutomations = readStored(storageKeysFor("automations"), initialAutomations);
     return (Array.isArray(storedAutomations) ? storedAutomations : initialAutomations).map((automation) =>
@@ -6245,6 +6248,9 @@ function App() {
           setRuns(data);
           setRunsError("");
           applyReceiptsFromRuns(data);
+          // Channel replies whose stream this page lost (reload, restart)
+          // are settled from their runs.
+          setMessagesByChannel((current) => settleChannelReplies(current, { runs: data, streaming: channelStreamsRef.current, replyText: (run) => humanReadableReplyText(run.reply, null, "") }));
         }
       } catch {
         if (!cancelled) {
@@ -7893,6 +7899,7 @@ function App() {
       ...(responder ? { responder } : {}),
       ...(workflowMarker || {}),
     });
+    channelStreamsRef.current.add(messageId);
 
     // Media context (#32): anchors may point at media from earlier messages
     // in the channel, so the lookup spans the whole channel. Frames are
@@ -8110,6 +8117,7 @@ function App() {
       settledStep = { status: "failed", preview: message };
     } finally {
       window.clearTimeout(timeout);
+      channelStreamsRef.current.delete(messageId);
       recordObservedEdits(agent.id, liveEvents, { channelId: channel.id, messageId, threadId, workspace: selectedWorkspace });
       void reviewMembers({ memberId: agent.id, force: true });
       void absorbCanvas(canvasAttachment.canvasId, agent.id);

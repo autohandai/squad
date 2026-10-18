@@ -4541,6 +4541,7 @@ function runSummary(run) {
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     channel: run.channel || null,
+    requestId: run.requestId || "",
     reply: run.reply || "",
     requestId: run.requestId || "",
     person: run.person === true,
@@ -8056,6 +8057,9 @@ function beginChatRun(payload, workId, startedAt) {
     personPrompt: String(payload.personPrompt || "").slice(0, 20000),
     mode: "chat",
     kind: "chat",
+    // The caller's id for this turn (a channel reply's message id), so a
+    // reply whose stream was lost can be settled from the run (bug hunt 2026-10).
+    requestId: String(payload.requestId || "").slice(0, 200),
     channel: channelContextFromPayload(payload),
     recipeId: null,
     canvasId: null,

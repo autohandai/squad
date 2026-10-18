@@ -122,6 +122,44 @@ export function recoverOrphanedChats(conversations, { presence = {}, streaming =
   return next;
 }
 
+const LIVE_RUN_STATUSES = new Set(["running", "queued", "starting", "launching"]);
+export const CHANNEL_ORPHANED_REPLY_NOTE = "This reply stopped before it finished, most likely because the page was reloaded or closed while it was running. Ask again in the thread.";
+
+/**
+ * A channel reply still "typing…" that this page is not streaming. The reply
+ * is a run on the bridge keyed by the message id (`run.requestId`): a finished
+ * run gives the reply its answer, a stopped or failed one closes it, a live
+ * one is left alone. With no run at all (an older record, or one from before
+ * the bridge restarted) it is closed once `graceMs` has passed. Before this,
+ * a reload or restart left "Kai is typing..." in the channel for good: ten
+ * such replies in the person's #general and #release-reviews (bug hunt
+ * 2026-10, channels).
+ */
+export function settleChannelReplies(byChannel, { runs = [], streaming = new Set(), now = Date.now(), graceMs = 20_000, replyText = (run) => String(run.reply || "").trim() } = {}) {
+  const byRequest = new Map((Array.isArray(runs) ? runs : []).filter((run) => run?.requestId).map((run) => [run.requestId, run]));
+  let next = byChannel;
+  for (const [channelId, messages] of Object.entries(byChannel || {})) {
+    if (!Array.isArray(messages)) continue;
+    let changed = false;
+    const settled = messages.map((message) => {
+      if (message?.status !== "loading" || message.role === "user" || streaming.has(message.id)) return message;
+      const run = byRequest.get(message.id);
+      if (run && LIVE_RUN_STATUSES.has(run.status)) return message;
+      const beganAt = Date.parse(message.startedAt || message.createdAt || "");
+      if (!run && Number.isFinite(beganAt) && now - beganAt < graceMs) return message;
+      changed = true;
+      const completedAt = run?.finishedAt || new Date(now).toISOString();
+      const answer = run?.status === "completed" ? withoutRecoveryNotices(replyText(run)) : "";
+      if (answer) return { ...message, status: "complete", body: answer, activityLabel: "", completedAt, updatedAt: completedAt, recoveredFromRun: run.id };
+      const reason = run?.status === "failed" ? "It failed before it finished. Ask again in the thread." : run?.status === "interrupted" ? "Squad restarted before it finished. Ask again in the thread." : CHANNEL_ORPHANED_REPLY_NOTE;
+      return { ...message, status: "error", interrupted: true, activityLabel: "", completedAt, updatedAt: completedAt,
+        body: `${withoutThinkingPlaceholder(String(message.body || "").replace(/^[^\n]{1,120} is typing(?:\.{3}|…)\s*$/, ""))}\n\n${reason}`.trim() };
+    });
+    if (changed) { if (next === byChannel) next = { ...byChannel }; next[channelId] = settled; }
+  }
+  return next;
+}
+
 /**
  * The fallback the bridge stores when a turn ends with no text: "Autohand
  * returned no chat text." / "Noah returned no chat text.". It is a fact

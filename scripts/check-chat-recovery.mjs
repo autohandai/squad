@@ -165,7 +165,7 @@ console.log('Checkpoint result recovery passed: saved successful parent output j
   const iris = "Reflection: I have the commit list but no dates yet. The `git_log` tool doesn't expose dates in its output, and shell/run_command are denied by the permission policy, so I can't get timestamps that way. I'll answer from what I can verify: the commit history and the two uncommitted diffs.\n\nFrom my side, here's what's on the board today:\n\n**Committed work (main, 12 ahead of origin):**";
   assert.equal(withoutReflectionPreamble(iris), "From my side, here's what's on the board today:\n\n**Committed work (main, 12 ahead of origin):**");
   const only = "Reflection: The file stats confirm the QA-relevant test files were modified today.\n\n";
-  assert.equal(withoutReflectionPreamble(only), only);
+  assert.equal(withoutReflectionPreamble(only), "The file stats confirm the QA-relevant test files were modified today.\n\n");
   assert.equal(withoutReflectionPreamble("Shipped.\n\nReflection: noted"), "Shipped.\n\nReflection: noted");
-  console.log("Reflection preambles dropped when an answer follows; a reflection-only reply is kept.");
+  console.log("Reflection preambles dropped when an answer follows; a reflection-only reply keeps its text without the label.");
 }

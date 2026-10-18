@@ -82,6 +82,7 @@ export function historyRecord(run) {
     finishedAt: String(run.finishedAt || ""),
     durationMs: Number.isFinite(Number(run.durationMs)) ? Number(run.durationMs) : null,
     channel: isPlainObject(run.channel) ? run.channel : null,
+    requestId: String(run.requestId || ""),
     recipeId: run.recipeId || null,
     canvasId: run.canvasId || null,
     reply: String(run.reply || "").slice(0, 20000),
