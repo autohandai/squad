@@ -165,12 +165,18 @@ export function restoreRepliesFromRuns(conversations, runs = [], { windowMs = 12
   for (const [memberId, messages] of Object.entries(conversations || {})) {
     if (!Array.isArray(messages)) continue;
     const used = new Set(messages.map((message) => message?.recoveredFromRun).filter(Boolean));
+    // A run is matched by the request it answered whenever both carry one.
+    // By start time alone, a reply stopped by a reload took the answer of the
+    // next message sent a minute later (bug hunt 2026-10, explore).
+    const requests = new Set(messages.map((message) => message?.requestId).filter(Boolean));
     let changed = false;
     const restored = messages.map((message) => {
       if (!message?.interrupted || message.status !== "error" || message.role === "user") return message;
       const beganAt = Date.parse(message.startedAt || "");
       if (!Number.isFinite(beganAt)) return message;
-      const run = finished.find((item) => item.agentId === memberId && !used.has(item.id) && Math.abs(Date.parse(item.startedAt) - beganAt) <= windowMs);
+      const run = finished.find((item) => item.agentId === memberId && !used.has(item.id) && (item.requestId && message.requestId
+        ? item.requestId === message.requestId
+        : !requests.has(item.requestId) && Math.abs(Date.parse(item.startedAt) - beganAt) <= windowMs));
       if (!run) return message;
       used.add(run.id);
       changed = true;

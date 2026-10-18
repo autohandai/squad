@@ -114,5 +114,15 @@ console.log('Checkpoint result recovery passed: saved successful parent output j
   assert.equal(next.noah[1].durationMs, 38377);
   assert.equal(next.noah[2].status, "error", "a failed run, or another member's run, restores nothing");
   assert.equal(restoreRepliesFromRuns(next, runs), next, "a restored reply is not restored twice");
+  // A reply stopped by a reload keeps its own (stopped) run: the next
+  // message's answer, sent a minute later, is not pasted into it.
+  const stoppedThenAsked = { noah: [
+    { id: "q1-a", role: "agent", status: "error", interrupted: true, body: "stopped", requestId: "q1", startedAt: "2026-10-18T12:09:58.215Z" },
+    { id: "q2-a", role: "agent", status: "complete", body: "Saved it.", requestId: "q2", startedAt: "2026-10-18T12:11:31.829Z" },
+  ] };
+  const later = [{ id: "r5", agentId: "noah", mode: "chat", status: "completed", requestId: "q2", startedAt: "2026-10-18T12:11:31.829Z", reply: "Saved it." }];
+  assert.equal(restoreRepliesFromRuns(stoppedThenAsked, later), stoppedThenAsked, "another request's run restores nothing");
+  const own = [{ ...later[0], id: "r6", requestId: "q1", startedAt: "2026-10-18T12:09:58.300Z", reply: "Mine." }];
+  assert.equal(restoreRepliesFromRuns(stoppedThenAsked, own).noah[0].body, "Mine.", "the reply's own run restores it");
   console.log("interrupted replies restored from finished runs");
 }
