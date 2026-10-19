@@ -485,6 +485,141 @@ export const initialAgents = [
   ...handoffDemoAgents,
 ];
 
+export const initialMemoryProposals = [
+  {
+    id: "memory_pending_mobile_nav_evidence",
+    status: "pending",
+    scope: "project",
+    ownerAgentId: "b3bc502e795a",
+    content:
+      "The dark-web-cli docs route previously showed mobile navigation overlap at 390px on /docs/agent-sdk, so UI fixes on that surface need viewport-specific browser evidence before closure.",
+    createdAt: "2026-05-25T09:12:00.000Z",
+    updatedAt: "2026-05-25T09:12:00.000Z",
+    confidence: {
+      score: 0.86,
+      rationale: "Proposed from a task handoff with explicit screenshot and route evidence.",
+    },
+    source: {
+      type: "task",
+      id: "task_goal10_qa_frontend_reviewer",
+      label: "QA to Frontend to Reviewer handoff chain",
+      href: "/squad-members/b3bc502e795a/task",
+      timestamp: "2026-05-25T09:08:00.000Z",
+    },
+    evidence: [
+      {
+        label: "QA screenshot",
+        detail: "Mobile navigation overlap at 390px on /docs/agent-sdk.",
+      },
+      {
+        label: "Task timeline",
+        detail: "Eva reproduced the defect before the work moved to Noah and Iris.",
+      },
+    ],
+  },
+  {
+    id: "memory_accepted_qa_boundary",
+    status: "accepted",
+    scope: "personal",
+    ownerAgentId: "b3bc502e795a",
+    content:
+      "Eva should avoid fixing code or running unit tests unless explicitly asked; her default job is reproducing defects and recording evidence-rich QA findings.",
+    createdAt: "2026-05-25T08:58:00.000Z",
+    updatedAt: "2026-05-25T09:05:00.000Z",
+    acceptedAt: "2026-05-25T09:05:00.000Z",
+    confidence: {
+      score: 0.94,
+      rationale: "Directly matches Eva's saved profile instructions and task behavior.",
+    },
+    source: {
+      type: "conversation",
+      id: "conversation_eva_profile_setup",
+      label: "Eva QA profile setup",
+      href: "/conversations/new?member=b3bc502e795a",
+      timestamp: "2026-05-25T08:56:00.000Z",
+    },
+    evidence: [
+      {
+        label: "Profile instruction",
+        detail: "Avoids code changes by default and records evidence-rich QA findings.",
+      },
+      {
+        label: "Role policy",
+        detail: "QA Engineer starter explicitly asks for reproduction and defect reporting.",
+      },
+    ],
+  },
+  {
+    id: "memory_accepted_edited_browser_proof",
+    status: "accepted",
+    scope: "project",
+    ownerAgentId: "asq_noah_frontend",
+    originalContent: "Use browser checks for UI changes.",
+    content:
+      "For UI changes in dark-web-cli, verify the exact route and viewport that triggered the defect before marking the task complete.",
+    createdAt: "2026-05-25T09:16:00.000Z",
+    updatedAt: "2026-05-25T09:20:00.000Z",
+    acceptedAt: "2026-05-25T09:20:00.000Z",
+    confidence: {
+      score: 0.82,
+      rationale: "Edited by the user from a broad agent suggestion into a scoped project rule.",
+    },
+    source: {
+      type: "run",
+      id: "run_goal10_noah_frontend_fix",
+      label: "Noah frontend fix run",
+      href: "/squad-members/asq_noah_frontend/task",
+      timestamp: "2026-05-25T09:17:00.000Z",
+    },
+    evidence: [
+      {
+        label: "Run output",
+        detail: "Noah returned a scoped frontend fix tied to the original viewport evidence.",
+      },
+      {
+        label: "Reviewer handoff",
+        detail: "Iris reviewed the frontend diff after Eva's reproduction packet.",
+      },
+    ],
+    editHistory: [
+      {
+        before: "Use browser checks for UI changes.",
+        after:
+          "For UI changes in dark-web-cli, verify the exact route and viewport that triggered the defect before marking the task complete.",
+        editedAt: "2026-05-25T09:19:00.000Z",
+      },
+    ],
+  },
+  {
+    id: "memory_rejected_broad_handoff",
+    status: "rejected",
+    scope: "team",
+    ownerAgentId: "asq_iris_reviewer",
+    content: "Every frontend task should always be handed to Noah before review.",
+    createdAt: "2026-05-25T09:24:00.000Z",
+    updatedAt: "2026-05-25T09:26:00.000Z",
+    rejectedAt: "2026-05-25T09:26:00.000Z",
+    rejectionReason: "Too broad for durable memory; handoff targets should remain task-specific.",
+    confidence: {
+      score: 0.48,
+      rationale: "Inferred from one successful handoff chain, but not enough evidence for a team rule.",
+    },
+    source: {
+      type: "task",
+      id: "task_goal10_qa_frontend_reviewer",
+      label: "QA to Frontend to Reviewer handoff chain",
+      href: "/squad-members/asq_iris_reviewer/task",
+      timestamp: "2026-05-25T09:24:00.000Z",
+    },
+    evidence: [
+      {
+        label: "Single task path",
+        detail: "Only one frontend handoff involved Noah, so this should not become a general rule.",
+      },
+    ],
+  },
+];
+
 export const initialTasks = [
   {
     id: "task_goal10_qa_frontend_reviewer",

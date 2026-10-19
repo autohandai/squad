@@ -32,6 +32,7 @@ import {
   Globe2,
   Hammer,
   History,
+  Inbox,
   KeyRound,
   Languages,
   LayoutList,
@@ -76,6 +77,7 @@ import {
   initialAgents,
   initialAutomations,
   initialMessages,
+  initialMemoryProposals,
   initialTasks,
   AUTOHAND_SKILLS_REGISTRY_URL,
   builtInAvatarOptions,
@@ -213,6 +215,7 @@ const STORAGE_KEYS = {
   automations: "autohandSquad.v1.automations",
   locale: "autohandSquad.v1.locale",
   handoffSettings: "autohandSquad.v1.handoffSettings",
+  memoryInbox: "autohandSquad.v1.memoryInbox",
   messages: "autohandSquad.v1.messages",
   sidebarCollapsed: "autohandSquad.v1.sidebarCollapsed",
   tasks: "autohandSquad.v1.tasks",
@@ -964,6 +967,27 @@ const DEFAULT_MAX_PROJECTS_PER_MEMBER = PROJECT_LIMIT_UPPER_BOUND;
 const DEFAULT_HANDOFF_RETRY_MODE = "checkpoint";
 const HANDOFF_RETRY_BRIDGE_DEFAULT = "bridge-default";
 const HANDOFF_RETRY_MODES = ["checkpoint", "manual", "disabled"];
+const MEMORY_PROPOSAL_STATUSES = ["pending", "accepted", "rejected"];
+const MEMORY_SCOPE_OPTIONS = [
+  {
+    id: "personal",
+    label: "Personal",
+    detail: "Only the selected owner should receive this memory.",
+    icon: UserRound,
+  },
+  {
+    id: "project",
+    label: "Project",
+    detail: "Applies to squad members working in the same repository.",
+    icon: FolderGit2,
+  },
+  {
+    id: "team",
+    label: "Team",
+    detail: "Applies across the local squad.",
+    icon: Boxes,
+  },
+];
 
 function storageKeysFor(name) {
   return [STORAGE_KEYS[name]];
@@ -1877,6 +1901,154 @@ function createAutomationId() {
   return `tr_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function createMemoryProposalId() {
+  return `mem_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function normalizeMemoryScope(scope) {
+  const value = String(scope || "").trim().toLowerCase();
+  return MEMORY_SCOPE_OPTIONS.some((item) => item.id === value) ? value : "project";
+}
+
+function memoryScopeMeta(scope) {
+  return MEMORY_SCOPE_OPTIONS.find((item) => item.id === normalizeMemoryScope(scope)) || MEMORY_SCOPE_OPTIONS[1];
+}
+
+function normalizeMemoryStatus(status) {
+  const value = String(status || "").trim().toLowerCase();
+  return MEMORY_PROPOSAL_STATUSES.includes(value) ? value : "pending";
+}
+
+function normalizeMemoryConfidence(confidence) {
+  const rawScore = typeof confidence === "number" ? confidence : confidence?.score;
+  const parsed = Number(rawScore);
+  const score = Number.isFinite(parsed)
+    ? Math.min(1, Math.max(0, parsed > 1 ? parsed / 100 : parsed))
+    : 0.5;
+  return {
+    score,
+    rationale: String(confidence?.rationale || "The agent proposed this as a useful durable memory.").trim(),
+  };
+}
+
+function normalizeMemorySource(source) {
+  const value = source && typeof source === "object" ? source : {};
+  const type = ["conversation", "task", "run", "manual"].includes(value.type) ? value.type : "conversation";
+  return {
+    type,
+    id: String(value.id || `${type}_source`),
+    label: String(value.label || `${type[0].toUpperCase()}${type.slice(1)} source`),
+    href: String(value.href || ""),
+    timestamp: String(value.timestamp || ""),
+  };
+}
+
+function normalizeMemoryEvidence(evidence) {
+  return (Array.isArray(evidence) ? evidence : [])
+    .map((item, index) => ({
+      label: String(item?.label || `Evidence ${index + 1}`).trim(),
+      detail: String(item?.detail || item || "").trim(),
+    }))
+    .filter((item) => item.label || item.detail);
+}
+
+function normalizeMemoryEditHistory(editHistory) {
+  return (Array.isArray(editHistory) ? editHistory : [])
+    .map((item) => ({
+      before: String(item?.before || "").trim(),
+      after: String(item?.after || "").trim(),
+      editedAt: String(item?.editedAt || ""),
+    }))
+    .filter((item) => item.before || item.after);
+}
+
+function normalizeMemoryProposal(proposal) {
+  if (!proposal || typeof proposal !== "object") return null;
+  const createdAt = String(proposal.createdAt || proposal.updatedAt || new Date().toISOString());
+  const updatedAt = String(proposal.updatedAt || createdAt);
+  const content = String(proposal.content || proposal.summary || "").trim() || "Untitled memory proposal";
+  const status = normalizeMemoryStatus(proposal.status);
+
+  return {
+    ...proposal,
+    id: String(proposal.id || createMemoryProposalId()),
+    status,
+    scope: normalizeMemoryScope(proposal.scope),
+    ownerAgentId: normalizeSquadMemberId(proposal.ownerAgentId || proposal.agentId || initialAgents[0]?.id),
+    content,
+    originalContent: String(proposal.originalContent || "").trim(),
+    createdAt,
+    updatedAt,
+    acceptedAt: status === "accepted" ? String(proposal.acceptedAt || updatedAt) : String(proposal.acceptedAt || ""),
+    rejectedAt: status === "rejected" ? String(proposal.rejectedAt || updatedAt) : String(proposal.rejectedAt || ""),
+    rejectionReason: String(proposal.rejectionReason || ""),
+    hidden: Boolean(proposal.hidden),
+    confidence: normalizeMemoryConfidence(proposal.confidence),
+    source: normalizeMemorySource(proposal.source),
+    evidence: normalizeMemoryEvidence(proposal.evidence),
+    editHistory: normalizeMemoryEditHistory(proposal.editHistory),
+  };
+}
+
+function normalizeMemoryProposals(proposals) {
+  return (Array.isArray(proposals) ? proposals : initialMemoryProposals).map(normalizeMemoryProposal).filter(Boolean);
+}
+
+function mergeSeedMemoryProposals(storedProposals) {
+  const records = Array.isArray(storedProposals) ? storedProposals : [];
+  const seen = new Set(records.map((item) => String(item?.id || "")).filter(Boolean));
+  return [
+    ...initialMemoryProposals.filter((item) => !seen.has(String(item.id || ""))),
+    ...records,
+  ];
+}
+
+function pendingMemoryCount(proposals) {
+  return (Array.isArray(proposals) ? proposals : []).filter((item) => normalizeMemoryStatus(item.status) === "pending").length;
+}
+
+function confidencePercent(confidence) {
+  return `${Math.round(normalizeMemoryConfidence(confidence).score * 100)}%`;
+}
+
+function acceptedMemoryTargetAgentIds(proposal, agents = []) {
+  const ownerId = normalizeSquadMemberId(proposal?.ownerAgentId);
+  if (proposal?.scope === "team") {
+    return agents.map((agent) => agent.id).filter(Boolean);
+  }
+
+  const owner = agents.find((agent) => normalizeSquadMemberId(agent.id) === ownerId);
+  if (proposal?.scope === "project" && owner?.workspace) {
+    const ownerWorkspace = normalizePath(owner.workspace);
+    const projectAgentIds = agents
+      .filter((agent) => normalizePath(agent.workspace) === ownerWorkspace)
+      .map((agent) => agent.id)
+      .filter(Boolean);
+    return projectAgentIds.length ? projectAgentIds : ownerId ? [ownerId] : [];
+  }
+
+  return ownerId ? [ownerId] : [];
+}
+
+function applyAcceptedMemoryToAgents(agents = [], proposal) {
+  const content = String(proposal?.content || "").trim();
+  if (!content) return agents;
+  const targetAgentIds = new Set(acceptedMemoryTargetAgentIds(proposal, agents).map(normalizeSquadMemberId));
+  if (!targetAgentIds.size) return agents;
+  const timestamp = proposal.acceptedAt || proposal.updatedAt || new Date().toISOString();
+
+  return agents.map((agent) => {
+    if (!targetAgentIds.has(normalizeSquadMemberId(agent.id))) return agent;
+    const nextMemory = Array.from(new Set([...(Array.isArray(agent.memory) ? agent.memory : []), content]));
+    return {
+      ...agent,
+      memory: nextMemory,
+      updatedAt: timestamp,
+      profileFiles: refreshedProfileFilesForAgent({ ...agent, memory: nextMemory }),
+    };
+  });
+}
+
 function normalizeAutomationCopy(automation, defaultAgentId = initialAgents[0]?.id) {
   const createdAt = automation?.createdAt || new Date().toISOString();
   const triggerType = ["schedule", "event", "webhook"].includes(automation?.triggerType)
@@ -2201,6 +2373,9 @@ function App() {
       normalizeAutomationCopy(automation)
     );
   });
+  const [memoryProposals, setMemoryProposals] = useState(() =>
+    normalizeMemoryProposals(mergeSeedMemoryProposals(readStored(storageKeysFor("memoryInbox"), initialMemoryProposals)))
+  );
   const [messagesByAgent, setMessagesByAgent] = useState(() =>
     normalizeMessageCopy(
       readStored(storageKeysFor("messages"), { [initialAgents[0].id]: initialMessages(initialAgents[0].name) })
@@ -2227,6 +2402,7 @@ function App() {
   const localeCopy = useMemo(() => getLocaleCopy(localeResolution.locale), [localeResolution.locale]);
   const theme = resolveEffectiveThemeMode(themePreference, systemTheme);
   const activeThemePreset = getThemePreset(themePreference, theme);
+  const memoryPendingCount = useMemo(() => pendingMemoryCount(memoryProposals), [memoryProposals]);
 
   useEffect(() => {
     const onPop = () => setRoute(window.location.pathname + window.location.search);
@@ -2314,6 +2490,10 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.automations, JSON.stringify(automations));
   }, [automations]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.memoryInbox, JSON.stringify(memoryProposals));
+  }, [memoryProposals]);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.tasks, JSON.stringify(tasks));
@@ -2597,6 +2777,100 @@ function App() {
         updatedAt: new Date().toISOString(),
       });
     }
+  }
+
+  function changeMemoryProposalScope(proposalId, scope) {
+    const timestamp = new Date().toISOString();
+    setMemoryProposals((current) =>
+      current.map((proposal) =>
+        proposal.id === proposalId
+          ? normalizeMemoryProposal({ ...proposal, scope, updatedAt: timestamp })
+          : proposal
+      )
+    );
+  }
+
+  function saveMemoryProposalEdit(proposalId, content, acceptAfterSave = false) {
+    const timestamp = new Date().toISOString();
+    const proposal = memoryProposals.find((item) => item.id === proposalId);
+    const nextContent = String(content || "").trim();
+    if (!proposal || !nextContent) return;
+
+    const changed = nextContent !== proposal.content;
+    const nextProposal = normalizeMemoryProposal({
+      ...proposal,
+      status: acceptAfterSave ? "accepted" : proposal.status,
+      content: nextContent,
+      originalContent: proposal.originalContent || (changed ? proposal.content : ""),
+      acceptedAt: acceptAfterSave ? timestamp : proposal.acceptedAt,
+      rejectedAt: acceptAfterSave ? "" : proposal.rejectedAt,
+      rejectionReason: acceptAfterSave ? "" : proposal.rejectionReason,
+      hidden: acceptAfterSave ? false : proposal.hidden,
+      updatedAt: timestamp,
+      editHistory: changed
+        ? [
+            ...(Array.isArray(proposal.editHistory) ? proposal.editHistory : []),
+            { before: proposal.content, after: nextContent, editedAt: timestamp },
+          ]
+        : proposal.editHistory,
+    });
+
+    setMemoryProposals((current) =>
+      current.map((item) => (item.id === proposalId ? nextProposal : item))
+    );
+
+    if (acceptAfterSave) {
+      setAgents((current) => applyAcceptedMemoryToAgents(current, nextProposal));
+    }
+  }
+
+  function acceptMemoryProposal(proposalId) {
+    const timestamp = new Date().toISOString();
+    const proposal = memoryProposals.find((item) => item.id === proposalId);
+    if (!proposal) return;
+    const acceptedProposal = normalizeMemoryProposal({
+      ...proposal,
+      status: "accepted",
+      acceptedAt: timestamp,
+      rejectedAt: "",
+      rejectionReason: "",
+      hidden: false,
+      updatedAt: timestamp,
+    });
+
+    setMemoryProposals((current) =>
+      current.map((item) => (item.id === proposalId ? acceptedProposal : item))
+    );
+    setAgents((current) => applyAcceptedMemoryToAgents(current, acceptedProposal));
+  }
+
+  function rejectMemoryProposal(proposalId) {
+    const timestamp = new Date().toISOString();
+    setMemoryProposals((current) =>
+      current.map((proposal) =>
+        proposal.id === proposalId
+          ? normalizeMemoryProposal({
+              ...proposal,
+              status: "rejected",
+              rejectedAt: timestamp,
+              rejectionReason: proposal.rejectionReason || "Rejected during memory inbox review.",
+              hidden: false,
+              updatedAt: timestamp,
+            })
+          : proposal
+      )
+    );
+  }
+
+  function hideRejectedMemoryProposal(proposalId) {
+    const timestamp = new Date().toISOString();
+    setMemoryProposals((current) =>
+      current.map((proposal) =>
+        proposal.id === proposalId && proposal.status === "rejected"
+          ? normalizeMemoryProposal({ ...proposal, hidden: true, updatedAt: timestamp })
+          : proposal
+      )
+    );
   }
 
   async function startAutohand(agentId, launch) {
@@ -3043,6 +3317,7 @@ function App() {
   const isCreate = isCreateMemberRoute(route);
   const isExtensions = route.startsWith("/extensions");
   const isAnalytics = route.startsWith("/settings/analytics");
+  const isMemoryInbox = route.startsWith("/memory-inbox");
 
   return (
     <TooltipProvider>
@@ -3063,6 +3338,7 @@ function App() {
             route={route}
             runtime={runtime}
             runs={runs}
+            pendingMemoryCount={memoryPendingCount}
             theme={theme}
             locale={localeResolution.locale}
             copy={localeCopy}
@@ -3108,6 +3384,19 @@ function App() {
                 startAutohand={startAutohand}
                 runAutomation={runAutomation}
               />
+            ) : isMemoryInbox ? (
+              <MemoryInboxPage
+                agents={agents}
+                proposals={memoryProposals}
+                pendingCount={memoryPendingCount}
+                locale={localeResolution.locale}
+                navigate={navigate}
+                onAccept={acceptMemoryProposal}
+                onReject={rejectMemoryProposal}
+                onChangeScope={changeMemoryProposalScope}
+                onSaveEdit={saveMemoryProposalEdit}
+                onHideRejected={hideRejectedMemoryProposal}
+              />
             ) : isExtensions ? (
               <Extensions runtime={runtime} runs={runs} />
             ) : (
@@ -3133,6 +3422,7 @@ function App() {
                 runAutomation={runAutomation}
                 requestedWorkspace={requestedWorkspace}
                 handoffRetryMode={resolveHandoffRetryMode(handoffSettings, runtime)}
+                memoryPendingCount={memoryPendingCount}
                 onCreateHandoff={createHandoff}
                 onCancelHandoff={cancelHandoff}
                 onFailHandoff={markHandoffFailed}
@@ -3155,6 +3445,7 @@ function App() {
               route={route}
               runtime={runtime}
               runs={runs}
+              pendingMemoryCount={memoryPendingCount}
               theme={theme}
               locale={localeResolution.locale}
               copy={localeCopy}
@@ -3816,6 +4107,7 @@ function CollapsedSidebarRail({
   activeAgent,
   navigate,
   route,
+  pendingMemoryCount = 0,
   theme,
   locale = DEFAULT_LOCALE,
   copy = getLocaleCopy(DEFAULT_LOCALE),
@@ -3835,6 +4127,7 @@ function CollapsedSidebarRail({
         activeSection={memberSectionFromRoute(route)}
         copy={copy}
         navigate={navigate}
+        pendingMemoryCount={pendingMemoryCount}
         theme={theme}
         onSettings={onSettings}
         onAnalytics={onAnalytics}
@@ -3896,6 +4189,29 @@ function CollapsedSidebarRail({
         </Tooltip>
       </div>
 
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn(
+              "relative mt-3 size-9 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4",
+              route.startsWith("/memory-inbox") && "bg-muted text-foreground"
+            )}
+            onClick={() => navigate("/memory-inbox")}
+            aria-label="Memory Inbox"
+          >
+            <Inbox className="size-4" />
+            {pendingMemoryCount ? (
+              <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+                {pendingMemoryCount}
+              </span>
+            ) : null}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Memory Inbox ({pendingMemoryCount} pending)</TooltipContent>
+      </Tooltip>
+
       <ScrollArea className="mt-5 min-h-0 w-full flex-1">
         <nav aria-label={copy.mySquadMembers} className="flex flex-col items-center gap-3 pb-4">
           {visibleAgents.map((agent) => {
@@ -3947,7 +4263,7 @@ function CollapsedSidebarRail({
   );
 }
 
-function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, onSettings, onAnalytics, onExpand }) {
+function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, pendingMemoryCount = 0, onSettings, onAnalytics, onExpand }) {
   return (
     <div className="flex h-full min-h-screen w-[72px] flex-col items-center bg-card/95 px-2 py-3.5 text-card-foreground dark:bg-black">
       <Tooltip>
@@ -4010,6 +4326,26 @@ function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLoc
         <TooltipContent>{agent.name || copy.squadMember}</TooltipContent>
       </Tooltip>
 
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="relative mt-2 size-9 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4"
+            onClick={() => navigate("/memory-inbox")}
+            aria-label="Memory Inbox"
+          >
+            <Inbox className="size-4" />
+            {pendingMemoryCount ? (
+              <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+                {pendingMemoryCount}
+              </span>
+            ) : null}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Memory Inbox ({pendingMemoryCount} pending)</TooltipContent>
+      </Tooltip>
+
       <nav aria-label={`${agent.name || copy.squadMember} sections`} className="mt-6 flex flex-col items-center gap-2">
         {MEMBER_SECTIONS.map((item) => {
           const Icon = item.icon;
@@ -4052,7 +4388,7 @@ function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLoc
   );
 }
 
-function SidebarContent({ agents, activeAgent, navigate, route, theme, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onAnalytics, onCollapse }) {
+function SidebarContent({ agents, activeAgent, navigate, route, pendingMemoryCount = 0, theme, locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onAnalytics, onCollapse }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const memberId = activeAgent?.id || visibleAgents[0]?.id;
   const chatPath = memberChatPath(memberId);
@@ -4066,6 +4402,7 @@ function SidebarContent({ agents, activeAgent, navigate, route, theme, locale = 
         activeSection={memberSectionFromRoute(route)}
         copy={copy}
         navigate={navigate}
+        pendingMemoryCount={pendingMemoryCount}
         theme={theme}
         onSettings={onSettings}
         onAnalytics={onAnalytics}
@@ -4119,6 +4456,21 @@ function SidebarContent({ agents, activeAgent, navigate, route, theme, locale = 
           {copy.createSquadMember}
         </Button>
 
+        <Button
+          variant="ghost"
+          className={cn(
+            "h-10 w-full justify-start rounded-md px-3 text-muted-foreground hover:bg-muted/45 hover:text-foreground",
+            route.startsWith("/memory-inbox") && "bg-muted/80 text-foreground"
+          )}
+          onClick={() => navigate("/memory-inbox")}
+        >
+          <Inbox data-icon="inline-start" />
+          <span className="min-w-0 flex-1 truncate">Memory Inbox</span>
+          <Badge variant={pendingMemoryCount ? "default" : "secondary"} className="rounded-sm px-1.5">
+            {formatLocalizedNumber(pendingMemoryCount, locale)}
+          </Badge>
+        </Button>
+
         <ScrollArea className="min-h-0 flex-1 pr-1">
           <div className="flex flex-col gap-1.5">
             {visibleAgents.map((agent) => {
@@ -4154,7 +4506,7 @@ function SidebarContent({ agents, activeAgent, navigate, route, theme, locale = 
   );
 }
 
-function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, onSettings, onAnalytics, onCollapse }) {
+function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, pendingMemoryCount = 0, onSettings, onAnalytics, onCollapse }) {
   return (
     <div className="flex h-full min-h-screen flex-col bg-background">
       <div className="flex h-14 items-center gap-2 px-4">
@@ -4205,6 +4557,18 @@ function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCop
             {agent.role ? <div className="sr-only">{agent.role}</div> : null}
           </div>
         </div>
+
+        <Button
+          variant="ghost"
+          className="mb-3 h-9 w-full justify-start rounded-md px-5 text-sm font-medium text-muted-foreground hover:bg-accent/35 hover:text-foreground"
+          onClick={() => navigate("/memory-inbox")}
+        >
+          <Inbox data-icon="inline-start" />
+          <span className="min-w-0 flex-1 truncate">Memory Inbox</span>
+          <Badge variant={pendingMemoryCount ? "default" : "secondary"} className="rounded-sm px-1.5">
+            {pendingMemoryCount}
+          </Badge>
+        </Button>
 
         <nav aria-label={`${agent.name} sections`} className="flex flex-col gap-1">
           {MEMBER_SECTIONS.map((item) => {
@@ -4534,6 +4898,7 @@ function Conversation({
   runAutomation,
   requestedWorkspace,
   handoffRetryMode = DEFAULT_HANDOFF_RETRY_MODE,
+  memoryPendingCount = 0,
   onCreateHandoff,
   onCancelHandoff,
   onFailHandoff,
@@ -5046,6 +5411,7 @@ function Conversation({
             setActiveTab={setPanelTab}
             copy={copy}
             handoffRetryMode={handoffRetryMode}
+            memoryPendingCount={memoryPendingCount}
             onCreateHandoff={onCreateHandoff}
             onCancelHandoff={onCancelHandoff}
             onFailHandoff={onFailHandoff}
@@ -5874,6 +6240,7 @@ function TaskPanel({
   setActiveTab,
   copy = getLocaleCopy(DEFAULT_LOCALE),
   handoffRetryMode = DEFAULT_HANDOFF_RETRY_MODE,
+  memoryPendingCount = 0,
   onCreateHandoff,
   onCancelHandoff,
   onFailHandoff,
@@ -5903,12 +6270,12 @@ function TaskPanel({
         <SheetTitle>{copy.execution}</SheetTitle>
         <SheetDescription>{copy.executionDescription}</SheetDescription>
       </SheetHeader>
-      <div className="grid grid-cols-3 gap-2 border-b px-5 py-3">
-        <Metric label="Parent tasks" value={tasks.length} />
-        <Metric label="Handoffs" value={handoffCount} />
-        <Metric label="Blocked" value={blockedCount} />
+      <div className="flex flex-wrap gap-x-5 gap-y-2 border-b px-5 py-3 text-sm text-muted-foreground">
+        <span><strong className="font-semibold text-foreground">{tasks.length}</strong> parent tasks</span>
+        <span><strong className="font-semibold text-foreground">{memoryPendingCount}</strong> memory pending</span>
+        <span><strong className="font-semibold text-foreground">{handoffCount}</strong> handoffs</span>
       </div>
-      <MissionControlStrip tasks={tasks} agents={agents} />
+      <MissionControlStrip tasks={tasks} agents={agents} memoryPendingCount={memoryPendingCount} />
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
         <div className="border-b px-5 py-3">
           <TabsList className="grid w-full grid-cols-3">
@@ -5951,29 +6318,34 @@ function TaskPanel({
   );
 }
 
-function MissionControlStrip({ tasks = [], agents = [] }) {
+function MissionControlStrip({ tasks = [], agents = [], memoryPendingCount = 0 }) {
   const activeTasks = tasks.filter((task) => !["completed", "cancelled"].includes(task.status));
   const blockedTasks = tasks.filter((task) => task.status === "blocked" || latestFailedHandoff(task));
   const visibleTasks = [...activeTasks, ...tasks].filter((task, index, list) => list.findIndex((item) => item.id === task.id) === index).slice(0, 3);
 
   return (
-    <section className="border-b bg-muted/20 px-5 py-4" aria-label="Mission Control">
+    <section className="border-b px-5 py-4" aria-label="Mission Control">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold">Mission Control</h3>
           <p className="mt-1 text-xs text-muted-foreground">Current owners, handoff state, and blocked checkpoints.</p>
         </div>
-        <Badge variant={blockedTasks.length ? "destructive" : "secondary"} className="rounded-md">
-          {blockedTasks.length} blocked
-        </Badge>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Badge variant={memoryPendingCount ? "default" : "secondary"} className="rounded-md">
+            {memoryPendingCount} memory pending
+          </Badge>
+          <Badge variant={blockedTasks.length ? "destructive" : "secondary"} className="rounded-md">
+            {blockedTasks.length} blocked
+          </Badge>
+        </div>
       </div>
-      <div className="grid gap-2">
+      <div className="divide-y divide-border/75 border-y border-border/75">
         {visibleTasks.length ? (
           visibleTasks.map((task) => {
             const owner = taskOwner(task, agents);
             const handoff = latestHandoff(task);
             return (
-              <div key={task.id} className="rounded-md border bg-background/65 px-3 py-2">
+              <div key={task.id} className="py-3">
                 <div className="flex items-center justify-between gap-3 text-sm">
                   <span className="min-w-0 truncate font-medium">{task.title}</span>
                   <StatusBadge status={task.status} />
@@ -5987,7 +6359,7 @@ function MissionControlStrip({ tasks = [], agents = [] }) {
             );
           })
         ) : (
-          <div className="rounded-md border bg-background/65 px-3 py-2 text-sm text-muted-foreground">
+          <div className="py-3 text-sm text-muted-foreground">
             No active handoffs.
           </div>
         )}
@@ -9491,6 +9863,376 @@ function AutomationSummary({ automations, copy = getLocaleCopy(DEFAULT_LOCALE) }
         </Table>
       </CardContent>
     </Card>
+  );
+}
+
+function MemoryInboxPage({
+  agents = [],
+  proposals = [],
+  pendingCount = 0,
+  locale = DEFAULT_LOCALE,
+  navigate,
+  onAccept,
+  onReject,
+  onChangeScope,
+  onSaveEdit,
+  onHideRejected,
+}) {
+  const [activeTab, setActiveTab] = useState("pending");
+  const [showHiddenRejected, setShowHiddenRejected] = useState(false);
+  const [editingProposal, setEditingProposal] = useState(null);
+  const normalizedProposals = useMemo(() => normalizeMemoryProposals(proposals), [proposals]);
+  const grouped = useMemo(
+    () => ({
+      pending: normalizedProposals.filter((proposal) => proposal.status === "pending"),
+      accepted: normalizedProposals.filter((proposal) => proposal.status === "accepted"),
+      rejected: normalizedProposals.filter((proposal) => proposal.status === "rejected"),
+    }),
+    [normalizedProposals]
+  );
+  const visibleRejected = showHiddenRejected ? grouped.rejected : grouped.rejected.filter((proposal) => !proposal.hidden);
+  const hiddenRejectedCount = grouped.rejected.filter((proposal) => proposal.hidden).length;
+  const visibleItems =
+    activeTab === "pending" ? grouped.pending : activeTab === "accepted" ? grouped.accepted : visibleRejected;
+
+  function renderList(items) {
+    if (!items.length) {
+      return (
+        <EmptyBlock
+          icon={activeTab === "accepted" ? CheckCircle2 : activeTab === "rejected" ? Ban : Inbox}
+          title={activeTab === "pending" ? "No pending memories" : activeTab === "accepted" ? "No accepted memories" : "No rejected memories"}
+          body={activeTab === "pending" ? "New proposed memories will appear here before durable storage." : "Audit records stay available in this queue."}
+        />
+      );
+    }
+
+    return (
+      <div className="divide-y divide-border/75 border-y border-border/75">
+        {items.map((proposal) => (
+          <MemoryProposalCard
+            key={proposal.id}
+            proposal={proposal}
+            agents={agents}
+            locale={locale}
+            navigate={navigate}
+            onAccept={onAccept}
+            onReject={onReject}
+            onEdit={setEditingProposal}
+            onChangeScope={onChangeScope}
+            onHideRejected={onHideRejected}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <PageTitle title="Memory Inbox" />
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8">
+        <section className="border-b border-border/75 pb-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0">
+              <h1 className="text-3xl font-semibold tracking-normal">Review queue</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                Proposed memories stay here until you accept, edit, rescope, or reject them.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted-foreground">
+              <span><strong className="font-semibold text-foreground">{pendingCount}</strong> pending</span>
+              <span><strong className="font-semibold text-foreground">{grouped.accepted.length}</strong> accepted</span>
+              <span><strong className="font-semibold text-foreground">{grouped.rejected.length}</strong> rejected</span>
+            </div>
+          </div>
+        </section>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="grid gap-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <TabsList variant="line" className="h-auto flex-wrap justify-start gap-4 bg-transparent p-0">
+              <TabsTrigger value="pending" className="h-9 px-0">
+                Pending
+                <Badge variant="secondary" className="ml-2 rounded-sm px-1.5 text-[11px]">
+                  {grouped.pending.length}
+                </Badge>
+              </TabsTrigger>
+              <TabsTrigger value="accepted" className="h-9 px-0">
+                Accepted
+                <Badge variant="secondary" className="ml-2 rounded-sm px-1.5 text-[11px]">
+                  {grouped.accepted.length}
+                </Badge>
+              </TabsTrigger>
+              <TabsTrigger value="rejected" className="h-9 px-0">
+                Rejected
+                <Badge variant="secondary" className="ml-2 rounded-sm px-1.5 text-[11px]">
+                  {grouped.rejected.length}
+                </Badge>
+              </TabsTrigger>
+            </TabsList>
+
+            {activeTab === "rejected" ? (
+              <label className="flex h-9 items-center gap-3 text-sm text-muted-foreground">
+                <span>Show hidden audit</span>
+                <Switch checked={showHiddenRejected} onCheckedChange={setShowHiddenRejected} />
+              </label>
+            ) : null}
+          </div>
+
+          <TabsContent value="pending" className="m-0">
+            {renderList(grouped.pending)}
+          </TabsContent>
+          <TabsContent value="accepted" className="m-0">
+            {renderList(grouped.accepted)}
+          </TabsContent>
+          <TabsContent value="rejected" className="m-0">
+            <div className="grid gap-3">
+              {hiddenRejectedCount && !showHiddenRejected ? (
+                <div className="border-y border-dashed border-border/75 py-3 text-sm text-muted-foreground">
+                  {hiddenRejectedCount} hidden rejected memory {hiddenRejectedCount === 1 ? "record" : "records"} retained in the local audit.
+                </div>
+              ) : null}
+              {renderList(visibleRejected)}
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      <MemoryEditDialog
+        proposal={editingProposal}
+        open={Boolean(editingProposal)}
+        onOpenChange={(open) => !open && setEditingProposal(null)}
+        onSave={(content, acceptAfterSave) => {
+          if (!editingProposal) return;
+          onSaveEdit?.(editingProposal.id, content, acceptAfterSave);
+          setEditingProposal(null);
+          if (acceptAfterSave) setActiveTab("accepted");
+        }}
+      />
+    </div>
+  );
+}
+
+function MemoryProposalCard({
+  proposal,
+  agents = [],
+  locale = DEFAULT_LOCALE,
+  navigate,
+  onAccept,
+  onReject,
+  onEdit,
+  onChangeScope,
+  onHideRejected,
+}) {
+  const owner = agents.find((agent) => normalizeSquadMemberId(agent.id) === normalizeSquadMemberId(proposal.ownerAgentId));
+  const scope = memoryScopeMeta(proposal.scope);
+  const ScopeIcon = scope.icon;
+  const timestamp = proposal.acceptedAt || proposal.rejectedAt || proposal.updatedAt || proposal.createdAt;
+  const latestEdit = proposal.editHistory?.[proposal.editHistory.length - 1];
+  const statusVariant = proposal.status === "rejected" ? "destructive" : proposal.status === "accepted" ? "default" : "secondary";
+
+  return (
+    <article className={cn("py-5", proposal.hidden && "opacity-65")}>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_260px] xl:items-start">
+        <div className="min-w-0">
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant={statusVariant} className="capitalize">
+              {proposal.status}
+            </Badge>
+            <span className="inline-flex items-center gap-1.5">
+              <ScopeIcon className="size-3.5" />
+              {scope.label}
+            </span>
+            <span>{confidencePercent(proposal.confidence)} confidence</span>
+            <span>Owner: {owner?.name || proposal.ownerAgentId || "Unassigned"}</span>
+            <span>Source: {proposal.source.label}</span>
+            <time>{formatRecordDate(timestamp, locale)}</time>
+            {proposal.hidden ? <span>Hidden audit</span> : null}
+          </div>
+          <h2 className="text-base font-semibold leading-6">{proposal.content}</h2>
+
+          {proposal.evidence.length ? (
+            <div className="mt-4">
+              <div className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Evidence</div>
+              <ul className="grid gap-1.5 text-sm leading-6 text-muted-foreground">
+                {proposal.evidence.map((item) => (
+                  <li key={`${proposal.id}-${item.label}-${item.detail}`} className="grid gap-1 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-3">
+                    <span className="truncate font-medium text-foreground">{item.label}</span>
+                    <span className="min-w-0">{item.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-muted-foreground">No supporting evidence recorded.</p>
+          )}
+
+          {proposal.confidence?.rationale ? (
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">
+              {proposal.confidence.rationale}
+            </p>
+          ) : null}
+
+          {latestEdit ? (
+            <div className="mt-4 grid gap-3 border-l border-border/75 pl-4 md:grid-cols-2">
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Before edit</div>
+                <p className="text-sm leading-6 text-muted-foreground">{latestEdit.before || proposal.originalContent}</p>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">After edit</div>
+                <p className="text-sm leading-6">{latestEdit.after || proposal.content}</p>
+              </div>
+            </div>
+          ) : null}
+
+          {proposal.status === "accepted" ? (
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <span>Accepted {formatRecordDate(proposal.acceptedAt, locale)}</span>
+              <span>Source linked</span>
+              <span>Timestamp recorded</span>
+            </div>
+          ) : null}
+
+          {proposal.status === "rejected" && proposal.rejectionReason ? (
+            <div className="mt-3 text-sm text-destructive">
+              {proposal.rejectionReason}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="grid content-start gap-3 text-sm">
+          <div>
+            <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Scope</div>
+            <div className="grid gap-2">
+              {proposal.status === "pending" ? (
+                <MemoryScopeSelect value={proposal.scope} onValueChange={(scopeId) => onChangeScope?.(proposal.id, scopeId)} />
+              ) : (
+                <div className="flex items-center gap-2">
+                  <ScopeIcon className="size-4 text-primary" />
+                  <span>{scope.label}</span>
+                </div>
+              )}
+              <p className="text-xs leading-5 text-muted-foreground">{scope.detail}</p>
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Source record</div>
+            <div className="truncate font-medium">{proposal.source.id}</div>
+            <div className="mt-1 text-xs capitalize text-muted-foreground">{proposal.source.type}</div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 xl:justify-end">
+            {proposal.source.href ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => navigate?.(proposal.source.href)}>
+                <ArrowUpRight data-icon="inline-start" />
+                Source
+              </Button>
+            ) : null}
+            {proposal.status === "pending" ? (
+              <>
+                <Button type="button" variant="outline" size="sm" onClick={() => onEdit?.(proposal)}>
+                  <PencilLine data-icon="inline-start" />
+                  Edit
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => onReject?.(proposal.id)}>
+                  <Ban data-icon="inline-start" />
+                  Reject
+                </Button>
+                <Button type="button" size="sm" onClick={() => onAccept?.(proposal.id)}>
+                  <CheckCircle2 data-icon="inline-start" />
+                  Accept
+                </Button>
+              </>
+            ) : null}
+            {proposal.status === "rejected" && !proposal.hidden ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => onHideRejected?.(proposal.id)}>
+                <X data-icon="inline-start" />
+                Hide
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function MemoryScopeSelect({ value, onValueChange }) {
+  return (
+    <Select value={normalizeMemoryScope(value)} onValueChange={onValueChange}>
+      <SelectTrigger className="h-9 w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          <SelectLabel>Memory scope</SelectLabel>
+          {MEMORY_SCOPE_OPTIONS.map((scope) => (
+            <SelectItem key={scope.id} value={scope.id}>
+              {scope.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function MemoryEditDialog({ proposal, open, onOpenChange, onSave }) {
+  const [content, setContent] = useState(proposal?.content || "");
+  const changed = String(content || "").trim() !== String(proposal?.content || "").trim();
+  const canSave = Boolean(String(content || "").trim());
+
+  useEffect(() => {
+    setContent(proposal?.content || "");
+  }, [proposal?.id, proposal?.content]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent closeLabel="Close" className="max-h-[88svh] overflow-y-auto rounded-md border-border bg-background p-0 sm:max-w-[680px]">
+        <DialogHeader className="border-b px-6 py-5">
+          <DialogTitle>Edit memory proposal</DialogTitle>
+          <DialogDescription>{proposal?.source?.label || "Memory source"}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-5 p-6">
+          <Field>
+            <FieldLabel>Memory content</FieldLabel>
+            <Textarea
+              value={content}
+              onChange={(event) => setContent(event.target.value)}
+              className="min-h-36 resize-y"
+              placeholder="Write the durable memory"
+            />
+            <FieldDescription>{confidencePercent(proposal?.confidence)} confidence / {memoryScopeMeta(proposal?.scope).label}</FieldDescription>
+          </Field>
+
+          {changed ? (
+            <div className="grid gap-2 rounded-md border bg-muted/25 p-3 md:grid-cols-2">
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Before</div>
+                <p className="text-sm leading-6 text-muted-foreground">{proposal?.content}</p>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">After</div>
+                <p className="text-sm leading-6">{content}</p>
+              </div>
+            </div>
+          ) : null}
+        </div>
+        <DialogFooter className="sticky bottom-0 border-t bg-background/95 px-6 py-4 backdrop-blur">
+          <Button type="button" variant="ghost" onClick={() => onOpenChange?.(false)}>
+            Cancel
+          </Button>
+          <Button type="button" variant="outline" disabled={!canSave} onClick={() => onSave?.(content, false)}>
+            Save edit
+          </Button>
+          {proposal?.status === "pending" ? (
+            <Button type="button" disabled={!canSave} onClick={() => onSave?.(content, true)}>
+              Save and accept
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
