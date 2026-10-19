@@ -8202,6 +8202,7 @@ function AgentProjectsPage({ agent, runtime, workspaces = [], navigate, openTerm
   const projectPaths = useMemo(() => new Set(projects.map((project) => project.path)), [projectPathKey]);
   const [projectDraft, setProjectDraft] = useState("");
   const [projectError, setProjectError] = useState("");
+  const [projectToRemove, setProjectToRemove] = useState(null);
   const currentWorkspace = normalizeSquadWorkspacePath(agent.workspace, runtime);
   const workspaceChoices = workspaceOptions(workspaces, projectDraft, runtime).filter(
     (workspace) => !projectPaths.has(normalizeSquadWorkspacePath(workspace.path, runtime))
@@ -8214,8 +8215,14 @@ function AgentProjectsPage({ agent, runtime, workspaces = [], navigate, openTerm
   const atLimit = projects.length >= maxProjects;
   const duplicateProject = Boolean(normalizedDraft && projectPaths.has(normalizedDraft));
   const blockedProject = Boolean(normalizedDraft && isBlockedWorkspace(normalizedDraft, runtime));
-  const canAddProject = Boolean(normalizedDraft) && !atLimit && !duplicateProject && !blockedProject;
   const remainingSlots = Math.max(0, maxProjects - projects.length);
+  const projectInputId = `project-path-${agent.id}`;
+  const projectErrorId = `${projectInputId}-error`;
+  const defaultProject = projects.find((project) => project.path === currentWorkspace);
+  const defaultProjectName = defaultProject?.name || workspaceName(currentWorkspace) || "No default";
+  const addProjectSummary = atLimit
+    ? `Maximum of ${maxProjects} projects reached.`
+    : `${remainingSlots} ${remainingSlots === 1 ? "slot" : "slots"} available for ${agent.name}.`;
 
   useEffect(() => {
     const normalized = normalizeSquadWorkspacePath(projectDraft, runtime);
@@ -8274,6 +8281,12 @@ function AgentProjectsPage({ agent, runtime, workspaces = [], navigate, openTerm
     commitProjects(nextProjects, nextWorkspace);
   }
 
+  function confirmRemoveProject() {
+    if (!projectToRemove) return;
+    removeProject(projectToRemove.path);
+    setProjectToRemove(null);
+  }
+
   function setDefaultProject(path) {
     commitProjects(projects, path);
   }
@@ -8281,123 +8294,208 @@ function AgentProjectsPage({ agent, runtime, workspaces = [], navigate, openTerm
   return (
     <div className="min-h-screen bg-background">
       <PageTitle title={copy.projects} />
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-        <section className="overflow-hidden rounded-md border border-border/80 bg-card/75">
-          <div className="grid gap-5 border-b border-border/75 p-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:p-6">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="grid size-11 place-items-center rounded-md border border-primary/35 bg-primary/15 text-primary">
-                  <Folders className="size-5" />
-                </span>
-                <div className="min-w-0">
-                  <h2 className="text-2xl font-semibold tracking-normal">Repositories & Projects</h2>
-                  <p className="mt-1 truncate text-sm text-muted-foreground">
-                    {agent.name} / {localizedRole(agent, copy)}
-                  </p>
+      <div className="mx-auto flex w-full max-w-5xl flex-col px-5 py-7 sm:px-7 lg:px-10">
+        <header className="min-w-0 pb-7">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 items-start gap-4">
+              <AgentAvatar agent={agent} className="size-16 rounded-2xl border-0 shadow-sm" />
+              <div className="min-w-0 pt-1">
+                <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <span>{agent.name}</span>
+                  <span aria-hidden="true">/</span>
+                  <span className="truncate">{localizedRole(agent, copy)}</span>
                 </div>
+                <h2 className="text-4xl font-semibold tracking-normal text-balance sm:text-5xl">Project Access</h2>
+                <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground text-pretty">
+                  Keep {agent.name}'s working context focused on the repositories they can read, run, and hand off from.
+                </p>
               </div>
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <Metric label={copy.projects} value={`${projects.length}/${maxProjects}`} />
-                <Metric label="Remaining" value={String(remainingSlots)} />
-                <Metric label={copy.workspace} value={workspaceName(currentWorkspace) || "none"} />
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+              <Button variant="ghost" onClick={() => openTerminal(agent)} className="bg-muted/55 hover:bg-muted">
+                <TerminalSquare data-icon="inline-start" aria-hidden="true" />
+                {copy.openCli}
+              </Button>
+              <Button onClick={() => navigate(memberChatPath(agent.id))}>
+                <MessageSquareText data-icon="inline-start" aria-hidden="true" />
+                {copy.backToChat}
+              </Button>
+            </div>
+          </div>
+
+          <dl className="mt-7 flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <dt>{copy.projects}</dt>
+              <dd className="font-semibold tabular-nums text-foreground">{projects.length}/{maxProjects}</dd>
+            </div>
+            <div className="flex items-center gap-2">
+              <dt>Available</dt>
+              <dd className="font-semibold tabular-nums text-foreground">{remainingSlots}</dd>
+            </div>
+            <div className="flex min-w-0 items-center gap-2">
+              <dt>Default</dt>
+              <dd className="min-w-0 truncate font-semibold text-foreground" title={currentWorkspace || undefined}>{defaultProjectName}</dd>
+            </div>
+          </dl>
+        </header>
+
+        <main className="grid gap-9 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+          <section className="min-w-0" aria-labelledby="project-list-title">
+            <div className="flex min-w-0 items-end justify-between gap-4 border-b border-border/60 pb-3">
+              <div className="min-w-0">
+                <h3 id="project-list-title" className="text-lg font-semibold tracking-normal">Connected Projects</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {projects.length ? `${projects.length} active ${projects.length === 1 ? "repository" : "repositories"}.` : `${agent.name} has no project access yet.`}
+                </p>
               </div>
             </div>
 
-            <form className="rounded-md border border-border/80 bg-background/65 p-4" onSubmit={addProject}>
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold">Add project</div>
-                <Badge variant="outline" className="rounded-md bg-background text-xs">
-                  max {maxProjects}
+            {projects.length ? (
+              <div className="mt-2 divide-y divide-border/50">
+                {projects.map((project) => {
+                  const isDefault = project.path === currentWorkspace;
+                  return (
+                    <article
+                      key={project.path}
+                      className="group -mx-3 grid gap-3 rounded-md px-3 py-4 transition-colors hover:bg-muted/35 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+                    >
+                      <div className="grid min-w-0 grid-cols-[32px_minmax(0,1fr)] items-start gap-3">
+                        <span className="mt-0.5 grid size-8 place-items-center rounded-md bg-primary/10 text-primary">
+                          <FolderGit2 className="size-4" aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <h4 className="min-w-0 truncate text-sm font-semibold" title={project.label || project.name}>
+                              {project.label || project.name}
+                            </h4>
+                            <Badge variant="secondary" className="rounded-md border-0 bg-muted px-1.5 py-0 text-[11px] capitalize text-muted-foreground">
+                              {project.kind}
+                            </Badge>
+                            {isDefault ? (
+                              <Badge variant="outline" className="rounded-md border-0 bg-primary/12 px-1.5 py-0 text-[11px] text-primary">
+                                Default
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <code className="mt-1 block truncate font-mono text-xs text-muted-foreground" title={project.path}>
+                            {project.path}
+                          </code>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1 md:justify-end">
+                        <Button type="button" variant="ghost" size="sm" disabled={isDefault} onClick={() => setDefaultProject(project.path)} className="text-muted-foreground hover:text-foreground">
+                          {isDefault ? <BadgeCheck data-icon="inline-start" aria-hidden="true" /> : <GitBranch data-icon="inline-start" aria-hidden="true" />}
+                          {isDefault ? "Default" : "Make Default"}
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${project.label || project.name}`} onClick={() => setProjectToRemove(project)} className="text-muted-foreground hover:text-destructive">
+                          <Trash2 aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="mt-8 rounded-md bg-muted/35 px-5 py-8">
+                <EmptyBlock icon={Folders} title="No Projects Added" body={`${agent.name} has no associated repositories yet.`} />
+              </div>
+            )}
+          </section>
+
+          <aside className="lg:sticky lg:top-6">
+            <form className="rounded-lg bg-muted/35 p-4 shadow-sm shadow-background/20" onSubmit={addProject}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-base font-semibold">Add Project</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{addProjectSummary}</p>
+                </div>
+                <Badge variant="outline" className="rounded-md border-0 bg-background/70 text-xs tabular-nums">
+                  Max {maxProjects}
                 </Badge>
               </div>
-              <div className="mt-4 grid gap-3">
-                <Select value={selectedOptionValue} onValueChange={setProjectDraft} disabled={atLimit || !workspaceChoices.length}>
-                  <SelectTrigger className="h-10 w-full bg-background">
-                    <FolderGit2 className="size-4 text-muted-foreground" />
-                    <SelectValue placeholder={copy.scanningLocalFolders || "Scanning local folders"} />
-                  </SelectTrigger>
-                  <SelectContent position="popper" className="max-h-[420px]">
-                    <SelectGroup>
-                      <SelectLabel>{copy.localFolders}</SelectLabel>
-                      {workspaceChoices.map((workspace) => (
-                        <SelectItem key={workspace.path} value={workspace.path}>
-                          {workspace.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <Input
-                  value={projectDraft}
-                  onChange={(event) => setProjectDraft(event.target.value)}
-                  placeholder="/Users/name/path/to/repository"
-                  disabled={atLimit}
-                  className="h-10 bg-background font-mono text-xs"
-                />
-                <Button type="submit" disabled={!canAddProject}>
-                  <Plus data-icon="inline-start" />
-                  Add
-                </Button>
-                {projectError ? <p className="text-xs text-destructive">{projectError}</p> : null}
-              </div>
-            </form>
-          </div>
 
-          <div className="grid gap-4 p-5 lg:p-6">
-            {projects.length ? (
-              projects.map((project) => {
-                const isDefault = project.path === currentWorkspace;
-                return (
-                  <article
-                    key={project.path}
-                    className="grid gap-4 rounded-md border border-border/80 bg-background/65 p-4 md:grid-cols-[44px_minmax(0,1fr)_auto] md:items-center"
+              <FieldGroup className="mt-5 gap-4">
+                <Field>
+                  <FieldLabel>Local Folder</FieldLabel>
+                  <Select
+                    name={`${agent.id}-project-choice`}
+                    value={selectedOptionValue}
+                    onValueChange={setProjectDraft}
+                    disabled={atLimit || !workspaceChoices.length}
                   >
-                    <span className="grid size-11 place-items-center rounded-md border border-border/80 bg-card text-primary">
-                      <FolderGit2 className="size-5" />
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="truncate text-sm font-semibold">{project.label || project.name}</h3>
-                        <Badge variant="secondary" className="rounded-md bg-muted text-[11px] capitalize text-muted-foreground">
-                          {project.kind}
-                        </Badge>
-                        {isDefault ? (
-                          <Badge variant="outline" className="rounded-md border-primary/35 bg-primary/10 text-[11px] text-primary">
-                            Default
-                          </Badge>
-                        ) : null}
-                      </div>
-                      <code className="mt-2 block truncate text-xs text-muted-foreground">{project.path}</code>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                      <Button type="button" variant="outline" size="sm" disabled={isDefault} onClick={() => setDefaultProject(project.path)}>
-                        <GitBranch data-icon="inline-start" />
-                        Default
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${project.label || project.name}`} onClick={() => removeProject(project.path)}>
-                        <X />
-                      </Button>
-                    </div>
-                  </article>
-                );
-              })
-            ) : (
-              <EmptyBlock icon={Folders} title="No projects added" body={`${agent.name} has no associated repositories yet.`} />
-            )}
-          </div>
-        </section>
+                    <SelectTrigger
+                      aria-label="Choose local folder"
+                      aria-invalid={Boolean(projectError)}
+                      className="h-11 w-full min-w-0 border-transparent bg-background/80 text-left shadow-none hover:bg-background focus-visible:border-ring [&>span]:min-w-0 [&>span]:truncate"
+                    >
+                      <FolderGit2 className="size-4 text-muted-foreground" aria-hidden="true" />
+                      <SelectValue placeholder={copy.scanningLocalFolders || "Scanning local folders…"} />
+                    </SelectTrigger>
+                    <SelectContent position="popper" className="max-h-[420px]">
+                      <SelectGroup>
+                        <SelectLabel>{copy.localFolders}</SelectLabel>
+                        {workspaceChoices.map((workspace) => (
+                          <SelectItem key={workspace.path} value={workspace.path} textValue={workspace.label}>
+                            {workspace.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
 
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="outline" onClick={() => openTerminal(agent)}>
-            <TerminalSquare data-icon="inline-start" />
-            {copy.openCli}
-          </Button>
-          <Button onClick={() => navigate(memberChatPath(agent.id))}>
-            <MessageSquareText data-icon="inline-start" />
-            {copy.backToChat}
-          </Button>
-        </div>
+                <Field data-invalid={Boolean(projectError)}>
+                  <FieldLabel htmlFor={projectInputId}>Project Path</FieldLabel>
+                  <Input
+                    id={projectInputId}
+                    name="projectPath"
+                    type="text"
+                    value={projectDraft}
+                    onChange={(event) => setProjectDraft(event.target.value)}
+                    placeholder="Example: /Users/name/path/to/repository…"
+                    disabled={atLimit}
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-invalid={Boolean(projectError)}
+                    aria-describedby={projectError ? projectErrorId : undefined}
+                    className="h-11 border-transparent bg-background/80 font-mono text-xs shadow-none hover:bg-background focus-visible:border-ring"
+                  />
+                  <FieldDescription className="text-xs">Use an absolute path to a local folder or git repository.</FieldDescription>
+                  {projectError ? (
+                    <p id={projectErrorId} aria-live="polite" className="text-xs text-destructive">
+                      {projectError}
+                    </p>
+                  ) : null}
+                </Field>
+
+                <Button type="submit" className="h-10 w-full" disabled={atLimit}>
+                  <Plus data-icon="inline-start" aria-hidden="true" />
+                  Add Project
+                </Button>
+              </FieldGroup>
+            </form>
+          </aside>
+        </main>
       </div>
+
+      <Dialog open={Boolean(projectToRemove)} onOpenChange={(open) => !open && setProjectToRemove(null)}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>Remove Project Access</DialogTitle>
+            <DialogDescription>
+              Remove {agent.name}'s access to {projectToRemove?.label || projectToRemove?.name || "this project"}. This does not delete the repository.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => setProjectToRemove(null)}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={confirmRemoveProject}>
+              Remove Project
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
