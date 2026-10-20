@@ -132,18 +132,72 @@ export function resolveResponderRecipients({ mentions, channel, pick = null }) {
 const MENTION_PATTERN = /@([A-Za-z0-9][A-Za-z0-9._-]*)/g;
 const mentionKey = (value) => String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 
+/**
+ * The @tokens in a message that could name a member, deduplicated, in order.
+ * An @ inside a word is an address ("igor@gmail.com"), and a token followed
+ * by ":" or "/" is a canvas ("@canvas:plan") or a file ("@src/app.js"). Before
+ * this, any of those made a channel message "mentioned" with nobody to send
+ * it to, and the message was dropped without being posted.
+ */
+export function mentionTokens(text) {
+  const source = String(text || "");
+  const tokens = [];
+  for (const match of source.matchAll(MENTION_PATTERN)) {
+    if (/[A-Za-z0-9._%+-]/.test(source[match.index - 1] || "")) continue;
+    if (/[:/@]/.test(source[match.index + match[0].length] || "")) continue;
+    tokens.push(match[1]);
+  }
+  return Array.from(new Set(tokens));
+}
+
+/** Channel project names, which the composer offers as @name next to members. */
+export function projectMentionKeys(projects = []) {
+  const nameOf = (project) => {
+    const path = typeof project === "string" ? project : String(project?.path || "");
+    return (typeof project === "object" && project?.name) || path.split(/[\\/]/).filter(Boolean).pop() || "";
+  };
+  return new Set((Array.isArray(projects) ? projects : []).map((project) => mentionKey(nameOf(project))).filter(Boolean));
+}
+
 export function mentionAliases(member) {
   const name = String(member?.name || "").trim();
   const firstName = name.split(/\s+/)[0] || "";
   return Array.from(new Set([name, firstName, name.replace(/\s+/g, ""), String(member?.id || "")].map(mentionKey).filter(Boolean)));
 }
 
+/**
+ * The names a member went by before a rename (`formerNames`, kept from the
+ * team's rename memory, ADR-0134). squad_message already reached Robert by
+ * "Max"; an @Max in a channel or a DM reached nobody.
+ */
+export function formerMentionAliases(member) {
+  const names = Array.isArray(member?.formerNames) ? member.formerNames : [];
+  return Array.from(new Set(names.flatMap((value) => {
+    const name = String(value || "").trim();
+    return [name, name.split(/\s+/)[0] || "", name.replace(/\s+/g, "")];
+  }).map(mentionKey).filter(Boolean)));
+}
+
+/**
+ * Add each member's former names to alias buckets keyed by `keyOf`, where no
+ * member answers to that name now: whoever has the name today wins.
+ */
+export function addFormerNameBuckets(buckets, members = [], aliasesOf = formerMentionAliases) {
+  const former = new Map();
+  for (const member of members) for (const alias of aliasesOf(member)) if (!buckets.has(alias)) former.set(alias, [...(former.get(alias) || []), member]);
+  for (const [alias, owners] of former) buckets.set(alias, owners);
+  return buckets;
+}
+
 /** Mention resolution over bridge-side member copies; same shape the browser produces. */
-export function resolveMentions(text, members = []) {
-  const tokens = Array.from(new Set(Array.from(String(text || "").matchAll(MENTION_PATTERN), (match) => match[1])));
-  if (!tokens.length) return { hasMentions: false, mode: "channel", targetMemberIds: [], invalidMentionTokens: [] };
+export function resolveMentions(text, members = [], { projects = [] } = {}) {
   const buckets = new Map();
   for (const member of members) for (const alias of mentionAliases(member)) buckets.set(alias, [...(buckets.get(alias) || []), member]);
+  addFormerNameBuckets(buckets, members);
+  // A project mention picks the working folder; it is not a recipient.
+  const projectKeys = projectMentionKeys(projects);
+  const tokens = mentionTokens(text).filter((token) => buckets.has(mentionKey(token)) || !projectKeys.has(mentionKey(token)));
+  if (!tokens.length) return { hasMentions: false, mode: "channel", targetMemberIds: [], invalidMentionTokens: [] };
   const selected = new Map();
   const invalidMentionTokens = [];
   const here = tokens.some((token) => mentionKey(token) === "here");

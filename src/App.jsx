@@ -4,7 +4,9 @@ import { onDesktopMenu } from "@/lib/desktop-menu";
 import { FirstRun } from "@/components/onboarding/FirstRun";
 import { ChannelDetailsSettings } from "@/components/channels/ChannelDetailsSettings";
 import { AnsweredByTag } from "@/components/channels/ResponderSettings";
-import { needsResponderPick, normalizeResponder, resolveResponderRecipients, responderTargetHint } from "@/lib/channel-responders";
+import { mentionTokens, needsResponderPick, normalizeResponder, resolveResponderRecipients, responderTargetHint } from "@/lib/channel-responders";
+import { normalizeChannelReplyMode } from "@/lib/channel-replies";
+import { channelAgentsByIds, channelMembersFor, channelMentionAliases, channelMentionLabel, mentionedSquadMembers, mentionsPerson, normalizeChannelMentionKey, resolveChannelMentionTargets, unreachedMentionNote, withoutHereMentions } from "@/lib/channel-mentions";
 import { AgentChannelProposals } from "@/components/channels/AgentChannelProposals";
 import { VaultRequests, useVaultRequests } from "@/components/chat/VaultRequests";
 import { VaultSettings } from "@/components/settings/VaultSettings";
@@ -14,6 +16,7 @@ import { AutomationPlainEnglish } from "@/components/members/AutomationPlainEngl
 import { KeepWorkingSwitch } from "@/components/members/KeepWorkingSwitch";
 import { AgendaLine } from "@/components/chat/AgendaLine";
 import { RoutineRunList, RoutineRunRow } from "@/components/members/RoutineRunRow";
+import { TeamMemorySection } from "@/components/members/TeamMemorySection";
 import { RoutineProposalCard } from "@/components/members/RoutineProposalCard";
 import { browserTimeZone, routineDraft, routineDraftFromAutomation, routinePayloadFromAutomation, scheduleActionInstruction, scheduleKindLabel, taskActionInstruction } from "@/lib/routines";
 import { AppInformation } from "@/components/app-info/AppInformation";
@@ -335,7 +338,7 @@ import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMem
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
-import { PROFILE_LIMITS, blankGreeting, blankMemberDraft, isBlankMember, personalityFileContent, profileNoteFor, profileReceipts, replyWithoutReceipts, unappliedProfileReceipts } from "@/lib/member-shaping";
+import { MEMBER_PROFILE_FIELDS, PROFILE_LIMITS, blankGreeting, blankMemberDraft, isBlankMember, memberProfileRevision, mergeMemberProfile, personalityFileContent, profileNoteFor, profileReceipts, replyWithoutReceipts, teamNoteReceipts, unappliedProfileReceipts } from "@/lib/member-shaping";
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
@@ -1424,7 +1427,7 @@ const HANDOFF_RETRY_MODES = ["checkpoint", "manual", "disabled"];
 const MEMORY_SCOPES = [
   { id: "personal", label: "Personal", detail: "Only this squad member uses it by default." },
   { id: "project", label: "Project", detail: "Shared for this repository or normalized workspace." },
-  { id: "team", label: "Team", detail: "Useful across the whole Autohand Squad." },
+  { id: "team", label: "Team", detail: "Shared with every member, on every engine." },
 ];
 const MEMORY_STATUSES = ["pending", "accepted", "rejected"];
 
@@ -3206,6 +3209,7 @@ function normalizeChannelCopy(channel) {
     // Who answers un-mentioned messages (ADR-0108); kept so the mirrored
     // channel list cannot erase a saved lead or mode.
     responder: normalizeResponder(channel.responder),
+    replyMode: normalizeChannelReplyMode(channel.replyMode),
     // Owned by the git route plug-in (docs/integration/git.md). Kept verbatim
     // so re-PUTting the channel list does not erase the repository binding.
     ...(channel.git && typeof channel.git === "object" ? { git: channel.git } : {}),
@@ -3288,12 +3292,7 @@ function mergeSeedChannelMessages(stored) {
 
 const CHANNEL_MENTION_PATTERN = /@([A-Za-z0-9][A-Za-z0-9._-]*)/g;
 
-function normalizeChannelMentionKey(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
+
 
 function channelMentionHandle(agent) {
   const name = String(agent?.name || "").trim();
@@ -3302,93 +3301,15 @@ function channelMentionHandle(agent) {
   return handle || String(agent?.id || "").replace(/[^A-Za-z0-9._-]/g, "");
 }
 
-function channelMentionLabel(agent) {
-  const handle = channelMentionHandle(agent);
-  return handle ? `@${handle}` : String(agent?.name || "member");
-}
 
-function channelMentionAliases(agent) {
-  const name = String(agent?.name || "").trim();
-  const firstName = name.split(/\s+/)[0] || "";
-  return Array.from(
-    new Set(
-      [name, firstName, name.replace(/\s+/g, ""), channelMentionHandle(agent)]
-        .map(normalizeChannelMentionKey)
-        .filter(Boolean)
-    )
-  );
-}
 
-function channelMembersFor(channel, agents = []) {
-  const channelMemberIds = new Set(Array.isArray(channel?.memberIds) ? channel.memberIds : []);
-  return agents.filter((agent) => channelMemberIds.has(agent.id));
-}
 
-function channelAgentsByIds(memberIds = [], agents = []) {
-  const wanted = new Set((Array.isArray(memberIds) ? memberIds : []).filter(Boolean));
-  return agents.filter((agent) => wanted.has(agent.id));
-}
 
-function resolveChannelMentionTargets(prompt, channel, agents = [], options = {}) {
-  const text = String(prompt || "");
-  const channelAgents = channelMembersFor(channel, agents);
-  const fallbackAgents = channelAgentsByIds(options.fallbackMemberIds, agents);
-  const defaultAgents = fallbackAgents.length ? fallbackAgents : channelAgents;
-  const mentionTokens = Array.from(text.matchAll(CHANNEL_MENTION_PATTERN), (match) => String(match[1] || ""))
-    .filter(Boolean);
-  const uniqueTokens = Array.from(new Set(mentionTokens));
-  const hasMentions = uniqueTokens.length > 0;
-  if (!hasMentions) {
-    return {
-      mode: fallbackAgents.length ? "thread" : "channel",
-      hasMentions,
-      invalidMentionTokens: [],
-      targetAgents: defaultAgents,
-      targetMemberIds: defaultAgents.map((agent) => agent.id),
-      targetLabel: fallbackAgents.length ? "thread recipients" : "channel",
-    };
-  }
 
-  const aliasBuckets = new Map();
-  for (const agent of channelAgents) {
-    for (const alias of channelMentionAliases(agent)) {
-      aliasBuckets.set(alias, [...(aliasBuckets.get(alias) || []), agent]);
-    }
-  }
 
-  const selected = new Map();
-  const invalidMentionTokens = [];
-  const mentionsHere = uniqueTokens.some((token) => normalizeChannelMentionKey(token) === "here");
-  if (mentionsHere) {
-    for (const agent of channelAgents) selected.set(agent.id, agent);
-  }
 
-  for (const token of uniqueTokens) {
-    const key = normalizeChannelMentionKey(token);
-    if (!key || key === "here") continue;
-    const matches = aliasBuckets.get(key) || [];
-    if (matches.length === 1) {
-      selected.set(matches[0].id, matches[0]);
-    } else {
-      invalidMentionTokens.push(`@${token}`);
-    }
-  }
 
-  const targetAgents = Array.from(selected.values());
-  const targetLabel = mentionsHere
-    ? "@here"
-    : targetAgents.length
-      ? targetAgents.map(channelMentionLabel).join(", ")
-      : "";
-  return {
-    mode: mentionsHere ? "here" : "mentions",
-    hasMentions,
-    invalidMentionTokens,
-    targetAgents,
-    targetMemberIds: targetAgents.map((agent) => agent.id),
-    targetLabel,
-  };
-}
+
 
 function formatChannelTargetLabel(resolution) {
   if (!resolution?.targetAgents?.length) return "";
@@ -4592,7 +4513,7 @@ function App() {
     sharedConversationChannelRef.current = channel;
     if (channel) channel.onmessage = ({ data }) => {
       if (data?.type === "member.patch" && typeof data.memberId === "string" && data.patch && typeof data.patch === "object") {
-        setAgents((current) => current.map((member) => member.id === data.memberId ? { ...member, ...data.patch } : member));
+        setAgents((current) => current.map((member) => member.id === data.memberId && memberProfileRevision(data.patch) >= memberProfileRevision(member) ? { ...member, ...data.patch } : member));
       } else {
         const member = membersRef.current.find((item) => item.id === data?.memberId);
         setMessagesByAgent((current) => applySharedConversationEvent(current, { ...data, conversationStartedAt: member?.conversationStartedAt }));
@@ -4602,7 +4523,11 @@ function App() {
       if (event.key !== STORAGE_KEYS.agents || !event.newValue) return;
       try {
         const incoming = JSON.parse(event.newValue);
-        if (Array.isArray(incoming)) setAgents((current) => JSON.stringify(current) === event.newValue ? current : incoming.map(normalizeAgentCopy));
+        if (Array.isArray(incoming)) setAgents((current) => {
+          if (JSON.stringify(current) === event.newValue) return current;
+          const saved = new Map(current.map(member => [member.id, member]));
+          return incoming.map(normalizeAgentCopy).map(member => mergeMemberProfile(member, saved.get(member.id)));
+        });
       } catch { /* A malformed stored roster does not replace the current one. */ }
     };
     window.addEventListener("storage", onStorage);
@@ -5797,6 +5722,24 @@ function App() {
         const data = await api("/api/channels");
         if (!cancelled && Array.isArray(data?.channels)) {
           setAgentChannelActions(Array.isArray(data.agentChannelActions) ? data.agentChannelActions : []);
+          // Names members went by before a rename live on the bridge's copy
+          // (renamed there, or before this window kept them); @mentions in
+          // DMs and channels resolve them.
+          const savedById = new Map(Object.entries(data.agentChannelAccess || {}).filter(([, access]) => access?.agent && !access.removed).map(([id, access]) => [id, access.agent]));
+          if (savedById.size) {
+            setAgents((current) => {
+              let changed = false;
+              const next = current.map((agent) => {
+                const saved = savedById.get(agent.id);
+                const merged = mergeMemberProfile(agent, saved);
+                const names = [...new Set([...(merged.formerNames || []), ...(saved?.formerNames || [])])].filter((name) => typeof name === "string" && name && name !== merged.name);
+                if (merged === agent && JSON.stringify(names) === JSON.stringify(agent.formerNames || [])) return agent;
+                changed = true;
+                return { ...merged, formerNames: names };
+              });
+              return changed ? next : current;
+            });
+          }
           setChannels((current) => {
             const byId = new Map(current.map((channel) => [channel.id, channel]));
             for (const record of data.channels.map(normalizeChannelCopy).filter(Boolean)) {
@@ -6219,6 +6162,11 @@ function App() {
     const since = typeof stored?.since === "string" && stored.since ? stored.since : new Date().toISOString();
     appliedProfileReceiptsRef.current = new Set(Array.isArray(stored?.ids) ? stored.ids : []);
     appliedProfileReceiptsRef.current.since = since;
+    // The start of watching is kept from the first load. It was saved only
+    // once a receipt applied, so every load started watching afresh and a
+    // rename made while the window was closed (a routine, Telegram, a queued
+    // turn) never reached the sidebar.
+    if (!stored?.since) { try { localStorage.setItem("autohandSquad.v1.profileReceipts", JSON.stringify({ since, ids: [] })); } catch {} }
   }
   const applyReceiptsFromRuns = useCallback((list) => {
     const seen = appliedProfileReceiptsRef.current;
@@ -6916,6 +6864,12 @@ function App() {
   }, [route]);
 
   function updateAgent(agentId, patch) {
+    // A rename keeps the old name, so "@Max" still reaches the member now
+    // called Robert in a DM or a channel (squad_message already did).
+    const renamedFrom = membersRef.current.find((agent) => agent.id === agentId);
+    if (patch?.name && renamedFrom?.name && patch.name !== renamedFrom.name) {
+      patch = { ...patch, formerNames: [...new Set([...(renamedFrom.formerNames || []), renamedFrom.name])].filter((name) => name !== patch.name) };
+    }
     const publish = () => {
       sharedConversationChannelRef.current?.postMessage({ type: "member.patch", memberId: agentId, patch, at: new Date().toISOString() });
       setAgents(current => current.map(agent => {
@@ -6924,7 +6878,7 @@ function App() {
         return { ...agent, ...patch };
       }));
     };
-    const accessChanged = ["permissions", "projects", "workspace", "name", "instructions", "brainCard", "harness", "skills", "modelAssignment", "role"].some(key => key in patch);
+    const accessChanged = ["permissions", "projects", "workspace", "name", "description", "instructions", "brainCard", "harness", "skills", "modelAssignment", "role", "memory", "profileFiles"].some(key => key in patch);
     if (!accessChanged) { publish(); return Promise.resolve(); }
     const previous = memberAccessWritesRef.current.get(agentId);
     const entry = { member: previous?.member, promise: null };
@@ -6932,8 +6886,10 @@ function App() {
       const current = previous?.member || membersRef.current.find(member => member.id === agentId);
       if (!current) throw new Error("This teammate is no longer available.");
       const next = { ...current, ...patch };
-      await api(`/api/members/${encodeURIComponent(agentId)}/channel-access`, { method: "PUT", body: JSON.stringify({ agent: channelActionMember(next), profile: buildAgentProfile(next, next.workspace) }) });
-      entry.member = next;
+      const profilePatch = Object.fromEntries(MEMBER_PROFILE_FIELDS.filter(key => key in patch).map(key => [key, patch[key]]));
+      const saved = await api(`/api/members/${encodeURIComponent(agentId)}/channel-access`, { method: "PUT", body: JSON.stringify({ agent: channelActionMember(next), profile: buildAgentProfile(next, next.workspace), profilePatch }) });
+      patch = { ...patch, ...(saved.profile || {}), profileRevision: saved.profileRevision ?? memberProfileRevision(next) };
+      entry.member = { ...next, ...patch };
       publish();
     }).catch(error => {
       setChannelOperationError(`Could not save ${membersRef.current.find(member => member.id === agentId)?.name || "teammate"} settings: ${error.message}`);
@@ -7003,7 +6959,7 @@ function App() {
     );
   }
 
-  function acceptMemoryProposal(itemId) {
+  async function acceptMemoryProposal(itemId) {
     const timestamp = new Date().toISOString();
     const target = memoryInbox.find((item) => item.id === itemId);
     const ownerAgent = agents.find((agent) => agent.id === target?.ownerAgentId);
@@ -7021,31 +6977,51 @@ function App() {
     });
     if (!accepted) return;
 
+    // Team scope is the team's memory on the bridge (ADR-0134), which every
+    // member reads on every engine. It used to land in the owner's memory
+    // only, so "Team" meant one member. The proposal stays pending if the
+    // bridge refuses it (a secret, too long) or is away.
+    if (normalizeMemoryScope(accepted.scope) === "team") {
+      try {
+        await api("/api/team/memory", { method: "POST", body: JSON.stringify({ text: accepted.content, scope: "team" }) });
+      } catch (error) {
+        setChannelOperationError(`Could not share this memory with the team: ${clause(error.message)}.`);
+        return;
+      }
+      setMemoryInbox((current) => current.map((item) => (item.id === itemId ? accepted : item)));
+      return;
+    }
+
     setMemoryInbox((current) =>
       current.map((item) => (item.id === itemId ? accepted : item))
     );
-    setAgents((current) =>
-      current.map((agent) => {
-        if (agent.id !== accepted.ownerAgentId) return agent;
-        // Entries are objects (ADR-0048), so an accepted item joins as one.
-        // A Set over mixed strings and objects deduplicates neither; memoryKey
-        // is what already knows how to compare the two shapes.
-        const existing = normalizeMemoryEntries(agent.memory);
-        const addition = { id: accepted.id || memoryKey(accepted.content), text: accepted.content, at: timestamp, source: accepted.source || "" };
-        const memory = existing.some((entry) => memoryKey(entry) === memoryKey(addition))
-          ? existing
-          : normalizeMemoryEntries([...existing, addition]);
-        const nextAgent = {
-          ...agent,
-          memory,
-          updatedAt: timestamp,
-        };
-        return {
-          ...nextAgent,
-          profileFiles: refreshedProfileFilesForAgent(nextAgent),
-        };
-      })
-    );
+    const owner = membersRef.current.find((agent) => agent.id === accepted.ownerAgentId);
+    if (!owner) return;
+    // Entries are objects (ADR-0048), so an accepted item joins as one.
+    // A Set over mixed strings and objects deduplicates neither; memoryKey
+    // is what already knows how to compare the two shapes.
+    const existing = normalizeMemoryEntries(owner.memory);
+    const addition = { id: accepted.id || memoryKey(accepted.content), text: accepted.content, at: timestamp, source: accepted.source?.label || "" };
+    const memory = existing.some((entry) => memoryKey(entry) === memoryKey(addition))
+      ? existing
+      : normalizeMemoryEntries([...existing, addition]);
+    setMemberMemory(owner, memory, timestamp);
+  }
+
+  // A member's memory and the MEMORY.md made from it change together, and
+  // through updateAgent, so the bridge's copy (what routines, Telegram and
+  // queued turns read) learns it too. Accepting wrote the browser's copy
+  // only: a fact accepted here never reached a turn the bridge started.
+  function setMemberMemory(agent, memory, timestamp = new Date().toISOString()) {
+    const nextAgent = { ...agent, memory, updatedAt: timestamp };
+    return updateAgent(agent.id, { memory, profileFiles: refreshedProfileFilesForAgent(nextAgent), updatedAt: timestamp });
+  }
+
+  function forgetMemberMemory(agentId, entryId) {
+    const agent = membersRef.current.find((item) => item.id === agentId);
+    if (!agent) return;
+    const memory = normalizeMemoryEntries(agent.memory).filter((entry) => entry.id !== entryId);
+    void setMemberMemory(agent, memory);
   }
 
   function rejectMemoryProposal(itemId, reason = "") {
@@ -7528,13 +7504,14 @@ function App() {
             void reloadChannelsFromBridge();
             const shaped = profileReceipts(data.channelActions);
             if (shaped.length) {
-              finalResult.reply = replyWithoutReceipts(finalResult.reply, shaped) || finalResult.reply;
               applyProfileReceipts(agentId, shaped);
               for (const receipt of shaped) appliedProfileReceiptsRef.current.add(receipt.id);
             }
+            const quiet = [...shaped, ...teamNoteReceipts(data.channelActions)];
+            if (quiet.length) finalResult.reply = replyWithoutReceipts(finalResult.reply, quiet) || finalResult.reply;
             updateMessage(agentId, `${id}-a`, {
               body: finalResult.reply,
-              ...(shaped.length ? { profileNote: profileNoteFor(shaped) } : {}),
+              ...(quiet.length ? { profileNote: profileNoteFor(quiet) } : {}),
               trace: finalResult.trace,
               streamEvents: liveEvents,
               command: finalResult.command,
@@ -8754,10 +8731,18 @@ function App() {
   function applyProfileReceipts(agentId, receipts) {
     const current = membersRef.current.find((member) => member.id === agentId);
     if (!current || !receipts.length) return;
-    const merged = Object.assign({}, ...receipts.map((receipt) => receipt.patch));
+    const pending = receipts.filter(receipt => !Number.isSafeInteger(receipt.profileRevision) || receipt.profileRevision >= memberProfileRevision(current));
+    if (!pending.length) return;
+    const merged = Object.assign({}, ...pending.map((receipt) => receipt.patch));
     const others = membersRef.current.filter((member) => member.id !== agentId).map((member) => member.name);
     if (merged.name) merged.name = uniqueName(merged.name, others);
-    void updateAgent(agentId, profilePatchFor(current, merged));
+    const revision = Math.max(...pending.map(receipt => receipt.profileRevision || 0));
+    if (!revision) { void updateAgent(agentId, profilePatchFor(current, merged)); return; }
+    // The operation has already committed. A receipt projects it into this
+    // window; it must not write an older copy back over the bridge.
+    const patch = { ...profilePatchFor(current, merged), profileRevision: revision };
+    setAgents(items => items.map(member => member.id === agentId && memberProfileRevision(member) <= revision ? { ...member, ...patch } : member));
+    sharedConversationChannelRef.current?.postMessage({ type: "member.patch", memberId: agentId, patch, at: new Date().toISOString() });
   }
 
   async function startAutohand(agentId, launch) {
@@ -10026,6 +10011,7 @@ function App() {
                 memoryInbox={memoryInbox}
                 saveMemoryProposalEdit={saveMemoryProposalEdit}
                 acceptMemoryProposal={acceptMemoryProposal}
+                forgetMemberMemory={forgetMemberMemory}
                 rejectMemoryProposal={rejectMemoryProposal}
                 hideRejectedMemory={hideRejectedMemory}
                 purgeHiddenRejectedMemory={purgeHiddenRejectedMemory}
@@ -11351,9 +11337,16 @@ function agentSidebarTime(agent, locale = DEFAULT_LOCALE) {
   return date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
 }
 
+// The template's translated title only while the role is still that title.
+// The template id outlived any change: Iris, a Solution Architect template
+// renamed Code Reviewer, read "Solution Architect" in the Squad list while
+// every member and the bridge knew her as Code Reviewer, and a role set in
+// chat ("be our QA lead") never showed at all.
 function localizedRole(agent, copy = getLocaleCopy(DEFAULT_LOCALE)) {
-  const key = agent?.employeeType || String(agent?.role || "").toLowerCase().replace(/\s+/g, "-");
-  return copy.roleLabels?.[key] || agent?.role || "";
+  const role = String(agent?.role || "").trim();
+  const templateTitle = getLocaleCopy(DEFAULT_LOCALE).roleLabels?.[agent?.employeeType];
+  const key = agent?.employeeType && (!role || role === templateTitle) ? agent.employeeType : role.toLowerCase().replace(/\s+/g, "-");
+  return copy.roleLabels?.[key] || role;
 }
 
 function localizedSectionLabel(id, copy = getLocaleCopy(DEFAULT_LOCALE)) {
@@ -12241,6 +12234,9 @@ function agentLaunchPayload(agent, workspace) {
     id: agent?.id,
     staffId: agent?.staffId,
     name: agent?.name,
+    profileRevision: memberProfileRevision(agent),
+    formerNames: agent?.formerNames || [],
+    memory: agent?.memory || [],
     role: agent?.role,
     description: agent?.description,
     instructions: agent?.instructions,
@@ -13216,26 +13212,10 @@ function insertMentionText(text, item, mention = currentMentionQuery(text)) {
   };
 }
 
-function mentionedSquadMembers(text, agents = [], activeAgentId = "") {
-  const tokens = new Set(
-    Array.from(String(text || "").matchAll(/@([A-Za-z0-9._/-]+)/g))
-      .map((match) => match[1].toLowerCase())
-      .filter(Boolean)
-  );
-  if (!tokens.size) return [];
-  return agents.filter((agent) => {
-    if (agent.id === activeAgentId || agent.status === "offline") return false;
-    const names = [
-      agent.id,
-      agent.employeeId,
-      agent.staffId,
-      mentionTokenForAgent(agent),
-      String(agent.name || ""),
-    ].map((value) => String(value || "").toLowerCase());
-    return names.some((name) => tokens.has(name));
-  });
-}
-
+// "Ask @Noah." and "@Max," name a teammate too: the trailing punctuation of
+// a sentence is not part of the handle, and a first name that only one
+// teammate has is enough, as in channels (ADR-0134). Before, "@noah." and
+// "@max" (for "Max Power") matched no one and the handoff silently never ran.
 function mentionedFilePaths(text) {
   return Array.from(String(text || "").matchAll(/@([A-Za-z0-9._/-]*[/\\.][A-Za-z0-9._/-]+)/g))
     .map((match) => match[1])
@@ -21790,6 +21770,7 @@ function SquadMemberSectionPage({
   updateAgent,
   saveMemoryProposalEdit,
   acceptMemoryProposal,
+  forgetMemberMemory,
   rejectMemoryProposal,
   hideRejectedMemory,
   purgeHiddenRejectedMemory,
@@ -21872,6 +21853,7 @@ function SquadMemberSectionPage({
         openTerminal={openTerminal}
         onSaveEdit={saveMemoryProposalEdit}
         onAccept={acceptMemoryProposal}
+        onForget={(entryId) => forgetMemberMemory?.(agent.id, entryId)}
         onReject={rejectMemoryProposal}
         onHideRejected={hideRejectedMemory}
         onPurgeHiddenRejected={purgeHiddenRejectedMemory}
@@ -22080,6 +22062,7 @@ function MemoryInboxPage({
   onReject,
   onHideRejected,
   onPurgeHiddenRejected,
+  onForget,
 }) {
   const [showHiddenAudit, setShowHiddenAudit] = useState(false);
   const agentItems = items.filter((item) => item.ownerAgentId === agent.id || item.agentId === agent.id);
@@ -22106,7 +22089,7 @@ function MemoryInboxPage({
       <PageTitle title="Memory" />
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
         <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-          {`What ${agent.name} remembers between chats. New memories are proposed first and wait for you; nothing a member proposes is used until you accept it.`}
+          {`What ${agent.name} remembers between chats. When you say “remember” or “keep in mind”, it is saved straight away and you can remove it here; anything ${agent.name} proposes on its own waits for you.`}
         </p>
 
         <section className="grid gap-2" aria-labelledby="memory-active">
@@ -22122,6 +22105,12 @@ function MemoryInboxPage({
                 <div key={entry.id} className="flex items-baseline gap-3 py-2.5 text-sm">
                   <span className="min-w-0 flex-1">{memoryEntryLine(entry)}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">{entry.at ? formatRelativeTime(entry.at, locale) : ""}</span>
+                  {/* The page says what is remembered can be removed here; it could not be. */}
+                  {onForget ? (
+                    <Button type="button" variant="ghost" size="icon" className="size-6 shrink-0 self-center text-muted-foreground" aria-label={`Forget: ${entry.text}`} title="Forget" onClick={() => onForget(entry.id)}>
+                      <X />
+                    </Button>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -22129,6 +22118,8 @@ function MemoryInboxPage({
             <p className="text-sm text-muted-foreground">{memoryNeedle ? `Nothing ${agent.name} knows mentions \u201c${memoryQuery.trim()}\u201d.` : "Nothing yet."}</p>
           )}
         </section>
+
+        <TeamMemorySection agent={agent} request={api} formatTime={(at) => formatRelativeTime(at, locale)} />
 
         {pending.length ? (
           <MemoryInboxSection

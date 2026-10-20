@@ -29,13 +29,34 @@ function log(ctx, severity, message, attributes = {}) {
 /** The registered member copy with the patch applied; personality becomes PERSONALITY.md. */
 export function patchedMemberCopy(agent, patch) {
   const next = { ...agent };
-  for (const field of ["name", "role", "instructions", "skills"]) if (patch[field] !== undefined) next[field] = structuredClone(patch[field]);
+  for (const field of ["name", "role", "description", "instructions", "skills"]) if (patch[field] !== undefined) next[field] = structuredClone(patch[field]);
+  next.profileFiles = (Array.isArray(agent?.profileFiles) ? agent.profileFiles : [])
+    .filter((file) => file?.source !== "generated")
+    .map((file) => ({ ...file, content: file.section === "identity" ? patchedProfileText(file.content, patch) : file.content }));
   if (patch.personality !== undefined) {
-    const files = (Array.isArray(agent?.profileFiles) ? agent.profileFiles : []).filter((file) => file?.section !== "persona");
+    const files = next.profileFiles.filter((file) => file?.section !== "persona");
     files.push({ section: "persona", fileName: "PERSONALITY.md", originalFileName: "PERSONALITY.md", content: personalityFileContent(patch.personality, next.role), source: "manual" });
     next.profileFiles = files;
   }
   return next;
+}
+
+/**
+ * The registered profile text with the header's Name and Role lines brought
+ * up to date. The copy's `agent` took the patch but its `profile` (the
+ * text every bridge-started turn opens with: routines, Telegram, queued
+ * work, channel purposes) kept "Name: Max" after Max became Robert, so the
+ * member was told both names until the window next saved it (bug hunt
+ * 2026-10). Instructions are not rewritten here: the copy's own
+ * `instructions` travel beside the profile on those turns.
+ */
+export function patchedProfileText(profile, patch) {
+  let text = String(profile || "");
+  if (!text) return text;
+  const line = (label, value) => { text = text.replace(new RegExp(`^${label}: .*$`, "m"), () => `${label}: ${String(value).replace(/\s+/g, " ").trim()}`); };
+  if (patch.name) line("Name", patch.name);
+  if (patch.role) line("Role", patch.role);
+  return text;
 }
 
 async function otherMemberNames(ctx, actorId) {
@@ -63,9 +84,16 @@ export async function profileAction({ id, context, raw, signal, declined }) {
     // A chosen name another member already has is numbered, as the team
     // builder numbers a collision (ADR-0118).
     if (patch.name) patch.name = uniqueName(patch.name, await otherMemberNames(ctx, context.actorId));
-    if (access?.agent) await actions.setAccess(context.actorId, { agent: patchedMemberCopy(access.agent, patch), profile: access.profile });
+    if (!access?.agent) throw new Error("the member is not registered in this Squad");
+    const next = patchedMemberCopy(access.agent, patch);
+    const fields = ["name", "role", "description", "instructions", "skills", "profileFiles"];
+    const profilePatch = Object.fromEntries(fields.filter((field) => JSON.stringify(next[field]) !== JSON.stringify(access.agent[field])).map((field) => [field, next[field]]));
+    const saved = await actions.setAccess(context.actorId, { agent: next, profile: patchedProfileText(access.profile, patch), profilePatch });
+    if (patch.name && saved.profile?.name) patch.name = saved.profile.name;
     receipt.status = "applied";
     receipt.patch = patch;
+    receipt.profileRevision = saved.profileRevision;
+    receipt.previousName = String(before.name || "");
     receipt.message = profileChangeLine(patch, before);
     log(ctx, ctx?.SEVERITY?.INFO, `member-shaping: ${context.actorId} set ${Object.keys(patch).join(", ")}`, { "event.name": "member.profile.shaped", "autohand.member.id": context.actorId, "autohand.member.role": patch.role || "" });
   } catch (error) {

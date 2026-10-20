@@ -12,7 +12,18 @@ list to the section for that version.
 
 ### Added
 
+- Squad's own MCP gives members on Autohand, Claude Code, Codex and ACP engines the same tools to update their profile, manage shared/personal/project memories, ask teammates, read and post in their channels, keep a work plan and propose scheduled work. Memories can also be edited in the profile. Existing text actions keep working.
+- Channels open replies in threads by default. Expand the reply summary to read the conversation or choose Settings → Show replies → In the channel to show every answer in time order. The choice survives reopening Squad.
+
 - Forty everyday improvements, listed in `docs/reports/ux-enhancements-2026-10.md`. Copy buttons on code blocks, replies, channel messages and run output; Jump to latest in long chats and channels (with "3 new"); Up brings back your last message; Edit and resend on a failed reply; Today and Yesterday on day lines and full dates on hover; a Keyboard shortcuts sheet ("?"), ⌘1–9 for direct messages and "/" to search members; the window title names the page and the Needs you count; channels open by name; Squad search and Recent / A–Z sorting; draft markers, folded-section unread counts and Mark read in the sidebar; hide stopped work you have handled; search in Memory, History and Settings; and Reset to the level's defaults on Permissions.
+
+### Fixed
+
+- “Change your name to Viggas” updates the member's saved identity, header, sidebar and composer. Description, instructions, personality and skills follow the same saved profile; an old tab or late result cannot undo a newer change.
+- Channel messages no longer mark thinking, failed or empty responses as “replied”. Summaries show completed answers, work still running and failures separately, and late replies stay with their original thread.
+
+- Codex members forgot their instructions after the first message in a conversation: a rename, the work plan, earlier chats and anything new never reached a continued Codex thread. They now arrive on every turn.
+- "Ask @Noah." in a reply did not hand the work to Noah because of the full stop, and "@Max" did not reach "Max Power". Both work now, as they already did in channels.
 
 ## [0.1.7] - 2026-10-14
 

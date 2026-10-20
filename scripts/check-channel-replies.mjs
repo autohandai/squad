@@ -1,0 +1,65 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import { build } from "esbuild";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { channelReplyIndex, channelReplyState, channelThreadSummary, normalizeChannelReplyMode } from "../src/lib/channel-replies.js";
+
+const root = resolve(new URL("..", import.meta.url).pathname);
+const { outputFiles } = await build({ entryPoints: [resolve(root, "src/components/channels/ChannelStream.jsx")], bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", packages: "external", alias: { "@": resolve(root, "src") } });
+const module = { exports: {} };
+new Function("require", "module", "exports", outputFiles[0].text)(createRequire(resolve(root, "package.json")), module, module.exports);
+const { ChannelStream } = module.exports;
+const agent = { id: "eva", name: "Eva" };
+const rootMessage = { id: "question", channelId: "general", threadId: "thread-a", role: "user", body: "Please check the build.", createdAt: "2026-10-19T08:00:00Z" };
+const reply = (id, patch = {}) => ({ id, channelId: "general", threadId: "thread-a", parentMessageId: "question", role: "agent", agentId: "eva", authorName: "Eva", body: "The build passed.", status: "complete", createdAt: "2026-10-19T08:02:00Z", ...patch });
+const render = (messages, replyMode = "thread") => renderToStaticMarkup(React.createElement(ChannelStream, { channel: { id: "general", name: "general", replyMode }, messages, agents: [agent] }));
+
+const pending = reply("pending", { status: "loading", body: "Eva is typing..." });
+let html = render([rootMessage, pending]);
+assert.doesNotMatch(html, /Eva replied/, "a loading placeholder is presence, never a reply");
+assert.match(html, /0 replies · 1 working/);
+assert.doesNotMatch(html, /The build passed/);
+for (const status of ["loading", "queued", "running", "streaming"]) assert.equal(channelReplyState(reply(status, { status })), "working", `${status} text is not a completed answer`);
+for (const status of ["error", "failed", "cancelled", "interrupted"]) assert.equal(channelReplyState(reply(status, { status })), "failed");
+for (const body of ["", "Eva is typing…", "Eva returned no chat text."]) assert.equal(channelReplyState(reply("empty", { body })), "no-text");
+assert.equal(channelReplyState(reply("media", { body: "", attachments: [{ id: "image" }] })), "replied");
+
+const failed = reply("failed", { status: "error", body: "Connection interrupted." });
+const complete = reply("answer");
+const empty = reply("no-text", { body: "Eva returned no chat text." });
+let records = [rootMessage, pending, failed, complete, empty];
+let group = channelReplyIndex(records).groups.get("question");
+assert.deepEqual(group.replierIds, ["eva"]);
+assert.equal(channelThreadSummary(group), "1 reply · 1 working · 1 failed · 1 without reply text");
+html = render(records);
+assert.match(html, /Eva replied/);
+assert.match(html, /aria-expanded="false"/);
+assert.doesNotMatch(html, /The build passed\./, "thread answers are grouped behind the disclosure");
+html = render(records, "channel");
+assert.match(html, /The build passed\./, "direct mode renders the actual answer in the channel");
+assert.doesNotMatch(html, /aria-label="Thread:/);
+assert.doesNotMatch(html, /ml-6 border-l/, "direct mode has no implicit thread indentation");
+
+const secondRoot = { ...rootMessage, id: "second-question", threadId: "thread-b", body: "A different request.", createdAt: "2026-10-19T08:01:00Z" };
+records = [rootMessage, secondRoot, complete, reply("follow-up", { id: "follow-up", role: "user", body: "Which revision?" }), reply("answer-to-follow-up", { parentMessageId: "follow-up" })];
+const index = channelReplyIndex(records);
+assert.equal(index.roots.get("answer"), "question", "a late answer belongs to the first question");
+assert.equal(index.roots.get("answer-to-follow-up"), "question", "nested parents resolve to the original thread");
+assert.equal(index.groups.has("second-question"), false, "a newer human message steals no replies");
+assert.deepEqual(index.groups.get("question").replierIds, ["eva"], "multiple answers count a member once");
+assert.equal(channelReplyIndex(JSON.parse(JSON.stringify(records))).roots.get("answer"), "question", "the grouping survives persistence");
+assert.equal(channelReplyIndex([rootMessage, reply("legacy", { parentMessageId: "" })]).roots.get("legacy"), "question", "legacy thread-only replies use their existing root");
+const orphan = reply("orphan", { threadId: "missing", parentMessageId: "missing-root" });
+assert.equal(channelReplyIndex([rootMessage, orphan]).roots.get("orphan"), "orphan");
+assert.match(render([rootMessage, orphan]), /data-channel-message-id="orphan"/, "an unavailable parent never hides the saved answer");
+const cycle = [reply("cycle-a", { threadId: "cycle", parentMessageId: "cycle-b" }), reply("cycle-b", { threadId: "cycle", parentMessageId: "cycle-a" })];
+assert.deepEqual([...channelReplyIndex(cycle).roots.values()], ["cycle-a", "cycle-b"]);
+const crossChannel = reply("cross", { channelId: "other" });
+assert.equal(channelReplyIndex([rootMessage, crossChannel]).roots.get("cross"), "cross");
+assert.equal(normalizeChannelReplyMode(undefined), "thread");
+assert.equal(normalizeChannelReplyMode("channel"), "channel");
+assert.equal(normalizeChannelReplyMode("invalid"), "thread");
+console.log("Channel reply checks passed: presence, completion, failures, explicit correlation, threads, direct mode, persistence and rendered markup.");

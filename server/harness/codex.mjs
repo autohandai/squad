@@ -148,7 +148,7 @@ function sandboxFor(permissionMode, policy, access = "") {
  * Build the non-interactive command. Prompt goes last. `resumeId` switches to
  * `codex exec resume <thread>` which keeps the same thread on disk.
  */
-export function buildArgs({ prompt, workspace, model, permissions = {}, policy = "", access = "", effort = "", efforts = CODEX_EFFORTS, appendSystemPrompt = "", addDirs = [], resumeId = "" }) {
+export function buildArgs({ prompt, workspace, model, permissions = {}, policy = "", access = "", effort = "", efforts = CODEX_EFFORTS, appendSystemPrompt = "", turnContext = "", resendInstructions = false, addDirs = [], resumeId = "" }) {
   const args = ["exec"];
   const display = ["exec"];
   if (resumeId) {
@@ -179,9 +179,14 @@ export function buildArgs({ prompt, workspace, model, permissions = {}, policy =
     display.push("-c", `model_reasoning_effort="${effort}"`);
   }
   let finalPrompt = String(prompt || "");
-  if (appendSystemPrompt && !resumeId) {
+  // Per-turn context (team memory, recall, the work plan, a rename
+  // instruction) changes every turn, so it rides on every turn, resumed or
+  // not (ADR-0134). Before, a resumed thread got nothing after its first turn.
+  if (turnContext) finalPrompt = `<turn_context>\n${turnContext}\n</turn_context>\n\n${finalPrompt}`;
+  if (appendSystemPrompt && (!resumeId || resendInstructions)) {
     // Codex exec has no system-prompt flag; the member profile is prepended
-    // as operating instructions inside the first turn.
+    // as operating instructions inside the first turn, and again on a resumed
+    // thread when the profile changed since (a rename, new instructions).
     finalPrompt = `<operating_instructions>\n${appendSystemPrompt}\n</operating_instructions>\n\n${finalPrompt}`;
   }
   args.push(finalPrompt);

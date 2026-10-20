@@ -135,7 +135,7 @@ async function detect(adapter, { explicitPath = "", context = {} } = {}) {
  * the protocol, so `args` are the launch args and the prompt, instructions
  * and access go in `turn` for `runAcpHarness`.
  */
-export function buildArgs({ prompt, workspace, model = "", access = "", effort = "", appendSystemPrompt = "", addDirs = [], resumeId = "", launchArgs = [] }) {
+export function buildArgs({ prompt, workspace, model = "", access = "", effort = "", appendSystemPrompt = "", addDirs = [], resumeId = "", launchArgs = [], mcpServers = [] }) {
   const args = Array.isArray(launchArgs) ? launchArgs.map(String) : [];
   return {
     args,
@@ -149,6 +149,7 @@ export function buildArgs({ prompt, workspace, model = "", access = "", effort =
       resumeId: String(resumeId || ""),
       model: String(model || ""),
       effort: String(effort || ""),
+      mcpServers,
     },
   };
 }
@@ -161,6 +162,19 @@ export function parseLine(line, state) {
 
 export function resumeIdFrom(state) {
   return state?.resumeId || "";
+}
+
+/** ACP v1 stdio is mandatory; HTTP is negotiated during initialization. */
+export function acpMcpServers(servers = [], capabilities = {}) {
+  return servers.map(server => {
+    if (server.url) {
+      const type = server.transport === "sse" ? "sse" : "http";
+      if (!capabilities[type]) throw new Error(`The selected ACP agent does not support ${type} MCP server ${server.name}.`);
+      return { type, name: server.name, url: server.url, headers: Object.entries(server.headers || {}).map(([name, value]) => ({ name, value: String(value) })) };
+    }
+    if (!server.name || !server.command) throw new Error("A managed MCP server needs a name and command.");
+    return { name: server.name, command: server.command, args: server.args || [], env: Object.entries(server.env || {}).map(([name, value]) => ({ name, value: String(value) })) };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -572,13 +586,14 @@ export function runAcpHarness({
         firstEventTimer = null;
       }
       const agentCapabilities = init?.agentCapabilities && typeof init.agentCapabilities === "object" ? init.agentCapabilities : {};
+      const mcpServers = acpMcpServers(turn.mcpServers, agentCapabilities.mcpCapabilities || {});
       const authMethods = Array.isArray(init?.authMethods) ? init.authMethods : [];
       let resumed = false;
       let created = null;
       if (turn.resumeId && agentCapabilities.loadSession) {
         state.loading = true;
         try {
-          await connection.request("session/load", { sessionId: turn.resumeId, cwd, mcpServers: [] }, { timeoutMs: 120000 });
+          await connection.request("session/load", { sessionId: turn.resumeId, cwd, mcpServers }, { timeoutMs: 120000 });
           sessionId = turn.resumeId;
           resumed = true;
         } catch (error) {
@@ -589,7 +604,7 @@ export function runAcpHarness({
       }
       if (!sessionId) {
         try {
-          created = await connection.request("session/new", { cwd, mcpServers: [] }, { timeoutMs: 120000 });
+          created = await connection.request("session/new", { cwd, mcpServers }, { timeoutMs: 120000 });
         } catch (error) {
           if (Number(error?.code) === JSON_RPC_ERRORS.refused && authMethods.length) {
             throw new Error(`${label} needs sign-in first (${authMethods.map((method) => method?.name || method?.id).filter(Boolean).join(", ")}). Sign in with its own CLI and retry.`);
@@ -606,7 +621,7 @@ export function runAcpHarness({
         await connection.request("session/set_mode", { sessionId, modeId: "plan" }, { timeoutMs: 30000 }).catch(() => {});
       }
       if (stopped) return;
-      const text = !resumed && turn.instructions
+      const text = turn.instructions
         ? `<operating_instructions>\n${turn.instructions}\n</operating_instructions>\n\n${turn.prompt}`
         : turn.prompt;
       deliver({ type: "status", status: "turn_started", timestamp: state.timestamp() });

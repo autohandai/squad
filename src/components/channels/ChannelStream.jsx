@@ -1,12 +1,15 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Reply, SmilePlus, Zap } from "lucide-react";
+import { Bot, ChevronRight, Reply, SmilePlus, Zap } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Button } from "@/components/ui/button";
 import { QUICK_REACTIONS, reactionName, searchReactions } from "@/lib/reactions";
 import { isNoTextReply } from "@/lib/chat-recovery";
+import { channelReplyIndex, channelThreadSummary, isChannelPlaceholder, normalizeChannelReplyMode } from "@/lib/channel-replies";
 import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { cn } from "@/lib/utils";
 
@@ -168,37 +171,7 @@ function MentionChips({ message, agents, userName, channelMemberIds = [] }) {
   );
 }
 
-/**
- * Who answered each of your messages: every member who posted after it and
- * before your next one. That window is what "replied to me" means in a channel
- * where members answer on their own initiative rather than in a thread.
- */
-function repliersByUserMessage(ordered, agents) {
-  const byId = new Map(agents.map((agent) => [agent.id, agent]));
-  const result = new Map();
-  let openId = "";
-  let seen = null;
-  const close = () => {
-    if (openId && seen && seen.size) result.set(openId, [...seen.values()]);
-    openId = "";
-    seen = null;
-  };
-  for (const message of ordered) {
-    if (message.role === "user") {
-      close();
-      openId = message.id;
-      seen = new Map();
-      continue;
-    }
-    if (!openId || message.role === "event") continue;
-    const agent = byId.get(message.agentId);
-    if (agent && !seen.has(agent.id)) seen.set(agent.id, agent);
-  }
-  close();
-  return result;
-}
-
-/** A small facepile under your own message: who picked it up. */
+/** A small facepile under your own message: who has actually answered. */
 function RepliedFaces({ agents = [], renderMemberAvatar, label = "replied" }) {
   if (!agents.length) return null;
   const names = agents.map((agent) => agent.name).filter(Boolean);
@@ -276,10 +249,8 @@ function HoverActions({ messageId, onReact, onReply, onSetUpFlow, setUpLabel, ex
 }
 
 /**
- * Flat, chronological channel stream: day separators, a NEW divider at the
- * last-read boundary, author + time, mention chips, reactions, and quick
- * actions on hover. Thread replies render inline under their root with a
- * subtle indent so existing thread data keeps its grouping.
+ * Channel roots with expandable saved threads, or a chronological stream
+ * when the channel chooses direct replies. Both read the same transcript.
  */
 export function ChannelStream({
   channel,
@@ -304,13 +275,18 @@ export function ChannelStream({
   setUpFlowLabel = "Make a reaction do something…",
   renderActions,
   noTextLabel = "No reply text. Work details shows what ran.",
+  threadView = false,
 }) {
   const ordered = useMemo(() => sortChannelMessages(messages), [messages]);
-  const repliers = useMemo(() => repliersByUserMessage(ordered, agents), [ordered, agents]);
+  const replyIndex = useMemo(() => channelReplyIndex(ordered), [ordered]);
+  const threaded = !threadView && normalizeChannelReplyMode(channel?.replyMode) === "thread";
+  const visible = threaded ? ordered.filter(message => replyIndex.roots.get(message.id) === message.id) : ordered;
+  const [openThreads, setOpenThreads] = useState({});
   const endRef = useRef(null);
   const lastCount = useRef(0);
 
   useEffect(() => {
+    if (threadView) return undefined;
     if (ordered.length === lastCount.current) return undefined;
     const first = lastCount.current === 0;
     lastCount.current = ordered.length;
@@ -323,7 +299,7 @@ export function ChannelStream({
     const frame = window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: "end", behavior: "auto" }));
     const timer = window.setTimeout(() => endRef.current?.scrollIntoView({ block: "end", behavior: "auto" }), 250);
     return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
-  }, [ordered.length]);
+  }, [ordered.length, threadView]);
 
   if (!ordered.length) {
     return <p className="px-1 py-6 text-sm text-muted-foreground">{emptyLabel}</p>;
@@ -335,14 +311,16 @@ export function ChannelStream({
   let previousTimestamp = 0;
 
   return (
-    <div className="flex flex-col" aria-label={channel?.name ? `#${channel.name} messages` : "messages"}>
-      {ordered.map((message) => {
+    <div className="flex flex-col" aria-label={threadView ? "Thread replies" : channel?.name ? `#${channel.name} messages` : "messages"}>
+      {visible.map((message) => {
         // A reply that has not produced text yet is presence, not a message:
         // the PresenceLine under the composer shows it (ADR-0014).
-        if (message.status === "loading" && isPlaceholderBody(message.body)) return null;
+        if (message.status === "loading" && isChannelPlaceholder(message.body)) return null;
+        const group = replyIndex.groups.get(message.id);
+        const repliers = (group?.replierIds || []).map(id => agents.find(agent => agent.id === id) || { id, name: group.replies.find(reply => reply.agentId === id)?.authorName || "Member" });
         const ms = timestampOf(message);
         const day = dayKey(ms, locale);
-        const showDay = day && day !== previousDay;
+        const showDay = !threadView && day && day !== previousDay;
         // Repository events are one muted row, not an authored message, so
         // they keep the day divider but skip the author grouping.
         if (renderEvent && message.role === "event") {
@@ -361,7 +339,6 @@ export function ChannelStream({
         const compact = !showDay && !isNew && previousAuthor === name && ms - previousTimestamp < 4 * 60 * 1000;
         const loading = message.status === "loading";
         const failed = message.status === "error";
-        const isReply = Boolean(message.parentMessageId) && !String(message.id).endsWith("-root");
         if (showDay) previousDay = day;
         if (isNew) newShown = true;
         previousAuthor = name;
@@ -371,10 +348,10 @@ export function ChannelStream({
             {showDay ? <Divider label={day} /> : null}
             {isNew ? <Divider label={newLabel} emphasis /> : null}
             <article
+              data-channel-message-id={message.id}
               className={cn(
                 "group relative flex gap-3 rounded-md px-2 transition-colors hover:bg-muted/30",
-                compact ? "py-0.5" : "mt-2 py-1.5",
-                isReply && "ml-6 border-l border-border/60 pl-3"
+                compact ? "py-0.5" : "mt-2 py-1.5"
               )}
             >
               <div className="w-8 shrink-0">
@@ -415,15 +392,40 @@ export function ChannelStream({
                   onSetUpFlow={onSetUpReactionFlow ? () => onSetUpReactionFlow(message) : null}
                   setUpLabel={setUpFlowLabel}
                 />
-                {message.role === "user" ? (
-                  <RepliedFaces agents={repliers.get(message.id) || []} renderMemberAvatar={renderMemberAvatar} label={repliedLabel} />
+                {!threadView && message.role === "user" ? (
+                  <RepliedFaces agents={repliers} renderMemberAvatar={renderMemberAvatar} label={repliedLabel} />
+                ) : null}
+                {threaded && group?.messages.length ? (
+                  <Collapsible open={Boolean(openThreads[message.id])} onOpenChange={open => setOpenThreads(current => ({ ...current, [message.id]: open }))}>
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="mt-1 -ml-2 h-7 gap-1 px-2" aria-label={`Thread: ${channelThreadSummary(group)}`}>
+                        <ChevronRight data-icon="inline-start" className={cn("transition-transform", openThreads[message.id] && "rotate-90")} />
+                        {channelThreadSummary(group)}
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-2 border-l border-border/60 pl-2 sm:pl-3">
+                      <ChannelStream
+                        channel={channel} messages={group.messages} agents={agents} userName={userName} locale={locale}
+                        lastReadAt={lastReadAt} reactionsByMessage={reactionsByMessage} renderBody={renderBody}
+                        renderEvent={renderEvent} renderAvatar={renderAvatar} renderMemberAvatar={renderMemberAvatar}
+                        authorName={authorName} onReact={onReact} onReply={onReply} newLabel={newLabel}
+                        typingLabel={typingLabel} onSetUpReactionFlow={onSetUpReactionFlow} setUpFlowLabel={setUpFlowLabel}
+                        renderActions={renderActions} noTextLabel={noTextLabel} threadView
+                      />
+                      {group.working ? <p className="px-2 py-2 text-xs text-muted-foreground" role="status">{group.working} {group.working === 1 ? "member is" : "members are"} still working…</p> : null}
+                      {onReply ? <Button type="button" variant="ghost" size="sm" className="mt-1" onClick={() => onReply(message)}><Reply data-icon="inline-start" />Reply in thread</Button> : null}
+                    </CollapsibleContent>
+                  </Collapsible>
                 ) : null}
               </div>
               {!loading ? (
                 <HoverActions
                   messageId={message.id}
                   onReact={onReact}
-                  onReply={onReply ? () => onReply(message) : null}
+                  onReply={onReply ? () => {
+                    if (threaded) setOpenThreads(current => ({ ...current, [replyIndex.roots.get(message.id) || message.id]: true }));
+                    onReply(message);
+                  } : null}
                   onSetUpFlow={onSetUpReactionFlow ? () => onSetUpReactionFlow(message) : null}
                   setUpLabel={setUpFlowLabel}
                   extra={renderActions ? renderActions(message) : null}
@@ -434,12 +436,7 @@ export function ChannelStream({
         );
       })}
       <div ref={endRef} />
-      <JumpToLatest anchorRef={endRef} watch={ordered.length} />
+      {!threadView ? <JumpToLatest anchorRef={endRef} watch={ordered.length} /> : null}
     </div>
   );
-}
-
-function isPlaceholderBody(body) {
-  const text = String(body || "").trim();
-  return !text || /\bis typing(\.{3}|…)$/.test(text);
 }

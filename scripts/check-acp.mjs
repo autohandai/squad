@@ -21,12 +21,15 @@ import { access as fsAccess, chmod, mkdir, mkdtemp, readFile, rm, writeFile } fr
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { agentIdFromHarnessId, harnessIdFor, isAcpHarnessId, launchFor, normalizeAgent, normalizeRegistry, platformTarget } from '../server/acp/registry.mjs';
-import { contentText, decidePermission, eventsFromUpdate, isInsideDirs, newAcpState } from '../server/harness/acp.mjs';
+import { acpMcpServers, contentText, decidePermission, eventsFromUpdate, isInsideDirs, newAcpState } from '../server/harness/acp.mjs';
 import { getAdapter, normalizeHarnessAssignment, normalizeHarnessId } from '../server/harness/index.mjs';
 import { normalizeHarnessSessions } from '../server/chats/sessions.mjs';
 import { accessOption, harnessLabel, harnessOption, harnessTakesModel, isAcpHarnessId as clientIsAcp, normalizeHarnessId as clientNormalize, registerAcpAgents } from '../src/lib/harness.js';
 
 // ---------- pure checks ----------
+assert.deepEqual(acpMcpServers([{ name: 'squad', command: '/node', args: ['proxy.mjs'], env: { TOKEN: 'fixture' } }]), [{ name: 'squad', command: '/node', args: ['proxy.mjs'], env: [{ name: 'TOKEN', value: 'fixture' }] }]);
+assert.throws(() => acpMcpServers([{ name: 'remote', url: 'https://example.test/mcp' }]), /does not support http/);
+assert.deepEqual(acpMcpServers([{ name: 'remote', url: 'https://example.test/mcp', headers: { Authorization: 'fixture' } }], { http: true })[0].headers, [{ name: 'Authorization', value: 'fixture' }]);
 assert.equal(harnessIdFor('codex-acp'), 'acp:codex-acp'); assert.equal(harnessIdFor('pi'), 'pi');
 assert.equal(agentIdFromHarnessId('acp:codex-acp'), 'codex-acp'); assert.equal(agentIdFromHarnessId('pi-acp'), 'pi'); assert.equal(agentIdFromHarnessId('claude'), '');
 assert.ok(isAcpHarnessId('acp:gemini') && isAcpHarnessId('pi') && isAcpHarnessId('autohand-acp') && !isAcpHarnessId('acp:bad id') && !isAcpHarnessId('claude'));
@@ -268,14 +271,18 @@ process.exit(0);
   assert.deepEqual(sessionCalls.map((c) => c.kind).slice(0, 4), ['initialize', 'session/new', 'session/set_mode', 'session/prompt'], 'plan mode is requested when the agent offers it');
   assert.equal(sessionCalls.find((c) => c.kind === 'initialize').params.protocolVersion, 1);
   assert.equal(sessionCalls.find((c) => c.kind === 'session/new').params.cwd, rootDir);
+  const managedMcp = sessionCalls.find((c) => c.kind === 'session/new').params.mcpServers.find(server => server.name === 'autohand-squad');
+  assert.ok(managedMcp?.command && managedMcp.args.includes('--mcp'), 'any ACP v1 agent receives Squad through mandatory stdio MCP');
+  assert.ok(managedMcp.env.some(variable => variable.name === 'AUTOHAND_SQUAD_TEAM_TOKEN' && variable.value.length === 64), 'the MCP connection is scoped to the member');
   const firstSession = await resumeIdOnDisk();
   assert.ok(firstSession.startsWith('fake-session-pim-'), 'the session id is the resume id on disk');
 
-  // 4. The next turn loads the same session and sends the prompt alone; replayed history is not a new reply.
+  // 4. The next turn loads the same session with fresh context; replayed history is not a new reply.
   const second = await chat('pim', 'Carry on', { harness: { access: 'plan' } });
   const loadCall = (await calls()).filter((c) => c.member === 'pim' && c.kind === 'session/load').at(-1);
   assert.ok(loadCall, 'the second turn calls session/load'); assert.equal(loadCall.params.sessionId, firstSession);
-  assert.ok(second.includes(`session=${firstSession}`) && second.includes('prompt=plain'), 'the resumed turn carries only the prompt');
+  assert.ok(second.includes(`session=${firstSession}`) && second.includes('prompt=with-instructions'), 'resumed ACP turns refresh current profile, tools and memory');
+  assert.deepEqual(loadCall.params.mcpServers.find(server => server.name === 'autohand-squad'), managedMcp, 'MCP reaches session/load with the same stable member connection');
   assert.ok(!second.includes('"reply":"REPLAYED HISTORY'), 'replayed history is not the reply');
   assert.equal(await resumeIdOnDisk(), firstSession, 'the resume id is kept');
 

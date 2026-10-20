@@ -184,25 +184,25 @@ process.exit(0);
 
   // (ii) A task action in the reply creates the task and appends the receipt.
   await chat('alex', 'Send the NZ batch tomorrow', { requestId: 'req-add-1' }); // a plain turn with no action writes nothing
-  const addTurn = await chat('alex', `${reply('On it.\nSQUAD_ACTION: {"type":"task","op":"add","title":"Send the NZ batch","detail":"20 ICP-matched leads","due":"2026-10-15"}')}`, { requestId: 'req-add-2' });
+  const addTurn = await chat('alex', `${reply('On it.\nSQUAD_ACTION: {"type":"task","op":"add","title":"Send the NZ batch","detail":"20 ICP-matched leads","due":"2099-10-15"}')}`, { requestId: 'req-add-2' });
   check('(ii) the reply carries the receipt', /On it\.\n\nAdded to your plan: “Send the NZ batch” \[t_[a-z0-9]{6}\], due/.test(addTurn.done?.reply || ''), addTurn.done?.reply);
   const addReceipt = addTurn.done?.channelActions?.find((action) => action.type === 'task');
   check('(ii) the done event lists the task receipt', addReceipt?.status === 'added' && /^t_/.test(addReceipt.taskId), JSON.stringify(addTurn.done?.channelActions));
   let tasks = await tasksFor('alex');
   const nz = tasks.find((task) => task.title === 'Send the NZ batch');
-  check('(ii) the task exists on the bridge with the member as its source', nz && nz.status === 'open' && nz.due === '2026-10-15' && nz.detail === '20 ICP-matched leads' && nz.source === 'member' && nz.id === addReceipt.taskId, JSON.stringify(nz));
+  check('(ii) the task exists on the bridge with the member as its source', nz && nz.status === 'open' && nz.due === '2099-10-15' && nz.detail === '20 ICP-matched leads' && nz.source === 'member' && nz.id === addReceipt.taskId, JSON.stringify(nz));
   check('(ii) the stray marker turn did not create a task', tasks.length === 1, JSON.stringify(tasks.map((task) => task.title)));
   const addRun = (await api('/api/runs')).data.find((run) => run.agentId === 'alex' && run.title.includes('On it.'));
   check('(ii) the run record carries the receipt', addRun?.channelActions?.some((action) => action.type === 'task' && action.status === 'added'), JSON.stringify(addRun?.channelActions));
   check('(ii) the next turn\'s plan lists the task with its id', (await chat('alex', 'thanks')) && (await lastSystemPrompt()).includes(`[${nz.id}] Send the NZ batch — 20 ICP-matched leads (open, due`), (await lastSystemPrompt()).slice(-600));
 
   // (iii) done, update, replay and refusals.
-  const replay = await chat('alex', `${reply('On it.\nSQUAD_ACTION: {"type":"task","op":"add","title":"Send the NZ batch","detail":"20 ICP-matched leads","due":"2026-10-15"}')}`, { requestId: 'req-add-2' });
+  const replay = await chat('alex', `${reply('On it.\nSQUAD_ACTION: {"type":"task","op":"add","title":"Send the NZ batch","detail":"20 ICP-matched leads","due":"2099-10-15"}')}`, { requestId: 'req-add-2' });
   check('(iii) the same request id returns the same receipt and no second task', replay.done?.channelActions?.[0]?.taskId === nz.id && (await tasksFor('alex')).length === 1, JSON.stringify(replay.done?.channelActions));
   const duplicate = await chat('alex', `${reply('Again.\nSQUAD_ACTION: {"type":"task","op":"add","title":"send the nz batch"}')}`, { requestId: 'req-add-3' });
   check('(iii) an open task with the same title is not duplicated', duplicate.done?.channelActions?.[0]?.status === 'existing' && (await tasksFor('alex')).length === 1, JSON.stringify(duplicate.done?.channelActions));
-  const update = await chat('alex', `${reply(`Started.\nSQUAD_ACTION: {"type":"task","op":"update","id":"${nz.id}","status":"doing","due":"2026-10-16"}`)}`, { requestId: 'req-upd-1' });
-  check('(iii) op update changes status and due with a receipt', /Updated “Send the NZ batch”: due, status doing\./.test(update.done?.reply || '') && (await tasksFor('alex'))[0].status === 'doing' && (await tasksFor('alex'))[0].due === '2026-10-16', update.done?.reply);
+  const update = await chat('alex', `${reply(`Started.\nSQUAD_ACTION: {"type":"task","op":"update","id":"${nz.id}","status":"doing","due":"2099-10-16"}`)}`, { requestId: 'req-upd-1' });
+  check('(iii) op update changes status and due with a receipt', /Updated “Send the NZ batch”: due, status doing\./.test(update.done?.reply || '') && (await tasksFor('alex'))[0].status === 'doing' && (await tasksFor('alex'))[0].due === '2099-10-16', update.done?.reply);
   check('(iii) the plan now says doing', (await chat('alex', 'status?')) && (await lastSystemPrompt()).includes(`[${nz.id}] Send the NZ batch — 20 ICP-matched leads (doing,`));
   const finish = await chat('alex', `${reply(`Done.\nSQUAD_ACTION: {"type":"task","op":"done","title":"Send the NZ batch","outcome":"18 sent, 2 bounced"}`)}`, { requestId: 'req-done-1' });
   check('(iii) op done by title marks it done with the outcome', /Marked done: “Send the NZ batch” \(18 sent, 2 bounced\)\./.test(finish.done?.reply || ''), finish.done?.reply);
@@ -216,7 +216,7 @@ process.exit(0);
   check('(iii) another member cannot touch Alex\'s task by id', forgedTurn.done?.channelActions?.[0]?.status === 'failed' && (await tasksFor('noah')).length === 0, JSON.stringify(forgedTurn.done?.channelActions));
 
   // (iv) The person adds a task; the next turn's plan carries it; the routes behave.
-  const created = await api('/api/work', { memberId: 'alex', title: 'Research 20 AU accounts', detail: 'ICP tier 1', due: '2026-10-17' });
+  const created = await api('/api/work', { memberId: 'alex', title: 'Research 20 AU accounts', detail: 'ICP tier 1', due: '2099-10-17' });
   check('(iv) POST /api/work creates a person task', created.status === 201 && created.data.source === 'person' && created.data.history[0].by === 'person', JSON.stringify(created));
   check('(iv) POST /api/work refuses a task without a title', (await api('/api/work', { memberId: 'alex' })).status === 400);
   const sitrep = await chat('alex', 'So give me a sitrep, what tasks are you working on?');
@@ -273,7 +273,7 @@ process.exit(0);
   await startBridge();
   const afterRestart = await tasksFor('alex');
   check('restart keeps the tasks', afterRestart.length === 2 && afterRestart.some((task) => task.id === nz.id) && afterRestart.some((task) => task.id === doing.id), JSON.stringify(afterRestart.map((task) => task.id)));
-  const replayAfter = await chat('alex', `${reply('On it.\nSQUAD_ACTION: {"type":"task","op":"add","title":"Send the NZ batch","detail":"20 ICP-matched leads","due":"2026-10-15"}')}`, { requestId: 'req-add-2' });
+  const replayAfter = await chat('alex', `${reply('On it.\nSQUAD_ACTION: {"type":"task","op":"add","title":"Send the NZ batch","detail":"20 ICP-matched leads","due":"2099-10-15"}')}`, { requestId: 'req-add-2' });
   check('restart keeps the receipts: the old request id still answers with the first task', replayAfter.done?.channelActions?.[0]?.taskId === nz.id && (await tasksFor('alex')).length === 2, JSON.stringify(replayAfter.done?.channelActions));
 
   console.log(`\ncheck-work-plans: ok (${checks} checks). Instructions and the plan on a DM turn, task actions with receipts and idempotent replay, refusals, person routes, the "Schedule this?" offer and its absence, a routine run creating, holding and settling its task with the member's note in the routine history, restart. Not provider execution.`);

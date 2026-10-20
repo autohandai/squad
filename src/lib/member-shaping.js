@@ -17,9 +17,22 @@ export const PROFILE_ACTION_TYPE = "profile";
 
 // Limits match the form's draft (src/lib/member-draft.js) so a member shaped
 // in conversation fits everywhere a drafted one does.
-export const PROFILE_LIMITS = Object.freeze({ name: 60, role: 80, instructions: 1200, personality: 600, skills: 8, skill: 60 });
-const PROFILE_KEYS = new Set(["type", "op", "member", "name", "role", "instructions", "personality", "skills"]);
-const PROFILE_FIELDS = Object.freeze(["name", "role", "instructions", "personality", "skills"]);
+export const PROFILE_LIMITS = Object.freeze({ name: 60, role: 80, description: 600, instructions: 1200, personality: 600, skills: 8, skill: 60 });
+const PROFILE_KEYS = new Set(["type", "op", "member", "name", "role", "description", "instructions", "personality", "skills"]);
+const PROFILE_FIELDS = Object.freeze(["name", "role", "description", "instructions", "personality", "skills"]);
+export const MEMBER_PROFILE_FIELDS = Object.freeze(["name", "role", "description", "instructions", "skills", "brainCard", "memory", "profileFiles", "formerNames"]);
+
+export function memberProfileRevision(member) {
+  const revision = member?.profileRevision;
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
+}
+
+/** Bridge-owned profile fields win over an older window's snapshot. */
+export function mergeMemberProfile(local, saved) {
+  if (!saved || memberProfileRevision(saved) <= memberProfileRevision(local)) return local;
+  const fields = Object.fromEntries(MEMBER_PROFILE_FIELDS.filter((key) => key in saved).map((key) => [key, saved[key]]));
+  return { ...local, ...fields, profileRevision: memberProfileRevision(saved) };
+}
 
 /** A member with no role is blank; setting one, anywhere, ends that. */
 export function isBlankMember(agent) {
@@ -63,9 +76,17 @@ export function blankGreeting(agent) {
 // asked for. "be more concise" and "can you be quick" do not match.
 const ROLE_REQUEST = /\b(?:you(?:'re|’re| are)\s+(?:going\s+to\s+be|gonna\s+be|now)\s+(?:my|our|the|a|an)\b|(?:^|[,.;:!?]\s*|\b(?:actually|instead|now|please|just|i\s+want\s+you\s+to|i'd\s+like\s+you\s+to|can\s+you|could\s+you)\s*,?\s*)be\s+(?:my|our|the)\b|become\s+(?:my|our|the|a|an)\b|act\s+as\s+(?:my|our|the|a|an)\b|your\s+(?:new\s+)?(?:role|job|title)\s+is\b|take\s+on\s+the\s+role\b|switch\s+(?:roles?\s+)?to\s+being\b)/i;
 
-/** True when the message gives the member a role ("you're going to be my GTM Leader"). */
+// Naming the member is a profile change too (ADR-0134): "your name is
+// Robert" carried no instruction before, so the member said "I'll go by
+// Robert" and nothing in Squad changed.
+const NAME_REQUEST = /\b(?:your\s+(?:new\s+)?name\s+(?:is|will\s+be|should\s+be)\b|(?:i(?:'ll|’ll|\s+will|\s+want\s+to|'d\s+like\s+to|’d\s+like\s+to)|we(?:'ll|’ll|\s+will)|let\s+me)\s+call\s+you\b|you(?:'ll|’ll|\s+will)\s+be\s+called\b|you(?:'re|’re|\s+are)\s+(?:now\s+)?called\b|call\s+yourself\b|rename\s+yourself\b|change\s+your\s+name\b)/i;
+// "from now on you're Robert": only a capitalised word after it is a name.
+const NAME_CLAIM = /\bfrom\s+now\s+on,?\s+you(?:'re|’re|\s+are)\s+[A-Z][a-z]+\b(?!\s+(?:to|for|in|on)\b)/;
+
+/** True when the message gives the member a role ("you're going to be my GTM Leader") or a name. */
 export function asksForRole(prompt) {
-  return ROLE_REQUEST.test(String(prompt || ""));
+  const text = String(prompt || "");
+  return ROLE_REQUEST.test(text) || NAME_REQUEST.test(text) || NAME_CLAIM.test(text);
 }
 
 /** Whether this turn carries the shaping instruction: blank, or asked for a role. */
@@ -92,7 +113,7 @@ export function memberShapingInstruction(agent = {}) {
     opening,
     `When the person gives you a role in plain English ("you're going to be my GTM Leader", "be our release manager"): (1) confirm in one line, like "Done, I'm your GTM Leader from here on."; (2) set your profile with one line exactly like: SQUAD_ACTION: {"type":"profile","op":"set","name":"Alex","role":"GTM Leader","instructions":"How you work in this role, addressed to yourself as 'you'.","personality":"One or two sentences on tone and working style.","skills":["go-to-market strategy","market research"]}; (3) ask at most four numbered, concrete questions about what you need to start, and end with "Send what you have, even rough."; (4) from then on, work as that role.`,
     naming,
-    `Fields: name (one word, ≤${PROFILE_LIMITS.name} chars), role (a job title, ≤${PROFILE_LIMITS.role}), instructions (≤${PROFILE_LIMITS.instructions}), personality (≤${PROFILE_LIMITS.personality}), skills (≤${PROFILE_LIMITS.skills} short lower-case phrases); send only the fields that change. You can only change your own profile, and only when the person asks for a role or a change. The bridge records it and appends a receipt; do not claim the change before that receipt.`,
+    `Fields: name (a short name, ≤${PROFILE_LIMITS.name} chars), role (a job title, ≤${PROFILE_LIMITS.role}), description (responsibilities, ≤${PROFILE_LIMITS.description}), instructions (≤${PROFILE_LIMITS.instructions}), personality (≤${PROFILE_LIMITS.personality}), skills (≤${PROFILE_LIMITS.skills} short lower-case phrases); send only the fields that change. Prefer squad_set_profile when Squad's MCP is available; the SQUAD_ACTION line is the compatibility path. You can only change your own profile. Confirm a saved change only after the operation returns its receipt.`,
   ].join(" ");
 }
 
@@ -104,17 +125,17 @@ export function memberShapingInstruction(agent = {}) {
 export function validateProfileAction(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("the profile action must be an object");
   const extra = Object.keys(raw).filter((key) => !PROFILE_KEYS.has(key));
-  if (extra.length) throw new Error(`profile actions may only contain op, member, name, role, instructions, personality and skills (not ${extra.join(", ")})`);
+  if (extra.length) throw new Error(`profile actions may only contain op, member, name, role, description, instructions, personality and skills (not ${extra.join(", ")})`);
   if (String(raw.op || "").trim().toLowerCase() !== "set") throw new Error('op must be "set"');
   if (raw.member !== undefined && typeof raw.member !== "string") throw new Error("member must be your own name or id");
   const patch = {};
-  for (const field of ["name", "role", "instructions", "personality"]) {
+  for (const field of ["name", "role", "description", "instructions", "personality"]) {
     if (raw[field] === undefined) continue;
     if (typeof raw[field] !== "string") throw new Error(`${field} must be text`);
     const multiline = field === "instructions" || field === "personality";
     const value = multiline ? raw[field].trim() : raw[field].replace(/\s+/g, " ").trim();
     if (value.length > PROFILE_LIMITS[field]) throw new Error(`${field} is longer than ${PROFILE_LIMITS[field]} characters`);
-    if (value) patch[field] = value;
+    if (value || ["description", "instructions", "personality"].includes(field)) patch[field] = value;
   }
   if (patch.name && /\s/.test(patch.name) && patch.name.split(/\s+/).length > 3) throw new Error("name must be a short name, not a sentence");
   // The app's placeholder is never a chosen name; drop it rather than refuse
@@ -126,7 +147,7 @@ export function validateProfileAction(raw) {
     const seen = new Set();
     patch.skills = raw.skills.map((skill) => skill.replace(/\s+/g, " ").trim().slice(0, PROFILE_LIMITS.skill)).filter((skill) => skill && !seen.has(skill.toLowerCase()) && seen.add(skill.toLowerCase()));
   }
-  if (!PROFILE_FIELDS.some((field) => patch[field] !== undefined)) throw new Error("set at least one of name, role, instructions, personality or skills");
+  if (!PROFILE_FIELDS.some((field) => patch[field] !== undefined)) throw new Error("set at least one of name, role, description, instructions, personality or skills");
   return { patch, member: typeof raw.member === "string" ? raw.member.trim() : "" };
 }
 
@@ -146,13 +167,21 @@ export function profileChangeLine(patch = {}, before = {}) {
   const name = patch.name || String(before?.name || "").trim() || BLANK_MEMBER_NAME;
   if (patch.role) return `${name} is now your ${patch.role}.`;
   if (patch.name && patch.name !== before?.name) return `${String(before?.name || BLANK_MEMBER_NAME)} is now called ${patch.name}.`;
-  const changed = ["instructions", "personality", "skills"].filter((field) => patch[field] !== undefined);
+  const changed = ["description", "instructions", "personality", "skills"].filter((field) => patch[field] !== undefined);
   return `${name} updated its ${joinWords(changed)}.`;
 }
 
 /** The applied profile receipts in a done event's channelActions. */
 export function profileReceipts(channelActions) {
   return (Array.isArray(channelActions) ? channelActions : []).filter((receipt) => receipt?.type === PROFILE_ACTION_TYPE && receipt.status === "applied" && receipt.patch && typeof receipt.patch === "object");
+}
+
+/**
+ * Team tool receipts (ADR-0134) that read as a quiet line under the reply,
+ * like a profile change: "Remembered for the team: …", "Asked Eva".
+ */
+export function teamNoteReceipts(channelActions) {
+  return (Array.isArray(channelActions) ? channelActions : []).filter((receipt) => ["team_memory", "team_message"].includes(receipt?.type) && receipt.status === "applied" && receipt.message);
 }
 
 /**

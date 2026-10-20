@@ -66,6 +66,17 @@ export function containsSecret(text) {
 }
 
 /**
+ * A credential by shape: every rule but the long opaque string, which also
+ * matches a commit hash and so cannot refuse a sentence on its own. Memory
+ * uses this (team memory on the bridge, a member's own in the browser):
+ * memory is sent to every engine in every prompt, so a key in it is a key
+ * handed to all of them.
+ */
+export function looksLikeCredential(text) {
+  return scanSecrets(text).some((found) => found.kind !== "opaque string");
+}
+
+/**
  * `text` with every secret-looking part replaced by the marker.
  * Returns `{ text, count, kinds }`; `count` is 0 when nothing changed.
  */

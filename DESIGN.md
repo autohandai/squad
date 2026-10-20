@@ -125,7 +125,7 @@
 - Presence dots have six states: accent and breathing while working, green online, amber idle, slate paused, grey offline, and a dotted ring when the bridge is unreachable. Only working animates. A status the person set (paused, offline) wins over what the bridge reports, so the dot never disagrees with the Squad list beside it. Stop sits with the chat header actions and on the profile, confirming in a small popover.
 - When the local bridge is away, the app says so in one muted line at the top of the main area ("Squad's local service is restarting. Replies and queues continue once it is back.") and nothing else changes: no overlay, no dialog, no dead screen. The line appears only after a moment away and leaves on its own when the bridge answers (ADR-0123).
 - The primary sidebar is a Slack-like workspace rail: a **Search everything** control (⌘K / Ctrl K), Needs you, Squad, channel sections grouped by the channel's `section` (default "Channels"), then **Direct messages** listing members with presence dots and unread counts, and the account footer. No cards, no tinted panels; unread state is a bold row plus a small dot or count.
-- Channel pages are flat, chronological streams: a `# name` header with member count and a settings popover, day separators, a red **New** divider at the last-read boundary, author + time, mention chips for targeted members, emoji reactions with counts, and quick actions on hover. Thread replies render inline under their root with a subtle indent instead of a stacked thread block.
+- Channels default to threads: the original message stays in the stream with one quiet disclosure for its actual replies, working members and failures. Expanding it shows saved replies under a subtle left divider with Reply in thread. “Show replies” in channel settings persists a choice between In threads and In the channel; direct mode is chronological at one level. Both use the same transcript and preserve author, time, reactions, work details and reply targeting (ADR-0135).
 - The composer is one calm bordered field with @ / attach / emoji / format on the left and a round send button on the right; Enter sends, Shift+Enter breaks a line, and `@` opens a keyboard-navigable mention picker.
 - Presence is one living line under the composer, not placeholder rows: stacked avatars, then "Iris is thinking…", "Iris and Noah are typing…", "Iris, Noah and 2 others are running tools…", with three breathing dots. A reply enters the stream only once it has text. The line renders nothing when nobody is active and never shifts layout.
 - Squad recruiting notices ("Kai wants to join #client-abc — DevOps engineer. Kai can help with the Dockerfile and CI in api; nobody in the channel covers that yet.") sit above the composer as a divider-separated row with Add and Not now. They are visible to the user only, never sent to members, and never counted as unread.
@@ -238,6 +238,10 @@
 
 - Relay is a divider-row section: URL, Token, Workspace, one Save, the enable switch, a one-sentence status and a ghost Sync now.
 
+- Memory shows shared, personal and assigned-project memories as divider rows under “What … knows”, with author/time and quiet Edit/Forget actions. One inline add row chooses Whole team, Only <name>, or Current project; project rows identify the folder. Failed writes keep the draft. Memories save immediately when the person asks (ADR-0134).
+
+- What a team tool did in a turn ("Asked Eva", "Remembered for the team: …", "Robert is now called Rob") is one quiet line under the reply, the same line a profile change uses; never a card.
+
 ## Maintenance
 
 - When a durable user UI preference emerges, update this file in the same change so future UI work reflects it.
@@ -272,3 +276,6 @@
 - Copy controls are quiet icon buttons that appear on hover or focus, turn into a check when the copy worked, and say "Could not copy" when it did not.
 - Long scrolling conversations offer "Jump to latest" once the reader is a screen up, and say "N new" when messages arrived meanwhile; they never pull the reader down on their own.
 - Search fields that filter a page ("Search members", "Search memory", "Search this history", "Find a setting") clear with Esc and, when nothing matches, say what found nothing and offer the way back.
+
+- A member rename or profile receipt updates the header, sidebar, composer and profile from the same saved revision. A stale tab or old receipt cannot restore an earlier identity. Prose promising a change is not a saved change (ADR-0134).
+- “Replied” avatars count only completed, linked answers with real text or attachments. Typing, queued/streaming work, failures and empty runs never count; presence stays in the reserved lane under the composer (ADR-0135).

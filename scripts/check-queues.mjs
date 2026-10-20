@@ -114,7 +114,8 @@ if(args[0]==='--version'){console.log('codex 1.0.0');process.exit(0);}
 if(args[0]==='login'){console.log('Logged in using fixture');process.exit(0);}
 if(args[0]==='auth'){console.log(JSON.stringify({loggedIn:true,authMethod:'fixture'}));process.exit(0);}
 const claude=args[0]==='-p';
-const prompt=claude?args[1]:args.at(-1);
+// The person's message follows any context block Squad prepends for Codex (ADR-0134).
+const prompt=String(claude?args[1]:args.at(-1)).split('</operating_instructions>').pop().split('</turn_context>').pop();
 const member=process.env.AUTOHAND_SQUAD_MEMBER;
 const append=x=>fs.appendFileSync(file,JSON.stringify(x)+'\\n');
 const wait=/WAIT:([a-z0-9]+)/.exec(prompt);

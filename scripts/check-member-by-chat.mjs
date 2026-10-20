@@ -24,7 +24,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BLANK_MEMBER_NAME, asksForRole, blankGreeting, blankMemberDraft, isBlankMember, isPlaceholderName, memberShapingInstruction, namesSelf, needsShapingInstruction, profileChangeLine, profileReceipts, replyWithoutReceipts, validateProfileAction, profileNoteFor, unappliedProfileReceipts } from '../src/lib/member-shaping.js';
 import { queueItemMessagePatch } from '../src/lib/member-queue.js';
-import { patchedMemberCopy } from '../server/routes/member-shaping.route.mjs';
+import { patchedMemberCopy, patchedProfileText } from '../server/routes/member-shaping.route.mjs';
 
 let checks = 0;
 const check = (label, condition, detail = '') => { checks += 1; assert.ok(condition, `${label}${detail ? `: ${detail}` : ''}`); };
@@ -63,6 +63,8 @@ check('only applied profile receipts are applied by the browser', profileReceipt
 check('the receipt line is lifted out of the reply body', replyWithoutReceipts("Done, I'm your GTM Leader from here on.\n\nAlex is now your GTM Leader.", profileReceipts(receipts)) === "Done, I'm your GTM Leader from here on.");
 const copied = patchedMemberCopy({ id: 'n', name: 'New member', role: '', profileFiles: [{ section: 'persona', content: 'old' }, { section: 'identity', content: 'keep' }] }, { name: 'Alex', role: 'GTM Leader', personality: 'Direct.' });
 check('the bridge copy takes the patch, personality as PERSONALITY.md', copied.name === 'Alex' && copied.role === 'GTM Leader' && copied.profileFiles.length === 2 && copied.profileFiles.find((f) => f.section === 'persona').content.includes('Direct.') && copied.profileFiles.some((f) => f.content === 'keep'));
+const header = 'Autohand Squad member profile\nAgent ID: asq_max\nName: Max\nRole: X Growth\nOperating instructions: Role: keep this.\nName: in a brain card stays';
+check('the bridge profile text takes the new name and role in its header only', patchedProfileText(header, { name: 'Robert', role: 'QA $& Lead' }) === 'Autohand Squad member profile\nAgent ID: asq_max\nName: Robert\nRole: QA $& Lead\nOperating instructions: Role: keep this.\nName: in a brain card stays' && patchedProfileText(header, { skills: ['x'] }) === header && patchedProfileText('', { name: 'R' }) === '');
 console.log(`Member-by-chat pure checks passed (${checks}): blank, names, greeting, role requests, instruction, validation, identity, receipt line, browser helpers.`);
 
 // ---------- bridge ----------

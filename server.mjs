@@ -16,6 +16,9 @@ import { bundledComputerClient, createComputerUse } from "./server/computer-use.
 import { createConnectorStore } from "./server/connectors/store.mjs";
 import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
 import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
+import { AUTOHAND_TEAM_WAIT_SECONDS, TEAM_MCP_SERVER_NAME, createTeamService, teamMessagePrompt } from "./server/team/service.mjs";
+import { createTeamChannels } from "./server/team/channels.mjs";
+import { STORE_FILE as WORK_STORE_FILE, workStoreFor } from "./server/work/store.mjs";
 import { vaultToolsAllowed } from "./src/lib/permission-policy.js";
 import { createProductTelemetry, readProductTelemetryConfig } from "./server/product-telemetry.mjs";
 import { MemberAvailability } from "./server/members/availability.mjs";
@@ -51,8 +54,9 @@ import { workPlanFor } from "./server/work/plan.mjs";
 import { describeSchedule, isValidTimeZone, normalizeSchedule, validateSchedule } from "./server/routines/schedule.mjs";
 import { scheduleActionInstruction, taskActionInstruction } from "./src/lib/routines.js";
 import { automationNudgeLine, detectRecurringWork, repeatedWorkSignal, replyProposedSchedule } from "./src/lib/work-plans.js";
-import { memberShapingInstruction, needsShapingInstruction } from "./src/lib/member-shaping.js";
+import { MEMBER_PROFILE_FIELDS, memberProfileRevision, mergeMemberProfile, memberShapingInstruction, needsShapingInstruction } from "./src/lib/member-shaping.js";
 import { normalizeResponder, responderStatus } from "./src/lib/channel-responders.js";
+import { normalizeChannelReplyMode } from "./src/lib/channel-replies.js";
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
 import { memberProfileDefaults } from "./src/lib/member-profiles.js";
 import { CHAT_TURN_CEILING_MS } from "./src/lib/chat-timing.js";
@@ -429,6 +433,99 @@ const firecrawlBaseUrl = String(process.env.FIRECRAWL_API_URL || "").trim();
 const vault = createVaultService({ stateDir: squadStateDir, rootDir, homeDir, bridgeUrl: `http://127.0.0.1:${port}`, emit: emitBridgeEvent });
 const vaultWorkRuntimes = new Map();
 bridgeEvents.on("member.stopped", ({ memberId }) => vault.closeMember(memberId));
+// The team (ADR-0134): roster, messages between members and shared memory,
+// reached by every member through one managed MCP server on any engine.
+const team = createTeamService({
+  stateDir: squadStateDir,
+  rootDir,
+  bridgeUrl: `http://127.0.0.1:${port}`,
+  members: teamMembers,
+  isBusy: (memberId) => isMemberBusy(memberId),
+  deliver: deliverTeamMessage,
+  runAction: runTeamAction,
+  getProfile: async memberId => {
+    const access = await agentChannelActions.memberAccess(memberId);
+    if (!access?.agent || access.removed) throw new Error("This member is no longer available.");
+    const member = access.agent;
+    return { id: memberId, name: member.name, role: member.role || "", description: member.description || "", instructions: member.instructions || "", skills: member.skills || [], personality: member.profileFiles?.find(file => file.section === "persona")?.content || "", revision: memberProfileRevision(member) };
+  },
+  channels: createTeamChannels({ read: () => readChannelsState(), mutate: operation => mutateChannelsState(operation) }),
+  getWorkPlan: async memberId => {
+    const work = workStoreFor(join(squadStateDir, WORK_STORE_FILE));
+    await work.load();
+    return work.tasks(memberId).map(({ id, title, detail, due, status, outcome }) => ({ id, title, detail, due, status, outcome }));
+  },
+  emit: emitBridgeEvent,
+});
+const teamWorkRuntimes = new Map();
+bridgeEvents.on("member.stopped", ({ memberId }) => team.closeMember(memberId));
+void team.recover().catch(() => {});
+
+async function teamMembers() {
+  const state = await readChannelsState();
+  // The app's own utility agents (the squad designer) are registered like
+  // members but are not teammates: squad_team listed "Squad member" and a
+  // member could message it.
+  return Object.entries(state?.agentChannelAccess || {}).filter(([id]) => !isUtilityAgent(id)).map(([id, access]) => ({
+    id,
+    name: access?.agent?.name || id,
+    role: access?.agent?.role || "",
+    description: access?.agent?.description || "",
+    skills: access?.agent?.skills || [],
+    formerNames: access?.agent?.formerNames || [],
+    projects: normalizeAgentProjects(access?.agent || {}).map(project => ({ name: project.name || project.label || basename(project.path), path: project.path })),
+    engine: harnessAssignmentFromAgent(access?.agent || {}).id || "autohand",
+    removed: Boolean(access?.removed),
+  }));
+}
+
+/**
+ * A teammate answers another member's message in a run of its own. When the
+ * sender asked from a channel thread, the question and the answer are posted
+ * in that thread: before, the exchange was only a run in the Execution panel
+ * and the person could not see who said what (bug hunt 2026-10, channels).
+ */
+async function deliverTeamMessage({ from, to, message, depth, deliveryId, channel = null }) {
+  const state = await readChannelsState();
+  const access = state?.agentChannelAccess?.[to.id];
+  if (!access?.agent || access.removed) return { declined: "missing", reply: `${to.name} is no longer on the team.` };
+  await memberAvailability.assertCanWork({ agentId: to.id, agent: access.agent });
+  const workspace = access.agent.workspace || normalizeAgentProjects(access.agent)[0]?.path || "";
+  const post = (record) => channel && mutateChannelsState((current) => {
+    if (!current.channels.some((item) => item.id === channel.channelId) || current.messages.some((item) => item.id === record.id)) return;
+    const at = new Date().toISOString();
+    current.messages.push({ channelId: channel.channelId, threadId: channel.threadId, parentMessageId: channel.parentMessageId, role: "agent", status: "complete", teamDeliveryId: deliveryId, createdAt: at, updatedAt: at, ...record });
+  }).catch(() => {});
+  await post({ id: `${deliveryId}-ask`, agentId: from.id, authorName: from.name, body: `@${String(to.name || "").split(/\s+/)[0]} ${String(message || "").trim()}`, targetMemberIds: [to.id] });
+  let result;
+  try {
+    result = await chatOnce({
+      agentId: to.id,
+      agent: access.agent,
+      requestId: deliveryId,
+      workspace,
+      prompt: teamMessagePrompt(from, message),
+      profile: access.profile || "",
+      _teamDepth: depth,
+      teamMessage: { deliveryId, fromId: from.id, fromName: from.name },
+    });
+  } catch (error) {
+    await post({ id: `${deliveryId}-reply`, agentId: to.id, authorName: to.name, body: `${to.name} could not answer: ${error?.message || error}`, status: "error", relayFromAgentId: from.id });
+    throw error;
+  }
+  const reply = String(result?.reply || "").trim();
+  await post({ id: `${deliveryId}-reply`, agentId: to.id, authorName: to.name, body: reply || `${to.name} returned no chat text.`, status: result?.declined ? "error" : "complete", relayFromAgentId: from.id, transport: result?.transport || "" });
+  return result;
+}
+
+/** A team tool that changes a profile or proposes a schedule runs the SQUAD_ACTION handler. */
+async function runTeamAction(type, raw, session) {
+  const context = { actorId: session.memberId, identityValid: true, requestId: session.operationId || session.runId || randomUUID(), workspace: session.workspace, depth: session.depth };
+  // squad_schedule's timezone is optional; without one the proposal failed
+  // and the member had to guess a zone to retry. The person's is this machine's.
+  const zoned = type === "schedule" && !raw.timezone && !raw.timeZone && !raw.schedule?.timeZone ? { timezone: bridgeTimeZone() } : {};
+  return agentChannelActions.perform(context, { ...raw, ...zoned, type });
+}
 
 async function readNativeComputerGrantKey() {
   let file;
@@ -508,6 +605,38 @@ async function finishVaultWork(workId) {
   if (runtime.vault.perWork) await Promise.allSettled([rm(runtime.configPath, { force: true }), ...(runtime.vault.externalConfigPath ? [rm(runtime.vault.externalConfigPath, { force: true })] : [])]);
 }
 
+async function prepareTeamWork(agentRuntime, input) {
+  if (isUtilityAgent(agentRuntime.agentId) || !input._computerUseWorkId) return agentRuntime;
+  const engine = harnessAssignmentFromAgent(agentRuntime.agent).id;
+  const maxWaitSeconds = engine === "autohand" || engine === "autohand-acp" ? AUTOHAND_TEAM_WAIT_SECONDS : 50;
+  const session = await team.openWork({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, workspace: agentRuntime.workspace, depth: Number(input._teamDepth) || 0, channel: channelContextFromPayload(input), maxWaitSeconds });
+  const directory = join(agentRuntime.agentHome, "team-configs");
+  // A stable path, as the vault's, keeps a warm session's key (ADR-0030).
+  const perWork = Boolean(agentRuntime.computerUse);
+  const configPath = join(directory, perWork ? `${input._computerUseWorkId}.json` : "member.json");
+  const runtime = { ...agentRuntime, configPath, team: { ...session, perWork } };
+  teamWorkRuntimes.set(input._computerUseWorkId, runtime);
+  try {
+    const config = JSON.parse(await readFile(agentRuntime.configPath, "utf8"));
+    const existing = Array.isArray(config.mcp?.servers) ? config.mcp.servers : [];
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeSecretFile(configPath, JSON.stringify({ ...config, mcp: { ...config.mcp, enabled: true, servers: [...existing.filter((entry) => entry.name !== TEAM_MCP_SERVER_NAME), session.mcpServer] } }, null, 2));
+    return runtime;
+  } catch (error) { await finishTeamWork(input._computerUseWorkId).catch(() => {}); throw error; }
+}
+
+async function finishTeamWork(workId) {
+  team.finishWork(workId);
+  const runtime = teamWorkRuntimes.get(workId); if (!runtime) return;
+  teamWorkRuntimes.delete(workId);
+  if (runtime.team.perWork) await Promise.allSettled([rm(runtime.configPath, { force: true })]);
+}
+
+function teamInstructionsFor(runtime) {
+  if (isUtilityAgent(runtime?.agentId) || !runtime?.team) return "";
+  return runtime.team.instructions || "";
+}
+
 function vaultInstructions(runtime) {
   if (isUtilityAgent(runtime?.agentId) || !runtime?.vault) return "";
   return runtime.vault.instructions || "";
@@ -523,6 +652,7 @@ function computerUseInstructions(runtime) {
 bridgeEvents.on("run.finished", ({ runId }) => {
   void finishComputerWork(runId).then((evidence) => { const run = runs.get(runId); if (run && evidence) run.computerUse = evidence; }).catch(() => {});
   void finishVaultWork(runId).catch(() => {});
+  void finishTeamWork(runId).catch(() => {});
 });
 bridgeEvents.on("computer-use.evidence", (evidence) => {
   const run = runs.get(evidence.runId);
@@ -2811,9 +2941,14 @@ const agentRuntimeWrites = new Map();
 async function withSavedMember(payload) {
   const id = sanitizeAgentId(payload.agent?.id || payload.agentId);
   const saved = await readPersistentJson(join(isolatedAgentsDir, id, "profile.json"), null);
-  if (!saved) return payload;
-  if (typeof saved !== "object" || Array.isArray(saved)) throw new Error("The saved member profile is invalid. Restore it before retrying.");
-  return { ...payload, agent: { ...saved, ...(payload.agent || {}), id }, _memberDescriptionProvided: Boolean(payload.agent && typeof payload.agent === "object" && !Array.isArray(payload.agent)) };
+  if (saved && (typeof saved !== "object" || Array.isArray(saved))) throw new Error("The saved member profile is invalid. Restore it before retrying.");
+  const registered = await agentChannelActions.memberAccess(id);
+  const incoming = { ...saved, ...(payload.agent || {}), id };
+  const agent = mergeMemberProfile(incoming, registered?.agent);
+  if (!saved && !registered?.agent) return payload;
+  // An older window's prose can contradict the profile it is now loading.
+  // The runtime builds the current contract from the persisted member below.
+  return { ...payload, ...(agent !== incoming ? { profile: "" } : {}), agent, _memberDescriptionProvided: Boolean(payload.agent && typeof payload.agent === "object" && !Array.isArray(payload.agent)) };
 }
 
 async function ensureAgentRuntime(input, workspace) {
@@ -2958,6 +3093,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
         id: agentId,
         staffId: agent.staffId || "",
         name: agent.name || "Squad member",
+        profileRevision: memberProfileRevision(agent),
         role: agent.role || "",
         employeeType: agent.employeeType || "",
         description: agent.description || "",
@@ -2989,7 +3125,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
     autohandAuthUsable(readAutohandAuth(configPath)) ||
     autohandAuthUsable(readAutohandAuth(userConfigPath));
 
-  return prepareVaultWork(await prepareComputerWork({
+  return prepareTeamWork(await prepareVaultWork(await prepareComputerWork({
     agent,
     agentId,
     agentHome,
@@ -3007,7 +3143,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
     harness: harnessAssignmentFromAgent(agent),
     // Launch specs carry connector secrets; keep them out of public summaries.
     connectorServers: connectorSpecs,
-  }, input), input);
+  }, input), input), input);
 }
 
 function runtimeMemberInstructions(agentRuntime) {
@@ -3022,6 +3158,7 @@ function runtimeMemberInstructions(agentRuntime) {
     "Autohand Squad runtime member contract",
     `Member: ${agent.name || "Squad member"} (${agentRuntime.agentId})`,
     `Role: ${agent.role || "Software engineering agent"}`,
+    agent.description ? `Responsibilities: ${agent.description}` : "",
     agent.instructions ? `Operating instructions: ${String(agent.instructions).slice(0, 4000)}` : "",
     persona ? `Personality:\n${String(persona).slice(0, 5000)}` : "",
     memory.trim() ? `Durable memory (MEMORY.md):\n${String(memory).slice(0, 4000)}` : "",
@@ -3084,7 +3221,7 @@ async function autohandArgs(input) {
   const prompt = String(input.prompt || "").trim();
   let profile = String(input.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(input, workspace);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input), workPlanInstructions(input), memberShapingInstructions(input)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), teamInstructionsFor(agentRuntime), recallInstructions(input), workPlanInstructions(input), memberShapingInstructions(input)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const args = ["--path", workspace, "--config", agentRuntime.configPath];
@@ -3176,7 +3313,7 @@ function sdkTransportEnabled(input, mode) {
 }
 
 function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(input), workPlanInstructions(input), memberShapingInstructions(input)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), teamInstructionsFor(agentRuntime), recallInstructions(input), workPlanInstructions(input), memberShapingInstructions(input)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const model = selectedModelForInput(input, permissions, agentRuntime);
@@ -4933,6 +5070,7 @@ function normalizeChannel(item) {
     autoModeDefault: item.autoModeDefault === true,
     // Who answers un-mentioned messages (ADR-0108): everyone, a lead, or auto.
     responder: normalizeResponder(item.responder),
+    replyMode: normalizeChannelReplyMode(item.replyMode),
     // Owned by the git route plug-in (docs/integration/git.md); kept verbatim so
     // the web app's own PUT /api/channels mirror does not erase the binding.
     git: item.git && typeof item.git === "object" ? item.git : undefined,
@@ -5066,7 +5204,53 @@ function responderRecentLines(channel, state, limit = 6) {
     .map((message) => `${message.role === "user" ? message.authorName || "User" : state.agentChannelAccess?.[message.agentId]?.agent?.name || message.authorName || message.agentId || "Member"}: ${String(message.body).slice(0, 240)}`);
 }
 const mutateChannelsState = operation => channelsStore.mutate(operation);
-const agentChannelActions = createAgentChannelActions({ store: channelsStore, availability: memberAvailability, sanitizeId: sanitizeAgentId, run: payload => chatOnce(payload), reportError: error => console.error("Channel purpose queue:", error.message) });
+const agentChannelActions = createAgentChannelActions({
+  store: channelsStore, availability: memberAvailability, sanitizeId: sanitizeAgentId,
+  run: payload => chatOnce(payload),
+  reportError: error => console.error("Member/channel operation:", error.message),
+  onProfileChanged: syncSavedMemberProfile,
+  onRename: (memberId, { from, to }) => team.renamed(memberId, from, { name: to, role: "" }),
+});
+
+/**
+ * The member's saved profile.json and IDENTITY.md take a rename now, not at
+ * the member's next run: until then a bridge turn started from the saved
+ * profile (withSavedMember, the agenda) still called the member by its old
+ * name. Also run once at start for members renamed before this.
+ */
+async function syncSavedMemberProfile(memberId) {
+  // In line with ensureAgentRuntime's writes to the same files.
+  const id = sanitizeAgentId(memberId);
+  const pending = (agentRuntimeWrites.get(id) || Promise.resolve()).catch(() => {}).then(() => writeSavedMemberProfile(id));
+  agentRuntimeWrites.set(id, pending);
+  try { return await pending; }
+  finally { if (agentRuntimeWrites.get(id) === pending) agentRuntimeWrites.delete(id); }
+}
+async function writeSavedMemberProfile(id) {
+  const agentHome = join(isolatedAgentsDir, id);
+  const profilePath = join(agentHome, "profile.json");
+  const saved = await readPersistentJson(profilePath, null);
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) return;
+  const access = await agentChannelActions.memberAccess(id);
+  if (!access?.agent || access.removed) return;
+  const fields = Object.fromEntries(MEMBER_PROFILE_FIELDS.filter(key => key in access.agent).map(key => [key, access.agent[key]]));
+  const next = { ...saved, ...fields, profileRevision: memberProfileRevision(access.agent), updatedAt: access.updatedAt };
+  const skills = { ...(saved.skillInstall || {}), requested: next.skills || [] };
+  const files = (next.profileFiles || []).map(file => {
+    if (file.section !== "identity") return file;
+    let content = String(file.content || "");
+    for (const [label, value] of [["Name", next.name], ["Role", next.role]]) content = content.replace(new RegExp(`^${label}: .*$`, "m"), () => `${label}: ${String(value || "").replace(/\s+/g, " ")}`);
+    return { ...file, content };
+  });
+  const plan = planAgentProfileDocs({ ...next, profileFiles: files }, agentHome, id, next.workspace || "", skills);
+  await writeAgentProfileDocs(plan);
+  await writePersistentJson(profilePath, { ...next, profileDocs: plan.profileDocs });
+}
+void readChannelsState().then(async (state) => {
+  for (const [id, access] of Object.entries(state?.agentChannelAccess || {})) {
+    if (!access?.removed && access?.agent?.name && !isUtilityAgent(id)) await syncSavedMemberProfile(id).catch(error => console.error("Member profile projection:", error.message));
+  }
+}).catch(() => {});
 
 async function createChannel(payload) {
   const channel = normalizeChannel({
@@ -5104,6 +5288,7 @@ async function updateChannel(channelId, patch) {
     ...(Array.isArray(source.events) ? { events: source.events } : {}),
     ...(source.autoModeDefault !== undefined ? { autoModeDefault: source.autoModeDefault === true } : {}),
     ...(source.responder !== undefined ? { responder: normalizeResponder(source.responder) } : {}),
+    ...(source.replyMode !== undefined ? { replyMode: normalizeChannelReplyMode(source.replyMode) } : {}),
     id: existing.id,
     creatorId: existing.creatorId,
     createdAt: existing.createdAt,
@@ -6407,7 +6592,8 @@ function startCliRun(run, args, workspace, agentRuntime, payload) {
 
 async function finishRunChannelActions(run, payload, reply, trace) {
   if (run.status === "stopped" || run.abortController?.signal.aborted) return false;
-  const result = await agentChannelActions.finish(payload._channelActionContext, { reply, trace }, run.abortController?.signal);
+  const finished = await agentChannelActions.finish(payload._channelActionContext, { reply, trace }, run.abortController?.signal);
+  const result = withTeamReceipts(finished, team.takeReceipts(payload._computerUseWorkId || run.id));
   if (run.status === "stopped" || run.abortController?.signal.aborted) return false;
   run.reply = result.reply;
   run.channelActions = result.channelActions || [];
@@ -6641,7 +6827,12 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   const agentRuntime = await ensureAgentRuntime(payload, workspace);
   const assignment = harnessAssignmentFromAgent(agentRuntime.agent);
   const adapter = getAdapter(assignment);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), recallInstructions(payload), workPlanInstructions(payload), memberShapingInstructions(payload)].filter(Boolean).join("\n\n");
+  // Stable instructions and the turn's own context are kept apart so Codex,
+  // which has no system prompt, can be sent the context on every turn and
+  // the instructions only when they change (ADR-0134).
+  const stableProfile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime)].filter(Boolean).join("\n\n");
+  const turnContext = [teamInstructionsFor(agentRuntime), recallInstructions(payload), workPlanInstructions(payload), memberShapingInstructions(payload)].filter(Boolean).join("\n\n");
+  profile = [stableProfile, turnContext].filter(Boolean).join("\n\n");
   const readiness = await assertHarnessReady(assignment, { context: harnessContextFor(assignment.id) });
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const addDirs = [];
@@ -6665,11 +6856,11 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   const resumeId = payload.resumeSession === false || ephemeral ? "" : await readResumeId(agentRuntime.agentHome, adapter.id, workspace);
   // Squad-managed MCP servers (Computer Use, the vault) reach Claude through
   // one --mcp-config file and Codex through -c overrides, adapted per harness.
-  const managedServers = [agentRuntime.computerUse?.mcpServer, agentRuntime.vault?.mcpServer].filter(Boolean);
+  const managedServers = [agentRuntime.computerUse?.mcpServer, agentRuntime.vault?.mcpServer, agentRuntime.team?.mcpServer].filter(Boolean);
   let managedConfigPath = "";
   if (managedServers.length && adapter.id === "claude") {
-    const owner = agentRuntime.computerUse || agentRuntime.vault;
-    const directory = join(agentRuntime.agentHome, agentRuntime.computerUse ? "computer-use-configs" : "vault-configs");
+    const owner = agentRuntime.computerUse || agentRuntime.vault || agentRuntime.team;
+    const directory = join(agentRuntime.agentHome, agentRuntime.computerUse ? "computer-use-configs" : agentRuntime.vault ? "vault-configs" : "team-configs");
     managedConfigPath = join(directory, agentRuntime.computerUse ? `${owner.id}.claude.json` : "member.claude.json");
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await writeSecretFile(managedConfigPath, JSON.stringify({ mcpServers: Object.fromEntries(managedServers.map((server) => [server.name, { command: server.command, args: server.args, env: server.env }])) }));
@@ -6685,6 +6876,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
     connectorConfigPath = join(directory, "claude.json");
     await writeSecretFile(connectorConfigPath, JSON.stringify(claudeMcpConfig(connectorSpecs)));
   }
+  const codexInstructions = adapter.id === "codex" ? await codexInstructionsState(agentRuntime.agentHome, workspace, stableProfile) : null;
   const build = (resume) => {
     const built = adapter.buildArgs({
       prompt: mode === "auto" ? `${prompt}\n\nWork autonomously until the task is complete, then summarise what changed.` : prompt,
@@ -6695,10 +6887,11 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
       access,
       effort,
       efforts: Array.isArray(readiness.efforts) ? readiness.efforts : [],
-      appendSystemPrompt: profile,
+      ...(codexInstructions ? { appendSystemPrompt: stableProfile, turnContext, resendInstructions: codexInstructions.changed } : { appendSystemPrompt: profile }),
       addDirs,
       resumeId: resume,
       launchArgs: Array.isArray(readiness.launchArgs) ? readiness.launchArgs : [],
+      mcpServers: [...managedServers, ...autohandServersFor(connectorSpecs)],
     });
     if (managedServers.length && adapter.id === "claude") {
       built.args.push("--mcp-config", managedConfigPath);
@@ -6707,6 +6900,8 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
       for (const server of managedServers) {
         const prefix = `mcp_servers.${server.name}`;
         const values = [`${prefix}.command=${JSON.stringify(server.command)}`, `${prefix}.args=${JSON.stringify(server.args)}`, `${prefix}.env={${Object.entries(server.env).map(([key, value]) => `${JSON.stringify(key)}=${JSON.stringify(value)}`).join(",")}}`];
+        // A teammate's reply can take most of a minute; Codex's default tool timeout is 60 s.
+        if (server.name === TEAM_MCP_SERVER_NAME) values.push(`${prefix}.tool_timeout_sec=120`);
         for (const value of values) built.args.unshift("-c", value);
       }
       built.displayArgs.unshift("-c", "<squad-managed-mcp-config>");
@@ -6743,6 +6938,20 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
       AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: "",
     },
   };
+}
+
+// What Codex was last told, per member and folder: a digest of the stable
+// instructions. A resumed thread is sent them again only when the digest
+// changed (ADR-0134). Written before the turn, so a failed turn may skip one
+// resend; the next change sends them again.
+async function codexInstructionsState(agentHome, workspace, stableProfile) {
+  const file = join(agentHome, "codex-instructions.json");
+  const digest = createHash("sha256").update(stableProfile).digest("hex").slice(0, 32);
+  const saved = await readPersistentJson(file, {}).catch(() => ({}));
+  const key = createHash("sha256").update(String(workspace || "")).digest("hex").slice(0, 16);
+  const changed = saved?.[key] !== digest;
+  if (changed) await writePersistentJson(file, { ...(saved && typeof saved === "object" ? saved : {}), [key]: digest }).catch(() => {});
+  return { changed };
 }
 
 function externalCommandLabel(adapter, displayArgs) {
@@ -7004,7 +7213,7 @@ async function startRun(payload) {
   payload = { ...await withSavedMember(payload), _computerUseWorkId: id };
   payload._channelActionContext = await agentChannelActions.begin({ ...payload, requestId: payload.requestId || `run-${id}` });
   try { return await startRunInner(payload); }
-  catch (error) { await Promise.allSettled([finishComputerWork(id), finishVaultWork(id)]); throw error; }
+  catch (error) { await Promise.allSettled([finishComputerWork(id), finishVaultWork(id), finishTeamWork(id)]); throw error; }
 }
 
 async function startRunInner(payload) {
@@ -7297,7 +7506,8 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
   try {
     const result = await executeChatTurnInner({ ...payload, _computerUseWorkId: workId, ...(nudge ? { prompt: `${String(payload.prompt || "").trim()}\n\n${automationNudgeLine(nudge)}` } : {}) }, { stream: delayedDone, signal: runSignal, startedAt });
     const evidence = await finishComputerWork(workId);
-    const completed = await agentChannelActions.finish(actionContext, { ...cleanWorkResult(result), ...(evidence ? { computerUse: evidence } : {}) }, runSignal);
+    const finished = await agentChannelActions.finish(actionContext, { ...cleanWorkResult(result), ...(evidence ? { computerUse: evidence } : {}) }, runSignal);
+    const completed = withTeamReceipts(finished, team.takeReceipts(workId));
     const scheduleOffer = scheduleOfferFor(payload, completed);
     if (scheduleOffer) {
       completed.scheduleOffer = scheduleOffer;
@@ -7314,8 +7524,20 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
     signal?.removeEventListener("abort", forwardAbort);
     await finishComputerWork(workId).catch(() => {});
     await finishVaultWork(workId).catch(() => {});
+    await finishTeamWork(workId).catch(() => {});
+    team.takeReceipts(workId);
     bridgeEvents.off("computer-use.evidence", liveEvidence);
   }
+}
+
+// Team tool receipts (ADR-0134) join the turn's SQUAD_ACTION receipts, so the
+// browser applies a rename or shows a schedule proposal whichever way it came.
+// Profile receipts are lifted out of the reply by the browser; the others add
+// one quiet line each.
+function withTeamReceipts(result, receipts = []) {
+  if (!receipts.length) return result;
+  const lines = receipts.filter((receipt) => receipt?.message && receipt.type !== "team_message").map((receipt) => receipt.message);
+  return { ...result, reply: [String(result.reply || "").trim(), ...lines].filter(Boolean).join("\n\n"), channelActions: [...(Array.isArray(result.channelActions) ? result.channelActions : []), ...receipts] };
 }
 
 function beginChatRun(payload, workId, startedAt) {
@@ -7471,8 +7693,14 @@ function bridgeTimeZone() {
   }
 }
 
+// The part of the browser's profile that reaches the engine: every builder
+// cuts it at 12000 characters, so a format at its end may not have survived.
+function sentProfile(payload) {
+  return String(payload?.profile || "").trim().slice(0, 12000);
+}
+
 function workPlanInstructions(payload) {
-  const base = String(payload?.profile || "");
+  const base = sentProfile(payload);
   const parts = [];
   if (!base.includes('"type":"task"')) parts.push(taskActionInstruction());
   if (!base.includes('"type":"schedule"')) parts.push(scheduleActionInstruction(bridgeTimeZone()));
@@ -7489,7 +7717,7 @@ function workPlanInstructions(payload) {
 // receipt from its own chat stream.
 function memberShapingInstructions(payload) {
   if (channelContextFromPayload(payload) || payload?.collaboration) return "";
-  if (String(payload?.profile || "").includes('"type":"profile"')) return "";
+  if (sentProfile(payload).includes('"type":"profile"')) return "";
   // A turn with no member description (the app's own designer, a bare API
   // call) is not a blank member; only a described member can be shaped.
   const agent = payload?.agent && typeof payload.agent === "object" && !Array.isArray(payload.agent) ? payload.agent : null;
@@ -7747,6 +7975,7 @@ function routeContext() {
     },
     computerUse,
     vault,
+    team,
     authorizeComputerUseGrant,
     connectors,
     firecrawlBaseUrl,

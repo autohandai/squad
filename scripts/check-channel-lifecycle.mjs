@@ -36,7 +36,7 @@ try {
     assert.equal(duplicate.status, 409);
   });
   await check('editing, concurrent membership, messages and threads survive bridge restart', async () => {
-    const updated = await bridge.api('/api/channels/project-channel', 'PATCH', { name: 'project-renamed', visibility: 'private', section: 'Projects', autoModeDefault: true, projects: [{ name: 'source', path: process.cwd() }] });
+    const updated = await bridge.api('/api/channels/project-channel', 'PATCH', { name: 'project-renamed', visibility: 'private', section: 'Projects', autoModeDefault: true, replyMode: 'channel', projects: [{ name: 'source', path: process.cwd() }] });
     assert.equal(updated.success, true);
     await Promise.all(Array.from({ length: 8 }, (_, i) => bridge.api('/api/channels/project-channel/members', 'POST', { add: [`member-${i}`] })));
     await bridge.api('/api/channels/project-channel/members', 'POST', { add: ['iris', 'eva'], remove: ['eva'] });
@@ -48,6 +48,7 @@ try {
     const saved = state.channels.find(channel => channel.id === 'project-channel');
     assert.equal(saved.name, 'project-renamed'); assert.equal(saved.visibility, 'private');
     assert.equal(saved.section, 'Projects'); assert.equal(saved.autoModeDefault, true);
+    assert.equal(saved.replyMode, 'channel', 'the channel reply setting survives bridge restart');
     assert.equal(saved.projects[0].path, process.cwd());
     assert.equal(saved.memberIds.length, 9); assert.ok(!saved.memberIds.includes('eva'));
     assert.equal(state.messages.find(message => message.id === 'message-persistent').body, 'Retain this conversation');
