@@ -120,6 +120,11 @@ Commands actually run against this implementation:
   payload forwarding raw legacy memory. That payload now uses
   normalizeMemoryEntries, preserving structured entries and converting old
   strings before the bridge receives them rather than weakening the guard.
+- The remote-access fixture's restart check assumed the user's question was
+  at the start of a resumed Codex prompt. Resumed turns now carry fresh
+  turn_context by design; its mock reply removes the instruction envelopes
+  before quoting the question. The actual prompt, including those envelopes,
+  stays recorded and the restart delivery assertion remains unchanged.
 - `node scripts/check-team.mjs`: isolated real bridge and Codex protocol
   fixture; all sixteen tools, cross-member delivery, profile fields and
   revisions, old-name routing, memory, channel membership, idempotent posts,

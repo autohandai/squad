@@ -238,7 +238,8 @@ const emit = (x) => console.log(JSON.stringify(x));
 emit({ type: 'thread.started', thread_id: 'fixture-thread' });
 emit({ type: 'item.completed', item: { id: 'plan', type: 'todo_list', items: [{ text: 'Answer from the fixture', completed: false }] } });
 if (prompt.includes('HOLD fixture')) { setTimeout(() => process.exit(0), 45000); return; }
-let reply = 'Hello from the fixture: ' + prompt.slice(0, 40) + '\\n\\n| Step | State |\\n| --- | --- |\\n| build | ok |';
+const message = prompt.replace(/<(operating_instructions|turn_context)>[\\s\\S]*?<\\/\\1>\\s*/g, '');
+let reply = 'Hello from the fixture: ' + message.slice(0, 40) + '\\n\\n| Step | State |\\n| --- | --- |\\n| build | ok |';
 if (prompt.includes('propose a channel')) reply = 'Opening a room.\\nSQUAD_ACTION: {"type":"create_channel","name":"ops-room","purpose":"Coordinate the fixture work"}';
 emit({ type: 'item.completed', item: { id: 'reply', type: 'agent_message', text: reply } });
 emit({ type: 'turn.completed' });

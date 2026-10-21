@@ -72,6 +72,13 @@ The folder, selected role and typed name stay in place throughout recovery.
 - CI and release web jobs gate on the isolated bootstrap check. macOS DMG
   smoke boots the packaged bridge with PATH `/usr/bin:/bin` and requires the
   actual executable to resolve inside the mounted app's vendor directory.
+- A live recovery run downloaded the official pinned 0.9.7 release, checked
+  its published SHA-256 and executed its `--version` from disposable user
+  state. Receipt: `.codex-artifacts/runtime-bootstrap/live-cli-download.json`.
+- Cross-platform CI exposed an existing Computer Use fixture that made only
+  the macOS host executable. Linux launches the driver directly; that fixture
+  now puts the same mock protocol at the driver entry point on non-macOS.
+  This was a fixture launch error, not an unsupported-OS policy failure.
 
 These browser/download checks use a fixture CLI and account, not a live model
 provider. Native package smoke and published asset verification are separate
