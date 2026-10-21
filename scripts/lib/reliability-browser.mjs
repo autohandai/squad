@@ -44,9 +44,11 @@ export async function startBridge({ signedIn = true, prepare } = {}) {
   const env = { ...process.env, ...prepared, AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_USER_CONFIG_PATH: config };
   let child;
   let logs = '';
-  const api = async (path, method = 'GET', body) => {
-    const response = await fetch(origin + path, { method, signal: AbortSignal.timeout(10000), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    return { status: response.status, ...await response.json() };
+  const api = async (path, method = 'GET', body, timeout = 10000) => {
+    try {
+      const response = await fetch(origin + path, { method, signal: AbortSignal.timeout(timeout), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      return { status: response.status, ...await response.json() };
+    } catch (error) { throw new Error(`${method} ${path}: ${error.message}`, { cause: error }); }
   };
   const start = async () => {
     child = spawn(process.execPath, ['server.mjs', '--dev', '--host', '127.0.0.1', '--port', String(port), '--hmr-port', String(hmrPort)], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -63,21 +65,26 @@ export async function startBrowser() {
   const directory = await mkdtemp(join(tmpdir(), 'squad-reliability-chrome-'));
   const child = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-extensions', '--disable-gpu', '--window-size=1440,1100', 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = ''; child.stderr.on('data', data => { logs += data; });
-  let ws;
+  let ws, debugOrigin;
   try {
     const endpoint = await until(async () => {
       const [port] = (await readFile(join(directory, 'DevToolsActivePort'), 'utf8')).split('\n');
       const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
       return targets.find(target => target.type === 'page')?.webSocketDebuggerUrl;
     }, 'Chrome start', 60000);
+    debugOrigin = new URL(endpoint).origin.replace('ws:', 'http:');
     ws = new WebSocket(endpoint);
     await new Promise((resolve, reject) => { ws.addEventListener('open', resolve, { once: true }); ws.addEventListener('error', reject, { once: true }); });
   } catch (error) { await stop(child); await rm(directory, { recursive: true, force: true }); throw new Error(`${error.message}\n${logs}`); }
   let id = 0;
   const pending = new Map();
   const errors = [];
+  const requests = new Map();
   ws.addEventListener('message', event => {
     const message = JSON.parse(String(event.data));
+    if (message.method === 'Network.requestWillBeSent') requests.set(message.params.requestId, { url: message.params.request.url, status: 'pending' });
+    if (message.method === 'Network.responseReceived' && requests.has(message.params.requestId)) Object.assign(requests.get(message.params.requestId), { status: message.params.response.status });
+    if (message.method === 'Network.loadingFailed' && requests.has(message.params.requestId)) Object.assign(requests.get(message.params.requestId), { status: message.params.errorText });
     if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
     const entry = pending.get(message.id);
     if (!entry) return;
@@ -96,7 +103,7 @@ export async function startBrowser() {
   };
   try { await send('Page.enable', {}, 60000); await send('Runtime.enable', {}, 60000); }
   catch (error) { ws.close(); await stop(child); await rm(directory, { recursive: true, force: true }); throw error; }
-  return { send, evaluate, errors,
+  return { send, evaluate, errors, requests, debugOrigin,
     navigate: url => send('Page.navigate', { url }),
     click: text => evaluate(`(() => { const element = [...document.querySelectorAll('button')].find(item => (item.innerText.trim() === ${JSON.stringify(text)} || item.getAttribute('aria-label') === ${JSON.stringify(text)}) && item.getBoundingClientRect().width); if (!element) throw new Error('Missing button: ' + ${JSON.stringify(text)}); element.click(); })()`),
     fill: (selector, value) => evaluate(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); if (!input) throw new Error('Missing input'); const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, 'value').set.call(input, ${JSON.stringify(value)}); input.dispatchEvent(new Event('input', { bubbles: true })); })()`),

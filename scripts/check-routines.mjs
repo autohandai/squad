@@ -14,7 +14,7 @@
 // routine, and routines and their history survive a restart.
 
 import assert from "node:assert/strict";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { startBridge, until } from "./lib/reliability-browser.mjs";
@@ -40,6 +40,7 @@ async function check(label, run) {
   } catch (error) {
     failures.push({ label, error: error.message });
     console.error(`FAIL ${label}: ${error.message}`);
+    if (label.includes('when the bridge stopped')) console.error(error.stack);
   }
 }
 
@@ -91,8 +92,9 @@ await check("every 15 minutes aligns to the chosen start, not to the clock", () 
 await check("interval counts elapsed minutes through the New York fall-back", () => {
   assert.deepEqual(isoList({ kind: "interval", everyMinutes: 60, startDate: "2026-11-01", startTime: "00:30", timeZone: "America/New_York" }, "2026-11-01T04:30:00Z", 3), ["2026-11-01T05:30:00.000Z", "2026-11-01T06:30:00.000Z", "2026-11-01T07:30:00.000Z"]);
 });
-await check("interval clamps to 5..1440 minutes", () => {
-  assert.equal(normalizeSchedule({ kind: "interval", everyMinutes: 1 }).everyMinutes, 5);
+await check("interval supports 1..1440 minutes, including two-minute reminders", () => {
+  assert.equal(normalizeSchedule({ kind: "interval", everyMinutes: 1 }).everyMinutes, 1);
+  assert.equal(normalizeSchedule({ kind: "interval", everyMinutes: 2 }).everyMinutes, 2);
   assert.equal(normalizeSchedule({ kind: "interval", everyMinutes: 99999 }).everyMinutes, 1440);
 });
 await check("once in the past has no next occurrence", () => {
@@ -140,6 +142,8 @@ await check("routine records keep at most forty runs and expose active and last 
 // Part two: the real bridge
 
 const CLOCK_START = "2026-10-13T09:00:50Z";
+await mkdir(".codex-artifacts", { recursive: true });
+const workspace = await mkdtemp(join(process.cwd(), ".codex-artifacts/routines-"));
 
 const bridge = await startBridge({
   prepare: async (directory) => {
@@ -164,8 +168,7 @@ export class AutohandSDK {
   },
 });
 
-const workspace = process.cwd();
-const member = (id) => ({ id, name: id, role: "Engineer", skills: [], projects: [{ path: workspace }], workspace, permissions: { builtInPolicies: { squad_create_channel: "ask" } }, harness: { id: "autohand" } });
+const member = (id) => ({ id, name: id, role: "Engineer", skills: [], projects: [{ path: workspace }], workspace, permissions: { builtInPolicies: { squad_create_channel: "ask", squad_schedule: "ask" } }, harness: { id: "autohand" } });
 const calls = async () => (await readFile(join(bridge.directory, "calls.jsonl"), "utf8").catch(() => "")).split("\n").filter(Boolean).map((line) => JSON.parse(line));
 const release = (name) => writeFile(join(bridge.directory, `release-${name}`), "go");
 const hold = (name) => rm(join(bridge.directory, `release-${name}`), { force: true });
@@ -298,7 +301,7 @@ try {
     assert.equal(done.channelActions?.[0]?.type, "schedule", JSON.stringify(done.channelActions));
     assert.equal(done.channelActions[0].status, "proposed");
     assert.ok(!done.reply.includes("SQUAD_ACTION:"), "the reply describes the receipt, not the action line");
-    assert.match(done.reply, /Nothing is scheduled until you confirm/);
+    assert.match(done.reply, /Confirm it in Squad/);
     proposalId = done.channelActions[0].id;
     const proposals = (await bridge.api("/api/routines/proposals?status=proposed")).data.proposals;
     const proposal = proposals.find((item) => item.id === proposalId);
@@ -385,6 +388,7 @@ try {
   });
 } finally {
   await bridge.close();
+  await rm(workspace, { recursive: true, force: true });
 }
 
 if (failures.length) {

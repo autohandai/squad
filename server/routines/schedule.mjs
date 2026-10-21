@@ -20,7 +20,7 @@
 // change.
 
 export const SCHEDULE_KINDS = ["once", "weekdays", "interval", "monthly", "yearly", "cron"];
-export const MIN_INTERVAL_MINUTES = 5;
+export const MIN_INTERVAL_MINUTES = 1;
 export const MAX_INTERVAL_MINUTES = 1440;
 export const MAX_RUN_MINUTES = 24 * 60;
 export const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

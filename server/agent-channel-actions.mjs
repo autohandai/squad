@@ -56,11 +56,18 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
   async function begin(payload) {
     const actorId = sanitizeId(payload.agent?.id || payload.agentId);
     const identityValid = !payload.agent?.id || !payload.agentId || sanitizeId(payload.agent.id) === sanitizeId(payload.agentId);
-    await store.mutate(state => {
+    const schedulePolicy = await store.mutate(state => {
       register(state, payload.agent, payload.profile);
       for (const member of (Array.isArray(payload.squadMembers) ? payload.squadMembers : []).slice(0, 200)) register(state, member);
+      const actor = state.agentChannelAccess[actorId];
+      if (actor?.removed) return 'block';
+      const policy = actor?.agent?.permissions?.builtInPolicies?.squad_schedule;
+      return ['allow', 'ask', 'block'].includes(policy) ? policy : 'allow';
     });
-    return { actorId, identityValid, requestId: String(payload.requestId || randomUUID()).slice(0, 200), workspace: String(payload.workspace || ''), depth: Number(payload._channelActionDepth) || 0 };
+    const nested = payload.channel || {};
+    const channelId = String(payload.channelId || nested.channelId || nested.id || '');
+    const destination = channelId ? { channelId, threadId: String(payload.threadId || nested.threadId || ''), parentMessageId: String(payload.parentMessageId || nested.parentMessageId || '') } : null;
+    return { actorId, identityValid, requestId: String(payload.requestId || randomUUID()).slice(0, 200), workspace: String(payload.workspace || ''), depth: Number(payload._channelActionDepth) || 0, schedulePolicy, automationDraft: payload.automationDraft === true, destination };
   }
   async function setAccess(id, input) {
     id = sanitizeId(id);

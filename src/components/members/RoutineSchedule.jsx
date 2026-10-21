@@ -143,13 +143,13 @@ export function RoutineSchedule({ value, onChange, preview, locale, copy = {}, c
 
       {draft.kind === "interval" ? (
         <>
-          <Row label="Every" hint="5 to 1440 minutes">
+          <Row label="Every" hint="1 to 1440 minutes">
             <label className="inline-flex items-center gap-2 text-sm">
               <Input
                 type="number"
-                min={5}
+                min={1}
                 max={1440}
-                step={5}
+                step={1}
                 value={draft.everyMinutes}
                 onChange={(event) => update({ everyMinutes: Number(event.target.value) || 0 })}
                 className="h-9 w-24 text-sm"

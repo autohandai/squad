@@ -100,7 +100,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
   log({ kind: 'harness', resume: args.includes('resume') ? args[args.indexOf('resume') + 1] : '', ask: prompt.split('</turn_context>').pop().slice(0, 300), who, teamManaged: !!command, timeout: field('autohand-squad', 'tool_timeout_sec'), prompt });
   const ask = prompt.split('</operating_instructions>').pop().split('</turn_context>').pop();
   if (/^\\s*Message from Noah/.test(ask)) return say('Eva here: the build is green on main.');
-  const scenario = /team-scenario-([a-z-]+)/.exec(ask)?.[1];
+  const scenario = /team-scenario-([a-z-]+)/.exec(ask)?.[1] || (/Draft an automation:/.test(ask) ? 'schedule' : '');
   if (!command || !scenario) return say('Fixture turn done.');
   const proxy = child.spawn(command, field('autohand-squad', 'args'), { env: { ...process.env, ...field('autohand-squad', 'env') }, stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map();
@@ -152,6 +152,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
     if (scenario === 'old-name') await call('squad_message', { to: 'Noah', message: 'Still there?', wait_seconds: 30 });
     if (scenario === 'schedule') await call('squad_schedule', { title: 'Call Sam', instructions: 'Remind Igor to call Sam about the contract.', schedule: { kind: 'once', date: '2099-01-02', time: '09:00' }, timezone: 'Pacific/Auckland' });
     if (scenario === 'schedule-nozone') await call('squad_schedule', { title: 'Stretch', instructions: 'Remind Igor to stretch.', schedule: { kind: 'once', date: '2099-01-03', time: '15:00' } });
+    if (scenario === 'teach') await call('squad_teach', { text: 'Use release smoke checks before customer handoff.', request_id: 'transport-teach-once' });
   } finally { proxy.kill(); }
   say('Fixture turn done.');
 })().catch((error) => { console.error(error.message); process.exit(1); });
@@ -159,7 +160,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
 
 try {
   // --- pure pieces --------------------------------------------------------
-  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_task"]);
+  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_task"]);
   const roster = [{ id: "a1", name: "Eva Green" }, { id: "a2", name: "Noah" }, { id: "a3", name: "Max Power" }, { id: "a4", name: "Max Steel" }];
   assert.equal(resolveTeammate("@Eva,", roster).member?.id, "a1", "a first name with @ and a comma finds the teammate");
   assert.equal(resolveTeammate("eva green", roster).member?.id, "a1");
@@ -360,20 +361,33 @@ try {
   assert.deepEqual(JSON.parse(await readFile(join(state, "channels.json"), "utf8")).agentChannelAccess[eva.id].agent.formerNames, ["Eva Green"]);
   assert.equal(JSON.parse(await readFile(join(app, "agents", eva.id, "profile.json"), "utf8")).name, "Evie", "profile.json follows the rename before the next run");
 
-  // --- schedule: a reminder becomes a proposal the person confirms --------
+  // --- scheduling is real and automatic; editor drafts stay inert --------
   result = await chat(eva, "team-scenario-schedule");
   assert.equal(result.success, true, result.text);
   const proposal = result.data.channelActions.find((receipt) => receipt.type === "schedule");
   assert.ok(proposal, JSON.stringify(result.data.channelActions));
-  assert.equal(proposal.status, "proposed", JSON.stringify(proposal));
+  assert.equal(proposal.status, "confirmed", JSON.stringify(proposal));
+  assert.ok((await api(`/api/routines/${proposal.routineId}`)).data.enabled);
   log = await entries();
-  assert.match(toolText(log.filter((entry) => entry.name === "squad_schedule").at(-1)), /waiting for their confirmation/);
+  assert.match(toolText(log.filter((entry) => entry.name === "squad_schedule").at(-1)), /saved and enabled/);
   // The timezone is optional in the tool; without one the person's zone is used.
   result = await chat(eva, "team-scenario-schedule-nozone");
   const zoneless = result.data.channelActions.find((receipt) => receipt.type === "schedule");
-  assert.equal(zoneless?.status, "proposed", JSON.stringify(result.data.channelActions));
+  assert.equal(zoneless?.status, "confirmed", JSON.stringify(result.data.channelActions));
   const stretch = (await api("/api/routines/proposals")).data.proposals.find((item) => item.title === "Stretch");
   assert.equal(stretch?.timeZone, Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", JSON.stringify(stretch));
+  const beforeDraft = (await api('/api/routines')).data.routines.length;
+  const draft = await api('/api/routines/draft', {memberId:eva.id,agent:eva,workspace:root,text:'Remind Igor to call Sam tomorrow at 9',timeZone:'Pacific/Auckland'});
+  assert.equal(draft.success,true,draft.text);
+  assert.ok(draft.data.draft);
+  assert.equal((await api('/api/routines')).data.routines.length,beforeDraft,'managed MCP drafting cannot activate a schedule');
+
+  result = await chat(noah, 'team-scenario-teach');
+  assert.equal(result.success,true,result.text);
+  const teaching = result.data.channelActions.find(receipt=>receipt.type==='team_teaching');
+  assert.equal(teaching.deliveryIds.length,1);
+  await until(async()=>{const shared=(await api('/api/team')).data;return shared.deliveries.find(item=>item.id===teaching.deliveryIds[0])?.status==='completed';});
+  assert.ok((await api('/api/team')).data.memory.some(item=>item.text.includes('release smoke checks')));
 
   // --- a resumed Codex thread still gets the turn's context ----------------
   const resumed = (prompt) => api("/api/chat", { agentId: eva.id, agent: eva, workspace: root, prompt, squadMembers });

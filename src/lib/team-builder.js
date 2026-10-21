@@ -346,7 +346,7 @@ export function proposalMemberRecords(proposal, roleTemplates = []) {
       name: member.name,
       role: member.role,
       description: member.purpose,
-      instructions: `Act as ${member.role}. ${member.purpose}\n\n${brief}`,
+      instructions: `${member.instructions || `Act as ${member.role}. ${member.purpose}`}\n\n${brief}`,
       brainCard: { ...draft.brainCard, purpose: member.purpose },
       look: { avatar: "", employeeType: "" },
       skills: member.skills,

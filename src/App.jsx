@@ -13,6 +13,10 @@ import { VaultSettings } from "@/components/settings/VaultSettings";
 import { vaultNeedsYouRows } from "@/lib/vault";
 import { RoutineSchedule } from "@/components/members/RoutineSchedule";
 import { AutomationPlainEnglish } from "@/components/members/AutomationPlainEnglish";
+import { AccountAvatar } from "@/components/account/AccountAvatar";
+import { MemberReplyThread, useMemberThreadSummaries } from "@/components/chat/MemberReplyThread";
+import { automationAgenda, reconcileAutomationReplies } from "@/lib/automation-agenda";
+import { normalizeChannelGoal } from "@/lib/channel-goals";
 import { KeepWorkingSwitch } from "@/components/members/KeepWorkingSwitch";
 import { AgendaLine } from "@/components/chat/AgendaLine";
 import { RoutineRunList, RoutineRunRow } from "@/components/members/RoutineRunRow";
@@ -3204,6 +3208,8 @@ function normalizeChannelCopy(channel) {
     memberIds,
     projects: normalizeChannelProjects(channel.projects),
     section: String(channel.section || "").trim(),
+    purpose: String(channel.purpose || "").trim().slice(0, 4000),
+    goalSetup: normalizeChannelGoal(channel.goalSetup),
     creatorId: String(channel.creatorId || "").trim(),
     autoModeDefault: channel.autoModeDefault === true,
     // Who answers un-mentioned messages (ADR-0108); kept so the mirrored
@@ -4471,7 +4477,7 @@ function App() {
   tasksRef.current = tasks;
   const handoffRetriesRef = useRef(new Set());
   const chatMembersRef = useRef(new Map());
-  const [automations, setAutomations] = useState(() => {
+  const [localAutomations, setAutomations] = useState(() => {
     const storedAutomations = readStored(storageKeysFor("automations"), initialAutomations);
     return (Array.isArray(storedAutomations) ? storedAutomations : initialAutomations).map((automation) =>
       normalizeAutomationCopy(automation)
@@ -4498,6 +4504,9 @@ function App() {
   // below; declared there, the first render threw "Cannot access
   // 'routineProposals' before initialization" and the app could not render.
   const [routines, setRoutines] = useState([]);
+  const localAutomationsRef = useRef(localAutomations);
+  localAutomationsRef.current = localAutomations;
+  const automations = useMemo(() => automationAgenda(localAutomations, routines), [localAutomations, routines]);
   const [routineProposals, setRoutineProposals] = useState([]);
   // Member work plans (ADR-0124): the bridge's tasks per member, polled with routines.
   const [workTasks, setWorkTasks] = useState([]);
@@ -4571,6 +4580,25 @@ function App() {
   const [workspacesError, setWorkspacesError] = useState("");
   const [themePreference, setThemePreference] = useState(readThemePreference);
   const [skinId, setSkinId] = useState(readSkinId);
+  useEffect(() => {
+    function readSharedAppearance() {
+      const preference = readThemePreference();
+      setThemePreference(current => JSON.stringify(current) === JSON.stringify(preference) ? current : preference);
+      setSkinId(readSkinId());
+    }
+    function onStorage(event) {
+      if (!event.key || [...storageKeysFor("theme"), ...storageKeysFor("skin")].includes(event.key)) readSharedAppearance();
+    }
+    function onVisible() { if (document.visibilityState === "visible") readSharedAppearance(); }
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", readSharedAppearance);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", readSharedAppearance);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
   const [handoffSettings, setHandoffSettings] = useState(readHandoffSettings);
   const [chatSettings, setChatSettings] = useState(readChatSettings);
   const [notifications, setNotifications] = useState([]);
@@ -4700,6 +4728,9 @@ function App() {
   useEffect(() => {
     if (runs.length) setMessagesByAgent((current) => restoreRepliesFromRuns(current, runs));
   }, [runs]);
+  useEffect(() => {
+    setMessagesByAgent(current => reconcileAutomationReplies(current, routines));
+  }, [routines]);
   useEffect(() => {
     if (runtime?.serverStartedAt) {
       setMessagesByAgent((current) => recoverInterruptedChats(current, runtime.serverStartedAt));
@@ -4886,8 +4917,8 @@ function App() {
   }, [removedAgentIds]);
 
   useEffect(() => {
-    persistLocal(STORAGE_KEYS.automations, automations);
-  }, [automations]);
+    persistLocal(STORAGE_KEYS.automations, localAutomations);
+  }, [localAutomations]);
 
   useEffect(() => {
     persistLocal(STORAGE_KEYS.tasks, tasks);
@@ -5442,10 +5473,23 @@ function App() {
   const pendingTeamMemberNames = useMemo(() => teamBuilds.flatMap((build) => pendingBuildMembers(build).map((member) => member.name)), [teamBuilds]);
 
   function updateTeamBuild(id, patch) {
-    setTeamBuilds((current) => patchTeamBuildRecord(current, id, patch));
+    const next = patchTeamBuildRecord(teamBuildsRef.current, id, patch);
+    teamBuildsRef.current = next; setTeamBuilds(next);
   }
   function updateTeamBuildMember(id, key, patch) {
-    setTeamBuilds((current) => patchTeamBuildMember(current, id, key, patch));
+    const next = patchTeamBuildMember(teamBuildsRef.current, id, key, patch);
+    teamBuildsRef.current = next; setTeamBuilds(next);
+  }
+  async function saveChannelTeamBuild(build) {
+    if (!build.targetChannelId) return;
+    await api(`/api/channels/${encodeURIComponent(build.targetChannelId)}/goal/build`, { method: "PUT", body: JSON.stringify({ owner: build.goalOwner, build }) });
+  }
+  async function channelGoalProgress(build, status, error = "", memberIds = []) {
+    if (!build.targetChannelId) return null;
+    const result = await api(`/api/channels/${encodeURIComponent(build.targetChannelId)}/goal/progress`, { method: "POST", body: JSON.stringify({ owner: build.goalOwner, status, error, memberIds }) });
+    const channel = normalizeChannelCopy(result.channel);
+    setChannels(current => current.map(item => item.id === channel.id ? channel : item));
+    return channel;
   }
   function dismissTeamBuild(id) {
     setTeamBuilds((current) => current.filter((build) => build.id !== id));
@@ -5476,13 +5520,17 @@ function App() {
         if (member.status === "ready") continue;
         applyMember(member.key, { status: "preparing", error: "" });
         try {
+          await saveChannelTeamBuild({ ...build, members });
           const agent = await createAgent(member.draft, { id: member.id, navigate: false, ladderLevel: build.trusted ? undefined : "suggest-commands" });
           if (!agent) throw new Error("The bridge did not confirm the member.");
           memberIds[member.key] = agent.id || member.id;
           applyMember(member.key, { status: "ready", id: agent.id || member.id });
+          await saveChannelTeamBuild({ ...build, members });
         } catch (error) {
           applyMember(member.key, { status: "failed", error: error?.message || "could not be prepared" });
           apply({ status: "failed", error: `${member.name} could not be prepared.` });
+          await saveChannelTeamBuild({ ...build, members }).catch(() => {});
+          await channelGoalProgress(build, "failed", `${member.name} could not be prepared: ${error.message}`).catch(() => {});
           await reportTeamBuilt(build);
           return;
         }
@@ -5490,17 +5538,29 @@ function App() {
     }
     apply({ status: "finishing", error: "" });
     try {
+      await saveChannelTeamBuild({ ...build, members });
       const data = await api("/api/teams/import", {
         method: "POST",
         body: JSON.stringify({
           document: build.document,
           existingMemberNames: build.existingMemberNames || [],
           memberIds,
-          choices: { skills: true, presets: !build.trusted, channels: true, workflows: true, routines: true, connectors: true },
+          choices: { skills: true, presets: !build.trusted, channels: !build.targetChannelId, workflows: !build.targetChannelId, routines: !build.targetChannelId, connectors: !build.targetChannelId },
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
       build = { ...build, members, status: "ready", channels: data.channels || [], routines: data.routines || [], connectors: data.connectors?.added || [] };
+      if (build.targetChannelId) {
+        const ids = Object.values(memberIds);
+        await api(`/api/channels/${encodeURIComponent(build.targetChannelId)}/members`, { method: "POST", body: JSON.stringify({ add: ids }) });
+        const leadKey = build.document.members.find(member => member.name === build.document.team.lead)?.key;
+        const leadId = memberIds[leadKey] || ids[0];
+        await api(`/api/channels/${encodeURIComponent(build.targetChannelId)}`, { method: "PATCH", body: JSON.stringify({ responder: { mode: "lead", leadMemberId: leadId } }) });
+        await saveChannelTeamBuild(build);
+        // Ready atomically hands the first turns to the bridge. They keep
+        // running and save replies even if this window closes now.
+        await channelGoalProgress(build, "ready", "", ids);
+      }
       dismissTeamBuild(id);
       await reportTeamBuilt(build);
       await reloadChannelsFromBridge().catch(() => {});
@@ -5514,6 +5574,7 @@ function App() {
       if (!build.trusted) void refreshTeamPresets();
     } catch (error) {
       apply({ status: "bridge-failed", error: error?.message || "The bridge could not add the rest." });
+      await channelGoalProgress(build, "failed", error.message).catch(() => {});
       await reportTeamBuilt(build);
     }
   }
@@ -5521,7 +5582,7 @@ function App() {
   // Non-blocking: the dialog has already closed when this runs. The plan
   // comes from the bridge (names made unique against the squad and the
   // members still being prepared), the drafts are what createAgent takes.
-  async function addTeam(document, { trusted = false, source = "template" } = {}) {
+  async function addTeam(document, { trusted = false, source = "template", targetChannelId = "", goalOwner = "", goalObjective = "", workspace = "" } = {}) {
     const validated = validateTeamFile(document);
     if (!validated.ok) return;
     const existingMemberNames = [...membersRef.current.map((agent) => agent.name), ...pendingTeamMemberNames];
@@ -5538,6 +5599,7 @@ function App() {
       const record = recordByKey.get(member.key);
       if (!record) continue;
       const draft = buildMemberDraft(record, member.name, { trusted });
+      if (workspace) draft.workspace = workspace;
       const template = draft.employeeType ? roleTemplates.find((item) => item.id === draft.employeeType) : null;
       draft.avatar = draft.avatar || birdAvatarForRole(draft.employeeType, draft.role, draft.name);
       draft.skillSource = template?.skillSource || AUTOHAND_SKILLS_REGISTRY_URL;
@@ -5551,10 +5613,12 @@ function App() {
       memberIds[member.key] = createSquadMemberId();
       drafts[member.key] = draft;
     }
-    const build = { ...createTeamBuild({ document: validated.document, plan, drafts, memberIds, trusted, source }), existingMemberNames };
+    const build = { ...createTeamBuild({ document: validated.document, plan, drafts, memberIds, trusted, source }), existingMemberNames, targetChannelId, goalOwner, goalObjective };
+    await saveChannelTeamBuild(build);
     teamBuildsRef.current = [...teamBuildsRef.current, build];
     setTeamBuilds((current) => [...current, build]);
     void runTeamBuild(build.id);
+    return build;
   }
   function addTeamFromProposal(proposal) {
     void addTeam(teamDocumentFromProposal(proposal, { roleTemplates, app: "autohand-squad" }), { trusted: true, source: "objective" });
@@ -7627,8 +7691,9 @@ function App() {
   }
 
   async function createChannel(draft, { navigateTo = true, creatorId = "user" } = {}) {
+    const workspace = activeAgent?.workspace || fallbackWorkspace;
     const channel = normalizeChannelCopy(await api("/api/channels", {
-      method: "POST", body: JSON.stringify({ ...draft, id: draft.id || `channel-${crypto.randomUUID()}`, creatorId }),
+      method: "POST", body: JSON.stringify({ ...draft, projects: draft.projects?.length ? draft.projects : workspace ? [{ name: workspaceName(workspace) || "Project", path: workspace }] : [], goalSetup: { status: "awaiting" }, id: draft.id || `channel-${crypto.randomUUID()}`, creatorId }),
     }));
     if (!channel) throw new Error("The bridge did not return a valid channel. Try again.");
     setChannels((current) => [...current.filter(item => item.id !== channel.id), channel]);
@@ -7796,10 +7861,8 @@ function App() {
       workspace: selectedWorkspace,
       policy: agent.launch?.policy,
       model: agent.launch?.model,
-      // Deliberately not pinned to "cli". Doing so skipped the warm session
-      // pool entirely and spawned a fresh CLI for every channel message,
-      // measured at 15 s against 4 s over the SDK. The bridge already falls
-      // back to the CLI when the SDK cannot start (ADR-0030).
+      // The bridge uses the SDK when available, with a fresh thread scope
+      // and saved thread history so parallel conversations stay separate.
       timeoutMs: 300000,
       profile,
       agent: withChannelProjects(channelActionMember(agent, selectedWorkspace), channelProjects),
@@ -8026,10 +8089,43 @@ function App() {
   // One-prompt channel dispatch: a single user prompt opens a thread and fans
   // out to every squad member assigned to the channel; each member chooses its
   // own execution plan and posts an in-thread reply.
-  async function sendChannelPrompt(channelId, { prompt, autoMode, selfJudge, canvases = [], attachments = [], anchors = [] } = {}) {
+  const channelGoalRequestsRef = useRef(new Set());
+  async function startChannelGoal(channel, objective, { resume = false } = {}) {
+    if (channelGoalRequestsRef.current.has(channel.id)) return;
+    channelGoalRequestsRef.current.add(channel.id);
+    const owner = crypto.randomUUID();
+    let claimed = false;
+    try {
+      const claim = await api(`/api/channels/${encodeURIComponent(channel.id)}/goal`, { method: "POST", body: JSON.stringify({ objective, owner, resume }) });
+      const current = normalizeChannelCopy(claim.channel);
+      setChannels(items => items.map(item => item.id === current.id ? current : item));
+      await reloadChannelsFromBridge();
+      if (!claim.claimed) return;
+      claimed = true;
+      if (claim.build) {
+        const build = { ...claim.build, goalOwner: owner, status: claim.build.members.every(member => member.status === "ready") ? "bridge-failed" : "preparing", error: "" };
+        await saveChannelTeamBuild(build);
+        teamBuildsRef.current = [...teamBuildsRef.current.filter(item => item.id !== build.id), build];
+        setTeamBuilds(teamBuildsRef.current);
+        void runTeamBuild(build.id);
+        return;
+      }
+      const workspace = current.projects?.[0]?.path || activeAgent?.workspace || fallbackWorkspace;
+      const designed = await api("/api/teams/design", { method: "POST", body: JSON.stringify({ objective: current.goalSetup.objective, workspace, channelName: current.name, existingNames: membersRef.current.map(member => member.name) }) });
+      const document = teamDocumentFromProposal(designed.proposal, { roleTemplates, app: "autohand-squad" });
+      await addTeam(document, { trusted: true, source: "channel-goal", targetChannelId: current.id, goalOwner: owner, goalObjective: current.goalSetup.objective, workspace });
+      await reloadChannelsFromBridge();
+    } catch (error) {
+      if (claimed) await channelGoalProgress({ targetChannelId: channel.id, goalOwner: owner }, "failed", error.message).catch(() => {});
+      setChannelOperationError(error.message);
+    } finally { channelGoalRequestsRef.current.delete(channel.id); }
+  }
+
+  async function sendChannelPrompt(channelId, { prompt, autoMode, selfJudge, resumeGoal = false, canvases = [], attachments = [], anchors = [] } = {}) {
     const channel = channels.find((item) => item.id === channelId);
     const text = String(prompt || "").trim();
     if (!channel || !text) return;
+    if (channel.goalSetup && channel.goalSetup.status !== "ready") return startChannelGoal(channel, text, { resume: resumeGoal });
     const mentions = resolveChannelMentionTargets(text, channel, agents);
     // Responder rules (ADR-0108): mentions and @here win; otherwise the
     // channel's mode decides, and only Auto asks the bridge to pick.
@@ -8516,7 +8612,17 @@ function App() {
   // dispatches runs for members the bridge cannot run on its own.
   const dispatchedRoutineRunsRef = useRef(new Set());
   const loadRoutines = useCallback(async () => {
-    const [list, proposals, work] = await Promise.all([api("/api/routines"), api("/api/routines/proposals?status=proposed"), api("/api/work").catch(() => null)]);
+    let [list, proposals, work] = await Promise.all([api("/api/routines"), api("/api/routines/proposals?status=proposed"), api("/api/work").catch(() => null)]);
+    let imported = false;
+    for (const automation of localAutomationsRef.current) {
+      if (automation.routineId || automation.triggerType !== "schedule") continue;
+      const payload = routinePayloadFromAutomation(automation, routineDraftFromAutomation(automation));
+      if (!payload) continue;
+      const saved = await api("/api/routines", { method: "POST", body: JSON.stringify({ ...payload, legacyAutomationId: automation.id }) });
+      setAutomations(current => current.map(item => item.id === automation.id ? { ...item, routineId: saved.id } : item));
+      imported = true;
+    }
+    if (imported) list = await api("/api/routines");
     setRoutines(Array.isArray(list?.routines) ? list.routines : []);
     setRoutineProposals(Array.isArray(proposals?.proposals) ? proposals.proposals : []);
     if (work) setWorkTasks(Array.isArray(work.tasks) ? work.tasks : []);
@@ -8532,7 +8638,8 @@ function App() {
   async function dispatchRoutineRun(dispatch) {
     if (!dispatch?.runId || dispatchedRoutineRunsRef.current.has(dispatch.runId)) return;
     dispatchedRoutineRunsRef.current.add(dispatch.runId);
-    const run = await startAutohand(dispatch.memberId, { prompt: dispatch.prompt, workspace: dispatch.workspace, mode: "auto", modeLabel: "Auto", policy: "restricted", model: dispatch.model || "", dryRun: false });
+    const member = membersRef.current.find(item => item.id === dispatch.memberId);
+    const run = await startAutohand(dispatch.memberId, { prompt: dispatch.prompt, workspace: dispatch.workspace, mode: "auto", modeLabel: "Auto", policy: member?.launch?.policy || "yes", model: dispatch.model || "", dryRun: false });
     try {
       if (run?.id) await api(`/api/routines/runs/${encodeURIComponent(dispatch.runId)}/started`, { method: "POST", body: JSON.stringify({ memberRunId: run.id }) });
       else await api(`/api/routines/runs/${encodeURIComponent(dispatch.runId)}/finished`, { method: "POST", body: JSON.stringify({ status: "failed", preview: "Autohand did not start from the app." }) });
@@ -8578,13 +8685,13 @@ function App() {
   async function syncAutomationRoutine(automation) {
     const payload = automation.triggerType === "schedule" ? routinePayloadFromAutomation(automation) : null;
     if (!payload) {
-      if (automation.routineId) await api(`/api/routines/${encodeURIComponent(automation.routineId)}`, { method: "DELETE" }).catch(() => {});
+      if (automation.routineId) await api(`/api/routines/${encodeURIComponent(automation.routineId)}`, { method: "DELETE" });
       await loadRoutines().catch(() => {});
       return { ...automation, routineId: "" };
     }
     let saved = null;
     if (automation.routineId) {
-      saved = await api(`/api/routines/${encodeURIComponent(automation.routineId)}`, { method: "PUT", body: JSON.stringify(payload) }).catch(() => null);
+      saved = await api(`/api/routines/${encodeURIComponent(automation.routineId)}`, { method: "PUT", body: JSON.stringify(payload) });
     }
     if (!saved) saved = await api("/api/routines", { method: "POST", body: JSON.stringify(payload) });
     await loadRoutines().catch(() => {});
@@ -8592,7 +8699,7 @@ function App() {
   }
   async function removeAutomationRoutine(automation) {
     if (!automation?.routineId) return;
-    await api(`/api/routines/${encodeURIComponent(automation.routineId)}`, { method: "DELETE" }).catch(() => {});
+    await api(`/api/routines/${encodeURIComponent(automation.routineId)}`, { method: "DELETE" });
     await loadRoutines().catch(() => {});
   }
 
@@ -8623,7 +8730,7 @@ function App() {
       instructions: draft.instructions.trim(),
       brainCard: normalizeBrainCard(draft.brainCard, draft),
       skillSource: draft.skillSource || AUTOHAND_SKILLS_REGISTRY_URL,
-      launch: { mode: "prompt", policy: "restricted", model: "", dryRun: false },
+      launch: { mode: "prompt", policy: "yes", model: "", dryRun: false },
       // An imported member starts where it can only ask (ADR-0106).
       permissions: options.ladderLevel ? normalizePermissionState({ ...createDefaultPermissionState(), ...permissionPresetForAutonomyLadder(options.ladderLevel) }) : createDefaultPermissionState(),
       modelAssignment: { mode: "inherit" },
@@ -8643,6 +8750,7 @@ function App() {
       profileFiles: buildAgentProfileFiles({ ...baseAgent, profileFiles: draft.profileFiles }),
     };
     function publishAgent(created) {
+      membersRef.current = membersRef.current.some(item => item.id === id) ? membersRef.current.map(item => item.id === id ? created : item) : [...membersRef.current, created];
       setAgents((current) => current.some((item) => item.id === id)
         ? current.map((item) => item.id === id ? created : item)
         : [...current, created]);
@@ -8688,6 +8796,7 @@ function App() {
         profileDocs: provision.profileDocs,
         updatedAt: provisionedAt,
       };
+      await api(`/api/members/${encodeURIComponent(id)}/channel-access`, { method: "PUT", body: JSON.stringify({ agent: channelActionMember(provisionedAgent, workspace), profile: buildAgentProfile(provisionedAgent, workspace) }) });
       publishAgent(provisionedAgent);
       // Provisioning outcomes are not memory proposals. A proposal is a
       // candidate fact the person accepts or rejects into a member's memory;
@@ -9470,7 +9579,7 @@ function App() {
         workspace,
         mode: "auto",
         modeLabel: "Auto",
-        policy: "restricted",
+        policy: automationAgent?.launch?.policy || "yes",
         model: automation.model === "auto" ? "" : automation.model,
         dryRun: false,
       });
@@ -9857,6 +9966,7 @@ function App() {
                 channelProposals={channelProposals}
                 onResolveProposal={resolveChannelProposal}
                 onDispatch={sendChannelPrompt}
+                goalSetupRunning={channelGoalRequestsRef.current.has(channelIdFromRoute(route)) || teamBuilds.some(build => build.targetChannelId === channelIdFromRoute(route) && ["preparing", "finishing"].includes(build.status))}
                 onFollowUp={sendThreadFollowUp}
                 canvasRefreshKey={canvasRefreshKey}
                 initialCanvasId={requestedCanvasId}
@@ -10230,12 +10340,7 @@ function messageCreatedTime(message, locale = DEFAULT_LOCALE) {
 function ChannelUserAvatar({ className }) {
   const { profile } = useContext(AccountContext);
   return (
-    <Avatar className={cn("size-8 rounded-md border border-border/70 bg-primary/12", className)}>
-      {profile.avatar ? <AvatarImage src={profile.avatar} alt="" /> : null}
-      <AvatarFallback className="rounded-md bg-primary/12 text-primary">
-        <span className="text-xs font-semibold">{profile.initials || "?"}</span>
-      </AvatarFallback>
-    </Avatar>
+    <AccountAvatar profile={profile} className={cn("size-8 border border-border/70", className)} />
   );
 }
 
@@ -10478,6 +10583,7 @@ function ChannelsPage({
   onDeleteChannel,
   onToggleMember,
   onDispatch,
+  goalSetupRunning = false,
   onFollowUp,
   reactionsByMessage = {},
   onReact,
@@ -10517,6 +10623,8 @@ function ChannelsPage({
   const [view, setView] = useState("messages");
   const [activeCanvasId, setActiveCanvasId] = useState("");
   const channel = channels.find((item) => item.id === activeChannelId) || null;
+  const goalSetup = channel?.goalSetup;
+  const needsGoal = Boolean(goalSetup && goalSetup.status !== "ready");
   const threads = channel ? channelThreads[channel.id] || [] : [];
   const channelMessages = channel ? messagesByChannel[channel.id] || [] : [];
   // Repository rows sit in the stream in time order beside the messages.
@@ -11085,6 +11193,12 @@ function ChannelsPage({
           ) : (
           <ScrollArea className="min-h-0 flex-1 px-2 lg:px-4">
             <div className="mx-auto w-full max-w-5xl py-3">
+              {needsGoal ? <div className="mb-5 border-b border-border/70 px-3 pb-4 pt-2" data-testid="channel-goal-setup">
+                <p className="text-sm font-medium">{goalSetup.status === "awaiting" ? `What’s the goal for #${channel.name}?` : goalSetup.status === "designing" ? "Designing a specialized team for your goal…" : goalSetup.status === "preparing" ? "Preparing the team and connecting this channel…" : "Team setup needs another attempt."}</p>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{goalSetup.status === "awaiting" ? "Describe what you want to achieve. Squad will prepare the right specialists, connect them here and start the work." : goalSetup.objective}</p>
+                {goalSetup.error ? <p role="alert" className="mt-2 text-sm text-destructive">{goalSetup.error}</p> : null}
+                {goalSetup.objective && !goalSetupRunning ? <Button variant="outline" size="sm" className="mt-3" onClick={() => onDispatch?.(channel.id, { prompt: goalSetup.objective, resumeGoal: true })}>{goalSetup.status === "failed" ? "Retry team setup" : "Resume team setup"}</Button> : null}
+              </div> : null}
               <ChannelStream
                 channel={channel}
                 messages={streamWithGitEvents}
@@ -11148,7 +11262,7 @@ function ChannelsPage({
                     </>
                   );
                 }}
-                emptyLabel={members.length ? (
+                emptyLabel={needsGoal ? null : members.length ? (
                   // Say who is here and how a message reaches them.
                   <>
                     {copy.channelNoThreads}{" "}
@@ -11226,16 +11340,16 @@ function ChannelsPage({
                 </div>
               ) : null}
               <MessageComposer
-                placeholder={formatCopy(copy.messageChannel || "Message #{name}", { name: channel.name })}
+                placeholder={goalSetup?.status === "awaiting" ? `What’s the goal for #${channel.name}?` : formatCopy(copy.messageChannel || "Message #{name}", { name: channel.name })}
                 lastSent={[...(messagesByChannel[channel.id] || [])].reverse().find((message) => message.role === "user" && String(message.body || "").trim())?.body || ""}
                 mentionItems={mentionItems}
                 value={draft}
                 onValueChange={setDraft}
-                busy={false}
-                disabled={!members.length && !replyTo}
+                busy={goalSetupRunning}
+                disabled={goalSetupRunning || (!members.length && !replyTo && !needsGoal)}
                 onSubmit={submitDraft}
                 onAttach={attachFiles}
-                hint={attachHint || (!members.length ? copy.channelNoMembers : "")}
+                hint={attachHint || (needsGoal ? "The goal determines the team; no extra confirmation is needed." : !members.length ? copy.channelNoMembers : "")}
               />
               {/* Height is reserved so a member starting or stopping never
                   shifts the composer under the cursor (DESIGN.md, ADR-0014). */}
@@ -12203,7 +12317,7 @@ function buildChannelProfileContext(channel, agent, agents = [], { autoMode, sel
     "Return a conversational answer only. Do not expose SDK event objects, JSON envelopes, raw tool traces, or transport metadata in the user-facing reply.",
     autoMode || selfJudge
       ? "Auto mode (self-judge): ON for this thread. Judge your own result and continue without waiting for approval."
-      : "Auto mode (self-judge): OFF for this thread. Pause and ask before destructive or ambiguous actions; the user reviews each step.",
+      : "Self-judge continuation is OFF for this thread. Carry out the requested work using your saved execution and tool policies. Ask only when a saved policy or a missing decision requires it; this switch does not add a confirmation for every step.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -12356,7 +12470,7 @@ function ChannelCreateDialog({
         <form onSubmit={submitCreate} className="flex flex-col gap-5">
           <DialogHeader>
             <DialogTitle>{copy.createChannel}</DialogTitle>
-            <DialogDescription>{copy.channelsDescription}</DialogDescription>
+            <DialogDescription>Create the channel, then describe its goal in chat. Squad will prepare the specialists and start their work.</DialogDescription>
           </DialogHeader>
 
           <div className="flex flex-col gap-2">
@@ -13022,7 +13136,7 @@ function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings
           on the row it was 12px of dead space in the normal case, and it made
           the footer top-heavy - 29px above the name against 16px below. */}
       <div className="flex items-center gap-3 rounded-md px-1 py-2">
-        <span className="grid size-9 place-items-center rounded-md bg-muted text-sm font-semibold">{profile.initials}</span>
+        <AccountAvatar profile={profile} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold">{profile.name}</span>
           <span className="block truncate text-xs text-muted-foreground">{profile.email || copy.loggedIn}</span>
@@ -13082,9 +13196,7 @@ function AccountMenuButton({
               </Badge>
             </div>
             <div className="flex min-w-0 items-center gap-3">
-              <span className="grid size-9 place-items-center rounded-md bg-muted text-sm font-semibold">
-                {profile.initials}
-              </span>
+              <AccountAvatar profile={profile} />
               <span className="min-w-0">
                 <span className="block truncate text-sm font-semibold">{profile.name}</span>
                 <span className="block truncate text-xs text-muted-foreground">{profile.email || copy.loggedIn}</span>
@@ -13555,6 +13667,9 @@ function Conversation({
       ? requestedWorkspace
       : getAgentWorkspace(agent, runtime, workspaces);
   const [workspace, setWorkspace] = useState(defaultWorkspace);
+  const [replyRoot, setReplyRoot] = useState(null);
+  const replyThreads = useMemberThreadSummaries(api, agent.id);
+  const replySheet = <MemberReplyThread api={api} member={agent} root={replyRoot} onClose={() => setReplyRoot(null)} workspace={workspace} renderBody={text => <MarkdownBlocks text={text} />} />;
   const [mode, setMode] = useState(defaultLaunch.mode);
   const [policy, setPolicy] = useState(defaultLaunch.policy);
   const [model, setModel] = useState(defaultLaunch.model || "");
@@ -14491,7 +14606,7 @@ function Conversation({
       try {
         saved = await onRoutineSync(saved);
       } catch (error) {
-        onLocalMessage?.(agent.id, { id: `routine-save-${Date.now()}`, role: "agent", body: `The schedule was not saved on the bridge: ${error.message}`, status: "complete" });
+        throw new Error(`The schedule was not saved on the bridge: ${error.message}`);
       }
     }
     setAutomations((current) => [saved, ...current]);
@@ -14608,12 +14723,13 @@ function Conversation({
   if (compact) {
     return (
       <div className="flex min-h-0 flex-1 flex-col bg-background" data-testid="quick-chat-conversation">
+        {replySheet}
         {currentGoal ? <div className="shrink-0 px-3"><MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /></div> : null}
         <ScrollArea className="min-h-0 flex-1">
           <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} className="px-3 sm:px-3" />
           <div className="flex flex-col gap-4 px-3 py-3">
             {hasConversationMessages ? localizedMessages.map((message) => (
-              <SquadMessage key={message.id} compact agent={agent} message={message} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} memberBusy={Boolean(chatSending)} />
+              <SquadMessage key={message.id} compact agent={agent} message={message} thread={replyThreads.find(thread => thread.parentMessageId === message.id)} onReply={setReplyRoot} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} memberBusy={Boolean(chatSending)} />
             )) : <p className="py-3 text-sm text-muted-foreground">Send a message to {agent.name}.</p>}
             <div ref={messagesEndRef} aria-hidden="true" />
           </div>
@@ -14764,6 +14880,7 @@ function Conversation({
             copy={copy}
             locale={locale}
           />
+          <Button variant="ghost" size="sm" aria-label="Reply threads" onClick={() => setReplyRoot({})}>Threads{replyThreads.some(thread => thread.working) ? " · working" : ""}</Button>
           {!compact ? <>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -14874,6 +14991,8 @@ function Conversation({
                         <SquadMessage
                           agent={agent}
                           message={message}
+                          thread={replyThreads.find(thread => thread.parentMessageId === message.id)}
+                          onReply={setReplyRoot}
                           computerEvidence={computerEvidenceByMessage.get(message.id)}
                           copy={copy}
                           chatSettings={chatSettings}
@@ -15191,6 +15310,7 @@ function Conversation({
             runs={runs}
             automations={automations}
             setAutomations={setAutomations}
+            onRoutineSync={onRoutineSync}
             runAutomation={runAutomation}
             activeTab={panelTab}
             setActiveTab={setPanelTab}
@@ -15210,6 +15330,7 @@ function Conversation({
           />
         </SheetContent>
       </Sheet>
+      {replySheet}
 
       <AutomationFormDialog
         agent={agent}
@@ -15393,13 +15514,6 @@ function launchPermissionWarnings({ permissions, prompt, mode, policy }) {
   const value = String(prompt || "").toLowerCase();
   const warnings = [];
 
-  if (policy === "yes" || permissions.permissionMode === "unrestricted") {
-    warnings.push({
-      id: "yes-policy",
-      title: "Approval boundary",
-      detail: "This launch can auto-approve broad tool use. Switch back to an ask-first policy unless this member has an explicit saved automation policy.",
-    });
-  }
   if (mode === "auto" && ladder.rank < 4) {
     warnings.push({
       id: "auto-low-level",
@@ -15454,9 +15568,10 @@ function LaunchPermissionWarnings({ warnings = [] }) {
 }
 
 
-const SquadMessage = memo(function SquadMessage({ agent, message, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onEditResend, onFolderAccess, onScheduleOffer, memberBusy = false }) {
+const SquadMessage = memo(function SquadMessage({ agent, message, thread, onReply, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onEditResend, onFolderAccess, onScheduleOffer, memberBusy = false }) {
   const isUser = message.role === "user";
-  if (!isUser) return <AgentResponseMessage compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onEditResend={onEditResend} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} memberBusy={memberBusy} />;
+  const replyAction = onReply && message.status !== "loading" && message.body ? <Button type="button" size="sm" variant="ghost" className="h-6 px-1.5 text-xs text-muted-foreground" aria-label="Reply in thread" onClick={() => onReply(thread ? {threadId:thread.id} : message)}>{thread?.replyCount ? `${thread.replyCount} ${thread.replyCount === 1 ? "reply" : "replies"}` : "Reply"}{thread?.working ? " · working" : ""}</Button> : null;
+  if (!isUser) return <AgentResponseMessage replyAction={replyAction} compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onEditResend={onEditResend} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} memberBusy={memberBusy} />;
 
   return (
     <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
@@ -15464,11 +15579,12 @@ const SquadMessage = memo(function SquadMessage({ agent, message, computerEviden
         <MarkdownBlocks text={message.body} />
       </div>
       <time className="pr-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" title={messageFullTime(message)} dateTime={messageIsoTime(message)}>{message.time}</time>
+      {replyAction}
     </article>
   );
 });
 
-function AgentResponseMessage({ agent, message, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onEditResend, onFolderAccess, onScheduleOffer, memberBusy = false }) {
+function AgentResponseMessage({ agent, message, replyAction, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onEditResend, onFolderAccess, onScheduleOffer, memberBusy = false }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
   // Trace normalisation and body parsing are the expensive part of a row.
   const view = useMemo(() => buildAgentResponseView(message), [message]);
@@ -15510,6 +15626,7 @@ function AgentResponseMessage({ agent, message, computerEvidence = [], compact =
           {message.status === "stopped" ? <span>· Stopped</span> : null}
           {hasVisibleAnswer && !isError ? <ReadAloudButton text={view.answer} message={message} api={api} auto={Boolean(agent.readAloud)} compact={compact} copy={copy} /> : null}
           {hasVisibleAnswer && !isError && !isLoading ? <CopyButton text={view.answer} label="Copy reply" className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" /> : null}
+          {replyAction}
         </div>
 
         {showProgressPlaceholder && !taskProgressFromMessage(message)?.items?.length ? (
@@ -20712,6 +20829,7 @@ function AutomationsPage({
         saved = await onRoutineSync(saved);
       } catch (error) {
         setRoutineError(`The schedule was not saved on the bridge: ${error.message}`);
+        return;
       }
     }
     setAutomations((current) => {
@@ -20728,17 +20846,23 @@ function AutomationsPage({
     }
   }
 
-  function deleteAutomation(automation) {
-    void onRoutineRemove?.(automation);
+  async function deleteAutomation(automation) {
+    setRoutineError("");
+    try { await onRoutineRemove?.(automation); }
+    catch (error) { setRoutineError(error.message); return; }
     setAutomations((current) => current.filter((item) => item.id !== automation.id));
     if (automationId) {
       navigate(automationListPath(agent.id));
     }
   }
 
-  function toggleAutomation(automation) {
+  async function toggleAutomation(automation) {
     const timestamp = new Date().toISOString();
-    if (automation.routineId && onRoutineSync) void onRoutineSync({ ...automation, status: automation.status === "active" ? "paused" : "active" }).catch((error) => setRoutineError(error.message));
+    setRoutineError("");
+    if (onRoutineSync) {
+      try { await onRoutineSync({ ...automation, status: automation.status === "active" ? "paused" : "active" }); }
+      catch (error) { setRoutineError(error.message); return; }
+    }
     setAutomations((current) =>
       current.map((item) =>
         item.id === automation.id
@@ -20801,7 +20925,7 @@ function AutomationsPage({
         {routineError ? <p role="alert" className="text-sm text-destructive">{routineError}</p> : null}
 
         {automations.length ? (
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="divide-y divide-border/70" data-testid="member-automations">
             {automations.map((automation) => (
               <AutomationCard
                 key={automation.id}
@@ -20834,6 +20958,7 @@ function AutomationsPage({
           if (!open) setEditingAutomation(null);
         }}
         onSave={saveAutomation}
+        saveError={routineError}
       />
     </div>
   );
@@ -20861,20 +20986,19 @@ function AutomationCard({ automation, routine = null, agent, navigate, onEdit, o
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <section className="relative w-full max-w-xl rounded-md border border-border/85 bg-card/55 p-5 shadow-none">
+    <section className="relative flex w-full items-center gap-4 py-4">
       <button
         type="button"
-        className="block min-w-0 text-left outline-none transition-colors hover:text-primary focus-visible:ring-[3px] focus-visible:ring-ring/40"
+        className="block min-w-0 flex-1 text-left outline-none transition-colors hover:text-primary focus-visible:ring-[3px] focus-visible:ring-ring/40"
         onClick={() => navigate(automationDetailPath(agent.id, automation.id))}
       >
         <span className="block truncate text-base font-semibold">{automation.name}</span>
-        <span className="mt-3 block text-sm text-muted-foreground">{routine?.description ? `${routine.description} · ${routine.schedule?.timeZone || ""}` : automationScheduleLabel(automation, locale)}</span>
+        <span className="mt-1 block text-sm text-muted-foreground">{routine?.description ? `${routine.description} · ${routine.schedule?.timeZone || ""}` : automationScheduleLabel(automation, locale)}</span>
+        {routine ? <RoutineRunRow routine={routine} locale={locale} compact className="mt-1" /> : null}
       </button>
-      <div className="my-5 border-t border-dashed border-border/80" />
       <div className="flex items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <Switch checked={automation.status === "active"} onCheckedChange={() => onToggle(automation)} />
-          {routine ? <RoutineRunRow routine={routine} locale={locale} compact className="min-w-0" /> : <span className="truncate text-sm text-muted-foreground">Next: {automationNextRunLabel(automation, locale)}</span>}
+          <Switch aria-label={automation.name} checked={automation.status === "active"} onCheckedChange={() => onToggle(automation)} />
         </div>
         <div className="relative">
           <Button
@@ -21105,6 +21229,7 @@ function AutomationDetailView({
           if (!open) setEditingAutomation(null);
         }}
         onSave={onSave}
+        saveError={routineError}
       />
     </div>
   );
@@ -21144,7 +21269,7 @@ function previewRoutineOnBridge(schedule) {
   return api("/api/routines/preview", { method: "POST", body: JSON.stringify({ schedule }) });
 }
 
-function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, workspaces, previewRoutine = previewRoutineOnBridge, open, onOpenChange, onSave }) {
+function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, workspaces, previewRoutine = previewRoutineOnBridge, open, onOpenChange, onSave, saveError = "" }) {
   const [draft, setDraft] = useState(() => automationDraftFrom(automation, agent, defaultWorkspace));
   const workspaceChoices = workspaceOptions(workspaces, draft.workspace, runtime);
   const projectChoices = normalizeAgentProjects(agent?.projects, agent?.workspace, workspaces);
@@ -21158,6 +21283,8 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
   const [plainAnswer, setPlainAnswer] = useState("");
   const [plain, setPlain] = useState({ status: "idle" });
   const [handOpen, setHandOpen] = useState(!isNew);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const drafted = plain.status === "proposed" || plain.status === "read-from-words";
 
   useEffect(() => {
@@ -21205,10 +21332,13 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
     setDraft((current) => ({ ...current, ...patch }));
   }
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
-    if (!isValid) return;
-    onSave(draft);
+    if (!isValid || saving) return;
+    setError(""); setSaving(true);
+    try { await onSave(draft); }
+    catch (problem) { setError(problem.message); }
+    finally { setSaving(false); }
   }
 
   return (
@@ -21222,6 +21352,7 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
         <form className="flex max-h-[88svh] flex-col" onSubmit={submit}>
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
             <h2 className="text-xl font-semibold tracking-normal">{automation?.id ? "Edit Automation" : "New Automation"}</h2>
+            {error || saveError ? <p role="alert" className="mt-3 text-sm text-destructive">{error || saveError}</p> : null}
 
             {isNew ? (
               <div className="mt-5 grid gap-4">
@@ -21485,8 +21616,8 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!isValid}>
-              Save
+            <Button type="submit" disabled={!isValid || saving}>
+              {saving ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
         </form>

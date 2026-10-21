@@ -58,6 +58,22 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
+    name: "squad_teach",
+    description: "Teach or share a lesson with the team when the person asks. Saves the reusable lesson in shared memory and starts a real message delivery to each selected teammate, on their own engine. Omit recipients for the whole team. Returns delivery ids and honest current states; squad_replies collects their answers. Do not claim someone learned it before they answer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", minLength: 1, maxLength: 500, description: "The reusable lesson, with enough context to apply it." },
+        // The pinned CLI treats a `to` argument as a filesystem path during
+        // authorization, including for MCP tools. Recipient lists need their
+        // own name; a `to` array fails before reaching this service.
+        recipients: { type: "array", minItems: 1, maxItems: 200, items: { type: "string", minLength: 1 }, description: "Optional teammate names or ids; omit for everyone else." },
+        request_id: { type: "string", minLength: 1, maxLength: 128, description: "Reuse on retry to avoid duplicate deliveries." },
+      },
+      required: ["text"], additionalProperties: false,
+    },
+  },
+  {
     name: "squad_remember",
     description: "Save something to remember, immediately and without asking. Use it whenever the person says 'remember', 'keep in mind', 'note that', 'from now on', or tells you a durable fact or preference. scope 'team' (default) is shared with every teammate on every engine; 'me' is yours only. Never save secrets, passwords or keys.",
     inputSchema: {
@@ -98,7 +114,7 @@ const TOOLS = [
   },
   {
     name: "squad_schedule",
-    description: "Propose work that runs later or repeats: a one-off reminder ('remind me tomorrow at 9 to call Sam'), a daily report, a weekly check. Squad's own scheduler runs it on whichever engine you use; the person confirms the proposal in Squad once. For a reminder, write instructions like 'Remind Igor to call Sam about the contract'.",
+    description: "Create a saved Automation for a requested reminder, later work or repeating work. It starts automatically under the member's saved permissions. Use mode propose only for an unsolicited suggestion or when the person explicitly asks for a draft. The receipt says whether it is scheduled or needs confirmation. For a reminder, write instructions like 'Remind Igor to call Sam about the contract'.",
     inputSchema: {
       type: "object",
       properties: {
@@ -106,9 +122,10 @@ const TOOLS = [
         instructions: { type: "string", description: "What to do each time it runs." },
         schedule: {
           type: "object",
-          description: 'One of: {"kind":"once","date":"YYYY-MM-DD","time":"HH:MM"}, {"kind":"weekdays","days":[1,2,3,4,5],"time":"HH:MM"} (0 is Sunday), {"kind":"interval","everyMinutes":5-1440}, {"kind":"monthly","day":1-31|"last","time":"HH:MM"}, {"kind":"yearly","month":1-12,"day":1-31,"time":"HH:MM"}, {"kind":"cron","cron":"m h dom mon dow"}.',
+          description: 'One of: {"kind":"once","date":"YYYY-MM-DD","time":"HH:MM"}, {"kind":"weekdays","days":[1,2,3,4,5],"time":"HH:MM"} (0 is Sunday), {"kind":"interval","everyMinutes":1-1440}, {"kind":"monthly","day":1-31|"last","time":"HH:MM"}, {"kind":"yearly","month":1-12,"day":1-31,"time":"HH:MM"}, {"kind":"cron","cron":"m h dom mon dow"}.',
         },
         timezone: { type: "string", description: "IANA zone, e.g. Pacific/Auckland. Leave it out to use the person's own zone." },
+        mode: { type: "string", enum: ["create", "propose"], description: "create (default) for requested work; propose only for a suggestion or draft." },
       },
       required: ["title", "instructions", "schedule"],
       additionalProperties: false,
@@ -202,7 +219,7 @@ export function teamMessagePrompt(from, message) {
     "",
     String(message || "").trim(),
     "",
-    `Answer ${from.name || "them"} directly: your reply goes back to them. Do what is asked within your role and permissions, and say plainly if you cannot.`,
+    `Return your answer as the final text of this turn. Squad automatically delivers it to ${from.name || "your sender"}. Do not call squad_message or squad_teach to acknowledge them or send this same answer back; do not wait for them to acknowledge it. If you need clarification, return the question in your final answer. Do what is asked within your role and permissions, and say plainly if you cannot.`,
   ].join("\n");
 }
 
@@ -214,13 +231,14 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   const lines = [
     `Your team is reachable through Squad's ${TEAM_MCP_SERVER_NAME} MCP server, on any engine:`,
     "- squad_team lists teammates; squad_message asks one and returns their reply (squad_replies collects late ones).",
+    "- When the person says teach the team, share what you learned, tell everyone or pass this on, call squad_teach with the reusable lesson in this turn. It saves team knowledge and actually messages the teammates. Report queued/running/replied states accurately; a promise in chat is not a delivery.",
     "- squad_get_profile reads your saved profile; squad_set_profile changes name, role, description, instructions, personality and skills. A verbal promise does not change Squad.",
     "- squad_channels and squad_channel_messages read your channels; squad_post_channel publishes a message there; squad_create_channel uses your existing creation permission.",
     "- squad_update_memory corrects a saved entry; squad_forget removes one. Project memories stay with this turn's workspace; personal memories stay with you.",
     "- squad_work_plan reads your commitments and ids; squad_task adds, updates or completes your own tasks, with the same receipts as the Tasks view.",
     "- When the person says remember, keep in mind, note that, or from now on, call squad_remember in that turn (scope team unless it is only about you). Do not only say you will remember: a memory exists only once squad_remember has saved it.",
     "- When the person gives you a new name or role ('your name is Robert', 'I'll call you Robert', 'be our QA lead'), call squad_set_profile with the change, then confirm. Squad tells your teammates.",
-    "- For a reminder or anything that should happen later or repeat, call squad_schedule; the person confirms it once in Squad.",
+    "- For a requested reminder or anything that should happen later or repeat, call squad_schedule in this turn. The request authorizes it: do not ask for confirmation again. Report the persisted receipt. Use mode propose for an unsolicited suggestion or an explicit draft. A scheduled automation is not a blocked task.",
     depth >= TEAM_MAX_DEPTH - 1 ? "- You are answering a teammate's message several hops deep: finish this yourself and do not message further teammates." : "",
   ];
   const sections = [lines.filter(Boolean).join("\n")];
@@ -247,23 +265,26 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
   }
 
   /**
-   * A member's connection for one turn. The credential is per member and
-   * stable, like the vault's, so the launch config (part of a warm SDK
-   * session's key, ADR-0030) does not change between turns.
+   * A member's connection for one turn. Ordinary chat keeps a stable
+   * credential/config for its warm session (ADR-0030). Ephemeral work uses
+   * its own scope so another thread cannot retarget the active credential.
    */
-  async function openWork({ memberId, runId = "", workspace = "", depth = 0, channel = null, maxWaitSeconds = 50 }) {
+  async function openWork({ memberId, runId = "", workspace = "", depth = 0, channel = null, maxWaitSeconds = 50, automationDraft = false, scope = "", ancestorIds = [] }) {
     if (typeof memberId !== "string" || !memberId.trim()) throw new TeamError("A member identity is required.");
     const owner = memberId.trim();
-    let session = sessions.get(owner);
+    const key = JSON.stringify([owner, String(scope)]);
+    let session = sessions.get(key);
     if (!session) {
-      session = { id: randomUUID(), memberId: owner, runId: "", workspace: "", depth: 0, token: randomBytes(32).toString("hex") };
-      sessions.set(owner, session);
+      session = { id: randomUUID(), memberId: owner, scope: String(scope), runId: "", workspace: "", depth: 0, token: randomBytes(32).toString("hex") };
+      sessions.set(key, session);
       byToken.set(session.token, session);
     }
     session.runId = String(runId || "");
     session.active = true;
     session.workspace = String(workspace || "");
     session.depth = Math.max(0, Number(depth) || 0);
+    session.ancestorIds = [...new Set(Array.isArray(ancestorIds) ? ancestorIds.filter(id => typeof id === "string") : [])].slice(0, TEAM_MAX_DEPTH);
+    session.automationDraft = automationDraft === true;
     // The channel thread this turn answers in, so a teammate's reply can be
     // shown there (bug hunt 2026-10, channels).
     session.channel = channel?.channelId && channel?.threadId ? channel : null;
@@ -316,7 +337,7 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
         await waitUntilFree(to.id);
         await store.updateDelivery(delivery.id, { status: "running" });
         emit("team.message.started", { deliveryId: delivery.id, fromId: from.id, toId: to.id });
-        const result = await deliver({ from, to, message: delivery.message, depth: session.depth + 1, deliveryId: delivery.id, channel });
+        const result = await deliver({ from, to, message: delivery.message, depth: session.depth + 1, ancestorIds: [...session.ancestorIds, session.memberId], deliveryId: delivery.id, channel });
         const reply = String(result?.reply || "").trim();
         const error = result?.declined ? reply || "The teammate could not take the message." : "";
         const done = await store.updateDelivery(delivery.id, { status: error ? "error" : "completed", reply: error ? "" : reply, error, runId: result?.runId || "" });
@@ -381,6 +402,7 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           const { self, others } = await teammates(session.memberId);
           const { member: to, reason } = resolveTeammate(args.to, others);
           if (!to) return failure(`Not sent: ${reason}.`);
+          if (session.ancestorIds.includes(to.id)) return failure("You are already answering this teammate's delivery. Return your answer or clarification as this turn's final text; Squad sends it back automatically. Queuing another message to a waiting sender can create a cycle.");
           const delivery = await store.addDelivery({ fromId: self.id, fromName: self.name, toId: to.id, toName: to.name, message: body, runId: "", fromRunId: session.runId, requestId: args.request_id || operationId });
           addReceipt(session, { id: `team-message-${delivery.id}`, type: "team_message", actorId: self.id, status: "applied", deliveryId: delivery.id, toId: to.id, message: `Asked ${to.name}.` });
           if (delivery.duplicate && !["queued", "running"].includes(delivery.status)) return text({ deliveryId: delivery.id, duplicate: true, ...deliveryView(delivery, to.name) });
@@ -392,6 +414,29 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           finally { clearTimeout(timeout); }
           if (settled) await store.updateDelivery(delivery.id, { readAt: new Date().toISOString() });
           return text(deliveryView(settled || delivery, to.name));
+        }
+        case "squad_teach": {
+          if (session.depth >= TEAM_MAX_DEPTH) return failure("This conversation is already several teammates deep. Save your own learning and report back without rebroadcasting.");
+          const lesson = cleanMemoryText(args.text);
+          const { self, others } = await teammates(session.memberId);
+          const recipients = args.recipients ? args.recipients.map(name => {
+            const { member, reason } = resolveTeammate(name, others);
+            if (!member) throw new TeamError(`Not shared: ${reason}.`);
+            return member;
+          }) : others;
+          const unique = [...new Map(recipients.map(member => [member.id, member])).values()];
+          if (unique.some(member => session.ancestorIds.includes(member.id))) return failure("You are answering a teammate's delivery. Return your lesson or clarification as final text instead of broadcasting it back to a waiting sender. Choose other recipients explicitly for new work.");
+          const memory = await store.remember({ text: lesson, scope: "team", authorId: self.id, authorName: self.name, source: "teaching" });
+          emit("team.memory.changed", { memberId: self.id, id: memory.id });
+          const deliveries = [];
+          for (const to of unique) {
+            const message = `Lesson shared by ${self.name}: ${lesson}\n\nThis lesson is already saved in Squad's shared team memory. Apply it when relevant to your work and briefly tell ${self.name} what it changes for your role. Do not rebroadcast it.`;
+            const delivery = await store.addDelivery({ fromId: self.id, fromName: self.name, toId: to.id, toName: to.name, message, runId: "", fromRunId: session.runId, requestId: `${args.request_id || operationId}:${to.id}` });
+            if (!delivery.duplicate) startDelivery(delivery, { from: self, to, session: operation, channel: session.channel });
+            deliveries.push({ to: to.name, deliveryId: delivery.id, ...deliveryView(delivery, to.name) });
+          }
+          addReceipt(session, { id: `team-teaching-${operationId}`, type: "team_teaching", actorId: self.id, status: "applied", memoryId: memory.id, deliveryIds: deliveries.map(item => item.deliveryId), message: `Saved the lesson for the team; ${deliveries.length} teammate ${deliveries.length === 1 ? "delivery" : "deliveries"} recorded.` });
+          return text({ memoryId: memory.id, saved: !memory.duplicate, deliveries, note: "The lesson is saved. Report each delivery's state; collect answers with squad_replies before claiming teammates replied." });
         }
         case "squad_replies": {
           const { replies, waiting } = await store.takeReplies(session.memberId);
@@ -429,7 +474,7 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           const receipt = await runAction("schedule", { ...args, type: "schedule" }, operation);
           addReceipt(session, receipt);
           if (!receipt || ["failed", "blocked"].includes(receipt.status)) return failure(receipt?.message || "The schedule was not recorded.");
-          return text({ status: receipt.status, message: receipt.message, note: "Tell the person it is waiting for their confirmation in Squad; do not say it is scheduled until they confirm." });
+          return text({ status: receipt.status, routineId: receipt.routineId || null, message: receipt.message, note: receipt.status === "confirmed" ? "This automation is saved and enabled. Confirm its schedule to the person; do not ask for approval again or add a blocked task." : "This is a proposal or draft. Describe the saved state; it is not active yet." });
         }
         case "squad_get_profile": {
           if (!getProfile) return failure("Profile reading is unavailable in this runtime.");
@@ -485,10 +530,9 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
   }
 
   function closeMember(memberId) {
-    const session = sessions.get(String(memberId || ""));
-    if (!session) return;
-    sessions.delete(session.memberId);
-    byToken.delete(session.token);
+    for (const [key, session] of sessions) if (session.memberId === memberId) {
+      sessions.delete(key); byToken.delete(session.token);
+    }
   }
 
   return {
@@ -499,7 +543,10 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
     dispatch,
     closeMember,
     finishWork: runId => {
-      for (const session of sessions.values()) if (session.runId === runId) session.active = false;
+      for (const [key, session] of sessions) if (session.runId === runId) {
+        session.active = false;
+        if (session.scope) { sessions.delete(key); byToken.delete(session.token); }
+      }
     },
     recover: () => store.recover(),
     pending: () => [...live.keys()],

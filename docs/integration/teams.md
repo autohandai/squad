@@ -30,6 +30,21 @@ Module files:
 
 ## Routes
 
+`POST /api/teams/design` accepts `{ objective, channelName, workspace,
+existingNames }` and returns a runtime-validated `{ proposal, source: "model",
+runId }` for 1–8 specialists (ADR-0142). This channel path uses the whole
+objective and known skill catalog, not the New team dialog's keyword kits.
+It designs only; the existing provisioner prepares the members.
+
+Channel setup uses `POST /api/channels/:id/goal` (`objective`, `owner`,
+optional `resume`), `GET/PUT .../goal/build` (the resumable build snapshot),
+and `POST .../goal/progress` (`owner`, `status`, `memberIds` when ready).
+The bridge stores `channel-team-builds.json`, claims one owner, retains the
+original goal/thread and prepared member ids, and rejects late results from
+another owner. Ready queues each first turn and its loading message before
+execution; the bridge saves actual replies even without a browser. Restart
+marks unfinished turns interrupted instead of replaying their side effects.
+
 | Route | Body → answer |
 | --- | --- |
 | `POST /api/teams/export` | `{ team, description?, lead?, members: [{ id, name, role, description, instructions, brainCard, avatar, employeeType, skills, harness }], include: { skills: "all" \| [names], channels, workflows, notes, routines } }` → `{ document, filename, summary, skipped, redacted }`. Nothing written. The selected members' routines (`routines.json`) travel by member name unless `include.routines` is false. |
@@ -48,6 +63,23 @@ exports `importWorkflows(ctx, channelId, inputs)` (always `enabled: false`,
 no runs) and `removeChannelWorkflows(ctx, channelId)`.
 
 State files: `<squad state>/presets.json`, `<squad state>/skills/<name>/SKILL.md`.
+
+## Members through Squad MCP
+
+The managed `autohand-squad` server supplies the same operations on every
+engine (ADR-0134). `squad_teach({ text, recipients?, request_id? })` saves a
+shared lesson and creates real teammate deliveries. `recipients` is an array
+of names or ids; omit it for everyone else. Do not call it `to`: Autohand's
+path authorization interprets that argument as a string file destination.
+`squad_replies` collects actual answers. Receipts distinguish saved memory,
+queued/running deliveries and replies. Recipients return their final text;
+Squad delivers it automatically, and rejects recursive messages to a waiting
+ancestor. Ordinary independent messages still use `squad_message`.
+
+`squad_schedule` creates an enabled Automation for a requested job by
+default. Its optional `mode: "propose"` records a suggestion. Saved Ask/Block
+permissions remain authoritative. The Automation editor's drafting call is
+bound to draft-only mode and never starts a schedule before Save (ADR-0138).
 
 ## Team file additions (ADR-0118)
 

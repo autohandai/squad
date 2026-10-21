@@ -47,7 +47,7 @@ export const name = "routines";
 
 const MAX_LATE_MS = 12 * 60 * 60_000;
 const PROPOSAL_TTL_MS = 24 * 60 * 60_000;
-const PROPOSAL_KEYS = new Set(["type", "title", "instructions", "schedule", "timezone", "timeZone"]);
+const PROPOSAL_KEYS = new Set(["type", "title", "instructions", "schedule", "timezone", "timeZone", "mode"]);
 
 let store = null;
 let bridgeContext = null;
@@ -153,7 +153,9 @@ async function startRoutineRun(ctx, routine, { trigger, scheduledFor, now, known
         prompt: routinePrompt(routine),
         workspace: routine.workspace,
         title: routine.title,
-        marker: { routineId: routine.id, routineRunId: run.id, ...(routine.model && routine.model !== "auto" ? { model: routine.model } : {}) },
+        // Isolate scheduled work from the member's active conversation.
+        // The result is delivered from the persisted occurrence below.
+        marker: { routineId: routine.id, routineRunId: run.id, ephemeralSession: true, resumeSession: false, ...(routine.model && routine.model !== "auto" ? { model: routine.model } : {}) },
       });
       run.memberRunId = memberRun?.id || "";
       run.status = "running";
@@ -237,7 +239,7 @@ async function enforceRunLimits(ctx, now) {
   return dirty;
 }
 
-function onMemberRunFinished(ctx, event) {
+async function onMemberRunFinished(ctx, event) {
   const memberRunId = String(event?.runId || "");
   if (!memberRunId || !store?.state) return;
   for (const routine of store.routines()) {
@@ -246,10 +248,23 @@ function onMemberRunFinished(ctx, event) {
     if (run.status !== "running") return;
     const status = event.status === "completed" ? "completed" : event.status === "stopped" ? "stopped" : "failed";
     const nowIso = schedulerNow().toISOString();
-    store.replaceRoutine(settleRun(routine, run, { status, finishedAt: nowIso, preview: String(event.title || "").slice(0, 400), reason: status === "failed" ? "The member run failed." : status === "stopped" ? "The member run was stopped." : "" }));
+    const reply = String(ctx.runs?.get?.(memberRunId)?.reply || "").trim().slice(0, 12000);
+    store.replaceRoutine(settleRun(routine, run, { status, finishedAt: nowIso, reply, preview: reply.slice(0, 400) || String(event.title || "").slice(0, 400), reason: status === "failed" ? "The member run failed." : status === "stopped" ? "The member run was stopped." : "" }));
+    await store.save();
+    if (routine.destination?.channelId && status === "completed" && reply) {
+      await ctx.mutateChannelsState(state => {
+        const channel = state.channels.find(item => item.id === routine.destination.channelId && item.memberIds.includes(routine.memberId));
+        if (!channel) return;
+        const id = `automation-result-${run.id}`;
+        if (state.messages.some(item => item.id === id)) return;
+        const thread = state.threads.find(item => item.id === routine.destination.threadId && item.channelId === channel.id);
+        const agent = state.agentChannelAccess?.[routine.memberId]?.agent;
+        state.messages.push({ id, channelId: channel.id, threadId: thread?.id || "", parentMessageId: thread?.parentMessageId || "", role: "agent", agentId: routine.memberId, authorName: agent?.name || routine.memberId, body: reply, status: "complete", routineId: routine.id, createdAt: nowIso, updatedAt: nowIso });
+      });
+    }
     log(ctx, status === "completed" ? ctx.SEVERITY.INFO : ctx.SEVERITY.WARN, `routine ${routine.title} ${status}`, runAttributes(routine, { ...run, status }, { "event.name": `routine.run.${status}`, "autohand.run.id": memberRunId }));
     ctx.emit("routine.finished", { routineId: routine.id, routineTitle: routine.title, runId: run.id, memberId: routine.memberId, status, memberRunId, preview: String(event.title || "").slice(0, 400) });
-    void store.save().then(() => changed(ctx));
+    changed(ctx);
     return;
   }
 }
@@ -290,12 +305,15 @@ async function recoverInterruptedRuns(ctx) {
 // Schedule proposals from chat (SQUAD_ACTION: {"type":"schedule", ...})
 
 function receiptOf(proposal) {
-  return { id: proposal.id, type: "schedule", actorId: proposal.memberId, status: proposal.status, message: proposal.message, title: proposal.title };
+  return { id: proposal.id, type: "schedule", actorId: proposal.memberId, status: proposal.status, message: proposal.message, title: proposal.title, ...(proposal.routineId ? { routineId: proposal.routineId } : {}) };
 }
 
 async function proposeSchedule({ id, context, raw, digest, signal, declined }) {
   const ctx = bridgeContext;
   await ensureStore(ctx);
+  const actor = (await knownMembers(ctx)).get(context.actorId);
+  const savedPolicy = actor?.agent?.permissions?.builtInPolicies?.squad_schedule;
+  const schedulePolicy = ["allow", "ask", "block"].includes(savedPolicy) ? savedPolicy : context.schedulePolicy || "allow";
   const now = schedulerNow();
   const existing = store.proposal(id);
   if (existing) {
@@ -312,6 +330,7 @@ async function proposeSchedule({ id, context, raw, digest, signal, declined }) {
     title: raw.title,
     instructions: raw.instructions,
     schedule: { ...(raw.schedule && typeof raw.schedule === "object" ? raw.schedule : {}), timeZone },
+    destination: context.destination,
     status: "proposed",
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + PROPOSAL_TTL_MS).toISOString(),
@@ -319,8 +338,10 @@ async function proposeSchedule({ id, context, raw, digest, signal, declined }) {
   try {
     if (signal?.aborted || declined) throw new Error("this turn was stopped before the proposal could be recorded");
     if (!context.identityValid) throw new Error("the action identity does not match the executing member");
+    if (!actor || schedulePolicy === "block") throw new Error("scheduling is blocked by this member's saved permissions");
     const extra = Object.keys(raw).filter((key) => !PROPOSAL_KEYS.has(key));
-    if (extra.length) throw new Error("schedule proposals may only contain type, title, instructions, schedule and timezone");
+    if (extra.length) throw new Error("schedules may only contain type, title, instructions, schedule, timezone and mode");
+    if (raw.mode !== undefined && !["create", "propose"].includes(raw.mode)) throw new Error("schedule mode must be create or propose");
     if (!record.title) throw new Error("give the proposed routine a title");
     if (!record.instructions) throw new Error("say what the routine should do");
     if (!isValidTimeZone(timeZone)) throw new Error("an IANA timezone such as Europe/London is required");
@@ -332,8 +353,19 @@ async function proposeSchedule({ id, context, raw, digest, signal, declined }) {
     if (problems.length) throw new Error(`the schedule is incomplete (${problems.join(", ")})`);
     const next = nextOccurrences(record.schedule, now, 3);
     if (!next.length) throw new Error("the schedule never runs");
-    record.message = `Proposed routine “${record.title}”: ${describeSchedule(record.schedule)} (${timeZone}). Next: ${formatOccurrence(next[0], timeZone)}. Nothing is scheduled until you confirm it in Squad.`;
-    log(ctx, ctx.SEVERITY.INFO, `routine proposed by ${context.actorId}: ${record.title}`, { "event.name": "routine.proposed", "autohand.member.id": context.actorId, "autohand.routine.proposal_id": id });
+    const proposed = context.automationDraft || schedulePolicy === "ask" || raw.mode === "propose";
+    if (proposed) {
+      record.message = `Proposed automation “${record.title}”: ${describeSchedule(record.schedule)} (${timeZone}). Next: ${formatOccurrence(next[0], timeZone)}. ${context.automationDraft ? "This is a draft; Save creates it." : "Confirm it in Squad to start it."}`;
+    } else {
+      const nowIso = now.toISOString();
+      const routine = { ...routineInputFrom({ memberId: record.memberId, title: record.title, instructions: record.instructions, workspace: record.workspace, schedule: record.schedule, enabled: true }, null, { now: nowIso }), destination: record.destination, source: "chat", proposalId: id, nextAt: next[0].toISOString() };
+      store.replaceRoutine(routine);
+      record.status = "confirmed";
+      record.routineId = routine.id;
+      record.decidedAt = nowIso;
+      record.message = `Scheduled automation “${record.title}”: ${describeSchedule(record.schedule)} (${timeZone}). Next: ${formatOccurrence(next[0], timeZone)}. You can change or pause it in Automations.`;
+    }
+    log(ctx, ctx.SEVERITY.INFO, `automation ${proposed ? "proposed" : "scheduled"} by ${context.actorId}: ${record.title}`, { "event.name": proposed ? "routine.proposed" : "routine.confirmed", "autohand.member.id": context.actorId, "autohand.routine.proposal_id": id });
   } catch (error) {
     record.status = "failed";
     record.message = `Schedule proposal not recorded: ${error?.message || error}.`;
@@ -359,7 +391,7 @@ async function decideProposal(ctx, id, confirm) {
     routine = routineInputFrom({ memberId: proposal.memberId, title: proposal.title, instructions: proposal.instructions, workspace: proposal.workspace, schedule: proposal.schedule, enabled: true }, null, { now: nowIso });
     const problems = [...validateRoutine(routine), ...validateSchedule(routine.schedule)];
     if (problems.length) throw Object.assign(new Error(`the proposal is incomplete: ${problems.join(", ")}`), { status: 409 });
-    routine = { ...routine, source: "chat", proposalId: proposal.id, nextAt: isoOrNull(nextOccurrence(routine.schedule, now)) };
+    routine = { ...routine, destination: proposal.destination, source: "chat", proposalId: proposal.id, nextAt: isoOrNull(nextOccurrence(routine.schedule, now)) };
     store.replaceRoutine(routine);
     store.replaceProposal({ ...proposal, status: "confirmed", routineId: routine.id, message: "You confirmed this routine.", decidedAt: nowIso, updatedAt: nowIso });
     log(ctx, ctx.SEVERITY.INFO, `routine ${routine.title} confirmed from chat`, runAttributes(routine, null, { "event.name": "routine.confirmed", "autohand.routine.proposal_id": proposal.id }));
@@ -432,6 +464,7 @@ async function draftAutomation(ctx, body, now) {
     requestId: `draft-${randomUUID()}`,
     resumeSession: false,
     ephemeralSession: true,
+    automationDraft: true,
   });
   const run = await waitForRun(ctx, summary.id, DRAFT_TIMEOUT_MS);
   if (!run) throw Object.assign(new Error(`${agent.name || "The member"} did not answer within ${Math.round(DRAFT_TIMEOUT_MS / 1000)} seconds`), { status: 504 });
@@ -468,7 +501,7 @@ export async function init(ctx) {
   await ensureStore(ctx);
   await recoverInterruptedRuns(ctx);
   if (!listening && ctx.events?.on) {
-    ctx.events.on("run.finished", (event) => onMemberRunFinished(bridgeContext, event));
+    ctx.events.on("run.finished", (event) => { void onMemberRunFinished(bridgeContext, event).catch(error => log(bridgeContext, bridgeContext.SEVERITY.ERROR, `automation result could not be delivered: ${error.message}`)); });
     listening = true;
   }
   if (unregisterTick) unregisterTick();
@@ -531,6 +564,10 @@ export async function handle(req, res, url, ctx) {
 
   if (path === "/api/routines" && req.method === "POST") {
     const body = withIntervalAnchor(await ctx.readBody(req), now);
+    // A browser's pre-agenda schedule is imported once, even when two app
+    // windows open together. It cannot overwrite a later canonical edit.
+    const imported = body?.legacyAutomationId && store.routines().find(item => item.legacyAutomationId === body.legacyAutomationId && item.memberId === body.memberId);
+    if (imported) return ok(ctx, res, 200, publicRoutine(imported, await knownMembers(ctx), now));
     const routine = routineInputFrom(body, null, { now: now.toISOString(), defaultTimeZone: body?.timeZone });
     const problems = [...validateRoutine(routine), ...validateSchedule(routine.schedule).map((field) => `schedule.${field}`)];
     if (problems.length) return fail(ctx, res, 400, `routine is incomplete: ${problems.join(", ")}`);
