@@ -133,6 +133,16 @@ platform, verifies it against the published `.sha256`, and writes
 early, and both packagers copy only the vendored binary (plus its build info)
 into the app; the Agent SDK's own bundled CLI is never shipped.
 
+First-run setup also repairs a missing or unusable CLI through
+`POST /api/setup/runtime`. It downloads that same pinned release, verifies its
+published archive checksum and executable version, and installs it below the
+user's app-state directory in `runtime/autohand-cli/<version>/<platform>-<arch>`.
+It never modifies the signed app or requires a system CLI. Healthy bundles use
+their shipped CLI offline. CI and release web checks run
+`bun run check:runtime-bootstrap` with an isolated home, no global or SDK CLI,
+and controlled release responses; macOS installer smoke boots the actual
+bundled runtime with only `/usr/bin:/bin` on PATH. See ADR-0136.
+
 ## Code Signing And Notarization
 
 Signing is optional and driven entirely by repository secrets. Without them

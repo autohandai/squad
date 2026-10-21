@@ -116,6 +116,10 @@ The truthful channel rendering decision is recorded separately in ADR-0135.
 
 Commands actually run against this implementation:
 
+- The release-wide `check-chief-of-staff` guard found the newly added launch
+  payload forwarding raw legacy memory. That payload now uses
+  normalizeMemoryEntries, preserving structured entries and converting old
+  strings before the bridge receives them rather than weakening the guard.
 - `node scripts/check-team.mjs`: isolated real bridge and Codex protocol
   fixture; all sixteen tools, cross-member delivery, profile fields and
   revisions, old-name routing, memory, channel membership, idempotent posts,

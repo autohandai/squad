@@ -147,6 +147,7 @@ jobs:
           bun run check:sessions
           bun run check:recruiting
           bun run check:server
+          bun run check:runtime-bootstrap
           bun run check:release
           bun run build
 
@@ -607,7 +608,7 @@ jobs:
           # Intel runner it produced no evidence at all. Let it fail soft and
           # carry its status into the report.
           serve_status=0
-          AUTOHAND_HOME="$state_root/autohand-home" AUTOHAND_SQUAD_HOME="$state_root" AUTOHAND_SQUAD_NODE="$node_bin" "$squad" serve --server-path "$server" --web-port "$web_port" || serve_status=$?
+          PATH="/usr/bin:/bin" AUTOHAND_HOME="$state_root/autohand-home" AUTOHAND_SQUAD_HOME="$state_root" AUTOHAND_SQUAD_NODE="$node_bin" "$squad" serve --server-path "$server" --web-port "$web_port" || serve_status=$?
           ready=false
           for _ in {1..30}; do
             if curl -fsS "http://127.0.0.1:${web_port}/api/runtime" >/dev/null; then ready=true; break; fi

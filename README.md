@@ -491,6 +491,11 @@ Run `bun run check:onboarding:recovery` for rendered validation, saved choices,
 failed provisioning, prerequisite recovery, duplicate submissions and confirmed
 real provisioning with an isolated fixture skill catalog. This check does not
 execute a model provider.
+Run `bun run check:runtime-bootstrap` for first-install CLI recovery without a
+system or bundled CLI, failed verification, retries, concurrency and restart
+persistence. `bun run check:runtime-bootstrap:browser` also checks automatic
+setup and rendered recovery without losing onboarding choices. Both use an
+isolated home and a fixture release download; no provider is called.
 Run `bun run check:member-creation:browser` for normal and alternate setup
 creation, handwritten profile preservation, duplicate submission and refresh
 recovery after a lost preparation response. It uses real provisioning with

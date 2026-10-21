@@ -28,6 +28,7 @@ export function FirstRun({
   loginRequestStatus = "",
   onRequestLogin,
   onRefreshAccount,
+  onRefreshRuntime,
   providerReady = true,
   onOpenProviders,
   avatarFor,
@@ -52,9 +53,44 @@ export function FirstRun({
   const [startError, setStartError] = useState("");
   const startingRef = useRef(false);
   const nameTouched = useRef(onboardingState?.nameTouched === true);
+  const [runtimeAttempt, setRuntimeAttempt] = useState(0);
+  const [runtimeSetup, setRuntimeSetup] = useState(runtime?.bootstrap || { phase: "idle" });
+  const refreshRuntimeRef = useRef(onRefreshRuntime || onRefreshAccount);
+  useEffect(() => { refreshRuntimeRef.current = onRefreshRuntime || onRefreshAccount; }, [onRefreshRuntime, onRefreshAccount]);
 
   const signedIn = runtime?.account?.signedIn === true;
   const runtimeReady = runtime?.available === true;
+
+  useEffect(() => {
+    if (runtime?.available !== false || runtime?.bridgeUnavailable) return undefined;
+    if (!runtimeAttempt && runtime?.bootstrap?.phase === "error") { setRuntimeSetup(runtime.bootstrap); return undefined; }
+    let cancelled = false, timer;
+    const controller = new AbortController();
+    const deadline = window.setTimeout(() => controller.abort(), 150000);
+    setRuntimeSetup({ phase: "preparing", error: "" });
+    async function prepare() {
+      try {
+        await api("/api/setup/runtime", { method: "POST", signal: controller.signal, body: "{}" });
+        while (!cancelled) {
+          const snapshot = await api("/api/runtime", { signal: controller.signal });
+          if (cancelled) return;
+          setRuntimeSetup(snapshot.bootstrap || { phase: snapshot.available ? "ready" : "idle" });
+          if (snapshot.available) { await refreshRuntimeRef.current?.(); return; }
+          if (snapshot.bootstrap?.phase === "error") return;
+          await new Promise(resolve => { timer = window.setTimeout(resolve, 750); });
+        }
+      } catch (error) {
+        if (!cancelled) setRuntimeSetup({ phase: "error", error: controller.signal.aborted ? "Preparing Autohand Code timed out. Check your connection and retry." : error?.message || "Autohand Code could not be prepared. Retry setup." });
+      } finally { window.clearTimeout(deadline); }
+    }
+    void prepare();
+    return () => { cancelled = true; window.clearTimeout(timer); window.clearTimeout(deadline); controller.abort(); };
+  }, [api, runtime?.available, runtime?.bridgeUnavailable, runtimeAttempt]);
+
+  async function retryRuntime() {
+    await refreshRuntimeRef.current?.();
+    setRuntimeAttempt(current => current+1);
+  }
 
   // Profile the folder whenever it changes; the sentence it yields drives the
   // role suggestions.
@@ -175,7 +211,17 @@ export function FirstRun({
   const recent = workspaces.filter((item) => item?.path && item.path !== folder).slice(0, 5);
   const blockers = [];
   if (!signedIn) blockers.push({ text: "Sign in with your Autohand account to give your teammates a brain.", action: "Sign in", onAction: onRequestLogin, secondary: onRefreshAccount ? { label: "Refresh", onAction: onRefreshAccount } : null, note: loginRequestStatus });
-  if (signedIn && !runtimeReady) blockers.push({ text: "The local Autohand runtime is not answering yet.", action: "Retry", onAction: onRefreshAccount });
+  if (!runtimeReady && runtime?.available === false) {
+    const preparing = ["preparing", "downloading", "verifying", "installing"].includes(runtimeSetup.phase) && !runtime.bridgeUnavailable;
+    const progress = runtimeSetup.totalBytes > 0 ? ` ${Math.min(100, Math.floor(100 * runtimeSetup.bytes / runtimeSetup.totalBytes))}%` : "";
+    const text = runtime.bridgeUnavailable ? "The local Autohand runtime is not answering yet."
+      : runtimeSetup.phase === "error" ? runtimeSetup.error
+      : runtimeSetup.phase === "downloading" ? `Downloading Autohand Code…${progress}`
+      : runtimeSetup.phase === "verifying" ? "Verifying Autohand Code…"
+      : runtimeSetup.phase === "installing" ? "Installing Autohand Code…"
+      : preparing ? "Preparing Autohand Code for this computer…" : "The local Autohand runtime is not answering yet.";
+    blockers.push({ text, busy: preparing, action: "Retry", onAction: preparing ? null : retryRuntime, failed: runtimeSetup.phase === "error" });
+  }
   if (signedIn && runtimeReady && !providerReady) blockers.push({ text: "No model provider is configured. Autohand AI works with your account.", action: "Open providers", onAction: onOpenProviders });
 
   const folderFeedback = folderError ? (
@@ -213,14 +259,15 @@ export function FirstRun({
           <div className="mt-8 border-y border-border/70 py-4 text-sm">
             {blockers.map((blocker) => (
               <div key={blocker.text} className="flex flex-wrap items-center gap-3">
-                <span className="min-w-0 flex-1">{blocker.text}</span>
+                {blocker.busy ? <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
+                <span className="min-w-0 flex-1" role={blocker.failed ? "alert" : blocker.busy ? "status" : undefined}>{blocker.text}</span>
                 {blocker.secondary ? (
                   <Button variant="ghost" size="sm" onClick={blocker.secondary.onAction}>
                     <RefreshCw data-icon="inline-start" />
                     {blocker.secondary.label}
                   </Button>
                 ) : null}
-                <Button size="sm" onClick={blocker.onAction}>{blocker.action}</Button>
+                {blocker.onAction ? <Button size="sm" onClick={blocker.onAction}>{blocker.action}</Button> : null}
                 {blocker.note ? <span className="basis-full text-xs text-muted-foreground">{blocker.note}</span> : null}
               </div>
             ))}

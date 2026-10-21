@@ -48,7 +48,15 @@ await check(true, async (bridge, browser) => {
   await until(() => browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.onboarding'))?.status === 'skipped'`), 'saved skip');
   await browser.screenshot('.codex-artifacts/onboarding-browser-squad.png');
   await browser.navigate(bridge.origin + '/'); await pathIs(browser, '/squad');
-  await browser.click('Open account menu'); await browser.click('Settings'); await pathIs(browser, '/settings');
+  const account = await browser.evaluate(`(() => { const rect = [...document.querySelectorAll('button[aria-label="Open account menu"]')].find(item=>item.getBoundingClientRect().width).getBoundingClientRect(); return {x:rect.x+rect.width/2,y:rect.y+rect.height/2}; })()`);
+  await browser.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...account, button: 'left', clickCount: 1 });
+  await browser.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...account, button: 'left', clickCount: 1 });
+  await until(() => browser.evaluate(`!![...document.querySelectorAll('[role="menuitem"]')].find(item=>item.textContent.trim()==='Settings')`), 'Settings menu item');
+  await browser.evaluate(`[...document.querySelectorAll('[role="menuitem"]')].find(item=>item.textContent.trim()==='Settings').click()`);
+  await pathIs(browser, '/settings');
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid="settings-sections"] a[data-section="setup"]')`), 'Settings sections');
+  await browser.evaluate(`document.querySelector('[data-testid="settings-sections"] a[data-section="setup"]').click()`);
+  await pathIs(browser, '/settings/setup');
   await until(() => browser.evaluate(`!!document.querySelector('#settings-setup button')`), 'Settings setup');
   await browser.evaluate(`document.querySelector('#settings-setup button').click()`); await pathIs(browser, '/welcome');
   await until(() => hasText(browser, 'No model provider is configured'), 'provider blocker');

@@ -56,6 +56,9 @@ jobs:
       - name: Check web server syntax
         run: bun run check:server
 
+      - name: Check first-install CLI recovery without a system CLI
+        run: bun run check:runtime-bootstrap
+
       - name: Check attention and verified desktop upgrades
         run: |
           bun run check:work-attention

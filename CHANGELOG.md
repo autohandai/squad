@@ -10,6 +10,8 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-21
+
 ### Added
 
 - Squad's own MCP gives members on Autohand, Claude Code, Codex and ACP engines the same tools to update their profile, manage shared/personal/project memories, ask teammates, read and post in their channels, keep a work plan and propose scheduled work. Memories can also be edited in the profile. Existing text actions keep working.
@@ -19,6 +21,7 @@ list to the section for that version.
 
 ### Fixed
 
+- First-time setup prepares Autohand Code when the CLI is missing or cannot run, with download progress and Retry if the connection or verification fails. A working desktop bundle starts without installing a system CLI, and retrying keeps your folder, role and name.
 - “Change your name to Viggas” updates the member's saved identity, header, sidebar and composer. Description, instructions, personality and skills follow the same saved profile; an old tab or late result cannot undo a newer change.
 - Channel messages no longer mark thinking, failed or empty responses as “replied”. Summaries show completed answers, work still running and failures separately, and late replies stay with their original thread.
 

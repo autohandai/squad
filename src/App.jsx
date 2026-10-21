@@ -9779,6 +9779,7 @@ function App() {
                 loginRequestStatus={loginRequestStatus}
                 onRequestLogin={requestAccountLogin}
                 onRefreshAccount={refreshAccountStatus}
+                onRefreshRuntime={refreshRuntime}
                 providerReady={onboardingProviderReady(providerSettings)}
                 onOpenProviders={() => navigate("/settings?section=providers")}
                 avatarFor={(template, name, className) => (
@@ -12236,7 +12237,7 @@ function agentLaunchPayload(agent, workspace) {
     name: agent?.name,
     profileRevision: memberProfileRevision(agent),
     formerNames: agent?.formerNames || [],
-    memory: agent?.memory || [],
+    memory: normalizeMemoryEntries(agent?.memory),
     role: agent?.role,
     description: agent?.description,
     instructions: agent?.instructions,

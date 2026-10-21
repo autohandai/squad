@@ -21,17 +21,12 @@ import { join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { CLI_TARGETS } from '../server/runtime/cli-bootstrap.mjs';
 
 const require = createRequire(import.meta.url);
 const appPackage = require('../package.json');
 
-export const CLI_TARGETS = {
-  'darwin/arm64': { binary: 'autohand-macos-arm64', archive: 'autohand-macos-arm64.tar.gz', inner: 'autohand' },
-  'darwin/x64': { binary: 'autohand-macos-x64', archive: 'autohand-macos-x64.tar.gz', inner: 'autohand' },
-  'linux/x64': { binary: 'autohand-linux-x64', archive: 'autohand-linux-x64.tar.gz', inner: 'autohand' },
-  'linux/arm64': { binary: 'autohand-linux-arm64', archive: 'autohand-linux-arm64.tar.gz', inner: 'autohand' },
-  'win32/x64': { binary: 'autohand-windows-x64.exe', archive: 'autohand-windows-x64.zip', inner: 'autohand.exe' },
-};
+export { CLI_TARGETS };
 
 export function pinnedCliVersion() {
   const version = String(appPackage.autohand?.cliVersion || '').trim();

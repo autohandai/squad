@@ -18,6 +18,7 @@ import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstruct
 import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
 import { AUTOHAND_TEAM_WAIT_SECONDS, TEAM_MCP_SERVER_NAME, createTeamService, teamMessagePrompt } from "./server/team/service.mjs";
 import { createTeamChannels } from "./server/team/channels.mjs";
+import { createCliBootstrap, createCliProbe } from "./server/runtime/cli-bootstrap.mjs";
 import { STORE_FILE as WORK_STORE_FILE, workStoreFor } from "./server/work/store.mjs";
 import { vaultToolsAllowed } from "./src/lib/permission-policy.js";
 import { createProductTelemetry, readProductTelemetryConfig } from "./server/product-telemetry.mjs";
@@ -1006,6 +1007,13 @@ function agentSdkPackageDirs() {
 const vendoredAutohandCliDir = process.env.AUTOHAND_SQUAD_CLI_DIR
   ? resolve(process.env.AUTOHAND_SQUAD_CLI_DIR)
   : join(rootDir, "vendor", "autohand-cli");
+const inspectAutohandCli = createCliProbe();
+const cliBootstrap = createCliBootstrap({
+  stateDir: appStateDir,
+  version: String(packageMetadata.autohand?.cliVersion || ""),
+  repository: String(packageMetadata.autohand?.cliRepository || "autohandai/code-cli"),
+  locate: () => resolveAutohandBinaryDetailed(),
+});
 
 function vendoredAutohandCliInfo() {
   try {
@@ -1016,16 +1024,22 @@ function vendoredAutohandCliInfo() {
 }
 
 function resolveAutohandBinaryDetailed() {
+  const usable = (path, source, pinned = false) => {
+    const probe = inspectAutohandCli(path, pinned ? { expectedVersion: packageMetadata.autohand.cliVersion } : {});
+    return probe ? { path, source, version: probe.output } : null;
+  };
   const explicit = String(process.env.AUTOHAND_SQUAD_AUTOHAND_BIN || "").trim();
-  if (explicit && existsSync(explicit)) return { path: explicit, source: "explicit" };
+  if (explicit) { const selected = usable(explicit, "explicit"); if (selected) return selected; }
 
   const bundledName = bundledAutohandCliName();
   if (bundledName) {
     const vendored = join(vendoredAutohandCliDir, bundledName);
-    if (existsSync(vendored)) return { path: vendored, source: "vendored" };
+    const selected = usable(vendored, "vendored", true) || usable(cliBootstrap.path, "managed", true);
+    if (selected) return selected;
     for (const packageDir of agentSdkPackageDirs()) {
       const bundled = join(packageDir, "cli", bundledName);
-      if (existsSync(bundled)) return { path: bundled, source: "agent-sdk" };
+      const selected = usable(bundled, "agent-sdk");
+      if (selected) return selected;
     }
   }
 
@@ -1034,7 +1048,7 @@ function resolveAutohandBinaryDetailed() {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find(Boolean) || "";
-  return { path: onPath, source: onPath ? "path" : "none" };
+  return usable(onPath, "path") || { path: "", source: "none", version: "" };
 }
 
 function resolveAutohandBinary() {
@@ -1060,7 +1074,7 @@ function autohandSupportsFlag(flag) {
 function getRuntime() {
   const resolved = resolveAutohandBinaryDetailed();
   const autohandPath = resolved.path;
-  const version = autohandPath ? cliVersionOutput(autohandPath) : "";
+  const version = resolved.version || "";
   const vendored = vendoredAutohandCliInfo();
   return {
     autohandPath,
@@ -1070,6 +1084,7 @@ function getRuntime() {
     version,
     squadVersion: packageMetadata.version || "0.0.0",
     available: Boolean(autohandPath),
+    bootstrap: cliBootstrap.status(),
     defaultWorkspace: getDefaultWorkspace(),
     // Names this machine in the relay workspace switcher and member ownership.
     hostName: hostname(),
@@ -8186,6 +8201,11 @@ async function handleApi(req, res, url) {
     } catch (error) {
       json(res, 400, { success: false, error: error.message });
     }
+    return true;
+  }
+
+  if (url.pathname === "/api/setup/runtime" && req.method === "POST") {
+    json(res, 202, { success: true, data: cliBootstrap.prepare() });
     return true;
   }
 
