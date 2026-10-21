@@ -312,6 +312,24 @@ async fn start_stack(
     open_requested: bool,
     tray_requested: bool,
 ) -> Result<CommandOutput> {
+    let startup = crate::startup_ports::prepare_desktop_startup(paths, config)?;
+    start_stack_with_analytics_port(
+        paths,
+        &startup.config,
+        open_requested,
+        tray_requested,
+        startup.analytics_port,
+    )
+    .await
+}
+
+async fn start_stack_with_analytics_port(
+    paths: &StatePaths,
+    config: &SquadConfig,
+    open_requested: bool,
+    tray_requested: bool,
+    analytics_port: u16,
+) -> Result<CommandOutput> {
     let web_port = web_port_from_open_url(&config.open_url).unwrap_or(DEFAULT_WEB_PORT);
     let daemon_config = stack_daemon_config(config, Some(web_port));
     let mut code = 0;
@@ -319,7 +337,7 @@ async fn start_stack(
 
     for result in [
         start(paths, &daemon_config).await?,
-        analytics_start(paths, &daemon_config, DEFAULT_ANALYTICS_PORT).await?,
+        analytics_start(paths, &daemon_config, analytics_port).await?,
     ] {
         if result.code != 0 {
             code = result.code;
@@ -373,9 +391,9 @@ async fn stack_status(paths: &StatePaths, config: &SquadConfig) -> Result<Comman
     let daemon_config =
         daemon_config_from_record(paths, &stack_daemon_config(config, Some(web_port)));
     let daemon = fetch_status(&daemon_config).await.ok();
-    let analytics = fetch_analytics(&daemon_config, DEFAULT_ANALYTICS_PORT)
-        .await
-        .ok();
+    let analytics_port = crate::startup_ports::analytics_port_for(paths, &config.host);
+    let analytics_running = analytics_is_ready(&daemon_config, analytics_port);
+    let analytics = fetch_analytics(&daemon_config, analytics_port).await.ok();
     let web = if is_local_open_url(&config.open_url) {
         fetch_web_runtime(config.host.as_str(), web_port).ok()
     } else {
@@ -406,8 +424,8 @@ async fn stack_status(paths: &StatePaths, config: &SquadConfig) -> Result<Comman
             "status": daemon
         },
         "analytics": {
-            "url": format!("http://{}:{}", daemon_config.host, DEFAULT_ANALYTICS_PORT),
-            "running": analytics.is_some(),
+            "url": format!("http://{}:{}", daemon_config.host, analytics_port),
+            "running": analytics_running,
             "snapshot": analytics
         },
         "tray": tray
@@ -429,7 +447,12 @@ async fn restart_stack(
 }
 
 async fn stop_stack(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput> {
-    let web_port = web_port_from_open_url(&config.open_url).unwrap_or(DEFAULT_WEB_PORT);
+    let web_port = read_web_server_record(paths)
+        .ok()
+        .flatten()
+        .filter(|record| record.host == config.host)
+        .map(|record| record.port)
+        .unwrap_or_else(|| web_port_for(config));
     let daemon_config =
         daemon_config_from_record(paths, &stack_daemon_config(config, Some(web_port)));
     let mut code = 0;
@@ -454,8 +477,9 @@ async fn stop_stack(paths: &StatePaths, config: &SquadConfig) -> Result<CommandO
         )),
     }
 
+    let analytics_port = crate::startup_ports::analytics_port_for(paths, &config.host);
     for result in [
-        analytics_stop(paths, &daemon_config, DEFAULT_ANALYTICS_PORT).await?,
+        analytics_stop(paths, &daemon_config, analytics_port).await?,
         stop(paths, &daemon_config).await?,
     ] {
         if result.code != 0 {
@@ -512,12 +536,21 @@ async fn start(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput
 }
 
 async fn stop(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput> {
+    if !crate::startup_ports::own_daemon(paths, config, config.port)
+        && crate::startup_ports::owned_daemon(paths, config).is_none()
+    {
+        return Ok(CommandOutput::ok(
+            "No verified Squad daemon is running at this address; no process was stopped.\n",
+        ));
+    }
     match post_lifecycle(config, "/stop").await {
         Ok(message) => Ok(CommandOutput::ok(format!("{}\n", message.message))),
         Err(_) => {
             if let Ok(Some(record)) = read_daemon_record(paths) {
                 if record.host == config.host && record.port == config.port {
-                    if terminate_process(record.pid) {
+                    if crate::startup_ports::owned_daemon(paths, config) == Some(record.pid)
+                        && terminate_process(record.pid)
+                    {
                         let _ = remove_daemon_record(paths);
                         return Ok(CommandOutput::ok("Autohand Squad daemon stopped\n"));
                     }
@@ -552,24 +585,25 @@ async fn analytics_start(
     config: &SquadConfig,
     analytics_port: u16,
 ) -> Result<CommandOutput> {
-    if let Ok(snapshot) = fetch_analytics(config, analytics_port).await {
+    if analytics_is_ready(config, analytics_port) {
         return Ok(CommandOutput::ok(format!(
-            "Autohand Squad analytics is already running at http://{}:{}\ntracked events: {}\n",
-            config.host, analytics_port, snapshot.telemetry.total_events
+            "Autohand Squad analytics is already running at http://{}:{}\n",
+            config.host, analytics_port
         )));
     }
 
     let analytics = locate_analytics_binary(paths)?;
     spawn_analytics(paths, config, analytics_port, &analytics)?;
-    if let Some(snapshot) = wait_until(
-        || fetch_analytics_blocking(config, analytics_port).ok(),
+    if wait_until(
+        || analytics_is_ready(config, analytics_port).then_some(()),
         readiness_timeout(),
     )
     .await
+    .is_some()
     {
         return Ok(CommandOutput::ok(format!(
-            "Autohand Squad analytics started at http://{}:{}\nactive daemons: {}\n",
-            config.host, analytics_port, snapshot.services.active_daemons
+            "Autohand Squad analytics started at http://{}:{}\n",
+            config.host, analytics_port
         )));
     }
 
@@ -605,6 +639,11 @@ async fn analytics_stop(
     config: &SquadConfig,
     analytics_port: u16,
 ) -> Result<CommandOutput> {
+    if !crate::startup_ports::own_analytics(paths, config, analytics_port)
+        && crate::startup_ports::owned_analytics(paths, config, analytics_port).is_none()
+    {
+        return Ok(CommandOutput::ok("No verified Squad analytics service is running at this address; no process was stopped.\n"));
+    }
     if post_to::<serde_json::Value>(
         config.host.as_str(),
         analytics_port,
@@ -615,7 +654,7 @@ async fn analytics_stop(
     .is_ok()
     {
         for _ in 0..30 {
-            if fetch_analytics(config, analytics_port).await.is_err() {
+            if !analytics_is_ready(config, analytics_port) {
                 let _ = remove_analytics_record(paths);
                 return Ok(CommandOutput::ok("Autohand Squad analytics stopped\n"));
             }
@@ -626,6 +665,8 @@ async fn analytics_stop(
     if let Ok(Some(record)) = crate::state::read_analytics_record(paths) {
         if record.host == config.host
             && record.port == analytics_port
+            && crate::startup_ports::owned_analytics(paths, config, analytics_port)
+                == Some(record.pid)
             && terminate_process(record.pid)
         {
             let _ = remove_analytics_record(paths);
@@ -651,7 +692,7 @@ async fn serve(
     dev: bool,
     web_port: u16,
 ) -> Result<CommandOutput> {
-    if fetch_web_runtime(config.host.as_str(), web_port).is_ok() {
+    if web_runtime_is_ready(config.host.as_str(), web_port) {
         return Ok(CommandOutput::ok(format!(
             "Autohand Squad web server is already running at http://{}:{}\n",
             config.host, web_port
@@ -778,6 +819,13 @@ async fn serve_stop(
     config: &SquadConfig,
     web_port: u16,
 ) -> Result<CommandOutput> {
+    if !crate::startup_ports::own_web(paths, &config.host, web_port)
+        && crate::startup_ports::owned_web(paths, config, web_port).is_none()
+    {
+        return Ok(CommandOutput::ok(
+            "No verified Squad bridge is running at this address; no process was stopped.\n",
+        ));
+    }
     if let Ok(response) = post_to::<WebShutdownResponse>(
         config.host.as_str(),
         web_port,
@@ -796,7 +844,11 @@ async fn serve_stop(
     }
 
     if let Ok(Some(record)) = read_web_server_record(paths) {
-        if record.host == config.host && record.port == web_port && terminate_process(record.pid) {
+        if record.host == config.host
+            && record.port == web_port
+            && crate::startup_ports::owned_web(paths, config, web_port) == Some(record.pid)
+            && terminate_process(record.pid)
+        {
             let _ = wait_for_web_stop(config.host.as_str(), web_port).await;
             let _ = remove_web_server_record(paths);
             return Ok(CommandOutput::ok(format!(
@@ -875,15 +927,26 @@ async fn wait_until<T>(mut probe: impl FnMut() -> Option<T>, timeout: Duration) 
 }
 
 pub async fn wait_for_web_runtime(host: &str, web_port: u16, timeout: Duration) -> bool {
-    wait_until(|| fetch_web_runtime(host, web_port).ok(), timeout)
-        .await
-        .is_some()
+    wait_until(
+        || web_runtime_is_ready(host, web_port).then_some(()),
+        timeout,
+    )
+    .await
+    .is_some()
 }
 
 /// Start the daemon, analytics, and web server without opening a browser or
 /// spawning a tray. Used by the desktop entry point after preflight.
 pub async fn start_services(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput> {
     start_stack(paths, config, false, false).await
+}
+
+pub(crate) async fn start_services_with_analytics_port(
+    paths: &StatePaths,
+    config: &SquadConfig,
+    analytics_port: u16,
+) -> Result<CommandOutput> {
+    start_stack_with_analytics_port(paths, config, false, false, analytics_port).await
 }
 
 pub fn web_port_for(config: &SquadConfig) -> u16 {
@@ -923,7 +986,13 @@ where
     post_to(config.host.as_str(), config.port, method, path, body)
 }
 
-fn post_to<T>(host: &str, port: u16, method: &str, path: &str, body: Option<&str>) -> Result<T>
+pub(crate) fn post_to<T>(
+    host: &str,
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<T>
 where
     T: DeserializeOwned,
 {
@@ -978,8 +1047,26 @@ pub(crate) fn fetch_web_runtime(host: &str, web_port: u16) -> Result<serde_json:
     post_to(host, web_port, "GET", "/api/runtime", None)
 }
 
-pub(crate) fn fetch_web_runtime_blocking(host: &str, web_port: u16) -> Result<serde_json::Value> {
-    fetch_web_runtime(host, web_port)
+/// Liveness must not rebuild metrics, probe a CLI, or read account files.
+pub(crate) fn analytics_is_ready(config: &SquadConfig, port: u16) -> bool {
+    post_to::<serde_json::Value>(&config.host, port, "GET", "/health", None)
+        .is_ok_and(|value| {
+            value["success"] == true
+                && (value["service"] == "autohand-squad-analytics"
+                    // Releases before the structured health response.
+                    || value["message"] == format!("autohand-squad-analytics http://{}:{port}", config.host))
+        })
+}
+
+pub(crate) fn web_runtime_is_ready(host: &str, port: u16) -> bool {
+    match post_to::<serde_json::Value>(host, port, "GET", "/api/health", None) {
+        Ok(value) => value["success"] == true && value["service"] == "autohand-squad-bridge",
+        // Reattach to older releases that have no lightweight endpoint.
+        Err(error) if error.to_string().contains("HTTP 404") => {
+            fetch_web_runtime(host, port).is_ok_and(|value| is_squad_web_runtime(&value))
+        }
+        Err(_) => false,
+    }
 }
 
 async fn wait_for_web_stop(host: &str, web_port: u16) -> bool {
@@ -1187,7 +1274,7 @@ fn terminate_squad_web_listener(web_port: u16) -> bool {
     false
 }
 
-fn listener_pids_for_port(web_port: u16) -> Vec<u32> {
+pub(crate) fn listener_pids_for_port(web_port: u16) -> Vec<u32> {
     #[cfg(target_family = "unix")]
     {
         let port_filter = format!("-iTCP:{web_port}");
@@ -1262,7 +1349,7 @@ fn is_squad_web_process(command: &str) -> bool {
             || lower.contains("autohand squad/server.mjs"))
 }
 
-fn daemon_config_from_record(paths: &StatePaths, config: &SquadConfig) -> SquadConfig {
+pub(crate) fn daemon_config_from_record(paths: &StatePaths, config: &SquadConfig) -> SquadConfig {
     let mut next = config.clone();
     if let Ok(Some(record)) = read_daemon_record(paths) {
         next.host = record.host;
@@ -2125,6 +2212,98 @@ mod tests {
             "autohand-squad-cli-test-{}-{nonce}",
             std::process::id()
         )))
+    }
+
+    #[tokio::test]
+    async fn stale_service_records_cannot_shutdown_a_foreign_listener() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+        let paths = temp_state_paths();
+        paths.ensure().unwrap();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let running = Arc::new(AtomicBool::new(true));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let active = running.clone();
+        let captured = requests.clone();
+        let service = std::thread::spawn(move || {
+            while active.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
+                        let mut bytes = [0; 4096];
+                        let count = stream.read(&mut bytes).unwrap_or(0);
+                        captured.lock().unwrap().push(
+                            String::from_utf8_lossy(&bytes[..count])
+                                .lines()
+                                .next()
+                                .unwrap_or("")
+                                .to_string(),
+                        );
+                        let body = r#"{"success":true,"message":"unrelated local app"}"#;
+                        let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(5)),
+                }
+            }
+        });
+        let mut config = SquadConfig::defaults();
+        config.port = port;
+        let url = format!("http://127.0.0.1:{port}");
+        let pid = std::process::id();
+        crate::state::write_daemon_record(
+            &paths,
+            &crate::state::DaemonRecord {
+                pid,
+                host: config.host.clone(),
+                port,
+                url: url.clone(),
+                accepting_work: true,
+                started_at: crate::state::now_string(),
+                drain_requested_at: None,
+            },
+        )
+        .unwrap();
+        crate::state::write_analytics_record(
+            &paths,
+            &crate::state::AnalyticsRecord {
+                pid,
+                host: config.host.clone(),
+                port,
+                url: url.clone(),
+                started_at: crate::state::now_string(),
+            },
+        )
+        .unwrap();
+        crate::state::write_web_server_record(
+            &paths,
+            &WebServerRecord {
+                pid,
+                host: config.host.clone(),
+                port,
+                url,
+                started_at: crate::state::now_string(),
+                server_path: "unrelated-server".into(),
+                dev: false,
+            },
+        )
+        .unwrap();
+        let daemon = stop(&paths, &config).await;
+        let analytics = analytics_stop(&paths, &config, port).await;
+        let web = serve_stop(&paths, &config, port).await;
+        assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_err());
+        running.store(false, Ordering::SeqCst);
+        service.join().unwrap();
+        assert!(daemon.is_ok() && analytics.is_ok() && web.is_ok());
+        assert!(!requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request.starts_with("POST ")));
+        std::fs::remove_dir_all(paths.root).unwrap();
     }
 
     fn cli(command: SquadCommand) -> SquadCli {

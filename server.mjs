@@ -8920,6 +8920,19 @@ server = createServer(async (req, res) => {
     json(res, 400, { success: false, error: "invalid request url" });
     return;
   }
+  // Supervisor liveness is independent of CLI discovery, account I/O and
+  // metrics. These values are already held in memory after bridge startup.
+  if (url.pathname === "/api/health" && req.method === "GET") {
+    json(res, 200, {
+      success: true,
+      service: "autohand-squad-bridge",
+      version: packageMetadata.version,
+      pid: process.pid,
+      stateDir: squadStateDir,
+      startedAt: serverStartedAt,
+    });
+    return;
+  }
   if (url.pathname.startsWith("/api/")) {
     // Another machine's bridge presenting a token this one minted: the
     // same-origin check does not apply (there is no browser Origin), only

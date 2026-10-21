@@ -1,5 +1,5 @@
 use crate::api::{ApiClient, RemoteMetrics, TelemetryFlushSnapshot};
-use crate::cli::{fetch_web_runtime, process_is_running, spawn_web_server, terminate_process};
+use crate::cli::{process_is_running, spawn_web_server, terminate_process, web_runtime_is_ready};
 use crate::config::{resolve_config, ConfigOverrides, SquadConfig};
 use crate::live_status::{
     read_fresh_live_status_snapshot, LiveStatusAutomation, LiveStatusJob, LiveStatusMember,
@@ -1110,7 +1110,7 @@ fn spawn_bridge_supervisor(state: Arc<AppState>) {
             let host = record.host.clone();
             let port = record.port;
             let pid = record.pid;
-            let probe = tokio::task::spawn_blocking(move || fetch_web_runtime(&host, port).is_ok())
+            let probe = tokio::task::spawn_blocking(move || web_runtime_is_ready(&host, port))
                 .await
                 .unwrap_or(false);
             let alive = if probe {

@@ -3,12 +3,11 @@
 //! human-readable detail line, and a remediation hint so the GUI dialog, the
 //! CLI, and support tickets all describe the same failure the same way.
 
-use crate::analytics::DEFAULT_ANALYTICS_PORT;
 use crate::cli::{
-    bundled_autohand_cli, fetch_analytics_blocking, fetch_status_blocking,
-    fetch_web_runtime_blocking, gui_path_env, locate_analytics_binary, locate_daemon_binary,
-    locate_node_runtime, locate_tray_binary, locate_web_server, stack_daemon_config,
-    web_port_from_open_url, DEFAULT_WEB_PORT,
+    analytics_is_ready, bundled_autohand_cli, fetch_status_blocking, gui_path_env,
+    locate_analytics_binary, locate_daemon_binary, locate_node_runtime, locate_tray_binary,
+    locate_web_server, stack_daemon_config, web_port_from_open_url, web_runtime_is_ready,
+    DEFAULT_WEB_PORT,
 };
 use crate::config::SquadConfig;
 use crate::state::{now_string, read_tray_record, StatePaths};
@@ -102,6 +101,33 @@ fn check(
 }
 
 pub fn run_preflight(paths: &StatePaths, config: &SquadConfig) -> PreflightReport {
+    let diagnostic = diagnostic_config(paths, config);
+    run_preflight_with_analytics_port(
+        paths,
+        &diagnostic,
+        crate::startup_ports::analytics_port_for(paths, &config.host),
+    )
+}
+
+fn diagnostic_config(paths: &StatePaths, config: &SquadConfig) -> SquadConfig {
+    let web_port = web_port_from_open_url(&config.open_url).unwrap_or(DEFAULT_WEB_PORT);
+    let mut diagnostic = config.clone();
+    if config.fixed_port.is_none() {
+        let daemon = crate::cli::daemon_config_from_record(
+            paths,
+            &stack_daemon_config(config, Some(web_port)),
+        );
+        diagnostic.port = daemon.port;
+        diagnostic.fixed_port = Some(daemon.port);
+    }
+    diagnostic
+}
+
+pub(crate) fn run_preflight_with_analytics_port(
+    paths: &StatePaths,
+    config: &SquadConfig,
+    analytics_port: u16,
+) -> PreflightReport {
     let web_port = web_port_from_open_url(&config.open_url).unwrap_or(DEFAULT_WEB_PORT);
     let daemon_config = stack_daemon_config(config, Some(web_port));
     let mut checks = Vec::new();
@@ -215,7 +241,7 @@ pub fn run_preflight(paths: &StatePaths, config: &SquadConfig) -> PreflightRepor
         "Web app port",
         &config.host,
         web_port,
-        || fetch_web_runtime_blocking(&config.host, web_port).is_ok(),
+        || web_runtime_is_ready(&config.host, web_port),
     ));
     checks.push(check_port(
         "daemon-port",
@@ -224,13 +250,7 @@ pub fn run_preflight(paths: &StatePaths, config: &SquadConfig) -> PreflightRepor
         daemon_config.port,
         || fetch_status_blocking(&daemon_config).is_ok(),
     ));
-    checks.push(check_port(
-        "analytics-port",
-        "Analytics port",
-        &daemon_config.host,
-        DEFAULT_ANALYTICS_PORT,
-        || fetch_analytics_blocking(&daemon_config, DEFAULT_ANALYTICS_PORT).is_ok(),
-    ));
+    checks.push(analytics_port_check(&daemon_config, analytics_port));
 
     checks.push(match read_tray_record(paths) {
         Ok(Some(record))
@@ -401,6 +421,16 @@ fn check_port(
     }
 }
 
+fn analytics_port_check(config: &SquadConfig, port: u16) -> CheckResult {
+    check_port(
+        "analytics-port",
+        "Analytics port",
+        &config.host,
+        port,
+        || analytics_is_ready(config, port),
+    )
+}
+
 pub fn parse_node_version(value: &str) -> Option<(u32, u32, u32)> {
     let trimmed = value.trim().trim_start_matches('v');
     let mut parts = trimmed.split(['.', '-', '+']);
@@ -510,5 +540,67 @@ mod tests {
         let owned = check_port("web-port", "Web app port", "127.0.0.1", port, || true);
         assert_eq!(owned.status, CheckStatus::Ok);
         drop(listener);
+    }
+
+    #[test]
+    fn analytics_readiness_does_not_collect_metrics() {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let service = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            let count = stream.read(&mut request).unwrap();
+            let health = String::from_utf8_lossy(&request[..count]).starts_with("GET /health ");
+            // Metrics can be unavailable/slow while the service is healthy.
+            let (status, body) = if health {
+                (
+                    200,
+                    format!(
+                        r#"{{"success":true,"message":"autohand-squad-analytics http://127.0.0.1:{port}"}}"#
+                    ),
+                )
+            } else {
+                (503, "{\"success\":false}".to_string())
+            };
+            write!(
+                stream,
+                "HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let config = SquadConfig::defaults();
+        let result = analytics_port_check(&config, port);
+        service.join().unwrap();
+        assert_eq!(result.status, CheckStatus::Ok, "{}", result.detail);
+    }
+
+    #[test]
+    fn doctor_follows_recorded_daemon_port_and_respects_explicit_fixed_port() {
+        let root = std::env::temp_dir().join(format!("squad-doctor-ports-{}", std::process::id()));
+        let paths = StatePaths::from_root(&root);
+        paths.ensure().unwrap();
+        crate::state::write_daemon_record(
+            &paths,
+            &crate::state::DaemonRecord {
+                pid: 42,
+                host: "127.0.0.1".into(),
+                port: 45000,
+                url: "http://127.0.0.1:45000".into(),
+                accepting_work: true,
+                started_at: now_string(),
+                drain_requested_at: None,
+            },
+        )
+        .unwrap();
+        let mut config = SquadConfig::defaults();
+        let diagnostic = diagnostic_config(&paths, &config);
+        assert_eq!(diagnostic.port, 45000);
+        assert_eq!(diagnostic.open_url, config.open_url);
+        config.port = 19822;
+        config.fixed_port = Some(19822);
+        assert_eq!(diagnostic_config(&paths, &config).port, 19822);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Reopening Squad no longer mistakes its healthy background analytics service for another app using its port. Startup and supervision use lightweight health checks, reuse the current workspace's healthy services, and recover verified stale analytics processes. Background services can choose free ports; the desktop keeps its saved address so chats and members stay visible.
+
 ## [0.1.8] - 2026-10-21
 
 ### Added

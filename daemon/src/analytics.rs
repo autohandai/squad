@@ -253,8 +253,11 @@ pub async fn run_analytics_daemon_with_paths(
 
 async fn snapshot_loop(paths: StatePaths) {
     loop {
-        let snapshot = collect_analytics_snapshot(&paths, "analytics-daemon");
-        let _ = write_snapshot(&paths, &snapshot);
+        let snapshot_paths = paths.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            collect_analytics_snapshot(&snapshot_paths, "analytics-daemon")
+        })
+        .await;
         sleep(Duration::from_secs(5)).await;
     }
 }
@@ -855,15 +858,25 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<AnalyticsState>) ->
             write_json_response(
                 &mut stream,
                 200,
-                &LifecycleResponse {
-                    success: true,
-                    message: format!("autohand-squad-analytics {}", state.record.url),
-                },
+                &serde_json::json!({
+                    "success": true,
+                    "service": "autohand-squad-analytics",
+                    "message": format!("autohand-squad-analytics {}", state.record.url),
+                    "version": VERSION,
+                    "pid": state.record.pid,
+                    "stateDir": state.paths.root,
+                    "startedAt": state.record.started_at,
+                }),
             )
             .await
         }
         ("GET", "/metrics") => {
-            let snapshot = collect_analytics_snapshot(&state.paths, "analytics-daemon");
+            let paths = state.paths.clone();
+            let snapshot = tokio::task::spawn_blocking(move || {
+                collect_analytics_snapshot(&paths, "analytics-daemon")
+            })
+            .await
+            .context("collect analytics snapshot")?;
             write_json_response(&mut stream, 200, &snapshot).await
         }
         ("POST", "/stop") => {

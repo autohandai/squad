@@ -245,6 +245,8 @@
 
 ## Maintenance
 
+- Reopening the desktop reuses healthy local Squad services and recovers verified stale analytics without a confirmation. Keep the desktop's address stable because its WebKit storage belongs to that origin; never hide saved chats by silently moving the UI to another port. An unrelated listener is left running and a real conflict explains the next action.
+
 - When a durable user UI preference emerges, update this file in the same change so future UI work reflects it.
 
 - Idle project observation delivers concrete, evidence-backed suggestions in the member’s ordinary DM. Keep its on/off control in Self-improvement; report paused, unsupported, and failed checks honestly. A suggestion is not completed work.
