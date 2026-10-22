@@ -79,7 +79,7 @@
     "check:server": "node --check server.mjs",
     "check:onboarding": "node scripts/verify-onboarding-flow.mjs",
     "check:onboarding:browser": "node scripts/verify-onboarding-browser.mjs",
-    "check:sign-in-recovery:browser": "node scripts/check-sign-in-recovery-browser.mjs",
+    "check:sign-in-recovery:browser": "node scripts/check-sign-in-opener.mjs && node scripts/check-sign-in-recovery-browser.mjs",
     "check:onboarding:recovery": "node scripts/check-onboarding-recovery.mjs",
     "check:channels:browser": "node scripts/verify-channel-browser.mjs",
     "check:web": "bun run build",
