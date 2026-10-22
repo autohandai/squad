@@ -1,6 +1,6 @@
 # ADR-0144: Recover device sign-in without waiting for a code to expire
 
-Date: 2026-10-23. Status: Proposed (draft pull request).
+Date: 2026-10-23. Status: Accepted. Igor approved merging PR #44.
 
 ## Context and evidence
 
@@ -30,3 +30,9 @@ Existing harness adapter and rendered onboarding checks pass. The frontend build
 - The native reset listener is tested by dispatching the shell event and the Rust call compiles. A rebuilt installed-app CloseRequested/relaunch test remains required before release; this change has not replaced the user's installed app or published a desktop artifact.
 - Reopening the gate cancels its outstanding authorization rather than restoring it. Approving an old code afterward does not resume that cancelled CLI process.
 - Other external links in the main webview retain their existing handling; this change is limited to sign-in.
+
+## Integration with current main
+
+Main independently added the bridge-backed link, copy link and fresh-code restart in ADR-0143. PR #44 preserves those actions while using the checked platform opener, copy-code action, explicit cancel and ordered reset handling. The pending-flow restoration choice is superseded by this ADR: reopening the gate cancels the old flow. The 0.1.9 release history and newer natural workflows and Quick Chat changes remain intact.
+
+Integration verification after resolving against main `8771069`: the production build and JSX-import check pass; the platform-opener, real-bridge/browser sign-in regression, harness adapters, rendered onboarding and Quick Chat appearance checks pass. The browser regressions use isolated fixture accounts and processes; they do not establish a packaged-app or public-release result. The build used Vite runner config loading to avoid writing its config cache through the shared node_modules symlink.

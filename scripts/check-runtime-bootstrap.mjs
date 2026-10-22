@@ -61,9 +61,16 @@ globalThis.fetch=async(url,options)=>{
   async function launch() {
     bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], bridgeOptions);
     bridge.stdout.on('data', data => { logs += data; }); bridge.stderr.on('data', data => { logs += data; });
-    await until(async () => (await fetch(origin+'/api/runtime').catch(() => null))?.ok, 'fresh bridge', 30000);
+    await until(async () => (await fetch(origin+'/api/health').catch(() => null))?.ok, 'fresh bridge', 30000);
   }
   await launch();
+  const health = await (await fetch(origin+'/api/health', { signal: AbortSignal.timeout(800) })).json();
+  assert.equal(health.success, true);
+  assert.equal(health.service, 'autohand-squad-bridge');
+  assert.equal(health.pid, bridge.pid);
+  assert.equal(health.stateDir, join(directory, 'squad'));
+  assert.equal(typeof health.startedAt, 'string');
+  assert.equal('autohandPath' in health, false, 'health must not run CLI/configuration discovery');
   const before = (await (await fetch(origin+'/api/runtime')).json()).data;
   assert.equal(before.available, false, 'the fixture must have no CLI from the machine or app');
   if (process.argv.includes('--browser')) {

@@ -4,10 +4,11 @@
 
 use crate::cli::{
     desktop_shell_binary, is_local_open_url, open_url, readiness_timeout, stack_daemon_config,
-    start_services, wait_for_web_runtime, web_port_for,
+    start_services_with_analytics_port, wait_for_web_runtime, web_port_for,
 };
 use crate::config::{resolve_config, ConfigOverrides, SquadConfig};
-use crate::preflight::{run_preflight, PreflightReport};
+use crate::preflight::{run_preflight_with_analytics_port, PreflightReport};
+use crate::startup_ports::prepare_desktop_startup;
 use crate::state::{now_string, write_tray_record, StatePaths, TrayRecord};
 use crate::telemetry::{append_telemetry_event, launcher_event};
 use anyhow::{Context, Result};
@@ -103,10 +104,16 @@ fn register_desktop_shell_as_controller(paths: &StatePaths, config: &SquadConfig
         return;
     }
     let daemon_config = stack_daemon_config(config, Some(web_port_for(config)));
+    let daemon = crate::state::read_daemon_record(paths).ok().flatten();
     let record = TrayRecord {
         pid: std::process::id(),
-        host: daemon_config.host.clone(),
-        daemon_port: daemon_config.port,
+        host: daemon
+            .as_ref()
+            .map(|record| record.host.clone())
+            .unwrap_or(daemon_config.host.clone()),
+        daemon_port: daemon
+            .map(|record| record.port)
+            .unwrap_or(daemon_config.port),
         open_url: url.to_string(),
         started_at: now_string(),
     };
@@ -121,13 +128,22 @@ fn bootstrap_once(
     config: &SquadConfig,
     open_browser: bool,
 ) -> std::result::Result<String, BootstrapFailure> {
-    let report = run_preflight(paths, config);
+    let startup = prepare_desktop_startup(paths, config).map_err(|error| BootstrapFailure {
+        title: "Autohand Squad could not prepare its local services".to_string(),
+        body: format!("{error:#}\n\nLogs: {}", paths.root.display()),
+    })?;
+    let config = &startup.config;
+    let report = run_preflight_with_analytics_port(paths, config, startup.analytics_port);
     if !report.ok {
         return Err(preflight_failure(&report, paths));
     }
 
     let start = runtime
-        .block_on(start_services(paths, config))
+        .block_on(start_services_with_analytics_port(
+            paths,
+            config,
+            startup.analytics_port,
+        ))
         .map_err(|error| BootstrapFailure {
             title: "Autohand Squad could not start its local services".to_string(),
             body: format!("{error:#}\n\nLogs: {}", paths.root.display()),

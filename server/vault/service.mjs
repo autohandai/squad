@@ -87,13 +87,14 @@ export function createVaultService({ stateDir, rootDir, homeDir, bridgeUrl, emit
    * only on the turn that delivers it. The return value carries the secret:
    * keep it out of status and summaries.
    */
-  async function openWork({ memberId, runId = "", channelId = "" }) {
+  async function openWork({ memberId, runId = "", channelId = "", scope = "" }) {
     if (typeof memberId !== "string" || !memberId.trim()) throw new VaultError("A member identity is required.");
     const owner = memberId.trim();
-    let session = sessions.get(owner);
+    const key = JSON.stringify([owner, String(scope)]);
+    let session = sessions.get(key);
     if (!session) {
-      session = { id: randomUUID(), memberId: owner, runId: "", channelId: "", createdAt: new Date().toISOString(), token: randomBytes(32).toString("hex") };
-      sessions.set(owner, session);
+      session = { id: randomUUID(), memberId: owner, scope: String(scope), runId: "", channelId: "", createdAt: new Date().toISOString(), token: randomBytes(32).toString("hex") };
+      sessions.set(key, session);
       byToken.set(session.token, session);
     }
     session.runId = String(runId);
@@ -113,10 +114,9 @@ export function createVaultService({ stateDir, rootDir, homeDir, bridgeUrl, emit
 
   /** Invalidate a member's credential (member stopped, profile reset). */
   function closeMember(memberId) {
-    const session = sessions.get(String(memberId || ""));
-    if (!session) return;
-    sessions.delete(session.memberId);
-    byToken.delete(session.token);
+    for (const [key, session] of sessions) if (session.memberId === memberId) {
+      sessions.delete(key); byToken.delete(session.token);
+    }
   }
 
   async function callTool(session, name, args) {
@@ -170,6 +170,11 @@ export function createVaultService({ stateDir, rootDir, homeDir, bridgeUrl, emit
     tools: TOOLS,
     openWork,
     closeMember,
+    finishWork: runId => {
+      for (const [key, session] of sessions) if (session.scope && session.runId === runId) {
+        sessions.delete(key); byToken.delete(session.token);
+      }
+    },
     dispatch,
     sessions: () => [...sessions.values()].map(publicSession),
     close: () => { sessions.clear(); byToken.clear(); },

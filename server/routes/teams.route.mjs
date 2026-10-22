@@ -21,6 +21,8 @@
 import { TeamFileError, parseTeamUpload } from "../teams/validate.mjs";
 import { addPresets, assemblePresetExport, assembleTeamExport, createChannelsAndWorkflows, createConnectors, createRoutines, listTemplates, planTeamImport, readPresets, removePreset, writeImportedSkills } from "../teams/package.mjs";
 import { TEAM_LIMITS } from "../../src/lib/teams.js";
+import { channelGoalInstruction, channelGoalSystemInstruction, channelGoalProposal, CHANNEL_GOAL_LIMIT } from "../../src/lib/channel-goals.js";
+import { roleTemplates } from "../../src/lib/member-profiles.js";
 
 export const name = "teams";
 
@@ -32,7 +34,7 @@ const UPLOAD_BYTES = TEAM_LIMITS.fileBytes + 256 * 1024;
 function fail(ctx, res, error) {
   const status = Number(error?.status) || Number(error?.statusCode) || 500;
   const message = status === 413 ? `This file is larger than ${Math.round(TEAM_LIMITS.fileBytes / 1024 / 1024)} MB, which is more than a team file can be.` : error?.message || "Something went wrong.";
-  ctx.json(res, status, { success: false, error: message });
+  ctx.json(res, status, { success: false, error: message, ...(error?.runId ? { runId: error.runId } : {}) });
   return true;
 }
 
@@ -48,6 +50,36 @@ function memberNames(value) {
 export async function handle(req, res, url, ctx) {
   const path = url.pathname;
   if (!path.startsWith("/api/teams")) return false;
+
+  if (path === "/api/teams/design" && req.method === "POST") {
+    let runId;
+    try {
+      const body = await ctx.readBody(req), objective = String(body.objective || "").trim();
+      if (!objective || objective.length > CHANNEL_GOAL_LIMIT) throw new TeamFileError(`Describe the channel's goal in 1–${CHANNEL_GOAL_LIMIT} characters.`, 400);
+      const workspace = await ctx.cleanWorkspace(body.workspace);
+      const skills = [...new Set(roleTemplates.flatMap(role => role.skills || []))];
+      const summary = await ctx.startRun({ agentId: "squad-designer", workspace, profile: channelGoalSystemInstruction({ skills }), prompt: channelGoalInstruction(objective, { channelName: String(body.channelName || "").slice(0, 80) }), title: "Design a team for the channel goal", mode: "prompt", policy: "yes", ephemeralSession: true, resumeSession: false });
+      runId = summary.id;
+      const deadline = Date.now() + 90_000;
+      let run;
+      while (Date.now() < deadline) {
+        run = ctx.runs.get(runId);
+        if (run?.finishedAt) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (!run?.finishedAt) throw new TeamFileError("The team design took too long. Your goal is saved; retry when the engine is ready.", 504);
+      if (run.status !== "completed") throw new TeamFileError("The engine could not design the team. Your goal is saved; retry the design.", 502);
+      const reply = String(run.reply || "").trim().replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+      let design;
+      try { design = JSON.parse(reply); } catch { throw new TeamFileError("The engine did not return a valid team design. Your goal is saved; retry the design.", 502); }
+      const proposal = channelGoalProposal(design, { objective, channelName: String(body.channelName || "team"), existingNames: memberNames(body.existingNames), skills });
+      return ok(ctx, res, 200, { proposal, source: "model", runId });
+    } catch (error) {
+      if (runId) error.runId = runId;
+      if (runId && ctx.isLiveRun(ctx.runs.get(runId))) await ctx.stopRun(runId, "team design could not finish").catch(() => {});
+      return fail(ctx, res, error);
+    }
+  }
 
   if (path === "/api/teams/export" && req.method === "POST") {
     try {

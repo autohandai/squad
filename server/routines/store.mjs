@@ -38,6 +38,10 @@ function iso(value) {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
+function destination(value) {
+  return value?.channelId ? { channelId: text(value.channelId, 120), threadId: text(value.threadId, 120), parentMessageId: text(value.parentMessageId, 120) } : null;
+}
+
 export function createRoutineId() {
   return `routine-${randomUUID()}`;
 }
@@ -61,6 +65,7 @@ export function normalizeRun(input, routineId = "") {
     memberRunId: text(source.memberRunId, 80),
     reason: text(source.reason, 400),
     preview: text(source.preview, 400),
+    reply: text(source.reply, 12000),
     // A note the work plan attaches (ADR-0124): "Marked done by the member".
     note: text(source.note, 400),
   };
@@ -83,6 +88,8 @@ export function normalizeRoutine(input, { now = new Date().toISOString(), defaul
     maxRunMinutes: Number.isFinite(minutes) && minutes > 0 ? Math.min(Math.round(minutes), MAX_RUN_MINUTES) : 0,
     source: source.source === "chat" ? "chat" : "editor",
     proposalId: text(source.proposalId, 120),
+    legacyAutomationId: text(source.legacyAutomationId, 120),
+    destination: destination(source.destination),
     nextAt: iso(source.nextAt),
     lastRunAt: iso(source.lastRunAt),
     runs: (Array.isArray(source.runs) ? source.runs : []).map((run) => normalizeRun(run, id)).slice(0, MAX_RUNS_KEPT),
@@ -107,6 +114,7 @@ export function normalizeProposal(input, { now = new Date().toISOString() } = {}
     status: PROPOSAL_STATUSES.includes(source.status) ? source.status : "failed",
     message: text(source.message, 600),
     routineId: text(source.routineId, 80),
+    destination: destination(source.destination),
     createdAt,
     updatedAt: iso(source.updatedAt) || createdAt,
     decidedAt: iso(source.decidedAt),
@@ -119,7 +127,7 @@ export function routineInputFrom(body, existing = null, { now, defaultTimeZone }
   const source = body && typeof body === "object" ? body : {};
   const merged = existing
     ? { ...existing, ...pick(source, ["title", "instructions", "workspace", "model", "enabled", "schedule", "maxRunMinutes"]), id: existing.id, memberId: existing.memberId, runs: existing.runs, createdAt: existing.createdAt, source: existing.source, proposalId: existing.proposalId, updatedAt: now }
-    : { ...pick(source, ["memberId", "title", "instructions", "workspace", "model", "enabled", "schedule", "maxRunMinutes"]), runs: [], createdAt: now, updatedAt: now, source: "editor" };
+    : { ...pick(source, ["memberId", "title", "instructions", "workspace", "model", "enabled", "schedule", "maxRunMinutes", "legacyAutomationId"]), runs: [], createdAt: now, updatedAt: now, source: "editor" };
   return normalizeRoutine(merged, { now, defaultTimeZone });
 }
 

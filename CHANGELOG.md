@@ -12,7 +12,25 @@ list to the section for that version.
 
 ### Fixed
 
-- Sign-in links open in your browser again. Copy the verification link and code into any browser profile, cancel sign-in or start over with a new code. Reopening the sign-in screen clears a pending login instead of waiting for it to expire.
+- Cancel a pending sign-in without waiting for the code to expire, or start over with a new code. Copy the device code as well as the link. Closing or reopening the sign-in screen clears pending authorization, and browser-opening failures show how to continue.
+
+## [0.1.9] - 2026-10-23
+
+### Added
+
+- New channels ask their goal, prepare specialists for that objective, connect the team and start its work. Interrupted preparation can resume without recreating ready members.
+- Reply to a message in an independent thread. Threads keep their history across reopening Squad, can work in parallel for the same member, and have a Stop control for that thread.
+- Members can teach the team through Squad's MCP: save a shared lesson, send it to teammates on their own engines, and collect their answers with delivery receipts.
+
+### Fixed
+
+- Signing in no longer gets stuck. "Open the sign-in page" now opens your browser. Copy link lets you paste the link into a different browser profile, and Start over gets a new code without waiting for the old one to expire. Reopening Squad during sign-in shows the link and code again.
+- Quick Chat follows the main app's current skin and theme as they change, without reloading the conversation or losing an unsent draft.
+- Asking a member for a reminder or repeating job saves an active Automation without asking you to confirm twice. Two-minute reminders keep their requested interval; explicit review permissions and editor drafts still wait for review.
+- Execution and each member's Automations show the same saved schedules. Editing, pausing and deleting them persist across reopening Squad; old browser schedules import once.
+- Member work defaults to automatic execution on Autohand, Codex and Claude Code, including work started without an open chat. Explicit saved restrictions still apply.
+- Your signed-in photo appears in the account footer and menu as well as messages; initials remain the fallback when a photo is unavailable.
+- Reopening Squad no longer mistakes its healthy background analytics service for another app using its port. Startup and supervision use lightweight health checks, reuse the current workspace's healthy services, and recover verified stale analytics processes. Background services can choose free ports; the desktop keeps its saved address so chats and members stay visible.
 
 ## [0.1.8] - 2026-10-21
 

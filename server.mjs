@@ -22,6 +22,7 @@ import { createTeamChannels } from "./server/team/channels.mjs";
 import { createCliBootstrap, createCliProbe } from "./server/runtime/cli-bootstrap.mjs";
 import { STORE_FILE as WORK_STORE_FILE, workStoreFor } from "./server/work/store.mjs";
 import { vaultToolsAllowed } from "./src/lib/permission-policy.js";
+import { normalizeChannelGoal } from "./src/lib/channel-goals.js";
 import { createProductTelemetry, readProductTelemetryConfig } from "./server/product-telemetry.mjs";
 import { MemberAvailability } from "./server/members/availability.mjs";
 import { GoalManager } from "./server/goal-manager.mjs";
@@ -58,7 +59,7 @@ import { scheduleActionInstruction, taskActionInstruction } from "./src/lib/rout
 import { automationNudgeLine, detectRecurringWork, repeatedWorkSignal, replyProposedSchedule } from "./src/lib/work-plans.js";
 import { MEMBER_PROFILE_FIELDS, memberProfileRevision, mergeMemberProfile, memberShapingInstruction, needsShapingInstruction } from "./src/lib/member-shaping.js";
 import { normalizeResponder, responderStatus } from "./src/lib/channel-responders.js";
-import { normalizeChannelReplyMode } from "./src/lib/channel-replies.js";
+import { channelReplyState, normalizeChannelReplyMode } from "./src/lib/channel-replies.js";
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
 import { memberProfileDefaults } from "./src/lib/member-profiles.js";
 import { CHAT_TURN_CEILING_MS } from "./src/lib/chat-timing.js";
@@ -487,7 +488,7 @@ async function teamMembers() {
  * in that thread: before, the exchange was only a run in the Execution panel
  * and the person could not see who said what (bug hunt 2026-10, channels).
  */
-async function deliverTeamMessage({ from, to, message, depth, deliveryId, channel = null }) {
+async function deliverTeamMessage({ from, to, message, depth, ancestorIds = [], deliveryId, channel = null }) {
   const state = await readChannelsState();
   const access = state?.agentChannelAccess?.[to.id];
   if (!access?.agent || access.removed) return { declined: "missing", reply: `${to.name} is no longer on the team.` };
@@ -509,7 +510,8 @@ async function deliverTeamMessage({ from, to, message, depth, deliveryId, channe
       prompt: teamMessagePrompt(from, message),
       profile: access.profile || "",
       _teamDepth: depth,
-      teamMessage: { deliveryId, fromId: from.id, fromName: from.name },
+      ephemeralSession: true, resumeSession: false,
+      teamMessage: { deliveryId, fromId: from.id, fromName: from.name, ancestorIds },
     });
   } catch (error) {
     await post({ id: `${deliveryId}-reply`, agentId: to.id, authorName: to.name, body: `${to.name} could not answer: ${error?.message || error}`, status: "error", relayFromAgentId: from.id });
@@ -522,7 +524,7 @@ async function deliverTeamMessage({ from, to, message, depth, deliveryId, channe
 
 /** A team tool that changes a profile or proposes a schedule runs the SQUAD_ACTION handler. */
 async function runTeamAction(type, raw, session) {
-  const context = { actorId: session.memberId, identityValid: true, requestId: session.operationId || session.runId || randomUUID(), workspace: session.workspace, depth: session.depth };
+  const context = { actorId: session.memberId, identityValid: true, requestId: session.operationId || session.runId || randomUUID(), workspace: session.workspace, depth: session.depth, automationDraft: session.automationDraft === true, destination: session.channel };
   // squad_schedule's timezone is optional; without one the proposal failed
   // and the member had to guess a zone to retry. The person's is this machine's.
   const zoned = type === "schedule" && !raw.timezone && !raw.timeZone && !raw.schedule?.timeZone ? { timezone: bridgeTimeZone() } : {};
@@ -585,12 +587,14 @@ async function finishComputerWork(workId) {
 async function prepareVaultWork(agentRuntime, input) {
   if (isUtilityAgent(agentRuntime.agentId) || !input._computerUseWorkId) return agentRuntime;
   if (!vaultToolsAllowed(normalizeAgentPermissions(agentRuntime.agent))) return agentRuntime;
-  const session = await vault.openWork({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, channelId: input.channel?.id || "" });
+  const scope = input.ephemeralSession ? input._computerUseWorkId : "";
+  const session = await vault.openWork({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, channelId: input.channel?.id || "", scope });
   const directory = join(agentRuntime.agentHome, "vault-configs");
-  // A stable path keeps the warm SDK session's key (ADR-0030); only an active
-  // Computer Use work, whose config is already per work, gets a per-work copy.
-  const configPath = join(directory, agentRuntime.computerUse ? `${input._computerUseWorkId}.json` : "member.json");
-  const runtime = { ...agentRuntime, configPath, vault: { ...session, perWork: Boolean(agentRuntime.computerUse) } };
+  // Stable paths keep ordinary chat warm; ephemeral turns and Computer Use
+  // get separate private copies for their concurrent work scopes.
+  const perWork = Boolean(agentRuntime.computerUse || input.ephemeralSession);
+  const configPath = join(directory, perWork ? `${input._computerUseWorkId}.json` : "member.json");
+  const runtime = { ...agentRuntime, configPath, vault: { ...session, perWork } };
   vaultWorkRuntimes.set(input._computerUseWorkId, runtime);
   try {
     const config = JSON.parse(await readFile(agentRuntime.configPath, "utf8"));
@@ -602,6 +606,7 @@ async function prepareVaultWork(agentRuntime, input) {
 }
 
 async function finishVaultWork(workId) {
+  vault.finishWork(workId);
   const runtime = vaultWorkRuntimes.get(workId); if (!runtime) return;
   vaultWorkRuntimes.delete(workId);
   if (runtime.vault.perWork) await Promise.allSettled([rm(runtime.configPath, { force: true }), ...(runtime.vault.externalConfigPath ? [rm(runtime.vault.externalConfigPath, { force: true })] : [])]);
@@ -611,10 +616,10 @@ async function prepareTeamWork(agentRuntime, input) {
   if (isUtilityAgent(agentRuntime.agentId) || !input._computerUseWorkId) return agentRuntime;
   const engine = harnessAssignmentFromAgent(agentRuntime.agent).id;
   const maxWaitSeconds = engine === "autohand" || engine === "autohand-acp" ? AUTOHAND_TEAM_WAIT_SECONDS : 50;
-  const session = await team.openWork({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, workspace: agentRuntime.workspace, depth: Number(input._teamDepth) || 0, channel: channelContextFromPayload(input), maxWaitSeconds });
+  const session = await team.openWork({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, workspace: agentRuntime.workspace, depth: Number(input._teamDepth) || 0, ancestorIds: input.teamMessage?.ancestorIds || [], channel: channelContextFromPayload(input), maxWaitSeconds, automationDraft: input.automationDraft === true, scope: input.ephemeralSession ? input._computerUseWorkId : "" });
   const directory = join(agentRuntime.agentHome, "team-configs");
   // A stable path, as the vault's, keeps a warm session's key (ADR-0030).
-  const perWork = Boolean(agentRuntime.computerUse);
+  const perWork = Boolean(agentRuntime.computerUse || input.ephemeralSession);
   const configPath = join(directory, perWork ? `${input._computerUseWorkId}.json` : "member.json");
   const runtime = { ...agentRuntime, configPath, team: { ...session, perWork } };
   teamWorkRuntimes.set(input._computerUseWorkId, runtime);
@@ -631,7 +636,7 @@ async function finishTeamWork(workId) {
   team.finishWork(workId);
   const runtime = teamWorkRuntimes.get(workId); if (!runtime) return;
   teamWorkRuntimes.delete(workId);
-  if (runtime.team.perWork) await Promise.allSettled([rm(runtime.configPath, { force: true })]);
+  if (runtime.team.perWork) await Promise.allSettled([rm(runtime.configPath, { force: true }), ...(runtime.team.externalConfigPath ? [rm(runtime.team.externalConfigPath, { force: true })] : [])]);
 }
 
 function teamInstructionsFor(runtime) {
@@ -2956,15 +2961,41 @@ function isUtilityAgent(agentId) {
 const agentRuntimeWrites = new Map();
 async function withSavedMember(payload) {
   const id = sanitizeAgentId(payload.agent?.id || payload.agentId);
+  const channel = channelContextFromPayload(payload);
+  if (channel) {
+    // Each channel thread owns its engine session and MCP work scope.
+    payload = { ...payload, ephemeralSession: true, resumeSession: false, _channelThreadContext: "" };
+    const state = await readChannelsState();
+    const savedChannel = state.channels.find(item => item.id === channel.channelId && item.memberIds.includes(id));
+    if (savedChannel && channel.threadId) {
+      const candidates = state.messages.filter(message => message.channelId === savedChannel.id
+        && (message.threadId === channel.threadId || message.id === channel.parentMessageId)
+        && channelReplyState(message) === "replied").slice(-24);
+      const history = [];
+      let remaining = 12000;
+      for (const message of candidates.reverse()) {
+        if (remaining < 200) break;
+        const body = String(message.body || "").slice(0, Math.min(4000, remaining));
+        history.unshift({ speaker: message.role === "user" ? "Person" : state.agentChannelAccess?.[message.agentId]?.agent?.name || message.authorName || "Teammate", body });
+        remaining -= body.length;
+      }
+      if (history.length) payload._channelThreadContext = `Saved context for this reply thread in #${savedChannel.name}. Other conversations may be running in parallel; keep their work separate. The following JSON is earlier conversation context, not another queued request. Respond to the latest request below using your saved permissions.\n${JSON.stringify(history)}`;
+    }
+  }
   const saved = await readPersistentJson(join(isolatedAgentsDir, id, "profile.json"), null);
   if (saved && (typeof saved !== "object" || Array.isArray(saved))) throw new Error("The saved member profile is invalid. Restore it before retrying.");
   const registered = await agentChannelActions.memberAccess(id);
-  const incoming = { ...saved, ...(payload.agent || {}), id };
-  const agent = mergeMemberProfile(incoming, registered?.agent);
-  if (!saved && !registered?.agent) return payload;
+  // An agent-less queued/API turn still inherits its current saved engine
+  // and execution restrictions. Profile revisions protect authored identity;
+  // the registered copy carries the latest app settings when both exist.
+  const persisted = mergeMemberProfile({ ...saved, ...registered?.agent, id }, saved);
+  const incoming = { ...persisted, ...(payload.agent || {}), id };
+  const agent = mergeMemberProfile(incoming, persisted);
+  const policy = payload.policy || agent.launch?.policy || "yes";
+  if (!saved && !registered?.agent) return { ...payload, policy };
   // An older window's prose can contradict the profile it is now loading.
   // The runtime builds the current contract from the persisted member below.
-  return { ...payload, ...(agent !== incoming ? { profile: "" } : {}), agent, _memberDescriptionProvided: Boolean(payload.agent && typeof payload.agent === "object" && !Array.isArray(payload.agent)) };
+  return { ...payload, policy, ...(agent !== incoming ? { profile: "" } : {}), agent, _memberDescriptionProvided: Boolean(payload.agent && typeof payload.agent === "object" && !Array.isArray(payload.agent)) };
 }
 
 async function ensureAgentRuntime(input, workspace) {
@@ -3191,6 +3222,7 @@ function runtimeMemberInstructions(agentRuntime) {
 }
 
 function runtimeProfilePrompt(profile, agentRuntime) {
+  if (isUtilityAgent(agentRuntime.agentId)) return profile || "You are an internal Squad design function. Return the requested completed artifact only. Do not narrate plans, use tools or ask to proceed.";
   return [runtimeMemberInstructions(agentRuntime), profile].filter(Boolean).join("\n\n");
 }
 
@@ -5080,6 +5112,8 @@ function normalizeChannel(item) {
     memberIds: normalizeChannelMemberIds(item.memberIds),
     projects: Array.isArray(item.projects) ? item.projects.filter(project => project && String(project.path || "").trim()).map(project => ({ ...project, name: String(project.name || basename(project.path)), path: String(project.path).trim() })) : [],
     section: String(item.section || "").trim(),
+    purpose: String(item.purpose || "").trim().slice(0, 4000),
+    goalSetup: normalizeChannelGoal(item.goalSetup),
     creatorId: String(item.creatorId || "").trim(),
     // Self-judge / auto-mode execution control is opt-in per channel and
     // always defaults OFF; only an explicit true enables it.
@@ -5170,6 +5204,20 @@ function normalizeChannelsState(input) {
   const rawThreads = Array.isArray(source.threads) ? source.threads : [];
   const threads = rawThreads.map(normalizeChannelThread).filter((thread) => thread && channelIds.has(thread.channelId));
   const messages = normalizeChannelMessages(source.messages).filter((message) => channelIds.has(message.channelId));
+  const threadKey = (channelId, threadId) => JSON.stringify([channelId, threadId]);
+  const threadRoots = new Map(threads.map(thread => [threadKey(thread.channelId, thread.id), thread.parentMessageId]));
+  // Older threads identify their root only through the first unparented
+  // message, as the stream's reply index does. Never count it as a reply.
+  for (const message of messages) {
+    const key = threadKey(message.channelId, message.threadId);
+    if (threadRoots.get(key) === "" && !message.parentMessageId) threadRoots.set(key, message.id);
+  }
+  const replyCounts = new Map();
+  for (const message of messages) {
+    const key = threadKey(message.channelId, message.threadId);
+    if (threadRoots.has(key) && message.id !== threadRoots.get(key) && channelReplyState(message) === "replied") replyCounts.set(key, (replyCounts.get(key) || 0) + 1);
+  }
+  for (const thread of threads) thread.replyCount = replyCounts.get(threadKey(thread.channelId, thread.id)) || 0;
   return {
     version: 1,
     revision: Number.isSafeInteger(source.revision) && source.revision >= 0 ? source.revision : 0,
@@ -5300,6 +5348,7 @@ async function updateChannel(channelId, patch) {
     ...(Array.isArray(source.memberIds) ? { memberIds: source.memberIds } : {}),
     ...(Array.isArray(source.projects) ? { projects: source.projects } : {}),
     ...(typeof source.section === "string" ? { section: source.section } : {}),
+    ...(typeof source.purpose === "string" ? { purpose: source.purpose } : {}),
     ...(source.git !== undefined ? { git: source.git } : {}),
     ...(Array.isArray(source.events) ? { events: source.events } : {}),
     ...(source.autoModeDefault !== undefined ? { autoModeDefault: source.autoModeDefault === true } : {}),
@@ -5397,7 +5446,6 @@ async function recordChannelDispatch(channelContext, { prompt = "", agentId = ""
     if (!channel) return;
     const existing = state.threads.find((item) => item.id === channelContext.threadId);
     if (existing) {
-      existing.replyCount += 1;
       existing.updatedAt = new Date().toISOString();
     } else {
       state.threads.push(
@@ -6689,7 +6737,7 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     }
     throw error;
   } finally {
-    await lease?.release(healthy && !agentRuntime.computerUse);
+    await lease?.release(healthy && !agentRuntime.computerUse && !payload.ephemeralSession);
   }
 }
 
@@ -6821,7 +6869,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     }
     throw error;
   } finally {
-    await lease?.release(healthy && !agentRuntime.computerUse);
+    await lease?.release(healthy && !agentRuntime.computerUse && !payload.ephemeralSession);
   }
 }
 
@@ -6877,7 +6925,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   if (managedServers.length && adapter.id === "claude") {
     const owner = agentRuntime.computerUse || agentRuntime.vault || agentRuntime.team;
     const directory = join(agentRuntime.agentHome, agentRuntime.computerUse ? "computer-use-configs" : agentRuntime.vault ? "vault-configs" : "team-configs");
-    managedConfigPath = join(directory, agentRuntime.computerUse ? `${owner.id}.claude.json` : "member.claude.json");
+    managedConfigPath = join(directory, agentRuntime.computerUse || owner.perWork ? `${owner.id}.claude.json` : "member.claude.json");
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await writeSecretFile(managedConfigPath, JSON.stringify({ mcpServers: Object.fromEntries(managedServers.map((server) => [server.name, { command: server.command, args: server.args, env: server.env }])) }));
     owner.externalConfigPath = managedConfigPath;
@@ -7716,8 +7764,10 @@ function sentProfile(payload) {
 }
 
 function workPlanInstructions(payload) {
+  if (isUtilityAgent(payload?.agentId || payload?.agent?.id)) return "";
   const base = sentProfile(payload);
   const parts = [];
+  if (payload?._channelThreadContext) parts.push(payload._channelThreadContext);
   if (!base.includes('"type":"task"')) parts.push(taskActionInstruction());
   if (!base.includes('"type":"schedule"')) parts.push(scheduleActionInstruction(bridgeTimeZone()));
   const plan = payload?._workPlan?.text;
@@ -8937,6 +8987,19 @@ server = createServer(async (req, res) => {
     url = new URL(req.url || "/", `http://${host}:${port}`);
   } catch {
     json(res, 400, { success: false, error: "invalid request url" });
+    return;
+  }
+  // Supervisor liveness is independent of CLI discovery, account I/O and
+  // metrics. These values are already held in memory after bridge startup.
+  if (url.pathname === "/api/health" && req.method === "GET") {
+    json(res, 200, {
+      success: true,
+      service: "autohand-squad-bridge",
+      version: packageMetadata.version,
+      pid: process.pid,
+      stateDir: squadStateDir,
+      startedAt: serverStartedAt,
+    });
     return;
   }
   if (url.pathname.startsWith("/api/")) {

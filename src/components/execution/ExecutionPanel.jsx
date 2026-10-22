@@ -34,6 +34,7 @@ export function ExecutionPanel({
   runs = [],
   automations = [],
   setAutomations,
+  onRoutineSync,
   runAutomation,
   activeTab = "runs",
   setActiveTab,
@@ -135,6 +136,7 @@ export function ExecutionPanel({
             <AutomationList
               automations={automations}
               setAutomations={setAutomations}
+              onRoutineSync={onRoutineSync}
               runAutomation={runAutomation}
               copy={copy}
               scheduleLabel={format.schedule}
