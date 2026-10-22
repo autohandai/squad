@@ -9631,6 +9631,8 @@ function App() {
         bridgeUnavailable={runtime.bridgeUnavailable === true}
         startLogin={() => { recordSignInStarted(); return api("/api/harnesses/login", { method: "POST", body: JSON.stringify({ id: "autohand" }) }); }}
         loginStatus={() => api("/api/harnesses/login?id=autohand")}
+        openLoginPage={() => api("/api/harnesses/login/open?id=autohand", { method: "POST" })}
+        cancelLogin={() => api("/api/harnesses/login?id=autohand", { method: "DELETE" })}
         refreshAccount={refreshRuntime}
       />
     );

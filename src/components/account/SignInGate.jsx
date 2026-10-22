@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, LogIn, RefreshCw, TerminalSquare } from "lucide-react";
+import { Copy, ExternalLink, LogIn, RefreshCw, RotateCcw, TerminalSquare } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { copyText } from "@/lib/copy-text";
 import { cn } from "@/lib/utils";
 
 /**
@@ -11,12 +12,19 @@ import { cn } from "@/lib/utils";
  * The bridge starts the CLI's own login flow; this page shows the URL and
  * device code it prints, waits for the flow to finish, and re-checks the
  * account. Nothing here handles credentials.
+ *
+ * Closing the window only hides it and the bridge keeps the flow alive, so
+ * the gate resumes a running flow and can start over with a fresh code.
+ * Copy link exists for the wrong browser profile: opening again would land
+ * in the same default browser.
  */
 export function SignInGate({
   account,
   bridgeUnavailable = false,
   startLogin,
   loginStatus,
+  openLoginPage,
+  cancelLogin,
   refreshAccount,
   onSignedIn,
   productName = "Autohand Squad",
@@ -24,9 +32,26 @@ export function SignInGate({
   const [flow, setFlow] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
   const pollRef = useRef(null);
 
   useEffect(() => () => window.clearInterval(pollRef.current), []);
+
+  useEffect(() => {
+    let active = true;
+    loginStatus?.()
+      .then((status) => {
+        if (!active || status?.state !== "running") return;
+        setFlow(status);
+        setBusy(true);
+        watchFlow();
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (account?.signedIn) onSignedIn?.();
@@ -38,27 +63,60 @@ export function SignInGate({
     try {
       const started = await startLogin();
       setFlow(started);
-      window.clearInterval(pollRef.current);
-      pollRef.current = window.setInterval(async () => {
-        try {
-          const status = await loginStatus();
-          setFlow(status);
-          if (status?.state === "done" || status?.state === "failed" || status?.state === "cancelled") {
-            window.clearInterval(pollRef.current);
-            setBusy(false);
-            if (status.state === "failed") setError(status.error || "Sign-in did not complete.");
-            await refreshAccount?.();
-          } else if (status?.state === "running") {
-            await refreshAccount?.();
-          }
-        } catch (pollError) {
-          setError(pollError?.message || "Could not check the sign-in status.");
-        }
-      }, 2500);
+      watchFlow();
     } catch (startError) {
       setBusy(false);
       setError(startError?.message || "Could not start the sign-in flow.");
     }
+  }
+
+  function watchFlow() {
+    window.clearInterval(pollRef.current);
+    pollRef.current = window.setInterval(async () => {
+      try {
+        const status = await loginStatus();
+        setFlow(status);
+        if (status?.state === "done" || status?.state === "failed" || status?.state === "cancelled") {
+          window.clearInterval(pollRef.current);
+          setBusy(false);
+          if (status.state === "failed") setError(status.error || "Sign-in did not complete.");
+          await refreshAccount?.();
+        } else if (status?.state === "running") {
+          await refreshAccount?.();
+        }
+      } catch (pollError) {
+        setError(pollError?.message || "Could not check the sign-in status.");
+      }
+    }, 2500);
+  }
+
+  async function startOver() {
+    window.clearInterval(pollRef.current);
+    setFlow(null);
+    setCopied(false);
+    try {
+      await cancelLogin?.();
+    } catch (cancelError) {
+      setBusy(false);
+      setError(cancelError?.message || "Could not cancel the sign-in flow.");
+      return;
+    }
+    await beginSignIn();
+  }
+
+  async function openPage() {
+    setError("");
+    try {
+      await openLoginPage();
+    } catch (openError) {
+      setError(openError?.message || "Could not open the sign-in page.");
+    }
+  }
+
+  async function copyLink() {
+    const ok = await copyText(flow?.url);
+    setCopied(ok);
+    if (!ok) setError("Could not copy the link. Select it below instead.");
   }
 
   const waiting = busy && flow?.state === "running";
@@ -91,22 +149,38 @@ export function SignInGate({
             {waiting ? "Waiting for the browser…" : busy ? "Opening sign-in…" : "Continue with Autohand account"}
           </Button>
 
-          {flow?.url ? (
-            <a
-              href={flow.url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center justify-center gap-1.5 text-sm text-primary underline-offset-4 hover:underline"
-            >
-              Open the sign-in page
-              <ExternalLink className="size-3.5" aria-hidden="true" />
-            </a>
+          {waiting && flow?.url ? (
+            <>
+              <div className="flex items-center justify-center gap-1">
+                <Button type="button" variant="link" size="sm" onClick={openPage}>
+                  Open the sign-in page
+                  <ExternalLink />
+                </Button>
+                <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" onClick={copyLink}>
+                  <Copy data-icon="inline-start" />
+                  {copied ? "Copied" : "Copy link"}
+                </Button>
+              </div>
+              <p className="text-center text-xs text-muted-foreground">
+                Wrong browser profile? Paste the link into the right one.
+              </p>
+              <p className="select-all break-all text-center font-mono text-xs text-muted-foreground" data-testid="sign-in-url">
+                {flow.url}
+              </p>
+            </>
           ) : null}
 
           {flow?.code ? (
             <p className="text-center text-sm text-muted-foreground">
               Enter code <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{flow.code}</code> if the page asks for one.
             </p>
+          ) : null}
+
+          {waiting ? (
+            <Button type="button" variant="ghost" size="sm" className="self-center text-muted-foreground" onClick={startOver}>
+              <RotateCcw data-icon="inline-start" />
+              Start over with a new code
+            </Button>
           ) : null}
 
           {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}

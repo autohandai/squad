@@ -18,6 +18,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Signing in no longer gets stuck. "Open the sign-in page" now opens your browser. Copy link lets you paste the link into a different browser profile, and Start over gets a new code without waiting for the old one to expire. Reopening Squad during sign-in shows the link and code again.
 - Quick Chat follows the main app's current skin and theme as they change, without reloading the conversation or losing an unsent draft.
 - Asking a member for a reminder or repeating job saves an active Automation without asking you to confirm twice. Two-minute reminders keep their requested interval; explicit review permissions and editor drafts still wait for review.
 - Execution and each member's Automations show the same saved schedules. Editing, pausing and deleting them persist across reopening Squad; old browser schedules import once.

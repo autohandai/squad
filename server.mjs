@@ -8238,6 +8238,20 @@ async function handleApi(req, res, url) {
     return true;
   }
 
+  // The desktop webview drops target=_blank links, so the sign-in gate asks
+  // the bridge to open the running flow's own URL in the default browser.
+  if (url.pathname === "/api/harnesses/login/open" && req.method === "POST") {
+    const id = normalizeHarnessAssignment({ id: url.searchParams.get("id") }).id;
+    const flow = harnessLogins.status(id);
+    if (flow.state !== "running" || !flow.url) {
+      json(res, 409, { success: false, error: "No sign-in is waiting. Start sign-in again." });
+      return true;
+    }
+    openUrlInBrowser(flow.url);
+    json(res, 200, { success: true, data: { opened: true } });
+    return true;
+  }
+
   if (url.pathname === "/api/harnesses/test" && req.method === "POST") {
     try {
       const payload = await readBody(req);
