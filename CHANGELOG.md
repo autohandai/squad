@@ -10,6 +10,8 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-23
+
 ### Added
 
 - New channels ask their goal, prepare specialists for that objective, connect the team and start its work. Interrupted preparation can resume without recreating ready members.
