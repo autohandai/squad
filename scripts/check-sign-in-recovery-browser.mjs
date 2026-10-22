@@ -29,6 +29,7 @@ try {
   // This is a button using the local opener, not a dropped target=_blank link.
   await browser.click('Open the sign-in page');
   await until(async () => (await readFile(join(bridge.directory, 'opened'), 'utf8')).includes('user_code=TEST-0001'), 'system browser opener');
+  await browser.screenshot('.codex-artifacts/sign-in-waiting.png');
   await browser.click('Copy link');
   assert.equal(await browser.evaluate('window.__copied'), 'https://autohand.ai/signin?user_code=TEST-0001');
   await browser.click('Copy code');
