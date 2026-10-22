@@ -22,7 +22,7 @@ Independent review also reproduced a race: resetting while the login POST is pen
 
 `node scripts/check-sign-in-recovery-browser.mjs` runs the real local bridge and rendered React gate with an isolated state directory, a fixture login process and a fixture system opener. It checks opener arguments, copy URL/code callbacks, opener failure, cancel, a fresh code on restart, native reset event handling, webview reload while the bridge survives, a delayed start followed by reset, bridge restart, inactive-open HTTP 409 and browser exceptions. The regression failed before the implementation and passes afterward.
 
-Existing harness adapter and rendered onboarding checks pass. The frontend build passes. `cargo fmt -- --check` and an offline native `cargo check` pass with bundle sidecars disabled for compile checking, because this clean source checkout has not staged release resources.
+Existing harness adapter and rendered onboarding checks pass. The frontend build and all 18 existing native shell unit tests pass. `cargo fmt -- --check` and an offline native `cargo check` pass with bundle sidecars disabled for compile checking, because this clean source checkout has not staged release resources.
 
 ## Consequences and limits
 
