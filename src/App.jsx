@@ -4592,10 +4592,12 @@ function App() {
     function onVisible() { if (document.visibilityState === "visible") readSharedAppearance(); }
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", readSharedAppearance);
+    window.addEventListener("squad:popup-shown", readSharedAppearance);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", readSharedAppearance);
+      window.removeEventListener("squad:popup-shown", readSharedAppearance);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);

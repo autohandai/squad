@@ -75,7 +75,15 @@ fn show_popup(app: &AppHandle, shell: &Shell, window: &tauri::WebviewWindow) -> 
             ))
             .map_err(|error| error.to_string())?;
     }
+    reveal_popup(window)
+}
+
+// The popover stays mounted while hidden, and an always-on-top panel does not
+// reliably deliver focus or visibility events to its page. Ask it to re-read
+// the shared skin and theme every time it is shown.
+fn reveal_popup(window: &tauri::WebviewWindow) -> Result<(), String> {
     window.show().map_err(|error| error.to_string())?;
+    let _ = window.eval("window.dispatchEvent(new Event('squad:popup-shown'))");
     window.set_focus().map_err(|error| error.to_string())
 }
 
@@ -85,8 +93,7 @@ fn show_popup(
     _shell: &Shell,
     window: &tauri::WebviewWindow,
 ) -> Result<(), String> {
-    window.show().map_err(|error| error.to_string())?;
-    window.set_focus().map_err(|error| error.to_string())
+    reveal_popup(window)
 }
 
 pub(crate) fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {

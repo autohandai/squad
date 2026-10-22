@@ -42,3 +42,18 @@ conversation state to refresh appearance.
 - Browser checks compare computed tokens and skin/surface attributes while
   checking the document identity and unsent draft remain unchanged. A source
   browser check does not establish an installed native release.
+
+## Amendment, 2026-10-23: the shell signals when the popover is shown
+
+The screenshot was reported again from installed 0.1.8, built 2026-10-21,
+before this fix existed. Recovery on show still depended on the webview
+delivering `focus` or `visibilitychange` to an always-on-top popover that was
+hidden and shown again. Nobody has observed that in the native shell. The
+shell now dispatches `squad:popup-shown` into the page each time it shows
+Quick Chat, and the app re-reads appearance on that event too.
+
+What was checked: `bun run desktop:check` compiles the shell, and
+`check-quick-chat-theme.mjs` passes. A browser control that blocked storage,
+focus and visibility events still saw Quick Chat update without the new
+event, by a path that was not identified. So the browser check cannot show
+that the signal is needed, and the native popover is still unobserved.
