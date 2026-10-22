@@ -195,6 +195,15 @@ fn main() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == MAIN_WINDOW {
                     api.prevent_close();
+                    // Closing keeps the bridge alive, but a pending sign-in
+                    // must not trap the person when this window is reopened.
+                    if let Some(webview) = window.app_handle().get_webview_window(MAIN_WINDOW) {
+                        if let Err(error) = webview.eval(
+                            "window.dispatchEvent(new Event('squad:sign-in-reset'))",
+                        ) {
+                            eprintln!("sign-in reset failed: {error}");
+                        }
+                    }
                     let _ = window.hide();
                 }
             }

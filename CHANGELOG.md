@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Sign-in links open in your browser again. Copy the verification link and code into any browser profile, cancel sign-in or start over with a new code. Reopening the sign-in screen clears a pending login instead of waiting for it to expire.
+
 ## [0.1.8] - 2026-10-21
 
 ### Added
