@@ -405,13 +405,11 @@ const desktopUpdates = createUpdateFlow({
         desktopDaemonUpdateToken=randomUUID();
         await updateDaemonAdmission({stateDir:squadStateDir,token:desktopDaemonUpdateToken,pause:true});
       }
-      const [savedQueue, queued, diskRuns, activeGoals] = await Promise.all([
-        readOptionalJsonFile(join(squadStateDir, "queues.json")), readJsonDir(join(squadStateDir, "queue")), readJsonDir(join(squadStateDir, "runs")), goals.list(),
-      ]);
-      const active = value => ["pending", "queued", "launching", "running", "handoff-pending"].includes(value.status);
-      const busy = activeChats.size || observerRunStarts.size || Boolean(projectObserver.active) || sdkSessions?.stats().busy || [...runs.values()].some(isLiveRun) || activeGoals.some(active) || [...queued, ...diskRuns, ...(savedQueue?.items || [])].some(active);
-      if (busy) { desktopInstallLocked = false; await releaseDesktopDaemonAdmission(); }
-      return !busy;
+      // Installing wins over running work (ADR-0144): stop chats, runs and
+      // observations, pause goals so they can resume, and keep queued work.
+      const { stoppedRuns } = await stopManagedRuns("Stopped to install the Squad update.");
+      logEvent(SEVERITY.INFO, "work stopped for update install", { "event.name": "update.install.stop_work", "squad.runs.stopped": stoppedRuns });
+      return true;
     } catch (error) { desktopInstallLocked = false; await releaseDesktopDaemonAdmission(); throw error; }
   },
 });

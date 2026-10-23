@@ -175,14 +175,6 @@ export function createUpdateFlow({
       !state.installer?.verified
     )
       throw fail("Download and verify the update first.");
-    if (
-      !(await canRestart({
-        automatic: state.installMode === "restart" && !preferInstaller,
-      }))
-    )
-      throw fail(
-        "Finish active agent work and queued follow-ups before installing. Your update is ready when you are.",
-      );
     const installer = state.installer;
     // Revalidate persisted metadata and bytes, even after a bridge restart.
     const official = verifiedInstaller(
@@ -213,6 +205,14 @@ export function createUpdateFlow({
       );
       throw fail(state.error, 422);
     }
+    // The update comes first: the host stops running work only once the
+    // installer is known to be good, and refuses only a second install.
+    if (
+      !(await canRestart({
+        automatic: state.installMode === "restart" && !preferInstaller,
+      }))
+    )
+      throw fail("Another update installation is already in progress.");
     if (state.installMode === "restart" && !preferInstaller) {
       const capability = await capabilityImpl({ platform, serviceStateDir });
       if (!capability)

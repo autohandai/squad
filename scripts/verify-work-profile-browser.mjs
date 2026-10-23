@@ -390,8 +390,8 @@ async function main() {
     await updaterButton('Cancel download'); await waitFor(async()=>(await updaterText()).includes('Download cancelled'),'cancel');
     await updaterButton('Download update'); await waitFor(async()=>(await updaterText()).includes('Version 0.1.6 is ready'),'verified ready');
     await screenshot('update-ready');
-    await cdp.evaluate("window.__updateVerify.installError='Finish active agent work before installing.'"); await updaterButton('Install update');
-    await waitFor(()=>cdp.evaluate("document.querySelector('#settings-updates [role=alert]')?.innerText.includes('Finish active agent work')"),'busy work refusal');
+    await cdp.evaluate("window.__updateVerify.installError='Another update installation is already in progress.'"); await updaterButton('Install update');
+    await waitFor(()=>cdp.evaluate("document.querySelector('#settings-updates [role=alert]')?.innerText.includes('already in progress')"),'second install refusal');
     await cdp.evaluate("window.__updateVerify.installError=''"); await updaterButton('Install update');
     await waitFor(async()=>(await updaterText()).includes('Installer opened'),'system installer');
     await navigate('/settings/updates'); await waitFor(async()=>(await updaterText()).includes('Installer opened'),'operation survives reload');

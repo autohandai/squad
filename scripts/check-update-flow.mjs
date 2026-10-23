@@ -81,7 +81,7 @@ try {
   await restored.load();
   assert.equal(restored.status().phase, "ready");
   busy = true;
-  await assert.rejects(restored.install(), /Finish.*work/);
+  await assert.rejects(restored.install(), /already in progress/);
   assert.equal(opened, 0);
   busy = false;
   await restored.install();
@@ -92,10 +92,15 @@ try {
   const coldInstall=cold.install(); await until(()=>Boolean(resumeInstall));
   assert.equal(cold.status().phase,"installer-open"); resumeInstall(true); await coldInstall;
   // The saved checksum is rechecked before opening a previously downloaded installer.
+  let stoppedWork = 0;
   const tampered = createUpdateFlow({
     appStateDir: dir,
     platform: "darwin",
     arch: "arm64",
+    canRestart: async () => {
+      stoppedWork++;
+      return true;
+    },
     openImpl: async () => {
       opened++;
     },
@@ -105,6 +110,7 @@ try {
   await writeFile(join(dir, "updates", snapshot.downloadName), "changed");
   await assert.rejects(tampered.install(), /verification/);
   assert.equal(opened, 2);
+  assert.equal(stoppedWork, 0, "a tampered installer never stops running work");
   // Cancellation removes partials and never opens an installer.
   const cancel = createUpdateFlow({
     appStateDir: join(dir, "cancel"),
@@ -176,7 +182,7 @@ try {
   await reopened.load();
   assert.equal(reopened.status().phase, "complete");
   console.log(
-    "Update flow passed: measured bytes, duplicate refusal, persisted ready state, idle guard, tamper refusal, cancellation. Mocked installer only.",
+    "Update flow passed: measured bytes, duplicate refusal, persisted ready state, second-install guard, tamper refusal before work stops, cancellation. Mocked installer only.",
   );
 } finally {
   await rm(dir, { recursive: true, force: true });

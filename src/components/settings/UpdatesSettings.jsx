@@ -39,7 +39,7 @@ export function UpdatesSettings({
         </h3>
         <p className="text-sm text-muted-foreground">
           {view.phase === "ready"
-            ? "The download is verified. Install when your work is finished."
+            ? "The download is verified. Installing stops any running work first, and paused goals can be resumed afterwards."
             : view.phase === "complete"
               ? "Your members, conversations, and settings are here."
               : view.phase === "installer-open"

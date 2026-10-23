@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Installing an update no longer waits for the team to go idle. Install stops running chats and runs, pauses goals so you can resume them, and keeps queued work for after the restart. Squad still refuses a second install while one is running, and never stops work for an installer that fails verification.
 - Cancel a pending sign-in without waiting for the code to expire, or start over with a new code. Copy the device code as well as the link. Closing or reopening the sign-in screen clears pending authorization, and browser-opening failures show how to continue.
 
 ## [0.1.9] - 2026-10-23
