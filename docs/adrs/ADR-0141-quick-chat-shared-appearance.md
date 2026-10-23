@@ -38,7 +38,8 @@ conversation state to refresh appearance.
   hidden window also repairs stale state. Identical values do not trigger
   repeated state updates or cross-window write loops.
 - System light/dark changes continue through the existing media-query
-  listener. Skins that intentionally choose a surface keep that contract.
+  listener. As of [ADR-0146](ADR-0146-skin-modes-and-five-new-designs.md), all
+  skins follow Mode and supply paired palettes; none forces a surface.
 - Browser checks compare computed tokens and skin/surface attributes while
   checking the document identity and unsent draft remain unchanged. A source
   browser check does not establish an installed native release.

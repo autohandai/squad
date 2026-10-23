@@ -23,7 +23,7 @@ import {
   SOFT_PORTRAIT_SLUGS,
   memberAvatar,
   skinById,
-  surfaceForSkin,
+  tokensForSkin,
 } from "../src/lib/skins.js";
 
 // The token list lives in App.jsx; a skin that names a colour must name all of
@@ -33,7 +33,8 @@ const tokenBlock = app.slice(app.indexOf("const THEME_TOKEN_NAMES = ["), app.ind
 const TOKEN_NAMES = [...tokenBlock.matchAll(/"([a-z0-9-]+)"/g)].map((match) => match[1]);
 assert.ok(TOKEN_NAMES.length >= 20, `found ${TOKEN_NAMES.length} theme tokens`);
 
-assert.ok(SKINS.length >= 3, `skins: ${SKINS.length}`);
+assert.equal(SKINS.length, 8, 'the three existing skins and five new designs are available');
+for (const id of ['paper', 'slate', 'grove', 'blueprint', 'ember']) assert.ok(isSkinId(id), `new skin ${id} is selectable`);
 assert.equal(SKINS[0].id, DEFAULT_SKIN_ID, "the default skin is first, so it is what a new install lands on");
 assert.equal(new Set(SKINS.map((skin) => skin.id)).size, SKINS.length, "skin ids are unique");
 
@@ -44,13 +45,15 @@ for (const skin of SKINS) {
 
   // All the colours or none: a half-declared palette is the bug where a skin
   // looks right until you open a chart or a destructive button.
-  if (skin.tokens) {
+  if (skin.tokens) for (const surface of ['light', 'dark']) {
+    const tokens = tokensForSkin(skin, surface);
+    assert.ok(tokens, `${skin.id} has a ${surface} palette`);
     for (const token of TOKEN_NAMES) {
-      assert.ok(skin.tokens[token], `${skin.id} is missing the ${token} token`);
-      assert.match(skin.tokens[token], /^#[0-9a-f]{6}$/i, `${skin.id}.${token} = ${skin.tokens[token]}`);
+      assert.ok(tokens[token], `${skin.id}/${surface} is missing the ${token} token`);
+      assert.match(tokens[token], /^#[0-9a-f]{6}$/i, `${skin.id}/${surface}.${token} = ${tokens[token]}`);
     }
     assert.deepEqual(
-      Object.keys(skin.tokens).filter((key) => !TOKEN_NAMES.includes(key)),
+      Object.keys(tokens).filter((key) => !TOKEN_NAMES.includes(key)),
       [],
       `${skin.id} declares a token the app does not apply`
     );
@@ -63,15 +66,27 @@ for (const skin of SKINS) {
   assert.ok(["photo", "portrait", "blob"].includes(skin.avatars), `${skin.id} avatars: ${skin.avatars}`);
 }
 
-// The default skin must not force a surface or a palette: twenty theme presets
-// and the user's own light/dark choice depend on it staying out of the way.
+// Only Autohand inherits colour presets. Every custom skin draws both modes.
 const fallback = skinById(DEFAULT_SKIN_ID);
 assert.equal(fallback.tokens, null, "the default skin overrides no colours");
-assert.equal(fallback.surface, null, "the default skin forces no surface");
-assert.equal(surfaceForSkin(fallback, "light"), "light", "the default skin follows the user into light");
-assert.equal(surfaceForSkin(fallback, "dark"), "dark", "the default skin follows the user into dark");
-assert.equal(surfaceForSkin(skinById("soft"), "dark"), "light", "a light skin stays light");
-assert.equal(surfaceForSkin(skinById("grut"), "light"), "dark", "a dark skin stays dark");
+for (const surface of ['light', 'dark']) assert.equal(tokensForSkin(fallback, surface), null);
+const linear = c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+const luminance = hex => [1,3,5].map(i => linear(parseInt(hex.slice(i,i+2),16)/255)).reduce((sum,c,i) => sum+c*[0.2126,0.7152,0.0722][i],0);
+const contrast = (a,b) => (Math.max(luminance(a),luminance(b))+0.05)/(Math.min(luminance(a),luminance(b))+0.05);
+for (const skin of SKINS.filter(skin => skin.tokens)) {
+  assert.deepEqual(Object.keys(skin.tokens).sort(), ['dark','light'], `${skin.id} cannot pin or silently fall through to another surface`);
+  assert.ok(luminance(tokensForSkin(skin,'light').background)>0.8, `${skin.id} Light is actually light`);
+  assert.ok(luminance(tokensForSkin(skin,'dark').background)<0.1, `${skin.id} Dark is actually dark`);
+  for (const surface of ['light','dark']) {
+    const t=tokensForSkin(skin,surface);
+    const pairs=[['foreground','background'],['foreground','card'],['foreground','popover'],['primary-foreground','primary'],
+      ['secondary-foreground','secondary'],['accent-foreground','accent'],['muted-foreground','background'],['muted-foreground','muted'],['muted-foreground','card'],['muted-foreground','popover'],['destructive','background']];
+    let weakest=Infinity;
+    for(const [ink,paper]of pairs){const ratio=contrast(t[ink],t[paper]);weakest=Math.min(weakest,ratio);assert.ok(ratio>=4.5,`${skin.id}/${surface}: ${ink} on ${paper} is ${ratio.toFixed(2)}:1, below AA body text`);}
+    assert.ok(contrast(t.ring,t.background)>=3,`${skin.id}/${surface}: focus ring must remain visible`);
+    console.log(`${skin.id}/${surface}: weakest text contrast ${weakest.toFixed(2)}:1`);
+  }
+}
 
 assert.ok(isSkinId("grut"));
 assert.ok(!isSkinId("nope"));
@@ -114,6 +129,8 @@ for (const shape of BLOB_SHAPES) {
     const svg = blobSvg({ shape, expression, colour: "#4d8df0" });
     assert.ok(svg.startsWith("<svg") && svg.endsWith("</svg>"), `${shape}/${expression} is not an svg`);
     assert.ok(svg.includes("fill-rule=\"evenodd\""), `${shape}/${expression} must punch the eyes out`);
+    assert.equal((svg.match(/<path\b/g)||[]).length,1,`${shape}/${expression}: body and eyes must share one path; sibling shapes cannot cut holes`);
+    assert.equal((svg.match(/M/g)||[]).length,3,`${shape}/${expression}: body plus two eye subpaths`);
     assert.ok(svg.length < 1200, `${shape}/${expression} is ${svg.length} bytes`);
   }
 }
@@ -149,7 +166,7 @@ assert.ok(blobSvg({ shape: "circle" }).includes('aria-hidden="true"'), "an unnam
 // pooled in the corners. DESIGN.md asks for 4-8px and names bulbous corners
 // explicitly.
 const WINDOW_FRAME_RADIUS_PX = 12;
-const SKIN_INSET_PX = { default: 0, soft: 4, grut: 0 };
+const SKIN_INSET_PX = { default: 0, soft: 4, grut: 0, paper: 0, slate: 0, grove: 0, blueprint: 0, ember: 0 };
 const css = readFileSync("src/styles.css", "utf8");
 for (const skin of SKINS) {
   // The PANEL radius, not --radius. They are two jobs: --radius is the skin's

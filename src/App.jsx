@@ -27,7 +27,7 @@ import { AppInformation } from "@/components/app-info/AppInformation";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
 import { NEED_HELP, firstPromptFor, joinList, proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
-import { DEFAULT_SKIN_ID, SKINS, SKIN_VAR_DEFAULTS, isSkinId, memberAvatar, skinById, surfaceForSkin } from "@/lib/skins";
+import { DEFAULT_SKIN_ID, SKINS, SKIN_VAR_DEFAULTS, isSkinId, memberAvatar, skinById, tokensForSkin } from "@/lib/skins";
 import { blobForMember, blobSvg } from "@/lib/blob-avatar";
 import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
@@ -4758,9 +4758,8 @@ function App() {
     if (feature) recordFeatureUsed(feature, "open");
   }, [route]);
   const activeSkin = skinById(skinId);
-  // A skin whose whole point is being light has nothing to show in the dark, so
-  // it names its surface; the default skin names none and follows the user.
-  const theme = surfaceForSkin(activeSkin, resolveEffectiveThemeMode(themePreference, systemTheme));
+  // Mode belongs to the person. Each skin supplies the palette for it.
+  const theme = resolveEffectiveThemeMode(themePreference, systemTheme);
   const activeThemePreset = getThemePreset(themePreference, theme);
 
   useEffect(() => {
@@ -4830,11 +4829,9 @@ function App() {
     root.dataset.themePreset = activeThemePreset.id;
     root.dataset.skin = activeSkin.id;
 
-    // The skin's colours win where it has an opinion; where it has none the
-    // user's chosen preset shows through, which is how the default skin keeps
-    // all twenty presets working.
+    const tokens = tokensForSkin(activeSkin, theme) || activeThemePreset.tokens;
     for (const tokenName of THEME_TOKEN_NAMES) {
-      root.style.setProperty(`--${tokenName}`, activeSkin.tokens?.[tokenName] || activeThemePreset.tokens[tokenName]);
+      root.style.setProperty(`--${tokenName}`, tokens[tokenName]);
     }
     for (const [varName, fallback] of Object.entries(SKIN_VAR_DEFAULTS)) {
       root.style.setProperty(`--${varName}`, activeSkin.vars?.[varName] ?? fallback);
@@ -4845,7 +4842,7 @@ function App() {
     // palette out of twenty and no skin at all, which reads as a wrong-coloured
     // band at the edge of the window.
     const themeColor = document.querySelector('meta[name="theme-color"]');
-    if (themeColor) themeColor.setAttribute("content", activeSkin.tokens?.background || activeThemePreset.tokens.background);
+    if (themeColor) themeColor.setAttribute("content", tokens.background);
 
     try {
       window.localStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(themePreference));
@@ -24777,41 +24774,6 @@ function SettingsPage({
       <>
         <SettingsSectionHeader title={copy.appearance || "Appearance"} description={copy.appearanceDescription || "How the app looks."} />
         <div className="grid gap-8">
-          <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-            <div className="min-w-0">
-              <h4 id="skin-title" className="text-sm font-medium">{copy.skin || "Skin"}</h4>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {copy.skinDescription || "The whole look: shape, spacing, and who your members look like. A theme changes the colours inside a skin."}
-              </p>
-            </div>
-            <div aria-labelledby="skin-title" className="flex flex-col border-t border-border/60">
-              {SKINS.map((option) => {
-                const selected = option.id === activeSkin.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    className="flex items-center gap-3 border-b border-border/60 px-2 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:bg-muted/40 focus-visible:outline-none"
-                    onClick={() => onSkinChange?.(option.id)}
-                  >
-                    <span className="flex shrink-0 overflow-hidden rounded-md border border-border/70" aria-hidden="true">
-                      {option.swatches.map((swatch) => (
-                        <span key={swatch} className="size-5" style={{ background: swatch }} />
-                      ))}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium">{option.label}</span>
-                      <span className="block text-xs text-muted-foreground">{option.description}</span>
-                    </span>
-                    {selected ? <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] lg:items-center">
             <div className="min-w-0">
               <div className="text-sm font-medium">{copy.themeMode || "Mode"}</div>
@@ -24842,6 +24804,40 @@ function SettingsPage({
 
           <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
             <div className="min-w-0">
+              <h4 id="skin-title" className="text-sm font-medium">{copy.skin || "Skin"}</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {copy.skinDescription || "The whole look: type, shape, spacing and member portraits. Every skin follows your mode."}
+              </p>
+            </div>
+            <ToggleGroup type="single" orientation="vertical" role="radiogroup" aria-labelledby="skin-title" value={activeSkin.id} onValueChange={(value) => value && onSkinChange?.(value)} className="flex w-full flex-col items-stretch rounded-none border-t border-border/60">
+              {SKINS.map((option) => {
+                const selected = option.id === activeSkin.id;
+                return (
+                  <ToggleGroupItem
+                    key={option.id}
+                    value={option.id}
+                    aria-label={option.label}
+                    data-skin-option={option.id}
+                    className="flex h-auto w-full items-center justify-start gap-3 whitespace-normal rounded-none border-b border-border/60 px-2 py-3 text-left text-foreground transition-colors hover:bg-muted/30 hover:text-foreground focus-visible:bg-muted/40 data-[state=on]:bg-transparent data-[state=on]:text-foreground data-[spacing=0]:first:rounded-none data-[spacing=0]:last:rounded-none"
+                  >
+                    <span className="flex shrink-0 overflow-hidden rounded-md border border-border/70" aria-hidden="true">
+                      {option.swatches.map((swatch) => (
+                        <span key={swatch} className="size-5" style={{ background: swatch }} />
+                      ))}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className={cn("block text-sm", selected ? "font-semibold" : "font-medium")}>{option.label}</span>
+                      <span className="block text-xs text-muted-foreground">{option.description}</span>
+                    </span>
+                    {selected ? <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
+                  </ToggleGroupItem>
+                );
+              })}
+            </ToggleGroup>
+          </div>
+
+          {activeSkin.id === DEFAULT_SKIN_ID ? <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]" data-testid="theme-presets">
+            <div className="min-w-0">
               <h4 id="theme-presets-title" className="text-sm font-medium">{copy.themePresets}</h4>
               <p className="mt-1 text-sm text-muted-foreground">{copy.themePresetsDescription}</p>
             </div>
@@ -24859,7 +24855,7 @@ function SettingsPage({
               {/* "System preference is currently using Dark." repeated the Mode
                   row's "Following system preference: Dark." one block up. */}
             </div>
-          </div>
+          </div> : null}
         </div>
       </>
     ),
@@ -26687,7 +26683,7 @@ function InformationWindow({ page }) {
   }, []);
   useEffect(() => {
     const skin = skinById(appearance.skin);
-    const mode = surfaceForSkin(skin, resolveEffectiveThemeMode(appearance.preference, systemMode));
+    const mode = resolveEffectiveThemeMode(appearance.preference, systemMode);
     const preset = getThemePreset(appearance.preference, mode);
     const html = document.documentElement;
     html.classList.toggle("light", mode === THEME_MODE_LIGHT);
@@ -26696,8 +26692,9 @@ function InformationWindow({ page }) {
     html.dataset.themeMode = appearance.preference.mode;
     html.dataset.themeSurface = mode;
     html.dataset.themePreset = preset.id;
-    for (const token of THEME_TOKEN_NAMES) html.style.setProperty(`--${token}`, skin.tokens?.[token] || preset.tokens[token]);
-    for (const [key, fallback] of Object.entries(SKIN_VAR_DEFAULTS)) html.style.setProperty(key, skin.vars?.[key] ?? fallback);
+    const tokens = tokensForSkin(skin, mode) || preset.tokens;
+    for (const token of THEME_TOKEN_NAMES) html.style.setProperty(`--${token}`, tokens[token]);
+    for (const [key, fallback] of Object.entries(SKIN_VAR_DEFAULTS)) html.style.setProperty(`--${key}`, skin.vars?.[key] ?? fallback);
   }, [appearance, systemMode]);
   // The desktop shell opens these pages in their own window. In a browser they
   // replace the app, which left no way back but the browser's own button.

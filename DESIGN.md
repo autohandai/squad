@@ -57,6 +57,8 @@
 - Each section is a heading (`text-base`), one sentence of description, then rows: label and detail on the left (`220px`), the control on the right. The section sits flush with the top of the column; there is no divider between sections because there is only one.
 - Toggles and choices are divider rows, never bordered or tinted boxes. A selected choice shows a check mark and a stronger label, not a filled background. No icons in section headers.
 - Copy avoids repeating a word three times in view: the section is "Appearance", its first row is "Mode"; the "Language" section's row is "Display language".
+- Mode (System, Dark, Light) applies to every skin. Custom skins own complete light and dark palettes; only Autohand shows Theme presets. Keep the saved Autohand presets when switching skins. The skin picker stays a keyboard-accessible, divider-separated radio list with swatches, a description and a check, without preview cards (ADR-0146).
+- Skins change type, control geometry, density and member portraits as well as colour. Paper uses editorial headings and warm paper; Slate condensed type and compact steel surfaces; Grove open spacing and round illustrated portraits; Blueprint monospaced type and crisp edges; Ember warm ink and generous spacing. Keep shared page layouts, restrained corners and opaque custom-skin sidebars. Existing Soft floating panels and Grut blobs retain their own shapes.
 - Notifications is one switch row per event kind and a ghost Send test notification button.
 - Remote access is a divider-row section: a Bot token row (password input and an outlined Connect), one status sentence ("Polling as @bot" or the error, in the muted or destructive colour) with a ghost Disconnect, a pairing row that shows the code in `code` type with letter spacing beside an outlined Open in Telegram and a ghost New code, a paired-account row with the account name and a ghost Unpair, then the notify choice as check-mark rows (Long work / Everything / Off). No QR image, no boxed steps, no numbered wizard. The list row says only "Remote access"; the state lives in the section.
 - Messages that came from Telegram sit in the member's conversation as ordinary user and member rows; the source is data on the row, not a badge.
@@ -91,6 +93,7 @@
 ## Typography
 
 - The product typefaces are **Autohand Sans** for UI and **Autohand Mono** for code, both shipped from `public/fonts` (no font CDN; the desktop app works offline). Tokens: `--font-ui` and `--font-code`; do not reference another family directly.
+- Skin typography is assigned through tokens in the skin registry: Blueprint reuses bundled Autohand Mono, Slate and Ember vary Autohand Sans width, and Paper's `--skin-heading-font` uses the installed Iowan/Palatino/Georgia serif stack. Components inherit these tokens; skins never fetch fonts.
 - Autohand Sans is the variable font (weights 400–700, width 75–100%); Autohand Mono ships Regular, Medium, and SemiBold, with 700 mapped to SemiBold. Licences and provenance live in `public/fonts/ATTRIBUTION.md`.
 
 ## Harness Identity And Desktop Shell

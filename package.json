@@ -107,6 +107,7 @@
     "desktop:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "check:reactions": "node scripts/check-reactions.mjs",
     "check:skins": "node scripts/check-skins.mjs",
+    "check:skins:browser": "node scripts/check-appearance-skins-browser.mjs && node scripts/check-appearance-skins-browser.mjs --desktop",
     "check:theme-tokens": "node scripts/check-theme-tokens.mjs",
     "check:sdk-errors": "node scripts/check-sdk-errors.mjs",
     "check:goal-lifecycle": "node scripts/check-goal-lifecycle.mjs",

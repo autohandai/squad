@@ -1,227 +1,85 @@
-// Skins: the whole look, not just the palette (ADR-0058).
-//
-// The existing theme presets swap the 23 colour tokens and nothing else, which
-// is why every preset still looks like the same product. A skin also sets the
-// corner radius, how surfaces are raised, how tight the spacing is, and where
-// member avatars come from - the four things that actually make two chat apps
-// look like different software.
-//
-// A skin that declares no tokens keeps whatever theme preset the user picked,
-// so the default skin leaves the preset system exactly as it was.
+// A skin owns typography, geometry, density and faces as well as colours.
+// Mode always chooses light/dark; only Autohand uses theme presets (ADR-0146).
+import { blobForMember } from './blob-avatar.js';
+import { SKIN_PALETTES } from './skin-palettes.js';
 
-import { blobForMember } from "./blob-avatar.js";
-
-export const DEFAULT_SKIN_ID = "default";
-
-/** Every var a skin may set beyond the colour tokens, with its default. */
+export const DEFAULT_SKIN_ID = 'default';
 export const SKIN_VAR_DEFAULTS = {
-  radius: "0.5rem",
-  "skin-elevation": "none",
-  "skin-elevation-strong": "none",
-  "skin-density": "1",
-  "skin-avatar-radius": "0.375rem",
-  // What the two shell panels round by, when a skin insets them from the
-  // window edge. Separate from --radius on purpose: --radius is the skin's
-  // identity and reshapes every button, input and popover through
-  // --radius-sm/md/lg/xl, while this answers only to the window's frame mask.
-  "skin-panel-radius": "0px",
+  radius: '0.5rem',
+  'skin-elevation': 'none',
+  'skin-elevation-strong': 'none',
+  'skin-density': '1',
+  'skin-avatar-radius': '0.375rem',
+  // A panel's corner answers to the window mask, independently of controls.
+  'skin-panel-radius': '0px',
+  'font-ui': '"Autohand Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  'skin-heading-font': 'var(--font-ui)',
+  'skin-font-stretch': '100%',
 };
 
+function skin({ id, vars = {}, ...design }) {
+  return { id, ...design, tokens: SKIN_PALETTES[id] || null, vars: { ...SKIN_VAR_DEFAULTS, ...vars } };
+}
+
 export const SKINS = [
-  {
-    id: "default",
-    label: "Autohand",
-    description: "Today's console. Calm, neutral and direct, in whichever theme you picked.",
-    // No surface and no tokens: the user's own light/dark choice and theme
-    // preset survive switching back to this skin.
-    surface: null,
-    tokens: null,
-    vars: {
-      radius: "0.5rem",
-      "skin-elevation": "none",
-      "skin-elevation-strong": "none",
-      "skin-density": "1",
-      "skin-avatar-radius": "0.375rem",
-      // Not inset, so the panels reach the window edge and have no outer
-      // corner of their own to round.
-      "skin-panel-radius": "0px",
-    },
-    avatars: "photo",
-    swatches: ["#0a0a0a", "#fafafa", "#5ed46f", "#27272a"],
-  },
-  {
-    id: "soft",
-    label: "Soft",
-    description: "Light and rounded, panels that float. Coral is the only colour that asks for anything.",
-    surface: "light",
-    tokens: {
-      background: "#eceef4",
-      foreground: "#1d2330",
-      card: "#f7f8fb",
-      "card-foreground": "#1d2330",
-      popover: "#ffffff",
-      "popover-foreground": "#1d2330",
-      primary: "#ef7a5c",
-      "primary-foreground": "#ffffff",
-      secondary: "#e4e7ef",
-      "secondary-foreground": "#3c4456",
-      muted: "#e7eaf1",
-      "muted-foreground": "#77809a",
-      accent: "#dfe3ee",
-      "accent-foreground": "#2a3142",
-      destructive: "#d9534f",
-      border: "#dce0ea",
-      input: "#dce0ea",
-      ring: "#ef7a5c",
-      "chart-1": "#ef7a5c",
-      "chart-2": "#7aa2d8",
-      "chart-3": "#6fc3a0",
-      "chart-4": "#e8b45c",
-      "chart-5": "#9b8ed6",
-    },
-    vars: {
-      radius: "1.25rem",
-      // At a 4px inset the panels line the window rather than hover in it, so
-      // they must not carry the large shadow: a 24px blur offset 8px down
-      // covers the whole 4px margin and the bottom several times over, so the
-      // page colour meant to show between frame and panel renders as a dark
-      // rim. A float that fills its own gap reads as a bevel, which DESIGN.md
-      // rules out alongside bulbous corners. The strong shadow is unchanged -
-      // popovers and dialogs float over content and still have room to fall.
-      "skin-elevation": "0 1px 2px rgba(29, 35, 48, 0.05)",
-      "skin-elevation-strong": "0 2px 4px rgba(29, 35, 48, 0.05), 0 18px 48px rgba(29, 35, 48, 0.10)",
-      // Density stays at 1. Scaling the root to 18.4px cost the page a
-      // scrollbar and started to disagree with the fixed-pixel icon sizes;
-      // the float reads from radius and shadow, not from bigger type.
-      "skin-density": "1",
-      "skin-avatar-radius": "9999px",
-      // 12 - 4. The frame is masked at 12px and clips, so concentric corners
-      // need inner = outer - inset; at 20px inside a 10px inset the margin was
-      // 10px along the flat edges and 17.5px across the diagonal, pooling the
-      // page colour in every corner.
-      "skin-panel-radius": "8px",
-    },
-    avatars: "portrait",
-    swatches: ["#eceef4", "#ef7a5c", "#f7f8fb", "#1d2330"],
-  },
-  {
-    id: "grut",
-    label: "Grut",
-    description: "Flat, quiet and dark. Every member is a blob with a face.",
-    surface: "dark",
-    tokens: {
-      background: "#0d0d0f",
-      foreground: "#ededf0",
-      card: "#151517",
-      "card-foreground": "#ededf0",
-      popover: "#1a1a1d",
-      "popover-foreground": "#ededf0",
-      primary: "#ededf0",
-      "primary-foreground": "#0d0d0f",
-      secondary: "#1f1f23",
-      "secondary-foreground": "#c9c9d1",
-      muted: "#1c1c20",
-      "muted-foreground": "#86868f",
-      accent: "#232328",
-      "accent-foreground": "#ededf0",
-      destructive: "#e5544b",
-      border: "#26262b",
-      input: "#26262b",
-      ring: "#4d8df0",
-      "chart-1": "#4d8df0",
-      "chart-2": "#5bc4a4",
-      "chart-3": "#f0a23c",
-      "chart-4": "#a97bf0",
-      "chart-5": "#ef6a8c",
-    },
-    vars: {
-      radius: "0.75rem",
-      "skin-elevation": "none",
-      "skin-elevation-strong": "none",
-      "skin-density": "0.95",
-      "skin-avatar-radius": "9999px",
-      // Not inset either, so its panels reach the window edge and the frame
-      // mask is the only corner there is.
-      "skin-panel-radius": "0px",
-    },
-    avatars: "blob",
-    swatches: ["#0d0d0f", "#4d8df0", "#5bc4a4", "#f0a23c"],
-  },
+  skin({ id: 'default', label: 'Autohand',
+    description: 'Calm, neutral and direct. Make it yours with theme presets.',
+    avatars: 'photo', swatches: ['#0a0a0a', '#fafafa', '#5ed46f', '#27272a'] }),
+  skin({ id: 'soft', label: 'Soft',
+    description: 'Quiet floating panels, round portraits and a coral accent.',
+    vars: { radius: '1.25rem', 'skin-avatar-radius': '9999px', 'skin-panel-radius': '8px',
+      // At a 4px inset, a broad shadow fills the gap and reads as a bevel.
+      'skin-elevation': '0 1px 2px rgba(29, 35, 48, 0.05)',
+      'skin-elevation-strong': '0 2px 4px rgba(29, 35, 48, 0.05), 0 18px 48px rgba(29, 35, 48, 0.10)' },
+    avatars: 'portrait', swatches: ['#eceef4', '#ef7a5c', '#252b3a', '#1d2330'] }),
+  skin({ id: 'grut', label: 'Grut',
+    description: 'Flat and quiet, in light or dark. Every member is a blob with a face.',
+    vars: { radius: '0.75rem', 'skin-density': '0.95', 'skin-avatar-radius': '9999px' },
+    avatars: 'blob', swatches: ['#f7f7f8', '#0d0d0f', '#4d8df0', '#5bc4a4'] }),
+  skin({ id: 'paper', label: 'Paper',
+    description: 'Warm paper, editorial headings and soft-edged portraits.',
+    vars: { radius: '0.375rem', 'skin-density': '1.02', 'skin-avatar-radius': '0.375rem',
+      'skin-heading-font': '"Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif' },
+    avatars: 'portrait', swatches: ['#faf7ef', '#765137', '#eee5d4', '#201d19'] }),
+  skin({ id: 'slate', label: 'Slate',
+    description: 'Cool steel, condensed type and a compact, square-cut rhythm.',
+    vars: { radius: '0.25rem', 'skin-density': '0.94', 'skin-avatar-radius': '0.125rem', 'skin-font-stretch': '90%' },
+    avatars: 'photo', swatches: ['#f2f5f8', '#355c7d', '#95b9d5', '#101922'] }),
+  skin({ id: 'grove', label: 'Grove',
+    description: 'Sage surfaces, open spacing and round illustrated faces.',
+    vars: { radius: '0.5rem', 'skin-density': '1.04', 'skin-avatar-radius': '9999px',
+      'skin-elevation-strong': '0 2px 4px rgba(20, 35, 24, 0.06), 0 12px 28px rgba(20, 35, 24, 0.10)' },
+    avatars: 'portrait', swatches: ['#f4f6ee', '#426449', '#b1d29f', '#152018'] }),
+  skin({ id: 'blueprint', label: 'Blueprint',
+    description: 'Drafting blue, monospaced type and crisp, ruled edges.',
+    vars: { radius: '0.125rem', 'skin-density': '0.96', 'skin-avatar-radius': '0.125rem',
+      'font-ui': '"Autohand Mono", ui-monospace, SFMono-Regular, Menlo, monospace' },
+    avatars: 'photo', swatches: ['#f5f8ff', '#2b5cad', '#9fc3ff', '#101c36'] }),
+  skin({ id: 'ember', label: 'Ember',
+    description: 'Warm ink, rust accents and generous studio spacing.',
+    vars: { radius: '0.375rem', 'skin-density': '1.03', 'skin-avatar-radius': '0.375rem',
+      'skin-font-stretch': '95%', 'skin-elevation-strong': '0 2px 4px rgba(40, 20, 12, 0.08), 0 12px 28px rgba(40, 20, 12, 0.12)' },
+    avatars: 'photo', swatches: ['#fff7ee', '#a14626', '#f4b183', '#251b18'] }),
 ];
 
-const BY_ID = new Map(SKINS.map((skin) => [skin.id, skin]));
+const BY_ID = new Map(SKINS.map(design => [design.id, design]));
+export function skinById(id) { return BY_ID.get(String(id || '')) || BY_ID.get(DEFAULT_SKIN_ID); }
+export function isSkinId(id) { return BY_ID.has(String(id || '')); }
+export function tokensForSkin(design, surface) { return design?.tokens?.[surface] || null; }
 
-export function skinById(id) {
-  return BY_ID.get(String(id || "")) || BY_ID.get(DEFAULT_SKIN_ID);
-}
-
-export function isSkinId(id) {
-  return BY_ID.has(String(id || ""));
-}
-
-/**
- * The surface a skin forces, or the user's own choice when it forces none.
- * Only the default skin follows the user; a skin whose whole point is being
- * light has nothing sensible to show in the dark.
- */
-export function surfaceForSkin(skin, userSurface) {
-  return skin?.surface || userSurface;
-}
-
-// ---------------------------------------------------------------------------
-// Where a member's face comes from
-
-/**
- * Roles that actually have soft-skin artwork in `public/avatars/soft/`.
- *
- * Radix unmounts an AvatarImage when it fails to load, so an `onError`
- * handler cannot quietly swap in a fallback - a missing portrait becomes an
- * initial, not a photo. Listing what exists keeps the skin pointing only at
- * files that are there; `check-skins` fails if an entry has no file.
- */
+// Roles with installed artwork. Custom roles keep their member's own photo.
 export const SOFT_PORTRAIT_SLUGS = [
-  "ai-engineer",
-  "backend-engineer",
-  "common-qa-engineer",
-  "content-operations-specialist",
-  "data-analyst",
-  "devops-engineer",
-  "frontend-developer",
-  "full-stack-developer",
-  "mobile-developer",
-  "platform-engineer",
-  "product-manager",
-  "scrum-master",
-  "security-engineer",
-  "solution-architect",
-  "technical-writer",
-  "ux-ui-designer",
+  'ai-engineer', 'backend-engineer', 'common-qa-engineer', 'content-operations-specialist',
+  'data-analyst', 'devops-engineer', 'frontend-developer', 'full-stack-developer', 'mobile-developer',
+  'platform-engineer', 'product-manager', 'scrum-master', 'security-engineer', 'solution-architect',
+  'technical-writer', 'ux-ui-designer',
 ];
-
-/** The role slug a member's artwork is filed under. */
-export function roleSlug(member) {
-  return String(member?.employeeType || "").trim().toLowerCase();
-}
-
-/**
- * What to draw for this member under this skin: an image to load, or a blob to
- * render. Kept here rather than in the avatar component so the fallbacks are
- * checkable without a browser - a custom role has no portrait on disk, and
- * falling through to the member's own picture is better than an empty circle.
- */
-export function memberAvatar(member, skin) {
-  const kind = skin?.avatars || "photo";
-  if (kind === "blob") {
-    return { kind: "blob", blob: blobForMember(member) };
+export function roleSlug(member) { return String(member?.employeeType || '').trim().toLowerCase(); }
+export function memberAvatar(member, design) {
+  if (design?.avatars === 'blob') return { kind: 'blob', blob: blobForMember(member) };
+  if (design?.avatars === 'portrait') {
+    const role = roleSlug(member);
+    if (SOFT_PORTRAIT_SLUGS.includes(role)) return { kind: 'image', src: `/avatars/soft/${role}.jpg`, fallbackSrc: member?.avatar || '' };
   }
-  if (kind === "portrait") {
-    const slug = roleSlug(member);
-    if (slug && SOFT_PORTRAIT_SLUGS.includes(slug)) {
-      return { kind: "image", src: `/avatars/soft/${slug}.jpg`, fallbackSrc: member?.avatar || "" };
-    }
-    // No portrait drawn for this role yet: the member's own picture is a
-    // better answer than an empty circle.
-    return { kind: "image", src: member?.avatar || "", fallbackSrc: "" };
-  }
-  return { kind: "image", src: member?.avatar || "", fallbackSrc: "" };
+  return { kind: 'image', src: member?.avatar || '', fallbackSrc: '' };
 }

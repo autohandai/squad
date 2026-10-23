@@ -1,0 +1,88 @@
+// Complete light/dark palettes owned by skins (ADR-0146). Each surface has
+// one body ink; accents and chart colours are deliberate exceptions.
+function palette({ background, foreground, card, popover, primary, primaryForeground, secondary,
+  muted, mutedForeground, accent, destructive, border, input = border, ring = primary, charts,
+  secondaryForeground = foreground }) {
+  return {
+    background, foreground, card, 'card-foreground': foreground, popover, 'popover-foreground': foreground,
+    primary, 'primary-foreground': primaryForeground, secondary, 'secondary-foreground': secondaryForeground,
+    muted, 'muted-foreground': mutedForeground, accent, 'accent-foreground': foreground,
+    destructive, border, input, ring,
+    ...Object.fromEntries(charts.map((colour, index) => [`chart-${index + 1}`, colour])),
+  };
+}
+
+export const SKIN_PALETTES = {
+  soft: {
+    light: palette({ background: '#eceef4', foreground: '#1d2330', card: '#f7f8fb', popover: '#ffffff',
+      primary: '#ef7a5c', primaryForeground: '#241b18', secondary: '#e4e7ef', muted: '#e7eaf1',
+      mutedForeground: '#59647b', accent: '#dfe3ee', destructive: '#b83c36', border: '#dce0ea', ring: '#b64930',
+      charts: ['#bd5135', '#386aa8', '#2d795a', '#986e1e', '#705ca6'] }),
+    dark: palette({ background: '#1a1e29', foreground: '#e9edf7', card: '#252b3a', popover: '#30384a',
+      primary: '#ffac93', primaryForeground: '#241b18', secondary: '#30394c', muted: '#30394c',
+      mutedForeground: '#b8c4dc', accent: '#3b4660', destructive: '#ff958b', border: '#4c5974',
+      charts: ['#ffac93', '#9fbeef', '#94d6b8', '#ebc97e', '#c8b2ef'] }),
+  },
+  grut: {
+    light: palette({ background: '#f7f7f8', foreground: '#18181b', card: '#efeff1', popover: '#ffffff',
+      primary: '#18181b', primaryForeground: '#f7f7f8', secondary: '#e8e8eb', secondaryForeground: '#3a3a42',
+      muted: '#ebebee', mutedForeground: '#63636c', accent: '#e4e4e8', destructive: '#c9372f',
+      border: '#e0e0e4', input: '#d2d2d8', ring: '#2a66cc',
+      charts: ['#2a66cc', '#2a9d7c', '#c47a12', '#8556d6', '#d64570'] }),
+    dark: palette({ background: '#0d0d0f', foreground: '#ededf0', card: '#151517', popover: '#1a1a1d',
+      primary: '#ededf0', primaryForeground: '#0d0d0f', secondary: '#1f1f23', secondaryForeground: '#c9c9d1',
+      muted: '#1c1c20', mutedForeground: '#86868f', accent: '#232328', destructive: '#e5544b',
+      border: '#26262b', input: '#313137', ring: '#4d8df0',
+      charts: ['#4d8df0', '#5bc4a4', '#f0a23c', '#a97bf0', '#ef6a8c'] }),
+  },
+  paper: {
+    light: palette({ background: '#faf7ef', foreground: '#302d26', card: '#f1ebdf', popover: '#fffdf7',
+      primary: '#765137', primaryForeground: '#ffffff', secondary: '#eee5d6', muted: '#ece5d8',
+      mutedForeground: '#6c6256', accent: '#e6dac6', destructive: '#b13e30', border: '#d8cbb6',
+      charts: ['#765137', '#477066', '#a06a23', '#775d84', '#a44a4a'] }),
+    dark: palette({ background: '#201d19', foreground: '#eee5d4', card: '#28241f', popover: '#322d27',
+      primary: '#d0ad7d', primaryForeground: '#211a13', secondary: '#393228', muted: '#393228',
+      mutedForeground: '#b9ad9b', accent: '#443a2d', destructive: '#ee998b', border: '#5e5140', ring: '#d0ad7d',
+      charts: ['#d0ad7d', '#9cbdac', '#e4bb75', '#baa5cc', '#e4a0a0'] }),
+  },
+  slate: {
+    light: palette({ background: '#f2f5f8', foreground: '#202d3b', card: '#e8edf2', popover: '#ffffff',
+      primary: '#355c7d', primaryForeground: '#ffffff', secondary: '#dfe7ee', muted: '#e0e7ed',
+      mutedForeground: '#546475', accent: '#d8e2ec', destructive: '#b2383e', border: '#bac7d3',
+      charts: ['#355c7d', '#3a7974', '#9b6b26', '#79578b', '#a64d65'] }),
+    dark: palette({ background: '#101922', foreground: '#e2ebf2', card: '#172430', popover: '#20313f',
+      primary: '#95b9d5', primaryForeground: '#101922', secondary: '#213342', muted: '#213342',
+      mutedForeground: '#a0b3c2', accent: '#2a4052', destructive: '#ff8a8a', border: '#435c70',
+      charts: ['#95b9d5', '#8ec6bd', '#d8bd87', '#bfa7d6', '#dba3b5'] }),
+  },
+  grove: {
+    light: palette({ background: '#f4f6ee', foreground: '#26352a', card: '#e9eee2', popover: '#fafff5',
+      primary: '#426449', primaryForeground: '#ffffff', secondary: '#e2e9da', muted: '#e2e9da',
+      mutedForeground: '#58684e', accent: '#d7e4cd', destructive: '#b44437', border: '#bdcdb3', ring: '#477454',
+      charts: ['#426449', '#497e80', '#8b6c31', '#795d83', '#ab5949'] }),
+    dark: palette({ background: '#152018', foreground: '#e4eddf', card: '#1d2b20', popover: '#27382a',
+      primary: '#b1d29f', primaryForeground: '#132114', secondary: '#293b2b', muted: '#293b2b',
+      mutedForeground: '#b2c1aa', accent: '#324831', destructive: '#f49388', border: '#4b6345',
+      charts: ['#b1d29f', '#9fcbcb', '#d2bf8b', '#c0a6cf', '#e6ac97'] }),
+  },
+  blueprint: {
+    light: palette({ background: '#f5f8ff', foreground: '#172e56', card: '#eaf0fc', popover: '#ffffff',
+      primary: '#2b5cad', primaryForeground: '#ffffff', secondary: '#e0e9f8', muted: '#e0e9f8',
+      mutedForeground: '#4c6084', accent: '#d6e3fb', destructive: '#b63749', border: '#afc3e5',
+      charts: ['#2b5cad', '#277a88', '#926519', '#8054a3', '#ad4669'] }),
+    dark: palette({ background: '#101c36', foreground: '#e0ecff', card: '#142747', popover: '#1e3559',
+      primary: '#9fc3ff', primaryForeground: '#101c36', secondary: '#1d3354', muted: '#1d3354',
+      mutedForeground: '#adc3e5', accent: '#263f65', destructive: '#ff9caa', border: '#446693',
+      charts: ['#9fc3ff', '#88d0d8', '#e7c57f', '#c8b0ec', '#eeacc7'] }),
+  },
+  ember: {
+    light: palette({ background: '#fff7ee', foreground: '#3f2c24', card: '#f6e9db', popover: '#fffdf8',
+      primary: '#a14626', primaryForeground: '#ffffff', secondary: '#f0ddcb', muted: '#f0ddcb',
+      mutedForeground: '#795d4c', accent: '#ecd0b4', destructive: '#b33831', border: '#d7b899',
+      charts: ['#a14626', '#397774', '#8b6c24', '#8d526f', '#735f98'] }),
+    dark: palette({ background: '#251b18', foreground: '#faeadd', card: '#30221d', popover: '#3c2b24',
+      primary: '#f4b183', primaryForeground: '#2b1a13', secondary: '#412d24', muted: '#412d24',
+      mutedForeground: '#d0b39d', accent: '#50372a', destructive: '#ffa295', border: '#795442',
+      charts: ['#f4b183', '#a5d1bd', '#e4c785', '#d7a4bd', '#bda9e0'] }),
+  },
+};

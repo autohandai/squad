@@ -3,6 +3,11 @@
 Date: 2026-09-29
 Status: Accepted
 
+2026-10-23: [ADR-0146](ADR-0146-skin-modes-and-five-new-designs.md) supersedes
+the forced-surface decision below. Every skin now has light/dark palettes and
+follows Mode; only Autohand shows preset controls. That record also corrects
+the original sibling-shape SVG implementation, which never cut out the eyes.
+
 ## Context
 
 The owner: "one of the ideas i have is to allow users create skins for their

@@ -398,6 +398,13 @@ html[data-skin] {
      type size moves together. Kept close to 1: past about 10% the fixed-pixel
      icon sizes stop agreeing with the text beside them. */
   font-size: calc(16px * var(--skin-density, 1));
+  font-stretch: var(--skin-font-stretch, 100%);
+}
+
+@layer base {
+  html[data-skin] :is(h1, h2, h3) {
+    font-family: var(--skin-heading-font, var(--font-ui));
+  }
 }
 
 /* Surfaces that lift. Deliberately a short list - the two panels the eye reads
@@ -515,10 +522,9 @@ html[data-skin="grut"] .app-sidebar,
 html[data-skin="grut"] .app-main {
   box-shadow: none;
 }
-/* Opaque, not the `bg-card/70` the markup carries. A translucent sidebar over
-   an opaque page composites to an unpredictable value; this skin separates its
-   two columns by a single deliberate step, so that step has to be exact. */
-html[data-skin="grut"] .app-sidebar {
+/* Custom skins own the sidebar colour, rather than compositing bg-card/70
+   over the page or native window material. Autohand retains its vibrancy. */
+html[data-skin]:not([data-skin="default"]) .app-sidebar {
   background: var(--card);
 }
 

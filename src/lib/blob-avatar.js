@@ -80,14 +80,14 @@ export function blobFor(seed) {
 // coordinate space.
 
 const BODIES = {
-  circle: '<circle cx="50" cy="50" r="42"/>',
-  pebble: '<path d="M50 8c22 0 42 16 42 38 0 24-18 46-42 46S8 70 8 46C8 24 28 8 50 8z"/>',
-  squircle: '<path d="M50 8c30 0 42 12 42 42s-12 42-42 42S8 80 8 50 20 8 50 8z"/>',
-  capsule: '<rect x="14" y="20" width="72" height="60" rx="30"/>',
-  triangle: '<path d="M50 10c4 0 7 2 9 6l32 58c4 8 0 16-9 16H18c-9 0-13-8-9-16l32-58c2-4 5-6 9-6z"/>',
-  hexagon: '<path d="M50 8l34 20v44L50 92 16 72V28z" />',
-  cloud: '<path d="M32 78a22 22 0 0 1-2-44 24 24 0 0 1 45-6 20 20 0 0 1 3 40z"/>',
-  droplet: '<path d="M50 8c14 20 34 34 34 52a34 34 0 0 1-68 0c0-18 20-32 34-52z"/>',
+  circle: 'M50 8a42 42 0 1 1 0 84a42 42 0 1 1 0-84z',
+  pebble: 'M50 8c22 0 42 16 42 38 0 24-18 46-42 46S8 70 8 46C8 24 28 8 50 8z',
+  squircle: 'M50 8c30 0 42 12 42 42s-12 42-42 42S8 80 8 50 20 8 50 8z',
+  capsule: 'M44 20h12a30 30 0 0 1 0 60H44a30 30 0 0 1 0-60z',
+  triangle: 'M50 10c4 0 7 2 9 6l32 58c4 8 0 16-9 16H18c-9 0-13-8-9-16l32-58c2-4 5-6 9-6z',
+  hexagon: 'M50 8l34 20v44L50 92 16 72V28z',
+  cloud: 'M32 78a22 22 0 0 1-2-44 24 24 0 0 1 45-6 20 20 0 0 1 3 40z',
+  droplet: 'M50 8c14 20 34 34 34 52a34 34 0 0 1-68 0c0-18 20-32 34-52z',
 };
 
 // --- the face -------------------------------------------------------------
@@ -98,9 +98,18 @@ const BODIES = {
 // emotional range, and it is enough.
 
 function eyes({ rx = 5, ry = 9, y = 46, dx = 13, tilt = 0, rotate = 0 }) {
-  const left = `<ellipse cx="${50 - dx}" cy="${y + tilt}" rx="${rx}" ry="${ry}" transform="rotate(${-rotate} ${50 - dx} ${y + tilt})"/>`;
-  const right = `<ellipse cx="${50 + dx}" cy="${y - tilt}" rx="${rx}" ry="${ry}" transform="rotate(${rotate} ${50 + dx} ${y - tilt})"/>`;
-  return left + right;
+  return ellipse(50 - dx, y + tilt, rx, ry, -rotate) + ellipse(50 + dx, y - tilt, rx, ry, rotate);
+}
+
+// Even-odd fill applies within one path, not between sibling SVG elements.
+// Keep each rotated eye as a subpath of the body so its centre is transparent.
+function ellipse(cx, cy, rx, ry, degrees) {
+  const angle = degrees * Math.PI / 180;
+  const round = value => Math.round(value * 100) / 100;
+  const x = round(rx * Math.cos(angle));
+  const y = round(rx * Math.sin(angle));
+  const arc = `A${rx} ${ry} ${degrees} 1 0`;
+  return `M${round(cx + x)} ${round(cy + y)}${arc} ${round(cx - x)} ${round(cy - y)}${arc} ${round(cx + x)} ${round(cy + y)}z`;
 }
 
 const FACES = {
@@ -131,9 +140,9 @@ export function blobSvg({ shape = "circle", expression = "neutral", colour = BLO
   const face = (FACES[expression] || FACES.neutral)();
   const label = title ? `<title>${escapeXml(title)}</title>` : "";
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img"${title ? "" : ' aria-hidden="true"'}>` +
+    `<svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img"${title ? "" : ' aria-hidden="true"'}>` +
     label +
-    `<g fill="${colour}" fill-rule="evenodd">${body}${face}</g>` +
+    `<path fill="${colour}" fill-rule="evenodd" d="${body}${face}"/>` +
     `</svg>`
   );
 }
