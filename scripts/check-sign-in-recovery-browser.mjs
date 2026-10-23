@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
+
+const bridge = await startBridge({ signedIn: false, prepare: async directory => {
+  const fixtureBin = join(directory, 'bin');
+  await mkdir(fixtureBin);
+  const login = join(fixtureBin, 'squad');
+  await writeFile(login, `#!${process.execPath}\nimport fs from 'node:fs';\nconst counter = ${JSON.stringify(join(directory, 'count'))};\nconst n = Number(fs.existsSync(counter) ? fs.readFileSync(counter, 'utf8') : 0) + 1;\nfs.writeFileSync(counter, String(n));\nconsole.log('Open https://autohand.ai/signin?user_code=TEST-000' + n);\nconsole.log('Enter code TEST-000' + n);\nsetInterval(() => {}, 1000);\n`);
+  await chmod(login, 0o755);
+  const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
+  await writeFile(join(fixtureBin, opener), `#!/bin/sh\n[ -e '${join(directory, 'fail-open')}' ] && exit 7\nprintf '%s\\n' "$*" >> '${join(directory, 'opened')}'\n`);
+  await chmod(join(fixtureBin, opener), 0o755);
+  return { AUTOHAND_SQUAD_CLI: login, PATH: `${fixtureBin}:/usr/bin:/bin:/usr/sbin:/sbin` };
+} });
+let browser;
+const status = async () => (await bridge.api('/api/harnesses/login?id=autohand')).data;
+const freshGate = async () => until(() => browser.evaluate(`!![...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'Continue with Autohand account' && !b.disabled)`), 'fresh enabled sign-in action');
+const begin = async () => { await freshGate(); await browser.click('Continue with Autohand account'); };
+try {
+  browser = await startBrowser();
+  await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `const originalFetch = window.fetch.bind(window); window.fetch = (input, options) => { if (window.__deferLogin && String(input).includes('/api/harnesses/login') && options?.method === 'POST') { window.__deferLogin = false; return new Promise((resolve, reject) => { window.__releaseLogin = () => originalFetch(input, options).then(resolve, reject); }); } return originalFetch(input, options); }; Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { window.__copied = text; } } });` });
+  await browser.navigate(bridge.origin);
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid="sign-in-gate"]')`), 'gate');
+  await begin();
+  await until(async () => (await status()).url, 'verification URL');
+  await until(() => browser.evaluate(`document.body.textContent.includes('TEST-0001')`), 'visible device code');
+  // This is a button using the local opener, not a dropped target=_blank link.
+  await browser.click('Open the sign-in page');
+  await until(async () => (await readFile(join(bridge.directory, 'opened'), 'utf8')).includes('user_code=TEST-0001'), 'system browser opener');
+  await browser.screenshot('.codex-artifacts/sign-in-waiting.png');
+  await browser.click('Copy link');
+  assert.equal(await browser.evaluate('window.__copied'), 'https://autohand.ai/signin?user_code=TEST-0001');
+  await browser.click('Copy code');
+  assert.equal(await browser.evaluate('window.__copied'), 'TEST-0001');
+  await writeFile(join(bridge.directory, 'fail-open'), 'fixture');
+  await browser.click('Open the sign-in page');
+  await until(() => browser.evaluate(`!!document.querySelector('[role="alert"]')?.textContent.includes('Copy the link instead')`), 'opener failure is actionable');
+  await rm(join(bridge.directory, 'fail-open'));
+  await browser.click('Cancel sign-in');
+  await until(async () => (await status()).state === 'cancelled', 'cancelled child');
+  await freshGate();
+  await begin();
+  await until(async () => (await status()).code === 'TEST-0002', 'new code');
+  await browser.click('Start over');
+  await until(async () => (await status()).code === 'TEST-0003', 'start over replaces code');
+  await browser.evaluate("window.dispatchEvent(new Event('squad:sign-in-reset'))");
+  await until(async () => (await status()).state === 'cancelled', 'native close event cancels sign-in');
+  await begin();
+  await until(async () => (await status()).code === 'TEST-0004', 'restart after hidden window');
+  // Closing/reopening the webview while its bridge survives must reset the flow.
+  await browser.navigate(bridge.origin);
+  await until(async () => (await status()).state !== 'running', 'relaunch discards pending flow');
+  await freshGate();
+  await browser.evaluate('window.__deferLogin = true');
+  await begin();
+  await until(() => browser.evaluate('typeof window.__releaseLogin === "function"'), 'delayed start');
+  await browser.evaluate("window.dispatchEvent(new Event('squad:sign-in-reset')); window.__releaseLogin();");
+  await freshGate();
+  assert.notEqual((await status()).state, 'running', 'reset runs after a delayed start, so no orphaned login survives');
+  await bridge.restart();
+  await browser.navigate(bridge.origin);
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid="sign-in-gate"]')`), 'fresh screen after bridge restart');
+  assert.notEqual((await status()).state, 'running');
+  assert.equal((await bridge.api('/api/harnesses/login/open?id=autohand', 'POST')).status, 409);
+  assert.deepEqual(browser.errors, []);
+  await browser.screenshot('.codex-artifacts/sign-in-recovery.png');
+  console.log('PASS device URL opener, copy URL/code, cancel, start over, webview relaunch, bridge restart; no browser exceptions');
+} finally { await browser?.close(); await bridge.close(); }

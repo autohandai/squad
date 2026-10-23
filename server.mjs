@@ -4,6 +4,7 @@ import { OtelLogger, SEVERITY, parseLogEnvelope, resourceFromEnv, traceIdFor, sp
 import { SdkSessionPool } from "./server/sdk-sessions.mjs";
 import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
+import { openSignInUrl } from "./server/harness/open-login.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { profileWorkspace } from "./server/workspace-profile.mjs";
 import { updateDaemonAdmission } from "./server/mac-update.mjs";
@@ -8238,8 +8239,8 @@ async function handleApi(req, res, url) {
     return true;
   }
 
-  // The desktop webview drops target=_blank links, so the sign-in gate asks
-  // the bridge to open the running flow's own URL in the default browser.
+  // Use the bridge opener: target=_blank is dropped by the main desktop webview.
+  // Only the active CLI flow chooses the URL; the caller cannot supply one.
   if (url.pathname === "/api/harnesses/login/open" && req.method === "POST") {
     const id = normalizeHarnessAssignment({ id: url.searchParams.get("id") }).id;
     const flow = harnessLogins.status(id);
@@ -8247,8 +8248,12 @@ async function handleApi(req, res, url) {
       json(res, 409, { success: false, error: "No sign-in is waiting. Start sign-in again." });
       return true;
     }
-    openUrlInBrowser(flow.url);
-    json(res, 200, { success: true, data: { opened: true } });
+    try {
+      await openSignInUrl(flow.url);
+      json(res, 200, { success: true, data: { opened: true } });
+    } catch (error) {
+      json(res, 502, { success: false, error: error.message });
+    }
     return true;
   }
 

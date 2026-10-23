@@ -1,6 +1,6 @@
 # ADR-0143: The sign-in gate recovers a stuck device flow
 
-Date: 2026-10-23. Status: Accepted.
+Date: 2026-10-23. Status: Superseded by ADR-0144.
 
 ## Context and evidence
 
@@ -50,3 +50,7 @@ no browser exceptions.
 - Start over kills the old `squad login` process. If the person approves the
   old code in the browser after that, the approval is ignored and they must
   use the new code.
+
+## Follow-up decision
+
+PR #44 preserves this bridge-backed link, copy-link fallback and fresh-code restart. ADR-0144 supersedes restoring a pending flow on mount with cancelling it on mount and native window close. This matches the approved recovery behavior and prevents reuse of a request opened in the wrong browser profile. Its serialized start/cancel mutations also prevent a late start from surviving cancellation.

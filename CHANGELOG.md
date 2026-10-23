@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Cancel a pending sign-in without waiting for the code to expire, or start over with a new code. Copy the device code as well as the link. Closing or reopening the sign-in screen clears pending authorization, and browser-opening failures show how to continue.
+
 ## [0.1.9] - 2026-10-23
 
 ### Added
