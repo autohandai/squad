@@ -23,6 +23,12 @@ export const name = "queues";
 let store = null;
 let dispatcher = null;
 
+// Called by both direct chat routes after normal availability/remote checks.
+export async function admitChat(payload) {
+  if (!dispatcher) throw Object.assign(new Error('Queues are not ready.'), { status: 503 });
+  return dispatcher.admit(payload);
+}
+
 export async function init(ctx) {
   store = new QueueStore({ squadStateDir: ctx.squadStateDir });
   await store.ready;

@@ -52,6 +52,7 @@ import { createResponderPicker } from "./server/responders/pick.mjs";
 import { createRunHistory, runHistoryPath } from "./server/runs/history.mjs";
 import { clearHarnessSessions } from "./server/chats/sessions.mjs";
 import { ChatStore } from "./server/chats/store.mjs";
+import { admitChat } from "./server/routes/queues.route.mjs";
 import { buildRecall, collectRecallSources } from "./server/chats/recall.mjs";
 import { workPlanFor } from "./server/work/plan.mjs";
 import { describeSchedule, isValidTimeZone, normalizeSchedule, validateSchedule } from "./server/routines/schedule.mjs";
@@ -7823,6 +7824,11 @@ function isPersonTurn(payload) {
   return !/^(goal|routine|observer|agenda|draft|run)-/.test(String(payload.requestId || ""));
 }
 
+function needsChatAdmission(payload) {
+  const memberId = String(payload.agentId || payload.agent?.id || '').trim();
+  return Boolean(memberId) && !isUtilityAgent(memberId) && isPersonTurn(payload) && !payload.memberThreadId && !payload.ephemeralSession && payload.interruptQueue !== true;
+}
+
 // The next-turn nudge: when the person's message reads as repeating work and
 // the reply proposed no routine, the member's next turn carries one line
 // asking it to propose or ask. In memory: a bridge restart forgets it, and
@@ -8554,6 +8560,7 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === "/api/chat" && req.method === "POST") {
+    let admission;
     try {
       const payload = withRemoteDefaultWorkspace(req, await readBody(req));
       await memberAvailability.assertCanWork(payload);
@@ -8567,6 +8574,11 @@ async function handleApi(req, res, url) {
       if (pursuingGoal) {
         const goal = await goals.start(payload);
         json(res, 201, { success: true, data: { reply: "Goal started.", goal, goalId: goal.id } });
+        return true;
+      }
+      admission = needsChatAdmission(payload) ? await admitChat(payload) : null;
+      if (admission?.item) {
+        json(res, 201, { success: true, data: { queued: true, item: admission.item } });
         return true;
       }
       const reply = await chatOnce(payload);
@@ -8587,11 +8599,12 @@ async function handleApi(req, res, url) {
         ...(error instanceof ChatRuntimeError && error.details ? { data: cleanWorkResult(error.details) } : {}),
         ...(error instanceof HarnessNotReadyError ? { harness: publicReadiness(error.readiness) } : {}),
       });
-    }
+    } finally { admission?.release?.(); }
     return true;
   }
 
   if (url.pathname === "/api/chat/stream" && req.method === "POST") {
+    let admission;
     try {
       const payload = withRemoteDefaultWorkspace(req, await readBody(req));
       await memberAvailability.assertCanWork(payload);
@@ -8603,6 +8616,13 @@ async function handleApi(req, res, url) {
         return true;
       }
       if (pursuingGoal) { await streamGoal(payload, res); return true; }
+      admission = needsChatAdmission(payload) ? await admitChat(payload) : null;
+      if (admission?.item) {
+        const stream = startEventStream(res);
+        stream.send('queued', { queued: true, item: admission.item });
+        stream.end();
+        return true;
+      }
       const outcome = await streamChat(payload, res);
       emitBridgeEvent("chat.finished", {
         memberId: String(payload.agentId || ""),
@@ -8620,7 +8640,7 @@ async function handleApi(req, res, url) {
       }
       emitBridgeEvent("chat.finished", { memberId: "", status: "failed", preview: String(error?.message || "").slice(0, 140) });
       json(res, error.status || 400, { success: false, error: error.message });
-    }
+    } finally { admission?.release?.(); }
     return true;
   }
 

@@ -73,6 +73,17 @@ body with `await ctx.readBody(req)` (returns an object). Server-sent events:
 Route paths are matched with plain string comparison or a `RegExp` on
 `url.pathname`; parse ids yourself (`/^\/api\/members\/([^/]+)\/stop$/`).
 
+Ordinary member DMs share queue admission across callers (ADR-0147).
+`POST /api/chat` can return HTTP 201 with
+`{ success: true, data: { queued: true, item } }` instead of a completed reply.
+`POST /api/chat/stream` acknowledges the same case with a `queued` SSE event
+carrying `{ queued: true, item }`, then closes without a `done` event. This
+acknowledges saved work, not a completed model turn. Read its subsequent state
+from `/api/queues/:memberId`; the public item excludes the private launch
+payload. Explicit `interruptQueue: true` retains Send now semantics. Goals,
+collaborations, channel turns and independent/ephemeral threads use their
+existing entry points and are not silently folded into the DM queue.
+
 ## `ctx` (bridge context)
 
 | Field | Type | Notes |

@@ -7460,6 +7460,7 @@ function App() {
       profile,
       agent: channelActionMember(agent, selectedWorkspace),
       collaboration: launch.collaboration || null,
+      ...(launch.interruptQueue ? { interruptQueue: true } : {}),
       ...(canvasAttachment.canvasId ? { canvasId: canvasAttachment.canvasId, canvasDir: canvasAttachment.canvasDir } : {}),
     };
     let streamedAnswer = "";
@@ -7489,6 +7490,15 @@ function App() {
           body: JSON.stringify(payload),
         },
         (event, data) => {
+          if (event === 'queued' && data?.item) {
+            completed = true;
+            finalResult = { queued: true, item: data.item };
+            // The durable queue owns these rows from here. Do not display an
+            // empty answer or duplicate the question when its turn starts.
+            setMessagesByAgent(current => ({ ...current, [agentId]: (current[agentId] || []).filter(message => message.id !== `${id}-u` && message.id !== `${id}-a`) }));
+            void refreshMemberQueues().catch(() => {});
+            return;
+          }
           if (event === "start") {
             updateMessage(agentId, `${id}-a`, {
               startedAt: data.startedAt || startedAt,
@@ -7605,6 +7615,7 @@ function App() {
       );
 
       if (streamError) throw streamError;
+      if (finalResult?.queued) return finalResult;
       if (!completed) {
         const completedAt = new Date().toISOString();
         finalResult = {
@@ -7668,8 +7679,10 @@ function App() {
       if (remaining) chatMembersRef.current.set(agentId, remaining); else chatMembersRef.current.delete(agentId);
       recordObservedEdits(agentId, liveEvents, { messageId: `${id}-a`, workspace: selectedWorkspace });
       // Learn from the task it just finished, not hours later (ADR-0029).
-      void reviewMembers({ memberId: agentId, force: true });
-      void absorbCanvas(canvasAttachment.canvasId, agentId);
+      if (!finalResult?.queued) {
+        void reviewMembers({ memberId: agentId, force: true });
+        void absorbCanvas(canvasAttachment.canvasId, agentId);
+      }
     }
   }
 
@@ -14205,6 +14218,7 @@ function Conversation({
   // doing when the new instruction arrives.
   const pendingSteerRef = useRef({});
   function steerNow(nextItem, agentId = agent.id) {
+    nextItem = { ...nextItem, interruptQueue: true };
     const text = String(nextItem?.prompt || "").trim();
     if (!text) return;
     if (agentId === agent.id && isQueueRunning(queue)) {
@@ -14272,6 +14286,7 @@ function Conversation({
           requestId: sourceLaunch.requestId,
           retryOf: sourceLaunch.retryOf,
           collaboration: sourceLaunch.collaboration,
+          interruptQueue: sourceLaunch.interruptQueue === true,
           canvases: targetAgentId === agent.id ? canvases : [],
           signal: controller.signal,
         })

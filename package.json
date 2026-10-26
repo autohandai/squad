@@ -113,6 +113,8 @@
     "check:goal-lifecycle": "node scripts/check-goal-lifecycle.mjs",
     "check:goal-bridge": "node scripts/check-goal-bridge.mjs",
     "check:queues": "node scripts/check-queues.mjs",
+    "check:queue-admission": "node scripts/check-queue-admission.mjs",
+    "check:queue-admission:browser": "node scripts/check-queue-admission.mjs --browser",
     "check:chats": "node scripts/check-chats.mjs",
     "check:reliability": "node scripts/check-reliability.mjs",
     "check:member-goals": "node scripts/check-member-goals.mjs",

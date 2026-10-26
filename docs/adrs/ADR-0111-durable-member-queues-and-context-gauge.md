@@ -2,6 +2,11 @@
 
 Date: 2026-10-13
 Status: Accepted
+
+2026-10-26: [ADR-0147](ADR-0147-server-owned-direct-message-admission.md)
+extends this decision to direct-message admission. The server also queues
+ordinary direct calls when the member is busy or an older follow-up waits;
+browser-local sending state alone cannot enforce order across windows.
 Lane: L11 queues (docs/superpowers/specs/2026-10-13-parity-lanes-design.md)
 
 ## Context and evidence

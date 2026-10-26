@@ -32,7 +32,7 @@ export function privateLaunch(payload) {
     if (!value || typeof value !== "object") return value;
     return Object.fromEntries(Object.entries(value).filter(([key]) => !/(?:api.?key|token|secret|password|authorization|credentials|^env$)/i.test(key)).map(([key, item]) => [key, scrub(item)]));
   };
-  const keys = ["agentId", "agent", "squadMembers", "workspace", "profile", "model", "policy", "transport", "timeoutMs", "canvasDir", "canvasId", "channelId", "threadId", "channel"];
+  const keys = ["agentId", "agent", "squadMembers", "workspace", "profile", "model", "effort", "access", "policy", "transport", "timeoutMs", "canvasDir", "canvasId", "channelId", "threadId", "channel"];
   return scrub(Object.fromEntries(keys.filter((key) => payload[key] !== undefined).map((key) => [key, payload[key]])));
 }
 

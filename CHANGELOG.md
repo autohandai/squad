@@ -16,6 +16,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Later messages from another window now join the same queue instead of starting ahead of saved follow-ups and keeping them waiting. Works across Autohand, Codex, Claude Code and ACP engines; Send now still interrupts explicitly, and queued work keeps its selected effort and access.
 - Grut now honours Light mode, and Soft supports Dark mode. Theme presets appear only with the Autohand skin; your chosen presets stay saved when you try another skin. Quick Chat and information windows inherit the same appearance. Grut's blob avatars show their eyes and fill their portrait space.
 - Installing an update no longer waits for the team to go idle. Install stops running chats and runs, pauses goals so you can resume them, and keeps queued work for after the restart. Squad still refuses a second install while one is running, and never stops work for an installer that fails verification.
 - Cancel a pending sign-in without waiting for the code to expire, or start over with a new code. Copy the device code as well as the link. Closing or reopening the sign-in screen clears pending authorization, and browser-opening failures show how to continue.

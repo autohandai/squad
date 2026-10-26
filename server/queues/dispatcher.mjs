@@ -19,12 +19,47 @@ export class QueueDispatcher {
     this.store = store; this.executeTurn = executeTurn; this.isMemberBusy = isMemberBusy; this.availability = availability;
     this.registerChat = registerChat; this.emit = emit; this.cleanResult = cleanResult; this.now = now;
     this.workers = new Map();
+    this.directTurns = new Set();
+    this.admissions = new Map();
     this.timer = null;
     this.ticking = false;
     this.stopped = false;
   }
 
   at() { return new Date(this.now()).toISOString(); }
+
+  // All ordinary DM entry points share admission, including different windows.
+  // Reserve before handing a direct turn back to its caller; serialize the
+  // asynchronous busy check so two callers cannot both observe an idle member.
+  async admit(payload) {
+    await this.store.ready;
+    const memberId = String(payload.agentId || payload.agent?.id || '').trim();
+    const previous = this.admissions.get(memberId) || Promise.resolve();
+    let unlock;
+    const pending = new Promise(resolve => { unlock = resolve; });
+    this.admissions.set(memberId, pending);
+    await previous;
+    try {
+      if (this.stopped) throw Object.assign(new Error('The queue dispatcher is stopping.'), { status: 503 });
+      if (this.directTurns.has(memberId) || this.workers.has(memberId) || this.store.nextQueued(memberId) || await this.isMemberBusy(memberId)) {
+        const item = await this.store.enqueue(payload);
+        this.emit('queue.enqueued', { memberId, itemId: item.id, text: item.text.slice(0, 140) });
+        this.schedule();
+        return { item };
+      }
+      this.directTurns.add(memberId);
+      let released = false;
+      return { release: () => {
+        if (released) return;
+        released = true;
+        this.directTurns.delete(memberId);
+        this.schedule();
+      } };
+    } finally {
+      unlock();
+      if (this.admissions.get(memberId) === pending) this.admissions.delete(memberId);
+    }
+  }
 
   /** Subscribe to the bus events that can free a member, and poll while work waits. */
   attach(events) {
@@ -49,11 +84,12 @@ export class QueueDispatcher {
       await this.store.ready;
       const waiting = new Set([...this.store.items.values()].filter((item) => item.status === "queued").map((item) => item.memberId));
       for (const memberId of waiting) {
-        if (this.workers.has(memberId) || this.store.memberState(memberId).paused) continue;
+        if (this.workers.has(memberId) || this.directTurns.has(memberId) || this.admissions.has(memberId) || this.store.memberState(memberId).paused) continue;
         const item = this.store.nextQueued(memberId);
         if (!item) continue;
         if ((await this.availability?.get(memberId, item.launch?.agent || {}))?.onBreak) continue;
         if (await this.isMemberBusy(memberId)) continue;
+        if (this.directTurns.has(memberId) || this.admissions.has(memberId)) continue;
         this.run(item);
       }
       if (this.timer) clearTimeout(this.timer);
