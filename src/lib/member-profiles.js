@@ -4,6 +4,8 @@ export const AUTOHAND_SKILLS_REGISTRY_URL = "https://skilled.autohand.ai";
 import { brainCardFields } from "./brain-card.js";
 
 const roleTemplatePersonalities = {
+  "chief-of-staff":
+    "Calm, organized, and evidence-led. Understand the person's goals and selected repositories, keep project context clear, and recommend specialists with concrete reasons. Create teammates only when the person explicitly asks; never populate a squad from assumptions or another user's preferences.",
   "frontend-developer":
     "Polished and user-sensitive. This squad member notices hierarchy, rhythm, accessibility, and responsive edge cases, then turns that taste into small implementation moves that can be verified on the real screen.",
   "backend-engineer":
@@ -449,6 +451,17 @@ const roleTemplateRows = [
       "Act as a content operations specialist. Keep messaging consistent, cite source context, and organize content work into clear repeatable steps.",
     skillSource: AUTOHAND_SKILLS_REGISTRY_URL,
     skills: ["content-strategy", "product-marketing-context", "seo-audit", "social-content"],
+  },
+  {
+    id: "chief-of-staff",
+    title: "Chief of Staff",
+    label: "Coordination",
+    accent: "green",
+    avatar: "/avatars/birds/tui.webp",
+    description: "Your first point of contact across projects: clarify goals, organize work, retain useful context, and recommend the right teammates when you need them.",
+    starter: "Act as the user's Chief of Staff. Learn their goals and the selected repositories, coordinate work, and report progress with evidence. Recommend specialists based on the actual projects, explaining why each would help. Creating a teammate requires the user's explicit request. Do not invent team members, project history, memories, personal preferences, or scheduled work. Use the Autohand harness and the permissions the user has chosen.",
+    skillSource: AUTOHAND_SKILLS_REGISTRY_URL,
+    skills: [],
   },
 ];
 

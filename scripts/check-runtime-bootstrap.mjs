@@ -3,7 +3,7 @@
 // isolated account/state. Exercises the actual bridge, never the user's home.
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile, stat, chmod } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile, stat, chmod } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -12,13 +12,14 @@ import { startBrowser, stop, until } from './lib/reliability-browser.mjs';
 import { CLI_TARGETS } from '../server/runtime/cli-bootstrap.mjs';
 
 const root = process.cwd();
-const directory = await mkdtemp(join(tmpdir(), 'squad-first-run-runtime-'));
+const directory = await realpath(await mkdtemp(join(tmpdir(), 'squad-first-run-runtime-')));
 const runtimeRoot = join(directory, 'runtime');
 const workspace = join(directory, 'project');
 let bridge, browser, logs = '';
 try {
   await mkdir(runtimeRoot);
   await mkdir(workspace);
+  execFileSync(process.platform === 'darwin' ? '/usr/bin/git' : 'git', ['init', '-q', workspace]);
   for (const name of ['server.mjs', 'package.json', 'server', 'relay', 'dist']) await cp(join(root, name), join(runtimeRoot, name), { recursive: true });
   await cp(join(root, 'src/lib'), join(runtimeRoot, 'src/lib'), { recursive: true });
   for (const name of ['toml', 'yaml']) await cp(join(root, 'node_modules', name), join(runtimeRoot, 'node_modules', name), { recursive: true, dereference: true });
@@ -75,7 +76,7 @@ globalThis.fetch=async(url,options)=>{
   assert.equal(before.available, false, 'the fixture must have no CLI from the machine or app');
   if (process.argv.includes('--browser')) {
     browser = await startBrowser();
-    await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `if(!localStorage.getItem('bootstrap.seeded')){localStorage.clear();localStorage.setItem('autohandSquad.v1.onboarding',JSON.stringify({version:1,status:'incomplete',selectedWorkspace:${JSON.stringify(workspace)},memberName:'Fresh Mac teammate',nameTouched:true}));localStorage.setItem('bootstrap.seeded','true');}` });
+    await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `if(!localStorage.getItem('bootstrap.seeded')){localStorage.clear();localStorage.setItem('autohandSquad.v1.onboarding',JSON.stringify({version:1,status:'active',selectedWorkspace:${JSON.stringify(workspace)},selectedRepositories:[${JSON.stringify(workspace)}]}));localStorage.setItem('bootstrap.seeded','true');}` });
     await browser.navigate(origin+'/welcome');
   } else {
     const response = await fetch(origin+'/api/setup/runtime', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
@@ -92,14 +93,12 @@ globalThis.fetch=async(url,options)=>{
 
   if (browser) {
     await until(() => browser.evaluate(`document.body.innerText.includes('verification failed')`), 'actionable download failure in onboarding', 30000);
-    await until(() => browser.evaluate(`!![...document.querySelectorAll('button')].find(button=>button.innerText.includes('Best fit'))`), 'folder suggestions');
-    await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.innerText.includes('Best fit')).click()`);
-    assert.equal(await browser.evaluate(`document.querySelector('#first-run-name')?.value`), 'Fresh Mac teammate');
-    assert.equal(await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.innerText.includes('Start the conversation'))?.disabled`), true);
+    assert.deepEqual(await browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.onboarding')).selectedRepositories`), [workspace]);
+    assert.equal(await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.innerText.includes('Start with Chief of Staff'))?.disabled`), true);
     await rm(bad);
     await browser.click('Retry');
-    await until(() => browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.innerText.includes('Start the conversation'))?.disabled === false`), 'onboarding recovers after verified CLI installation', 30000);
-    assert.equal(await browser.evaluate(`document.querySelector('#first-run-name')?.value`), 'Fresh Mac teammate', 'retry preserves onboarding choices');
+    await until(() => browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.innerText.includes('Start with Chief of Staff'))?.disabled === false`), 'onboarding recovers after verified CLI installation', 30000);
+    assert.deepEqual(await browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.onboarding')).selectedRepositories`), [workspace], 'retry preserves repository choices');
     await browser.screenshot(join(root, '.codex-artifacts/runtime-bootstrap/onboarding-ready.png'));
     assert.deepEqual(browser.errors, []);
   } else {

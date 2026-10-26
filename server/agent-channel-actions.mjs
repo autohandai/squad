@@ -12,7 +12,7 @@ const nameKey = value => String(value || '').replace(/^@/, '').trim().toLowerCas
 const mode = agent => ['allow', 'ask', 'block'].includes(agent?.permissions?.builtInPolicies?.squad_create_channel) ? agent.permissions.builtInPolicies.squad_create_channel : 'ask';
 const workspaceModes = agent => Object.fromEntries(Object.entries(agent?.channelPoliciesByWorkspace || {}).filter(([, policy]) => ['allow', 'ask', 'block'].includes(policy)));
 const paths = agent => [...new Set([...(agent?.projects || []).map(p => p.path), agent?.workspace].filter(Boolean))];
-const memberFields = ['id', 'name', 'formerNames', 'profileRevision', 'role', 'description', 'instructions', 'brainCard', 'memory', 'skills', 'permissions', 'modelAssignment', 'harness', 'projects', 'workspace', 'launch', 'status', 'staffId', 'profileFiles', 'profileDocs', 'skillSource', 'skillInstall'];
+const memberFields = ['id', 'name', 'formerNames', 'profileRevision', 'role', 'employeeType', 'avatar', 'avatarVersion', 'createdAt', 'updatedAt', 'stats', 'tools', 'description', 'instructions', 'brainCard', 'memory', 'skills', 'permissions', 'modelAssignment', 'harness', 'projects', 'workspace', 'launch', 'status', 'staffId', 'profileFiles', 'profileDocs', 'skillSource', 'skillInstall'];
 const memberCopy = (agent, id) => Object.fromEntries(memberFields.filter(key => key in agent).map(key => [key, key === 'id' ? id : structuredClone(agent[key]) ]));
 
 // Same bound and wording as the browser's channel relay (src/App.jsx,

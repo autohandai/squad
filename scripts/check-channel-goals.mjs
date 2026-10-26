@@ -5,6 +5,7 @@ import { mkdir,mkdtemp,readFile,rm,writeFile } from 'node:fs/promises';
 import {join} from 'node:path';
 import {startBridge,startBrowser,until} from './lib/reliability-browser.mjs';
 import {initialAgents} from '../src/data.js';
+import {memberFixture} from './lib/member-fixture.mjs';
 import {teamDocumentFromProposal,buildMemberDraft} from '../src/lib/team-builder.js';
 import {planImport} from '../src/lib/teams.js';
 await mkdir('.codex-artifacts',{recursive:true});
@@ -81,7 +82,7 @@ try {
   await bridge.restart();
   assert.equal((await bridge.api('/api/channels')).data.messages.filter(message=>message.channelId==='goal-recovery'&&message.role==='agent'&&message.status==='complete').length,4,'goal answers survive a bridge restart');
   if(process.argv.includes('--browser')){
-    const agent={...initialAgents[0],id:'goal-guide',name:'Eva',workspace,projects:[{path:workspace}],skills:[],permissions:{},harness:{id:'autohand'}};
+    const agent=memberFixture({id:'goal-guide',name:'Eva',workspace,projects:[{path:workspace}],skills:[],permissions:{},harness:{id:'autohand'}});
     await bridge.api(`/api/members/${agent.id}/channel-access`,'PUT',{agent,profile:''});
     const storage={agents:[agent],removedAgents:initialAgents.map(member=>member.id),tasks:[],messages:{},channels:[],automations:[],onboarding:{version:1,status:'skipped',lastStep:'skipped'},sidebarCollapsed:false};
     browser=await startBrowser();

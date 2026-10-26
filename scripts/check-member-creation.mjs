@@ -31,6 +31,7 @@ async function check(label,run) {
   finally{await browser?.close();await bridge.close();}
 }
 async function enter(bridge,browser,{onboarding=false}={}) {
+  if(onboarding) assert.equal((await bridge.api('/api/setup/complete','POST',{paths:[process.cwd()]},60000)).status,200);
   await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`
     if (!sessionStorage.getItem('creation.seeded')) {
       if (!${onboarding}) localStorage.setItem('autohandSquad.v1.onboarding',JSON.stringify({version:1,status:'skipped'}));
@@ -50,20 +51,19 @@ async function enter(bridge,browser,{onboarding=false}={}) {
       }
       return response;
     };`});
-  await browser.navigate(bridge.origin+(onboarding?'/': '/squad-members/new?workspace='+encodeURIComponent(process.cwd())));
+  await browser.navigate(bridge.origin+(onboarding?'/welcome': '/squad-members/new?workspace='+encodeURIComponent(process.cwd())));
   if(onboarding) {
-    await until(()=>browser.evaluate(`location.pathname==='/welcome' && document.body.textContent.includes('Point at a folder.')`),'fresh first run');
-    const folder=(await bridge.api('/api/runtime')).data.defaultWorkspace;
-    await browser.click('Use '+folder.split('/').pop());
-    await until(()=>browser.evaluate(`!document.body.textContent.includes('Looking at the folder…') && [...document.querySelectorAll('button')].some(button=>button.innerText==='Create someone else…' && !button.disabled)`),'alternate member entry');
-    await browser.click('Create someone else…');
+    await until(()=>browser.evaluate(`document.body.textContent.includes('Review Frontend Developer')`),'recommended member entry',30000);
+    await browser.click('Review Frontend Developer');
   }
   await until(()=>browser.evaluate(`document.body.textContent.includes('New Squad member')`),'creation form');
 }
 async function select(browser) {
+  if(!await browser.evaluate(`!!document.querySelector('#member-name')`)) {
   await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent.includes('Or start from a ready-made role')).click()`);
   await until(()=>browser.evaluate(`!!document.querySelector('[role="radiogroup"] [role="radio"]')`),'role picker');
   await browser.evaluate(`[...document.querySelectorAll('[role="radiogroup"] [role="radio"]')].find(button=>button.textContent.includes('Frontend Developer')).click()`);
+  }
   await until(()=>browser.evaluate(`!!document.querySelector('#member-name')`),'member draft');
   await browser.fill('#member-name','Recovered member');
   await browser.click('How it will work');
@@ -108,16 +108,18 @@ await check('rapid submit and refresh retry use one identity and preserve custom
   await until(()=>browser.evaluate(`document.body.textContent.includes('Recovered member')`),'confirmed roster after restart');
   assert.deepEqual(browser.errors,[]);
 });
-await check('alternate first-run creation completes only after preparation and drafts its first conversation',async(bridge,browser)=>{
+await check('recommended specialist is created only after preparation and preserves completed setup',async(bridge,browser)=>{
   await enter(bridge,browser,{onboarding:true});await select(browser);await submit(browser);
+  const coordinator=(await bridge.api('/api/setup')).data.memberId;
   await until(()=>browser.evaluate(`sessionStorage.getItem('creation.failed')==='true'`),'alternate failed preparation');
-  assert.equal((await browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.onboarding'))`)).status,'active');
+  assert.equal((await browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.onboarding'))`)).status,'completed');
   assert.equal(await browser.evaluate(`location.pathname`),'/squad-members/new');
   await browser.evaluate(`sessionStorage.setItem('creation.fail','false')`);await submit(browser);
   await until(()=>browser.evaluate(`location.pathname==='/conversations/new'`),'confirmed alternate first member',20000);
   const saved=await browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.onboarding'))`);
-  assert.equal(saved.status,'completed');assert.equal(saved.memberId,(await calls(browser))[0].agentId);
-  assert.ok(await browser.evaluate(`document.querySelector('main textarea')?.value.length>0`),'Alternate setup must draft the first prompt.');
+  assert.equal(saved.status,'completed');assert.equal(saved.memberId,coordinator);
+  assert.notEqual((await calls(browser))[0].agentId,coordinator);
+  assert.equal((await members(browser)).length,2,'only the explicitly saved specialist joins the coordinator');
   await browser.screenshot('.codex-artifacts/reliability/member-creation-confirmed.png');
   await bridge.restart();await browser.navigate(bridge.origin+'/');
   await until(()=>browser.evaluate(`location.pathname!=='/welcome' && document.body.textContent.includes('Recovered member')`),'alternate setup survives restart');

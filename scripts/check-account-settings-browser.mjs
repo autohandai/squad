@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { initialAgents } from '../src/data.js';
+import { memberFixture } from './lib/member-fixture.mjs';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
 
 const artifact = '.codex-artifacts/local-0.1.6/account-settings';
@@ -10,7 +11,7 @@ let browser;
 const report = [];
 const part = process.env.ACCOUNT_CHECK_PART || 'all';
 try {
-  const member = { ...initialAgents[0], name: 'Alex', workspace: bridge.directory, projects: [{ path: bridge.directory }], skills: [] };
+  const member = memberFixture({ name: 'Alex', workspace: bridge.directory, projects: [{ path: bridge.directory }], skills: [] });
   browser = await startBrowser();
   await browser.send('Emulation.setDeviceMetricsOverride', {width:1170,height:760,deviceScaleFactor:1,mobile:false});
   await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { initialAgents } from '../src/data.js';
+import { memberFixture } from './lib/member-fixture.mjs';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
 
 // A real bridge and local protocol fixture, never a vendor request.
@@ -69,7 +70,7 @@ try {
   if (process.argv.includes('--browser')) {
     const browser = await startBrowser();
     try {
-      const member = { ...initialAgents[0], ...agent, id: 'browser-recovery', roleId: 'custom', customRoleTitle: agent.role, skills: [], workspace: process.cwd(), projects: [{ path: process.cwd() }] };
+      const member = memberFixture({ ...agent, id: 'browser-recovery', roleId: 'custom', customRoleTitle: agent.role, skills: [], workspace: process.cwd(), projects: [{ path: process.cwd() }] });
       await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `
         if(!sessionStorage.getItem('claude.seeded')) {
           localStorage.setItem('autohandSquad.v1.agents',${JSON.stringify(JSON.stringify([member]))});

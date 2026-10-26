@@ -26,7 +26,7 @@ import { browserTimeZone, routineDraft, routineDraftFromAutomation, routinePaylo
 import { AppInformation } from "@/components/app-info/AppInformation";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
-import { NEED_HELP, firstPromptFor, joinList, proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
+import { NEED_HELP, joinList, proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
 import { DEFAULT_SKIN_ID, SKINS, SKIN_VAR_DEFAULTS, isSkinId, memberAvatar, skinById, tokensForSkin } from "@/lib/skins";
 import { blobForMember, blobSvg } from "@/lib/blob-avatar";
 import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
@@ -134,11 +134,9 @@ import {
 } from "lucide-react";
 import {
   extensionRows,
-  initialAgents,
   initialAutomations,
   initialChannels,
   initialMemoryInbox,
-  initialMessages,
   initialRecipes,
   initialTasks,
   AUTOHAND_SKILLS_REGISTRY_URL,
@@ -338,7 +336,7 @@ import { CopyButton } from "@/components/chat/CopyButton";
 import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { KeyboardShortcuts, openKeyboardShortcuts } from "@/components/shell/KeyboardShortcuts";
 import { isHiddenStopped, useHiddenStopped } from "@/lib/hidden-stopped";
-import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, mergeSeedAgents, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
+import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
 import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
@@ -2530,6 +2528,7 @@ function normalizeOnboardingState(value) {
     version: ONBOARDING_VERSION,
     status,
     selectedWorkspace: String(source.selectedWorkspace || "").trim(),
+    selectedRepositories: Array.isArray(source.selectedRepositories) ? [...new Set(source.selectedRepositories.filter(path => typeof path === "string" && path.trim()))] : source.selectedWorkspace ? [String(source.selectedWorkspace).trim()] : [],
     selectedRoleId: String(source.selectedRoleId || "").trim(),
     memberName: String(source.memberName || ""),
     nameTouched: source.nameTouched === true,
@@ -2550,10 +2549,6 @@ function onboardingIsIncomplete(state) {
 
 function onboardingProviderReady(providerSettings) {
   return Boolean(providerSettings && providerIsConfigured(providerSettings, providerSettings.defaultProvider));
-}
-
-function onboardingAccountReady(runtime) {
-  return runtime?.account?.signedIn === true;
 }
 
 function readLocalePreference() {
@@ -2701,7 +2696,7 @@ function createAutomationId() {
   return `tr_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function normalizeAutomationCopy(automation, defaultAgentId = initialAgents[0]?.id) {
+function normalizeAutomationCopy(automation, defaultAgentId = "") {
   const createdAt = automation?.createdAt || new Date().toISOString();
   const triggerType = ["schedule", "event", "webhook"].includes(automation?.triggerType)
     ? automation.triggerType
@@ -3092,7 +3087,7 @@ function normalizeMemoryProjectIdentity(item = {}) {
   };
 }
 
-function normalizeMemoryProposal(item, fallbackAgentId = initialAgents[0]?.id) {
+function normalizeMemoryProposal(item, fallbackAgentId = "") {
   if (!item || typeof item !== "object") return null;
   const content = String(item.content || item.editedContent || item.proposedContent || "").trim();
   if (!content) return null;
@@ -3130,7 +3125,7 @@ function normalizeMemoryProposal(item, fallbackAgentId = initialAgents[0]?.id) {
   };
 }
 
-function normalizeMemoryInboxCopy(items, defaultAgentId = initialAgents[0]?.id) {
+function normalizeMemoryInboxCopy(items, defaultAgentId = "") {
   return (Array.isArray(items) ? items : initialMemoryInbox)
     .map((item) => normalizeMemoryProposal(item, defaultAgentId))
     .filter(Boolean);
@@ -4468,9 +4463,9 @@ function App() {
     return [...removedIdSet(readStored(storageKeysFor("removedAgents"), []))];
   });
   const [agents, setAgents] = useState(() => {
-    const storedAgents = readStored(storageKeysFor("agents"), initialAgents);
-    const removed = readStored(storageKeysFor("removedAgents"), []);
-    return mergeSeedAgents(storedAgents, initialAgents, Array.isArray(removed) ? removed : []).map(normalizeAgentCopy);
+    const storedAgents = readStored(storageKeysFor("agents"), []);
+    const removed = removedIdSet(readStored(storageKeysFor("removedAgents"), []));
+    return (Array.isArray(storedAgents) ? storedAgents : []).filter(member => !removed.has(normalizeSquadMemberId(member?.id))).map(normalizeAgentCopy);
   });
   const [tasks, setTasks] = useState(() => normalizeTasksCopy(mergeSeedTasks(readStored(storageKeysFor("tasks"), initialTasks))));
   const tasksRef = useRef(tasks);
@@ -4485,7 +4480,7 @@ function App() {
   });
   const [messagesByAgent, setMessagesByAgent] = useState(() =>
     normalizeMessageCopy(
-      readStored(storageKeysFor("messages"), { [initialAgents[0].id]: initialMessages(initialAgents[0].name) })
+      readStored(storageKeysFor("messages"), {})
     )
   );
   // Previous chats (ADR-0113): summaries per member from the bridge; the
@@ -4606,6 +4601,19 @@ function App() {
   const [notifications, setNotifications] = useState([]);
   const [notificationSettings, setNotificationSettings] = useState(DEFAULT_NOTIFICATION_SETTINGS);
   const [onboardingState, setOnboardingState] = useState(readOnboardingState);
+  const [setupSnapshot, setSetupSnapshot] = useState(null);
+  const [setupError, setSetupError] = useState("");
+  const refreshSetup = useCallback(async () => {
+    try {
+      const saved = await api("/api/setup");
+      setSetupSnapshot(saved); setSetupError("");
+      if (["completed", "existing"].includes(saved.status)) {
+        setOnboardingState(current => normalizeOnboardingState({ ...current, status: ONBOARDING_STATUS_COMPLETED, ...(saved.repositories?.length ? { selectedRepositories: saved.repositories.map(item => item.path), selectedWorkspace: saved.repositories[0].path } : {}), ...(saved.memberId ? { memberId: saved.memberId, memberReady: true } : {}), lastStep: "complete" }));
+      }
+      return saved;
+    } catch (error) { setSetupError(error.message || "Could not read saved setup. Retry to continue."); return null; }
+  }, []);
+  useEffect(() => { void refreshSetup(); }, [refreshSetup]);
   const [loginRequestStatus, setLoginRequestStatus] = useState("");
   const [systemTheme, setSystemTheme] = useState(getSystemColorMode);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(
@@ -4785,15 +4793,17 @@ function App() {
     return () => window.removeEventListener("keydown", dismiss);
   }, [route]);
 
-  // Opening Autohand Squad (the daemon opens the app at "/") should land on
-  // first-run setup until the user completes or skips it. Public beta access is
-  // account-gated, so a signed-out user always returns to setup.
+  // New installations must select repositories and prepare their coordinator.
+  // Existing completed/skipped setups retain their previous entry behavior.
   useEffect(() => {
     const path = route.split("?")[0];
+    if (setupSnapshot && ["new", "preparing"].includes(setupSnapshot.status) && onboardingIsIncomplete(onboardingState) && !path.startsWith("/settings") && path !== ONBOARDING_ROUTE) {
+      window.history.replaceState({}, "", ONBOARDING_ROUTE); setRoute(ONBOARDING_ROUTE); return;
+    }
     if (path === "/" || path === "") {
       // The runtime fetch decides where "/" lands; redirecting before it
       // resolves sent every signed-in user to onboarding.
-      if (!runtime) return;
+      if (!runtime || (!setupSnapshot && !setupError)) return;
       // Signed-out users never get here (the SignInGate renders instead), so
       // "/" only decides between first-run setup and the workspace.
       const baseTarget = onboardingIsIncomplete(onboardingState) ? ONBOARDING_ROUTE : SQUAD_DIRECTORY_ROUTE;
@@ -4801,7 +4811,7 @@ function App() {
       window.history.replaceState({}, "", target);
       setRoute(target);
     }
-  }, [onboardingState, route, runtime]);
+  }, [onboardingState, route, runtime, setupSnapshot, setupError]);
 
 
   useEffect(() => {
@@ -5788,7 +5798,7 @@ function App() {
           // Names members went by before a rename live on the bridge's copy
           // (renamed there, or before this window kept them); @mentions in
           // DMs and channels resolve them.
-          const savedById = new Map(Object.entries(data.agentChannelAccess || {}).filter(([, access]) => access?.agent && !access.removed).map(([id, access]) => [id, access.agent]));
+          const savedById = new Map(Object.entries(data.agentChannelAccess || {}).filter(([id, access]) => id !== "squad-designer" && access?.agent && !access.removed).map(([id, access]) => [id, access.agent]));
           if (savedById.size) {
             setAgents((current) => {
               let changed = false;
@@ -5800,6 +5810,10 @@ function App() {
                 changed = true;
                 return { ...merged, formerNames: names };
               });
+              const removed = removedIdSet(readStored(storageKeysFor("removedAgents"), []));
+              for (const [id, saved] of savedById) {
+                if (!next.some(member => member.id === id) && !removed.has(id)) { next.push(normalizeAgentCopy(saved)); changed = true; }
+              }
               return changed ? next : current;
             });
           }
@@ -6864,50 +6878,22 @@ function App() {
     setChannelProposals((current) => ({ ...current, [key]: { status, at: new Date().toISOString() } }));
   }
 
-  // First run ends in a conversation (ADR-0013): create the teammate from the
-  // chosen template on the chosen folder and open the chat with the drafted
-  // first message.
-  async function startFirstConversation({ template, name, folder, prompt }) {
-    const workspace = normalizeSquadWorkspacePath(folder || fallbackWorkspace, runtime);
-    const memberId = onboardingIsIncomplete(onboardingState) && onboardingState.memberId ? onboardingState.memberId : createSquadMemberId();
-    updateOnboardingState({ status: ONBOARDING_STATUS_ACTIVE, lastStep: "talk", selectedWorkspace: workspace, memberId });
-    const agent = await createAgent(
-      {
-        employeeType: template.id,
-        name,
-        role: template.title,
-        workspace,
-        description: template.description || "",
-        instructions: template.starter || "",
-        skills: normalizeSkillList(template.skills),
-        skillSource: template.skillSource || AUTOHAND_SKILLS_REGISTRY_URL,
-        avatar: birdAvatarForRole(template.id, template.title, name),
-        profileFiles: normalizeProfileFiles(template.profileFiles),
-        brainCard: normalizeBrainCard(template.brainCard, template),
-        harness: normalizeHarnessAssignmentCopy(null),
-      },
-      { id: memberId, prompt, requireProvision: true, navigate: false }
-    );
-    updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete", memberReady: true });
-    navigate(routeWithParams(memberChatPath(agent.id), { prompt: prompt || null }));
+  // The bridge owns first-install identity and the completion receipt so
+  // reloads, retries and other windows cannot multiply the starter team.
+  async function startFirstConversation(paths) {
+    const saved = await api("/api/setup/complete", { method: "POST", body: JSON.stringify({ paths }) });
+    if (saved.member) {
+      const member = normalizeAgentCopy(saved.member);
+      setAgents(current => current.some(item => item.id === member.id) ? current.map(item => item.id === member.id ? member : item) : [...current, member]);
+    }
+    await reloadChannelsFromBridge();
+    setSetupSnapshot(saved);
+    updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete", selectedRepositories: saved.repositories.map(item => item.path), selectedWorkspace: saved.repositories[0].path, memberId: saved.memberId, memberReady: true });
+    navigate(channelsPath("channel_general"));
   }
 
   function finishOnboarding() {
-    updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete" });
-    const target = routeWithParams(memberChatPath(activeAgent?.id), {
-      workspace: onboardingState.selectedWorkspace || requestedWorkspace || fallbackWorkspace || null,
-    });
-    navigate(target);
-  }
-
-  function skipOnboarding() {
-    if (!onboardingAccountReady(runtime)) {
-      setLoginRequestStatus("Sign in before opening the Squad workspace. Public beta access requires an Autohand account.");
-      navigate(ONBOARDING_ROUTE);
-      return;
-    }
-    updateOnboardingState({ status: ONBOARDING_STATUS_SKIPPED, lastStep: "skipped" });
-    navigate(squadDirectoryPath());
+    navigate(channels.some(channel => channel.id === "channel_general") ? channelsPath("channel_general") : squadDirectoryPath());
   }
 
   function openFeedback(kind = "feedback") {
@@ -8716,6 +8702,7 @@ function App() {
   }
 
   async function createAgent(draft, options = {}) {
+    if (onboardingIsIncomplete(onboardingState) && setupSnapshot?.status !== "existing") throw new Error("Choose your repositories and finish setup before adding teammates.");
     const id = options.id || createSquadMemberId();
     const timestamp = new Date().toISOString();
     const skills = normalizeSkillList(draft.skills);
@@ -9823,12 +9810,12 @@ function App() {
         <div
           className={cn(
             "relative grid min-h-screen transition-[grid-template-columns] duration-200 ease-out",
-            isSettings ? "lg:grid-cols-[minmax(0,1fr)]" : desktopSidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[280px_minmax(0,1fr)]"
+            isSettings || (isOnboarding && onboardingIsIncomplete(onboardingState)) ? "lg:grid-cols-[minmax(0,1fr)]" : desktopSidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[280px_minmax(0,1fr)]"
           )}
         >
           {/* Settings is its own shell (ADR-0119): no app sidebar, the page
               carries Back and its own section list. */}
-          {isSettings ? null : <DesktopSidebar
+          {isSettings || (isOnboarding && onboardingIsIncomplete(onboardingState)) ? null : <DesktopSidebar
             updateAvailable={updates?.snapshot?.updateAvailable === true}
             agents={agents}
             activeAgent={activeAgent}
@@ -9879,7 +9866,7 @@ function App() {
             ) : null}
             <AgentChannelProposals proposals={agentChannelActions.filter(action => action.status === "proposed")} members={agents} onDecision={decideChannelProposal} />
             <VaultRequests vault={vaultRequests} members={agents} copy={localeCopy} />
-            {isSettings ? null : <MobileTopbar
+            {isSettings || (isOnboarding && onboardingIsIncomplete(onboardingState)) ? null : <MobileTopbar
               activeAgent={activeAgent}
               showsMember={sidebarActiveTarget(route, activeAgent).kind === "member"}
               theme={theme}
@@ -9911,12 +9898,12 @@ function App() {
                 renderTemplateAvatar={(template, className) => (
                   <AgentAvatar agent={{ name: template.title, role: template.title, employeeType: template.id, avatar: birdAvatarForRole(template.id, template.title, template.id) }} className={className} />
                 )}
-                onCreateSomeoneElse={(folder) => {
-                  updateOnboardingState({ lastStep: "member", selectedWorkspace: folder });
-                  navigate(routeWithParams(`${MEMBER_ROUTE_PREFIX}/new`, { workspace: folder || null }));
-                }}
                 onStart={startFirstConversation}
-                onSkip={skipOnboarding}
+                onContinue={finishOnboarding}
+                onReviewSuggestion={(template, folder) => navigate(routeWithParams(`${MEMBER_ROUTE_PREFIX}/new`, { workspace: folder, role: template.id }))}
+                setupSnapshot={setupSnapshot}
+                setupError={setupError}
+                onRefreshSetup={refreshSetup}
                 brand={
                   <>
                     <BrandMark theme="dark" className="size-9 dark:hidden" />
@@ -10109,11 +10096,12 @@ function App() {
               />
             ) : isCreate ? (
               <CreateAgent
-                key={requestedWorkspace || fallbackWorkspace || "member-creation"}
+                key={`${requestedWorkspace || fallbackWorkspace || "member-creation"}:${new URLSearchParams(route.split("?")[1] || "").get("role") || ""}`}
+                initialTemplateId={new URLSearchParams(route.split("?")[1] || "").get("role") || ""}
                 copy={localeCopy}
                 existingMemberIds={agents.map(agent => agent.id)}
                 presets={presetTemplates}
-                onCreate={(draft, options) => createAgent(draft, { ...options, ...(onboardingIsIncomplete(onboardingState) ? { completeOnboarding: true, prompt: firstPromptFor(draft.role, workspaceName(draft.workspace) || workspaceLabel(draft.workspace, workspaces)) } : {}) })}
+                onCreate={(draft, options) => createAgent(draft, options)}
                 onCancel={() => navigate(onboardingIsIncomplete(onboardingState) ? "/welcome" : "/conversations/new")}
                 defaultWorkspace={requestedWorkspace || fallbackWorkspace}
                 workspaceRoot={runtime?.workspaceRoot}
@@ -10121,7 +10109,7 @@ function App() {
                 harnessesLoading={harnessesLoading}
                 onRefreshHarnesses={() => refreshHarnesses(true)}
               />
-            ) : isProfile ? (
+            ) : isProfile && activeAgent ? (
               <SquadMemberPage
                 agent={activeAgent}
                 agents={agents}
@@ -10158,6 +10146,11 @@ function App() {
               />
             ) : isExtensions ? (
               <Extensions runtime={runtime} runs={runs} />
+            ) : !activeAgent ? (
+              <section className="mx-auto max-w-2xl px-6 py-12">
+                <p className="text-sm text-muted-foreground" role="status">{!channelsBridgeReady || !setupSnapshot ? "Reading your squad…" : "Choose a teammate or add one to start a conversation."}</p>
+                {channelsBridgeReady && setupSnapshot ? <Button className="mt-4" variant="outline" onClick={() => navigate(onboardingIsIncomplete(onboardingState) ? ONBOARDING_ROUTE : `${MEMBER_ROUTE_PREFIX}/new`)}>{onboardingIsIncomplete(onboardingState) ? "Continue setup" : "New member"}</Button> : null}
+              </section>
             ) : (
               <Conversation
                 promptByAgent={chatDraftsByAgent}
@@ -12241,7 +12234,7 @@ const DM_DELEGATION_MAX_HOPS = 2;
 const SCHEDULE_ACTION_INSTRUCTION = scheduleActionInstruction(browserTimeZone());
 // Member work plans (ADR-0124): the task action format, next to the schedule one.
 const TASK_ACTION_INSTRUCTION = taskActionInstruction();
-const CHANNEL_ACTION_INSTRUCTION = 'To propose a shared channel, include one line exactly like: SQUAD_ACTION: {"type":"create_channel","name":"project-name","members":["Noah","Eva"],"purpose":"one sentence"}. Use existing teammates and an assigned workspace. The bridge checks squad_create_channel: ask requires user approval, block refuses, allow creates. Never claim creation before bridge confirmation.';
+const CHANNEL_ACTION_INSTRUCTION = 'To propose a shared channel, include one line like: SQUAD_ACTION: {"type":"create_channel","name":"project-name","members":["existing-member-id"],"purpose":"one sentence"}. Replace the example id with existing teammates and use an assigned workspace. The bridge checks squad_create_channel: ask requires user approval, block refuses, allow creates. Never claim creation before bridge confirmation.';
 
 function buildTeammateContext(agent, agents = [], { hop = 0 } = {}) {
   const teammates = agents.filter((item) => item.id !== agent.id && item.status !== "offline");
@@ -19606,8 +19599,8 @@ function buildCustomRoleInstructions(templateDraft) {
     .join("\n\n");
 }
 
-function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, existingMemberIds = [], harnesses = [], harnessesLoading = false, onRefreshHarnesses, presets = [], copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
-  const creationStorageKey = `${STORAGE_KEYS.memberCreation}:${defaultWorkspace || ""}`;
+function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, initialTemplateId = "", existingMemberIds = [], harnesses = [], harnessesLoading = false, onRefreshHarnesses, presets = [], copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
+  const creationStorageKey = `${STORAGE_KEYS.memberCreation}:${defaultWorkspace || ""}${initialTemplateId ? `:${initialTemplateId}` : ""}`;
   const [savedCreation] = useState(() => {
     const saved = readStored(creationStorageKey, null);
     return saved?.version === 1 && saved.draft && typeof saved.draft === "object" && !Array.isArray(saved.draft) && ["name", "role", "description", "instructions"].every(field => typeof saved.draft[field] === "string") && !existingMemberIds.includes(saved.memberId) ? saved : null;
@@ -19662,8 +19655,8 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, exis
       : copyText.designAsking || "Asking a model to design this.";
   const [customTemplates, setCustomTemplates] = useState(() => (Array.isArray(savedCreation?.customTemplates) ? savedCreation.customTemplates : []).filter(template => template && typeof template.id === "string" && template.id.startsWith("custom-role-") && typeof template.title === "string" && typeof template.description === "string" && typeof template.starter === "string"));
   const [customTemplateDialogOpen, setCustomTemplateDialogOpen] = useState(false);
-  const [templateId, setTemplateId] = useState(() => [...presets, ...roleTemplates, ...customTemplates].some(template => template.id === savedCreation?.templateId) ? savedCreation.templateId : "");
-  const appliedTemplateRef = useRef(templateId);
+  const [templateId, setTemplateId] = useState(() => [...presets, ...roleTemplates, ...customTemplates].some(template => template.id === (savedCreation?.templateId || initialTemplateId)) ? savedCreation?.templateId || initialTemplateId : "");
+  const appliedTemplateRef = useRef(savedCreation?.templateId || "");
   // Imported presets come first (ADR-0106), then the built-in roles, then
   // roles written on this screen.
   const availableTemplates = useMemo(() => [...presets, ...roleTemplates, ...customTemplates], [presets, customTemplates]);

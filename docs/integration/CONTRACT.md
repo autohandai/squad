@@ -18,6 +18,10 @@ Validate runtime config before mutating profile documents; config read/write
 failure must fail provisioning and preserve the last confirmed personality.
 Member creation callers await provisioning before publishing or completing
 setup; retries retain a stable identity and the editable draft (ADR-0077).
+First install requires repositories and creates only one Chief of Staff on
+Autohand plus #general. The bridge owns the setup receipt; project recommendations
+do not provision teammates. See [onboarding.md](onboarding.md), ADR-0148 and
+ADR-0149 for setup ownership and packaged-source boundaries.
 Reply-mention delegation retains incoming parent task context and waits for
 child results before returning to its source (ADR-0078). Append handoffs against
 current task state, preserve sibling results, and do not mark a parent complete

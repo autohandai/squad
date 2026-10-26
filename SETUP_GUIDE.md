@@ -71,10 +71,12 @@ daemon, and tray/menu controller. The visible web app stays on port `19821` by
 default. If the daemon API would collide with the web app, the launcher moves
 the daemon API to another local port.
 
-First-run or signed-out users are routed from `/` to `/welcome` until account
-sign-in is ready and setup is completed or optional setup is skipped. The
-onboarding flow reuses the existing runtime checks, tray/browser login action,
-Settings LLM provider controls, workspace list, and squad-member creation route.
+New installations are routed to `/welcome` for account sign-in and mandatory
+selection of one or more Git repositories. Setup creates one Chief of Staff
+using Autohand Code and one `#general` channel, then opens that channel. Project
+metadata informs specialist suggestions, which create nothing until you choose
+Review and Save member. Existing completed/skipped setups remain valid. Runtime
+recovery, account login and provider settings keep their existing controls.
 
 Use these lifecycle commands from `daemon/`:
 
@@ -159,16 +161,15 @@ repo-local `.autohand/agents/<member-id>/` directory. Avoid deleting
 `~/.autohand` unless you intentionally want to reset broader Autohand CLI
 state, auth, and config.
 
-For a clean first-run onboarding test, clear
-`autohandSquad.v1.onboarding` from local storage or clear all local storage for
-`127.0.0.1:19821`, then open `/`. Skip only defers optional setup after account
-sign-in; it does not bypass the public-beta login requirement. The setup guide
-remains resumable from Settings. Chosen folder, role and name survive refreshes;
-failed validation or member preparation stays on the form with a retry. Setup
-completes only after provisioning succeeds, and preparation retries reuse the
-same member ID.
-The New member form, including “Create someone else”, keeps its unfinished
-role/personality draft for that folder after refresh and waits for preparation.
+For a clean first-run onboarding test, run `bun run check:fresh-install`.
+Clearing `autohandSquad.v1.onboarding` or browser storage alone tests recovery:
+the bridge keeps the team and setup receipt and restores them into a new window.
+The check isolates browser and runtime data and never clears the operator's
+squad. Repository choices survive refresh; failed validation or preparation
+stays inline with a retry. Setup completes only after provisioning and the
+default channel save succeed, and retries reuse the same member ID.
+The New member form keeps its unfinished role/personality draft for that folder
+after refresh and waits for preparation. Recommended roles have separate drafts.
 Cancel clears that draft. A failed runtime-config check explains what to restore
 before retrying and preserves the last confirmed personality.
 
@@ -182,14 +183,14 @@ bun run check:member-config
 ```
 
 These checks start isolated bridges and clean headless Chrome profiles. The
-first verifies mandatory account gating, root routing, persisted skip, Settings
-resume and provider controls. The second covers invalid folders and saved
-selections, interruptions, prerequisite/folder retries, provisioning failures,
-rapid submissions, confirmed provisioning and restart recovery. Skill hosting
-is an isolated fixture; neither check executes a live provider or login flow.
+first verifies account gating, root routing, required repositories, Settings
+resume, provider controls, existing preferences, real provisioning and explicit
+specialist creation. The second covers interrupted preparation, partial saves,
+concurrent retries, deletion and corruption. Neither executes a live provider
+or login flow.
 Screenshots are written to `.codex-artifacts/`.
-The additional creation check covers the normal/custom role form, alternate
-setup completion and a lost response after real preparation. Config checks
+The additional creation check covers the normal/custom role form,
+recommended-role creation and a lost response after real preparation. Config checks
 exercise real disk failures without executing a provider.
 
 ## LLM Provider

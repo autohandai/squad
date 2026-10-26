@@ -114,7 +114,7 @@ const TOOLS = [
   },
   {
     name: "squad_schedule",
-    description: "Create a saved Automation for a requested reminder, later work or repeating work. It starts automatically under the member's saved permissions. Use mode propose only for an unsolicited suggestion or when the person explicitly asks for a draft. The receipt says whether it is scheduled or needs confirmation. For a reminder, write instructions like 'Remind Igor to call Sam about the contract'.",
+    description: "Create a saved Automation for a requested reminder, later work or repeating work. It starts automatically under the member's saved permissions. Use mode propose only for an unsolicited suggestion or when the person explicitly asks for a draft. The receipt says whether it is scheduled or needs confirmation. For a reminder, write instructions describing what to remind the user about.",
     inputSchema: {
       type: "object",
       properties: {

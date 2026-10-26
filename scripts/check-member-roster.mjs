@@ -18,9 +18,9 @@ const seed = [{ id: "eva", name: "Eva" }, { id: "noah", name: "Noah" }];
 // --- the reported bug ------------------------------------------------------
 
 {
-  // Fresh install: every seeded member shows up.
+  // Legacy migration input: every supplied seed can be reconciled.
   const first = mergeSeedAgents([], seed, []);
-  assert.deepEqual(first.map((agent) => agent.id).sort(), ["eva", "noah"], "a fresh install seeds the squad");
+  assert.deepEqual(first.map((agent) => agent.id).sort(), ["eva", "noah"], "legacy migration seeds are reconciled");
 
   // The person deletes Eva. Storage keeps Noah; the deletion is recorded.
   const afterDelete = first.filter((agent) => agent.id !== "eva");
@@ -79,9 +79,9 @@ const seed = [{ id: "eva", name: "Eva" }, { id: "noah", name: "Noah" }];
 }
 
 {
-  // The real seed list works, and every seeded member can be deleted.
+  // New installs no longer ship legacy demo members (ADR-0148).
   const all = mergeSeedAgents([], initialAgents, []);
-  assert.ok(all.length >= 1, "the shipped seed list is not empty");
+  assert.deepEqual(all, [], "the shipped roster has no implicit demo members");
   const removed = initialAgents.reduce((list, agent) => rememberRemovedAgent(list, agent.id), []);
   assert.deepEqual(mergeSeedAgents([], initialAgents, removed), [], "every shipped member can be deleted for good");
 }

@@ -32,7 +32,7 @@ export async function stop(child) {
   if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
 }
 
-export async function startBridge({ signedIn = true, prepare } = {}) {
+export async function startBridge({ signedIn = true, prepare, cwd = process.cwd(), development = true } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'squad-reliability-'));
   const port = await freePort();
   let hmrPort = await freePort();
@@ -51,7 +51,7 @@ export async function startBridge({ signedIn = true, prepare } = {}) {
     } catch (error) { throw new Error(`${method} ${path}: ${error.message}`, { cause: error }); }
   };
   const start = async () => {
-    child = spawn(process.execPath, ['server.mjs', '--dev', '--host', '127.0.0.1', '--port', String(port), '--hmr-port', String(hmrPort)], { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn(process.execPath, ['server.mjs', ...(development ? ['--dev'] : []), '--host', '127.0.0.1', '--port', String(port), '--hmr-port', String(hmrPort)], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', data => { logs += data; }); child.stderr.on('data', data => { logs += data; });
     await until(async () => (await api('/api/runtime')).success, 'isolated bridge start', 60000);
   };

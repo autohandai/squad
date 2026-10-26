@@ -81,6 +81,8 @@
     "check:onboarding:browser": "node scripts/verify-onboarding-browser.mjs",
     "check:sign-in-recovery:browser": "node scripts/check-sign-in-opener.mjs && node scripts/check-sign-in-recovery-browser.mjs",
     "check:onboarding:recovery": "node scripts/check-onboarding-recovery.mjs",
+    "check:fresh-install": "node scripts/check-fresh-install.mjs",
+    "check:runtime-source-staging": "node scripts/check-runtime-source-staging.mjs",
     "check:channels:browser": "node scripts/verify-channel-browser.mjs",
     "check:web": "bun run build",
     "check:render": "node scripts/check-render.mjs",

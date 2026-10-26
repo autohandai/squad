@@ -19,6 +19,7 @@ import { stageAppInfo } from './stage-app-info.mjs';
 import { stageProductTelemetry } from './stage-product-telemetry.mjs';
 import { stageComputerUse } from './stage-computer-use.mjs';
 import { stageClaudeSdk } from './stage-claude-sdk.mjs';
+import { stageRuntimeSources } from './lib/stage-runtime-sources.mjs';
 
 const rootDir = process.cwd();
 const tauriDir = join(rootDir, 'src-tauri');
@@ -53,7 +54,7 @@ async function stageRuntime() {
   }
   await assertFile(join(rootDir, 'dist', 'index.html'));
   await cp(join(rootDir, 'dist'), join(runtimeDir, 'dist'), { recursive: true });
-  await cp(join(rootDir, 'server'), join(runtimeDir, 'server'), { recursive: true });
+  await stageRuntimeSources(join(rootDir, 'server'), join(runtimeDir, 'server'), 'server');
   await assertFile(join(runtimeDir, 'server', 'harness', 'index.mjs'));
   // `squad mcp` runs this entry from the staged runtime (ADR-0109).
   await assertFile(join(runtimeDir, 'server', 'control-plane', 'mcp-server.mjs'));
@@ -66,9 +67,9 @@ async function stageRuntime() {
   await assertFile(join(runtimeDir, 'server', 'team', 'mcp-server.mjs'));
   // Route plug-ins share pure logic with the web app (src/lib/*.js, no React,
   // no DOM); they import it relatively, so it ships beside server/.
-  await cp(join(rootDir, 'src', 'lib'), join(runtimeDir, 'src', 'lib'), { recursive: true });
+  await stageRuntimeSources(join(rootDir, 'src', 'lib'), join(runtimeDir, 'src', 'lib'), 'lib');
   // The relay client (server/relay/sync.mjs) uses the relay's WebSocket framer.
-  await cp(join(rootDir, 'relay'), join(runtimeDir, 'relay'), { recursive: true });
+  await stageRuntimeSources(join(rootDir, 'relay'), join(runtimeDir, 'relay'), 'relay');
 
   const modulesRoot = join(rootDir, 'node_modules');
   const sdkSource = join(modulesRoot, '@autohandai', 'agent-sdk');

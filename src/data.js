@@ -3,128 +3,6 @@ export { AUTOHAND_SKILLS_REGISTRY_URL, roleTemplates };
 
 export { brainCardFields } from "./lib/brain-card.js";
 
-// Seeds are dated when this install first loads them, not when they were
-// written, so a new squad never shows activity from before it existed.
-const SEEDED_AT = new Date().toISOString();
-
-const handoffDemoAgents = [
-  {
-    id: "asq_noah_frontend",
-    staffId: "member-002",
-    employeeId: "emp_frontend_noah",
-    name: "Noah",
-    role: "Frontend Developer",
-    status: "online",
-    createdAt: SEEDED_AT,
-    updatedAt: SEEDED_AT,
-    avatar: "/avatars/birds/kea.webp",
-    employeeType: "frontend-developer",
-    workspace: "",
-    description:
-      "Focused on frontend implementation, interaction polish, accessibility, responsive behavior, and visual hierarchy for local Web products.",
-    instructions:
-      "Runs as a real Autohand CLI instance isolated to Noah's squad member profile. Continue parent tasks handed from QA, preserve evidence, and make scoped frontend changes with validation notes.",
-    brainCard: brainCardForRoleId("frontend-developer"),
-    projects: [],
-    skillSource: AUTOHAND_SKILLS_REGISTRY_URL,
-    launch: {
-      mode: "prompt",
-      policy: "restricted",
-      model: "",
-      dryRun: false,
-    },
-    stats: { activeDays: 0, automations: 0, tasks: 0, projects: 0 },
-    memory: [
-    
-    ],
-    skills: ["react-component-architecture", "tailwind-ui-patterns", "web-design-guidelines", "testing-strategies"],
-    tools: [
-      { name: "Autohand CLI", policy: "restricted", status: "isolated" },
-      { name: "Terminal", policy: "manual", status: "wired" },
-      { name: "Browser", policy: "allow", status: "ready" },
-      { name: "GitHub", policy: "ask", status: "ready" },
-    ],
-  },
-  {
-    id: "asq_iris_reviewer",
-    staffId: "member-003",
-    employeeId: "emp_reviewer_iris",
-    name: "Iris",
-    role: "Code Reviewer",
-    status: "online",
-    createdAt: SEEDED_AT,
-    updatedAt: SEEDED_AT,
-    avatar: "/avatars/birds/tui.webp",
-    employeeType: "solution-architect",
-    workspace: "",
-    description:
-      "Review-focused squad member for diff review, regression risk, architecture fit, and evidence-based approval decisions.",
-    instructions:
-      "Runs as a real Autohand CLI instance isolated to Iris's squad member profile. Review handed-off frontend and backend changes, preserve task context, and return blocking findings first.",
-    brainCard: brainCardForRoleId("solution-architect"),
-    projects: [],
-    skillSource: AUTOHAND_SKILLS_REGISTRY_URL,
-    launch: {
-      mode: "prompt",
-      policy: "restricted",
-      model: "",
-      dryRun: false,
-    },
-    stats: { activeDays: 0, automations: 0, tasks: 0, projects: 0 },
-    memory: [
-    
-    ],
-    skills: ["api-design-restful", "git-workflow-mastery", "documentation-writing", "testing-strategies"],
-    tools: [
-      { name: "Autohand CLI", policy: "restricted", status: "isolated" },
-      { name: "Terminal", policy: "manual", status: "wired" },
-      { name: "Browser", policy: "allow", status: "ready" },
-      { name: "GitHub", policy: "ask", status: "ready" },
-    ],
-  },
-  {
-    id: "asq_kai_devops",
-    staffId: "member-004",
-    employeeId: "emp_devops_kai",
-    name: "Kai",
-    role: "DevOps Engineer",
-    status: "online",
-    createdAt: SEEDED_AT,
-    updatedAt: SEEDED_AT,
-    avatar: "/avatars/birds/fantail.webp",
-    employeeType: "devops-engineer",
-    workspace: "",
-    description:
-      "Delivery infrastructure role for build validation, CI readiness, deployment checks, and release evidence.",
-    instructions:
-      "Runs as a real Autohand CLI instance isolated to Kai's squad member profile. Validate builds and deployment readiness when a parent task reaches release verification.",
-    brainCard: brainCardForRoleId("devops-engineer"),
-    projects: [],
-    skillSource: AUTOHAND_SKILLS_REGISTRY_URL,
-    launch: {
-      mode: "prompt",
-      policy: "restricted",
-      model: "",
-      dryRun: false,
-    },
-    stats: { activeDays: 0, automations: 0, tasks: 0, projects: 0 },
-    memory: [
-    
-    ],
-    skills: ["deployment-automation", "monitoring-observability", "environment-setup", "git-workflow-mastery"],
-    tools: [
-      { name: "Autohand CLI", policy: "restricted", status: "isolated" },
-      { name: "Terminal", policy: "manual", status: "wired" },
-      { name: "Browser", policy: "allow", status: "ready" },
-      { name: "GitHub", policy: "ask", status: "ready" },
-    ],
-  },
-];
-
-function brainCardForRoleId(roleId) {
-  return roleTemplates.find(role => role.id === roleId)?.brainCard || null;
-}
-
 const generatedAvatarOptions = [
   { id: "nz-riso-set-1-01", label: "Riso 01", src: "/avatars/nz-riso-set-1-01.webp" },
   { id: "nz-riso-set-1-02", label: "Riso 02", src: "/avatars/nz-riso-set-1-02.webp" },
@@ -190,52 +68,8 @@ export const builtInAvatarOptions = [
   ...generatedAvatarOptions,
 ];
 
-export const initialAgents = [
-  {
-    id: "b3bc502e795a",
-    staffId: "bczh5540",
-    employeeId: "emp_01ks6na8x5744jk73307bxw3cf",
-    name: "Eva",
-    role: "QA Engineer",
-    status: "online",
-    createdAt: SEEDED_AT,
-    updatedAt: SEEDED_AT,
-    avatar: "/avatars/birds/kiwi.webp",
-    employeeType: "common-qa-engineer",
-    workspace: "",
-    description:
-      "A quality assurance role for general command-line tools and Web products, focused on test plan documentation, end-to-end testing, defect reproduction, and evidence-based reporting; does not run unit tests and does not fix issues.",
-    instructions:
-      "Runs as a real Autohand CLI instance isolated to Eva's squad member profile. It uses the selected conversation folder as the working tree, avoids code changes by default, and records evidence-rich QA findings.",
-    brainCard: brainCardForRoleId("common-qa-engineer"),
-    projects: [],
-    skillSource: AUTOHAND_SKILLS_REGISTRY_URL,
-    launch: {
-      mode: "prompt",
-      policy: "restricted",
-      model: "",
-      dryRun: false,
-    },
-    stats: { activeDays: 0, automations: 0, tasks: 0, projects: 0 },
-    memory: [
-      "Frontend fixes from QA handoffs should include browser evidence before reviewer handoff.",
-    
-    ],
-    skills: [
-      "testing-strategies",
-      "webapp-testing",
-      "agent-browser",
-      "frontend-responsive-design-standards",
-    ],
-    tools: [
-      { name: "Autohand CLI", policy: "restricted", status: "isolated" },
-      { name: "Terminal", policy: "manual", status: "wired" },
-      { name: "Browser", policy: "allow", status: "ready" },
-      { name: "GitHub", policy: "ask", status: "ready" },
-    ],
-  },
-  ...handoffDemoAgents,
-];
+// Members are provisioned after repository selection; no demo roster ships.
+export const initialAgents = [];
 
 // Squad channels: channel-level coordination with public/private visibility
 // and per-channel squad-member membership. Auto mode (self-judge) is always
@@ -245,28 +79,7 @@ export const CHANNEL_VISIBILITY_PUBLIC = "public";
 export const CHANNEL_VISIBILITY_PRIVATE = "private";
 export const CHANNEL_VISIBILITIES = [CHANNEL_VISIBILITY_PUBLIC, CHANNEL_VISIBILITY_PRIVATE];
 
-export const initialChannels = [
-  {
-    id: "channel_general",
-    name: "general",
-    visibility: CHANNEL_VISIBILITY_PUBLIC,
-    memberIds: ["b3bc502e795a", "asq_noah_frontend", "asq_iris_reviewer", "asq_kai_devops"],
-    creatorId: "user",
-    autoModeDefault: false,
-    createdAt: SEEDED_AT,
-    updatedAt: SEEDED_AT,
-  },
-  {
-    id: "channel_release_reviews",
-    name: "release-reviews",
-    visibility: CHANNEL_VISIBILITY_PRIVATE,
-    memberIds: ["asq_iris_reviewer", "asq_kai_devops"],
-    creatorId: "user",
-    autoModeDefault: false,
-    createdAt: SEEDED_AT,
-    updatedAt: SEEDED_AT,
-  },
-];
+export const initialChannels = [];
 
 export const initialTasks = [];
 

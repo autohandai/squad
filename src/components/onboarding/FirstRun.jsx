@@ -1,458 +1,152 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, FolderOpen, Loader2, RefreshCw } from "lucide-react";
-
+import { useEffect, useRef, useState } from "react";
+import { FolderOpen, Loader2, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
-import { firstPromptFor, suggestRoles } from "@/lib/squad-recruiting";
 
-/**
- * First run: point at a folder, meet your first teammate, start talking.
- * One column, three moments; readiness stays silent while it is green and
- * appears as one sentence with one action when it is not. See ADR-0013.
- */
-const MOMENTS = [
-  { id: "folder", label: "Point at a folder" },
-  { id: "teammate", label: "Meet your first teammate" },
-  { id: "talk", label: "Start talking" },
-];
-
-export function FirstRun({
-  runtime,
-  workspaces = [],
-  roleTemplates = [],
-  fallbackWorkspace = "",
-  onboardingState,
-  updateOnboardingState,
-  api,
-  loginRequestStatus = "",
-  onRequestLogin,
-  onRefreshAccount,
-  onRefreshRuntime,
-  providerReady = true,
-  onOpenProviders,
-  avatarFor,
-  renderTemplateAvatar,
-  onCreateSomeoneElse,
-  onStart,
-  onSkip,
-  brand,
-}) {
-  const [folder, setFolder] = useState(onboardingState?.selectedWorkspace || "");
-  const [profile, setProfile] = useState(null);
-  const [profileBusy, setProfileBusy] = useState(false);
-  const [pickBusy, setPickBusy] = useState(false);
-  const [folderError, setFolderError] = useState("");
-  const [validatedFolder, setValidatedFolder] = useState("");
-  const [profileAttempt, setProfileAttempt] = useState(0);
-  const [tracking, setTracking] = useState(false);
-  const [trackError, setTrackError] = useState("");
-  const [roleId, setRoleId] = useState(onboardingState?.selectedRoleId || "");
-  const [name, setName] = useState(onboardingState?.memberName || "");
+/** Repository selection is mandatory. Analysis only suggests; Start creates
+ * the one coordinator. Specialists have a separate, explicit creation flow. */
+export function FirstRun({ runtime, workspaces = [], onboardingState, updateOnboardingState, api, loginRequestStatus = '', onRequestLogin, onRefreshAccount, onRefreshRuntime, providerReady, onOpenProviders, renderTemplateAvatar, onStart, onContinue, onReviewSuggestion, setupSnapshot, setupError, onRefreshSetup, brand }) {
+  const [paths, setPaths] = useState(onboardingState.selectedRepositories || []);
+  const [path, setPath] = useState('');
+  const [plan, setPlan] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [startError, setStartError] = useState("");
-  const startingRef = useRef(false);
-  const nameTouched = useRef(onboardingState?.nameTouched === true);
+  const [attempt, setAttempt] = useState(0);
   const [runtimeAttempt, setRuntimeAttempt] = useState(0);
-  const [runtimeSetup, setRuntimeSetup] = useState(runtime?.bootstrap || { phase: "idle" });
+  const [runtimeSetup, setRuntimeSetup] = useState(runtime?.bootstrap || { phase: 'idle' });
+  const startingRef = useRef(false);
   const refreshRuntimeRef = useRef(onRefreshRuntime || onRefreshAccount);
   useEffect(() => { refreshRuntimeRef.current = onRefreshRuntime || onRefreshAccount; }, [onRefreshRuntime, onRefreshAccount]);
-
-  const signedIn = runtime?.account?.signedIn === true;
-  const runtimeReady = runtime?.available === true;
+  const complete = ['completed', 'existing'].includes(setupSnapshot?.status) || ['completed', 'skipped'].includes(onboardingState.status);
 
   useEffect(() => {
+    if (!paths.length && setupSnapshot?.repositories?.length) setPaths(setupSnapshot.repositories.map(item => item.path));
+  }, [setupSnapshot]);
+
+  // Keep the existing pinned-CLI first-install recovery and its bounded retry.
+  useEffect(() => {
     if (runtime?.available !== false || runtime?.bridgeUnavailable) return undefined;
-    if (!runtimeAttempt && runtime?.bootstrap?.phase === "error") { setRuntimeSetup(runtime.bootstrap); return undefined; }
+    if (!runtimeAttempt && runtime?.bootstrap?.phase === 'error') { setRuntimeSetup(runtime.bootstrap); return undefined; }
     let cancelled = false, timer;
     const controller = new AbortController();
     const deadline = window.setTimeout(() => controller.abort(), 150000);
-    setRuntimeSetup({ phase: "preparing", error: "" });
+    setRuntimeSetup({ phase: 'preparing', error: '' });
     async function prepare() {
       try {
-        await api("/api/setup/runtime", { method: "POST", signal: controller.signal, body: "{}" });
+        await api('/api/setup/runtime', { method: 'POST', signal: controller.signal, body: '{}' });
         while (!cancelled) {
-          const snapshot = await api("/api/runtime", { signal: controller.signal });
+          const snapshot = await api('/api/runtime', { signal: controller.signal });
           if (cancelled) return;
-          setRuntimeSetup(snapshot.bootstrap || { phase: snapshot.available ? "ready" : "idle" });
+          setRuntimeSetup(snapshot.bootstrap || { phase: snapshot.available ? 'ready' : 'idle' });
           if (snapshot.available) { await refreshRuntimeRef.current?.(); return; }
-          if (snapshot.bootstrap?.phase === "error") return;
+          if (snapshot.bootstrap?.phase === 'error') return;
           await new Promise(resolve => { timer = window.setTimeout(resolve, 750); });
         }
-      } catch (error) {
-        if (!cancelled) setRuntimeSetup({ phase: "error", error: controller.signal.aborted ? "Preparing Autohand Code timed out. Check your connection and retry." : error?.message || "Autohand Code could not be prepared. Retry setup." });
+      } catch (cause) {
+        if (!cancelled) setRuntimeSetup({ phase: 'error', error: controller.signal.aborted ? 'Preparing Autohand Code timed out. Check your connection and retry.' : cause.message });
       } finally { window.clearTimeout(deadline); }
     }
     void prepare();
     return () => { cancelled = true; window.clearTimeout(timer); window.clearTimeout(deadline); controller.abort(); };
   }, [api, runtime?.available, runtime?.bridgeUnavailable, runtimeAttempt]);
 
-  async function retryRuntime() {
-    await refreshRuntimeRef.current?.();
-    setRuntimeAttempt(current => current+1);
-  }
-
-  // Profile the folder whenever it changes; the sentence it yields drives the
-  // role suggestions.
   useEffect(() => {
+    setPlan(null); setError('');
+    if (!paths.length) { setBusy(false); return undefined; }
     let cancelled = false;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
-    setValidatedFolder("");
-    setProfile(null);
-    if (!folder) {
-      clearTimeout(timer);
-      setProfileBusy(false);
-      return undefined;
-    }
-    setProfileBusy(true);
-    setFolderError("");
-    api("/api/workspaces/profile", { method: "POST", signal: controller.signal, body: JSON.stringify({ path: folder }) })
-      .then((data) => {
-        if (!data?.path) throw new Error("Could not validate that folder. Choose a folder and try again.");
-        if (!cancelled) {
-          setProfile(data);
-          setValidatedFolder(folder);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setProfile(null);
-          setFolderError(controller.signal.aborted ? "Reading that folder timed out. Try again." : error?.message || "Could not read that folder.");
-        }
-      })
-      .finally(() => {
-        clearTimeout(timer);
-        if (!cancelled) setProfileBusy(false);
-      });
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [folder, api, profileAttempt]);
+    const timer = setTimeout(() => controller.abort(), 30000);
+    setBusy(true);
+    api('/api/setup/repositories', { method: 'POST', signal: controller.signal, body: JSON.stringify({ paths }) })
+      .then(result => { if (!cancelled) setPlan(result); })
+      .catch(cause => { if (!cancelled) setError(controller.signal.aborted ? 'Reading the repositories timed out. Retry to continue.' : cause.message); })
+      .finally(() => { clearTimeout(timer); if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; clearTimeout(timer); controller.abort(); };
+  }, [api, paths, attempt]);
 
-  const suggestions = useMemo(() => suggestRoles(profile, roleTemplates, 3), [profile, roleTemplates]);
-  const selected = suggestions.find((item) => item.template.id === roleId)
-    || (roleTemplates.find((template) => template.id === roleId) ? { template: roleTemplates.find((template) => template.id === roleId) } : null);
-  const moment = !folder ? "folder" : !selected ? "teammate" : "talk";
-  const folderReady = Boolean(folder && validatedFolder === folder && profile && !profileBusy && !folderError);
-  const canStart = Boolean(selected && folderReady && signedIn && runtimeReady && providerReady && name.trim());
-
-  // A folder that is not a repository is a folder where a member's work
-  // cannot be undone. Offer the one action that fixes that, at the moment the
-  // folder is chosen rather than after something has been edited.
-  async function startTracking() {
-    if (!folder || tracking) return;
-    setTracking(true);
-    setTrackError("");
+  function select(next) {
+    setPaths(next); setPlan(null); setError('');
+    updateOnboardingState({ selectedRepositories: next, selectedWorkspace: next[0] || '', lastStep: 'repositories' });
+  }
+  function add(value) {
+    const folder = value.trim();
+    if (!folder || starting || complete) return;
+    select([...new Set([...paths, folder])]); setPath('');
+  }
+  async function pick() {
+    setPicking(true); setError('');
     try {
-      const result = await api("/api/workspaces/track", { method: "POST", body: JSON.stringify({ path: folder }) });
-      setProfile((current) => (current ? { ...current, git: result?.git || current.git } : current));
-    } catch (error) {
-      setTrackError(error?.message || "Could not start tracking that folder.");
-    } finally {
-      setTracking(false);
-    }
+      const result = await api('/api/workspaces/pick', { method: 'POST', body: JSON.stringify({ title: 'Choose a repository for your squad' }) });
+      if (result?.path) add(result.path);
+    } catch (cause) { setError(cause.message); }
+    finally { setPicking(false); }
   }
-
-  function chooseFolder(path) {
-    const next = String(path || "").trim();
-    setFolder(next);
-    setRoleId("");
-    setValidatedFolder("");
-    setStartError("");
-    setFolderError("");
-    setTrackError("");
-    updateOnboardingState?.({ selectedWorkspace: next, selectedRoleId: "", lastStep: next ? "teammate" : "folder" });
-  }
-
-  async function pickFolder() {
-    setPickBusy(true);
-    try {
-      const picked = await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: "Choose the folder your first teammate will work in" }) });
-      if (picked?.path) chooseFolder(picked.path);
-    } catch (error) {
-      setFolderError(error?.message || "Could not open the folder picker. Try again or choose a recent folder.");
-    } finally {
-      setPickBusy(false);
-    }
-  }
-
-  function chooseRole(template) {
-    setRoleId(template.id);
-    const nextName = nameTouched.current ? name : template.defaultName || defaultNameFor(template);
-    setName(nextName);
-    setStartError("");
-    updateOnboardingState?.({ selectedRoleId: template.id, memberName: nextName, nameTouched: nameTouched.current, lastStep: "talk" });
-  }
-
   async function start() {
-    if (!canStart || startingRef.current) return;
-    startingRef.current = true;
-    setStarting(true);
-    setStartError("");
-    try {
-      await onStart?.({
-        template: selected.template,
-        name: name.trim() || selected.template.defaultName || defaultNameFor(selected.template),
-        folder,
-        profile,
-        prompt: firstPromptFor(selected.template.title, profile?.name || basename(folder), profile?.summary || ""),
-      });
-    } catch (error) {
-      setStartError(error?.message || "Could not prepare your teammate. Try again.");
-    } finally {
-      startingRef.current = false;
-      setStarting(false);
-    }
+    if (startingRef.current || !canStart) return;
+    startingRef.current = true; setStarting(true); setError('');
+    try { await onStart(plan.repositories.map(item => item.path)); }
+    catch (cause) { setError(cause.message || 'Could not prepare your squad. Your repositories are saved; retry to continue.'); }
+    finally { startingRef.current = false; setStarting(false); }
   }
+  const signedIn = runtime?.account?.signedIn === true;
+  const runtimeReady = runtime?.available === true;
+  const canStart = !complete && !!setupSnapshot && !setupError && !!plan?.repositories?.length && !busy && signedIn && runtimeReady && providerReady;
+  const preparing = ['preparing', 'downloading', 'verifying', 'installing'].includes(runtimeSetup.phase) && !runtime?.bridgeUnavailable;
+  const recent = workspaces.filter(item => item.path && !paths.includes(item.path)).slice(0, 5);
+  const recommendations = plan?.recommendations || [];
 
-  const recent = workspaces.filter((item) => item?.path && item.path !== folder).slice(0, 5);
-  const blockers = [];
-  if (!signedIn) blockers.push({ text: "Sign in with your Autohand account to give your teammates a brain.", action: "Sign in", onAction: onRequestLogin, secondary: onRefreshAccount ? { label: "Refresh", onAction: onRefreshAccount } : null, note: loginRequestStatus });
-  if (!runtimeReady && runtime?.available === false) {
-    const preparing = ["preparing", "downloading", "verifying", "installing"].includes(runtimeSetup.phase) && !runtime.bridgeUnavailable;
-    const progress = runtimeSetup.totalBytes > 0 ? ` ${Math.min(100, Math.floor(100 * runtimeSetup.bytes / runtimeSetup.totalBytes))}%` : "";
-    const text = runtime.bridgeUnavailable ? "The local Autohand runtime is not answering yet."
-      : runtimeSetup.phase === "error" ? runtimeSetup.error
-      : runtimeSetup.phase === "downloading" ? `Downloading Autohand Code…${progress}`
-      : runtimeSetup.phase === "verifying" ? "Verifying Autohand Code…"
-      : runtimeSetup.phase === "installing" ? "Installing Autohand Code…"
-      : preparing ? "Preparing Autohand Code for this computer…" : "The local Autohand runtime is not answering yet.";
-    blockers.push({ text, busy: preparing, action: "Retry", onAction: preparing ? null : retryRuntime, failed: runtimeSetup.phase === "error" });
-  }
-  if (signedIn && runtimeReady && !providerReady) blockers.push({ text: "No model provider is configured. Autohand AI works with your account.", action: "Open providers", onAction: onOpenProviders });
+  return <div className="min-h-screen bg-background" data-testid="first-run">
+    <div className="mx-auto w-full max-w-2xl px-6 py-12 lg:py-16">
+      <header className="flex items-center gap-3">{brand}<div><div className="text-sm font-semibold">Autohand Squad</div><div className="text-xs text-muted-foreground">{complete ? 'Your setup' : 'First run'}</div></div></header>
+      <h1 className="mt-10 text-3xl font-semibold tracking-tight">{complete ? 'A team that fits your projects.' : 'Start with your repositories.'}</h1>
+      <p className="mt-3 text-base text-muted-foreground">{complete ? 'Your saved squad is ready. Review a suggested teammate whenever you need more help.' : 'Choose one or more Git repositories. You’ll start with one Chief of Staff on Autohand Code and one channel, #general.'}</p>
 
-  const folderFeedback = folderError ? (
-    <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-      <span role="alert" className="text-destructive">{folderError}</span>
-      {folder ? <Button variant="ghost" size="sm" onClick={() => { setProfileBusy(true); setProfileAttempt((current) => current + 1); }}>Retry folder</Button> : null}
+      {!signedIn ? <div className="mt-6 flex flex-wrap items-center gap-3 border-y py-4 text-sm"><span className="flex-1">Sign in with your Autohand account to continue.</span><Button onClick={onRequestLogin}>Sign in</Button><Button variant="ghost" size="sm" onClick={onRefreshAccount}><RefreshCw />Refresh</Button>{loginRequestStatus ? <span className="basis-full text-muted-foreground">{loginRequestStatus}</span> : null}</div> : null}
+      {runtime?.available === false ? <div className="mt-6 flex flex-wrap items-center gap-3 border-y py-4 text-sm">
+        {preparing ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+        <span className="flex-1" role={runtimeSetup.phase === 'error' ? 'alert' : 'status'}>{runtime?.bridgeUnavailable ? 'The local Autohand runtime is not answering yet.' : runtimeSetup.phase === 'error' ? runtimeSetup.error : runtimeSetup.phase === 'downloading' ? `Downloading Autohand Code…${runtimeSetup.totalBytes > 0 ? ` ${Math.min(100, Math.floor(100 * runtimeSetup.bytes / runtimeSetup.totalBytes))}%` : ''}` : runtimeSetup.phase === 'verifying' ? 'Verifying Autohand Code…' : runtimeSetup.phase === 'installing' ? 'Installing Autohand Code…' : 'Preparing Autohand Code for this computer…'}</span>
+        {!preparing ? <Button size="sm" onClick={async () => { await refreshRuntimeRef.current?.(); setRuntimeAttempt(value => value + 1); }}>Retry</Button> : null}
+      </div> : null}
+      {signedIn && runtimeReady && !providerReady ? <div className="mt-6 flex flex-wrap items-center gap-3 border-y py-4 text-sm"><span className="flex-1">No model provider is configured. Autohand AI works with your account.</span><Button size="sm" onClick={onOpenProviders}>Open providers</Button></div> : null}
+      {setupError ? <p className="mt-6 text-sm text-destructive" role="alert">{setupError} <Button variant="ghost" size="sm" onClick={onRefreshSetup}>Retry setup</Button></p> : null}
+
+      <section className="mt-8" aria-labelledby="repositories-heading">
+        <h2 id="repositories-heading" className="text-sm font-semibold">Repositories{!complete ? ' · required' : ''}</h2>
+        {!complete ? <>
+          <div className="mt-3 flex flex-wrap gap-3"><Button variant="outline" onClick={pick} disabled={picking || starting}>{picking ? <Loader2 className="animate-spin" /> : <FolderOpen />}Choose a repository…</Button></div>
+          <form className="mt-3 flex items-end gap-2" onSubmit={event => { event.preventDefault(); add(path); }}>
+            <div className="min-w-0 flex-1"><label htmlFor="first-run-repository" className="text-xs text-muted-foreground">Or enter a local repository path</label><Input id="first-run-repository" value={path} onChange={event => setPath(event.target.value)} disabled={starting} placeholder="/path/to/repository" autoComplete="off" /></div>
+            <Button type="submit" variant="outline" disabled={!path.trim() || starting}>Add repository</Button>
+          </form>
+        </> : null}
+        <ul className="mt-4 divide-y divide-border/70" aria-label="Selected repositories">{paths.map(folder => {
+          const profile = plan?.repositories.find(item => item.path === folder);
+          return <li key={folder} className="flex items-start gap-3 py-3"><div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{profile?.name || folder.split(/[\\/]/).filter(Boolean).pop()}</div><div className="break-all text-xs text-muted-foreground">{folder}</div>{profile ? <p className="mt-1 text-sm text-muted-foreground">{profile.summary}</p> : null}</div>{!complete ? <Button variant="ghost" size="icon-sm" aria-label={`Remove ${folder}`} disabled={starting} onClick={() => select(paths.filter(item => item !== folder))}><X /></Button> : null}</li>;
+        })}</ul>
+        {!complete && recent.length ? <details className="mt-3 text-sm"><summary className="cursor-pointer text-muted-foreground">Recent folders</summary><ul className="mt-2">{recent.map(item => <li key={item.path}><Button variant="ghost" size="sm" disabled={starting} onClick={() => add(item.path)}>{item.name || item.path}</Button></li>)}</ul></details> : null}
+        {busy ? <p className="mt-3 text-sm text-muted-foreground" role="status">Reading your repositories…</p> : null}
+        {error ? <div className="mt-3 text-sm"><p role="alert" className="text-destructive">{error}</p>{paths.length ? <Button variant="ghost" size="sm" onClick={() => setAttempt(value => value + 1)} disabled={starting}>Retry repositories</Button> : null}</div> : null}
+      </section>
+
+      {plan ? <section className="mt-8 border-t border-border/70 pt-6" aria-labelledby="suggestions-heading">
+        <h2 id="suggestions-heading" className="text-base font-semibold">Suggested teammates</h2>
+        <p className="mt-2 text-sm text-muted-foreground">Based on the languages, frameworks and project files in your repositories. Suggestions stay suggestions until you choose to create someone.</p>
+        {recommendations.length ? <ul className="mt-3 divide-y divide-border/70">{recommendations.map(({ template, reason, repositories }) => <li key={template.id} className="flex flex-wrap items-center gap-3 py-4">
+          {renderTemplateAvatar?.(template, 'size-9 rounded-md')}
+          <div className="min-w-0 flex-1"><h3 className="text-sm font-medium">{template.title}</h3><p className="text-sm text-muted-foreground">{reason}</p><p className="mt-1 text-xs text-muted-foreground">{repositories.map(item => item.name).join(', ')}</p></div>
+          {complete ? <Button variant="outline" size="sm" onClick={() => onReviewSuggestion(template, repositories[0]?.path)}>Review {template.title}</Button> : null}
+        </li>)}</ul> : <p className="mt-4 text-sm text-muted-foreground">There isn’t enough project evidence to suggest specialists yet. Your Chief of Staff can help you decide as the project develops.</p>}
+      </section> : null}
+
+      <footer className="mt-10 border-t border-border/70 pt-6">
+        {complete ? <Button onClick={onContinue}>Open your squad</Button> : <>
+          <div className="flex items-center gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-md bg-muted text-sm font-semibold" aria-hidden="true">CS</div><div><div className="text-sm font-medium">Chief of Staff</div><div className="text-xs text-muted-foreground">Autohand Code · coordinates your selected repositories</div></div></div>
+          <Button className="mt-5" onClick={start} disabled={!canStart || starting}>{starting ? <Loader2 className="animate-spin" /> : null}{starting ? 'Preparing your squad…' : 'Start with Chief of Staff'}</Button>
+          <p className="mt-3 text-xs text-muted-foreground">Creates only your Chief of Staff and #general. Your repository choices are saved so you can return to setup.</p>
+        </>}
+      </footer>
     </div>
-  ) : null;
-
-  return (
-    <div className="min-h-screen bg-background">
-      <div className="mx-auto w-full max-w-2xl px-6 py-12 lg:py-16">
-        <header className="flex items-center gap-3">
-          {brand}
-          <div className="min-w-0">
-            <div className="text-sm font-semibold">Autohand Squad</div>
-            <div className="text-xs text-muted-foreground">First run</div>
-          </div>
-        </header>
-
-        <ol className="mt-10 flex flex-wrap gap-x-6 gap-y-1 text-xs">
-          {MOMENTS.map((item, index) => {
-            const active = item.id === moment;
-            const done = MOMENTS.findIndex((m) => m.id === moment) > index;
-            return (
-              <li key={item.id} className={cn("flex items-center gap-2", active ? "text-foreground" : "text-muted-foreground")}>
-                <span className={cn("grid size-5 place-items-center rounded-full border text-[10px]", active && "border-foreground", done && "border-transparent bg-foreground text-background")}>{index + 1}</span>
-                <span className={cn(active && "font-medium")}>{item.label}</span>
-              </li>
-            );
-          })}
-        </ol>
-
-        {blockers.length ? (
-          <div className="mt-8 border-y border-border/70 py-4 text-sm">
-            {blockers.map((blocker) => (
-              <div key={blocker.text} className="flex flex-wrap items-center gap-3">
-                {blocker.busy ? <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
-                <span className="min-w-0 flex-1" role={blocker.failed ? "alert" : blocker.busy ? "status" : undefined}>{blocker.text}</span>
-                {blocker.secondary ? (
-                  <Button variant="ghost" size="sm" onClick={blocker.secondary.onAction}>
-                    <RefreshCw data-icon="inline-start" />
-                    {blocker.secondary.label}
-                  </Button>
-                ) : null}
-                {blocker.onAction ? <Button size="sm" onClick={blocker.onAction}>{blocker.action}</Button> : null}
-                {blocker.note ? <span className="basis-full text-xs text-muted-foreground">{blocker.note}</span> : null}
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        {moment === "folder" ? (
-          <section className="mt-10">
-            <h1 className="text-3xl font-semibold tracking-tight">Point at a folder.</h1>
-            <p className="mt-3 text-base text-muted-foreground">Your first teammate works inside one folder on this Mac. Pick the project you want help with; you can add more later.</p>
-            <div className="mt-6 flex flex-wrap items-center gap-3">
-              <Button onClick={pickFolder} disabled={pickBusy}>
-                {pickBusy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <FolderOpen data-icon="inline-start" />}
-                Choose a folder…
-              </Button>
-              {fallbackWorkspace ? (
-                <Button variant="ghost" onClick={() => chooseFolder(fallbackWorkspace)}>
-                  Use {basename(fallbackWorkspace)}
-                </Button>
-              ) : null}
-            </div>
-            {folderFeedback}
-            {recent.length ? (
-              <div className="mt-8">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Recent</div>
-                <ul className="mt-2 divide-y divide-border/70">
-                  {recent.map((item) => (
-                    <li key={item.path}>
-                      <button type="button" className="flex w-full items-center justify-between gap-4 py-2.5 text-left text-sm hover:text-foreground" onClick={() => chooseFolder(item.path)}>
-                        <span className="min-w-0 truncate font-medium">{item.name || basename(item.path)}</span>
-                        <span className="min-w-0 truncate text-xs text-muted-foreground">{item.label || item.path}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {moment === "teammate" ? (
-          <section className="mt-10">
-            <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => chooseFolder("")}>
-              ← {basename(folder)}
-            </button>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Meet your first teammate.</h1>
-            <p className="mt-3 min-h-6 text-base text-muted-foreground">
-              {profileBusy ? "Looking at the folder…" : profile?.summary || "Choose a readable project folder to continue."}
-            </p>
-            {folderFeedback}
-            {roleId && !selected ? <p role="alert" className="mt-3 text-sm text-muted-foreground">Your previously selected role is no longer available. Choose a teammate to continue.</p> : null}
-            {/* Version control, said once, where the folder is chosen. A
-                tracked folder says who commits will be from; an untracked one
-                offers to become tracked. Neither blocks going on. */}
-            {folderReady && profile?.git?.available !== false ? (
-              <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-                {profile?.git?.tracked ? (
-                  <span>
-                    Tracked by git{profile.git.branch ? ` on ${profile.git.branch}` : ""}
-                    {profile.git.name ? `. Commits here will be from ${profile.git.name}.` : "."}
-                  </span>
-                ) : (
-                  <>
-                    <span>Not tracked by git, so nothing a teammate changes here can be undone.</span>
-                    <button
-                      type="button"
-                      onClick={startTracking}
-                      disabled={tracking}
-                      className="underline underline-offset-4 transition-colors hover:text-foreground disabled:opacity-60"
-                    >
-                      {tracking ? "Starting…" : "Start tracking"}
-                    </button>
-                  </>
-                )}
-                {trackError ? <span className="text-destructive">{trackError}</span> : null}
-              </p>
-            ) : null}
-            {!profileBusy ? (
-              <ul className="mt-6 divide-y divide-border/70">
-                {suggestions.map(({ template, needs }, index) => (
-                  <li key={template.id}>
-                    <button type="button" className="flex w-full items-center gap-4 py-3 text-left hover:text-foreground" onClick={() => chooseRole(template)}>
-                      {renderTemplateAvatar ? renderTemplateAvatar(template, "size-10 rounded-md") : null}
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium">
-                          {template.title}
-                          {index === 0 ? <span className="ml-2 text-xs font-normal text-muted-foreground">Best fit</span> : null}
-                        </span>
-                        <span className="block truncate text-sm text-muted-foreground">{fitSentence(needs, template)}</span>
-                      </span>
-                      <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <div className="mt-6">
-              <Button variant="ghost" size="sm" disabled={!folderReady || starting} onClick={() => onCreateSomeoneElse?.(folder)}>
-                Create someone else…
-              </Button>
-            </div>
-          </section>
-        ) : null}
-
-        {moment === "talk" && selected ? (
-          <section className="mt-10">
-            <button type="button" disabled={starting} className="text-xs text-muted-foreground hover:text-foreground" onClick={() => { setRoleId(""); setStartError(""); updateOnboardingState?.({ selectedRoleId: "", lastStep: "teammate" }); }}>
-              ← {selected.template.title}
-            </button>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Start talking.</h1>
-            <div className="mt-6 flex items-center gap-4">
-              {avatarFor ? avatarFor(selected.template, name, "size-14 rounded-md") : null}
-              <div className="min-w-0 flex-1">
-                <label className="text-xs text-muted-foreground" htmlFor="first-run-name">Name</label>
-                <Input
-                  id="first-run-name"
-                  className="mt-1 max-w-xs"
-                  value={name}
-                  disabled={starting}
-                  onChange={(event) => {
-                    nameTouched.current = true;
-                    setName(event.target.value);
-                    updateOnboardingState?.({ memberName: event.target.value, nameTouched: true });
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") start();
-                  }}
-                />
-                <div className="mt-1 text-sm text-muted-foreground">
-                  {selected.template.title} · {basename(folder)}
-                </div>
-              </div>
-            </div>
-            {profileBusy ? <p className="mt-3 text-sm text-muted-foreground">Looking at the folder…</p> : folderFeedback}
-            <p className="mt-6 text-sm text-muted-foreground">
-              Your first message is drafted so you can just press send: “{firstPromptFor(selected.template.title, profile?.name || basename(folder), profile?.summary || "")}”
-            </p>
-            <div className="mt-6 flex items-center gap-3">
-              <Button onClick={start} disabled={starting || !canStart}>
-                {starting ? <Loader2 className="animate-spin" data-icon="inline-start" /> : null}
-                Start the conversation
-              </Button>
-            </div>
-            {startError ? <p role="alert" className="mt-3 text-sm text-destructive">{startError}</p> : null}
-          </section>
-        ) : null}
-
-        <footer className="mt-14 flex items-center justify-between border-t border-border/70 pt-4 text-xs text-muted-foreground">
-          <span>Your choices are saved. You can return from Settings.</span>
-          <Button variant="ghost" size="sm" onClick={onSkip} disabled={!signedIn || starting}>
-            Skip for now
-          </Button>
-        </footer>
-      </div>
-    </div>
-  );
-}
-
-function fitSentence(needs, template) {
-  const labels = { frontend: "the UI", backend: "the service code", mobile: "the mobile app", infra: "infra and CI", tests: "the tests", docs: "the docs", data: "the data layer", security: "auth and security", ai: "the AI parts" };
-  if (!needs?.length) return template.description ? template.description.split(". ")[0] + "." : "A good all-rounder to start with.";
-  const list = needs.map((need) => labels[need] || need);
-  const joined = list.length === 1 ? list[0] : list.length === 2 ? `${list[0]} and ${list[1]}` : `${list.slice(0, -1).join(", ")}, and ${list[list.length - 1]}`;
-  return `Fits this folder: ${joined}.`;
-}
-
-function defaultNameFor(template) {
-  const names = {
-    "frontend-developer": "Noah",
-    "backend-engineer": "Mila",
-    "full-stack-developer": "Ari",
-    "mobile-developer": "Tane",
-    "ux-ui-designer": "Aroha",
-    "solution-architect": "Iris",
-    "devops-engineer": "Kai",
-    "platform-engineer": "Rewi",
-    "security-engineer": "Manaia",
-    "ai-engineer": "Nikau",
-    "technical-writer": "Wren",
-    "common-qa-engineer": "Eva",
-    "data-analyst": "Huia",
-  };
-  return names[template?.id] || "Sam";
-}
-
-function basename(path) {
-  return String(path || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "";
+  </div>;
 }

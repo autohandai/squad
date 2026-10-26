@@ -483,20 +483,29 @@ cargo test -j1 -- --test-threads=1
 cargo build --bins -j1
 ```
 
-Run `bun run check:onboarding:browser` when changing the first-run setup flow.
-It starts an isolated local bridge, drives a clean headless Chrome profile
-through account gating, `/`, `/welcome`, `/squad`, Settings resume and provider
-setup, and writes screenshots under `.codex-artifacts/`.
-Run `bun run check:onboarding:recovery` for rendered validation, saved choices,
-failed provisioning, prerequisite recovery, duplicate submissions and confirmed
-real provisioning with an isolated fixture skill catalog. This check does not
-execute a model provider.
+New installations require one or more repositories at `/welcome`. Start creates
+only a Chief of Staff on Autohand Code and `#general`, assigned those projects.
+Project files inform specialist suggestions; Review opens the editable member
+form and only Save member creates a specialist. Existing teams are preserved.
+Return to the setup guide in Settings to review the suggestions later.
+
+Run `bun run check:onboarding:browser` for account/provider readiness, Settings
+resume, existing-user preservation and the full clean-install browser flow.
+`bun run check:fresh-install` runs only that clean-install regression: actual
+single/multiple Git repositories, project-specific suggestions, required setup,
+real provisioning, failed delivery, concurrent completion, restart, empty-browser
+recovery and explicit specialist creation. Screenshots and results go under
+`.codex-artifacts/fresh-install/`; no live model provider is executed.
+`bun run check:onboarding:recovery` checks durable service recovery after failed
+provisioning or partial saves, stable identities, changed repositories, deletion,
+corruption and preservation. `bun run check:runtime-source-staging` checks the
+desktop source boundary against injected state, credentials and symlinks.
 Run `bun run check:runtime-bootstrap` for first-install CLI recovery without a
 system or bundled CLI, failed verification, retries, concurrency and restart
 persistence. `bun run check:runtime-bootstrap:browser` also checks automatic
 setup and rendered recovery without losing onboarding choices. Both use an
 isolated home and a fixture release download; no provider is called.
-Run `bun run check:member-creation:browser` for normal and alternate setup
+Run `bun run check:member-creation:browser` for normal and recommended member
 creation, handwritten profile preservation, duplicate submission and refresh
 recovery after a lost preparation response. It uses real provisioning with
 controlled skills/runtime. `bun run check:member-config` checks config damage,

@@ -12,10 +12,13 @@ list to the section for that version.
 
 ### Added
 
+- First-run setup accepts one or more repositories and suggests teammates based on their languages and frameworks. Review and create specialists when you need them.
 - Five new skins: Paper, Slate, Grove, Blueprint and Ember, with their own typography, spacing, corners and member portraits. Every skin works in light and dark mode and follows System mode.
 
 ### Fixed
 
+- New installations start with just a Chief of Staff using Autohand Code and one #general channel. Demo teammates and channels are no longer added, setup cannot skip repository selection, and retries or reopening a window keep the same coordinator. Existing squads and preferences are preserved.
+- Desktop builds copy runtime code and explicit product catalogs instead of entire working folders, keeping local state and credentials out of those packaged source trees.
 - Later messages from another window now join the same queue instead of starting ahead of saved follow-ups and keeping them waiting. Works across Autohand, Codex, Claude Code and ACP engines; Send now still interrupts explicitly, and queued work keeps its selected effort and access.
 - Grut now honours Light mode, and Soft supports Dark mode. Theme presets appear only with the Autohand skin; your chosen presets stay saved when you try another skin. Quick Chat and information windows inherit the same appearance. Grut's blob avatars show their eyes and fill their portrait space.
 - Installing an update no longer waits for the team to go idle. Install stops running chats and runs, pauses goals so you can resume them, and keeps queued work for after the restart. Squad still refuses a second install while one is running, and never stops work for an installer that fails verification.

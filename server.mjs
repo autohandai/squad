@@ -8070,6 +8070,7 @@ function routeContext() {
     emit: emitBridgeEvent,
     getRuntime,
     cleanWorkspace,
+    provisionAgent: ensureAgentRuntime,
     spawnSync,
     // Member homes: <agentsDir>/<member id>/{skills,profile}. Read-only use
     // by team export (server/teams, ADR-0106); provisioning stays here.
