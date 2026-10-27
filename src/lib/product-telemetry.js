@@ -1,10 +1,9 @@
 // Explicit product events only. No DOM capture, prompt text, paths or request bodies.
-export const PREBUILT_MEMBER_TEMPLATES = new Set([
-  "frontend-developer", "backend-engineer", "full-stack-developer", "mobile-developer",
-  "ux-ui-designer", "solution-architect", "devops-engineer", "platform-engineer",
-  "security-engineer", "ai-engineer", "scrum-master", "technical-writer",
-  "common-qa-engineer", "product-manager", "data-analyst", "content-operations-specialist",
-]);
+import { roleTemplates } from "./member-profiles.js";
+
+// Only the shipped catalog is eligible. User-authored roles still become
+// "custom"; importing a member or adding a preset cannot expand this list.
+export const PREBUILT_MEMBER_TEMPLATES = new Set(roleTemplates.map(role => role.id));
 export const TELEMETRY_FEATURES = new Set([
   "dm", "channels", "needs_you", "squad", "member_profile", "member_creation",
   "goal", "break", "task_progress", "handoff", "approval", "memory", "canvas",

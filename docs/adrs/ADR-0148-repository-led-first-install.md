@@ -94,6 +94,16 @@ fixed at 16 role templates; adding the coordinator made the actual count 17.
 The assertion now compares the full extracted catalog with the source contracts,
 so it proves preservation without making future role additions a packaging error.
 
+CI on that release attempt then caught a second duplicate catalog: telemetry's
+static allowlist did not include Chief of Staff, so the role was classified as
+custom. Its built-in IDs now come from the shipped role catalog; user-authored
+roles and imported presets cannot expand it, and private names are still dropped.
+The unpublished 0.1.10 build was canceled rather than publishing against failed
+CI. The correction uses a new 0.1.11 tag; the old tag was not moved.
+All 25 web-check/build commands from `.github/workflows/ci.yml` were then rerun
+locally and passed, including product telemetry and release packaging. The local
+command/results receipt is `.codex-artifacts/release-web-checks.json`.
+
 ## Consequences
 
 - Repository selection is required for new installs; a non-Git folder must be

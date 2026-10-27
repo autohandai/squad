@@ -10,7 +10,7 @@ list to the section for that version.
 
 ## [Unreleased]
 
-## [0.1.10] - 2026-10-27
+## [0.1.11] - 2026-10-27
 
 ### Added
 

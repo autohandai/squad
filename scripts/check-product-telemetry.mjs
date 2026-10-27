@@ -8,6 +8,7 @@ import { createProductTelemetry, readProductTelemetryConfig, squadAnalyticsIdent
 import { stageProductTelemetry } from "./stage-product-telemetry.mjs";
 
 assert.deepEqual([...PREBUILT_MEMBER_TEMPLATES].sort(), roleTemplates.map(role => role.id).sort());
+assert.deepEqual(sanitizeSquadEvent("member_created", { template_id: "chief-of-staff", harness: "autohand", name: "Private coordinator name" }), { event: "member_created", properties: { template_id: "chief-of-staff", member_origin: "prebuilt", harness: "autohand" } });
 assert.equal(sanitizeSquadEvent("unknown", {}), null);
 assert.equal(sanitizeSquadEvent("feature_used", null), null);
 assert.equal(sanitizeSquadEvent("feature_used", { feature: "/Users/private/repo", action: "open" }), null);
