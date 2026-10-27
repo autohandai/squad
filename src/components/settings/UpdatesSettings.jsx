@@ -16,8 +16,9 @@ export function UpdatesSettings({
   renderNotes,
 }) {
   const view = updateView(updates, operation, { checking, error });
+  const visibleOperation = view.operation;
   const date = checkedTime(updates?.snapshot?.checkedAt);
-  const installAction = updateInstallAction(operation);
+  const installAction = updateInstallAction(visibleOperation);
   const ready = Boolean(installAction);
   const cancellable = ["checking", "downloading", "verifying"].includes(
     view.phase,
@@ -42,7 +43,7 @@ export function UpdatesSettings({
             : view.phase === "complete"
               ? "Your members, conversations, and settings are here."
               : view.phase === "installer-open"
-                ? operation.message
+                ? visibleOperation.message
                 : view.phase === "installing" || view.phase === "restarting"
                   ? "Squad will close briefly and reopen with your saved data."
                   : view.preview
@@ -53,7 +54,7 @@ export function UpdatesSettings({
                         ? "Start the Squad service, then try again."
                         : "New releases appear here automatically when checks are enabled."}
         </p>
-        <UpdateProgress operation={operation} />
+        <UpdateProgress operation={visibleOperation} />
         {view.failure ? (
           <p role="alert" className="text-sm text-destructive" data-selectable>
             {view.failure}
@@ -71,7 +72,7 @@ export function UpdatesSettings({
               {view.phase === "failed" ? "Retry download" : "Download update"}
             </Button>
           ) : null}
-          {ready && operation.installMode === "restart" ? (
+          {ready && visibleOperation.installMode === "restart" ? (
             <Button variant="ghost" size="sm" onClick={() => onInstall?.({ mode: "installer" })} disabled={view.busy || !onInstall}>Open installer</Button>
           ) : null}
           {cancellable ? (

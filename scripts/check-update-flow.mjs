@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createUpdateFlow } from "../server/update-flow.mjs";
+import { compareUpdateVersions, reconcileUpdateOperation } from "../src/lib/update-version.js";
+import { updateView, updateInstallAction } from "../src/lib/update-status.js";
 const dir = await mkdtemp(join(tmpdir(), "squad-update-flow-"));
 const content = Buffer.from("installer bytes; never executed");
 const snapshot = {
@@ -106,7 +108,6 @@ try {
     },
   });
   await tampered.load();
-  const { writeFile } = await import("node:fs/promises");
   await writeFile(join(dir, "updates", snapshot.downloadName), "changed");
   await assert.rejects(tampered.install(), /verification/);
   assert.equal(opened, 2);
@@ -181,8 +182,43 @@ try {
   });
   await reopened.load();
   assert.equal(reopened.status().phase, "complete");
+  // A manual upgrade retires an old failure on every supported installer platform.
+  const saved = JSON.parse(await readFile(join(dir, "updates", "operation.json"), "utf8"));
+  for (const [platform, phase] of [["darwin", "failed"], ["win32", "ready"], ["linux", "installer-open"]]) {
+    const home = join(dir, `manual-${platform}`);
+    await mkdir(join(home, "updates"), { recursive: true });
+    await writeFile(join(home, "updates", "operation.json"), JSON.stringify({ ...saved, phase, error: "Previous install failed" }));
+    let touchedWork = false;
+    const manual = createUpdateFlow({ appStateDir: home, appVersion: "0.1.8", platform, canRestart: async () => { touchedWork = true; return true; }, openImpl: async () => { throw Error("must not open an older installer"); } });
+    const progress = await manual.progress();
+    assert.equal(progress.phase, "complete"); assert.equal(progress.version, "0.1.8"); assert.equal(progress.error, ""); assert.equal(progress.verified, false);
+    await assert.rejects(manual.install(), /Download and verify/);
+    assert.equal(touchedWork, false);
+    const disk = JSON.parse(await readFile(join(home, "updates", "operation.json"), "utf8"));
+    assert.equal(disk.installer, undefined); assert.equal(disk.plan, undefined);
+  }
+  // A late response from an older bridge must not bring its install action back.
+  const oldOperation = { phase: "failed", version: "0.1.7", verified: true, installMode: "restart", error: "Previous install failed" };
+  const view = updateView({ appVersion: "0.1.8", status: "up-to-date", snapshot: { success: true, source: "squad-api", latestAllowedVersion: "0.1.8" } }, oldOperation);
+  assert.equal(view.failure, ""); assert.equal(view.phase, "complete"); assert.equal(updateInstallAction(view.operation), null);
+  assert.equal(updateView({ appVersion: "0.1.8", status: "available", snapshot: { ...snapshot, latestAllowedVersion: "0.1.7" } }, oldOperation).downloadable, false);
+  let staleStoppedWork = false;
+  const staleDiscovery = createUpdateFlow({ appStateDir: join(dir, "stale-discovery"), appVersion: "0.1.7", platform: "linux", arch: "x64", checkFresh: async () => ({ ...fresh, snapshot: { ...snapshot, downloadName: "autohand-squad-0.1.7-linux-x64.deb", downloadUrl: "https://github.com/autohandai/squad/releases/download/v0.1.7/autohand-squad-0.1.7-linux-x64.deb" } }), fetchImpl: async () => new Response(content), canRestart: async () => { staleStoppedWork = true; return true; } });
+  await staleDiscovery.start();
+  await until(() => staleDiscovery.status().phase === "ready");
+  await assert.rejects(staleDiscovery.install(), /Download and verify/);
+  assert.equal(staleDiscovery.status().phase, "complete"); assert.equal(staleStoppedWork, false);
+  await staleDiscovery.flush();
+  assert.equal(compareUpdateVersions("0.1.8-canary.9", "0.1.8"), -1);
+  assert.equal(compareUpdateVersions("0.1.8", "0.1.8-canary.9"), 1);
+  assert.equal(compareUpdateVersions("0.1.8-canary.10", "0.1.8-canary.9"), 1);
+  assert.equal(compareUpdateVersions("0.1.18", "0.1.8"), 1);
+  assert.equal(compareUpdateVersions("0.1.8+build.2", "0.1.8+build.1"), 0);
+  assert.equal(compareUpdateVersions("0.1.8-canary.01", "0.1.8"), null);
+  assert.equal(reconcileUpdateOperation(oldOperation, "unknown"), oldOperation);
+  assert.equal(reconcileUpdateOperation({ ...oldOperation, version: "0.1.8" }, "0.1.8-canary.9").phase, "failed");
   console.log(
-    "Update flow passed: measured bytes, duplicate refusal, persisted ready state, second-install guard, tamper refusal before work stops, cancellation. Mocked installer only.",
+    "Update flow passed: measured bytes, duplicate refusal, persisted ready state, tamper refusal, cancellation and retirement of obsolete installers across macOS, Windows and Linux. Mocked installer only.",
   );
 } finally {
   await rm(dir, { recursive: true, force: true });

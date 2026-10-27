@@ -80,3 +80,22 @@ the runtime's existing `anyhow` and `libc` dependencies: six tests passed,
 including refusal before any mutation when a recovery journal already exists.
 `SQUAD_UPDATE_NATIVE=<that-harness> node scripts/check-mac-update.mjs` also passed
 with real DMGs and signed fixture bundles. Application launch remained mocked.
+
+## Manual-install correction found before publication
+
+Final validation reproduced a second failure: a retained `failed`, verified
+0.1.11 operation rendered "Could not update" and "Install and restart" even
+when the running app was 0.1.12. `load()` only recognized an exact version
+match in `installing` or `restarting`; the recommended manual recovery left
+older failures actionable. This was a distinct lifecycle gap, rather than
+evidence that the original macOS policy diagnosis was wrong.
+
+The bridge now reconciles any superseded operation on load and before install,
+removing its installer and plan references without deleting the cached file.
+Both UI surfaces apply the same reconciliation to late responses. Shared
+version ordering distinguishes stable and prerelease versions; unknown versions
+keep their existing state. Tests cover macOS, Windows and Linux recovery and
+assert that an obsolete installer neither opens nor stops work.
+
+The unpublished 0.1.12 workflow was cancelled after this reproduction. Its tag
+remains unchanged; the corrected code ships as 0.1.13.

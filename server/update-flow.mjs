@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, writeFile, rm } from "node:fs/promises";
 import { join, dirname } from "node:path";
+import { reconcileUpdateOperation } from "../src/lib/update-version.js";
 import {
   upgradeDesktop,
   openDesktopTarget,
@@ -74,19 +75,8 @@ export function createUpdateFlow({
       }
       if (saved) {
         state = saved;
-        if (
-          ["installing", "restarting"].includes(state.phase) &&
-          state.version === appVersion
-        )
-          publish(
-            {
-              phase: "complete",
-              error: "",
-              message: `Updated to ${appVersion}.`,
-            },
-            true,
-          );
-        else if (ACTIVE.has(state.phase))
+        reconcileInstalled();
+        if (ACTIVE.has(state.phase))
           publish(
             {
               phase: "failed",
@@ -159,6 +149,10 @@ export function createUpdateFlow({
     const { installer, plan, ...visible } = state;
     return visible;
   }
+  function reconcileInstalled() {
+    const reconciled = reconcileUpdateOperation(state, appVersion);
+    if (reconciled !== state) publish(reconciled, true);
+  }
   async function cancel() {
     if (
       !controller ||
@@ -170,6 +164,7 @@ export function createUpdateFlow({
   }
   async function performInstall({ preferInstaller = false } = {}) {
     await load();
+    reconcileInstalled();
     if (
       !["ready", "installer-open", "failed"].includes(state.phase) ||
       !state.installer?.verified

@@ -16,6 +16,7 @@ export function SidebarUpdateNotice({
   className,
 }) {
   const view = updateView(updates, operation, { checking, error });
+  const visibleOperation = view.operation;
   if (
     !view.available &&
     !view.busy &&
@@ -23,7 +24,7 @@ export function SidebarUpdateNotice({
   )
     return null;
   const ready = ["ready", "installer-open", "complete"].includes(view.phase);
-  const installAction = updateInstallAction(operation);
+  const installAction = updateInstallAction(visibleOperation);
   return (
     <section
       aria-label="Squad update"
@@ -68,11 +69,11 @@ export function SidebarUpdateNotice({
             </>
           )}
         </Button>
-        {installAction && operation.installMode === "restart" && view.phase === "failed" ? (
+        {installAction && visibleOperation.installMode === "restart" && view.phase === "failed" ? (
           <Button variant="link" size="sm" onClick={() => onInstall?.({ mode: "installer" })}>Open installer</Button>
         ) : null}
       </div>
-      <UpdateProgress operation={operation} compact />
+      <UpdateProgress operation={visibleOperation} compact />
       {view.failure ? (
         <p className="text-xs text-destructive [overflow-wrap:anywhere]" role="alert" data-selectable>
           {view.failure}

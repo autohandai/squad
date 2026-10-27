@@ -425,6 +425,16 @@ async function main() {
     assert(!await cdp.evaluate("Boolean(document.querySelector('[role=progressbar]'))"),'unknown total has no made-up bar');
     await updaterButton('Cancel download');
     await updaterButton('Release notes'); assert(await cdp.evaluate("window.__verifyRequests.some(r=>r.path==='/api/updates/releases')"));
+    await cdp.evaluate("localStorage.setItem('workProfileVerify.updateScenario',JSON.stringify({status:'up-to-date'})); localStorage.setItem('workProfileVerify.operation',JSON.stringify({phase:'failed',version:'0.1.4',verified:true,installMode:'restart',error:'Previous install failed'}))");
+    await navigate('/settings/updates');
+    await waitFor(async()=>(await updaterText()).includes('Updated to 0.1.5.'),'manual upgrade retires failed installer in Settings');
+    assert(!await cdp.evaluate("Array.from(document.querySelector('#settings-updates').querySelectorAll('button')).some(button=>/Install and restart|Install update|Open installer/.test(button.textContent))"),'Settings cannot install a superseded download');
+    assert(!await cdp.evaluate("Boolean(document.querySelector('#settings-updates [role=alert]'))"),'Settings clears obsolete install errors');
+    await navigate('/squad');
+    await waitFor(()=>cdp.evaluate("document.querySelector('[data-testid=sidebar-update-notice]')?.textContent.includes('Updated to 0.1.5.')"),'manual upgrade retires failed installer in sidebar');
+    assert(!await cdp.evaluate("Array.from(document.querySelector('[data-testid=sidebar-update-notice]').querySelectorAll('button')).some(button=>/Install and restart|Install update|Open installer/.test(button.textContent))"),'sidebar cannot restore an obsolete install action');
+    await screenshot('update-manual-recovery');
+    await cdp.evaluate("localStorage.setItem('workProfileVerify.operation',JSON.stringify({phase:'idle'}))");
     await navigate('/settings/cloud');
     await waitFor(() => cdp.evaluate("Boolean(document.querySelector('[data-testid=cloud-sync-settings] button:not([disabled])'))"), 'cloud settings ready');
     assert(!await cdp.evaluate("window.__verifyRequests.some(r=>r.path==='/api/cloud/connect' || r.path==='/api/cloud/session')"), 'opening cloud settings neither signs in nor uploads');

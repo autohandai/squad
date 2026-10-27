@@ -1,3 +1,5 @@
+import { compareUpdateVersions, reconcileUpdateOperation } from "./update-version.js";
+
 export const UPDATE_BUSY_PHASES = new Set([
   "checking",
   "downloading",
@@ -30,15 +32,6 @@ export function checkedTime(value) {
   const date = new Date(/^\d+$/.test(stamp) ? Number(stamp) : stamp);
   return Number.isFinite(date.getTime()) ? date : null;
 }
-function compare(a, b) {
-  const x = String(a).replace(/^v/, "").split(/[.-]/);
-  const y = String(b).replace(/^v/, "").split(/[.-]/);
-  for (let i = 0; i < 3; i++) {
-    const d = Number(x[i]) - Number(y[i]);
-    if (d) return d;
-  }
-  return 0;
-}
 export function updateView(
   updates,
   operation = {},
@@ -47,10 +40,13 @@ export function updateView(
   const snapshot = updates?.snapshot;
   const current = updates?.appVersion || snapshot?.currentVersion || "";
   const latest = snapshot?.latestAllowedVersion || "";
+  operation = reconcileUpdateOperation(operation, current);
+  const comparison = compareUpdateVersions(current, latest);
   const available =
     updates?.status === "available" &&
     snapshot?.success === true &&
-    ["github:autohandai/squad", "squad-api"].includes(snapshot?.source);
+    ["github:autohandai/squad", "squad-api"].includes(snapshot?.source) &&
+    comparison !== null && comparison < 0;
   const downloadable =
     available &&
     snapshot.downloadUrl &&
@@ -64,7 +60,7 @@ export function updateView(
     ? "macOS blocked automatic installation. Open the verified installer to finish updating. Your saved data is unchanged."
     : rawFailure;
   const preview =
-    updates?.status === "up-to-date" && latest && compare(current, latest) > 0;
+    updates?.status === "up-to-date" && latest && comparison > 0;
   const titles = {
     checking: "Checking for updates…",
     downloading: `Downloading ${operation.version || latest}…`,
@@ -95,6 +91,7 @@ export function updateView(
                   ? "You're up to date"
                   : "Not checked yet");
   return {
+    operation,
     current,
     latest,
     available,
