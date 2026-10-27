@@ -110,6 +110,9 @@ export function createTeamStore({ stateDir }) {
       // A member removes what it wrote or what is its own; the person removes anything.
       if (!person && entry.authorId !== actorId && entry.memberId !== actorId) throw Object.assign(new Error("only the member who saved a memory, or the person, can remove it"), { status: 403 });
       state.memory = state.memory.filter((item) => item.id !== id);
+      // Only an explicit deletion creates a sync tombstone. Local retention or
+      // an absent file must never be mistaken for a cloud delete.
+      state.memoryTombstones = [...(state.memoryTombstones || []).filter(item => item.id !== id), { id, deletedAt: at() }];
       return entry;
     });
   }

@@ -6,6 +6,11 @@ export const UPDATE_BUSY_PHASES = new Set([
   "installing",
   "restarting",
 ]);
+export function updateInstallAction(operation = {}) {
+  if (!operation.verified || !["ready", "failed", "installer-open"].includes(operation.phase)) return null;
+  if (operation.installMode === "restart") return "Install and restart";
+  return operation.phase === "installer-open" ? "Open installer again" : "Install update";
+}
 export function updatePercent(operation) {
   const bytes = Number(operation?.bytes);
   const total = Number(operation?.totalBytes);
@@ -45,7 +50,7 @@ export function updateView(
   const available =
     updates?.status === "available" &&
     snapshot?.success === true &&
-    snapshot?.source === "github:autohandai/squad";
+    ["github:autohandai/squad", "squad-api"].includes(snapshot?.source);
   const downloadable =
     available &&
     snapshot.downloadUrl &&
@@ -53,8 +58,11 @@ export function updateView(
     /^[a-f0-9]{64}$/i.test(snapshot.downloadSha256 || "");
   const phase = operation.phase || "idle";
   const busy = UPDATE_BUSY_PHASES.has(phase);
-  const failure =
+  const rawFailure =
     error || operation.error || updates?.checkError || snapshot?.error || "";
+  const failure = rawFailure.includes("--squad-swap-update") && /Operation not permitted|Permission denied/i.test(rawFailure)
+    ? "macOS blocked automatic installation. Open the verified installer to finish updating. Your saved data is unchanged."
+    : rawFailure;
   const preview =
     updates?.status === "up-to-date" && latest && compare(current, latest) > 0;
   const titles = {

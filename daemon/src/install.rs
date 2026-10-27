@@ -456,7 +456,7 @@ fn release_matches_channel(release: &GithubRelease, channel: &str) -> bool {
 }
 
 /// Map a release asset name to (os, arch, component) for this daemon's targets.
-fn classify_asset(name: &str) -> Option<(&'static str, &'static str, &'static str)> {
+pub(crate) fn classify_asset(name: &str) -> Option<(&'static str, &'static str, &'static str)> {
     let lower = name.to_ascii_lowercase();
     let os = if lower.contains("macos") || lower.ends_with(".dmg") || lower.contains("darwin") {
         "macos"

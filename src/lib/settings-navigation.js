@@ -48,6 +48,7 @@ export const SETTINGS_SECTION_IDS = Object.freeze([
   'relay',
   'remote-access',
   'connectors',
+  'cloud',
   'updates',
   'system',
 ]);
@@ -101,6 +102,7 @@ export const SETTINGS_KEYWORDS = Object.freeze({
   relay: 'relay sync cloud channels remote',
   'remote-access': 'remote access phone telegram tunnel pairing',
   connectors: 'connectors mcp servers web research tools',
+  cloud: 'cloud sync team workspace memory memories devices account',
   updates: 'updates version upgrade release download install',
   system: 'system data folder storage counts reveal automatic checks',
 });

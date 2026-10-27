@@ -74,7 +74,7 @@ export async function desktopUpdateStatus({ squadStateDir, appVersion, refresh =
 }
 
 export function verifiedInstaller(snapshot, { platform = process.platform, arch = process.arch } = {}) {
-  if (snapshot?.success !== true || snapshot.error || snapshot.updateAvailable !== true || snapshot.source !== `github:${UPDATE_REPOSITORY}`) {
+  if (snapshot?.success !== true || snapshot.error || snapshot.updateAvailable !== true || ![`github:${UPDATE_REPOSITORY}`, "squad-api"].includes(snapshot.source)) {
     throw updateError("A successful update check from the official repository is required.", 409);
   }
   const version = String(snapshot.latestAllowedVersion || "");

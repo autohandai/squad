@@ -106,6 +106,23 @@ function installFixtures(data) {
       if (scenario.error) return new Response(JSON.stringify({ success: false, error: "Browser fixture app information unavailable" }), { status: 500, headers: { "content-type": "application/json" } });
       return response({ version: "0.1.5", commitHash: "b".repeat(40), dirty: true, builtAt: "2026-10-01T03:00:00.000Z", metadataSource: "bundled", appExecutableSha256: scenario.noChecksum ? null : "c".repeat(64), appExecutableName: scenario.noChecksum ? null : "Autohand Squad", changelog: "# Changelog\n\nBrowser fixture shipped profile improvements.\n\n## 0.1.5\n\n- Browser fixture release evidence.", security: "# Security policy\n\nBrowser fixture disclosure policy.", license: "MIT License\n\nBrowser fixture project license notice.", thirdPartyLicenses: [{ ecosystem: "npm", name: "browser-fixture-react", version: "19.0.0", license: "MIT", text: "Browser fixture permission notice for React.", repository: "https://github.com/facebook/react", note: null }, { ecosystem: "cargo", name: "browser-fixture-runtime", version: "1.0.0", license: "Apache-2.0", text: "", repository: null, note: "Browser fixture license text was not staged." }], licenseCoverage: ["Browser fixture coverage includes staged dependencies; missing notices are identified explicitly."] });
     }
+    if (url.pathname === "/api/cloud" || url.pathname.startsWith("/api/cloud/")) {
+      window.__cloudVerify ||= { enabled: false, conflicts: [], error: "" };
+      window.__cloudTenants ||= [];
+      if (url.pathname === "/api/cloud/session") return response({ tenants: window.__cloudTenants });
+      if (url.pathname === "/api/cloud/tenants") {
+        const input = JSON.parse(options.body || "{}");
+        window.__cloudTenants = [{ id: "11111111-1111-4111-8111-111111111111", name: input.name, role: "owner", workspaces: [{ id: "22222222-2222-4222-8222-222222222222", name: "Main", archivedAt: null }] }];
+        return response({ tenants: window.__cloudTenants });
+      }
+      if (url.pathname === "/api/cloud/connect") {
+        window.__cloudConnectBody = JSON.parse(options.body || "{}");
+        window.__cloudVerify = { enabled: true, tenantName: window.__cloudTenants[0].name, workspaceName: "Main", lastSyncedAt: data.now, conflicts: [], error: "" };
+      }
+      if (url.pathname === "/api/cloud/resolve") { window.__cloudResolution = JSON.parse(options.body || "{}"); window.__cloudVerify.conflicts = []; }
+      if (url.pathname === "/api/cloud/disconnect") window.__cloudVerify = { enabled: false, conflicts: [], error: "" };
+      return response(window.__cloudVerify);
+    }
     if (url.pathname === "/api/updates") {
       const scenario = window.__updateVerify;
       if (scenario.checkDelayMs && url.searchParams.has("refresh")) await new Promise((resolve) => setTimeout(resolve, scenario.checkDelayMs));
@@ -390,6 +407,10 @@ async function main() {
     await updaterButton('Cancel download'); await waitFor(async()=>(await updaterText()).includes('Download cancelled'),'cancel');
     await updaterButton('Download update'); await waitFor(async()=>(await updaterText()).includes('Version 0.1.6 is ready'),'verified ready');
     await screenshot('update-ready');
+    await navigate('/squad');
+    await waitFor(() => cdp.evaluate("Boolean(document.querySelector('[data-testid=sidebar-update-notice]'))"), 'ready update in the directory sidebar');
+    assert(await cdp.evaluate("Array.from(document.querySelector('[data-testid=sidebar-update-notice]').querySelectorAll('button')).some(button => button.textContent.includes('Install update'))"), 'a verified download offers installation directly in the sidebar');
+    await navigate('/settings/updates');
     await cdp.evaluate("window.__updateVerify.installError='Another update installation is already in progress.'"); await updaterButton('Install update');
     await waitFor(()=>cdp.evaluate("document.querySelector('#settings-updates [role=alert]')?.innerText.includes('already in progress')"),'second install refusal');
     await cdp.evaluate("window.__updateVerify.installError=''"); await updaterButton('Install update');
@@ -404,6 +425,28 @@ async function main() {
     assert(!await cdp.evaluate("Boolean(document.querySelector('[role=progressbar]'))"),'unknown total has no made-up bar');
     await updaterButton('Cancel download');
     await updaterButton('Release notes'); assert(await cdp.evaluate("window.__verifyRequests.some(r=>r.path==='/api/updates/releases')"));
+    await navigate('/settings/cloud');
+    await waitFor(() => cdp.evaluate("Boolean(document.querySelector('[data-testid=cloud-sync-settings] button:not([disabled])'))"), 'cloud settings ready');
+    assert(!await cdp.evaluate("window.__verifyRequests.some(r=>r.path==='/api/cloud/connect' || r.path==='/api/cloud/session')"), 'opening cloud settings neither signs in nor uploads');
+    const cloudButton = label => cdp.evaluate(`Array.from(document.querySelector('[data-testid=cloud-sync-settings]').querySelectorAll('button')).find(button=>button.textContent.trim()===${JSON.stringify(label)})?.click()`);
+    await cloudButton('Choose cloud workspace');
+    await waitFor(() => cdp.evaluate("Boolean(document.querySelector('#cloud-team-name'))"), 'new cloud team form');
+    await cdp.evaluate("document.querySelector('#cloud-team-name').focus()"); await cdp.send('Input.insertText', { text: 'Browser team' });
+    await cloudButton('Create team');
+    await waitFor(() => cdp.evaluate("document.querySelector('[data-testid=cloud-sync-settings]').innerText.includes('Enable sync')"), 'cloud workspace selection');
+    assert(!await cdp.evaluate("Boolean(window.__cloudConnectBody)"), 'creating and choosing a team still does not upload');
+    await cloudButton('Enable sync');
+    await waitFor(() => cdp.evaluate("document.querySelector('[data-testid=cloud-sync-settings]').innerText.includes('Sync now')"), 'explicit cloud enrollment');
+    assert.equal(await cdp.evaluate("window.__cloudConnectBody.workspaceId"), '22222222-2222-4222-8222-222222222222');
+    await screenshot('cloud-connected');
+    await cdp.evaluate("window.__cloudVerify.conflicts=[{id:'fixture-fact',localText:'Keep local evidence',remoteText:'Keep cloud evidence',remoteDeleted:false}]");
+    await cloudButton('Sync now');
+    await waitFor(() => cdp.evaluate("document.querySelector('[data-testid=cloud-sync-settings]').innerText.includes('Keep local evidence')"), 'both memory versions rendered');
+    await cloudButton('Use cloud');
+    await waitFor(() => cdp.evaluate("window.__cloudResolution?.resolution==='remote'"), 'explicit conflict resolution');
+    await cloudButton('Disconnect');
+    await waitFor(() => cdp.evaluate("document.querySelector('[data-testid=cloud-sync-settings]').innerText.includes('Choose cloud workspace')"), 'disconnect remains usable');
+    report.cloud = { fixtureOnly: true, explicitEnrollment: true, conflictChoice: true };
     // Pointer selection of settings chrome is refused in all skins.
     for(const skin of ['default','soft','grut']) {
       await cdp.evaluate(`localStorage.setItem('autohandSquad.v1.skin',${JSON.stringify(skin)})`); await navigate('/settings/updates');

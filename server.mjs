@@ -18,6 +18,7 @@ import { createConnectorStore } from "./server/connectors/store.mjs";
 import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
 import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
 import { AUTOHAND_TEAM_WAIT_SECONDS, TEAM_MCP_SERVER_NAME, createTeamService, teamMessagePrompt } from "./server/team/service.mjs";
+import { createSquadCloud } from "./server/squad-cloud/service.mjs";
 import { createTeamChannels } from "./server/team/channels.mjs";
 import { createCliBootstrap, createCliProbe } from "./server/runtime/cli-bootstrap.mjs";
 import { STORE_FILE as WORK_STORE_FILE, workStoreFor } from "./server/work/store.mjs";
@@ -459,6 +460,11 @@ const team = createTeamService({
   },
   emit: emitBridgeEvent,
 });
+const cloud = createSquadCloud({ stateDir: squadStateDir, store: team.store, readIdentityToken: () => {
+  const auth = readAutohandAuth(userConfigPath);
+  return autohandAuthUsable(auth) ? auth.token : "";
+} });
+cloud.start();
 const teamWorkRuntimes = new Map();
 bridgeEvents.on("member.stopped", ({ memberId }) => team.closeMember(memberId));
 void team.recover().catch(() => {});
@@ -8046,6 +8052,7 @@ function routeContext() {
     computerUse,
     vault,
     team,
+    cloud,
     authorizeComputerUseGrant,
     connectors,
     firecrawlBaseUrl,
@@ -8985,6 +8992,7 @@ async function serveStatic(req, res, url) {
 }
 
 async function stopAndExitFromSignal(signal) {
+  await cloud.close();
   await stopManagedRuns(`web server received ${signal}`);
   process.exit(0);
 }

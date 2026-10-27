@@ -1,0 +1,5 @@
+node_modules/
+.cloudflare/
+.dev.vars
+.env*
+coverage/

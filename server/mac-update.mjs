@@ -212,7 +212,11 @@ export async function replaceMacApp(
   try {
     await open(plan.app);
   } catch (error) {
-    await swap(plan.app, plan.stage);
+    try {
+      await swap(plan.app, plan.stage);
+    } catch (restore) {
+      throw Error(`Reopening the app failed and restore failed: ${restore.message}. Recovery bundles were retained.`, { cause: error });
+    }
     await open(plan.app).catch(() => {});
     throw error;
   }

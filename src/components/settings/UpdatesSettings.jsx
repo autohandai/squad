@@ -2,7 +2,7 @@ import { ArrowDownToLine, RefreshCw, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { UpdateProgress } from "@/components/account/UpdateProgress";
-import { checkedTime, updateView } from "@/lib/update-status";
+import { checkedTime, updateView, updateInstallAction } from "@/lib/update-status";
 export function UpdatesSettings({
   updates,
   checking = false,
@@ -17,9 +17,8 @@ export function UpdatesSettings({
 }) {
   const view = updateView(updates, operation, { checking, error });
   const date = checkedTime(updates?.snapshot?.checkedAt);
-  const ready =
-    operation.verified &&
-    ["ready", "installer-open", "failed"].includes(view.phase);
+  const installAction = updateInstallAction(operation);
+  const ready = Boolean(installAction);
   const cancellable = ["checking", "downloading", "verifying"].includes(
     view.phase,
   );
@@ -64,17 +63,16 @@ export function UpdatesSettings({
           {ready ? (
             <Button onClick={onInstall} disabled={view.busy || !onInstall}>
               <RotateCw data-icon="inline-start" />
-              {operation.installMode === "restart"
-                ? "Install and restart"
-                : view.phase === "installer-open"
-                  ? "Open installer again"
-                  : "Install update"}
+              {installAction}
             </Button>
           ) : view.downloadable && !view.busy ? (
             <Button onClick={onDownload} disabled={checking || !onDownload}>
               <ArrowDownToLine data-icon="inline-start" />
               {view.phase === "failed" ? "Retry download" : "Download update"}
             </Button>
+          ) : null}
+          {ready && operation.installMode === "restart" ? (
+            <Button variant="ghost" size="sm" onClick={() => onInstall?.({ mode: "installer" })} disabled={view.busy || !onInstall}>Open installer</Button>
           ) : null}
           {cancellable ? (
             <Button variant="outline" size="sm" onClick={onCancel}>

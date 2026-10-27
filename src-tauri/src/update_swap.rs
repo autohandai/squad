@@ -1,6 +1,22 @@
 //! A headless atomic bundle swap. No webview, AppKit, or tray is created.
+#[path = "update_transaction.rs"]
+mod transaction;
 #[cfg(target_os = "macos")]
 fn swap_paths(left: &std::path::Path, right: &std::path::Path) -> std::io::Result<()> {
+    transaction::exchange(
+        left,
+        right,
+        |a, b| rename_paths(a, b, libc::RENAME_SWAP),
+        |a, b| rename_paths(a, b, libc::RENAME_EXCL),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn rename_paths(
+    left: &std::path::Path,
+    right: &std::path::Path,
+    flags: u32,
+) -> std::io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
     let left = CString::new(left.as_os_str().as_bytes())?;
@@ -11,7 +27,7 @@ fn swap_paths(left: &std::path::Path, right: &std::path::Path) -> std::io::Resul
             left.as_ptr(),
             libc::AT_FDCWD,
             right.as_ptr(),
-            libc::RENAME_SWAP,
+            flags,
         )
     };
     if result == 0 {

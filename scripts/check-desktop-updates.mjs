@@ -34,6 +34,8 @@ try {
     assert.throws(() => verifiedInstaller({ ...snapshot, ...changed }, { platform: "darwin", arch: "arm64" })); checked();
   }
   assert.throws(() => verifiedInstaller(snapshot, { platform: "darwin", arch: "x64" })); checked();
+  assert.equal(verifiedInstaller({ ...snapshot, source: "squad-api" }, { platform: "darwin", arch: "arm64" }).sha256, snapshot.downloadSha256); checked();
+  assert.throws(() => verifiedInstaller({ ...snapshot, source: "squad-api", downloadUrl: "https://untrusted.example/installer.dmg" }, { platform: "darwin", arch: "arm64" })); checked();
 
   const opened = [];
   const result = await upgradeDesktop({

@@ -1,7 +1,7 @@
-import { ArrowDownToLine } from "lucide-react";
+import { ArrowDownToLine, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { UpdateProgress } from "./UpdateProgress";
-import { updateView } from "@/lib/update-status";
+import { updateView, updateInstallAction } from "@/lib/update-status";
 import { cn } from "@/lib/utils";
 /** The same operation appears in Settings and every sidebar skin. */
 export function SidebarUpdateNotice({
@@ -10,6 +10,7 @@ export function SidebarUpdateNotice({
   error = "",
   operation = {},
   onDownload,
+  onInstall,
   onReview,
   onOpenReleases,
   className,
@@ -22,6 +23,7 @@ export function SidebarUpdateNotice({
   )
     return null;
   const ready = ["ready", "installer-open", "complete"].includes(view.phase);
+  const installAction = updateInstallAction(operation);
   return (
     <section
       aria-label="Squad update"
@@ -39,32 +41,40 @@ export function SidebarUpdateNotice({
             </p>
           ) : null}
         </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           variant="ghost"
           size="sm"
           onClick={
-            ready || view.busy || view.phase === "failed"
-              ? onReview
-              : view.downloadable
+            installAction
+              ? onInstall
+              : ready || view.busy
+                ? onReview
+              : view.downloadable || view.phase === "failed"
                 ? onDownload
                 : onOpenReleases
           }
-          disabled={checking && !view.busy}
-          aria-label={ready ? "Review Squad update" : "Download Squad update"}
+          disabled={(checking && !view.busy) || Boolean(installAction && !onInstall)}
         >
-          {view.busy || ready || view.phase === "failed" ? (
-            "View"
+          {installAction ? (
+            <><RotateCw data-icon="inline-start" />{installAction}</>
+          ) : view.busy || ready ? (
+            "Details"
           ) : (
             <>
               <ArrowDownToLine data-icon="inline-start" />
-              Download
+              {view.phase === "failed" ? "Retry download" : "Download"}
             </>
           )}
         </Button>
+        {installAction && operation.installMode === "restart" && view.phase === "failed" ? (
+          <Button variant="link" size="sm" onClick={() => onInstall?.({ mode: "installer" })}>Open installer</Button>
+        ) : null}
       </div>
       <UpdateProgress operation={operation} compact />
       {view.failure ? (
-        <p className="text-xs text-destructive" role="alert">
+        <p className="text-xs text-destructive [overflow-wrap:anywhere]" role="alert" data-selectable>
           {view.failure}
         </p>
       ) : null}

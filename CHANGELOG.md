@@ -10,6 +10,19 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-28
+
+### Added
+
+- A dedicated Squad API, with its own deployment, tenant memberships, roles, workspaces, device registration, private R2 memory storage and release feed. Autohand sign-in remains the identity provider.
+- Cloud sync in Settings lets you choose a team and workspace before sharing team memories between devices. Concurrent edits keep both versions for you to resolve; disconnecting keeps your local memories.
+
+### Fixed
+
+- Ready updates offer Install and restart directly in the sidebar. If macOS blocks automatic installation, the verified download stays available with an Open installer action and a readable error.
+- macOS updates can recover when the system refuses an atomic app exchange. The replacement preserves the previous bundle, restores it when a later move fails, and keeps recovery diagnostics if restoration is also blocked.
+- Update checks prefer Squad's dedicated release feed and keep the official installer checksum and download action. Temporary service outages can use the existing GitHub source during the transition.
+
 ## [0.1.11] - 2026-10-27
 
 ### Added

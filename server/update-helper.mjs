@@ -63,9 +63,19 @@ try {
     },
   });
 } catch (error) {
+  // Keep executable commands and recovery paths in private diagnostics, not the sidebar.
+  await writeFile(join(plan.statePath, "..", "install-diagnostics.json"), JSON.stringify({
+    at: new Date().toISOString(), message: error.message, stderr: error.stderr || "", plan,
+  }), { mode: 0o600 }).catch(() => {});
+  const details = `${error.message}\n${error.stderr || ""}`;
+  const recoveryFailed = /restore failed|restore.*failed|rollback.*failed/i.test(details);
   await save(
     "failed",
-    `Update could not finish: ${error.message}. Your previous app and saved data have been kept.`,
+    recoveryFailed
+      ? "Automatic installation could not restore the previous app. Recovery bundles were retained; see install-diagnostics.json in the updates folder. Your saved data is unchanged."
+      : /Operation not permitted|Permission denied|EACCES|EPERM/i.test(details)
+        ? "macOS blocked automatic installation. Open the verified installer to finish updating. Your saved data is unchanged."
+        : "Automatic installation could not finish. Open the verified installer to finish updating. Your saved data is unchanged.",
   ).catch(() => {});
   await exec("/usr/bin/open", ["-n", plan.app], { timeout: 15_000 }).catch(
     () => {},

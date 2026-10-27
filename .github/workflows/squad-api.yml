@@ -1,0 +1,89 @@
+name: Squad API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - services/squad-api/**
+      - server/squad-cloud/**
+      - server/team/store.mjs
+      - .github/workflows/squad-api.yml
+  pull_request:
+    paths:
+      - services/squad-api/**
+      - server/squad-cloud/**
+      - server/team/store.mjs
+      - .github/workflows/squad-api.yml
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the verified API to the configured Squad account
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: squad-api-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/squad-api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.0
+          cache: npm
+          cache-dependency-path: services/squad-api/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && (inputs.deploy || vars.SQUAD_API_DEPLOY_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: squad-production
+    defaults:
+      run:
+        working-directory: services/squad-api
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SQUAD_API_DATABASE_ID: ${{ vars.SQUAD_API_DATABASE_ID }}
+      SQUAD_RELEASE_PUBLISHER_TOKEN: ${{ secrets.SQUAD_RELEASE_PUBLISHER_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.22.0
+          cache: npm
+          cache-dependency-path: services/squad-api/package-lock.json
+      - run: npm ci
+      - name: Check deployment configuration
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$SQUAD_API_DATABASE_ID"
+          test -n "$SQUAD_RELEASE_PUBLISHER_TOKEN"
+      - name: Apply Squad database migrations
+        run: node_modules/.bin/cf d1 migrations apply "$SQUAD_API_DATABASE_ID" --dir migrations
+      - name: Deploy the dedicated Squad service
+        run: |
+          node --input-type=module -e 'import {writeFile} from "node:fs/promises"; await writeFile(process.env.RUNNER_TEMP + "/squad-api-secrets.json",JSON.stringify({RELEASE_PUBLISHER_TOKEN:process.env.SQUAD_RELEASE_PUBLISHER_TOKEN}),{mode:0o600});'
+          node_modules/.bin/cf deploy --secrets-file "$RUNNER_TEMP/squad-api-secrets.json" --tag "$GITHUB_SHA" --message "Squad API $GITHUB_SHA"
+      - name: Verify the public service
+        run: curl --fail --show-error --silent https://squad.autohand.ai/health

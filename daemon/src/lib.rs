@@ -12,6 +12,7 @@ pub mod live_status;
 pub mod native_tray;
 pub mod otel;
 pub mod preflight;
+pub mod squad_api;
 pub mod startup_ports;
 pub mod state;
 pub mod telemetry;

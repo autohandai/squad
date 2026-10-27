@@ -317,6 +317,7 @@ import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
 import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
 import { SystemSettings } from "@/components/settings/SystemSettings";
+import { CloudSyncSettings } from "@/components/settings/CloudSyncSettings";
 import { UsageBreakdown } from "@/components/settings/UsageBreakdown";
 import { shouldAutoCheckUpdates } from "@/lib/system-settings";
 import { ConnectorsSettings } from "@/components/settings/ConnectorsSettings";
@@ -4665,10 +4666,10 @@ function App() {
     await updateAction("upgrade");
   }
   const cancelUpdate = () => updateAction("cancel");
-  async function installUpdate() {
+  async function installUpdate(options = {}) {
     const invoke = window.__TAURI_INTERNALS__?.invoke;
     const native = /^AutohandSquadDesktop\//.test(navigator.userAgent) && typeof invoke === "function";
-    const data = await updateAction("install", { mode: native ? "restart" : "installer" });
+    const data = await updateAction("install", { mode: options.mode === "installer" ? "installer" : native ? "restart" : "installer" });
     if (data?.phase === "installing" && data.installMode === "restart") {
       try { await invoke("squad_quit_for_update"); }
       catch (error) { setUpdatesError(typeof error === "string" ? error : error?.message || "Squad could not close. Keep it open and try again when the update stops."); }
@@ -13135,10 +13136,10 @@ function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCop
 }
 
 function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onMissionControl, onOnboarding, onAnalytics, updateAvailable = false }) {
-  const { profile, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult, upgradeApp, openReleasePage } = useContext(AccountContext);
+  const { profile, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult, upgradeApp, installUpdate, openReleasePage } = useContext(AccountContext);
   return (
     <div className="border-t p-4">
-      <SidebarUpdateNotice updates={updates} checking={updatesChecking} upgrading={updatesUpgrading} error={updatesError} operation={updatesUpgradeResult} onDownload={upgradeApp} onReview={() => onSettings?.("updates")} onOpenReleases={openReleasePage} />
+      <SidebarUpdateNotice updates={updates} checking={updatesChecking} upgrading={updatesUpgrading} error={updatesError} operation={updatesUpgradeResult} onDownload={upgradeApp} onInstall={installUpdate} onReview={() => onSettings?.("updates")} onOpenReleases={openReleasePage} />
       {/* The gap belongs to the update button, not to the account row: carried
           on the row it was 12px of dead space in the normal case, and it made
           the footer top-heavy - 29px above the name against 16px below. */}
@@ -24699,6 +24700,7 @@ function SettingsPage({
     { id: "relay", label: copy.relay || "Relay" },
     { id: "remote-access", label: copy.remoteAccess || "Remote access" },
     { id: "connectors", label: copy.connectors || "Connectors" },
+    { id: "cloud", label: "Cloud sync" },
     { id: "updates", label: "Updates" },
     { id: "system", label: copy.system || "System" },
   ];
@@ -25241,6 +25243,7 @@ function SettingsPage({
         <UpdatesSettings updates={updates} checking={updatesChecking} error={updatesError} operation={updatesUpgradeResult || {}} onCheck={onCheckUpdates} onDownload={onUpgradeApp} onInstall={onInstallUpdate} onCancel={onCancelUpdate} onOpenReleases={onOpenReleases} renderNotes={(text) => <MarkdownBlocks text={text} muted />} />
       </>
     ),
+    cloud: () => (<><SettingsSectionHeader title="Cloud sync" description="Keep shared team memories together." /><CloudSyncSettings api={api} /></>),
     system: () => (
       <>
         <SettingsSectionHeader

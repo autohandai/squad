@@ -194,10 +194,10 @@ assertIncludes(releaseWorkflow, 'required: true', 'Manual release version is req
 assertIncludes(releaseWorkflow, 'name: Setup', 'Release workflow has a shared setup job');
 assertIncludes(releaseWorkflow, "if: github.repository == 'autohandai/squad'", 'Release setup cannot publish from a fork');
 assertIncludes(releaseWorkflow, 'source_sha: ${{ steps.source.outputs.source_sha }}', 'Release setup exports the verified source SHA');
-assertCount(releaseWorkflow, 'scripts/verify-release-ref.sh v "$VERSION"', 5, 'Every release job verifies the tag-bound source');
-assertCount(releaseWorkflow, 'ref: ${{ needs.setup.outputs.source_sha }}', 4, 'Every build and publish job checks out the verified source SHA');
-assertCount(releaseWorkflow, 'fetch-depth: 0', 5, 'Every release checkout fetches tag history');
-assertCount(releaseWorkflow, 'persist-credentials: false', 5, 'Every release checkout drops persisted credentials');
+assertCount(releaseWorkflow, 'scripts/verify-release-ref.sh v "$VERSION"', 6, 'Every release job verifies the tag-bound source');
+assertCount(releaseWorkflow, 'ref: ${{ needs.setup.outputs.source_sha }}', 5, 'Every build and publish job checks out the verified source SHA');
+assertCount(releaseWorkflow, 'fetch-depth: 0', 6, 'Every release checkout fetches tag history');
+assertCount(releaseWorkflow, 'persist-credentials: false', 6, 'Every release checkout drops persisted credentials');
 assertIncludes(releaseWorkflow, 'macos-26-intel', 'Release workflow builds macOS Intel');
 assertNativeReleaseMatrix(releaseWorkflow, [
   ['linux-x64', 'ubuntu-24.04', 'linux', 'x64'],
