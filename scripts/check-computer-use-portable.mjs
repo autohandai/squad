@@ -12,6 +12,7 @@ import { packageSquadPortable } from './package-squad-portable.mjs';
 import { stageComputerUse } from './stage-computer-use.mjs';
 import { COMPUTER_USE_HOST } from './computer-use-host.mjs';
 import { tarCreateArgs } from './release-archive.mjs';
+import { roleTemplates } from '../src/lib/member-profiles.js';
 const root=await mkdtemp(join(tmpdir(),'squad-portable-component-'));
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 function run(command,args,options={}){const r=spawnSync(command,args,{encoding:'utf8',...options});if(r.status!==0)throw new Error(`${command}: ${r.stderr}`);return r.stdout;}
@@ -39,7 +40,7 @@ try{
  const workflowRoute=await import(pathToFileURL(join(bundled,'server/routes/workflows.route.mjs')));
  assert.equal(workflowRoute.name,'workflows','Extracted route must resolve its shared runtime imports.');
  const profiles=await import(pathToFileURL(join(bundled,'src/lib/member-profiles.js')));
- assert.equal(profiles.roleTemplates.length,16,'Extracted runtime must include existing member profiles.');
+ assert.deepEqual(profiles.roleTemplates,roleTemplates,'Extracted runtime must preserve every built-in member profile, including Chief of Staff.');
  const claudeSdk=await import(pathToFileURL(join(bundled,'node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs')));
  assert.equal(typeof claudeSdk.query,'function','Extracted portable runtime must load the actual Claude SDK.');
  assert.equal(digest(await readFile(join(bundled,'node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs'))),digest(await readFile(new URL('../node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs',import.meta.url))));

@@ -89,6 +89,11 @@ These are local source/staged-runtime checks, not a newly installed native app,
 published updater artifact, notarized release, or live-provider session. The
 operator's running app and saved data were not replaced to run these checks.
 
+The 0.1.10 release preflight subsequently found a portable-archive assertion
+fixed at 16 role templates; adding the coordinator made the actual count 17.
+The assertion now compares the full extracted catalog with the source contracts,
+so it proves preservation without making future role additions a packaging error.
+
 ## Consequences
 
 - Repository selection is required for new installs; a non-Git folder must be

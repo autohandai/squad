@@ -10,6 +10,8 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-27
+
 ### Added
 
 - First-run setup accepts one or more repositories and suggests teammates based on their languages and frameworks. Review and create specialists when you need them.
