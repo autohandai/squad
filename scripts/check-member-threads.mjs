@@ -69,8 +69,9 @@ try {
   const callOne=channelCalls.find(call=>call.message.includes('REQUEST:CHANNEL_ONE'));
   const callTwo=channelCalls.find(call=>call.message.includes('REQUEST:CHANNEL_TWO'));
   assert.notEqual(callOne.id,callTwo.id,'channel threads must use separate engine sessions');
-  assert.ok(callOne.options.appendSystemPrompt.includes('Saved history for CHANNEL_ONE'),'channel history is supplied in the engine system context');
-  assert.equal(callOne.options.appendSystemPrompt.includes('Saved history for CHANNEL_TWO'),false,'other channel thread context is excluded');
+  assert.ok(callOne.message.includes('Saved history for CHANNEL_ONE'),'channel history reaches its own turn context');
+  assert.equal(callOne.message.includes('Saved history for CHANNEL_TWO'),false,'other channel thread context is excluded');
+  assert.equal(callOne.options.appendSystemPrompt.includes('Saved history for CHANNEL_ONE'),false,'mutable thread history does not change the launch contract');
   await bridge.api(`/api/runs/${channelOne.data.id}/stop`,'POST',{});
   await writeFile(join(bridge.directory,'release-CHANNEL_TWO'),'go');
   await until(async()=>(await bridge.api(`/api/runs/${channelTwo.data.id}`)).data?.reply==='Answer for CHANNEL_TWO','stopping one channel thread preserves the other');

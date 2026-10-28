@@ -590,17 +590,18 @@ async function finishComputerWork(workId) {
 }
 
 async function prepareVaultWork(agentRuntime, input) {
-  if (isUtilityAgent(agentRuntime.agentId) || !input._computerUseWorkId) return agentRuntime;
+  const warming = input._warmSession === true && !input._computerUseWorkId;
+  if (isUtilityAgent(agentRuntime.agentId) || (!input._computerUseWorkId && !warming)) return agentRuntime;
   if (!vaultToolsAllowed(normalizeAgentPermissions(agentRuntime.agent))) return agentRuntime;
   const scope = input.ephemeralSession ? input._computerUseWorkId : "";
-  const session = await vault.openWork({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, channelId: input.channel?.id || "", scope });
+  const session = await vault[warming ? "prepareMember" : "openWork"]({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, channelId: input.channel?.id || "", scope });
   const directory = join(agentRuntime.agentHome, "vault-configs");
   // Stable paths keep ordinary chat warm; ephemeral turns and Computer Use
   // get separate private copies for their concurrent work scopes.
   const perWork = Boolean(agentRuntime.computerUse || input.ephemeralSession);
   const configPath = join(directory, perWork ? `${input._computerUseWorkId}.json` : "member.json");
   const runtime = { ...agentRuntime, configPath, vault: { ...session, perWork } };
-  vaultWorkRuntimes.set(input._computerUseWorkId, runtime);
+  if (!warming) vaultWorkRuntimes.set(input._computerUseWorkId, runtime);
   try {
     const config = JSON.parse(await readFile(agentRuntime.configPath, "utf8"));
     const existing = Array.isArray(config.mcp?.servers) ? config.mcp.servers : [];
@@ -618,16 +619,17 @@ async function finishVaultWork(workId) {
 }
 
 async function prepareTeamWork(agentRuntime, input) {
-  if (isUtilityAgent(agentRuntime.agentId) || !input._computerUseWorkId) return agentRuntime;
+  const warming = input._warmSession === true && !input._computerUseWorkId;
+  if (isUtilityAgent(agentRuntime.agentId) || (!input._computerUseWorkId && !warming)) return agentRuntime;
   const engine = harnessAssignmentFromAgent(agentRuntime.agent).id;
   const maxWaitSeconds = engine === "autohand" || engine === "autohand-acp" ? AUTOHAND_TEAM_WAIT_SECONDS : 50;
-  const session = await team.openWork({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, workspace: agentRuntime.workspace, depth: Number(input._teamDepth) || 0, ancestorIds: input.teamMessage?.ancestorIds || [], channel: channelContextFromPayload(input), maxWaitSeconds, automationDraft: input.automationDraft === true, scope: input.ephemeralSession ? input._computerUseWorkId : "" });
+  const session = await team[warming ? "prepareMember" : "openWork"]({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, workspace: agentRuntime.workspace, depth: Number(input._teamDepth) || 0, ancestorIds: input.teamMessage?.ancestorIds || [], channel: channelContextFromPayload(input), maxWaitSeconds, automationDraft: input.automationDraft === true, scope: input.ephemeralSession ? input._computerUseWorkId : "" });
   const directory = join(agentRuntime.agentHome, "team-configs");
   // A stable path, as the vault's, keeps a warm session's key (ADR-0030).
   const perWork = Boolean(agentRuntime.computerUse || input.ephemeralSession);
   const configPath = join(directory, perWork ? `${input._computerUseWorkId}.json` : "member.json");
   const runtime = { ...agentRuntime, configPath, team: { ...session, perWork } };
-  teamWorkRuntimes.set(input._computerUseWorkId, runtime);
+  if (!warming) teamWorkRuntimes.set(input._computerUseWorkId, runtime);
   try {
     const config = JSON.parse(await readFile(agentRuntime.configPath, "utf8"));
     const existing = Array.isArray(config.mcp?.servers) ? config.mcp.servers : [];
@@ -3366,7 +3368,8 @@ function sdkTransportEnabled(input, mode) {
 }
 
 function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), teamInstructionsFor(agentRuntime), recallInstructions(input), workPlanInstructions(input), memberShapingInstructions(input)].filter(Boolean).join("\n\n");
+  const turnContext = [vaultInstructions(agentRuntime), teamInstructionsFor(agentRuntime), recallInstructions(input), input._channelThreadContext, input._workPlan?.text, memberShapingInstructions(input)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), workPlanCapabilityInstructions(input)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const model = selectedModelForInput(input, permissions, agentRuntime);
@@ -3447,7 +3450,12 @@ function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
   return {
     options,
     command: `autohand ${displayArgs.map(shellQuote).join(" ")}`,
+    turnContext,
   };
+}
+
+function sdkPromptForTurn(context, prompt) {
+  return context.turnContext ? `<squad_turn_context>\nCurrent Squad context for this turn; use saved tool permissions.\n${context.turnContext}\n</squad_turn_context>\n\n${prompt}` : prompt;
 }
 
 // Goal 06: Layered Context Model — ordered layer contract.
@@ -6573,7 +6581,7 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
 
   void (async () => {
     try {
-      const output = await collectSdkPrompt(sdk, prompt, 300000, (event) => appendSdkEventLog(run, event), run.abortController.signal);
+      const output = await collectSdkPrompt(sdk, sdkPromptForTurn(context, prompt), 300000, (event) => appendSdkEventLog(run, event), run.abortController.signal);
       if (run.status !== "stopped") {
         run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
         const reply = sdkReplyFromEvents(output.events, output.rawStdout);
@@ -6692,7 +6700,7 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     lease = await acquireSdkLease(payload, workspace, context);
     const sdk = lease.sdk;
     started = true;
-    const output = await collectSdkPrompt(sdk, prompt, timeoutMs, () => {
+    const output = await collectSdkPrompt(sdk, sdkPromptForTurn(context, prompt), timeoutMs, () => {
       eventCount += 1;
     });
     healthy = true;
@@ -6813,7 +6821,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
       label: lease.created ? "Sending the request to the model..." : "Reusing the warm session; sending the request...",
       timestamp: new Date().toISOString(),
     });
-    const output = await collectSdkPrompt(sdk, prompt, timeoutMs, (event) => {
+    const output = await collectSdkPrompt(sdk, sdkPromptForTurn(context, prompt), timeoutMs, (event) => {
       eventCount += 1;
       stream.send("sdk", chatStreamEventFromSdkEvent(event));
     }, signal);
@@ -7768,13 +7776,18 @@ function sentProfile(payload) {
   return String(payload?.profile || "").trim().slice(0, 12000);
 }
 
-function workPlanInstructions(payload) {
+function workPlanCapabilityInstructions(payload) {
   if (isUtilityAgent(payload?.agentId || payload?.agent?.id)) return "";
   const base = sentProfile(payload);
   const parts = [];
-  if (payload?._channelThreadContext) parts.push(payload._channelThreadContext);
   if (!base.includes('"type":"task"')) parts.push(taskActionInstruction());
   if (!base.includes('"type":"schedule"')) parts.push(scheduleActionInstruction(bridgeTimeZone()));
+  return parts.join("\n\n");
+}
+
+function workPlanInstructions(payload) {
+  if (isUtilityAgent(payload?.agentId || payload?.agent?.id)) return "";
+  const parts = [payload?._channelThreadContext, workPlanCapabilityInstructions(payload)].filter(Boolean);
   const plan = payload?._workPlan?.text;
   if (typeof plan === "string" && plan) parts.push(plan);
   return parts.join("\n\n");
@@ -8124,7 +8137,7 @@ async function handleApi(req, res, url) {
   // (42 s measured against 4 s warm, ADR-0030).
   if (url.pathname === "/api/chat/warm" && req.method === "POST") {
     try {
-      const payload = await readBody(req);
+      const payload = { ...await withSavedMember(await readBody(req)), _warmSession: true, ephemeralSession: false };
       const agentId = sanitizeAgentId(payload.agentId || payload.agent?.id || "");
       // The pool is created on first use, so do not test the lazy handle here:
       // acquireSdkLease builds it. Only a missing member is a reason to stop.

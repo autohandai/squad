@@ -269,7 +269,7 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
    * credential/config for its warm session (ADR-0030). Ephemeral work uses
    * its own scope so another thread cannot retarget the active credential.
    */
-  async function openWork({ memberId, runId = "", workspace = "", depth = 0, channel = null, maxWaitSeconds = 50, automationDraft = false, scope = "", ancestorIds = [] }) {
+  async function openWork({ memberId, runId = "", workspace = "", depth = 0, channel = null, maxWaitSeconds = 50, automationDraft = false, scope = "", ancestorIds = [], prepareOnly = false }) {
     if (typeof memberId !== "string" || !memberId.trim()) throw new TeamError("A member identity is required.");
     const owner = memberId.trim();
     const key = JSON.stringify([owner, String(scope)]);
@@ -279,17 +279,18 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
       sessions.set(key, session);
       byToken.set(session.token, session);
     }
-    session.runId = String(runId || "");
-    session.active = true;
-    session.workspace = String(workspace || "");
-    session.depth = Math.max(0, Number(depth) || 0);
-    session.ancestorIds = [...new Set(Array.isArray(ancestorIds) ? ancestorIds.filter(id => typeof id === "string") : [])].slice(0, TEAM_MAX_DEPTH);
-    session.automationDraft = automationDraft === true;
-    // The channel thread this turn answers in, so a teammate's reply can be
-    // shown there (bug hunt 2026-10, channels).
-    session.channel = channel?.channelId && channel?.threadId ? channel : null;
-    session.maxWaitSeconds = Math.max(0, Math.min(50, Number(maxWaitSeconds) || 0));
-    const memory = await store.memoryFor(owner, session.workspace);
+    if (!prepareOnly) {
+      session.runId = String(runId || "");
+      session.active = true;
+      session.workspace = String(workspace || "");
+      session.depth = Math.max(0, Number(depth) || 0);
+      session.ancestorIds = [...new Set(Array.isArray(ancestorIds) ? ancestorIds.filter(id => typeof id === "string") : [])].slice(0, TEAM_MAX_DEPTH);
+      session.automationDraft = automationDraft === true;
+      // The channel thread this turn answers in, so a teammate's reply can be shown there.
+      session.channel = channel?.channelId && channel?.threadId ? channel : null;
+      session.maxWaitSeconds = Math.max(0, Math.min(50, Number(maxWaitSeconds) || 0));
+    }
+    const memory = await store.memoryFor(owner, prepareOnly ? workspace : session.workspace);
     const mcpServer = {
       name: TEAM_MCP_SERVER_NAME,
       transport: "stdio",
@@ -539,6 +540,8 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
     store,
     tools: TOOLS,
     openWork,
+    // Discovery can warm a process without granting or retargeting a live turn.
+    prepareMember: input => openWork({ ...input, prepareOnly: true }),
     takeReceipts,
     dispatch,
     closeMember,

@@ -87,6 +87,9 @@ jobs:
       - name: Check SDK session pool
         run: bun run check:sessions
 
+      - name: Check warm chat reuse and quiet progress
+        run: bun run check:chat-experience
+
       - name: Check folder profiles and squad recruiting
         run: bun run check:recruiting
 

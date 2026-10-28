@@ -11,3 +11,10 @@ export {
   summarizeQuiet,
   toolObject,
 } from "../../server/activity/normalize.mjs";
+
+// A chat receipt records useful work, while the answer and transport diagnostics
+// have their own presentation. Keep the complete event stream for explicit debugging.
+export function chatWorkActivity(items = [], { diagnostics = false } = {}) {
+  if (diagnostics) return items;
+  return items.filter(item => !["message", "thought", "status"].includes(item.kind) || item.state === "failed");
+}

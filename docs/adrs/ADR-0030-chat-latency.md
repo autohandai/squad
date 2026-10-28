@@ -93,3 +93,50 @@ both change what a member can do or touch the person's own configuration:
 - **That copied config carries a live GitHub personal access token** into
   each member's home directory. Worth the person's attention. Not touched,
   because it is their credential and their configuration.
+
+## 2026-10-28: Managed connections and mutable turn context broke reuse again
+
+The reported Eva greeting took **41,965 ms** between its saved start and finish
+timestamps. It ran over the Autohand SDK without tool work. The local session
+inventory held two sessions for the same member/workspace, created milliseconds
+apart. These observations do not assign all of the delay to local startup:
+the existing "sending to the model" status is emitted before the CLI finishes
+its asynchronous startup.
+
+`node scripts/check-chat-warmth.mjs` reproduced the interacting callers through
+the real bridge with a fixture SDK: warm-up plus the first send started **two**
+SDKs. The original static source check only covered the browser-built profile;
+it did not cover managed MCP configuration or bridge-added context. The warm
+request used the base config, while the real turn used a managed team/vault
+config. Recall, work plans and shared memory also changed the system prompt.
+
+Warm-up now uses the same saved-member reconciliation and managed configuration
+as a direct-message turn. Team and vault services can prepare an inactive
+connection for initialization and tool-schema discovery. Preparation cannot
+activate, consume a vault outcome, or retarget an existing turn. Tool calls
+require active work; finishing work deactivates ordinary vault sessions too.
+Computer Use and ephemeral threads retain their separate work scopes.
+
+The SDK's launch prompt carries the stable member and capability contract.
+Current recall, work plan, thread context, shared memory, vault outcomes and
+shaping instructions travel with each prompt. Both SDK execution paths receive
+the same turn-context envelope. Credentials remain inside private MCP config;
+vault outcomes remain ids and hints. The session key still includes launch
+options and the durable profile; excluding the prompt or permissions from the
+key would hide correctness bugs.
+
+The regression now observes one SDK across warm-up and two sends, including a
+shared-memory change. It verifies that the new lesson reaches the reused SDK,
+that the warmed credential works during a real fixture turn, that inactive
+team/vault calls fail, and that a durable profile change starts a new session.
+It runs in CI and release verification alongside the rendered chat check.
+
+An isolated live probe on the actual Autohand AI `moa` provider, with model tools
+blocked and user chats untouched, measured first text at **16,628 ms** on its
+first turn and **6,943 ms** on the next. Both sends reused the one prepared SDK.
+The script and receipt are in `.codex-artifacts/chat-latency-20261028/`.
+This is not a controlled comparison with Eva's larger saved context or a promise
+that every first message takes those times. Truly cold CLI/MCP startup and
+provider response time remain; inherited servers and the selected model were
+not removed or changed to manufacture the result. Fresh per-turn context also
+continues to consume prompt tokens.

@@ -87,7 +87,7 @@ export function createVaultService({ stateDir, rootDir, homeDir, bridgeUrl, emit
    * only on the turn that delivers it. The return value carries the secret:
    * keep it out of status and summaries.
    */
-  async function openWork({ memberId, runId = "", channelId = "", scope = "" }) {
+  async function openWork({ memberId, runId = "", channelId = "", scope = "", prepareOnly = false }) {
     if (typeof memberId !== "string" || !memberId.trim()) throw new VaultError("A member identity is required.");
     const owner = memberId.trim();
     const key = JSON.stringify([owner, String(scope)]);
@@ -97,9 +97,12 @@ export function createVaultService({ stateDir, rootDir, homeDir, bridgeUrl, emit
       sessions.set(key, session);
       byToken.set(session.token, session);
     }
-    session.runId = String(runId);
-    session.channelId = String(channelId || "");
-    const outcomes = await requests.takeOutcomes(owner);
+    if (!prepareOnly) {
+      session.runId = String(runId);
+      session.channelId = String(channelId || "");
+      session.active = true;
+    }
+    const outcomes = prepareOnly ? [] : await requests.takeOutcomes(owner);
     const mcpServer = {
       name: VAULT_MCP_SERVER_NAME,
       transport: "stdio",
@@ -159,6 +162,7 @@ export function createVaultService({ stateDir, rootDir, homeDir, bridgeUrl, emit
     if (request.method === "ping" || request.method.startsWith("notifications/")) return {};
     if (request.method === "tools/list") return { tools: TOOLS };
     if (request.method !== "tools/call") throw new VaultError("Unsupported vault method.");
+    if (!session.active) throw new VaultError("This member has no active Squad turn.", 401);
     const name = request.params?.name;
     if (!VAULT_TOOL_NAMES.includes(name)) throw new VaultError("This vault tool is not available through Squad.", 403);
     return callTool(session, name, request.params?.arguments ?? {});
@@ -169,10 +173,12 @@ export function createVaultService({ stateDir, rootDir, homeDir, bridgeUrl, emit
     requests,
     tools: TOOLS,
     openWork,
+    prepareMember: input => openWork({ ...input, prepareOnly: true }),
     closeMember,
     finishWork: runId => {
-      for (const [key, session] of sessions) if (session.scope && session.runId === runId) {
-        sessions.delete(key); byToken.delete(session.token);
+      for (const [key, session] of sessions) if (session.runId === runId) {
+        session.active = false;
+        if (session.scope) { sessions.delete(key); byToken.delete(session.token); }
       }
     },
     dispatch,

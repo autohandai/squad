@@ -10,6 +10,14 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-10-28
+
+### Fixed
+
+- Opening a chat warms the same Autohand Code session used to answer. Changing recall, work plans and shared memory no longer starts another agent process; profile, permission and model changes still take effect.
+- Short replies show the answer and elapsed time. Work details shows real tool work without internal hooks, thoughts or a second copy of the answer; raw diagnostics require the explicit setting.
+- Starting or resetting a fresh chat no longer fails before the first reply.
+
 ## [0.1.13] - 2026-10-28
 
 ### Added

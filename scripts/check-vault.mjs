@@ -87,8 +87,15 @@ async function stop() {
   await closed;
 }
 function assertNoSeed(text, where) {
-  for (const [name, value] of Object.entries(SEED)) assert.ok(!String(text).includes(value), `${where} must not contain the seeded ${name}`);
+  for (const [name, value] of Object.entries(SEED)) {
+    // A three-digit CVV also occurs inside random ids and localhost ports.
+    // Its standalone plaintext value must never appear in a response or prompt.
+    const found = name === "cvv" ? new RegExp(`(?<!\\w)${value}(?!\\w)`).test(String(text)) : String(text).includes(value);
+    assert.ok(!found, `${where} must not contain the seeded ${name}`);
+  }
 }
+assert.doesNotThrow(() => assertNoSeed(`vlt_a${SEED.cvv}b`, "an opaque id"));
+assert.throws(() => assertNoSeed(JSON.stringify({ cvv: SEED.cvv }), "plaintext CVV"), /seeded cvv/);
 
 /** Speak to the stdio proxy ourselves with Content-Length framing. */
 async function headerFramedCalls(server, requests) {

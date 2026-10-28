@@ -8,7 +8,7 @@ await mkdir(artifact, { recursive: true });
 const bridge = await startBridge();
 let browser;
 try {
-  const member = { ...initialAgents[0], name: 'Alex', workspace: bridge.directory, projects: [{ path: bridge.directory }], skills: [] };
+  const member = { ...initialAgents[0], id: 'chat-timing-fixture', name: 'Alex', role: 'Assistant', workspace: process.cwd(), projects: [{ path: process.cwd() }], skills: [] };
   browser = await startBrowser();
   await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `
     if (!sessionStorage.getItem('timing.seeded')) {

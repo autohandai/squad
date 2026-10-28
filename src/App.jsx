@@ -145,6 +145,7 @@ import {
   brainCardFields,
   birdAvatarForRole,
   builtInAvatarOptions,
+  initialMessages,
   roleTemplates,
 } from "./data.js";
 import {
@@ -379,7 +380,7 @@ import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { CanvasList } from "@/components/canvases/CanvasList";
 import { CanvasPanel } from "@/components/canvases/CanvasPanel";
 import { canvasMentionItems, expandCanvasMentions, isCanvasMentionQuery } from "@/lib/canvases";
-import { activityFromTrace, activityStats, classifyTool, normalizeActivity } from "@/lib/activity";
+import { activityFromTrace, activityStats, chatWorkActivity, classifyTool, normalizeActivity } from "@/lib/activity";
 import { ExecutionPanel } from "@/components/execution/ExecutionPanel";
 import { RunList } from "@/components/execution/RunList";
 import { latestFailedHandoff, latestHandoff, latestPendingHandoff, taskOwner } from "@/lib/handoffs";
@@ -15604,7 +15605,9 @@ function AgentResponseMessage({ agent, message, replyAction, computerEvidence = 
   const elapsedMs = useElapsedMs(message.startedAt, isLoading);
   const durationMs = isLoading ? elapsedMs : durationFromMessage(message);
   const durationLabel = durationMs === null ? "" : formatDuration(durationMs);
-  const { activity: workActivity } = useMessageActivity(message, isLoading);
+  const { activity, raw: workRaw } = useMessageActivity(message, isLoading);
+  const diagnostics = normalizedChatSettings.displayCliOutput;
+  const workActivity = useMemo(() => chatWorkActivity(activity, { diagnostics }), [activity, diagnostics]);
   const hasVisibleAnswer = Boolean(view.answer && !isThinkingPlaceholder);
   const showRawOutput = normalizedChatSettings.displayCliOutput && hasRawOutput;
   const showProgressPlaceholder = isLoading && !hasVisibleAnswer;
@@ -15684,7 +15687,7 @@ function AgentResponseMessage({ agent, message, replyAction, computerEvidence = 
         {message.workDetailsLimited ? <p className="mt-2 text-xs text-muted-foreground">Work details show the activity received while this reply was running; the final diagnostic output was too large.</p> : null}
         <ComputerUseEvidence files={computerEvidence} compact={compact} />
         {!compact ? <AgentWorkUpdate message={message} isLoading={isLoading} /> : null}
-        {!compact ? <AgentWorkDetails message={message} isLoading={isLoading} durationLabel={isLoading ? "" : durationLabel} copy={copy} mode={normalizeChatSettings(chatSettings).workDetails} /> : null}
+        {!compact ? <AgentWorkDetails message={message} activity={workActivity} raw={workRaw} diagnostics={diagnostics} isLoading={isLoading} durationLabel={isLoading ? "" : durationLabel} copy={copy} mode={normalizedChatSettings.workDetails} /> : null}
         {!isLoading && onFolderAccess ? (
           <FolderAccessCard
             folders={pendingFolderRequests(agent, message)}
@@ -15736,8 +15739,7 @@ function useMessageActivity(message, isLoading) {
 }
 
 /** "Work details · 12 steps · 4 tools · 1 failed · 32s": a text disclosure over the activity feed. */
-function AgentWorkDetails({ message, isLoading = false, durationLabel = "", copy = getLocaleCopy(DEFAULT_LOCALE), mode = "collapsed" }) {
-  const { activity, raw } = useMessageActivity(message, isLoading);
+function AgentWorkDetails({ message, activity = [], raw = [], diagnostics = false, isLoading = false, durationLabel = "", copy = getLocaleCopy(DEFAULT_LOCALE), mode = "collapsed" }) {
   const [showRaw, setShowRaw] = useState(false);
   // Open while the member works, then leave it as the reader left it. Binding
   // `open` straight to isLoading both trapped it open and slammed it shut the
@@ -15749,14 +15751,13 @@ function AgentWorkDetails({ message, isLoading = false, durationLabel = "", copy
     if (expands && isLoading) setOpen(true);
   }, [expands, isLoading]);
   if (mode === "hidden") return null;
-  if (!activity.length && !isLoading) return null;
+  if (!activity.length) return null;
   const stats = activityStats(activity);
   // A reply that came back from another machine's bridge says so here, so the
   // transport is visible without a badge on the row.
   const via = message?.remote?.label || message?.remote?.url || "";
   const summary = [
-    `${stats.rows} ${stats.rows === 1 ? "step" : "steps"}`,
-    stats.tools ? `${stats.tools} ${stats.tools === 1 ? "tool" : "tools"}` : "",
+    stats.tools ? `${stats.tools} ${stats.tools === 1 ? "tool" : "tools"}` : `${stats.rows} ${stats.rows === 1 ? "update" : "updates"}`,
     durationLabel,
     via ? `${copy.via || "via"} ${via}` : "",
   ]
@@ -15770,7 +15771,7 @@ function AgentWorkDetails({ message, isLoading = false, durationLabel = "", copy
         <span className="text-muted-foreground/80">{summary}</span>
         {stats.failed ? <span className="text-destructive/80">· {stats.failed} failed</span> : null}
       </summary>
-      <ActivityFeed items={activity} raw={raw} showRaw={showRaw} onToggleRaw={() => setShowRaw((value) => !value)} copy={copy} className="mt-1" />
+      <ActivityFeed items={activity} raw={raw} showRaw={diagnostics && showRaw} onToggleRaw={diagnostics ? () => setShowRaw((value) => !value) : undefined} copy={copy} className="mt-1" />
     </details>
   );
 }
