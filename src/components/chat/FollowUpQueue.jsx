@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { isQueueRunning, queueItemStatusLabel, queuedItems, runningQueueItem } from "@/lib/member-queue";
+import { AttachmentList } from "@/components/chat/Attachments";
 
 function StatusDot({ status }) {
   return (
@@ -145,6 +146,7 @@ export function FollowUpQueue({ queue, copy = {}, compact = false, busy = false,
                   </>
                 )}
               </div>
+              <AttachmentList files={item.attachments || []} className="col-span-2 col-start-2" />
             </div>
           );
         })}

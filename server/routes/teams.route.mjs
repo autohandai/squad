@@ -58,7 +58,7 @@ export async function handle(req, res, url, ctx) {
       if (!objective || objective.length > CHANNEL_GOAL_LIMIT) throw new TeamFileError(`Describe the channel's goal in 1–${CHANNEL_GOAL_LIMIT} characters.`, 400);
       const workspace = await ctx.cleanWorkspace(body.workspace);
       const skills = [...new Set(roleTemplates.flatMap(role => role.skills || []))];
-      const summary = await ctx.startRun({ agentId: "squad-designer", workspace, profile: channelGoalSystemInstruction({ skills }), prompt: channelGoalInstruction(objective, { channelName: String(body.channelName || "").slice(0, 80) }), title: "Design a team for the channel goal", mode: "prompt", policy: "yes", ephemeralSession: true, resumeSession: false });
+      const summary = await ctx.startRun({ agentId: "squad-designer", workspace, profile: channelGoalSystemInstruction({ skills }), prompt: channelGoalInstruction(objective, { channelName: String(body.channelName || "").slice(0, 80) }), attachments: body.attachments || [], title: "Design a team for the channel goal", mode: "prompt", policy: "yes", ephemeralSession: true, resumeSession: false });
       runId = summary.id;
       const deadline = Date.now() + 90_000;
       let run;

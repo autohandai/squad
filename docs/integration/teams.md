@@ -81,6 +81,78 @@ default. Its optional `mode: "propose"` records a suggestion. Saved Ask/Block
 permissions remain authoritative. The Automation editor's drafting call is
 bound to draft-only mode and never starts a schedule before Save (ADR-0138).
 
+Model discovery and configured fallbacks use the same member-scoped server
+(ADR-0155). `squad_models({})` lists connected engines and the member's saved
+configuration. `squad_models({ engine, provider? })` returns that engine's
+reported model IDs and display names without sending a prompt.
+
+`squad_set_fallbacks({ fallbacks: [{ engine, model?, provider?, effort? }] })`
+replaces the member's ordered list, up to four choices. It requires **Let this
+member manage fallbacks** in Model settings; the tool cannot enable that
+permission or change the primary. Provider applies to Autohand choices.
+Models must come from discovery, and engines must already be connected.
+Independent catalog checks run concurrently. The final serialized write
+rechecks the person's opt-in and preserves any concurrent primary edits.
+An applied profile receipt includes the saved revision, so the UI reflects
+the change. The external `squad mcp` control plane retains its separate,
+limited tool set; these operations belong to managed member work.
+
+The app reads `GET /api/harnesses/models?id=<engine>&provider=<provider>`
+(optional workspace, executablePath and `refresh=1`) for the same catalog.
+`GET /api/members/:id/model-routing` returns configuration and local recovery
+health; `POST .../model-routing/reset` clears its cooldown. Human edits use
+the existing channel-access profile patch with `modelRouting: { version: 1,
+fallbacks: [{ harness: { id, model?, effort? }, provider? }],
+allowAgentChanges: false }`. These remain local bridge routes.
+
+## Collective memory (ADR-0156)
+
+The existing managed server also exposes:
+
+| Tool | Arguments and behavior |
+| --- | --- |
+| `squad_search_memory` | `{ query, limit?: 1..20 }` searches authorized collected memories using exact words plus local TurboVec text features. |
+| `squad_memory_graph` | `{ query?, similarity? }` returns bounded memory excerpts and saved links; computed similarity links are explicitly derived. |
+| `squad_read_memory` | `{ id }` returns one complete source record when visible. |
+| `squad_share_memory` | `{ id, teammate_id, revoke? }` adds/removes an explicit grant for a memory the actor owns/authored. No message is sent. |
+| `squad_relate_memories` | `{ from, to, relation: references|supports|contradicts, evidence }` saves a typed link between visible endpoints; actor must own/author `from`. |
+| `squad_organize_memory` | `{ id, groupId?, title?, kind?, tags? }` curates an owned memory without changing its source or visibility. |
+
+`squad_recall` reads the same collection. Search/recall/graph responses have a
+total excerpt budget and `hasMore`; follow an ID with `squad_read_memory` for
+full text. Existing remember/update/forget operate on canonical team records.
+Imported source content is read-only. Identity and project are derived from
+the per-work credential, never caller arguments. Private memories require
+ownership or an explicit grant; project access uses the current workspace.
+The person's all-member graph is not the graph an individual agent receives.
+
+The local app uses `GET/POST /api/memory`, `GET/PATCH/DELETE /api/memory/:id`,
+`PATCH /api/memory/:id/metadata`, `POST /api/memory/:id/share`,
+`POST /api/memory/links`, `DELETE /api/memory/links/:id`,
+`POST /api/memory/groups`, `DELETE /api/memory/groups/:id`,
+`GET/PATCH /api/memory/settings` and `POST /api/memory/reindex`.
+List accepts query, owner, kind, scope, group, tag, offset, limit and similarity.
+Settings select team/member/profile/isolated-CLI sources, explicit shared
+Markdown folders and member colors. Folder collection never edits originals.
+Library metadata lives in `<squad state>/memory/library.json`; the vector cache
+is a derived sibling under `memory/vectors`. These additions are local and do
+not change the separate cloud-sync upload contract.
+
+The packaged Rust daemon implements a private NDJSON worker mode:
+`autohand-squad-daemon --memory-index --index-dir <path>`. Requests include an
+`id` and `op` of `sync` (documents `{id,text}`), `search` (query, allowedIds,
+limit) or `status`. Empty/missing allowlists yield no search hits. Responses
+echo `id`, `success`, and `data` or `error`. The bridge owns visibility; the
+worker never resolves paths or grants from an agent tool. TurboVec 1.1.2 uses
+1536-dimensional normalized lexical token/bigram features and four-bit
+quantization, with no embedding network request.
+
+Run `RUSTUP_TOOLCHAIN=1.93.1 bun run check:memory` locally with Rust >=1.89 and
+Chrome installed. The command builds the native daemon and verifies library,
+MCP and browser paths. CI runs native library checks after the runtime build
+on each target; Linux also runs the browser check. Release checks use the
+freshly compiled release executable before packaging.
+
 ## Team file additions (ADR-0118)
 
 Version 1 of the format gains three optional parts, all rebuilt through the

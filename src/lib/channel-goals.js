@@ -1,4 +1,5 @@
 import { slug, uniqueName } from './teams.js';
+import { attachmentReferences } from './attachments.js';
 
 export const CHANNEL_GOAL_LIMIT = 4000;
 export const CHANNEL_GOAL_PHASES = ['awaiting', 'designing', 'preparing', 'ready', 'failed'];
@@ -9,7 +10,7 @@ export function normalizeChannelGoal(value) {
   const deliveries = (Array.isArray(value.deliveries) ? value.deliveries : []).slice(0, 8)
     .filter(item => item?.memberId && item.messageId)
     .map(item => ({ memberId: text(item.memberId, 120), messageId: text(item.messageId, 200), runId: text(item.runId, 120), status: ['queued', 'running', 'complete', 'error', 'stopped'].includes(item.status) ? item.status : 'error' }));
-  return { status: value.status, objective: text(value.objective, CHANNEL_GOAL_LIMIT), buildId: text(value.buildId, 120), rootMessageId: text(value.rootMessageId, 120), threadId: text(value.threadId, 120), owner: text(value.owner, 120), error: text(value.error, 600), deliveries };
+  return { status: value.status, objective: text(value.objective, CHANNEL_GOAL_LIMIT), buildId: text(value.buildId, 120), rootMessageId: text(value.rootMessageId, 120), threadId: text(value.threadId, 120), owner: text(value.owner, 120), error: text(value.error, 600), deliveries, ...(value.attachments?.length ? { attachments: attachmentReferences(value.attachments) } : {}) };
 }
 
 export function channelGoalSystemInstruction({ skills = [] } = {}) {

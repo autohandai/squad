@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, ExternalLink, LogIn, RefreshCw } from "lucid
 
 import { Button } from "@/components/ui/button";
 import { EffortSlider } from "@/components/chat/EffortSlider";
+import { HarnessModelSelect } from "./HarnessModelSelect";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,10 +17,8 @@ import { engineVersion,
   effortLevelsFor,
   fetchAcpRegistry,
   harnessLoginStatus,
-  harnessTakesModel,
   isAcpHarnessId,
   listAcpAgents,
-  modelChoices,
   harnessNeedsSignIn,
   harnessOption,
   normalizeHarnessAssignment,
@@ -63,6 +62,7 @@ export function HarnessSelect({
   testing = false,
   testResult = null,
   api,
+  workspace = "",
   id = "member-harness",
   label = "Runs with",
   description = "The engine that executes this member. Personality, model, and permissions stay the same when you change it.",
@@ -72,7 +72,6 @@ export function HarnessSelect({
 }) {
   const assignment = normalizeHarnessAssignment(value);
   const [advancedOpen, setAdvancedOpen] = useState(defaultAdvancedOpen || Boolean(assignment.executablePath || assignment.model || assignment.effort || assignment.access));
-  const [customModel, setCustomModel] = useState(false);
   const external = assignment.id !== "autohand";
   const [signIn, setSignIn] = useState({ state: "idle" });
   const [acpAgents, setAcpAgents] = useState(() => sortAcpAgents(listAcpAgents()));
@@ -155,7 +154,7 @@ export function HarnessSelect({
           </Button>
         ) : null}
       </div>
-      <Select value={assignment.id} onValueChange={(next) => update({ id: next })}>
+      <Select value={assignment.id} onValueChange={(next) => update({ id: next, executablePath: "", model: "", effort: "" })}>
         <SelectTrigger id={id} className={cn("w-full bg-card", compact ? "h-9" : "sm:max-w-sm")}>
           <SelectValue placeholder="Choose an engine" />
         </SelectTrigger>
@@ -254,45 +253,11 @@ export function HarnessSelect({
           </button>
           {advancedOpen ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              {harnessTakesModel(assignment.id) ? (
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor={`${id}-model`} className="text-xs">
                   {option.short} model
                 </Label>
-                {external ? (
-                  <>
-                    <Select
-                      value={customModel ? "__custom" : assignment.model || "__default"}
-                      onValueChange={(next) => {
-                        if (!next) return;
-                        if (next === "__custom") { setCustomModel(true); return; }
-                        setCustomModel(false);
-                        update({ model: next === "__default" ? "" : next });
-                      }}
-                    >
-                      <SelectTrigger id={`${id}-model`} className="h-9 w-full bg-card">
-                        <SelectValue placeholder="Engine default" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {modelChoices(readiness, { current: customModel ? "" : assignment.model }).map((item) => (
-                          <SelectItem key={item.id || "__default"} value={item.id || "__default"}>
-                            {item.label}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value="__custom">Custom…</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {customModel ? (
-                      <Input
-                        value={assignment.model}
-                        placeholder={assignment.id === "claude" ? "claude-opus-5-5" : "gpt-6.1-sol"}
-                        className="h-9 bg-card"
-                        autoFocus
-                        onChange={(event) => update({ model: event.target.value })}
-                      />
-                    ) : null}
-                  </>
-                ) : (
+                {api ? <HarnessModelSelect api={api} harness={assignment.id} executablePath={assignment.executablePath} workspace={workspace} value={assignment.model} label={`${option.short} model`} onChange={model => update({ model })} /> : (
                   <Input
                     id={`${id}-model`}
                     value={assignment.model}
@@ -302,9 +267,6 @@ export function HarnessSelect({
                   />
                 )}
               </div>
-              ) : (
-                <p className="text-xs text-muted-foreground sm:col-span-2">{option.label} chooses its own model; change it in that agent's settings.</p>
-              )}
               {effortLevelsFor(assignment.id, readiness, assignment.model || readiness?.defaults?.model || "").length ? (
                 <div className="sm:col-span-2">
                   <EffortSlider

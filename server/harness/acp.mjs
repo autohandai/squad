@@ -26,6 +26,7 @@ import { guiSafeEnv, redactHome } from "./discovery.mjs";
 import { resolveAccess } from "./access.mjs";
 import { formatDuration } from "../../src/lib/duration.js";
 import { stopMessage } from "./stop-reason.mjs";
+import { acpPromptInput } from "../attachments.mjs";
 
 export const transport = "acp";
 export const ACCESS_MODES = Object.freeze(["plan", "write", "full"]);
@@ -135,7 +136,7 @@ async function detect(adapter, { explicitPath = "", context = {} } = {}) {
  * the protocol, so `args` are the launch args and the prompt, instructions
  * and access go in `turn` for `runAcpHarness`.
  */
-export function buildArgs({ prompt, workspace, model = "", access = "", effort = "", appendSystemPrompt = "", addDirs = [], resumeId = "", launchArgs = [], mcpServers = [] }) {
+export function buildArgs({ prompt, workspace, model = "", access = "", effort = "", appendSystemPrompt = "", addDirs = [], resumeId = "", launchArgs = [], mcpServers = [], attachments = [] }) {
   const args = Array.isArray(launchArgs) ? launchArgs.map(String) : [];
   return {
     args,
@@ -150,6 +151,7 @@ export function buildArgs({ prompt, workspace, model = "", access = "", effort =
       model: String(model || ""),
       effort: String(effort || ""),
       mcpServers,
+      attachments,
     },
   };
 }
@@ -509,7 +511,7 @@ export function runAcpHarness({
         if (method === "fs/read_text_file") {
           const path = String(params?.path || "");
           if (!isAbsolute(path)) throw rpcError(JSON_RPC_ERRORS.invalidParams, "path must be absolute");
-          if (access !== "full" && !isInsideDirs(path, allowedDirs)) throw rpcError(JSON_RPC_ERRORS.refused, `${path} is outside the member's folders`);
+          if (access !== "full" && !isInsideDirs(path, allowedDirs) && !(turn.attachments || []).some(file => resolve(file.path) === resolve(path))) throw rpcError(JSON_RPC_ERRORS.refused, `${path} is outside the member's folders`);
           const content = await readFile(path, "utf8");
           return { content: clampLines(content, params?.line, params?.limit) };
         }
@@ -593,7 +595,7 @@ export function runAcpHarness({
       if (turn.resumeId && agentCapabilities.loadSession) {
         state.loading = true;
         try {
-          await connection.request("session/load", { sessionId: turn.resumeId, cwd, mcpServers }, { timeoutMs: 120000 });
+          created = await connection.request("session/load", { sessionId: turn.resumeId, cwd, mcpServers }, { timeoutMs: 120000 });
           sessionId = turn.resumeId;
           resumed = true;
         } catch (error) {
@@ -615,7 +617,15 @@ export function runAcpHarness({
       }
       if (!sessionId) throw new Error(`${label} returned no session id`);
       state.resumeId = sessionId;
-      deliver({ type: "agent_start", model: String(created?.models?.currentModelId || ""), sessionId, resumed, timestamp: state.timestamp() });
+      let selectedModel = String(created?.models?.currentModelId || "");
+      if (turn.model) {
+        const option = created?.configOptions?.find(item => item.category === "model" || item.id === "model");
+        if (option) await connection.request("session/set_config_option", { sessionId, configId: option.id, value: turn.model }, { timeoutMs: 30000 });
+        else if (created?.models?.availableModels?.length) await connection.request("session/set_model", { sessionId, modelId: turn.model }, { timeoutMs: 30000 });
+        else throw new Error(`${label} does not report selectable models. Choose its engine default.`);
+        selectedModel = turn.model;
+      }
+      deliver({ type: "agent_start", model: selectedModel, sessionId, resumed, timestamp: state.timestamp() });
       const modes = created?.modes && typeof created.modes === "object" ? created.modes : null;
       if (access === "plan" && modes?.availableModes?.some((mode) => mode?.id === "plan") && modes.currentModeId !== "plan") {
         await connection.request("session/set_mode", { sessionId, modeId: "plan" }, { timeoutMs: 30000 }).catch(() => {});
@@ -625,7 +635,7 @@ export function runAcpHarness({
         ? `<operating_instructions>\n${turn.instructions}\n</operating_instructions>\n\n${turn.prompt}`
         : turn.prompt;
       deliver({ type: "status", status: "turn_started", timestamp: state.timestamp() });
-      const result = await connection.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] });
+      const result = await connection.request("session/prompt", { sessionId, prompt: await acpPromptInput(text, turn.attachments, agentCapabilities.promptCapabilities) });
       for (const event of flushMessage(state)) deliver(event);
       const stopReason = String(result?.stopReason || "end_turn");
       deliver({ type: "agent_end", reason: stopReason, timestamp: state.timestamp() });

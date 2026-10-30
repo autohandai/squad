@@ -32,7 +32,7 @@ export function privateLaunch(payload) {
     if (!value || typeof value !== "object") return value;
     return Object.fromEntries(Object.entries(value).filter(([key]) => !/(?:api.?key|token|secret|password|authorization|credentials|^env$)/i.test(key)).map(([key, item]) => [key, scrub(item)]));
   };
-  const keys = ["agentId", "agent", "squadMembers", "workspace", "profile", "model", "effort", "access", "policy", "transport", "timeoutMs", "canvasDir", "canvasId", "channelId", "threadId", "channel"];
+  const keys = ["agentId", "agent", "squadMembers", "workspace", "profile", "model", "effort", "access", "policy", "transport", "timeoutMs", "canvasDir", "canvasId", "channelId", "threadId", "channel", "conversationContext"];
   return scrub(Object.fromEntries(keys.filter((key) => payload[key] !== undefined).map((key) => [key, payload[key]])));
 }
 
@@ -46,7 +46,7 @@ function attachmentReferences(value) {
   return value.slice(0, MAX_ATTACHMENTS).map((entry) => {
     if (typeof entry === "string") return { id: entry.slice(0, 200) };
     if (!entry || typeof entry !== "object") return null;
-    return { id: idOf(entry.id).slice(0, 200), name: String(entry.name || "").slice(0, 200), kind: String(entry.kind || entry.type || "").slice(0, 40) };
+    return { id: idOf(entry.id).slice(0, 200), name: String(entry.name || "").slice(0, 200), kind: String(entry.kind || entry.type || "").slice(0, 40), ...(entry.mime ? { mime: String(entry.mime).slice(0, 160) } : {}), ...(entry.size ? { size: Number(entry.size) || 0 } : {}), ...(entry.url ? { url: `/api/attachments/${idOf(entry.id)}` } : {}), ...(entry.previewUrl ? { previewUrl: `/api/attachments/${idOf(entry.id)}/preview` } : {}) };
   }).filter((entry) => entry && entry.id);
 }
 

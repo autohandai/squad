@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { readPersistentJson, writePersistentJson } from './persistent-json.mjs';
 import { cleanWorkResult, normalizeChecklist } from './work-progress.mjs';
 import { harnessAssignmentFromAgent } from './harness/registry.mjs';
+import { attachmentReferences } from '../src/lib/attachments.js';
 
 const ACTIVE = new Set(['running']);
 const FINISHED = new Set(['completed', 'cancelled']);
@@ -17,7 +18,7 @@ function privateLaunch(payload) {
     return Object.fromEntries(Object.entries(value).filter(([key]) => !/(?:api.?key|token|secret|password|authorization|credentials|^env$)/i.test(key)).map(([key, item]) => [key, scrub(item)]));
   };
   const keys = ['agentId', 'agent', 'squadMembers', 'workspace', 'profile', 'model', 'policy', 'transport', 'timeoutMs', 'canvasDir', 'channelId', 'threadId', 'channel'];
-  return scrub(Object.fromEntries(keys.filter((key) => payload[key] !== undefined).map((key) => [key, payload[key]])));
+  return { ...scrub(Object.fromEntries(keys.filter((key) => payload[key] !== undefined).map((key) => [key, payload[key]]))), attachments: attachmentReferences(payload.attachments) };
 }
 
 export function publicGoal(record) {

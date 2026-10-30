@@ -91,6 +91,7 @@ export function queueItemMessagePatch(item, member = {}) {
     ...(item.result?.durationMs ? { durationMs: item.result.durationMs } : {}),
     ...(item.result?.transport ? { transport: item.result.transport } : {}),
     ...(item.result?.effectiveModel ? { effectiveModel: item.result.effectiveModel } : {}),
+    ...(item.result?.routing ? { routing: item.result.routing } : {}),
     ...(item.result?.command ? { command: item.result.command } : {}),
     ...(item.progress ? { progress: item.progress } : {}),
     ...(status === "error" ? { error: item.error || "" } : {}),
@@ -128,7 +129,7 @@ export function reconcileQueueMessages(current, queues, members, locale = "en") 
       if (existing) {
         next[member.id] = messages.map((message) => (message.id === existing.id ? agentMessage : message));
       } else {
-        const userMessage = { id: `queue-${item.id}-u`, role: "user", body: item.text, time, createdAt: startedAt, startedAt, requestId: `queue-${item.id}`, queueItemId: item.id };
+        const userMessage = { id: `queue-${item.id}-u`, role: "user", body: item.text, attachments: item.attachments || [], time, createdAt: startedAt, startedAt, requestId: `queue-${item.id}`, queueItemId: item.id };
         next[member.id] = insertByTime(insertByTime(messages, userMessage), agentMessage);
       }
     }

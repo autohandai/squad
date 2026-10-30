@@ -1,18 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crosshair, FileIcon } from "lucide-react";
+import { Crosshair } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { AttachmentList } from "@/components/chat/Attachments";
 import { anchorLabel, formatTimestamp, normalizeAnchors, normalizeAttachment } from "@/lib/anchors";
 import { cn } from "@/lib/utils";
 
 const MIN_BOX = 0.01;
-
-function formatSize(bytes) {
-  const value = Number(bytes) || 0;
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function pointIn(element, event) {
   const rect = element.getBoundingClientRect();
@@ -186,18 +180,7 @@ export function MediaAttachment({ attachment, anchors = [], onAnchor, src, maxHe
   if (!file) return null;
 
   if (!isVideo && !isImage) {
-    return (
-      <a
-        href={source}
-        target="_blank"
-        rel="noreferrer"
-        className={cn("inline-flex max-w-full items-center gap-2 py-1 text-sm text-foreground/90 underline-offset-4 hover:underline", className)}
-      >
-        <FileIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <span className="min-w-0 truncate">{file.name}</span>
-        <span className="text-xs text-muted-foreground">{formatSize(file.size)}</span>
-      </a>
-    );
+    return <AttachmentList files={[file]} className={className} />;
   }
 
   const liveBox = drag ? boxFromPoints(drag.start, drag.end) : box;

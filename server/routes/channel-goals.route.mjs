@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { readPersistentJson, writePersistentJson } from '../persistent-json.mjs';
 import { validateTeamFile } from '../../src/lib/teams.js';
 import { normalizeChannelGoal, CHANNEL_GOAL_LIMIT } from '../../src/lib/channel-goals.js';
+import { attachmentReferences } from '../../src/lib/attachments.js';
+import { resolveAttachments } from '../attachments.mjs';
 
 export const name = 'channel-goals';
 const ROUTE = /^\/api\/channels\/([^/]+)\/goal(?:\/(build|progress))?$/;
@@ -32,6 +34,8 @@ function settle(state, channel, delivery, run, interrupted = false) {
       ? 'Finished without reply text. Open the run in Execution to inspect the work.'
       : delivery.status === 'stopped' ? 'This work was stopped.' : 'This member could not finish. Send a follow-up in this thread to retry.');
   message.completedAt = run?.finishedAt || stamp();
+  if (run?.effectiveModel) message.effectiveModel = run.effectiveModel;
+  if (run?.routing) message.routing = run.routing;
   message.updatedAt = stamp();
   channel.updatedAt = message.updatedAt;
 }
@@ -67,16 +71,17 @@ function claimGoal(state, channel, body) {
   const owner = String(body.owner || '').slice(0, 120);
   if (!owner) throw problem('A setup request identity is required.');
   if (['designing', 'preparing'].includes(previous?.status) && !body.resume) return { claimed: false, channel };
-  const same = previous?.objective === objective;
+  const attachments = body.attachments === undefined ? previous?.attachments || [] : body.attachments;
+  const same = previous?.objective === objective && JSON.stringify((previous?.attachments || []).map(file => file.id)) === JSON.stringify(attachments.map(file => file.id));
   const build = same && builds[channel.id]?.goalObjective === objective ? builds[channel.id] : null;
   const threadId = same && previous.threadId ? previous.threadId : `goal-${randomUUID()}`;
   const rootMessageId = same && previous.rootMessageId ? previous.rootMessageId : `${threadId}-root`;
   const now = stamp();
   if (!state.messages.some(message => message.id === rootMessageId)) {
-    state.messages.push({ id: rootMessageId, channelId: channel.id, threadId, parentMessageId: '', role: 'user', body: objective, status: 'complete', createdAt: now, updatedAt: now });
+    state.messages.push({ id: rootMessageId, channelId: channel.id, threadId, parentMessageId: '', role: 'user', body: objective, ...(attachments.length ? { attachments } : {}), status: 'complete', createdAt: now, updatedAt: now });
     state.threads.push({ id: threadId, channelId: channel.id, parentMessageId: rootMessageId, title: objective.slice(0, 160), creatorId: 'user', memberIds: [], replyCount: 0, createdAt: now, updatedAt: now });
   }
-  channel.goalSetup = normalizeChannelGoal({ status: build ? 'preparing' : 'designing', objective, buildId: build?.id || '', threadId, rootMessageId, owner });
+  channel.goalSetup = normalizeChannelGoal({ status: build ? 'preparing' : 'designing', objective, attachments, buildId: build?.id || '', threadId, rootMessageId, owner });
   channel.purpose = objective;
   channel.updatedAt = now;
   return { claimed: true, channel, build };
@@ -134,6 +139,7 @@ async function launch(channelId, delivery) {
       prompt: `Our channel goal: ${channel.goalSetup.objective}\n\nYou are ${access.agent.name}, ${access.agent.role}. Start the concrete work your role owns now. Coordinate through Squad with these teammates: ${roster.map(member => `${member.name} (${member.role})`).join(', ')}. Produce useful work and verify it before reporting. Do not ask whether to start.`,
       title: `Start ${access.agent.role || access.agent.name} work in #${channel.name}`,
       mode: 'prompt', policy: access.agent.launch?.policy || 'yes', requestId: delivery.messageId,
+      attachments: channel.goalSetup.attachments || [],
       channelId, channel: { id: channelId, name: channel.name, visibility: channel.visibility, memberIds: channel.memberIds },
       threadId: channel.goalSetup.threadId, parentMessageId: channel.goalSetup.rootMessageId, memberIds: channel.memberIds,
       autoModeDefault: true, selfJudge: true, ephemeralSession: true, resumeSession: false });
@@ -163,6 +169,7 @@ export async function handle(req, res, url, ctx) {
   try {
     const channelId = decodeURIComponent(match[1]), action = match[2];
     const body = req.method === 'GET' ? {} : await ctx.readBody(req, 2 * 1024 * 1024);
+    if (!action && req.method === 'POST' && body.attachments !== undefined) body.attachments = attachmentReferences(await resolveAttachments(ctx.squadStateDir, body.attachments));
     const deliveries = [];
     const data = await serialized(async () => {
       if (action === 'build' && req.method === 'GET') return { build: builds[channelId] || null };

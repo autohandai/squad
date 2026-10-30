@@ -8,13 +8,15 @@ import {initialAgents} from '../src/data.js';
 import {memberFixture} from './lib/member-fixture.mjs';
 import {teamDocumentFromProposal,buildMemberDraft} from '../src/lib/team-builder.js';
 import {planImport} from '../src/lib/teams.js';
+import {attachmentFixtures} from './lib/attachment-fixtures.mjs';
 await mkdir('.codex-artifacts',{recursive:true});
 const workspace=await mkdtemp(join(process.cwd(),'.codex-artifacts/channel-goals-'));
 const bridge=await startBridge({prepare:async directory=>{
   const entry=join(directory,'designer.mjs');
   await writeFile(entry,`import {existsSync,appendFileSync} from 'node:fs';
-    export class AutohandSDK {async start(){}async close(){}async interrupt(){}async *streamPrompt({message}){
-    if(!message.includes('Design a specialized Squad team')){appendFileSync(${JSON.stringify(join(directory,'work-calls.jsonl'))},JSON.stringify({message})+'\\n');yield {type:'message_start'};while(existsSync(${JSON.stringify(join(directory,'hold-work'))})){await new Promise(resolve=>setTimeout(resolve,50));yield {type:'heartbeat'};}yield {type:'message_end',content:'Started concrete work for this channel goal and checked the result.'};return;}
+    export class AutohandSDK {async start(){}async close(){}async interrupt(){}async *streamPrompt({message,images=[]}){
+    appendFileSync(${JSON.stringify(join(directory,'all-calls.jsonl'))},JSON.stringify({message,imageCount:images.length})+'\\n');
+    if(!message.includes('Design a specialized Squad team')){appendFileSync(${JSON.stringify(join(directory,'work-calls.jsonl'))},JSON.stringify({message,imageCount:images.length})+'\\n');yield {type:'message_start'};while(existsSync(${JSON.stringify(join(directory,'hold-work'))})){await new Promise(resolve=>setTimeout(resolve,50));yield {type:'heartbeat'};}yield {type:'message_end',content:'Started concrete work for this channel goal and checked the result.'};return;}
     const mobile=/mobile app/i.test(message);
     const roles=mobile?['Release Manager','Mobile Developer','UX Designer','QA Engineer']:['Sales Lead','Copywriter'];
     yield {type:'message_start'};yield {type:'message_end',content:JSON.stringify({name:mobile?'Mobile Release':'Bakery Sales',leadKey:'role-0',members:roles.map((role,index)=>({key:'role-'+index,name:['Mira','Tane','Lou','Kit'][index],role,purpose:'Own '+role+' for this channel goal.',instructions:'Work on the channel objective as '+role+'. Verify results before reporting.',skills:[]}))})};
@@ -33,10 +35,14 @@ try {
   legacyState.messages.push({id:'legacy-answer',channelId:'legacy-count',threadId:'legacy-thread',role:'agent',body:'Actual answer',status:'complete'});
   await bridge.api('/api/channels','PUT',legacyState);
   assert.equal((await bridge.api('/api/channels')).data.threads.find(thread=>thread.id==='legacy-thread').replyCount,1,'a completed legacy thread-only answer counts once');
-  const design=objective=>bridge.api('/api/teams/design','POST',{objective,workspace,channelName:'goal-proof',existingNames:['Mira']});
+  const png=(await attachmentFixtures())[0];
+  const uploaded=await fetch(bridge.origin+'/api/attachments',{method:'POST',headers:{'content-type':png.mime,'x-file-name':png.name},body:png.bytes});
+  const file=(await uploaded.json()).data;assert(file?.id);
+  const design=objective=>bridge.api('/api/teams/design','POST',{objective,attachments:[{id:file.id}],workspace,channelName:'goal-proof',existingNames:['Mira']});
   const mobile=await design('Build a mobile app and prepare its first release with UX and QA.');
   assert.equal(mobile.success,true,JSON.stringify(mobile));
   assert.equal(mobile.data.source,'model');
+  assert.equal(JSON.parse((await readFile(join(bridge.directory,'all-calls.jsonl'),'utf8')).trim()).imageCount,1,'the team designer receives the goal image natively');
   assert.deepEqual(mobile.data.proposal.members.map(member=>member.role),['Release Manager','Mobile Developer','UX Designer','QA Engineer']);
   assert.equal(mobile.data.proposal.members[0].name,'Mira 2','existing names remain unique');
   const sales=await design('Sell seasonal bread to local cafes with a small sales and copy team.');
@@ -46,7 +52,7 @@ try {
   assert.equal(sales.data.proposal.objective.includes('seasonal bread'),true);
   assert.equal((await design('')).status,400);
   await bridge.api('/api/channels','POST',{id:'goal-recovery',name:'goal-recovery',memberIds:[],projects:[{path:workspace}],goalSetup:{status:'awaiting'}});
-  const claim=await bridge.api('/api/channels/goal-recovery/goal','POST',{owner:'first-window',objective:mobile.data.proposal.objective});
+  const claim=await bridge.api('/api/channels/goal-recovery/goal','POST',{owner:'first-window',objective:mobile.data.proposal.objective,attachments:[{id:file.id}]});
   assert.equal(claim.data.claimed,true);
   assert.equal((await bridge.api('/api/channels/goal-recovery/goal','POST',{owner:'another-window',objective:mobile.data.proposal.objective})).data.claimed,false,'two windows cannot both begin a new build');
   const document=teamDocumentFromProposal(mobile.data.proposal),plan=planImport(document,{existingMemberNames:[]});
@@ -57,6 +63,7 @@ try {
   const resumed=await bridge.api('/api/channels/goal-recovery/goal','POST',{owner:'resumed-window',objective:mobile.data.proposal.objective,resume:true});
   assert.equal(resumed.data.build.members[0].status,'ready','restarting retains the prepared member id and status');
   assert.equal(resumed.data.build.members[0].id,'goal-member-0');
+  assert.equal(resumed.data.channel.goalSetup.attachments[0].id,file.id,'resume retains the original goal image');
   assert.equal((await bridge.api('/api/channels/goal-recovery/goal/progress','POST',{owner:'first-window',status:'ready'})).status,409,'an old window cannot finish a newly resumed setup');
   assert.equal((await bridge.api('/api/channels')).data.messages.filter(message=>message.channelId==='goal-recovery'&&message.role==='user').length,1,'resume does not duplicate the goal message');
   // Ready is a durable bridge handoff. No browser exists in this part of
@@ -74,6 +81,8 @@ try {
   assert.equal(begun.data.channel.goalSetup.deliveries?.length,4,'Ready queues actual member work on the bridge');
   await until(async()=>{const lines=await readFile(join(bridge.directory,'work-calls.jsonl'),'utf8');return lines.trim().split('\n').length===4;},'every specialist starts without an open browser',15000);
   let working=(await bridge.api('/api/channels')).data;
+  assert.equal(working.messages.find(message=>message.id===resumed.data.channel.goalSetup.rootMessageId).attachments[0].id,file.id,'the goal root keeps its visible attachment');
+  assert((await readFile(join(bridge.directory,'work-calls.jsonl'),'utf8')).trim().split('\n').map(JSON.parse).every(call=>call.imageCount===1),'all four specialists receive the original image natively');
   assert.equal(working.threads.find(thread=>thread.id===resumed.data.channel.goalSetup.threadId).replyCount,0,'starting work is never a completed reply');
   assert.equal((await bridge.api('/api/channels/goal-recovery/goal/progress','POST',start)).success,true,'retrying Ready is idempotent');
   await rm(join(bridge.directory,'hold-work'));

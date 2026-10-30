@@ -1,5 +1,6 @@
 use autohand_squad_runtime::config::PartialSquadConfig;
 use autohand_squad_runtime::daemon::run_daemon;
+use autohand_squad_runtime::memory_index::{run_stdio, MemoryIndexArgs};
 use clap::Parser;
 
 #[derive(Debug, Parser)]
@@ -38,8 +39,22 @@ struct DaemonArgs {
     plan_state: Option<String>,
 }
 
+fn main() {
+    // The bridge starts a private pipe to this mode. It must not start daemon
+    // listeners, telemetry or inspect the person's ordinary daemon config.
+    if std::env::args_os().any(|argument| argument == "--memory-index") {
+        let args = MemoryIndexArgs::parse();
+        if let Err(error) = run_stdio(&args.index_dir) {
+            eprintln!("memory index: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    daemon_main();
+}
+
 #[tokio::main]
-async fn main() {
+async fn daemon_main() {
     let args = DaemonArgs::parse();
     let overrides = PartialSquadConfig {
         host: args.host,

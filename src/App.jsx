@@ -1,4 +1,4 @@
-import React, { Fragment, createContext, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import React, { Fragment, Suspense, createContext, lazy, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectObserver } from "@/lib/use-project-observer";
 import { onDesktopMenu } from "@/lib/desktop-menu";
 import { FirstRun } from "@/components/onboarding/FirstRun";
@@ -104,7 +104,6 @@ import {
   Pin,
   PanelRightOpen,
   PanelLeft,
-  Paperclip,
   PencilLine,
   Play,
   Plus,
@@ -346,6 +345,11 @@ import { MEMBER_PROFILE_FIELDS, PROFILE_LIMITS, blankGreeting, blankMemberDraft,
 import { HISTORY_PAGE, mergeRecords, nextCursor } from "@/lib/member-history";
 import { SignInGate } from "@/components/account/SignInGate";
 import { PromptTextarea } from "@/components/chat/PromptTextarea";
+import { AttachmentButton, AttachmentList, useAttachments } from "@/components/chat/Attachments";
+import { HarnessModelSelect } from "@/components/members/HarnessModelSelect";
+import { MemberFallbacks } from "@/components/members/MemberFallbacks";
+import { fallbackLabel, normalizeModelRouting } from "@/lib/model-routing";
+import { ATTACHMENT_COUNT_LIMIT, attachmentOnlyPrompt, attachmentReferences } from "@/lib/attachments";
 import { ReadAloudButton } from "@/components/chat/ReadAloudButton";
 import { ReadAloudSetting } from "@/components/chat/ReadAloudSetting";
 import { VoiceInputButton } from "@/components/chat/VoiceInputButton";
@@ -404,7 +408,6 @@ import {
   fetchHarnesses,
   harnessForAgent,
   harnessLabel,
-  modelChoices,
   normalizeHarnessAssignment as normalizeHarnessAssignmentCopy,
   readinessFor,
   readinessLabel,
@@ -445,6 +448,8 @@ class RenderErrorBoundary extends React.Component {
   }
 }
 
+const MemoryPage = lazy(() => import("@/components/memory/MemoryPage").then(module => ({ default: module.MemoryPage })));
+const MemorySettings = lazy(() => import("@/components/settings/MemorySettings").then(module => ({ default: module.MemorySettings })));
 const CHAT_DRAFTS_KEY = "autohandSquad.v1.chatDrafts";
 
 const STORAGE_KEYS = {
@@ -1322,75 +1327,13 @@ function sidebarActiveTarget(route, activeAgent) {
   const [path, query = ""] = String(route || "").split("?");
   if (isWorkRoute(path)) return { kind: "work", id: "" };
   if (path === SQUAD_DIRECTORY_ROUTE || path === AGENTS_ROUTE) return { kind: "agents", id: "" };
+  if (path === "/memory") return { kind: "memory", id: "" };
   if (path.startsWith(CHANNELS_ROUTE)) return { kind: "channel", id: channelIdFromRoute(route) };
   if (path === "/conversations/new") {
     const member = new URLSearchParams(query).get("member") || activeAgent?.id || "";
     return member ? { kind: "member", id: member } : { kind: "", id: "" };
   }
   return { kind: "", id: "" };
-}
-
-// Attachments become prompt context: text-like files are inlined as fenced
-// blocks (bounded), anything else is referenced by name so the member knows
-// the user tried to share it.
-const ATTACHMENT_TEXT_LIMIT = 200 * 1024;
-const ATTACHMENT_TEXT_TYPES = /^(text\/|application\/(json|xml|javascript|x-yaml|yaml|toml|x-sh))/;
-
-function isTextLikeAttachment(file) {
-  return ATTACHMENT_TEXT_TYPES.test(file?.type || "") || /\.(md|txt|json|ya?ml|toml|js|jsx|ts|tsx|mjs|cjs|css|html|py|rs|go|sh|log|csv)$/i.test(file?.name || "");
-}
-
-async function attachFilesToDraft(files, setDraft) {
-  const blocks = [];
-  for (const file of files.slice(0, 5)) {
-    const textLike = isTextLikeAttachment(file);
-    if (textLike && file.size <= ATTACHMENT_TEXT_LIMIT) {
-      try {
-        const content = await file.text();
-        blocks.push(`\n\n<attachment name="${file.name}">\n${content}\n</attachment>`);
-        continue;
-      } catch {
-        // fall through to a reference-only attachment
-      }
-    }
-    blocks.push(`\n\n[attachment: ${file.name} (${Math.round(file.size / 1024)} KB, not inlined)]`);
-  }
-  if (blocks.length) setDraft((current) => `${current}${blocks.join("")}`.replace(/^\n+/, ""));
-}
-
-// Media attachments (#32, ADR-0024): images, videos and other binaries go to
-// the bridge as a raw body (`x-file-name` + `content-type`), which stores the
-// bytes under the squad state dir and returns the attachment record. `api`
-// spreads the caller's headers over its JSON defaults, so the File body is
-// sent untouched.
-async function uploadAttachment(file) {
-  return api("/api/attachments", {
-    method: "POST",
-    headers: { "x-file-name": encodeURIComponent(file.name), "content-type": file.type || "application/octet-stream" },
-    body: file,
-  });
-}
-
-// Split a composer drop: text-like files keep the inline `<attachment>` path,
-// everything else uploads and becomes a pending attachment on the message.
-async function attachChannelFiles(files, { setDraft, addAttachment, onError, copy = {} }) {
-  const list = Array.from(files || []);
-  const textLike = list.filter((file) => isTextLikeAttachment(file));
-  const binary = list.filter((file) => !isTextLikeAttachment(file));
-  if (textLike.length) await attachFilesToDraft(textLike, setDraft);
-  for (const file of binary) {
-    try {
-      const uploaded = await uploadAttachment(file);
-      if (uploaded?.id) addAttachment(uploaded);
-    } catch (error) {
-      const message = String(error?.message || "");
-      onError?.(
-        /larger than|413/i.test(message)
-          ? copy.attachmentTooLarge || message || "That file is larger than 25 MB."
-          : message || formatCopy(copy.attachmentUploadFailed || "Could not upload {name}.", { name: file.name })
-      );
-    }
-  }
 }
 
 // localStorage can throw (quota, private mode, locked-down webviews). A failed
@@ -2972,6 +2915,7 @@ function normalizeAgentCopy(agent) {
       : { activeDays: 0, automations: 0, tasks: 0, projects: projects.length },
     permissions: normalizePermissionState(agent.permissions),
     modelAssignment: normalizeModelAssignment(agent.modelAssignment),
+    modelRouting: normalizeModelRouting(agent.modelRouting),
     harness: normalizeHarnessAssignmentCopy(agent.harness),
     projects,
     brainCard,
@@ -6929,7 +6873,7 @@ function App() {
         return { ...agent, ...patch };
       }));
     };
-    const accessChanged = ["permissions", "projects", "workspace", "name", "description", "instructions", "brainCard", "harness", "skills", "modelAssignment", "role", "memory", "profileFiles"].some(key => key in patch);
+    const accessChanged = ["permissions", "projects", "workspace", "name", "description", "instructions", "brainCard", "harness", "skills", "modelAssignment", "modelRouting", "role", "memory", "profileFiles"].some(key => key in patch);
     if (!accessChanged) { publish(); return Promise.resolve(); }
     const previous = memberAccessWritesRef.current.get(agentId);
     const entry = { member: previous?.member, promise: null };
@@ -6941,6 +6885,7 @@ function App() {
       const saved = await api(`/api/members/${encodeURIComponent(agentId)}/channel-access`, { method: "PUT", body: JSON.stringify({ agent: channelActionMember(next), profile: buildAgentProfile(next, next.workspace), profilePatch }) });
       patch = { ...patch, ...(saved.profile || {}), profileRevision: saved.profileRevision ?? memberProfileRevision(next) };
       entry.member = { ...next, ...patch };
+      setChannelOperationError("");
       publish();
     }).catch(error => {
       setChannelOperationError(`Could not save ${membersRef.current.find(member => member.id === agentId)?.name || "teammate"} settings: ${error.message}`);
@@ -7370,7 +7315,8 @@ function App() {
     const startedAt = now.toISOString();
     const requestStartedAt = performance.now();
     const time = now.toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" });
-    const prompt = String(launch.prompt || "").trim();
+    const attachments = attachmentReferences(launch.attachments);
+    const prompt = String(launch.prompt || "").trim() || (attachments.length ? attachmentOnlyPrompt(attachments) : "");
     const selectedWorkspace = normalizeSquadWorkspacePath(launch.workspace || fallbackWorkspace, runtime);
     if (!prompt) return;
 
@@ -7390,7 +7336,7 @@ function App() {
     if (launch.queue) {
       const item = await api(`/api/queues/${encodeURIComponent(agentId)}/items`, {
         method: "POST",
-        body: JSON.stringify({ requestId, squadMembers: agents.map(member => channelActionMember(member)), agentId, mode: "prompt", text: prompt, workspace: selectedWorkspace, policy: launch.policy, model: launch.model, effort: launch.effort || "", access: launch.access || "", profile, agent: channelActionMember(agent, selectedWorkspace) }),
+        body: JSON.stringify({ requestId, squadMembers: agents.map(member => channelActionMember(member)), agentId, mode: "prompt", text: prompt, attachments, workspace: selectedWorkspace, policy: launch.policy, model: launch.model, effort: launch.effort || "", access: launch.access || "", profile, agent: channelActionMember(agent, selectedWorkspace), conversationContext: (messagesByAgent[agentId] || []).filter(message => message.status === "complete" && !message.superseded).slice(-12).map(message => ({ role: message.role, body: String(message.body || "").slice(-2400) })) }),
       });
       void refreshMemberQueues().catch(() => {});
       return { queued: true, item };
@@ -7399,7 +7345,7 @@ function App() {
     // Retry answers the same question again: the failed reply steps aside and
     // the question is not posted a second time.
     if (launch.retryOf) updateMessage(agentId, launch.retryOf, { superseded: true });
-    else appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, time, startedAt, requestId, ...checkpoint });
+    else appendMessage(agentId, { id: `${id}-u`, role: "user", body: prompt, attachments, time, startedAt, requestId, ...checkpoint });
 
     // A member on a break declines rather than silently queueing the work.
     const availability = memberAvailability(agent, localeCopy);
@@ -7436,6 +7382,7 @@ function App() {
     const openingBriefing = (messagesByAgent[agentId] || []).length === 0 ? briefingContext(briefingForActiveMember) : "";
     const payload = {
       requestId,
+      attachments,
       squadMembers: agents.map(member => channelActionMember(member)),
       agentId,
       mode: launch.mode === "goal" ? "goal" : "prompt",
@@ -7448,6 +7395,7 @@ function App() {
       profile,
       agent: channelActionMember(agent, selectedWorkspace),
       collaboration: launch.collaboration || null,
+      conversationContext: (messagesByAgent[agentId] || []).filter(message => message.status === "complete" && !message.superseded).slice(-12).map(message => ({ role: message.role, body: String(message.body || "").slice(-2400) })),
       ...(launch.interruptQueue ? { interruptQueue: true } : {}),
       ...(canvasAttachment.canvasId ? { canvasId: canvasAttachment.canvasId, canvasDir: canvasAttachment.canvasDir } : {}),
     };
@@ -7485,6 +7433,11 @@ function App() {
             // empty answer or duplicate the question when its turn starts.
             setMessagesByAgent(current => ({ ...current, [agentId]: (current[agentId] || []).filter(message => message.id !== `${id}-u` && message.id !== `${id}-a`) }));
             void refreshMemberQueues().catch(() => {});
+            return;
+          }
+          if (event === "fallback") {
+            streamedAnswer = "";
+            updateMessage(agentId, `${id}-a`, { body: "", activityLabel: `Continuing with ${harnessLabel(data.to)}${data.model ? ` · ${data.model}` : ""}…` });
             return;
           }
           if (event === "start") {
@@ -7558,6 +7511,7 @@ function App() {
               transport: data.transport || "",
               effectiveModel: data.effectiveModel,
               goal: data.goal || null,
+              routing: data.routing || null,
               progress: data.progress || (data.goal ? goalProgress(data.goal) : null),
               declined: data.declined ? data.reason || "break" : "",
               computerUse: data.computerUse || null,
@@ -7584,6 +7538,7 @@ function App() {
               durationMs: finalResult.durationMs,
               transport: finalResult.transport,
               effectiveModel: finalResult.effectiveModel,
+              routing: finalResult.routing,
               activityLabel: "",
               ...(finalResult.goal ? goalMessagePatch(finalResult.goal) : {}),
               ...(finalResult.progress ? { progress: finalResult.progress } : {}),
@@ -7677,7 +7632,7 @@ function App() {
   function appendChannelMessage(channelId, message) {
     setMessagesByChannel((current) => ({
       ...current,
-      [channelId]: [...(current[channelId] || []), message],
+      [channelId]: [...(current[channelId] || []), { ...message, channelId }],
     }));
   }
 
@@ -7853,8 +7808,11 @@ function App() {
       .filter(Boolean)
       .join("\n\n");
     const canvasAttachment = await attachCanvasMentions(prompt, canvases);
+    const threadFiles = (messagesByChannel[channel.id] || []).filter(message => message.role === "user" && (message.threadId === threadId || message.id === parentMessageId)).flatMap(message => message.attachments || []);
+    const turnFiles = [...new Map([...threadFiles, ...attachments].map(file => [file.id, file])).values()].slice(-ATTACHMENT_COUNT_LIMIT);
     const payload = {
       requestId: messageId,
+      attachments: attachmentReferences(turnFiles),
       squadMembers: agents.map(member => channelActionMember(member)),
       agentId: agent.id,
       prompt: canvasAttachment.prompt,
@@ -7915,6 +7873,11 @@ function App() {
         "/api/chat/stream",
         { method: "POST", signal: controller.signal, body: JSON.stringify(payload) },
         (event, data) => {
+          if (event === "fallback") {
+            streamedAnswer = "";
+            updateChannelMessage(channel.id, messageId, { body: `${agent.name} is typing...`, activityLabel: `Continuing with ${harnessLabel(data.to)}…` });
+            return;
+          }
           if (event === "start") {
             updateChannelMessage(channel.id, messageId, {
               startedAt: data.startedAt || startedAt,
@@ -7978,6 +7941,7 @@ function App() {
               transport: data.transport || "",
               effectiveModel: data.effectiveModel,
               completedAt,
+              routing: data.routing || null,
               durationMs: data.durationMs,
               activityLabel: "",
               updatedAt: completedAt,
@@ -8090,13 +8054,13 @@ function App() {
   // out to every squad member assigned to the channel; each member chooses its
   // own execution plan and posts an in-thread reply.
   const channelGoalRequestsRef = useRef(new Set());
-  async function startChannelGoal(channel, objective, { resume = false } = {}) {
+  async function startChannelGoal(channel, objective, { resume = false, attachments = [] } = {}) {
     if (channelGoalRequestsRef.current.has(channel.id)) return;
     channelGoalRequestsRef.current.add(channel.id);
     const owner = crypto.randomUUID();
     let claimed = false;
     try {
-      const claim = await api(`/api/channels/${encodeURIComponent(channel.id)}/goal`, { method: "POST", body: JSON.stringify({ objective, owner, resume }) });
+      const claim = await api(`/api/channels/${encodeURIComponent(channel.id)}/goal`, { method: "POST", body: JSON.stringify({ objective, owner, resume, attachments: attachments.length ? attachments : resume ? channel.goalSetup?.attachments || [] : [] }) });
       const current = normalizeChannelCopy(claim.channel);
       setChannels(items => items.map(item => item.id === current.id ? current : item));
       await reloadChannelsFromBridge();
@@ -8111,7 +8075,7 @@ function App() {
         return;
       }
       const workspace = current.projects?.[0]?.path || activeAgent?.workspace || fallbackWorkspace;
-      const designed = await api("/api/teams/design", { method: "POST", body: JSON.stringify({ objective: current.goalSetup.objective, workspace, channelName: current.name, existingNames: membersRef.current.map(member => member.name) }) });
+      const designed = await api("/api/teams/design", { method: "POST", body: JSON.stringify({ objective: current.goalSetup.objective, attachments: current.goalSetup.attachments || [], workspace, channelName: current.name, existingNames: membersRef.current.map(member => member.name) }) });
       const document = teamDocumentFromProposal(designed.proposal, { roleTemplates, app: "autohand-squad" });
       await addTeam(document, { trusted: true, source: "channel-goal", targetChannelId: current.id, goalOwner: owner, goalObjective: current.goalSetup.objective, workspace });
       await reloadChannelsFromBridge();
@@ -8125,7 +8089,7 @@ function App() {
     const channel = channels.find((item) => item.id === channelId);
     const text = String(prompt || "").trim();
     if (!channel || !text) return;
-    if (channel.goalSetup && channel.goalSetup.status !== "ready") return startChannelGoal(channel, text, { resume: resumeGoal });
+    if (channel.goalSetup && channel.goalSetup.status !== "ready") return startChannelGoal(channel, text, { resume: resumeGoal, attachments });
     const mentions = resolveChannelMentionTargets(text, channel, agents);
     // Responder rules (ADR-0108): mentions and @here win; otherwise the
     // channel's mode decides, and only Auto asks the bridge to pick.
@@ -9915,6 +9879,8 @@ function App() {
               />
             ) : isAnalytics ? (
               <SettingsAnalyticsPage locale={localeResolution.locale} copy={localeCopy} />
+            ) : routePath === "/memory" ? (
+              <Suspense fallback={<p className="px-8 py-8 text-sm text-muted-foreground">Opening memory…</p>}><MemoryPage api={api} navigate={navigate} onSettings={() => openSettings("memory")} /></Suspense>
             ) : isSquadDirectory ? (
               <SquadDirectoryPage
                 channelMessages={relayStatus?.connected ? Object.values(messagesByChannel).flat() : EMPTY_LIST}
@@ -10398,6 +10364,7 @@ function ChannelThreadMessage({ message, agents = [], userName = ACCOUNT_PROFILE
         </div>
         <div className={cn("mt-0.5 text-sm leading-6", error ? "text-destructive" : "text-foreground/90")}>
           <MarkdownBlocks text={message?.body || ""} />
+          <AttachmentList files={message?.attachments || []} className="mt-2" />
         </div>
       </div>
     </div>
@@ -10626,8 +10593,8 @@ function ChannelsPage({
   // Media (#32, ADR-0024): uploaded files waiting on the next send, plus the
   // last upload problem shown as the composer hint. Pending anchors need no
   // state: they live in the draft as `[[anchor:…]]` tokens.
-  const [pendingAttachments, setPendingAttachments] = useState([]);
-  const [attachHint, setAttachHint] = useState("");
+  const attachmentDraft = useAttachments(`channel:${activeChannelId}`, api);
+  const pendingAttachments = attachmentDraft.ready;
   // Canvases (ADR-0023): the channel's shared documents live on the Canvas tab.
   const [view, setView] = useState("messages");
   const [activeCanvasId, setActiveCanvasId] = useState("");
@@ -10785,8 +10752,6 @@ function ChannelsPage({
     setDeleteArmed(false);
     setReplyTo(null);
     setDraft("");
-    setPendingAttachments([]);
-    setAttachHint("");
     setView("messages");
     setActiveCanvasId("");
   }, [activeChannelId]);
@@ -10819,13 +10784,7 @@ function ChannelsPage({
   const pendingAnchors = useMemo(() => parseAnchorTokens(draft), [draft]);
   const addAnchorToDraft = (anchor) => setDraft((current) => appendAnchorToken(current, anchor));
   function attachFiles(files) {
-    setAttachHint("");
-    return attachChannelFiles(files, {
-      setDraft,
-      copy,
-      addAttachment: (uploaded) => setPendingAttachments((current) => (current.some((item) => item.id === uploaded.id) ? current : [...current, uploaded])),
-      onError: setAttachHint,
-    });
+    attachmentDraft.addFiles(files);
   }
 
   const channelProjects = useMemo(() => normalizeChannelProjects(channel?.projects), [channel?.projects]);
@@ -10924,14 +10883,13 @@ function ChannelsPage({
   }
 
   function submitDraft(text) {
-    if (!channel) return;
+    if (!channel || attachmentDraft.blocked) return;
     const { prompt: stripped, anchors } = anchorsFromDraft(text);
     const attachments = pendingAttachments;
     // A send with media but no words still needs a body: name the files.
     const prompt = stripped || attachments.map((item) => item.name).join(", ");
     if (!prompt) return;
-    setPendingAttachments([]);
-    setAttachHint("");
+    attachmentDraft.clear();
     if (replyTo?.threadId) {
       onFollowUp?.(channel.id, replyTo.threadId, prompt, { canvases, attachments, anchors });
       setReplyTo(null);
@@ -10945,7 +10903,7 @@ function ChannelsPage({
   const replyName = replyTo ? channelMessageAuthorName(replyTo, agents, accountProfile.name) : "";
 
   return (
-    <div className="flex h-[calc(100vh-56px)] min-h-0 w-full flex-col lg:h-screen">
+    <div className={cn("flex h-[calc(100vh-56px)] min-h-0 w-full flex-col lg:h-screen", attachmentDraft.dragging && "ring-1 ring-inset ring-primary/60")} data-file-drop-target="channel" {...attachmentDraft.bind}>
       <ChannelCreateDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -11332,22 +11290,9 @@ function ChannelsPage({
                       copy={copy}
                     />
                   ))}
-                  {pendingAttachments.map((attachment) => (
-                    <span key={attachment.id} className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 py-0.5 pl-1.5 pr-1 text-xs text-foreground/90" data-attachment-id={attachment.id}>
-                      <Paperclip className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-                      <span className="min-w-0 max-w-[12rem] truncate">{attachment.name}</span>
-                      <button
-                        type="button"
-                        aria-label={formatCopy(copy.attachmentRemove || "Remove {name}", { name: attachment.name })}
-                        className="grid size-4 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        onClick={() => setPendingAttachments((current) => current.filter((item) => item.id !== attachment.id))}
-                      >
-                        <X className="size-3" aria-hidden="true" />
-                      </button>
-                    </span>
-                  ))}
                 </div>
               ) : null}
+              <AttachmentList files={attachmentDraft.entries} onRemove={attachmentDraft.remove} onRetry={attachmentDraft.retry} className="mb-2" />
               <MessageComposer
                 placeholder={goalSetup?.status === "awaiting" ? `What’s the goal for #${channel.name}?` : formatCopy(copy.messageChannel || "Message #{name}", { name: channel.name })}
                 lastSent={[...(messagesByChannel[channel.id] || [])].reverse().find((message) => message.role === "user" && String(message.body || "").trim())?.body || ""}
@@ -11358,7 +11303,9 @@ function ChannelsPage({
                 disabled={goalSetupRunning || (!members.length && !replyTo && !needsGoal)}
                 onSubmit={submitDraft}
                 onAttach={attachFiles}
-                hint={attachHint || (needsGoal ? "The goal determines the team; no extra confirmation is needed." : !members.length ? copy.channelNoMembers : "")}
+                hasAttachments={Boolean(pendingAttachments.length)}
+                attachmentsPending={attachmentDraft.blocked}
+                hint={needsGoal ? "The goal determines the team; no extra confirmation is needed." : !members.length ? copy.channelNoMembers : ""}
               />
               {/* Height is reserved so a member starting or stopping never
                   shifts the composer under the cursor (DESIGN.md, ADR-0014). */}
@@ -12372,6 +12319,7 @@ function agentLaunchPayload(agent, workspace) {
     profileFiles: buildAgentProfileFiles(agent),
     profileDocs: agent?.profileDocs,
     modelAssignment: modelAssignmentForAgent(agent),
+    modelRouting: normalizeModelRouting(agent?.modelRouting),
     harness: harnessForAgent(agent),
     permissions,
   };
@@ -12726,6 +12674,11 @@ function CollapsedSidebarRail({
         </Tooltip>
 
         <Tooltip>
+          <TooltipTrigger asChild><Button variant="ghost" size="icon" className={cn("size-9 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground", route.split("?")[0] === "/memory" && "bg-accent text-foreground")} onClick={() => navigate("/memory")} aria-label="Collective memory" aria-current={route.split("?")[0] === "/memory" ? "page" : undefined}><Brain className="size-4" /></Button></TooltipTrigger>
+          <TooltipContent>Memory</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
@@ -13031,6 +12984,7 @@ function SidebarContent({
         // and the page showed All work with 28 rows.
         inbox: () => navigate(missionControlPath({ view: "needs-you" })),
         agents: () => navigate(squadDirectoryPath()),
+        memory: () => navigate("/memory"),
         channel: (channelId) => navigate(channelsPath(channelId)),
         member: (targetId) => navigate(memberChatPath(targetId)),
         createChannel: () => setCreateChannelOpen(true),
@@ -13691,7 +13645,6 @@ function Conversation({
   const engineReadiness = readinessFor(harnesses, launchAssignment.id);
   const [effort, setEffort] = useState(defaultLaunch.effort || launchAssignment.effort || "");
   const [access, setAccess] = useState(defaultLaunch.access || launchAssignment.access || "");
-  const [customModel, setCustomModel] = useState(false);
   const shownAccess = access || derivedAccess(agent.permissions?.permissionMode, policy);
   // The compact chooser reuses this conversation to retain per-member drafts.
   // Execution settings still belong to the newly selected member.
@@ -13703,7 +13656,6 @@ function Conversation({
     setDryRun(defaultLaunch.dryRun);
     setEffort(defaultLaunch.effort || harnessForAgent(agent).effort || "");
     setAccess(defaultLaunch.access || harnessForAgent(agent).access || "");
-    setCustomModel(false);
   }, [agent.id]);
   const [panelTab, setPanelTab] = useState("runs");
   const [focusRunId, setFocusRunId] = useState("");
@@ -13756,6 +13708,7 @@ function Conversation({
   const chatSendingRef = useRef({});
   const activeChatControllerRef = useRef({});
   const promptRef = useRef(null);
+  const attachmentDraft = useAttachments(`member:${agent.id}`, api);
   const messagesEndRef = useRef(null);
   const [mentionState, setMentionState] = useState(null);
   const [mentionFiles, setMentionFiles] = useState([]);
@@ -13764,6 +13717,7 @@ function Conversation({
   const [mentionIndex, setMentionIndex] = useState(0);
   const activeMode = RUN_MODES.find((item) => item.id === mode) || RUN_MODES[0];
   const prompt = promptByAgent[agent.id] || "";
+  const canSubmitDraft = Boolean(prompt.trim() || attachmentDraft.ready.length) && !attachmentDraft.blocked;
   const { entryFor: entryForPresence, stopMember } = usePresence();
   useEffect(() => {
     if (!initialPrompt || !agent?.id) return;
@@ -14087,11 +14041,13 @@ function Conversation({
 
     if (wantsSteer && !mentionOpen) {
       event.preventDefault();
-      const text = livePrompt();
-      if (!text || blockedWorkspace) return;
+      const text = livePrompt() || (attachmentDraft.ready.length ? attachmentOnlyPrompt(attachmentDraft.ready) : "");
+      if (!text || blockedWorkspace || attachmentDraft.blocked) return;
+      const attachments = attachmentDraft.ready;
+      attachmentDraft.clear();
       setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
       setMentionState(null);
-      steerNow({ prompt: expandSkillMentions(text, installedSkillNames), workspace, policy, model, effort, access });
+      steerNow({ prompt: expandSkillMentions(text, installedSkillNames), attachments, workspace, policy, model, effort, access });
       return;
     }
 
@@ -14198,11 +14154,12 @@ function Conversation({
 
   // A follow-up while the member is busy lands in its durable queue on the
   // bridge; the dispatcher sends it once the member is free (ADR-0111).
-  function queuePrompt(nextPrompt) {
+  function queuePrompt(nextPrompt, attachments = []) {
     const queuedPrompt = String(nextPrompt || "").trim();
     if (!queuedPrompt) return;
-    void Promise.resolve(onChat(agent.id, { prompt: queuedPrompt, workspace, policy, model, effort, access, queue: true })).catch((error) => {
+    void Promise.resolve(onChat(agent.id, { prompt: queuedPrompt, attachments, workspace, policy, model, effort, access, queue: true })).catch((error) => {
       postLocalNote(`Could not queue the follow-up: ${error.message}`);
+      attachmentDraft.restore(attachments);
       setPromptByAgent((current) => ({ ...current, [agent.id]: current[agent.id] || queuedPrompt }));
     });
     window.requestAnimationFrame(() => promptRef.current?.focus());
@@ -14234,7 +14191,7 @@ function Conversation({
   async function sendQueuedNow(item) {
     const cancelled = await runQueueAction("cancel", { id: item.id });
     if (!cancelled) return;
-    steerNow({ prompt: item.text, workspace: item.workspace || workspace, policy, model, effort, access });
+    steerNow({ prompt: item.text, attachments: item.attachments || [], workspace: item.workspace || workspace, policy, model, effort, access });
   }
 
   function sendPendingSteer(agentId = agent.id) {
@@ -14280,6 +14237,7 @@ function Conversation({
           mode: sourceLaunch.mode,
           requestId: sourceLaunch.requestId,
           retryOf: sourceLaunch.retryOf,
+          attachments: sourceLaunch.attachments || [],
           collaboration: sourceLaunch.collaboration,
           interruptQueue: sourceLaunch.interruptQueue === true,
           canvases: targetAgentId === agent.id ? canvases : [],
@@ -14301,6 +14259,7 @@ function Conversation({
           void Promise.resolve(
             onChat(handoffResult.targetAgentId, {
               prompt: receiverPrompt,
+              attachments: sourceLaunch.attachments || [],
               workspace: handoffResult.workspace || sourceLaunch.workspace || workspace,
               policy: sourceLaunch.policy || policy,
               model: sourceLaunch.model || model,
@@ -14418,7 +14377,7 @@ function Conversation({
     const index = visibleMessages.findIndex((item) => item.id === message.id);
     const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
     if (!previousUser?.body) return;
-    sendPromptNow({ prompt: previousUser.body, workspace, policy, model, effort, access, retry: true, retryOf: message.id, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
+    sendPromptNow({ prompt: previousUser.body, attachments: previousUser.attachments || [], workspace, policy, model, effort, access, retry: true, retryOf: message.id, requestId: message.requestId || previousUser.requestId || (/^chat-.*-a$/.test(message.id) ? message.id.slice(0, -2) : undefined) }, { agentId: agent.id });
   };
 
   // Put text in the composer with the caret at the end, ready to change.
@@ -14440,6 +14399,7 @@ function Conversation({
     const index = visibleMessages.findIndex((item) => item.id === message.id);
     const previousUser = [...visibleMessages.slice(0, index)].reverse().find((item) => item.role === "user");
     if (previousUser?.body) editPrompt(previousUser.body);
+    attachmentDraft.restore(previousUser?.attachments || []);
   };
 
   // Opening a member's chat puts the cursor in their composer.
@@ -14494,7 +14454,9 @@ function Conversation({
         } else if (chatSending) {
           postLocalNote("This member is already working. Pause or cancel the current goal before starting another.");
         } else {
-          sendPromptNow({ prompt: expandSkillMentions(command.args, installedSkillNames), workspace, policy, model, effort, access, mode: "goal" }, { agentId: agent.id, restorePromptOnError: true });
+          const attachments = attachmentDraft.ready;
+          attachmentDraft.clear();
+          sendPromptNow({ prompt: expandSkillMentions(command.args, installedSkillNames), attachments, workspace, policy, model, effort, access, mode: "goal" }, { agentId: agent.id, restorePromptOnError: true });
         }
         return true;
       }
@@ -14553,7 +14515,9 @@ function Conversation({
 
   function submit(event) {
     event.preventDefault();
-    const submittedPrompt = livePrompt();
+    if (attachmentDraft.blocked) return;
+    const attachments = attachmentDraft.ready;
+    const submittedPrompt = livePrompt() || (attachments.length ? attachmentOnlyPrompt(attachments) : "");
     if (!submittedPrompt) return;
     const slash = slashCommandFrom(submittedPrompt);
     const isControlCommand = slash && (slash.name === "break" || (slash.name === "goal" && ["", "status", "pause", "resume", "cancel"].includes(slash.args.toLowerCase())));
@@ -14571,11 +14535,12 @@ function Conversation({
       setPromptByAgent((current) => ({ ...current, [agent.id]: submittedPrompt }));
       return;
     }
+    attachmentDraft.clear();
     if (chatSendingRef.current[agent.id] || isQueueRunning(queue)) {
-      queuePrompt(expandedPrompt);
+      queuePrompt(expandedPrompt, attachments);
       return;
     }
-    sendPromptNow({ prompt: expandedPrompt, workspace, policy, model, effort, access }, { agentId: agent.id, restorePromptOnError: true });
+    sendPromptNow({ prompt: expandedPrompt, attachments, workspace, policy, model, effort, access }, { agentId: agent.id, restorePromptOnError: true });
   }
 
   // Goal 08: preview the context pack before launching a run. Calls the server
@@ -14691,6 +14656,7 @@ function Conversation({
   }
 
   function startFreshChat() {
+    attachmentDraft.clear();
     stopActiveChat();
     void runQueueAction("clear");
     setPromptByAgent((current) => ({ ...current, [agent.id]: "" }));
@@ -14733,7 +14699,7 @@ function Conversation({
 
   if (compact) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col bg-background" data-testid="quick-chat-conversation">
+      <div className={cn("flex min-h-0 flex-1 flex-col bg-background", attachmentDraft.dragging && "ring-1 ring-inset ring-primary/60")} data-testid="quick-chat-conversation" {...attachmentDraft.bind}>
         {replySheet}
         {currentGoal ? <div className="shrink-0 px-3"><MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /></div> : null}
         <ScrollArea className="min-h-0 flex-1">
@@ -14752,6 +14718,7 @@ function Conversation({
           {blockedWorkspace ? <p className="mb-2 text-xs text-destructive">Choose a project folder for {agent.name} in Squad before sending work.</p> : null}
           {launchWarnings.length ? <p className="mb-2 text-xs text-muted-foreground">{launchWarnings.map((warning) => warning.detail).join(" ")}</p> : null}
           <InputGroup className="h-auto flex-col items-stretch border-border bg-transparent shadow-none focus-within:border-ring/60 has-[[data-slot=input-group-control]:focus-visible]:ring-0 dark:bg-transparent" aria-label={`Message ${agent.name}`}>
+            <AttachmentList files={attachmentDraft.entries} onRemove={attachmentDraft.remove} onRetry={attachmentDraft.retry} className="px-2 pt-2" />
             {mentionOpen ? <MentionPicker items={mentionItems} loading={mentionLoading} error={mentionError} selectedIndex={mentionIndex} onSelect={selectMentionItem} /> : null}
             <PromptTextarea control={InputGroupTextarea} ref={promptRef} value={prompt} onDraft={updatePrompt} onKeyDown={handlePromptKeyDown} placeholder={formatCopy(copy.talkToPlaceholder, { name: agent.name })} aria-label={formatCopy(copy.talkToPlaceholder, { name: agent.name })} aria-describedby="quick-chat-composer-hint" className="max-h-24 min-h-11 resize-none px-3 py-2 text-sm leading-5 md:text-sm" />
             <InputGroupAddon align="block-end" className="gap-2 px-2 pb-2 pt-0" onClick={event => { if (!event.target.closest("button")) promptRef.current?.focus(); }}>
@@ -14759,9 +14726,10 @@ function Conversation({
                 {chatSending && !isGoalRunning(currentGoal) ? "Enter to queue" : "Enter to send"}
                 <span className="sr-only">. Shift+Enter starts a new line.</span>
               </InputGroupText>
+              <AttachmentButton compact onFiles={attachmentDraft.addFiles} disabled={blockedWorkspace} />
               <VoiceInputButton control={InputGroupButton} size="icon-sm" value={prompt} onValueChange={(next) => updatePrompt(next)} disabled={blockedWorkspace} copy={copy} noticeClassName="max-w-[10rem]" />
-              {chatSending && prompt.trim() ? <InputGroupButton type="submit" variant="ghost" size="icon-sm" aria-label={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup} title={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup}><Send className="size-4" /></InputGroupButton> : null}
-              <InputGroupButton type={chatSending ? "button" : "submit"} variant={chatSending ? "ghost" : "default"} size="icon-sm" className="shrink-0 rounded-md" disabled={!chatSending && (!prompt.trim() || blockedWorkspace)} aria-label={chatSending ? copy.stopChatResponse : copy.sendChatMessage} title={chatSending ? copy.stopChatResponse : copy.sendChatMessage} onClick={chatSending ? stopActiveChat : undefined}>
+              {chatSending && canSubmitDraft ? <InputGroupButton type="submit" variant="ghost" size="icon-sm" aria-label={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup} title={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup}><Send className="size-4" /></InputGroupButton> : null}
+              <InputGroupButton type={chatSending ? "button" : "submit"} variant={chatSending ? "ghost" : "default"} size="icon-sm" className="shrink-0 rounded-md" disabled={!chatSending && (!canSubmitDraft || blockedWorkspace)} aria-label={chatSending ? copy.stopChatResponse : copy.sendChatMessage} title={chatSending ? copy.stopChatResponse : copy.sendChatMessage} onClick={chatSending ? stopActiveChat : undefined}>
                 {chatSending ? <Square className="size-3.5 fill-current" /> : <Send className="size-4" />}
               </InputGroupButton>
             </InputGroupAddon>
@@ -14772,7 +14740,7 @@ function Conversation({
   }
 
   return (
-    <div className={cn("flex w-full max-w-full flex-col overflow-x-hidden bg-background/75", compact ? "min-h-0 flex-1" : "h-[calc(100svh-4rem)] min-h-[560px] lg:h-screen lg:min-h-screen")}>
+    <div className={cn("flex w-full max-w-full flex-col overflow-x-hidden bg-background/75", compact ? "min-h-0 flex-1" : "h-[calc(100svh-4rem)] min-h-[560px] lg:h-screen lg:min-h-screen", attachmentDraft.dragging && "ring-1 ring-inset ring-primary/60")} data-file-drop-target="member" {...attachmentDraft.bind}>
       <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6" data-tauri-drag-region="deep">
         <div className="min-w-0">
           <Popover key={agent.id}>
@@ -15051,6 +15019,8 @@ function Conversation({
               onResume={() => runQueueAction("resume")}
             />
             {launchWarnings.length ? <LaunchPermissionWarnings warnings={launchWarnings} /> : null}
+            {attachmentDraft.dragging ? <p className="px-3 pt-2 text-xs text-muted-foreground">Drop files to attach</p> : null}
+            <AttachmentList files={attachmentDraft.entries} onRemove={attachmentDraft.remove} onRetry={attachmentDraft.retry} className="px-3 pt-2" />
             <div className="flex flex-col gap-2 p-2">
               <div className="relative">
                 {mentionOpen ? (
@@ -15164,49 +15134,10 @@ function Conversation({
                       </Field>
                     )}
 
-                    {externalEngine ? (
-                      <Field className="gap-2">
-                        <FieldLabel>{copy.model}</FieldLabel>
-                        <Select
-                          value={customModel ? "__custom" : model || "__default"}
-                          onValueChange={(value) => {
-                            if (!value) return;
-                            if (value === "__custom") { setCustomModel(true); return; }
-                            setCustomModel(false);
-                            setModel(value === "__default" ? "" : value);
-                          }}
-                        >
-                          <SelectTrigger className="h-9 w-full" aria-label={copy.model}>
-                            <SelectValue placeholder={copy.engineDefault || "Engine default"} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectGroup>
-                              <SelectLabel>{harnessLabel(launchAssignment.id)}</SelectLabel>
-                              {modelChoices(engineReadiness, { current: customModel ? "" : model }).map((item) => (
-                                <SelectItem key={item.id || "__default"} value={item.id || "__default"}>
-                                  {item.label}
-                                </SelectItem>
-                              ))}
-                              <SelectItem value="__custom">{copy.customModel || "Custom…"}</SelectItem>
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                        {customModel ? (
-                          <Input
-                            value={model}
-                            onChange={(event) => setModel(event.target.value)}
-                            placeholder={launchAssignment.id === "claude" ? "claude-opus-5-5" : "gpt-6.1-sol"}
-                            className="h-9"
-                            autoFocus
-                          />
-                        ) : null}
-                      </Field>
-                    ) : (
-                      <Field className="gap-2">
-                        <FieldLabel>{copy.model}</FieldLabel>
-                        <Input value={model} onChange={(event) => setModel(event.target.value)} placeholder={copy.model} className="h-9" />
-                      </Field>
-                    )}
+                    <Field className="gap-2">
+                      <FieldLabel>{copy.model}</FieldLabel>
+                      <HarnessModelSelect api={api} harness={launchAssignment.id} executablePath={launchAssignment.executablePath} provider={externalEngine ? "" : effectiveModel.provider} workspace={workspace} value={model} label={copy.model || "Model"} onChange={setModel} />
+                    </Field>
 
                     {effortLevelsFor(launchAssignment.id, engineReadiness, model || engineReadiness?.defaults?.model || "").length ? (
                       <Field className="gap-2">
@@ -15268,9 +15199,10 @@ function Conversation({
                 </PopoverContent>
               </Popover>
 
+                <AttachmentButton onFiles={attachmentDraft.addFiles} disabled={blockedWorkspace} />
                 <VoiceInputButton value={prompt} onValueChange={(next) => updatePrompt(next)} disabled={blockedWorkspace} copy={copy} noticeClassName="max-w-[16rem]" />
 
-                {chatSending && prompt.trim() ? (
+                {chatSending && canSubmitDraft ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button type="submit" variant="ghost" size="icon-sm" className="rounded-full" aria-label={copy.queueFollowup}>
@@ -15291,7 +15223,7 @@ function Conversation({
                         "ml-auto size-9 rounded-full",
                         chatSending && "bg-foreground text-background hover:bg-foreground/90 hover:text-background"
                       )}
-                      disabled={chatSending ? false : !prompt.trim() || blockedWorkspace}
+                      disabled={chatSending ? false : !canSubmitDraft || blockedWorkspace}
                       aria-label={chatSending ? copy.stopChatResponse : copy.sendChatMessage}
                       onClick={chatSending ? stopActiveChat : undefined}
                     >
@@ -15586,6 +15518,7 @@ const SquadMessage = memo(function SquadMessage({ agent, message, thread, onRepl
 
   return (
     <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
+      <AttachmentList files={message.attachments || []} className="max-w-[min(40rem,88%)] justify-end" />
       <div className={cn("max-w-[min(40rem,88%)] bg-muted text-foreground", compact ? "rounded-md px-2.5 py-1.5 text-sm leading-5" : "rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] leading-6")}>
         <MarkdownBlocks text={message.body} />
       </div>
@@ -15636,6 +15569,7 @@ function AgentResponseMessage({ agent, message, replyAction, computerEvidence = 
             <span>{durationLabel}</span>
           ) : null}
           {!compact && message.effectiveModel ? <span className="hidden truncate sm:inline">· {replyModelLabel(message.effectiveModel, providerSummaryLabel)}</span> : null}
+          {fallbackLabel(message.routing) ? <span className="truncate text-muted-foreground">· {fallbackLabel(message.routing, { model: false })}</span> : null}
           {message.status === "stopped" ? <span>· Stopped</span> : null}
           {hasVisibleAnswer && !isError ? <ReadAloudButton text={view.answer} message={message} api={api} auto={Boolean(agent.readAloud)} compact={compact} copy={copy} /> : null}
           {hasVisibleAnswer && !isError && !isLoading ? <CopyButton text={view.answer} label="Copy reply" className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" /> : null}
@@ -21641,7 +21575,7 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
 // effort and access come from the engine, not from the workspace's LLM
 // providers, so the Model page shows and edits those. It used to show the
 // Autohand provider assignment, which these members never use.
-function EngineModelPage({ agent, navigate, updateAgent }) {
+function EngineModelPage({ agent, providerSettings, navigate, updateAgent }) {
   const assignment = harnessForAgent(agent);
   const [draft, setDraft] = useState(assignment);
   const [harnesses, setHarnesses] = useState([]);
@@ -21694,6 +21628,7 @@ function EngineModelPage({ agent, navigate, updateAgent }) {
             <HarnessSelect
               api={api}
               id="model-page-harness"
+              workspace={agent.workspace}
               defaultAdvancedOpen
               label="Runs with"
               value={draft}
@@ -21717,19 +21652,22 @@ function EngineModelPage({ agent, navigate, updateAgent }) {
           <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => navigate("/settings/providers")}>LLM Providers</button>{" "}
           applies only if {agent.name} is switched back to Autohand Code.
         </p>
+        <MemberFallbacks agent={agent} api={api} providerSettings={providerSettings} updateAgent={updateAgent} />
       </div>
     </div>
   );
 }
 
 function AgentModelPage({ agent, providerSettings, navigate, updateAgent }) {
-  if (harnessForAgent(agent).id !== "autohand") return <EngineModelPage agent={agent} navigate={navigate} updateAgent={updateAgent} />;
+  if (harnessForAgent(agent).id !== "autohand") return <EngineModelPage agent={agent} providerSettings={providerSettings} navigate={navigate} updateAgent={updateAgent} />;
   return <AutohandModelPage agent={agent} providerSettings={providerSettings} navigate={navigate} updateAgent={updateAgent} />;
 }
 
 function AutohandModelPage({ agent, providerSettings, navigate, updateAgent }) {
   const currentAssignment = modelAssignmentForAgent(agent);
   const [draft, setDraft] = useState(currentAssignment);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const definitions = providerDefinitionsFromSettings(providerSettings);
   const effectiveModel = effectiveModelForAgent({ ...agent, modelAssignment: draft }, providerSettings);
   const selectedProvider = draft.mode === "override" ? draft.provider : providerSettings?.defaultProvider || "autohandai";
@@ -21741,12 +21679,14 @@ function AutohandModelPage({ agent, providerSettings, navigate, updateAgent }) {
     setDraft(currentAssignment);
   }, [agent.id, agent.modelAssignment, agent.permissions]);
 
-  function save() {
-    if (!updateAgent || !overrideReady) return;
-    updateAgent(agent.id, {
-      modelAssignment: normalizeModelAssignment(draft),
-      updatedAt: new Date().toISOString(),
-    });
+  async function save() {
+    if (!updateAgent || !overrideReady || saving) return;
+    setSaving(true); setSaveError("");
+    try {
+      const result = await updateAgent(agent.id, { modelAssignment: normalizeModelAssignment(draft), updatedAt: new Date().toISOString() });
+      if (result?.error) throw new Error(result.error);
+    } catch (error) { setSaveError(error.message); }
+    finally { setSaving(false); }
   }
 
   function selectMode(mode) {
@@ -21760,7 +21700,7 @@ function AutohandModelPage({ agent, providerSettings, navigate, updateAgent }) {
   }
 
   function selectProvider(provider) {
-    const nextModel = providerSettings?.providers?.[provider]?.model || draft.model || "";
+    const nextModel = providerSettings?.providers?.[provider]?.model || "";
     setDraft({ mode: "override", provider, model: nextModel });
   }
 
@@ -21858,13 +21798,8 @@ function AutohandModelPage({ agent, providerSettings, navigate, updateAgent }) {
                 </Field>
                 <Field className="gap-2">
                   <FieldLabel>Model ID</FieldLabel>
-                  <Input
-                    value={draft.model || ""}
-                    onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
-                    placeholder={providerSettings?.providers?.[draft.provider]?.model || "Model ID"}
-                    className="h-10 sm:max-w-md"
-                  />
-                  <FieldDescription>Use the exact model ID expected by the selected provider.</FieldDescription>
+                  <HarnessModelSelect api={api} harness="autohand" provider={draft.provider} workspace={agent.workspace} value={draft.model || ""} allowDefault={false} onChange={model => setDraft(current => ({ ...current, model }))} />
+                  <FieldDescription>Models reported by Autohand Code for this provider. Names are shown with their exact IDs.</FieldDescription>
                 </Field>
               </div>
             ) : (
@@ -21882,16 +21817,18 @@ function AutohandModelPage({ agent, providerSettings, navigate, updateAgent }) {
             ) : null}
 
             <div className="flex flex-wrap gap-2">
-              <Button type="button" onClick={save} disabled={!canSave || !overrideReady}>
+              <Button type="button" onClick={save} disabled={!canSave || !overrideReady || saving}>
                 <CheckCircle2 data-icon="inline-start" />
-                Save model assignment
+                {saving ? "Saving…" : "Save model assignment"}
               </Button>
               <Button type="button" variant="outline" disabled={!canSave} onClick={() => setDraft(currentAssignment)}>
                 Discard
               </Button>
             </div>
+            {saveError ? <p role="alert" className="text-sm text-destructive">{saveError}</p> : null}
           </div>
         </section>
+        <MemberFallbacks agent={agent} api={api} providerSettings={providerSettings} updateAgent={updateAgent} />
       </div>
     </div>
   );
@@ -24701,6 +24638,7 @@ function SettingsPage({
     { id: "relay", label: copy.relay || "Relay" },
     { id: "remote-access", label: copy.remoteAccess || "Remote access" },
     { id: "connectors", label: copy.connectors || "Connectors" },
+    { id: "memory", label: "Memory" },
     { id: "cloud", label: "Cloud sync" },
     { id: "updates", label: "Updates" },
     { id: "system", label: copy.system || "System" },
@@ -25244,6 +25182,7 @@ function SettingsPage({
         <UpdatesSettings updates={updates} checking={updatesChecking} error={updatesError} operation={updatesUpgradeResult || {}} onCheck={onCheckUpdates} onDownload={onUpgradeApp} onInstall={onInstallUpdate} onCancel={onCancelUpdate} onOpenReleases={onOpenReleases} renderNotes={(text) => <MarkdownBlocks text={text} muted />} />
       </>
     ),
+    memory: () => (<><SettingsSectionHeader title="Memory" description="Collect and connect what your squad learns." /><Suspense fallback={<p className="text-sm text-muted-foreground">Loading memory settings…</p>}><MemorySettings api={api} onOpenLibrary={() => navigate("/memory")} /></Suspense></>),
     cloud: () => (<><SettingsSectionHeader title="Cloud sync" description="Keep shared team memories together." /><CloudSyncSettings api={api} /></>),
     system: () => (
       <>

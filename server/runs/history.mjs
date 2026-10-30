@@ -53,6 +53,7 @@ export function historyRecord(run) {
     displayConfigPath: run.displayConfigPath || "",
     agentHome: run.agentHome || "",
     effectiveModel: isPlainObject(run.effectiveModel) ? run.effectiveModel : null,
+    routing: isPlainObject(run.routing) ? run.routing : null,
     transport: String(run.transport || "cli"),
     harness: String(run.harness || ""),
     harnessVersion: String(run.harnessVersion || ""),

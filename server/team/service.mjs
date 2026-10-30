@@ -175,6 +175,49 @@ const TOOLS = [
     description: "Add, update or finish a task on your own Squad work plan. Uses the same operation and receipts as the Tasks view. For update or done, use an id from squad_work_plan. A task records a commitment; scheduling work later uses squad_schedule.",
     inputSchema: { type: "object", properties: { op: { type: "string", enum: ["add", "update", "done"] }, id: { type: "string", maxLength: 200 }, title: { type: "string", minLength: 1, maxLength: 160 }, detail: { type: "string", maxLength: 2000 }, due: { type: "string", maxLength: 10 }, status: { type: "string", enum: ["open", "doing", "blocked", "done"] }, outcome: { type: "string", maxLength: 2000 } }, required: ["op"], additionalProperties: false },
   },
+  {
+    name: "squad_models",
+    description: "Read your configured primary and fallback engines. Without engine, list connected engines; with engine, load its supported model IDs and names. This does not run a model or change settings.",
+    inputSchema: { type: "object", properties: { engine: { type: "string", maxLength: 120 }, provider: { type: "string", maxLength: 100 } }, additionalProperties: false },
+  },
+  {
+    name: "squad_set_fallbacks",
+    description: "Set your own ordered fallback engines and model IDs when the person asks. Requires the person's Let this member manage fallbacks setting. Cannot enable that setting, change the primary, choose arbitrary binaries or broaden permissions. Use squad_models first.",
+    inputSchema: { type: "object", properties: { fallbacks: { type: "array", maxItems: 4, items: { type: "object", properties: { engine: { type: "string", maxLength: 120 }, model: { type: "string", maxLength: 200 }, provider: { type: "string", maxLength: 100 }, effort: { type: "string", maxLength: 20 } }, required: ["engine"], additionalProperties: false } } }, required: ["fallbacks"], additionalProperties: false },
+  },
+  {
+    name: "squad_search_memory",
+    description: "Search collected Squad memories, saved profile Markdown and your own Autohand memory by words and local text similarity. Only team, your own, explicitly shared and current-project memories are returned. No external embedding API is called.",
+    inputSchema: { type: "object", properties: { query: { type: "string", minLength: 1, maxLength: 2000 }, limit: { type: "integer", minimum: 1, maximum: 20 } }, required: ["query"], additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "squad_memory_graph",
+    description: "Inspect memories and saved relationships you may read. Computed text similarity is optional and labelled derived; it is not evidence of a saved relationship.",
+    inputSchema: { type: "object", properties: { query: { type: "string", maxLength: 2000 }, similarity: { type: "boolean" } }, additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "squad_read_memory",
+    description: "Read a collected memory by its exact id from search or the graph, including its source and visibility. Private and other-project memories remain inaccessible.",
+    inputSchema: { type: "object", properties: { id: { type: "string", maxLength: 256 } }, required: ["id"], additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "squad_share_memory",
+    description: "Share a memory you own or authored with a named teammate, or revoke that explicit share. Does not send a message or change the original scope. Use squad_message when they should act on it.",
+    inputSchema: { type: "object", properties: { id: { type: "string", maxLength: 256 }, teammate_id: { type: "string", maxLength: 256 }, revoke: { type: "boolean" } }, required: ["id", "teammate_id"], additionalProperties: false },
+  },
+  {
+    name: "squad_relate_memories",
+    description: "Save a references, supports or contradicts link between two memories you may read. You must own or have authored the source memory. Include evidence explaining the relationship; similar wording alone is not proof.",
+    inputSchema: { type: "object", properties: { from: { type: "string", maxLength: 256 }, to: { type: "string", maxLength: 256 }, relation: { type: "string", enum: ["references", "supports", "contradicts"] }, evidence: { type: "string", minLength: 1, maxLength: 500 } }, required: ["from", "to", "relation", "evidence"], additionalProperties: false },
+  },
+  {
+    name: "squad_organize_memory",
+    description: "Organize a memory you own with an existing group id, tags, kind or readable title. Does not change sharing, source or text. The person creates groups in Memory.",
+    inputSchema: { type: "object", properties: { id: { type: "string", maxLength: 256 }, groupId: { type: "string", maxLength: 256 }, title: { type: "string", maxLength: 80 }, kind: { type: "string", enum: ["memory", "lesson", "decision", "preference", "discovery"] }, tags: { type: "array", maxItems: 20, items: { type: "string", maxLength: 80 } } }, required: ["id"], additionalProperties: false },
+  },
 ];
 
 export const TEAM_TOOL_NAMES = TOOLS.map((tool) => tool.name);
@@ -183,6 +226,20 @@ const record = (value) => Boolean(value) && typeof value === "object" && !Array.
 const text = (value) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }], structuredContent: typeof value === "string" ? { message: value } : value });
 const failure = (message) => ({ content: [{ type: "text", text: message }], structuredContent: { error: message }, isError: true });
 const clip = (value, limit) => { const s = String(value ?? ""); return s.length > limit ? `${s.slice(0, limit)}…` : s; };
+// MCP results become the next model prompt. Collected files can be much
+// larger than the old 500-character team entries; graph/search carry bounded
+// excerpts, with squad_read_memory for full source content.
+function memoryToolRecords(records, maxBytes = 14_000) {
+  const memories = [];
+  let bytes = 0;
+  for (const entry of records) {
+    const item = { id: entry.id, title: entry.title, scope: entry.scope === "member" ? "me" : entry.scope, ownerId: entry.ownerId, kind: entry.kind, text: clip(entry.text, 500), excerpt: entry.text.length > 500, savedBy: entry.authorName || "", source: entry.sourceLabel || "", at: entry.updatedAt || entry.createdAt, ...(entry.groupId ? { groupId: entry.groupId } : {}), tags: (entry.tags || []).slice(0, 8) };
+    const size = Buffer.byteLength(JSON.stringify(item), 'utf8');
+    if (bytes + size > maxBytes) break;
+    bytes += size; memories.push(item);
+  }
+  return memories;
+}
 const nameKey = (value) => String(value || "").replace(/^@/, "").trim().toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
 export class TeamError extends Error {
@@ -233,8 +290,10 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
     "- squad_team lists teammates; squad_message asks one and returns their reply (squad_replies collects late ones).",
     "- When the person says teach the team, share what you learned, tell everyone or pass this on, call squad_teach with the reusable lesson in this turn. It saves team knowledge and actually messages the teammates. Report queued/running/replied states accurately; a promise in chat is not a delivery.",
     "- squad_get_profile reads your saved profile; squad_set_profile changes name, role, description, instructions, personality and skills. A verbal promise does not change Squad.",
+    "- squad_models reads connected engines and their supported model IDs. squad_set_fallbacks updates your ordered fallbacks only when the person enabled Let this member manage fallbacks; never claim the list changed without its saved receipt.",
     "- squad_channels and squad_channel_messages read your channels; squad_post_channel publishes a message there; squad_create_channel uses your existing creation permission.",
     "- squad_update_memory corrects a saved entry; squad_forget removes one. Project memories stay with this turn's workspace; personal memories stay with you.",
+    "- squad_search_memory finds older collected memories across saved profiles and your CLI memory using local text similarity. squad_read_memory inspects a source; squad_memory_graph shows saved links. Private and project access is enforced by Squad, never by tool arguments. Similarity is a suggestion, not evidence. Share, relate and organize what you own with squad_share_memory, squad_relate_memories and squad_organize_memory.",
     "- squad_work_plan reads your commitments and ids; squad_task adds, updates or completes your own tasks, with the same receipts as the Tasks view.",
     "- When the person says remember, keep in mind, note that, or from now on, call squad_remember in that turn (scope team unless it is only about you). Do not only say you will remember: a memory exists only once squad_remember has saved it.",
     "- When the person gives you a new name or role ('your name is Robert', 'I'll call you Robert', 'be our QA lead'), call squad_set_profile with the change, then confirm. Squad tells your teammates.",
@@ -252,7 +311,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   return sections.join("\n\n");
 }
 
-export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, getProfile, getWorkPlan, channels = {}, emit = () => {} }) {
+export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, channels = {}, emit = () => {} }) {
   const store = createTeamStore({ stateDir });
   const sessions = new Map();
   const byToken = new Map();
@@ -390,6 +449,16 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
     const operation = { ...session, operationId };
     try {
       switch (name) {
+        case "squad_models": {
+          if (!getModels) throw new TeamError("Engine discovery is unavailable in this runtime.");
+          return text(await getModels(session.memberId, args));
+        }
+        case "squad_set_fallbacks": {
+          if (!setFallbacks) throw new TeamError("Fallback editing is unavailable in this runtime.");
+          const receipt = await setFallbacks(session.memberId, args.fallbacks);
+          addReceipt(session, receipt);
+          return text(receipt);
+        }
         case "squad_team": {
           const { self, others } = await teammates(session.memberId);
           const rows = await Promise.all(others.map(async (member) => ({ id: member.id, name: member.name, role: member.role || "", description: member.description || "", skills: member.skills || [], projects: member.projects || [], engine: member.engine || "", working: await isBusy(member.id).catch(() => false) })));
@@ -452,12 +521,19 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           return text({ saved: !entry.duplicate, alreadyKnown: Boolean(entry.duplicate), id: entry.id, scope: scope === "member" ? "me" : scope, text: entry.text });
         }
         case "squad_recall": {
+          const library = memoryLibrary?.();
+          if (library) {
+            const result = await library.list({ actor: { memberId: session.memberId, workspace: session.workspace }, query: args.query, limit: 60 });
+            const memories = memoryToolRecords(result.records);
+            return text({ memories, total: result.total, hasMore: memories.length < result.total, note: "Use squad_search_memory to narrow results and squad_read_memory for complete text.", warnings: result.warnings.slice(0, 8), search: result.index.available ? "turbovec-local-text" : "keyword-only" });
+          }
           const query = String(args.query || "").toLowerCase().split(/\s+/).filter(Boolean);
           const memory = (await store.memoryFor(session.memberId, session.workspace)).filter((entry) => query.every((word) => entry.text.toLowerCase().includes(word)));
           return text({ memories: memory.map((entry) => ({ id: entry.id, scope: entry.scope === "member" ? "me" : entry.scope, ...(entry.workspace ? { workspace: entry.workspace } : {}), text: entry.text, savedBy: entry.authorName || "", at: entry.updatedAt || entry.createdAt })) });
         }
         case "squad_forget": {
-          const entry = await store.forget(String(args.id || ""), { actorId: session.memberId });
+          const library = memoryLibrary?.();
+          const entry = library ? await library.forget(String(args.id || ""), { memberId: session.memberId, workspace: session.workspace }) : await store.forget(String(args.id || ""), { actorId: session.memberId });
           emit("team.memory.changed", { memberId: session.memberId, id: entry.id });
           return text({ removed: entry.id, text: entry.text });
         }
@@ -482,9 +558,29 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           return text(await getProfile(session.memberId));
         }
         case "squad_update_memory": {
-          const entry = await store.updateMemory(args.id, args.text, { actorId: session.memberId });
+          const library = memoryLibrary?.();
+          const entry = library ? await library.update(args.id, args.text, { memberId: session.memberId, workspace: session.workspace }) : await store.updateMemory(args.id, args.text, { actorId: session.memberId });
           emit("team.memory.changed", { memberId: session.memberId, id: entry.id });
           return text({ updated: entry.id, text: entry.text, scope: entry.scope });
+        }
+        case "squad_search_memory":
+        case "squad_memory_graph":
+        case "squad_read_memory":
+        case "squad_share_memory":
+        case "squad_relate_memories":
+        case "squad_organize_memory": {
+          const library = memoryLibrary?.();
+          if (!library) return failure("The collected memory library is unavailable in this runtime.");
+          const actor = { memberId: session.memberId, workspace: session.workspace };
+          if (name === "squad_read_memory") return text(await library.get(args.id, actor));
+          if (name === "squad_share_memory") return text(await library.share(args.id, args.teammate_id, actor, args.revoke === true));
+          if (name === "squad_relate_memories") return text(await library.relate(args, actor));
+          if (name === "squad_organize_memory") { const { id, ...patch } = args; return text(await library.curate(id, patch, actor)); }
+          const result = await library.list({ actor, query: args.query, limit: name === "squad_search_memory" ? args.limit || 10 : 200, similarity: name === "squad_memory_graph" && args.similarity === true });
+          const memories = memoryToolRecords(result.records, name === "squad_memory_graph" ? 10_000 : 14_000);
+          const ids = new Set(memories.map(item => item.id));
+          const links = result.links.filter(item => ids.has(item.from) && ids.has(item.to)).slice(0, 30).map(({ id, from, to, relation, evidence, derived }) => ({ id, from, to, relation, evidence: clip(evidence, 160), derived }));
+          return text({ memories, groups: result.groups.slice(0, 30), ...(name === "squad_memory_graph" ? { links } : {}), total: result.total, hasMore: memories.length < result.total, note: "Excerpts are bounded. Use squad_read_memory for complete text.", warnings: result.warnings.slice(0, 8), search: result.index.available ? "turbovec-local-text" : "keyword-only" });
         }
         case "squad_channels": return text({ channels: await channels.list(session.memberId) });
         case "squad_channel_messages": return text(await channels.read(session.memberId, args));

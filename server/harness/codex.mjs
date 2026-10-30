@@ -19,7 +19,7 @@ export const capabilities = {
   resume: true,
   interrupt: true,
   modelOverride: true,
-  images: false,
+  images: true,
   permissionModes: ["restricted", "interactive", "unrestricted"],
 };
 
@@ -148,7 +148,7 @@ function sandboxFor(permissionMode, policy, access = "") {
  * Build the non-interactive command. Prompt goes last. `resumeId` switches to
  * `codex exec resume <thread>` which keeps the same thread on disk.
  */
-export function buildArgs({ prompt, workspace, model, permissions = {}, policy = "", access = "", effort = "", efforts = CODEX_EFFORTS, appendSystemPrompt = "", turnContext = "", resendInstructions = false, addDirs = [], resumeId = "" }) {
+export function buildArgs({ prompt, workspace, model, permissions = {}, policy = "", access = "", effort = "", efforts = CODEX_EFFORTS, appendSystemPrompt = "", turnContext = "", resendInstructions = false, addDirs = [], resumeId = "", attachments = [] }) {
   const args = ["exec"];
   const display = ["exec"];
   if (resumeId) {
@@ -188,6 +188,10 @@ export function buildArgs({ prompt, workspace, model, permissions = {}, policy =
     // as operating instructions inside the first turn, and again on a resumed
     // thread when the profile changed since (a rename, new instructions).
     finalPrompt = `<operating_instructions>\n${appendSystemPrompt}\n</operating_instructions>\n\n${finalPrompt}`;
+  }
+  for (const file of attachments) {
+    const imagePath = /^(image\/(png|jpeg|gif|webp))$/.test(file.mime) ? file.path : file.kind === "image" ? file.previewPath : "";
+    if (imagePath) { args.push("--image", imagePath); display.push("--image", "<attached-image>"); }
   }
   args.push(finalPrompt);
   display.push("<prompt>");

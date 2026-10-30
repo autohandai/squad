@@ -305,6 +305,7 @@ pub(crate) fn open_quick_chat(
     let navigation_shell = shell.clone();
     let window = WebviewWindowBuilder::new(app, QUICK_CHAT_WINDOW, WebviewUrl::External(target))
         .title("Quick chat — Autohand Squad")
+        .disable_drag_drop_handler()
         .inner_size(POPUP_WIDTH, POPUP_HEIGHT)
         .decorations(false)
         .resizable(false)

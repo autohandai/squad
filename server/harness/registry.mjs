@@ -11,6 +11,7 @@ import * as acp from "./acp.mjs";
 import { listAcpAgents } from "../acp/registry.mjs";
 import { compareVersions, guiSafeEnv } from "./discovery.mjs";
 import { formatDuration } from "../../src/lib/duration.js";
+import { attachmentLogReplacer, claudePromptInput } from "../attachments.mjs";
 
 export const DEFAULT_HARNESS_ID = "autohand";
 export const HARNESS_SCHEMA_VERSION = 1;
@@ -72,7 +73,7 @@ export function normalizeHarnessAssignment(input) {
     schemaVersion: HARNESS_SCHEMA_VERSION,
     id: normalizeHarnessId(source.id || source.harnessId),
     executablePath: String(source.executablePath || "").trim(),
-    model: String(source.model || "").trim().slice(0, 120),
+    model: String(source.model || "").trim().slice(0, 200),
     effort: normalizeEffort(source.effort),
     access: normalizeAccess(source.access),
   };
@@ -240,7 +241,7 @@ export function runExternalHarness(options) {
   return runCliHarness(options);
 }
 
-function runCliHarness({
+async function runCliHarness({
   adapter,
   executable,
   args,
@@ -252,7 +253,17 @@ function runCliHarness({
   signal,
   onEvent = () => {},
   terminate,
+  attachments = [],
 }) {
+  let stdin = "";
+  if (adapter.id === "claude" && attachments.length) {
+    const promptIndex = args.indexOf("-p");
+    const prompt = promptIndex >= 0 ? args[promptIndex + 1] : "";
+    const input = await claudePromptInput(prompt, attachments);
+    for await (const message of input) stdin += `${JSON.stringify(message)}\n`;
+    args = args.filter((_, index) => index !== promptIndex && index !== promptIndex + 1);
+    args.push("-p", "--input-format", "stream-json");
+  }
   return new Promise((resolve) => {
     const events = [];
     const startedAt = Date.now();
@@ -274,11 +285,12 @@ function runCliHarness({
     const child = spawn(executable, args, {
       cwd,
       env: guiSafeEnv({ ...env, FORCE_COLOR: "0", NO_COLOR: "1", CI: process.env.CI || "" }),
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
       windowsHide: true,
       shell,
       detached: !isWindows,
     });
+    if (stdin) { child.stdin.on("error", () => {}); child.stdin.end(stdin); }
 
     const stopChild = () => {
       if (typeof terminate === "function") terminate(child);
@@ -329,12 +341,16 @@ function runCliHarness({
     };
 
     const handleLine = (line) => {
+      if (stdin) {
+        try { rawStdout += `${JSON.stringify(JSON.parse(line), attachmentLogReplacer)}\n`; }
+        catch { rawStdout += `${line}\n`; }
+      }
       for (const event of adapter.parseLine(line, state)) deliver(event);
     };
 
     child.stdout.on("data", (chunk) => {
       const text = String(chunk);
-      rawStdout += text;
+      if (!stdin) rawStdout += text;
       pending += text;
       let index = pending.indexOf("\n");
       while (index !== -1) {

@@ -121,7 +121,7 @@ export class QueueDispatcher {
       try {
         await this.store.transition(item, { status: "running", startedAt: this.at(), error: "" });
         this.emit("queue.started", { memberId, itemId: item.id, text: item.text.slice(0, 140) });
-        const result = this.cleanResult(await this.executeTurn({ ...item.launch, agentId: memberId, requestId: `queue-${item.id}`, mode: "prompt", prompt: item.text, resumeSession: true }, {
+        const result = this.cleanResult(await this.executeTurn({ ...item.launch, agentId: memberId, requestId: `queue-${item.id}`, mode: "prompt", prompt: item.text, attachments: item.attachments || [], resumeSession: true }, {
           signal: controller.signal,
           onEvent: (event, data) => {
             if (item.status !== "running") return;
@@ -140,7 +140,7 @@ export class QueueDispatcher {
         await this.store.transition(item, {
           status: "done", finishedAt: this.at(), reply: String(result?.reply || "").slice(0, 16000),
           progress: result?.progress ? { ...result.progress, outcome: "completed" } : item.progress ? { ...item.progress, outcome: "completed" } : null,
-          result: { workspace: result?.workspace || item.workspace, transport: result?.transport || "", effectiveModel: result?.effectiveModel || null, durationMs: Number(result?.durationMs) || (this.now() - startedAt), command: result?.command || "", startedAt: result?.startedAt || item.startedAt, completedAt: result?.completedAt || this.at(), channelActions: (Array.isArray(result?.channelActions) ? result.channelActions : []).filter((action) => action?.type === "profile").slice(0, 5) },
+          result: { workspace: result?.workspace || item.workspace, transport: result?.transport || "", effectiveModel: result?.effectiveModel || null, routing: result?.routing || null, durationMs: Number(result?.durationMs) || (this.now() - startedAt), command: result?.command || "", startedAt: result?.startedAt || item.startedAt, completedAt: result?.completedAt || this.at(), channelActions: (Array.isArray(result?.channelActions) ? result.channelActions : []).filter((action) => action?.type === "profile").slice(0, 5) },
         });
       } catch (error) {
         if (item.status === "running") {

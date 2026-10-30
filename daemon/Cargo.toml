@@ -2,6 +2,7 @@
 name = "autohand-squad-runtime"
 version = "0.1.14"
 edition = "2021"
+rust-version = "1.89"
 license = "MIT"
 description = "Standalone Autohand Squad runtime and daemon"
 repository = "https://github.com/autohandai/squad"
@@ -44,6 +45,7 @@ reqwest = { version = "0.13", features = ["json", "blocking"] }
 tao = "0.35"
 tokio = { version = "1.41", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tray-icon = "0.24"
+turbovec = "=1.1.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

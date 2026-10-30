@@ -16,10 +16,11 @@ import { createReadStream } from "node:fs";
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { promisify } from "node:util";
+import { ATTACHMENT_LIMIT_BYTES as FILE_LIMIT, attachmentMime } from "../../src/lib/attachments.js";
 
 export const name = "attachments";
 
-export const ATTACHMENT_LIMIT_BYTES = 25 * 1024 * 1024;
+export const ATTACHMENT_LIMIT_BYTES = FILE_LIMIT;
 const LIMIT_LABEL = "25 MB";
 const ID_RE = /^[a-z0-9]{12,32}$/;
 const PROBE_TIMEOUT_MS = 8000;
@@ -186,7 +187,8 @@ async function readSidecar(ctx, id) {
 }
 
 function publicRecord(ctx, meta) {
-  return { ...meta, path: join(attachmentsDir(ctx), `${meta.id}.${meta.ext}`), url: `/api/attachments/${meta.id}` };
+  const mime = attachmentMime(meta.name, meta.mime);
+  return { ...meta, mime, kind: kindOf(mime), path: join(attachmentsDir(ctx), `${meta.id}.${meta.ext}`), url: `/api/attachments/${meta.id}`, ...(meta.preview ? { previewUrl: `/api/attachments/${meta.id}/preview` } : {}) };
 }
 
 async function handleUpload(req, res, ctx) {
@@ -195,7 +197,7 @@ async function handleUpload(req, res, ctx) {
     ctx.json(res, 400, { success: false, error: "Send the file name in the x-file-name header." });
     return true;
   }
-  const mime = String(req.headers["content-type"] || "application/octet-stream").split(";")[0].trim().toLowerCase() || "application/octet-stream";
+  const mime = attachmentMime(fileName, req.headers["content-type"]);
   const body = await readBinaryBody(req, res, ATTACHMENT_LIMIT_BYTES);
   if (!body) return true;
   if (!body.length) {
@@ -206,9 +208,9 @@ async function handleUpload(req, res, ctx) {
   const ext = extensionFor(fileName, mime);
   const kind = kindOf(mime);
   const dir = attachmentsDir(ctx);
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   const filePath = join(dir, `${id}.${ext}`);
-  await writeFile(filePath, body);
+  await writeFile(filePath, body, { mode: 0o600 });
   const probed = await probe(filePath, kind);
   const meta = { id, kind, name: fileName, mime, ext, size: body.length, ...probed, createdAt: new Date().toISOString() };
   await ctx.writeJsonFile(join(dir, `${id}.json`), meta);
@@ -251,6 +253,8 @@ async function serveFile(req, res, { filePath, mime, fileName, cacheControl }) {
     "cache-control": cacheControl,
     "last-modified": info.mtime.toUTCString(),
     "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
   };
   const range = req.headers.range ? parseRange(req.headers.range, size) : null;
   if (range?.invalid) {
@@ -330,6 +334,7 @@ async function handleDelete(res, ctx, meta) {
   const dir = attachmentsDir(ctx);
   await rm(join(dir, `${meta.id}.${meta.ext}`), { force: true });
   await rm(join(dir, `${meta.id}.json`), { force: true });
+  await rm(join(dir, `${meta.id}.preview.png`), { force: true });
   try {
     const frames = (await readdir(framesDir(ctx))).filter((entry) => entry.startsWith(`${meta.id}-`));
     await Promise.all(frames.map((entry) => rm(join(framesDir(ctx), entry), { force: true })));
@@ -347,12 +352,30 @@ export async function handle(req, res, url, ctx) {
     return handleUpload(req, res, ctx);
   }
 
-  const match = /^\/api\/attachments\/([^/]+)(?:\/(meta|frame))?$/.exec(url.pathname);
+  const match = /^\/api\/attachments\/([^/]+)(?:\/(meta|frame|preview))?$/.exec(url.pathname);
   if (!match) return false;
   const [, id, sub] = match;
   if (!ID_RE.test(id)) return notFound(ctx, res);
   const meta = await readSidecar(ctx, id);
   if (!meta) return notFound(ctx, res);
+
+  if (sub === "preview" && req.method === "POST") {
+    const body = await readBinaryBody(req, res, ATTACHMENT_LIMIT_BYTES);
+    if (!body) return true;
+    if (!body.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+      ctx.json(res, 400, { success: false, error: "An attachment preview must be a PNG image." });
+      return true;
+    }
+    await writeFile(join(attachmentsDir(ctx), `${id}.preview.png`), body, { mode: 0o600 });
+    const updated = { ...meta, preview: { mime: "image/png", size: body.length } };
+    await ctx.writeJsonFile(join(attachmentsDir(ctx), `${id}.json`), updated);
+    ctx.json(res, 200, { success: true, data: publicRecord(ctx, updated) });
+    return true;
+  }
+  if (sub === "preview" && (req.method === "GET" || req.method === "HEAD")) {
+    if (!meta.preview) return notFound(ctx, res);
+    return (await serveFile(req, res, { filePath: join(attachmentsDir(ctx), `${id}.preview.png`), mime: "image/png", fileName: `${meta.name}.png`, cacheControl: "private, max-age=31536000, immutable" })) || notFound(ctx, res);
+  }
 
   if (sub === "meta" && req.method === "GET") {
     ctx.json(res, 200, { success: true, data: publicRecord(ctx, meta) });

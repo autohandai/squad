@@ -90,6 +90,12 @@ jobs:
       - name: Check warm chat reuse and quiet progress
         run: bun run check:chat-experience
 
+      - name: Check supported models and configured engine fallbacks
+        run: bun run check:model-routing
+
+      - name: Check uploaded files across chat, history and harnesses
+        run: bun run check:attachments
+
       - name: Check folder profiles and squad recruiting
         run: bun run check:recruiting
 
@@ -195,6 +201,13 @@ jobs:
       - name: Build runtime binaries
         run: cargo build --bins -j1
         working-directory: daemon
+
+      - name: Check collective memory, TurboVec and managed MCP on native targets
+        run: node scripts/check-memory-library.mjs
+
+      - name: Check memory graph and collection settings in Chromium
+        if: runner.os == 'Linux'
+        run: node scripts/check-memory-browser.mjs
 
   desktop:
     name: Desktop shell check

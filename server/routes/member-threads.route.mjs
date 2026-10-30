@@ -3,6 +3,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { readPersistentJson, writePersistentJson } from '../persistent-json.mjs';
+import { resolveAttachments } from '../attachments.mjs';
+import { ATTACHMENT_COUNT_LIMIT, attachmentReferences } from '../../src/lib/attachments.js';
 
 export const name = 'member-threads';
 const ROUTE = /^\/api\/members\/([^/]+)\/threads(?:\/([^/]+)(?:\/(messages|stop))?)?$/;
@@ -41,6 +43,8 @@ function settle(thread, run, message) {
   message.empty = !message.body;
   if (!message.body) message.body = run.status === 'completed' ? 'Finished without reply text. Open the run in Execution to inspect the work.' : `This work ${run.status === 'stopped' ? 'was stopped' : 'could not finish'}. You can send a follow-up to retry.`;
   message.completedAt = run.finishedAt;
+  if (run.effectiveModel) message.effectiveModel = run.effectiveModel;
+  if (run.routing) message.routing = run.routing;
   thread.updatedAt = stamp();
   return true;
 }
@@ -85,6 +89,7 @@ async function launch(memberId, threadId, replyId, input) {
       mode: 'prompt', policy: access.agent.launch?.policy || 'yes',
       ephemeralSession: true, resumeSession: false, memberThreadId: threadId,
       requestId: replyId,
+      attachments: attachmentReferences([...new Map([...(thread.root.attachments || []), ...thread.messages.flatMap(message => message.attachments || [])].map(file => [file.id, file])).values()].slice(-ATTACHMENT_COUNT_LIMIT)),
     });
     await mutate(() => {
       const current = threadFor(memberId, threadId);
@@ -114,12 +119,13 @@ export async function handle(req, res, url, ctx) {
       const { root } = await ctx.readBody(req);
       if (!root?.id || String(root.id).length > 200 || !['user', 'agent'].includes(root.role) || !String(root.body || '').trim() || String(root.body).length > 16000) throw problem('Choose a message with 1–16000 characters to reply to.');
       const threadId = `dm-${createHash('sha256').update(JSON.stringify([memberId, root.id])).digest('hex').slice(0, 32)}`;
+      const attachments = attachmentReferences(await resolveAttachments(ctx.squadStateDir, root.attachments || []));
       data = await mutate(() => {
         const previous = state.threads.find(thread => thread.id === threadId && thread.memberId === memberId);
         if (previous) return publicThread(previous);
         if (state.threads.filter(thread => thread.memberId === memberId).length >= 200) throw problem('This member has reached the limit of 200 reply threads.', 409);
         const now = stamp();
-        const thread = { id: threadId, memberId, parentMessageId: String(root.id), root: { id: String(root.id), role: root.role, body: String(root.body).trim(), authorName: String(root.authorName || '').slice(0, 120) }, messages: [], createdAt: now, updatedAt: now };
+        const thread = { id: threadId, memberId, parentMessageId: String(root.id), root: { id: String(root.id), role: root.role, body: String(root.body).trim(), authorName: String(root.authorName || '').slice(0, 120), attachments }, messages: [], createdAt: now, updatedAt: now };
         state.threads.push(thread); return publicThread(thread);
       }); status = 201;
     } else if (id && !action && req.method === 'GET') data = publicThread(threadFor(memberId, id));
@@ -127,6 +133,7 @@ export async function handle(req, res, url, ctx) {
       const body = await ctx.readBody(req), text = String(body.text || '').trim();
       if (!text || text.length > 8000) throw problem('A reply must contain 1–8000 characters.');
       const requestId = String(body.requestId || randomUUID()).slice(0, 120);
+      const attachments = attachmentReferences(await resolveAttachments(ctx.squadStateDir, body.attachments || []));
       const replyId = `reply-${createHash('sha256').update(JSON.stringify([id, requestId])).digest('hex').slice(0, 32)}`;
       let start = false;
       data = await mutate(() => {
@@ -134,12 +141,13 @@ export async function handle(req, res, url, ctx) {
         const previous = thread.messages.find(message => message.id === replyId);
         if (previous) {
           if (thread.messages.find(message => message.id === `${replyId}-user`)?.body !== text) throw problem('This request was already used for a different reply.', 409);
+          if (JSON.stringify(thread.messages.find(message => message.id === `${replyId}-user`)?.attachments || []) !== JSON.stringify(attachments)) throw problem('This request was already used with different attachments.', 409);
           return publicThread(thread);
         }
         if (thread.messages.some(message => message.status === 'loading')) throw problem('This thread is working. Other threads can work independently.', 409);
         if (thread.messages.length >= 200) throw problem('This thread has reached 200 messages; start another reply thread.', 409);
         const now = stamp();
-        thread.messages.push({ id: `${replyId}-user`, role: 'user', body: text, status: 'complete', createdAt: now }, { id: replyId, role: 'agent', body: '', status: 'loading', runId: '', createdAt: now });
+        thread.messages.push({ id: `${replyId}-user`, role: 'user', body: text, attachments, status: 'complete', createdAt: now }, { id: replyId, role: 'agent', body: '', status: 'loading', runId: '', createdAt: now });
         thread.updatedAt = now; start = true; return publicThread(thread);
       });
       if (start) void launch(memberId, id, replyId, body).catch(error => ctx.logEvent(ctx.SEVERITY.ERROR, `Reply thread failed: ${error.message}`));

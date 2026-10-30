@@ -108,6 +108,6 @@ export async function startBrowser() {
     click: text => evaluate(`(() => { const element = [...document.querySelectorAll('button')].find(item => (item.innerText.trim() === ${JSON.stringify(text)} || item.getAttribute('aria-label') === ${JSON.stringify(text)}) && item.getBoundingClientRect().width); if (!element) throw new Error('Missing button: ' + ${JSON.stringify(text)}); element.click(); })()`),
     fill: (selector, value) => evaluate(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); if (!input) throw new Error('Missing input'); const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, 'value').set.call(input, ${JSON.stringify(value)}); input.dispatchEvent(new Event('input', { bubbles: true })); })()`),
     screenshot: async path => { await until(() => evaluate(`!document.getElementById('boot')`), 'startup overlay removed'); await mkdir(join(path, '..'), { recursive: true }); const result = await send('Page.captureScreenshot', { format: 'png' }); await writeFile(path, Buffer.from(result.data, 'base64')); },
-    close: async () => { for (const entry of pending.values()) clearTimeout(entry.timer); ws.close(); await stop(child); await rm(directory, { recursive: true, force: true }); },
+    close: async () => { for (const entry of pending.values()) clearTimeout(entry.timer); ws.close(); await stop(child); await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); },
   };
 }

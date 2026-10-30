@@ -35,6 +35,8 @@ export function MessageComposer({
   hint = "",
   autoFocus = false,
   lastSent = "",
+  hasAttachments = false,
+  attachmentsPending = false,
 }) {
   const [internal, setInternal] = useState("");
   const text = value === undefined ? internal : value;
@@ -71,7 +73,7 @@ export function MessageComposer({
 
   function submit() {
     const body = text.trim();
-    if (!body || busy || disabled) return;
+    if ((!body && !hasAttachments) || busy || disabled || attachmentsPending) return;
     onSubmit?.(body);
     setText("");
     setMention(null);
@@ -153,7 +155,7 @@ export function MessageComposer({
     });
   }
 
-  const canSend = text.trim().length > 0 && !busy && !disabled;
+  const canSend = (text.trim().length > 0 || hasAttachments) && !busy && !disabled && !attachmentsPending;
 
   return (
     <div className={cn("relative rounded-md border border-border/80 bg-background transition-colors focus-within:border-foreground/40", disabled && "opacity-60")}>

@@ -10,6 +10,21 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- Collective memory brings the squad's saved memories, profile Markdown and isolated Autohand memories into a searchable graph and list, with source details, groups, tags, saved connections and member colors. New Memory settings choose collection sources and shared Markdown folders; Squad MCP lets agents search, read, organize, relate and explicitly share memories within their access.
+- Members can use an ordered list of fallback coding engines and models when their primary engine cannot answer, with visible switching and automatic return after a cooldown. An optional setting lets a member manage its own fallbacks through Squad tools.
+
+### Changed
+
+- Model overrides load names and exact IDs from the selected coding engine, with refresh and a custom-ID option, instead of requiring you to guess model names.
+
+### Fixed
+
+- Quota and silent-startup failures reach the configured fallback without becoming a setup-cancellation reply. Fallbacks keep read-only work in preview mode, replace failed partial answers, and leave your primary engine and permission choices intact.
+- Drag, choose or paste files into member chats, Quick Chat, channels and reply threads. Images show thumbnails; documents, spreadsheets and fonts show file previews. Upload progress, Retry and Remove keep failed files from disappearing when you send.
+- Attachments now reach the member's engine as native image or document inputs and file context, including queued follow-ups, retries and remote members. Saved and reopened conversations keep their files without putting binary data into chat history.
+
 ## [0.1.14] - 2026-10-28
 
 ### Fixed

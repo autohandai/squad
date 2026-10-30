@@ -67,4 +67,36 @@ assert.equal(ok.created, true);
 await ok.release(true);
 await flaky.closeAll();
 await pool.closeAll();
+
+// Cancellation must cover startup, not only a prompt after the SDK is ready.
+// Otherwise the fallback watchdog aborts a signal the session pool ignores.
+let releaseStartup;
+let enteredStartup;
+let coldClosed=0;
+const startupEntered=new Promise(resolve=>{enteredStartup=resolve;});
+const cold=new SdkSessionPool({sweepMs:10_000,createSdk:()=>({async start(){enteredStartup();await new Promise(resolve=>{releaseStartup=resolve;});},async close(){coldClosed++;releaseStartup?.();},async interrupt(){}})});
+const abort=new AbortController();
+const pending=cold.acquire({...launch,signal:abort.signal});
+pending.catch(()=>{});
+try{
+  await startupEntered;abort.abort(new Error('fixture startup cancelled'));
+  let timer;
+  try{await assert.rejects(Promise.race([pending,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Startup acquisition ignored cancellation')),150);})]),/fixture startup cancelled/);}finally{clearTimeout(timer);}
+  assert.equal(coldClosed,1,'Cancelled startup closes its owned SDK');
+  assert.equal(cold.stats().active,0,'Cancelled startup leaves no warm session');
+}finally{releaseStartup?.();const acquired=await pending.catch(()=>null);await acquired?.release();await cold.closeAll();}
+
+const serial=new SdkSessionPool({createSdk:fakeSdk,sweepMs:10_000});
+try{
+  const active=await serial.acquire(launch);
+  const queuedAbort=new AbortController();
+  const cancelled=serial.acquire({...launch,signal:queuedAbort.signal});cancelled.catch(()=>{});
+  queuedAbort.abort(new Error('fixture queued cancellation'));
+  let timer;
+  try{await assert.rejects(Promise.race([cancelled,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Queued acquisition ignored cancellation')),150);})]),/fixture queued cancellation/);}finally{clearTimeout(timer);}
+  let nextStarted=false;
+  const next=serial.acquire(launch).then(lease=>{nextStarted=true;return lease;});
+  await new Promise(resolve=>setTimeout(resolve,20));assert.equal(nextStarted,false,'Cancelling a waiter cannot unlock another turn that is still active');
+  await active.release(true);const nextLease=await next;assert.equal(nextLease.sdk,active.sdk);await nextLease.release(true);
+}finally{await serial.closeAll();}
 console.log('SDK session pool checks passed.');

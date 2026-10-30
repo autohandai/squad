@@ -20,7 +20,7 @@ export const PROFILE_ACTION_TYPE = "profile";
 export const PROFILE_LIMITS = Object.freeze({ name: 60, role: 80, description: 600, instructions: 1200, personality: 600, skills: 8, skill: 60 });
 const PROFILE_KEYS = new Set(["type", "op", "member", "name", "role", "description", "instructions", "personality", "skills"]);
 const PROFILE_FIELDS = Object.freeze(["name", "role", "description", "instructions", "personality", "skills"]);
-export const MEMBER_PROFILE_FIELDS = Object.freeze(["name", "role", "description", "instructions", "skills", "brainCard", "memory", "profileFiles", "formerNames"]);
+export const MEMBER_PROFILE_FIELDS = Object.freeze(["name", "role", "description", "instructions", "skills", "brainCard", "memory", "profileFiles", "formerNames", "modelRouting"]);
 
 export function memberProfileRevision(member) {
   const revision = member?.profileRevision;

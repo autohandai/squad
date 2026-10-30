@@ -19,7 +19,7 @@ export const capabilities = {
   resume: true,
   interrupt: true,
   modelOverride: true,
-  images: false,
+  images: true,
   permissionModes: ["restricted", "interactive", "unrestricted"],
 };
 

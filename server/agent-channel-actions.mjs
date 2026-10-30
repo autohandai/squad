@@ -4,6 +4,7 @@ import { channelError } from './channels-store.mjs';
 import { resolveMentions, resolveResponderRecipients } from '../src/lib/channel-responders.js';
 import { withoutHereMentions } from '../src/lib/channel-mentions.js';
 import { MEMBER_PROFILE_FIELDS, memberProfileRevision, mergeMemberProfile } from '../src/lib/member-shaping.js';
+import { normalizeModelRouting } from '../src/lib/model-routing.js';
 import { uniqueName } from '../src/lib/teams.js';
 
 const at = () => new Date().toISOString();
@@ -12,7 +13,7 @@ const nameKey = value => String(value || '').replace(/^@/, '').trim().toLowerCas
 const mode = agent => ['allow', 'ask', 'block'].includes(agent?.permissions?.builtInPolicies?.squad_create_channel) ? agent.permissions.builtInPolicies.squad_create_channel : 'ask';
 const workspaceModes = agent => Object.fromEntries(Object.entries(agent?.channelPoliciesByWorkspace || {}).filter(([, policy]) => ['allow', 'ask', 'block'].includes(policy)));
 const paths = agent => [...new Set([...(agent?.projects || []).map(p => p.path), agent?.workspace].filter(Boolean))];
-const memberFields = ['id', 'name', 'formerNames', 'profileRevision', 'role', 'employeeType', 'avatar', 'avatarVersion', 'createdAt', 'updatedAt', 'stats', 'tools', 'description', 'instructions', 'brainCard', 'memory', 'skills', 'permissions', 'modelAssignment', 'harness', 'projects', 'workspace', 'launch', 'status', 'staffId', 'profileFiles', 'profileDocs', 'skillSource', 'skillInstall'];
+const memberFields = ['id', 'name', 'formerNames', 'profileRevision', 'role', 'employeeType', 'avatar', 'avatarVersion', 'createdAt', 'updatedAt', 'stats', 'tools', 'description', 'instructions', 'brainCard', 'memory', 'skills', 'permissions', 'modelAssignment', 'modelRouting', 'harness', 'projects', 'workspace', 'launch', 'status', 'staffId', 'profileFiles', 'profileDocs', 'skillSource', 'skillInstall'];
 const memberCopy = (agent, id) => Object.fromEntries(memberFields.filter(key => key in agent).map(key => [key, key === 'id' ? id : structuredClone(agent[key]) ]));
 
 // Same bound and wording as the browser's channel relay (src/App.jsx,
@@ -81,7 +82,15 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
       } else {
         if (!input.agent || sanitizeId(input.agent.id) !== id) throw channelError('Matching member configuration is required.');
         if (input.profilePatch && (typeof input.profilePatch !== 'object' || Array.isArray(input.profilePatch) || Object.keys(input.profilePatch).some(key => !MEMBER_PROFILE_FIELDS.includes(key)))) throw channelError('Profile patch contains an unsupported field.');
-        const agent = { ...mergeMemberProfile(memberCopy(input.agent, id), previous?.agent), ...(input.profilePatch || {}) };
+        const agentRouting = input.modelRoutingActor === 'agent';
+        if (agentRouting && (previous?.removed || !normalizeModelRouting(previous?.agent?.modelRouting).allowAgentChanges || input.profilePatch?.modelRouting?.allowAgentChanges !== true)) throw channelError('The person has not allowed this member to manage fallbacks.', 403);
+        if (agentRouting && Object.keys(input.profilePatch || {}).some(key => key !== 'modelRouting')) throw channelError('A fallback tool may only change its fallback configuration.', 403);
+        // Catalog discovery is asynchronous. Rebase a managed tool's narrow
+        // patch on the latest member, including any primary/permission edits
+        // made by the person while that discovery was running.
+        const incoming = agentRouting ? previous.agent : input.agent;
+        const agent = { ...mergeMemberProfile(memberCopy(incoming, id), previous?.agent), ...(input.profilePatch || {}) };
+        if (agent.modelRouting) agent.modelRouting = normalizeModelRouting(agent.modelRouting, { strict: Boolean(input.profilePatch?.modelRouting) });
         if (input.profilePatch?.name && input.profilePatch.name !== before) {
           agent.name = uniqueName(input.profilePatch.name, Object.entries(state.agentChannelAccess).filter(([otherId, access]) => otherId !== id && !access.removed).map(([, access]) => access.agent?.name));
         }

@@ -28,6 +28,8 @@ export function goalMessagePatch(goal) {
     goalId: goal.id,
     goal,
     goalUpdatedAt: goal.updatedAt,
+    ...(goal.lastResult?.effectiveModel ? { effectiveModel: goal.lastResult.effectiveModel } : {}),
+    ...(goal.lastResult?.routing ? { routing: goal.lastResult.routing } : {}),
     progress: goalProgress(goal),
     body: summary || fallback,
     status,

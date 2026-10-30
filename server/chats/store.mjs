@@ -5,6 +5,7 @@
 // the harness session ids the bridge captured at the same moment.
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { attachmentReferences } from "../../src/lib/attachments.js";
 
 export const CHATS_DIR = "chats";
 export const MAX_CHATS_PER_MEMBER = 100;
@@ -68,7 +69,7 @@ export function boundMessages(input) {
     return { ...message, trace };
   });
   if (size(withoutTrace) <= MAX_CHAT_BYTES) return { messages: withoutTrace, limited: true };
-  return { messages: withoutTrace.map(({ id, role, body, time, status, authorName, startedAt, completedAt, durationMs }) => ({ id, role, body: String(body || "").slice(0, 20000), time, status, authorName, startedAt, completedAt, durationMs, workDetailsLimited: true })), limited: true };
+  return { messages: withoutTrace.map(({ id, role, body, attachments, time, status, authorName, startedAt, completedAt, durationMs }) => ({ id, role, body: String(body || "").slice(0, 20000), attachments: attachmentReferences(attachments), time, status, authorName, startedAt, completedAt, durationMs, workDetailsLimited: true })), limited: true };
 }
 
 /** Build the record stored on disk from what the browser sent. */

@@ -11,6 +11,7 @@
 // No engine runs. Needs Chrome; without one it warns and exits 0
 // (AUTOHAND_REQUIRE_BROWSER=1 makes that a failure).
 import assert from "node:assert/strict";
+import { SETTINGS_SECTION_IDS } from "../src/lib/settings-navigation.js";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -173,7 +174,7 @@ try {
   assert.equal(s.menuButton, false, "no account gear on Settings; Back is the way out");
   assert.deepEqual(s.headings, ["Appearance"], "exactly one section heading is on the page");
   assert.equal(s.current, "Appearance", "the list marks the open section");
-  assert.equal(s.rows.length, 17, "every section is in the list");
+  assert.deepEqual(s.rows, [...SETTINGS_SECTION_IDS], "every canonical section is in the list, in order");
   assert.equal(s.listIsRow, false, "wide: the list is a column");
   await shot("settings-appearance-1440");
 

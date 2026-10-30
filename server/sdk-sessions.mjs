@@ -11,6 +11,21 @@
 
 import { createHash } from "node:crypto";
 
+async function untilCancelled(promise, signal) {
+  if (!signal) return promise;
+  const reason = () => signal.reason instanceof Error ? signal.reason : new Error("SDK session acquisition was cancelled.");
+  if (signal.aborted) throw reason();
+  let abort;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      abort = () => reject(reason());
+      signal.addEventListener("abort", abort, { once: true });
+    })]);
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+}
+
 function stableStringify(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
@@ -43,7 +58,8 @@ export class SdkSessionPool {
    * Acquire a started SDK for the given launch. Resolves once no other prompt
    * is using that session. The caller must call `release(healthy)` exactly once.
    */
-  async acquire({ agentId, workspace, options, command = "" }) {
+  async acquire({ agentId, workspace, options, command = "", signal }) {
+    if (signal?.aborted) await untilCancelled(Promise.resolve(), signal);
     const key = sessionKeyFor({ agentId, workspace, options });
     let session = this.sessions.get(key);
     let created = false;
@@ -54,6 +70,7 @@ export class SdkSessionPool {
         workspace,
         command,
         sdk: null,
+        ready: false,
         starting: null,
         lock: Promise.resolve(),
         createdAt: Date.now(),
@@ -65,8 +82,9 @@ export class SdkSessionPool {
       created = true;
       session.starting = (async () => {
         const sdk = this.createSdk(options);
-        await sdk.start();
         session.sdk = sdk;
+        await sdk.start();
+        session.ready = true;
       })();
       session.starting.catch(() => {});
       await this.enforceCapacity(key);
@@ -78,19 +96,27 @@ export class SdkSessionPool {
     session.lock = new Promise((resolve) => {
       unlock = resolve;
     });
-    await previous;
+    try {
+      await untilCancelled(previous, signal);
+    } catch (error) {
+      // The cancelled waiter owns this queue slot, not the active session.
+      // Release it only after the preceding turn has actually finished.
+      if (created && !session.busy && this.sessions.get(key) === session) await this.close(key, "startup cancelled");
+      void previous.then(unlock, unlock);
+      throw error;
+    }
 
     try {
-      if (session.starting) await session.starting;
+      if (session.starting) await untilCancelled(session.starting, signal);
     } catch (error) {
+      if (this.sessions.get(key) === session) await this.close(key, signal?.aborted ? "startup cancelled" : "startup failed");
       unlock();
-      this.sessions.delete(key);
       throw error;
     }
     if (!session.sdk || this.sessions.get(key) !== session) {
       unlock();
       // Closed while we waited: start over with a fresh session.
-      return this.acquire({ agentId, workspace, options, command });
+      return this.acquire({ agentId, workspace, options, command, signal });
     }
 
     session.busy = true;
@@ -115,8 +141,10 @@ export class SdkSessionPool {
     this.sessions.delete(key);
     this.onEvent("session_closed", session, reason);
     try {
-      if (session.starting) await session.starting.catch(() => {});
-      await session.sdk?.interrupt?.().catch(() => {});
+      // A silent startup is exactly what cancellation must be able to stop.
+      // Its SDK is assigned before start(), so close the owned process
+      // without waiting for that startup promise to settle first.
+      if (session.ready) await session.sdk?.interrupt?.().catch(() => {});
       await session.sdk?.close?.();
     } catch {
       // Closing is best effort; the process is dropped either way.

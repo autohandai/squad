@@ -12,6 +12,7 @@ import { isNoTextReply } from "@/lib/chat-recovery";
 import { channelReplyIndex, channelThreadSummary, isChannelPlaceholder, normalizeChannelReplyMode } from "@/lib/channel-replies";
 import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { cn } from "@/lib/utils";
+import { fallbackLabel } from "@/lib/model-routing";
 
 export { QUICK_REACTIONS };
 
@@ -336,7 +337,8 @@ export function ChannelStream({
         }
         const isNew = !message.archivedThread && !newShown && lastReadAt > 0 && ms > lastReadAt && message.role !== "user";
         const name = authorName ? authorName(message) : message.role === "user" ? userName : message.authorName || "Member";
-        const compact = !showDay && !isNew && previousAuthor === name && ms - previousTimestamp < 4 * 60 * 1000;
+        const fallback = fallbackLabel(message.routing);
+        const compact = !fallback && !showDay && !isNew && previousAuthor === name && ms - previousTimestamp < 4 * 60 * 1000;
         const loading = message.status === "loading";
         const failed = message.status === "error";
         if (showDay) previousDay = day;
@@ -368,6 +370,7 @@ export function ChannelStream({
                   <div className="flex flex-wrap items-baseline gap-2">
                     <span className="text-sm font-semibold leading-5">{name}</span>
                     <span className="text-xs text-muted-foreground" title={fullTime(message)}>{timeLabel(message, locale)}</span>
+                    {fallback ? <span className="text-xs text-muted-foreground">{fallback}</span> : null}
                     {loading ? <Spinner className="size-3" /> : null}
                   </div>
                 ) : null}

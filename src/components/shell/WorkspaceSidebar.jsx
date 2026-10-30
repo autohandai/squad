@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bot, CheckCheck, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Pencil, Plus, Search } from "lucide-react";
+import { Bot, Brain, CheckCheck, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Pencil, Plus, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -210,6 +210,7 @@ export function WorkspaceSidebar({
             onClick={onNavigate.agents}
             trailing={<span className="text-xs text-muted-foreground">{visibleAgents.length}</span>}
           />
+          <NavRow icon={Brain} label="Memory" active={active.kind === "memory"} onClick={onNavigate.memory} />
         </nav>
 
         {sections.length === 0 ? (

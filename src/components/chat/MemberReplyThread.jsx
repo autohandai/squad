@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { AttachmentButton, AttachmentList, useAttachments } from "@/components/chat/Attachments";
+import { attachmentOnlyPrompt } from "@/lib/attachments";
+import { fallbackLabel } from "@/lib/model-routing";
 
 export function useMemberThreadSummaries(api, memberId) {
   const [threads, setThreads] = useState([]);
@@ -30,6 +33,7 @@ export function MemberReplyThread({ api, member, root, onClose, workspace, rende
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [retry, setRetry] = useState(null);
+  const attachments = useAttachments(`thread:${member.id}:${selectedId || root?.threadId || root?.id || ""}`, api);
   const prefix = `/api/members/${encodeURIComponent(member.id)}/threads`;
   useEffect(() => { setSelectedId(root?.threadId || ''); setThread(null); setText(''); setError(''); setRetry(null); }, [member.id, root?.id, root?.threadId]);
   useEffect(() => {
@@ -42,7 +46,7 @@ export function MemberReplyThread({ api, member, root, onClose, workspace, rende
           const current = await api(`${prefix}/${encodeURIComponent(id)}`);
           if (!cancelled) setThread(current);
         } else if (root.id) {
-          const current = await api(prefix, { method: 'POST', body: JSON.stringify({ root: { id: root.id, role: root.role, body: root.body, authorName: root.authorName } }) });
+          const current = await api(prefix, { method: 'POST', body: JSON.stringify({ root: { id: root.id, role: root.role, body: root.body, authorName: root.authorName, attachments: root.attachments || [] } }) });
           id = current.id;
           if (!cancelled) setThread(current);
         } else {
@@ -58,12 +62,13 @@ export function MemberReplyThread({ api, member, root, onClose, workspace, rende
 
   async function submit(event) {
     event.preventDefault();
-    if (!thread || !text.trim() || sending || thread.working) return;
-    const request = retry?.text === text.trim() ? retry : { text: text.trim(), requestId: crypto.randomUUID() };
+    const prompt = text.trim() || (attachments.ready.length ? attachmentOnlyPrompt(attachments.ready) : "");
+    if (!thread || !prompt || attachments.blocked || sending || thread.working) return;
+    const request = retry?.text === prompt && JSON.stringify(retry.attachments) === JSON.stringify(attachments.ready) ? retry : { text: prompt, attachments: attachments.ready, requestId: crypto.randomUUID() };
     setSending(true); setError(''); setRetry(request);
     try {
       const saved = await api(`${prefix}/${encodeURIComponent(thread.id)}/messages`, { method: 'POST', body: JSON.stringify({ ...request, workspace }) });
-      setThread(saved); setText(''); setRetry(null);
+      setThread(saved); setText(''); setRetry(null); attachments.clear();
     } catch (problem) { setError(problem.message); }
     finally { setSending(false); }
   }
@@ -72,7 +77,7 @@ export function MemberReplyThread({ api, member, root, onClose, workspace, rende
     catch (problem) { setError(problem.message); }
   }
   return <Sheet open={Boolean(root)} onOpenChange={open => { if (!open) onClose(); }}>
-    <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-xl" aria-label="Reply thread">
+    <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-xl" aria-label="Reply thread" {...attachments.bind}>
       <SheetHeader className="border-b px-5 py-4 pr-12">
         <SheetTitle className="text-base">{member.name} · Thread</SheetTitle>
         <SheetDescription>Independent work. Other conversations can continue while this thread runs.</SheetDescription>
@@ -80,19 +85,21 @@ export function MemberReplyThread({ api, member, root, onClose, workspace, rende
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" data-testid="member-reply-thread">
         {error ? <p role="alert" className="mb-3 text-sm text-destructive">{error}</p> : null}
         {thread ? <>
-          <div className="mb-5 border-b pb-4 text-sm text-muted-foreground">{renderBody(thread.root.body)}</div>
+          <div className="mb-5 border-b pb-4 text-sm text-muted-foreground">{renderBody(thread.root.body)}<AttachmentList files={thread.root.attachments || []} className="mt-2" /></div>
           <div className="space-y-5" aria-live="polite">
             {thread.messages.map(message => <article key={message.id} data-thread-message-id={message.id}>
-              <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground"><span className="font-medium">{message.role === 'user' ? 'You' : member.name}</span>{message.status === 'loading' ? <span>Working…</span> : null}{['error','stopped'].includes(message.status) ? <span className="text-destructive">{message.status === 'stopped' ? 'Stopped' : 'Could not finish'}</span> : null}</div>
+              <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="font-medium">{message.role === 'user' ? 'You' : member.name}</span>{message.status === 'loading' ? <span>Working…</span> : null}{fallbackLabel(message.routing) ? <span>{fallbackLabel(message.routing)}</span> : null}{['error','stopped'].includes(message.status) ? <span className="text-destructive">{message.status === 'stopped' ? 'Stopped' : 'Could not finish'}</span> : null}</div>
               <div className="text-sm leading-6">{message.body ? renderBody(message.body) : null}</div>
+              <AttachmentList files={message.attachments || []} className="mt-2" />
             </article>)}
             {!thread.messages.length ? <p className="text-sm text-muted-foreground">Reply to start independent work on this message.</p> : null}
           </div>
         </> : choices.length ? <div className="divide-y">{choices.map(choice => <button key={choice.id} className="block w-full py-3 text-left text-sm" onClick={() => setSelectedId(choice.id)}><span className="line-clamp-2">{choice.root.body}</span><span className="mt-1 block text-xs text-muted-foreground">{choice.replyCount} {choice.replyCount === 1 ? 'reply' : 'replies'}{choice.working ? ' · working' : ''}</span></button>)}</div> : <p className="text-sm text-muted-foreground">{root?.id ? 'Opening thread…' : 'Reply to a message to start a thread.'}</p>}
       </div>
       {thread ? <form onSubmit={submit} className="border-t p-4">
+        <AttachmentList files={attachments.entries} onRemove={attachments.remove} onRetry={attachments.retry} className="mb-2" />
         <Textarea value={text} onChange={event => setText(event.target.value)} placeholder={`Reply to ${member.name} in this thread…`} aria-label="Thread reply" className="min-h-20 resize-none" onKeyDown={event => {if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();event.currentTarget.form.requestSubmit();}}} />
-        <div className="mt-2 flex justify-end gap-2">{thread.working ? <Button type="button" variant="outline" size="sm" onClick={stop}>Stop this thread</Button> : null}<Button type="submit" size="sm" disabled={!text.trim() || sending || thread.working}>{sending ? 'Sending…' : 'Reply'}</Button></div>
+        <div className="mt-2 flex justify-end gap-2"><AttachmentButton onFiles={attachments.addFiles} />{thread.working ? <Button type="button" variant="outline" size="sm" onClick={stop}>Stop this thread</Button> : null}<Button type="submit" size="sm" disabled={(!text.trim() && !attachments.ready.length) || attachments.blocked || sending || thread.working}>{sending ? 'Sending…' : 'Reply'}</Button></div>
       </form> : null}
     </SheetContent>
   </Sheet>;

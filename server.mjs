@@ -18,6 +18,7 @@ import { createConnectorStore } from "./server/connectors/store.mjs";
 import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
 import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
 import { AUTOHAND_TEAM_WAIT_SECONDS, TEAM_MCP_SERVER_NAME, createTeamService, teamMessagePrompt } from "./server/team/service.mjs";
+import { createMemoryService } from "./server/memory/service.mjs";
 import { createSquadCloud } from "./server/squad-cloud/service.mjs";
 import { createTeamChannels } from "./server/team/channels.mjs";
 import { createCliBootstrap, createCliProbe } from "./server/runtime/cli-bootstrap.mjs";
@@ -53,6 +54,11 @@ import { createResponderPicker } from "./server/responders/pick.mjs";
 import { createRunHistory, runHistoryPath } from "./server/runs/history.mjs";
 import { clearHarnessSessions } from "./server/chats/sessions.mjs";
 import { ChatStore } from "./server/chats/store.mjs";
+import { attachmentPrompt, autohandPromptInput, readAttachmentBytes, resolveAttachments } from "./server/attachments.mjs";
+import { proxyBinary } from "./server/remote/proxy.mjs";
+import { createModelCatalog } from "./server/harness/model-catalog.mjs";
+import { createFallbackRouter, routingFailure } from "./server/harness/fallback-router.mjs";
+import { normalizeModelRouting } from "./src/lib/model-routing.js";
 import { admitChat } from "./server/routes/queues.route.mjs";
 import { buildRecall, collectRecallSources } from "./server/chats/recall.mjs";
 import { workPlanFor } from "./server/work/plan.mjs";
@@ -131,8 +137,17 @@ function rememberRemoteRun(runId, memberId) {
 
 // `payload.workspace` is a path on this machine; the remote bridge uses its
 // default workspace unless the remote record pins one there.
-function remotePayload(payload, remote) {
+async function remotePayload(payload, remote) {
   const { workspace: _local, ...rest } = payload || {};
+  if (rest.attachments?.length) {
+    const attachments = [];
+    for (const file of await resolveAttachments(squadStateDir, rest.attachments)) {
+      let uploaded = await proxyBinary(remote, "/api/attachments", await readAttachmentBytes(file), { "x-file-name": encodeURIComponent(file.name), "content-type": file.mime });
+      if (file.previewPath) uploaded = await proxyBinary(remote, `/api/attachments/${uploaded.id}/preview`, await readAttachmentBytes(file, true), { "content-type": "image/png" });
+      attachments.push({ id: uploaded.id, name: uploaded.name });
+    }
+    rest.attachments = attachments;
+  }
   return remote?.workspace ? { ...rest, workspace: remote.workspace } : rest;
 }
 
@@ -209,7 +224,7 @@ function tapStreamOutcome(res) {
 async function proxyChatOnce(remote, payload, res) {
   const memberId = String(payload.agentId || "");
   try {
-    const reply = await proxyJson(remote, "/api/chat", remotePayload(payload, remote));
+    const reply = await proxyJson(remote, "/api/chat", await remotePayload(payload, remote));
     logRemoteProxy(remote, "/api/chat", memberId);
     remoteChatFinished(payload, remote, { status: "completed", preview: String(reply?.reply || reply?.output || "") });
     json(res, 200, { success: true, data: reply });
@@ -224,7 +239,7 @@ async function proxyChatStream(remote, payload, res) {
   const memberId = String(payload.agentId || "");
   const outcomeOf = tapStreamOutcome(res);
   try {
-    await proxyStream(remote, "/api/chat/stream", remotePayload(payload, remote), res);
+    await proxyStream(remote, "/api/chat/stream", await remotePayload(payload, remote), res);
   } catch (error) {
     // Only before headers were sent: the JSON envelope still reaches the client.
     logRemoteProxy(remote, "/api/chat/stream", memberId, { "error.type": error?.name || "Error", "error.message": error?.message || "" });
@@ -240,7 +255,7 @@ async function proxyChatStream(remote, payload, res) {
 async function proxyRunStart(remote, payload, res) {
   const memberId = String(payload.agentId || "");
   try {
-    const summary = await proxyJson(remote, "/api/runs", remotePayload(payload, remote));
+    const summary = await proxyJson(remote, "/api/runs", await remotePayload(payload, remote));
     rememberRemoteRun(summary?.id, memberId);
     logRemoteProxy(remote, "/api/runs", memberId, { "autohand.run.id": String(summary?.id || "") });
     json(res, 201, { success: true, data: summary });
@@ -278,7 +293,10 @@ function withRemoteDefaultWorkspace(req, payload) {
 
 // Paths another machine may reach with a bearer token this bridge minted.
 const REMOTE_SERVED_PATHS = [/^\/api\/chat$/, /^\/api\/chat\/stream$/, /^\/api\/runs$/, /^\/api\/runs\/[^/]+$/, /^\/api\/runs\/[^/]+\/stop$/, /^\/api\/runtime$/, /^\/api\/members\/presence$/, /^\/api\/members\/[^/]+\/channel-access$/];
-function remoteServedPath(pathname) {
+function remoteServedPath(pathname, method) {
+  // Remote members need destination-owned files before their turn starts.
+  // Grant uploads only; a served token cannot list, fetch or delete files.
+  if (method === "POST" && (pathname === "/api/attachments" || /^\/api\/attachments\/[a-z0-9]{12,32}\/preview$/.test(pathname))) return true;
   return REMOTE_SERVED_PATHS.some((pattern) => pattern.test(pathname));
 }
 
@@ -443,9 +461,37 @@ const team = createTeamService({
   rootDir,
   bridgeUrl: `http://127.0.0.1:${port}`,
   members: teamMembers,
+  memoryLibrary: () => memoryLibrary,
   isBusy: (memberId) => isMemberBusy(memberId),
   deliver: deliverTeamMessage,
   runAction: runTeamAction,
+  getModels: async (memberId, input) => {
+    const payload = await withSavedMember({ agentId: memberId });
+    const configuration = normalizeModelRouting(payload.agent?.modelRouting);
+    if (input.engine) return { configuration, catalog: await modelCatalog.get({ id: input.engine, provider: input.provider, workspace: payload.agent?.workspace || getDefaultWorkspace() }) };
+    return { configuration, engines: (await listHarnesses({ contextFor: harnessContextFor })).filter(item => item.status === 'ready' && (!item.fetchOnUse || item.installed)).map(item => ({ id: item.id, name: item.label })) };
+  },
+  setFallbacks: async (memberId, rows) => {
+    const access = await agentChannelActions.memberAccess(memberId);
+    if (!access?.agent || access.removed) throw new Error("This member is no longer available.");
+    const current = normalizeModelRouting(access.agent.modelRouting);
+    if (!current.allowAgentChanges) throw new Error("The person must enable Let this member manage fallbacks in Model settings first. You cannot enable it yourself.");
+    let modelRouting = normalizeModelRouting({ ...current, fallbacks: rows.map(row => ({ harness: { id: row.engine, model: row.model || '', effort: row.effort || '' }, provider: row.provider })) }, { strict: true });
+    const providerSettings = modelRouting.fallbacks.some(route => route.harness.id === 'autohand') ? await readProviderSettings({ includeSecrets: true }) : null;
+    await Promise.all(modelRouting.fallbacks.map(async route => {
+      const readiness = await detectHarness(route.harness.id, { context: harnessContextFor(route.harness.id) });
+      if (readiness.status !== 'ready' || (readiness.fetchOnUse && !readiness.installed)) throw new Error(`${readiness.label || route.harness.id} is not connected.`);
+      if (route.harness.id === 'autohand') {
+        route.provider = route.provider || providerSettings.defaultProvider;
+        if (!providerConfigured(providerSettings.providers[route.provider])) throw new Error('Choose a configured Autohand provider before adding this fallback.');
+      }
+      const catalog = await modelCatalog.get({ id: route.harness.id, provider: route.provider, workspace: access.agent.workspace || getDefaultWorkspace() });
+      if (route.harness.model && !catalog.models.some(model => model.id === route.harness.model)) throw new Error(`Choose a model ID reported by ${readiness.label || route.harness.id}.`);
+    }));
+    modelRouting = normalizeModelRouting(modelRouting, { strict: true });
+    const saved = await agentChannelActions.setAccess(memberId, { agent: access.agent, profilePatch: { modelRouting }, modelRoutingActor: 'agent' });
+    return { id: `fallbacks-${memberId}-${saved.profileRevision}`, type: 'profile', status: 'applied', actorId: memberId, patch: { modelRouting }, profileRevision: saved.profileRevision, message: `Updated ${access.agent.name}'s fallback engines.` };
+  },
   getProfile: async memberId => {
     const access = await agentChannelActions.memberAccess(memberId);
     if (!access?.agent || access.removed) throw new Error("This member is no longer available.");
@@ -460,6 +506,12 @@ const team = createTeamService({
   },
   emit: emitBridgeEvent,
 });
+const memoryLibrary = createMemoryService({
+  stateDir: squadStateDir, rootDir, agentsDir: isolatedAgentsDir, teamStore: team.store,
+  members: async () => Object.entries((await readChannelsState())?.agentChannelAccess || {}).filter(([id]) => !isUtilityAgent(id)).map(([id, access]) => ({ ...access.agent, id, removed: Boolean(access.removed) })),
+  emit: emitBridgeEvent,
+});
+bridgeEvents.on("team.memory.changed", () => memoryLibrary.invalidate());
 const cloud = createSquadCloud({ stateDir: squadStateDir, store: team.store, readIdentityToken: () => {
   const auth = readAutohandAuth(userConfigPath);
   return autohandAuthUsable(auth) ? auth.token : "";
@@ -621,7 +673,7 @@ async function finishVaultWork(workId) {
 async function prepareTeamWork(agentRuntime, input) {
   const warming = input._warmSession === true && !input._computerUseWorkId;
   if (isUtilityAgent(agentRuntime.agentId) || (!input._computerUseWorkId && !warming)) return agentRuntime;
-  const engine = harnessAssignmentFromAgent(agentRuntime.agent).id;
+  const engine = agentRuntime.harness?.id || harnessAssignmentFromAgent(agentRuntime.agent).id;
   const maxWaitSeconds = engine === "autohand" || engine === "autohand-acp" ? AUTOHAND_TEAM_WAIT_SECONDS : 50;
   const session = await team[warming ? "prepareMember" : "openWork"]({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, workspace: agentRuntime.workspace, depth: Number(input._teamDepth) || 0, ancestorIds: input.teamMessage?.ancestorIds || [], channel: channelContextFromPayload(input), maxWaitSeconds, automationDraft: input.automationDraft === true, scope: input.ephemeralSession ? input._computerUseWorkId : "" });
   const directory = join(agentRuntime.agentHome, "team-configs");
@@ -2401,6 +2453,10 @@ function modelAssignmentFromAgent(agent) {
   return { mode: "inherit" };
 }
 
+function providerNotReadyError(message, credentials = false) {
+  return Object.assign(new Error(message), { code: credentials ? "SQUAD_PROVIDER_CREDENTIALS" : "SQUAD_PROVIDER_SETUP" });
+}
+
 async function resolveProviderForAgent(agent) {
   const settings = await readProviderSettings({ includeSecrets: true });
   const assignment = modelAssignmentFromAgent(agent);
@@ -2409,22 +2465,23 @@ async function resolveProviderForAgent(agent) {
   const definition = providerDefinitionMap.get(providerId);
 
   if (!provider || !definition) {
-    throw new Error(`Provider ${providerId} is not available in Settings.`);
+    throw providerNotReadyError(`Provider ${providerId} is not available in Settings.`);
   }
   if (!provider.enabled) {
-    throw new Error(`${definition.label} is assigned to this agent, but it is not enabled in Settings.`);
+    throw providerNotReadyError(`${definition.label} is assigned to this agent, but it is not enabled in Settings.`);
   }
   if (!providerCredentialReady(provider)) {
-    throw new Error(
+    throw providerNotReadyError(
       definition.auth === "account"
         ? `${definition.label} needs a signed-in Autohand account (run \`autohand login\`) or an API key in Settings.`
-        : `${definition.label} is assigned to this agent, but its API key is missing in Settings.`
+        : `${definition.label} is assigned to this agent, but its API key is missing in Settings.`,
+      true
     );
   }
 
   const model = assignment.mode === "override" ? assignment.model : provider.model;
   if (!model) {
-    throw new Error(`${definition.label} needs a default model before this agent can run.`);
+    throw providerNotReadyError(`${definition.label} needs a default model before this agent can run.`);
   }
 
   return {
@@ -3050,14 +3107,19 @@ async function ensureAgentRuntimeInner(input, workspace) {
   const brainCard = normalizeBrainCard(agent, skillInstall);
   const profilePlan = planAgentProfileDocs(agent, agentHome, agentId, workspace, skillInstall);
   const profileDocs = profilePlan.profileDocs;
-  const harnessAssignment = harnessAssignmentFromAgent(agent);
+  const harnessAssignment = input._routeTarget?.harness || harnessAssignmentFromAgent(agent);
   const externalHarness = isExternalHarness(harnessAssignment);
   // Vendor CLIs authenticate and choose models in their own harness. Creating
   // Squad's profile/workspace must not require an unrelated Autohand login.
   const resolvedProvider = externalHarness ? {
     provider: harnessAssignment.id, label: getAdapter(harnessAssignment).label,
     model: String(input.model || harnessAssignment.model || ""), baseUrl: "", source: "harness",
-  } : await resolveProviderForAgent(agent);
+  } : await (async () => {
+    if (!input._routeTarget) return resolveProviderForAgent(agent);
+    const settings = await readProviderSettings();
+    const provider = input._routeTarget.provider || settings.defaultProvider;
+    return resolveProviderForAgent({ ...agent, modelAssignment: { mode: "override", provider, model: input._routeTarget.harness.model || settings.providers?.[provider]?.model || "" } });
+  })();
 
   // Enabled connectors reach a member only when its mcp.connectors policy
   // is "allow" (ADR-0107); the person's own MCP entries are always kept.
@@ -3161,6 +3223,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
         modelAssignment: modelAssignmentFromAgent(agent),
         effectiveModel: publicResolvedProvider(resolvedProvider),
         harness: harnessAssignmentFromAgent(agent),
+        modelRouting: normalizeModelRouting(agent.modelRouting),
         projects,
         profileFiles: agent.profileFiles || [],
         memory: agent.memory || [],
@@ -3194,7 +3257,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
     effectiveModel: publicResolvedProvider(resolvedProvider),
     resolvedProvider,
     authReady,
-    harness: harnessAssignmentFromAgent(agent),
+    harness: harnessAssignment,
     // Launch specs carry connector secrets; keep them out of public summaries.
     connectorServers: connectorSpecs,
   }, input), input), input);
@@ -3211,6 +3274,7 @@ function runtimeMemberInstructions(agentRuntime) {
   return [
     "Autohand Squad runtime member contract",
     `Member: ${agent.name || "Squad member"} (${agentRuntime.agentId})`,
+    `Executing engine for this attempt: ${getAdapter(agentRuntime.harness || harnessAssignmentFromAgent(agent)).label}. The member's saved primary assignment and identity are unchanged.`,
     `Role: ${agent.role || "Software engineering agent"}`,
     agent.description ? `Responsibilities: ${agent.description}` : "",
     agent.instructions ? `Operating instructions: ${String(agent.instructions).slice(0, 4000)}` : "",
@@ -3273,7 +3337,7 @@ function canvasDirFor(input) {
 async function autohandArgs(input) {
   const mode = input.mode || "prompt";
   const workspace = await cleanWorkspace(input.workspace);
-  const prompt = String(input.prompt || "").trim();
+  const prompt = attachmentPrompt(String(input.prompt || "").trim(), input._messageAttachments);
   let profile = String(input.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(input, workspace);
   profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), teamInstructionsFor(agentRuntime), recallInstructions(input), workPlanInstructions(input), memberShapingInstructions(input)].filter(Boolean).join("\n\n");
@@ -4258,6 +4322,7 @@ function runSummary(run) {
     displayConfigPath: run.displayConfigPath,
     agentHome: run.agentHome,
     effectiveModel: run.effectiveModel || null,
+    routing: run.routing || null,
     skillInstall: run.skillInstall,
     profileDocs: run.profileDocs,
     brainCard: run.brainCard,
@@ -6512,7 +6577,7 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
     : null;
 
   const collectPromise = (async () => {
-    for await (const event of sdk.streamPrompt({ message: prompt })) {
+    for await (const event of sdk.streamPrompt(typeof prompt === "string" ? { message: prompt } : prompt)) {
       if (!gotFirstEvent) {
         gotFirstEvent = true;
         if (firstEventTimer) clearTimeout(firstEventTimer);
@@ -6581,7 +6646,7 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
 
   void (async () => {
     try {
-      const output = await collectSdkPrompt(sdk, sdkPromptForTurn(context, prompt), 300000, (event) => appendSdkEventLog(run, event), run.abortController.signal);
+      const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, prompt), payload._messageAttachments), 300000, (event) => appendSdkEventLog(run, event), run.abortController.signal);
       if (run.status !== "stopped") {
         run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
         const reply = sdkReplyFromEvents(output.events, output.rawStdout);
@@ -6700,7 +6765,7 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     lease = await acquireSdkLease(payload, workspace, context);
     const sdk = lease.sdk;
     started = true;
-    const output = await collectSdkPrompt(sdk, sdkPromptForTurn(context, prompt), timeoutMs, () => {
+    const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, prompt), payload._messageAttachments), timeoutMs, () => {
       eventCount += 1;
     });
     healthy = true;
@@ -6745,6 +6810,8 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     if (error instanceof AutohandStallError) {
       throw decorateStallError(error, agentRuntime);
     }
+    const failure = routingFailure(error);
+    if (failure && (failure.immediate || normalizeModelRouting(payload.agent?.modelRouting).fallbacks.length)) throw error;
     if (!started || eventCount === 0) {
       throw new SdkBridgeStartupError(`SDK prompt failed before producing events: ${error.message}`, error);
     }
@@ -6756,10 +6823,10 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
 
 // Acquire a warm session for this member; the launch options (config, flags,
 // profile, model) are part of the key, so a changed profile starts fresh.
-async function acquireSdkLease(payload, workspace, context) {
+async function acquireSdkLease(payload, workspace, context, signal) {
   const pool = await sdkSessionPool();
   const agentId = sanitizeAgentId(payload.agent?.id || payload.agentId || "member");
-  return pool.acquire({ agentId, workspace, options: context.options, command: context.command });
+  return pool.acquire({ agentId, workspace, options: context.options, command: context.command, signal });
 }
 
 // A stall means the CLI produced no event at all. Attach what it wrote to its
@@ -6812,7 +6879,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
       label: "Starting the local agent bridge...",
       timestamp: new Date().toISOString(),
     });
-    lease = await acquireSdkLease(payload, workspace, context);
+    lease = await acquireSdkLease(payload, workspace, context, signal);
     const sdk = lease.sdk;
     started = true;
     stream.send("sdk", {
@@ -6821,7 +6888,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
       label: lease.created ? "Sending the request to the model..." : "Reusing the warm session; sending the request...",
       timestamp: new Date().toISOString(),
     });
-    const output = await collectSdkPrompt(sdk, sdkPromptForTurn(context, prompt), timeoutMs, (event) => {
+    const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, prompt), payload._messageAttachments), timeoutMs, (event) => {
       eventCount += 1;
       stream.send("sdk", chatStreamEventFromSdkEvent(event));
     }, signal);
@@ -6867,10 +6934,12 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
   } catch (error) {
     // A person pressing Stop is not a sick session. Discarding it here cost a
     // full cold start on the next message (ADR-0030).
-    if (isAbortError(error) || signal?.aborted) healthy = started;
+    if (isAbortError(error) || signal?.aborted) healthy = started && signal?.reason?.code !== "SQUAD_NO_RESPONSE";
     if (error instanceof AutohandStallError) {
       throw decorateStallError(error, agentRuntime);
     }
+    const failure = routingFailure(error);
+    if (failure && (failure.immediate || normalizeModelRouting(payload.agent?.modelRouting).fallbacks.length)) throw error;
     if (!started || eventCount === 0) {
       stream.send("sdk", {
         type: "status",
@@ -6899,10 +6968,10 @@ function isAbortError(error) {
 
 async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   const workspace = await cleanWorkspace(payload.workspace);
-  const prompt = String(payload.prompt || "").trim();
+  const prompt = attachmentPrompt(String(payload.prompt || "").trim(), payload._messageAttachments);
   let profile = String(payload.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(payload, workspace);
-  const assignment = harnessAssignmentFromAgent(agentRuntime.agent);
+  const assignment = payload._routeTarget?.harness || harnessAssignmentFromAgent(agentRuntime.agent);
   const adapter = getAdapter(assignment);
   // Stable instructions and the turn's own context are kept apart so Codex,
   // which has no system prompt, can be sent the context on every turn and
@@ -6969,6 +7038,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
       resumeId: resume,
       launchArgs: Array.isArray(readiness.launchArgs) ? readiness.launchArgs : [],
       mcpServers: [...managedServers, ...autohandServersFor(connectorSpecs)],
+      attachments: payload._messageAttachments || [],
     });
     if (managedServers.length && adapter.id === "claude") {
       built.args.push("--mcp-config", managedConfigPath);
@@ -6995,6 +7065,7 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   };
   return {
     assignment,
+    attachments: payload._messageAttachments || [],
     adapter,
     readiness,
     workspace,
@@ -7048,6 +7119,7 @@ async function executeExternalHarness(prepared, { timeoutMs, inactivityMs = 0, s
       harnessVersion: prepared.readiness.version, models: prepared.readiness.models || [],
       modelRecoveryPath: prepared.ephemeral ? '' : join(agentRuntime.agentHome, 'claude-model-routing.json'),
       modelAccountKey: `${prepared.readiness.account?.method || ''}:${prepared.readiness.account?.label || ''}`,
+      attachments: prepared.attachments,
     }));
   // What a start failure looked like, in words (ADR-0123): the engine's own
   // disk and the workspace's are measured once per turn, only when needed.
@@ -7152,8 +7224,9 @@ async function chatOnceWithExternalHarness(payload) {
   return result;
 }
 
-async function streamChatWithExternalHarness(payload, { stream, signal, startedAt }) {
-  const prepared = await prepareExternalHarness(payload);
+async function streamChatWithExternalHarness(payload, { stream, signal, startedAt, assignedRun = null }) {
+  const prepared = await prepareExternalHarness(payload, { mode: assignedRun?.mode || "prompt" });
+  payload = prepareAssignedRunContext(assignedRun, payload, prepared.agentRuntime, prepared.workspace);
   await memberAvailability.assertCanWork(payload);
   if (!prepared.prompt) throw new Error("prompt is required");
   if (signal?.aborted) throw new Error(stopMessage(signal));
@@ -7162,7 +7235,7 @@ async function streamChatWithExternalHarness(payload, { stream, signal, startedA
     await recordChannelDispatch(channelContext, { prompt: prepared.prompt, agentId: payload.agentId || prepared.agentRuntime.agentId });
   }
   const requestedTimeout = Number(payload.timeoutMs);
-  const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, 15000), 600000) : 300000;
+  const timeoutMs = assignedRun ? assignedRunTimeoutMs(payload, assignedRun.mode) : Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, 15000), 600000) : 300000;
   stream.send("start", {
     startedAt: new Date(startedAt).toISOString(),
     workspace: prepared.workspace,
@@ -7178,8 +7251,8 @@ async function streamChatWithExternalHarness(payload, { stream, signal, startedA
     timestamp: new Date().toISOString(),
   });
   const output = await executeExternalHarness(prepared, {
-    timeoutMs: CHAT_TURN_CEILING_MS,
-    inactivityMs: timeoutMs,
+    timeoutMs: assignedRun ? timeoutMs : CHAT_TURN_CEILING_MS,
+    inactivityMs: assignedRun ? 0 : timeoutMs,
     signal,
     onEvent: (event) => stream.send("sdk", chatStreamEventFromSdkEvent(event)),
   });
@@ -7285,6 +7358,8 @@ async function startExternalHarnessRun(payload) {
 }
 
 async function startRun(payload) {
+  payload = { ...payload };
+  delete payload._routeTarget;
   if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   const id = randomUUID();
   payload = { ...await withSavedMember(payload), _computerUseWorkId: id };
@@ -7303,8 +7378,21 @@ async function startRunInner(payload) {
 }
 
 async function startPreparedRun(payload) {
+  payload = { ...payload, _messageAttachments: await resolveAttachments(squadStateDir, payload.attachments) };
   const id = payload._computerUseWorkId;
   await memberAvailability.assertCanWork(payload);
+  if (normalizeModelRouting(payload.agent?.modelRouting).fallbacks.length && payload.mode !== "permissions") {
+    const startedAt = Date.now();
+    const run = beginChatRun(payload, id, startedAt);
+    run.mode = payload.mode || "prompt";
+    run.kind = "run";
+    run.title = payload.title || payload.prompt || "Member work";
+    run.recipeId = typeof payload.recipeId === "string" && payload.recipeId ? payload.recipeId : null;
+    run.canvasId = typeof payload.canvasId === "string" && payload.canvasId ? payload.canvasId : null;
+    runHistory.persist();
+    void executeChatTurn(payload, { stream: { send() {} }, signal: run.abortController.signal, startedAt, preparedRun: run }).catch(error => finishChatRun(run, { error, aborted: run.abortController?.signal.aborted }));
+    return runSummary(run);
+  }
   if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {
     return startExternalHarnessRun(payload);
   }
@@ -7548,7 +7636,7 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
 // Resolves with `{ status, preview }` once the stream has ended: "completed"
 // with the reply's first line, or "failed" with the error message, so the
 // route can emit chat.finished with an honest status.
-async function executeChatTurn(payload, { stream, signal, startedAt = Date.now() }) {
+async function executeChatTurn(payload, { stream, signal, startedAt = Date.now(), preparedRun = null }) {
   if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   const memberId = String(payload.agentId || payload.agent?.id || "");
   if (payload.collaboration?.role === "receiver" && (
@@ -7561,17 +7649,19 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
     return result;
   }
   payload = await withSavedMember(payload);
-  const workId = randomUUID();
+  delete payload._routeTarget;
+  payload = { ...payload, _messageAttachments: await resolveAttachments(squadStateDir, payload.attachments) };
+  const workId = preparedRun?.id || randomUUID();
   // Always-on (ADR-0125): a person's message stops whatever the agenda
   // started for this member; the agenda route listens for this.
   emitBridgeEvent("chat.started", { memberId, requestId: String(payload.requestId || ""), person: isPersonTurn(payload), channelId: String(channelContextFromPayload(payload)?.id || "") });
-  const actionContext = await agentChannelActions.begin(payload);
+  const actionContext = payload._channelActionContext || await agentChannelActions.begin(payload);
   const originalStream = stream;
   const liveEvidence = (data) => { if (data.runId === workId) originalStream.send("computer-use", { sessionId: data.sessionId, runId: workId, files: data.files }); };
   bridgeEvents.on("computer-use.evidence", liveEvidence);
   // Every turn is a run (ADR-0113): the Execution panel lists it whichever
   // engine answers, Stop there stops it, and the record survives a restart.
-  const run = beginChatRun(payload, workId, startedAt);
+  const run = preparedRun || beginChatRun(payload, workId, startedAt);
   const forwardAbort = () => run.abortController?.abort();
   if (signal?.aborted) forwardAbort(); else signal?.addEventListener("abort", forwardAbort, { once: true });
   const runSignal = run.abortController.signal;
@@ -7581,7 +7671,12 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
   const nudge = takeAutomationNudge(payload);
   if (nudge) run.automationNudge = { kind: nudge.kind, phrase: nudge.phrase };
   try {
-    const result = await executeChatTurnInner({ ...payload, _computerUseWorkId: workId, ...(nudge ? { prompt: `${String(payload.prompt || "").trim()}\n\n${automationNudgeLine(nudge)}` } : {}) }, { stream: delayedDone, signal: runSignal, startedAt });
+    const turn = { ...payload, _computerUseWorkId: workId, ...(nudge ? { prompt: `${String(payload.prompt || "").trim()}\n\n${automationNudgeLine(nudge)}` } : {}) };
+    const result = await fallbackRouter.execute(turn, {
+      stream: delayedDone, signal: runSignal,
+      history: Array.isArray(payload.conversationContext) ? payload.conversationContext.slice(-12).map(message => ({ role: String(message.role || ''), body: String(message.body || '').slice(-2400) })) : [],
+      execute: (attempt, context) => executeChatTurnInner(attempt, { ...context, startedAt, assignedRun: preparedRun }),
+    });
     const evidence = await finishComputerWork(workId);
     const finished = await agentChannelActions.finish(actionContext, { ...cleanWorkResult(result), ...(evidence ? { computerUse: evidence } : {}) }, runSignal);
     const completed = withTeamReceipts(finished, team.takeReceipts(workId));
@@ -7672,6 +7767,7 @@ function chatRunStream(run, stream) {
         if (data.workspace) run.workspace = String(data.workspace);
         if (data.effectiveModel) run.effectiveModel = data.effectiveModel;
         if (data.harnessVersion) run.harnessVersion = String(data.harnessVersion);
+        if (data.harness) { run.harness = String(data.harness); run.transport = String(data.harness); }
       } else if (event === "sdk" && data && typeof data === "object") {
         appendChatRunEvent(run, data);
       }
@@ -7721,13 +7817,15 @@ function finishChatRun(run, { result = null, error = null, aborted = false } = {
     run.trace = result.trace || run.trace || null;
     run.workspace = String(result.workspace || run.workspace || "");
     if (result.effectiveModel) run.effectiveModel = result.effectiveModel;
+    if (result.harness) { run.harness = result.harness; run.transport = result.transport || result.harness; }
+    if (result.routing) run.routing = result.routing;
     if (result.harnessVersion) run.harnessVersion = String(result.harnessVersion);
     run.sessionId = String(result.sessionId || "");
     run.durationMs = Number.isFinite(Number(result.durationMs)) ? Number(result.durationMs) : Date.parse(finishedAt) - Date.parse(run.startedAt);
     run.channelActions = Array.isArray(result.channelActions) ? result.channelActions : [];
     // The chat result carries the context manifest (recall layer included);
     // the run shows the same one in the Execution panel.
-    if (result.contextLayers && typeof result.contextLayers === "object") run.contextLayers = result.contextLayers;
+    if (run.kind !== "run" && result.contextLayers && typeof result.contextLayers === "object") run.contextLayers = result.contextLayers;
     run.status = result.declined ? "stopped" : "completed";
     run.exitCode = result.declined ? null : 0;
   } else {
@@ -7741,7 +7839,8 @@ function finishChatRun(run, { result = null, error = null, aborted = false } = {
     if (error && run.status === "failed") appendLog(run, "stderr", error.message || String(error));
   }
   run.finishedAt = finishedAt;
-  run.finishedEventAt = finishedAt; // chat.finished already reaches the audit trail; no run.finished here
+  if (run.kind === "run") emitRunFinished(run);
+  else run.finishedEventAt = finishedAt; // chat.finished already reaches the audit trail
   appendLog(run, "system", `${run.harness || "member"} reply ${run.status}`);
   run.abortController = null;
   run.launch = null; // a finished turn is never retried from the Runs tab
@@ -7897,27 +7996,48 @@ async function recallForTurn(payload) {
   }
 }
 
-async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.now() }) {
+function assignedRunTimeoutMs(payload, mode) {
+  return mode === "auto" ? Math.min(Math.max(Number(payload.maxRuntime || 120), 1), 240) * 60_000 : 600000;
+}
+
+function prepareAssignedRunContext(run, payload, agentRuntime, workspace) {
+  if (!run) return payload;
+  const contextPack = run.contextPack || generateContextPack(run.mode, payload, agentRuntime, workspace);
+  const layerPayload = contextPack ? { ...payload, contextPack: { id: contextPack.id, taskId: contextPack.taskId, summary: contextPack.summary } } : payload;
+  Object.assign(run, {
+    contextPack, contextLayers: assembleContextLayers(run.mode, layerPayload, agentRuntime),
+    configPath: agentRuntime.configPath, displayConfigPath: agentRuntime.displayConfigPath,
+    agentHome: agentRuntime.agentHome, skillInstall: agentRuntime.skillInstall,
+    profileDocs: agentRuntime.profileDocs, brainCard: agentRuntime.brainCard,
+  });
+  runHistory.persist();
+  return layerPayload;
+}
+
+async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.now(), assignedRun = null }) {
   if (signal?.aborted) throw new Error(stopMessage(signal));
   await memberAvailability.assertCanWork(payload);
   payload = { ...payload, _recall: await recallForTurn(payload), _workPlan: await workPlanForTurn(payload) };
   stream = withWorkProgress(stream);
   let result;
-  if (isExternalHarness(harnessAssignmentFromAgent(payload.agent))) {
-    result = await streamChatWithExternalHarness(payload, { stream, signal, startedAt });
+  if (isExternalHarness(payload._routeTarget?.harness || harnessAssignmentFromAgent(payload.agent))) {
+    result = await streamChatWithExternalHarness(payload, { stream, signal, startedAt, assignedRun });
     return cleanWorkResult(result);
   }
-  const { args, displayArgs, workspace, prompt, agentRuntime } = await autohandArgs({ ...payload, mode: "prompt", dryRun: false });
+  const dryRun = payload._routeTarget ? payload.dryRun === true : false;
+  const mode = assignedRun?.mode || "prompt";
+  const { args, displayArgs, workspace, prompt, agentRuntime } = await autohandArgs({ ...payload, mode, dryRun });
+  payload = prepareAssignedRunContext(assignedRun, payload, agentRuntime, workspace);
   if (!prompt) throw new Error("prompt is required");
   assertAutohandAuth(agentRuntime);
   if (signal?.aborted) throw new Error(stopMessage(signal));
   const channelContext = channelContextFromPayload(payload);
   if (channelContext) await recordChannelDispatch(channelContext, { prompt, agentId: payload.agentId || agentRuntime.agentId });
   const requestedTimeout = Number(payload.timeoutMs);
-  const timeoutMs = Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, 15000), 300000) : 180000;
+  const timeoutMs = assignedRun ? assignedRunTimeoutMs(payload, mode) : Number.isFinite(requestedTimeout) ? Math.min(Math.max(requestedTimeout, 15000), 300000) : 180000;
   stream.send("start", { startedAt: new Date(startedAt).toISOString(), workspace, effectiveModel: agentRuntime.effectiveModel, channel: channelContext });
-  const sdkPayload = { ...payload, mode: "prompt", dryRun: false };
-  if (sdkTransportEnabled(sdkPayload, "prompt")) {
+  const sdkPayload = { ...payload, mode, dryRun };
+  if (sdkTransportEnabled(sdkPayload, mode)) {
     try {
       result = await streamChatWithSdk(sdkPayload, { workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal });
       return cleanWorkResult(result);
@@ -8026,6 +8146,9 @@ async function openTerminal(payload) {
 }
 
 // Bridge context handed to route plug-ins (docs/integration/CONTRACT.md).
+const modelCatalog = createModelCatalog({ autohandHomeDir, readProviderSettings, contextFor: harnessContextFor, defaultWorkspace: getDefaultWorkspace });
+const fallbackRouter = createFallbackRouter({ stateDir: squadStateDir });
+
 function routeContext() {
   return {
     rootDir,
@@ -8034,6 +8157,9 @@ function routeContext() {
     squadWorkspaceRoot,
     homeDir,
     packageMetadata,
+    modelCatalog,
+    fallbackRouter,
+    memberModelRouting: async id => normalizeModelRouting((await withSavedMember({ agentId: id })).agent?.modelRouting),
     json,
     readBody,
     startEventStream,
@@ -8065,6 +8191,7 @@ function routeContext() {
     computerUse,
     vault,
     team,
+    memoryLibrary,
     cloud,
     authorizeComputerUseGrant,
     connectors,
@@ -9005,6 +9132,7 @@ async function serveStatic(req, res, url) {
 }
 
 async function stopAndExitFromSignal(signal) {
+  memoryLibrary.close();
   await cloud.close();
   await stopManagedRuns(`web server received ${signal}`);
   process.exit(0);
@@ -9065,7 +9193,7 @@ server = createServer(async (req, res) => {
       return;
     }
     if (auth.remote) {
-      if (!remoteServedPath(url.pathname)) {
+      if (!remoteServedPath(url.pathname, req.method)) {
         json(res, 404, { success: false, error: `no remote route for ${req.method} ${url.pathname}` });
         return;
       }

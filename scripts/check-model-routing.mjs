@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createFallbackRouter,routingFailure} from '../server/harness/fallback-router.mjs';
+import {normalizeModelRouting} from '../src/lib/model-routing.js';
+import {createAgentChannelActions} from '../server/agent-channel-actions.mjs';
+import {createChannelsStore} from '../server/channels-store.mjs';
+import {modelRows} from '../server/harness/model-catalog.mjs';
+import {SdkSessionPool} from '../server/sdk-sessions.mjs';
+
+const directory=await mkdtemp(join(tmpdir(),'squad-routing-'));
+try{
+  let now=1000;
+  const config={fallbacks:[{harness:{id:'codex',model:'codex-recovery'}}],allowAgentChanges:false};
+  const payload={agentId:'routing-fixture',agent:{id:'routing-fixture',name:'Iris',harness:{id:'autohand'},modelAssignment:{mode:'override',provider:'autohandai',model:'moa'},modelRouting:config,permissions:{permissionMode:'restricted'},memory:[{text:'Keep the NZ spelling.'}]},workspace:'/fixture/project',prompt:'Continue the task.',attachments:[{id:'abcdefghijkl'}]};
+  const original=structuredClone(payload);
+  const events=[];const stream={send:(event,data)=>events.push({event,data})};
+  const router=createFallbackRouter({stateDir:directory,now:()=>now,cooldownMs:100,firstResponseMs:25});
+  const calls=[];
+  const execute=async turn=>{calls.push(turn);if(turn._routeTarget.harness.id==='autohand')throw Object.assign(new Error('Rate limit exceeded'),{status:429});return{reply:'Recovered',harness:'codex',effectiveModel:{provider:'openai',model:turn.model}};};
+  const result=await router.execute(payload,{execute,stream,history:[{role:'user',body:'The release code is NZ-42.'}]});
+  assert.equal(result.routing.fallback,true);assert.equal(result.routing.used.model,'codex-recovery');
+  assert.equal(calls.length,2);assert.equal(calls[1].agent.harness.id,'autohand','Fallback never rewrites the canonical member');
+  assert.deepEqual(calls[1].agent.permissions,payload.agent.permissions);assert.deepEqual(calls[1].attachments,payload.attachments);assert(calls[1].prompt.includes('NZ-42'));assert.equal(calls[1].workspace,payload.workspace);assert.deepEqual(payload,original);
+  assert(events.some(row=>row.event==='fallback'&&row.data.to==='codex'));
+  calls.length=0;
+  const restarted=createFallbackRouter({stateDir:directory,now:()=>now,cooldownMs:100,firstResponseMs:25});
+  await restarted.execute(payload,{execute,stream});assert.equal(calls.length,1,'cooldown survives a bridge restart');assert.equal(calls[0]._routeTarget.harness.id,'codex');
+  now+=101;calls.length=0;
+  const recovered=await restarted.execute(payload,{execute:async turn=>{calls.push(turn);return{reply:'Primary recovered',harness:turn._routeTarget.harness.id};},stream});
+  assert.equal(recovered.routing.fallback,false);assert.equal(calls[0]._routeTarget.harness.id,'autohand');
+  await router.reset(payload.agentId);
+  calls.length=0;
+  await router.execute(payload,{execute:async turn=>{calls.push(turn);if(turn._routeTarget.harness.id==='autohand')throw new Error('ECONNRESET');return{reply:'OK'};},stream});
+  assert.equal(calls.length,3,'a transient failure gets one retry, then the configured fallback');
+  await router.reset(payload.agentId);calls.length=0;
+  await router.execute(payload,{execute:async(turn,{signal})=>{calls.push(turn);if(turn._routeTarget.harness.id==='codex')return{reply:'OK'};return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));},stream});
+  assert.equal(calls.length,3,'an unresponsive engine is cancelled, retried once and replaced');
+  for(const message of ['permission denied','chat stopped by the user','ENOSPC: disk is full','The attachment is invalid','unrelated programming exception']){
+    await router.reset(payload.agentId);calls.length=0;
+    await assert.rejects(router.execute(payload,{execute:async turn=>{calls.push(turn);throw new Error(message);},stream}),new RegExp(message));assert.equal(calls.length,1,message+' must not switch engines');
+  }
+  await router.reset(payload.agentId);calls.length=0;
+  await assert.rejects(router.execute(payload,{execute:async(turn,{stream})=>{calls.push(turn);stream.send('sdk',{type:'tool_start',tool:{id:'write-1',name:'Write'}});throw new Error('Rate limit exceeded');},stream}),/Rate limit/);assert.equal(calls.length,1,'uncertain in-flight side effects stop automatic switching');
+  await router.reset(payload.agentId);calls.length=0;
+  const afterTool=await router.execute(payload,{execute:async(turn,{stream})=>{calls.push(turn);if(turn._routeTarget.harness.id==='codex'){assert(turn.prompt.includes('saved.txt'));return{reply:'Continued after completed work'};}stream.send('sdk',{type:'tool_start',tool:{id:'write-1',name:'Write'}});stream.send('sdk',{type:'tool_end',toolName:'Write',success:true,output:'Created saved.txt'});throw new Error('Rate limit exceeded');},stream});
+  assert.equal(afterTool.routing.fallback,true,'completed tool evidence carries into the next engine');
+  await router.reset(payload.agentId);
+  const parent=new AbortController();let stopCalls=0;
+  await assert.rejects(router.execute(payload,{signal:parent.signal,execute:async()=>{stopCalls++;parent.abort();throw new Error('aborted');},stream}));assert.equal(stopCalls,1);
+  assert.equal(routingFailure(Object.assign(new Error('unauthorized'),{status:401})).kind,'sign-in');
+  assert.throws(()=>normalizeModelRouting({fallbacks:[{harness:{id:'made-up'}}]},{strict:true}),/known/);
+  assert.throws(()=>normalizeModelRouting({fallbacks:[{harness:{id:'codex'}},{harness:{id:'codex'}}]},{strict:true}),/already/);
+  const store=createChannelsStore({filename:join(directory,'channels.json'),normalize:value=>({revision:0,agentChannelAccess:{},...value})});
+  const actions=createAgentChannelActions({store,sanitizeId:value=>value,availability:{}});
+  const stale={id:'managed',name:'Managed',harness:{id:'autohand'},modelRouting:{...config,allowAgentChanges:true}};
+  await actions.setAccess(stale.id,{agent:stale});
+  await actions.setAccess(stale.id,{agent:{...stale,harness:{id:'claude',model:'claude-fixture'}}});
+  await actions.setAccess(stale.id,{agent:stale,profilePatch:{modelRouting:{...stale.modelRouting,fallbacks:[{harness:{id:'codex',model:'codex-second'}}]}},modelRoutingActor:'agent'});
+  assert.equal((await store.read()).agentChannelAccess[stale.id].agent.harness.id,'claude','A fallback tool must not overwrite a primary changed while model discovery was running');
+  await actions.setAccess(stale.id,{agent:stale,profilePatch:{modelRouting:{...stale.modelRouting,allowAgentChanges:false}}});
+  await assert.rejects(actions.setAccess(stale.id,{agent:stale,profilePatch:{modelRouting:stale.modelRouting},modelRoutingActor:'agent'}),/has not allowed/);
+  assert.equal((await store.read()).agentChannelAccess[stale.id].agent.modelRouting.allowAgentChanges,false,'A stale agent write must not restore a revoked grant');
+  const latest=(await store.read()).agentChannelAccess[stale.id].agent;
+  await actions.setAccess(stale.id,{agent:latest,profilePatch:{modelRouting:{...latest.modelRouting,allowAgentChanges:true}}});
+  await actions.setAccess(stale.id,{removed:true});
+  await assert.rejects(actions.setAccess(stale.id,{agent:stale,profilePatch:{modelRouting:stale.modelRouting},modelRoutingActor:'agent'}),/has not allowed/);
+  assert.equal((await store.read()).agentChannelAccess[stale.id].removed,true,'A tool awaiting discovery may not resurrect a removed member');
+  assert.deepEqual(modelRows(['model-a',null,{id:'hidden',cliSupported:false},{id:'visible',displayName:'Visible'}]).map(row=>row.id),['model-a','visible'],'Catalogs accept string IDs and hide unsupported entries');
+  const readOnly={...payload,agentId:'read-only',access:'plan',agent:{...payload.agent,harness:{id:'codex',access:'plan'},permissions:{permissionMode:'unrestricted'},modelRouting:{fallbacks:[{harness:{id:'autohand',model:'moa'}}]}}};
+  await router.execute(readOnly,{stream,execute:async turn=>{if(turn._routeTarget.harness.id==='codex')throw new Error('Rate limit exceeded');assert.equal(turn.dryRun,true,'An Autohand fallback must preview changes when the primary was read-only');return{reply:'Read-only continuation'};}});
+  let coldStarts=0,coldCloses=0;
+  const coldPool=new SdkSessionPool({sweepMs:10_000,createSdk:()=>{let release;return{async start(){coldStarts++;await new Promise(resolve=>{release=resolve;});},async close(){coldCloses++;release?.();},async interrupt(){}};}});
+  try{
+    const cold=await router.execute({...payload,agentId:'cold-start'},{stream,execute:async(turn,{signal})=>{if(turn._routeTarget.harness.id==='codex')return{reply:'Continued after cold startup stalled'};const lease=await coldPool.acquire({agentId:'cold-start',workspace:payload.workspace,options:{},signal});await lease.release();throw new Error('An aborted startup may not start a prompt');}});
+    assert.equal(cold.routing.used.harness,'codex');assert.equal(coldStarts,2);assert.equal(coldCloses,2);assert.equal(coldPool.stats().active,0,'Both silent starts close before the next engine answers');
+  }finally{await coldPool.closeAll();}
+  console.log('PASS ordered fallback, one retry, no-response cancellation, persisted recovery, identity/context/files/access, completed-work continuation, stop/approval/disk guards, strict catalogs and atomic primary/grant preservation.');
+}finally{await rm(directory,{recursive:true,force:true});}

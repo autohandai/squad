@@ -107,6 +107,9 @@ fn main() {
             let mut builder =
                 WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
                     .title("Autohand Squad")
+                    // Composers upload browser File objects. Tauri's native
+                    // handler consumes OS file drops before HTML5 receives them.
+                    .disable_drag_drop_handler()
                     .inner_size(1280.0, 840.0)
                     .min_inner_size(960.0, 640.0)
                     .user_agent(&user_agent)

@@ -176,7 +176,7 @@ export function normalizeHarnessAssignment(input) {
     schemaVersion: HARNESS_SCHEMA_VERSION,
     id: normalizeHarnessId(source.id || source.harnessId),
     executablePath: String(source.executablePath || "").trim(),
-    model: String(source.model || "").trim().slice(0, 120),
+    model: String(source.model || "").trim().slice(0, 200),
     effort: normalizeEffort(source.effort),
     access: normalizeAccess(source.access),
   };

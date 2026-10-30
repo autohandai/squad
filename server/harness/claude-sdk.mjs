@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import { guiSafeEnv } from './discovery.mjs';
 import { formatDuration } from '../../src/lib/duration.js';
 import { fallbackCandidates, limitCooldown, MAX_MODEL_SWITCHES, modelIds, modelLimit } from './claude-model-recovery.mjs';
+import { attachmentLogReplacer, claudePromptInput } from '../attachments.mjs';
 
 const routingWrites = new Map();
 const recoveryPrompt = 'Continue the interrupted task from this conversation, from the last unfinished step. The previous model reached its model-specific usage limit. Preserve completed work; do not repeat completed tool calls or resubmit completed actions.';
@@ -116,7 +117,7 @@ async function sdkAttempt({ adapter, options, prompt, timeoutMs, inactivityMs, f
     for await (const message of query) {
       if (controller.signal.aborted) throw new Error('aborted');
       sawEvent = true; clearTimeout(startTimer); idle();
-      rawMessages.push(JSON.stringify(message));
+      rawMessages.push(JSON.stringify(message, attachmentLogReplacer));
       if (message.type === 'system' && message.subtype === 'init') model = message.model || model;
       if (message.type === 'rate_limit_event') rateLimitInfo = message.rate_limit_info;
       if (message.type === 'assistant' && message.error) errorCode = message.error;
@@ -139,7 +140,7 @@ async function sdkAttempt({ adapter, options, prompt, timeoutMs, inactivityMs, f
   }
 }
 
-export async function runClaudeSdk({ adapter, executable, args, cwd, env = {}, timeoutMs = 300000, inactivityMs = 0, firstEventTimeoutMs = 60000, signal, onEvent = () => {}, models = [], modelRecoveryPath = '', modelAccountKey = '', queryFactory }) {
+export async function runClaudeSdk({ adapter, executable, args, cwd, env = {}, timeoutMs = 300000, inactivityMs = 0, firstEventTimeoutMs = 60000, signal, onEvent = () => {}, models = [], modelRecoveryPath = '', modelAccountKey = '', queryFactory, attachments = [] }) {
   const startedAt = Date.now();
   const { prompt, options } = await claudeSdkOptions({ args, executable, cwd, env });
   const key = createHash('sha256').update(`${executable}\n${modelAccountKey}\n${cwd}`).digest('hex');
@@ -157,7 +158,7 @@ export async function runClaudeSdk({ adapter, executable, args, cwd, env = {}, t
   let available = models;
   while (true) {
     const remaining = Math.max(1, timeoutMs - (Date.now() - startedAt));
-    output = await sdkAttempt({ adapter, options, prompt: nextPrompt, timeoutMs: remaining, inactivityMs, firstEventTimeoutMs, signal, onEvent, queryFactory });
+    output = await sdkAttempt({ adapter, options, prompt: await claudePromptInput(nextPrompt, nextPrompt === recoveryPrompt ? [] : attachments), timeoutMs: remaining, inactivityMs, firstEventTimeoutMs, signal, onEvent, queryFactory });
     if (!defaultModel) defaultModel = output.model;
     combined.push(...output.events); stdout += output.rawStdout + '\n'; stderr += output.rawStderr;
     if (output.models.length) available = output.models;

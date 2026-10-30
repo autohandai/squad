@@ -65,7 +65,7 @@ function describeFailure(error) {
  * the connect timeout); the body may keep streaming afterwards. `signal`
  * aborts the whole exchange (used when the browser goes away).
  */
-async function open(remote, path, { method = "POST", body, stream = false, signal, timeoutMs = CONNECT_TIMEOUT_MS, fetchImpl = fetch } = {}) {
+async function open(remote, path, { method = "POST", body, stream = false, signal, timeoutMs = CONNECT_TIMEOUT_MS, fetchImpl = fetch, binary = false, headers = {} } = {}) {
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   if (signal) {
@@ -78,8 +78,8 @@ async function open(remote, path, { method = "POST", body, stream = false, signa
   try {
     response = await fetchImpl(remoteUrl(remote, path), {
       method,
-      headers: requestHeaders(remote, { stream, body }),
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: { ...requestHeaders(remote, { stream, body }), ...headers },
+      body: body === undefined ? undefined : binary ? body : JSON.stringify(body),
       signal: controller.signal,
       redirect: "manual",
     });
@@ -131,6 +131,12 @@ export async function proxyJson(remote, path, body, { method = body === undefine
   } finally {
     release();
   }
+}
+
+/** Transfer explicit message attachments to the bridge that runs the member. */
+export async function proxyBinary(remote, path, body, headers, { signal, timeoutMs = 60000, fetchImpl } = {}) {
+  const { response, release } = await open(remote, path, { body, headers, binary: true, signal, timeoutMs, fetchImpl });
+  try { return await envelopeFrom(remote, response); } finally { release(); }
 }
 
 /**

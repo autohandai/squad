@@ -89,12 +89,13 @@ export function createTeamStore({ stateDir }) {
     });
   }
 
-  async function updateMemory(id, text, { actorId = "", person = false } = {}) {
+  async function updateMemory(id, text, { actorId = "", person = false, expectedText } = {}) {
     const clean = cleanMemoryText(text);
     return mutate(state => {
       const entry = state.memory.find(item => item.id === id);
       if (!entry) throw Object.assign(new Error("That memory does not exist; call squad_recall for the current list."), { status: 404 });
       if (!person && entry.authorId !== actorId && entry.memberId !== actorId) throw Object.assign(new Error("Only the member who saved a memory, or the person, can update it."), { status: 403 });
+      if (expectedText !== undefined && entry.text !== expectedText) throw Object.assign(new Error("This memory changed while you were editing. Your draft is kept; reload the current memory before replacing its text."), { status: 409 });
       const duplicate = state.memory.find(item => item.id !== id && item.scope === entry.scope && item.memberId === entry.memberId && item.workspace === entry.workspace && memoryKey(item.text) === memoryKey(clean));
       if (duplicate) throw new Error(`That fact is already saved as ${duplicate.id}; forget the duplicate instead.`);
       entry.text = clean;

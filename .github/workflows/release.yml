@@ -146,6 +146,8 @@ jobs:
           bun run check:otel
           bun run check:sessions
           bun run check:chat-experience
+          bun run check:model-routing
+          bun run check:attachments
           bun run check:recruiting
           bun run check:server
           bun run check:runtime-bootstrap
@@ -298,6 +300,7 @@ jobs:
           RELEASE_ARCH: ${{ matrix.arch }}
           WEB_RUNTIME_DIR: ${{ runner.temp }}/squad-web-bundle/runtime
         run: |
+          node scripts/check-memory-library.mjs --release
           bun run release:package
           bun run release:portable
 

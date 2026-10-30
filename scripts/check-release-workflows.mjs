@@ -160,6 +160,11 @@ assertIncludes(ciWorkflow, 'libxdo-dev', 'CI installs the Linux xdo linker depen
 assertIncludes(ciWorkflow, 'bun run check:sdk', 'CI verifies the published Autohand SDK');
 assertIncludes(ciWorkflow, 'bun run cli:fetch', 'CI vendors the pinned Autohand Code CLI before SDK checks');
 assertIncludes(ciWorkflow, 'bun run check:otel', 'CI verifies the OpenTelemetry log format');
+assertIncludes(ciWorkflow, 'bun run check:model-routing', 'CI verifies harness model discovery and configured fallbacks');
+assertIncludes(ciWorkflow, 'node scripts/check-memory-library.mjs', 'CI verifies the native TurboVec library and managed memory MCP');
+assertIncludes(ciWorkflow, 'node scripts/check-memory-browser.mjs', 'CI verifies the rendered memory graph and collection settings');
+assertIncludes(releaseWorkflow, 'node scripts/check-memory-library.mjs', 'Release verifies the compiled native memory runtime before packaging');
+assertIncludes(webReleaseJob, 'bun run check:model-routing', 'Release validation exercises model discovery and fallbacks before packaging');
 assertIncludes(releaseWorkflow, 'bun run check:otel', 'Release workflow verifies the OpenTelemetry log format');
 assertIncludes(releaseWorkflow, 'bun run cli:fetch', 'Release workflow vendors the pinned Autohand Code CLI');
 assertIncludes(releaseWorkflow, 'AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI', 'Release SDK checks require the vendored CLI');
