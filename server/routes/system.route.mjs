@@ -6,6 +6,7 @@
 //   PUT  /api/system/settings  { autoCheckUpdates? } -> stored settings
 //   POST /api/system/reveal    open the data folder in Finder / Explorer
 
+import { rename } from "node:fs/promises";
 import { join } from "node:path";
 
 import { countMemoryEntries, systemSummary } from "../system/summary.mjs";
@@ -52,6 +53,40 @@ export async function handle(req, res, url, ctx) {
       ctx.json(res, 200, { success: true, data: publicSystemSettings(stored) });
     } catch (error) {
       ctx.json(res, 500, { success: false, error: error?.message || "Settings could not be saved." });
+    }
+    return true;
+  }
+
+  // Reset Squad to a clean install (ADR-0161 §3.1). Squad's own folders are
+  // moved aside with a timestamp, never deleted: the state folder, the
+  // members' isolated homes and the members' working folders. The person's
+  // Autohand Code sign-in, sessions and skills in ~/.autohand stay. The
+  // bridge then exits so its supervisor starts it empty; the window clears
+  // its own storage and returns to first run. Keychain items, ~/Library
+  // folders and macOS privacy grants belong to the desktop shell and are
+  // listed in SETUP_GUIDE for a hand clean-out.
+  if (url.pathname === "/api/system/reset" && req.method === "POST") {
+    const body = await ctx.readBody(req);
+    if (body?.confirm !== "RESET") {
+      ctx.json(res, 400, { success: false, error: "Send { confirm: \"RESET\" } to reset Squad." });
+      return true;
+    }
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const moved = [];
+      const candidates = [ctx.squadStateDir, appStateDirFor(ctx), ...(Array.isArray(ctx.memberWorkspaceRoots) ? ctx.memberWorkspaceRoots : [])].filter(Boolean);
+      for (const folder of [...new Set(candidates)]) {
+        const backup = `${folder.replace(/\/+$/, "")}.reset-${stamp}`;
+        try { await rename(folder, backup); moved.push({ folder, backup }); }
+        catch (error) { if (error?.code !== "ENOENT") throw error; }
+      }
+      ctx.logEvent?.(ctx.SEVERITY?.WARN, `Squad reset by the person; ${moved.length} folders moved aside`, { "event.name": "system.reset", "autohand.reset.folders": moved.map((entry) => entry.folder).join(",") });
+      ctx.json(res, 200, { success: true, data: { moved, restarting: true } });
+      // Leave nothing of the old state in memory: let the supervisor bring
+      // the bridge back empty.
+      setTimeout(() => process.exit(0), 400).unref?.();
+    } catch (error) {
+      ctx.json(res, 500, { success: false, error: error?.message || "Squad could not be reset." });
     }
     return true;
   }

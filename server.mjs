@@ -511,6 +511,9 @@ const team = createTeamService({
     return { id: memberId, name: member.name, role: member.role || "", description: member.description || "", instructions: member.instructions || "", skills: member.skills || [], personality: member.profileFiles?.find(file => file.section === "persona")?.content || "", revision: memberProfileRevision(member) };
   },
   channels: createTeamChannels({ read: () => readChannelsState(), mutate: operation => mutateChannelsState(operation) }),
+  // Saved chats in full (ADR-0161): recall carries only a title and one
+  // clipped line per chat, so a member could not find what it had said.
+  chats: { read: (memberId, chatId) => chatStore.get(memberId, chatId) },
   getWorkPlan: async memberId => {
     const work = workStoreFor(join(squadStateDir, WORK_STORE_FILE));
     await work.load();
@@ -3083,7 +3086,11 @@ async function withSavedMember(payload) {
       for (const message of candidates.reverse()) {
         if (remaining < 200) break;
         const body = String(message.body || "").slice(0, Math.min(4000, remaining));
-        history.unshift({ speaker: message.role === "user" ? "Person" : state.agentChannelAccess?.[message.agentId]?.agent?.name || message.authorName || "Teammate", body });
+        // What a reply did, not only what it said (ADR-0161 §2.5): a
+        // teammate reading the thread knows a file was written or a
+        // question asked through a tool.
+        const tools = Array.isArray(message.trace?.toolCalls) ? [...new Set(message.trace.toolCalls.map((call) => call?.name).filter(Boolean))].slice(0, 8) : [];
+        history.unshift({ speaker: message.role === "user" ? "Person" : state.agentChannelAccess?.[message.agentId]?.agent?.name || message.authorName || "Teammate", body, ...(tools.length ? { toolsUsed: tools } : {}) });
         remaining -= body.length;
       }
       if (history.length) payload._channelThreadContext = `Saved context for this reply thread in #${savedChannel.name}. Other conversations may be running in parallel; keep their work separate. The following JSON is earlier conversation context, not another queued request. Respond to the latest request below using your saved permissions.\n${JSON.stringify(history)}`;
@@ -8327,6 +8334,7 @@ function routeContext() {
     squadStateDir,
     appStateDir,
     squadWorkspaceRoot,
+    memberWorkspaceRoots: [squadWorkspaceRoot, ...legacySquadWorkspaceRoots],
     homeDir,
     packageMetadata,
     modelCatalog,

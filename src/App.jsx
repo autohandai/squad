@@ -299,6 +299,7 @@ import { PermissionApprovalCard } from "@/components/chat/PermissionApprovalCard
 import { ScheduleOffer } from "@/components/chat/ScheduleOffer";
 import { TeamProposalCard } from "@/components/chat/TeamProposalCard";
 import { pendingPermissionRequests } from "@/lib/permission-requests";
+import { conversationFileName, conversationMarkdown, conversationRecord } from "@/lib/conversation-export";
 import { teamProposalReceipts } from "@/lib/team-proposals";
 import { EffortSlider } from "@/components/chat/EffortSlider";
 import { continuationPrompt, folderNeedsYouRows, foldersNeedingAccess, mentionedPaths, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
@@ -6580,6 +6581,14 @@ function App() {
     }
     navigate(routeWithParams(`${MEMBER_ROUTE_PREFIX}/new`, { workspace: workspace || null }));
   }
+  // Export conversation (ADR-0161 §3.2): the open conversation as Markdown
+  // and JSON, with each reply's tools, permission decisions and written files.
+  function exportConversation(agent) {
+    const record = conversationRecord(agent, messagesByAgent[agent.id] || [], { workspace: agent.workspace || "" });
+    downloadMarkdownLog(conversationFileName(record, "md"), conversationMarkdown(record));
+    downloadMarkdownLog(conversationFileName(record, "json"), JSON.stringify(record, null, 2));
+    recordFeatureUsed("conversation", "export");
+  }
   const renderMemberMenu = useCallback(
     (agent, context = "sidebar") => (
       <MemberMenu
@@ -6600,6 +6609,7 @@ function App() {
         onMarkRead={context === "chat" ? undefined : () => markMemberRead(agent.id)}
         onDuplicate={() => duplicateMember(agent)}
         onSharePreset={() => setSharePreset(agent)}
+        onExportConversation={context === "chat" ? () => exportConversation(agent) : undefined}
         hidden={agent.hidden === true}
         onHide={() => hideMember(agent)}
         onRemove={() => setPendingMemberDelete(agent)}
@@ -22960,7 +22970,7 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
               </div>
             ))}
           </div>
-          <PermissionConfigPreview permissions={permissions} />
+          <PermissionConfigPreview permissions={permissions} agentId={agent.id} />
         </section>
       </div>
     </div>
@@ -23403,7 +23413,19 @@ function WrenchIcon(props) {
   return <Settings {...props} />;
 }
 
-function PermissionConfigPreview({ permissions }) {
+function PermissionConfigPreview({ permissions, agentId = "" }) {
+  // The file on disk, read from the bridge (ADR-0161 §1.6): the preview
+  // below is computed from the form and used to be mistaken for the file.
+  const [saved, setSaved] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setSaved(null);
+    if (!agentId) return undefined;
+    api(`/api/members/${encodeURIComponent(agentId)}/runtime-permissions`)
+      .then((data) => { if (!cancelled) setSaved({ ...data }); })
+      .catch((error) => { if (!cancelled) setSaved({ error: error?.message || "not readable" }); });
+    return () => { cancelled = true; };
+  }, [agentId, permissions]);
   // Mirrors server.mjs permissionSettingsFromAgent (ADR-0161): the bare rows
   // plus the engine's mcp__<server>__<tool> names for Squad's managed servers,
   // with the tools that can never reach a Squad window excluded.
@@ -23439,12 +23461,37 @@ function PermissionConfigPreview({ permissions }) {
     },
   };
 
+  // The lists that decide what the engine may call; a difference means the
+  // file is older than the form (not saved yet) or newer (saved elsewhere).
+  const listsOf = (block) => JSON.stringify(["mode", "availableTools", "excludedTools", "allowPatterns", "rules"].map((key) => block?.[key] ?? null));
+  const savedPermissions = saved?.permissions || null;
+  const differs = savedPermissions ? listsOf(savedPermissions) !== listsOf(preview.permissions) : false;
+
   // The engine's raw config is for checking, not reading: it was a 320px
-  // block of JSON open on the page. Now a disclosure.
+  // block of JSON open on the page. Now a disclosure, read-only, with the
+  // saved file beside what these settings would write.
   return (
-    <details className="min-w-0 text-sm">
+    <details className="min-w-0 text-sm" data-testid="permission-config-preview">
       <summary className="cursor-pointer text-muted-foreground hover:text-foreground">What Autohand Code receives (config.json)</summary>
-      <pre className="mt-2 max-h-[320px] overflow-auto rounded-md bg-muted/40 p-3 text-xs leading-5 text-muted-foreground">
+      <p className="mt-2 text-xs text-muted-foreground">
+        {saved?.error
+          ? `Saved file: ${saved.error}.`
+          : savedPermissions
+            ? differs
+              ? "The saved config.json differs from these settings. Save the member to write them; until then the engine uses the file."
+              : "The saved config.json matches these settings."
+            : agentId ? "Reading the saved config.json…" : "Read-only. The file is written when the member is saved."}
+      </p>
+      {savedPermissions ? (
+        <>
+          <p className="mt-2 text-xs font-medium text-muted-foreground">Saved on disk{saved.path ? ` · ${saved.path.replace(/^\/(?:Users|home)\/[^/]+/, "~")}` : ""}</p>
+          <pre className="mt-1 max-h-[240px] overflow-auto rounded-md bg-muted/40 p-3 text-xs leading-5 text-muted-foreground" aria-readonly="true">
+            {JSON.stringify({ permissions: savedPermissions, features: saved.features || {} }, null, 2)}
+          </pre>
+        </>
+      ) : null}
+      <p className="mt-2 text-xs font-medium text-muted-foreground">From these settings</p>
+      <pre className="mt-1 max-h-[320px] overflow-auto rounded-md bg-muted/40 p-3 text-xs leading-5 text-muted-foreground" aria-readonly="true">
         {JSON.stringify(preview, null, 2)}
       </pre>
     </details>

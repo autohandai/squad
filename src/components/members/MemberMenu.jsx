@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CalendarClock, CircleUserRound, Copy, Ellipsis, EllipsisVertical, Eye, EyeOff, Mail, MailOpen, MessageSquareText, PauseCircle, Pin, PinOff, Play, Share2, Trash2 } from "lucide-react";
+import { CalendarClock, CircleUserRound, Copy, Download, Ellipsis, EllipsisVertical, Eye, EyeOff, Mail, MailOpen, MessageSquareText, PauseCircle, Pin, PinOff, Play, Share2, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -35,6 +35,7 @@ export function MemberMenu({
   onMarkRead,
   onDuplicate,
   onSharePreset,
+  onExportConversation,
   hidden = false,
   onHide,
   onRemove,
@@ -60,6 +61,7 @@ export function MemberMenu({
     unreadItem,
   ].filter(Boolean);
   const copies = [
+    onExportConversation ? { icon: Download, label: copy.exportConversation || "Export conversation", action: onExportConversation } : null,
     onDuplicate ? { icon: Copy, label: copy.duplicateMember || "Duplicate", action: onDuplicate } : null,
     onSharePreset ? { icon: Share2, label: copy.shareAsPreset || "Share as preset…", action: onSharePreset } : null,
   ].filter(Boolean);

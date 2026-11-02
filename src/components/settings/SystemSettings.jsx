@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldContent, FieldDescription, FieldTitle } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,19 @@ export function SystemSettings({ api, locale = "en", copy = {}, onAutoCheckUpdat
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [reveal, setReveal] = useState({ state: "idle", error: "" });
+  // Reset Squad (ADR-0161 §3.1): the bridge moves its folders aside and
+  // restarts; the window forgets its own storage and returns to first run.
+  const [reset, setReset] = useState({ state: "idle", error: "" });
+  async function resetSquad() {
+    setReset({ state: "working", error: "" });
+    try {
+      await api("/api/system/reset", { method: "POST", body: JSON.stringify({ confirm: "RESET" }) });
+      for (const key of Object.keys(window.localStorage)) if (key.startsWith("autohandSquad.")) window.localStorage.removeItem(key);
+      window.setTimeout(() => { window.location.assign("/"); }, 2500);
+    } catch (error) {
+      setReset({ state: "idle", error: error?.message || "Squad could not be reset." });
+    }
+  }
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -141,7 +155,35 @@ export function SystemSettings({ api, locale = "en", copy = {}, onAutoCheckUpdat
         >
           <Switch id="system-auto-check-updates" checked={settings.autoCheckUpdates} disabled={saving || !api} onCheckedChange={toggleAutoCheck} />
         </Row>
+
+        <Row title={copy.systemReset || "Reset Squad"} description={copy.systemResetDetail || "Start again as a clean install. Your Autohand Code sign-in stays."}>
+          <Button type="button" variant="outline" size="sm" disabled={!api || reset.state === "working"} onClick={() => setReset({ state: "confirm", error: "" })}>
+            {copy.systemResetAction || "Reset Squad…"}
+          </Button>
+        </Row>
+        {reset.error ? (
+          <p role="status" className="py-2 text-xs text-destructive">
+            {reset.error}
+          </p>
+        ) : null}
       </div>
+
+      <Dialog open={reset.state === "confirm" || reset.state === "working"} onOpenChange={(open) => { if (!open && reset.state !== "working") setReset({ state: "idle", error: "" }); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{copy.systemResetTitle || "Reset Squad to a clean install?"}</DialogTitle>
+            <DialogDescription>
+              {copy.systemResetBody || "Members, channels, chats, memory, run history and settings are moved aside with today's date, not deleted. Your Autohand Code sign-in, sessions and skills stay. Squad restarts at first run. Keychain items and macOS privacy grants are listed in the setup guide if you want those gone too."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="ghost" disabled={reset.state === "working"} onClick={() => setReset({ state: "idle", error: "" })}>{copy.cancel || "Cancel"}</Button>
+            <Button type="button" variant="destructive" disabled={reset.state === "working"} onClick={() => void resetSquad()} data-testid="system-reset-confirm">
+              {reset.state === "working" ? copy.systemResetting || "Resetting…" : copy.systemResetConfirm || "Reset Squad"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

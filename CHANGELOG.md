@@ -16,6 +16,11 @@ list to the section for that version.
 - Members can propose a team from a conversation (`squad_propose_team`). The roster appears under the reply with Create team; the members are created through the same path as New team at the Edit files level, and nothing exists until you confirm.
 - "Allow for this reply" on a permission card now covers every later request for that tool in the same reply, so a member writing six files asks once.
 - A "Squad team tools" group in Permissions › Built-in tool rules lists every Squad team tool, so what a member may do with teammates is one decision in one place.
+- Members can read one of their saved chats in full (`squad_read_chat`) when you refer to an earlier conversation, and channel threads tell teammates which tools each reply used.
+- Export conversation, in the chat menu, saves the open conversation as Markdown and JSON with each reply's tools, permission decisions and written files.
+- Settings › System has Reset Squad: it moves Squad's data aside and returns to first run, keeping your Autohand Code sign-in.
+- The Permissions config preview shows the member's saved config.json next to the current settings and says when they differ.
+- `bun run check:cli-pin` fails when the bundled Autohand Code is behind the latest release.
 
 - Collective memory brings the squad's saved memories, profile Markdown and isolated Autohand memories into a searchable graph and list, with source details, groups, tags, saved connections and member colors. New Memory settings choose collection sources and shared Markdown folders; Squad MCP lets agents search, read, organize, relate and explicitly share memories within their access.
 - Members can use an ordered list of fallback coding engines and models when their primary engine cannot answer, with visible switching and automatic return after a cooldown. An optional setting lets a member manage its own fallbacks through Squad tools.

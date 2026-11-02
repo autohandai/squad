@@ -18,7 +18,25 @@ const STOP_PATH = /^\/api\/members\/([^/]+)\/stop$/;
 // an SDK client has not finished by then is left to finish in the background.
 const STOP_BUDGET_MS = 1500;
 
+// What the member's isolated config.json actually holds (ADR-0161 §1.6):
+// the Permissions page preview is computed from the form, and a person who
+// turned rules off read empty lists while the file still held the old ones.
+const RUNTIME_PERMISSIONS = /^\/api\/members\/([^/]+)\/runtime-permissions$/;
+async function runtimePermissions(req, res, url, ctx) {
+  const match = url.pathname.match(RUNTIME_PERMISSIONS);
+  if (!match || req.method !== "GET") return false;
+  const id = decodeURIComponent(match[1]);
+  if (!/^[a-z0-9][a-z0-9_-]{0,79}$/i.test(id)) { ctx.json(res, 400, { success: false, error: "member id is invalid" }); return true; }
+  const path = join(ctx.appStateDir || join(ctx.rootDir, ".autohand"), "agents", id, "config.json");
+  const config = await ctx.readOptionalJsonFile(path);
+  if (!config) { ctx.json(res, 404, { success: false, error: "This member has no saved config.json yet; it is written when the member first runs." }); return true; }
+  const permissions = config.permissions && typeof config.permissions === "object" ? config.permissions : {};
+  ctx.json(res, 200, { success: true, data: { path, permissions, features: config.features && typeof config.features === "object" ? config.features : {} } });
+  return true;
+}
+
 export async function handle(req, res, url, ctx) {
+  if (await runtimePermissions(req, res, url, ctx)) return true;
   if (url.pathname === "/api/members/breaks" && req.method === "GET") {
     ctx.json(res, 200, { success: true, data: await ctx.availability.list() });
     return true;

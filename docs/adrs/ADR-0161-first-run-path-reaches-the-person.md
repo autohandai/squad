@@ -153,6 +153,20 @@ source confirmed each one.
     chat and of the site at 1440px and 390px are in
     `.codex-artifacts/first-run-live/`.
 
+12. **The rest of the report.** `squad_read_chat` reads a saved chat in
+    full by the id the recall list now carries (§2.4). Channel thread
+    history names the tools each reply used (§2.5). The chat menu has
+    Export conversation, Markdown and JSON with tools, permission decisions
+    and written files (§3.2). Settings › System has Reset Squad: the bridge
+    moves its state, the members' homes and working folders aside with a
+    date, keeps `~/.autohand` sign-in, exits for its supervisor to restart
+    it, and the window returns to first run (§3.1); Keychain, `~/Library`
+    and privacy grants stay a hand step in SETUP_GUIDE. The config preview
+    shows the saved `config.json` beside the form and says when they differ
+    (§1.6). `check:cli-pin` fails a release check while the pinned CLI is
+    behind the latest release (side note); the pin itself stays 0.9.7 until
+    the first-run walkthrough has been run against 0.9.9.
+
 ## Consequences and validation
 
 - `check-permission-policy`, `check-permission-approvals`,

@@ -161,7 +161,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
 
 try {
   // --- pure pieces --------------------------------------------------------
-  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team"]);
+  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat"]);
   assert.deepEqual([...SQUAD_TEAM_TOOLS].sort(), [...TEAM_TOOL_NAMES].sort(), "the permission rows people see are exactly the tools the team server offers (ADR-0161)");
   const roster = [{ id: "a1", name: "Eva Green" }, { id: "a2", name: "Noah" }, { id: "a3", name: "Max Power" }, { id: "a4", name: "Max Steel" }];
   assert.equal(resolveTeammate("@Eva,", roster).member?.id, "a1", "a first name with @ and a comma finds the teammate");

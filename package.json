@@ -40,6 +40,7 @@
     "check:recruiting": "node scripts/check-squad-recruiting.mjs",
     "check:first-run": "node scripts/check-permission-policy.mjs && node scripts/check-permission-approvals.mjs && node scripts/check-team-proposals.mjs",
     "check:first-run:live": "node scripts/check-first-run-live.mjs",
+    "check:cli-pin": "node scripts/check-cli-pin.mjs",
     "check:notifications": "node scripts/check-notifications.mjs",
     "check:voice": "node scripts/check-voice.mjs",
     "check:jsx": "node scripts/check-jsx-imports.mjs",

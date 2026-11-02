@@ -165,8 +165,11 @@ The app intentionally keeps most state local:
 For a clean UI-only test, clear the browser's local storage for
 `127.0.0.1:19821`. For a clean squad-member profile, remove only the matching
 `~/.autohand/squad/web-state/agents/<member-id>/` directory. To reset Squad to
-a clean install, quit the app (window and menu bar), back up and remove the
-items above, and leave the rest of `~/.autohand` alone: `config.json`,
+a clean install, use Settings › System › Reset Squad: it moves the state
+folder, the members' homes and working folders aside with a date and returns
+to first run, keeping your sign-in. For a complete clean-out by hand, quit
+the app (window and menu bar), back up and remove the items above, and leave
+the rest of `~/.autohand` alone: `config.json`,
 sessions and skills there belong to Autohand Code and hold your sign-in. A
 new member copies that `config.json` for its account and provider settings
 only; it never inherits its `permissions` block (ADR-0161).

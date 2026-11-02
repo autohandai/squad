@@ -61,7 +61,7 @@ export function buildRecall(sources, { now = Date.now(), budget = RECALL_BUDGET_
   if (own.length) {
     counts.ownChats = own.length;
     sections.push(["Your previous chats with this person (newest first; New chat started a fresh context, these are for continuity):",
-      ...own.map((chat) => `- ${relativeAge(chat.endedAt, now)}, "${clip(chat.title, 90)}" (${chat.turns || 0} ${chat.turns === 1 ? "turn" : "turns"})${chat.digest?.lastReply ? `: last reply "${clip(chat.digest.lastReply, 220)}"` : ""}`)].join("\n"));
+      ...own.map((chat) => `- ${relativeAge(chat.endedAt, now)}, "${clip(chat.title, 90)}" (${chat.turns || 0} ${chat.turns === 1 ? "turn" : "turns"}, chat id ${chat.id})${chat.digest?.lastReply ? `: last reply "${clip(chat.digest.lastReply, 220)}"` : ""}`)].join("\n"));
   }
 
   const otherTurns = [...(sources.otherTurns || [])].filter((run) => run.agentId && run.agentId !== sources.memberId && (run.reply || run.title)).sort(byNewest("finishedAt")).slice(0, limits.otherTurns);
