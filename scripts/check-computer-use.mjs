@@ -122,6 +122,12 @@ try {
     await assert.rejects(autohandComputerClient({ homeDir: onlyDriver, env: { PATH: '' }, platform: 'darwin' }), /Autohand Computer Use\.app/);
     const linux = await autohandComputerClient({ homeDir: onlyDriver, env: { PATH: '' }, platform: 'linux' });
     assert.deepEqual(linux.args, ['mcp']); assert.equal(linux.embedded, false);
+    // The bundled copy the bridge falls back to, on every platform: the
+    // macOS-only identity check above does not write it on the Linux runner.
+    const bundledDir = join(temporary, 'identity-fixture', 'vendor', 'computer-use'); await mkdir(bundledDir, { recursive: true });
+    await writeFile(join(bundledDir, 'driver'), 'mock'); await writeFile(join(bundledDir, 'host'), 'mock');
+    const bundledItem = (path) => ({ path, sha256: createHash('sha256').update('mock').digest('hex') });
+    await writeFile(join(bundledDir, 'BUILD_INFO.json'), JSON.stringify({ version: '0.28.2', repository: 'autohandai/computer-use', driver: bundledItem('driver'), host: { ...bundledItem('host'), bundleId: 'ai.autohand.computer-use' } }));
     const notes = []; const fallback = await preferredComputerClient(join(temporary, 'identity-fixture'), { where: { homeDir: empty, env: { PATH: '' }, platform: 'darwin' }, log: (m) => notes.push(m) }).catch(() => null);
     assert.ok(notes[0]?.includes('Autohand Computer Use unavailable'), 'the fallback is logged'); assert.match(fallback?.identity?.fallbackReason || '', /not installed/); fallback?.close?.();
     // An installed host that exits at launch (built for a newer macOS) also falls back, with the reason kept for the Permissions page.
