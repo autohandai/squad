@@ -19,7 +19,7 @@ export class AutohandSDK {
   async start(){
     this.config=JSON.parse(readFileSync(this.options.envVars.AUTOHAND_CONFIG,'utf8'));
     this.team=this.config.mcp.servers.find(server=>server.name==='autohand-squad');
-    appendFileSync(file,JSON.stringify({kind:'launch',id:this.id,config:this.options.envVars.AUTOHAND_CONFIG,teamToken:this.team?.env.AUTOHAND_SQUAD_TEAM_TOKEN||''})+'\\n');
+    appendFileSync(file,JSON.stringify({kind:'launch',id:this.id,config:this.options.envVars.AUTOHAND_CONFIG,noCliComputerUse:this.options.envVars.AUTOHAND_DISABLE_COMPUTER_USE,teamToken:this.team?.env.AUTOHAND_SQUAD_TEAM_TOKEN||''})+'\\n');
   }
   async *streamPrompt({message:prompt}){
     let team='';
@@ -56,6 +56,7 @@ try {
   const launches = () => rows.filter(row => row.kind === 'launch');
   const prompts = () => rows.filter(row => row.kind === 'prompt');
   assert.equal(launches().length, 1, `two turns in one thread share one engine session: ${JSON.stringify(launches())}`);
+  assert.equal(launches()[0].noCliComputerUse, '1', "the CLI's own Computer Use is off; members reach it only through Squad's grant-checked proxy");
   assert.deepEqual(prompts().map(row => row.id), [1, 1], 'both prompts went to the same session');
   assert.deepEqual(prompts().map(row => row.team), ['200', '200'], "the thread's team token is valid on the second turn as on the first");
   assert.ok(prompts()[1].prompt.includes('Thread A, second turn'), 'the second prompt is the new message');

@@ -71,6 +71,14 @@ showing "readiness could not be confirmed".
 - `check-computer-use` covers the resolution order and the launch
   arguments with fixture files; `check-computer-use-bridge` keeps running
   the bundled path under the pin variable.
+- The CLI adds its own `autohand-computer-use` server to every session
+  unless `AUTOHAND_DISABLE_COMPUTER_USE` is set. On the 0.1.16 demo run a
+  QA Engineer with no Computer Use grant reached for it to check the phone
+  layout; with the macOS permissions not given yet, the CLI failed the whole
+  reply with "Autohand Computer Use could not verify its desktop
+  permissions". Member engines now run with that variable set, so the only
+  Computer Use a member has is Squad's proxy, which applies its grant.
+  `check-thread-warmth` asserts the variable on the engine launch.
 - A person who granted Squad Computer Use before this amendment grants
   Autohand Computer Use once; the Squad Computer Use row in System Settings
   is dead and can be removed by hand.

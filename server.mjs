@@ -3612,6 +3612,12 @@ function agentRuntimeEnvVars(agentRuntime) {
     AUTOHAND_CLIENT_NAME: autohandClientName(agentRuntime),
     AUTOHAND_SKILL_SNAPSHOT_MANAGED: '1',
     AUTOHAND_NO_IDLE_LOGOUT: "1",
+    // The CLI adds its own Autohand Computer Use to every session unless
+    // this is set. A member reaches Computer Use only through Squad's proxy,
+    // which applies the member's observe/control grant (ADR-0070, ADR-0162);
+    // the CLI's copy ignored that grant, and with macOS permissions not yet
+    // given it failed the QA Engineer's whole reply on the 0.1.16 demo run.
+    AUTOHAND_DISABLE_COMPUTER_USE: "1",
     AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: "",
     ...(agentRuntime.computerUse ? { AUTOHAND_SQUAD_COMPUTER_USE_SESSION: agentRuntime.computerUse.id } : {}),
   };

@@ -41,6 +41,7 @@ list to the section for that version.
 
 ### Fixed
 
+- A member without Computer Use permission no longer reaches Autohand Code's own Computer Use, which ignored the member's grant and could fail its whole reply when macOS permissions were not yet given.
 - An Autohand member's file writes are on disk the moment it makes them, so it no longer mistakes its own work for a failed tool, rewrites it through the shell, and has an earlier draft overwrite the result when the reply ends.
 - A member can no longer spend a whole reply editing its work plan: after eight plan changes in one reply the team tool refuses and tells it to do the task itself.
 - The sidebar no longer keeps saying "Updated to 0.1.14." with a Details button after an update has finished; Settings › Updates still shows it, the sidebar only speaks while there is something to download, install or fix.
