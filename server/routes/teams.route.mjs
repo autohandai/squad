@@ -23,6 +23,7 @@ import { addPresets, assemblePresetExport, assembleTeamExport, createChannelsAnd
 import { TEAM_LIMITS } from "../../src/lib/teams.js";
 import { channelGoalInstruction, channelGoalSystemInstruction, channelGoalProposal, CHANNEL_GOAL_LIMIT } from "../../src/lib/channel-goals.js";
 import { roleTemplates } from "../../src/lib/member-profiles.js";
+import { TeamProposalError, memberTeamProposal, teamProposalSummary } from "../../src/lib/team-proposals.js";
 
 export const name = "teams";
 
@@ -45,6 +46,36 @@ function ok(ctx, res, status, data) {
 
 function memberNames(value) {
   return (Array.isArray(value) ? value : []).map((item) => String(item || "").trim()).filter(Boolean).slice(0, 1000);
+}
+
+// squad_propose_team (ADR-0161): a member's roster becomes a `team` receipt
+// with status "proposed". The browser shows it under the reply; "Create team"
+// runs the same import as New team. Nothing here creates a member.
+async function proposeTeamAction(ctx, { id, context, raw, signal, declined }) {
+  const receipt = { id, type: "team", actorId: context.actorId, requestId: context.requestId, workspace: context.workspace, createdAt: new Date().toISOString() };
+  try {
+    if (signal?.aborted || declined) throw new TeamProposalError("this turn was stopped before the team could be proposed");
+    if (!context.identityValid) throw new TeamProposalError("the action identity does not match the executing member");
+    const state = await ctx.readChannelsState().catch(() => null);
+    const access = state?.agentChannelAccess && typeof state.agentChannelAccess === "object" ? state.agentChannelAccess : {};
+    const actor = access[context.actorId]?.agent;
+    if (!actor || access[context.actorId]?.removed) throw new TeamProposalError("this member is no longer part of the squad");
+    const { type, ...args } = raw;
+    void type;
+    const existingNames = Object.values(access).filter((record) => record?.agent && !record.removed).map((record) => record.agent.name);
+    const proposal = memberTeamProposal(args, { existingNames, roleTemplates });
+    return { ...receipt, status: "proposed", proposal, message: teamProposalSummary(proposal, actor.name) };
+  } catch (error) {
+    return { ...receipt, status: "failed", message: error instanceof TeamProposalError ? `The team was not proposed: ${error.message}.` : error?.message || String(error) };
+  }
+}
+
+export async function init(ctx) {
+  try {
+    ctx.agentChannelActions?.registerHandler?.("team", (action) => proposeTeamAction(ctx, action));
+  } catch (error) {
+    ctx.logEvent?.(ctx.SEVERITY?.WARN, `teams: member team proposals unavailable: ${error?.message || error}`, { "event.name": "team.proposals.unavailable" });
+  }
 }
 
 export async function handle(req, res, url, ctx) {

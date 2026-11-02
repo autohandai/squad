@@ -38,6 +38,8 @@
     "check:memory": "node scripts/check-memory.mjs",
     "check:chat-attachments": "node scripts/check-chat-attachment-delivery.mjs && node scripts/check-attachment-inputs.mjs && node scripts/check-chat-attachments-browser.mjs",
     "check:recruiting": "node scripts/check-squad-recruiting.mjs",
+    "check:first-run": "node scripts/check-permission-policy.mjs && node scripts/check-permission-approvals.mjs && node scripts/check-team-proposals.mjs",
+    "check:first-run:live": "node scripts/check-first-run-live.mjs",
     "check:notifications": "node scripts/check-notifications.mjs",
     "check:voice": "node scripts/check-voice.mjs",
     "check:jsx": "node scripts/check-jsx-imports.mjs",

@@ -220,6 +220,43 @@ const TOOLS = [
   },
 ];
 
+TOOLS.push({
+  name: "squad_propose_team",
+  description: "Propose new Squad members as a team for the person to confirm. This is the only way to create teammates in Squad: Autohand Code's create_team/add_teammate start processes inside your own session and never make a Squad member. Squad shows the roster under your reply with a Create team button; nothing is created until the person confirms. Describe each member's role and what they own; names and skills are optional.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      name: { type: "string", maxLength: 80, description: "The team's name, e.g. 'CST compliance'." },
+      objective: { type: "string", minLength: 1, maxLength: 600, description: "What the team is for, in one or two sentences." },
+      // The pinned CLI sometimes hands nested objects over as JSON strings
+      // (the first two calls of a live run failed "members[0] must be an
+      // object"); the service accepts either and parses the string form.
+      members: {
+        type: "array", minItems: 1, maxItems: 8,
+        description: "One entry per member: an object {name?, role, purpose, instructions?, skills?}. A JSON string of that object, or 'Role: what they own', is accepted too.",
+        items: {
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                name: { type: "string", maxLength: 60, description: "Optional; defaults to the role." },
+                role: { type: "string", minLength: 1, maxLength: 120, description: "The job title, e.g. 'SOC 2 Auditor'." },
+                purpose: { type: "string", minLength: 1, maxLength: 600, description: "What this member owns and is responsible for." },
+                instructions: { type: "string", maxLength: 4000, description: "Optional operating instructions." },
+                skills: { type: "array", maxItems: 8, items: { type: "string", maxLength: 80 }, description: "Optional skill ids from the Autohand skills catalog." },
+              },
+              required: ["role", "purpose"], additionalProperties: false,
+            },
+            { type: "string", minLength: 3, maxLength: 5000 },
+          ],
+        },
+      },
+      lead: { type: "string", maxLength: 120, description: "Optional: the name or role of the member who leads." },
+    },
+    required: ["objective", "members"], additionalProperties: false,
+  },
+});
+
 export const TEAM_TOOL_NAMES = TOOLS.map((tool) => tool.name);
 
 const record = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -298,6 +335,8 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
     "- When the person says remember, keep in mind, note that, or from now on, call squad_remember in that turn (scope team unless it is only about you). Do not only say you will remember: a memory exists only once squad_remember has saved it.",
     "- When the person gives you a new name or role ('your name is Robert', 'I'll call you Robert', 'be our QA lead'), call squad_set_profile with the change, then confirm. Squad tells your teammates.",
     "- For a requested reminder or anything that should happen later or repeat, call squad_schedule in this turn. The request authorizes it: do not ask for confirmation again. Report the persisted receipt. Use mode propose for an unsolicited suggestion or an explicit draft. A scheduled automation is not a blocked task.",
+    "- To add teammates or build an organisation of agents, call squad_propose_team with each member's role and what they own; the person confirms the roster in Squad and the members are created there. It is the only way to create Squad members. Autohand Code's create_team, add_teammate and delegate_* tools run inside your own session and never create a Squad member; do not offer them as a way to build the team.",
+    "- When you need a decision or an answer from the person, finish your reply with the question and wait for their next message; ask_followup_question is not available in Squad. When a tool asks for permission, Squad shows the person an Allow/Deny card for it, so say what you are waiting for rather than treating a denial as final. Keep drafts safe: write the design or brief you promised to a file in the workspace, or save it with squad_remember, before you ask where it should go.",
     depth >= TEAM_MAX_DEPTH - 1 ? "- You are answering a teammate's message several hops deep: finish this yourself and do not message further teammates." : "",
   ];
   const sections = [lines.filter(Boolean).join("\n")];
@@ -590,6 +629,12 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           addReceipt(session, receipt);
           if (!receipt || ["failed", "blocked"].includes(receipt.status)) return failure(receipt?.message || "Channel not created.");
           return text({ status: receipt.status, channelId: receipt.channelId || null, proposalId: receipt.id, message: receipt.message });
+        }
+        case "squad_propose_team": {
+          const receipt = await runAction("team", args, operation);
+          addReceipt(session, receipt);
+          if (!receipt || ["failed", "blocked"].includes(receipt.status)) return failure(receipt?.message || "The team was not proposed.");
+          return text({ status: receipt.status, proposalId: receipt.id, team: receipt.proposal?.name || "", members: (receipt.proposal?.members || []).map((member) => `${member.name} (${member.role})`), message: receipt.message, note: "The person now sees this roster under your reply with a Create team button. Nothing exists until they confirm; say that in one sentence, do not repeat the roster or quote the proposal id, and do not try to create members any other way." });
         }
         case "squad_work_plan": return getWorkPlan ? text({ tasks: await getWorkPlan(session.memberId) }) : failure("The work plan is unavailable in this runtime.");
         case "squad_task": {

@@ -146,20 +146,30 @@ AUTOHAND_SQUAD_HANDOFF_RETRY_MODE=manual \
 
 The app intentionally keeps most state local:
 
-- Browser local storage stores roster, messages, theme, language, automations,
-  tasks, and handoff preferences.
-- Repo-local `.autohand/agents/<member-id>/` stores isolated squad-member
-  profile files and Autohand config.
-- `~/.autohand/squad/` stores runtime daemon state, install records, logs,
-  queue records, run records, config, telemetry, sync, update, analytics, web
-  server, and tray state.
-- `~/.autohandsquad/` stores local worker/workspace data used by the app.
+- Browser local storage (the desktop app's WebKit storage, or the browser for
+  a dev server) stores roster, messages, theme, language, automations, tasks,
+  and handoff preferences.
+- `~/.autohand/squad/` stores everything the bridge owns: members under
+  `web-state/agents/<member-id>/` (profile files and the member's isolated
+  Autohand `config.json`), `channels.json`, `team.json`, chats, run history,
+  the search index, queue records, logs, telemetry, sync and update state.
+- `~/.autohand/squad-vault.key` (or the Keychain item `ai.autohand.squad.vault`
+  on macOS) holds the vault key.
+- `~/.autohandsquad/` (legacy: `~/.autohand-squad/`, `~/.qoderwake/`) stores
+  member working folders.
+- The packaged macOS app also keeps `ai.autohand.squad` folders under
+  `~/Library` (WebKit, Caches, HTTPStorages, Application Support, Saved
+  Application State, Preferences) and macOS privacy grants
+  (`tccutil reset All ai.autohand.squad`).
 
 For a clean UI-only test, clear the browser's local storage for
 `127.0.0.1:19821`. For a clean squad-member profile, remove only the matching
-repo-local `.autohand/agents/<member-id>/` directory. Avoid deleting
-`~/.autohand` unless you intentionally want to reset broader Autohand CLI
-state, auth, and config.
+`~/.autohand/squad/web-state/agents/<member-id>/` directory. To reset Squad to
+a clean install, quit the app (window and menu bar), back up and remove the
+items above, and leave the rest of `~/.autohand` alone: `config.json`,
+sessions and skills there belong to Autohand Code and hold your sign-in. A
+new member copies that `config.json` for its account and provider settings
+only; it never inherits its `permissions` block (ADR-0161).
 
 For a clean first-run onboarding test, run `bun run check:fresh-install`.
 Clearing `autohandSquad.v1.onboarding` or browser storage alone tests recovery:

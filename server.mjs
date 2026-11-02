@@ -2,6 +2,9 @@ import { createServer } from "node:http";
 import { hostname } from "node:os";
 import { OtelLogger, SEVERITY, parseLogEnvelope, resourceFromEnv, traceIdFor, spanIdFor } from "./server/otel-logs.mjs";
 import { SdkSessionPool } from "./server/sdk-sessions.mjs";
+import { PermissionApprovalError, PermissionApprovals } from "./server/permission-approvals.mjs";
+import { ChangeBatches } from "./server/change-batches.mjs";
+import { conversationReplay } from "./server/chats/replay.mjs";
 import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { openSignInUrl } from "./server/harness/open-login.mjs";
@@ -23,7 +26,7 @@ import { createSquadCloud } from "./server/squad-cloud/service.mjs";
 import { createTeamChannels } from "./server/team/channels.mjs";
 import { createCliBootstrap, createCliProbe } from "./server/runtime/cli-bootstrap.mjs";
 import { STORE_FILE as WORK_STORE_FILE, workStoreFor } from "./server/work/store.mjs";
-import { vaultToolsAllowed } from "./src/lib/permission-policy.js";
+import { SQUAD_UNREACHABLE_TOOLS, managedToolPolicies, vaultToolsAllowed } from "./src/lib/permission-policy.js";
 import { normalizeChannelGoal } from "./src/lib/channel-goals.js";
 import { createProductTelemetry, readProductTelemetryConfig } from "./server/product-telemetry.mjs";
 import { MemberAvailability } from "./server/members/availability.mjs";
@@ -329,6 +332,15 @@ const otel = new OtelLogger({
 // Warm SDK sessions: one started CLI per member + launch options, reused
 // across chat messages (see server/sdk-sessions.mjs).
 let sdkSessions = null;
+// Permission requests of live Autohand turns, answered from the chat (ADR-0161).
+const permissionApprovals = new PermissionApprovals({ log: (message) => logEvent(SEVERITY.WARN, message, { "event.name": "chat.permission.warn" }) });
+// Staged file changes of every SDK turn, accepted at turn end so they land
+// on disk (ADR-0161): the CLI's RPC preview mode waits for this decision.
+const changeBatches = new ChangeBatches({ log: (message) => logEvent(SEVERITY.WARN, message, { "event.name": "chat.changes.warn" }) });
+// Engine sessions that have received at least one prompt of a conversation.
+// A session created by warm-up or after a close has not, so the first prompt
+// on it replays the recent conversation (ADR-0161).
+const primedSessions = new WeakSet();
 async function sdkSessionPool() {
   if (!sdkSessions) {
     const { AutohandSDK } = await loadAgentSdk();
@@ -2650,7 +2662,12 @@ function expandPathPattern(pathPattern) {
   return [value];
 }
 
-function permissionSettingsFromAgent(agent) {
+// The permission keys Built-in tool rules own. Turning the rules off used to
+// leave the previous lists in config.json because the save merged over the old
+// block, so the denials continued with the switch off (ADR-0161).
+const builtInRuleKeys = ["availableTools", "excludedTools", "allowPatterns", "rules"];
+
+function permissionSettingsFromAgent(agent, { connectors = [] } = {}) {
   const permissions = normalizeAgentPermissions(agent);
   const settings = {
     mode: permissions.permissionMode,
@@ -2659,17 +2676,30 @@ function permissionSettingsFromAgent(agent) {
     allUrlsAllowed: permissions.allUrlsAllowed,
   };
 
+  // Tools that can never reach a Squad window are excluded whether or not the
+  // person manages built-in rules: the follow-up question answers itself
+  // "Yes" under --yes, and the CLI's in-process teams are not Squad members.
+  const unreachable = new Set(SQUAD_UNREACHABLE_TOOLS);
+  settings.excludedTools = [...unreachable].map((kind) => ({ kind }));
+
   if (permissions.builtInToolPolicyEnabled) {
-    const entries = Object.entries(permissions.builtInPolicies);
+    // The managed MCP servers (team, vault, Computer Use, web research) are
+    // named mcp__<server>__<tool> by the engine, which checks availableTools
+    // as a strict allowlist before the permission mode. Without these rows
+    // every Squad team tool was denied `not_in_available` at every ladder
+    // level (ADR-0161).
+    const entries = [
+      ...Object.entries(permissions.builtInPolicies).map(([kind, mode]) => [kind, unreachable.has(kind) ? "block" : mode]),
+      ...managedToolPolicies(permissions.builtInPolicies, { connectors }),
+    ];
     settings.allowPatterns = entries
       .filter(([, mode]) => mode === "allow")
       .map(([kind]) => ({ kind }));
     settings.availableTools = entries
       .filter(([, mode]) => mode !== "block")
       .map(([kind]) => ({ kind }));
-    settings.excludedTools = entries
-      .filter(([, mode]) => mode === "block")
-      .map(([kind]) => ({ kind }));
+    settings.excludedTools = uniqueStrings([...unreachable, ...entries.filter(([, mode]) => mode === "block").map(([kind]) => kind)])
+      .map((kind) => ({ kind }));
     settings.rules = entries
       .filter(([, mode]) => mode === "ask")
       .map(([tool]) => ({ tool, action: "prompt" }));
@@ -2970,11 +3000,24 @@ async function writeAgentProfileDocs(plan) {
   await writeFile(plan.profileDocs.agentsPath, plan.index, "utf8");
 }
 
+// What a new member inherits from the person's own ~/.autohand/config.json:
+// auth, provider and MCP settings, never their permissions. A fresh Chief of
+// Staff arrived with the person's 13 allowList grants, including writes into
+// unrelated repositories and shell commands from other projects, which an
+// Interactive-mode member runs without asking (ADR-0161). Squad writes the
+// member's own permission block from its saved profile.
+function seedMemberConfig(userConfig) {
+  if (!userConfig || typeof userConfig !== "object" || Array.isArray(userConfig)) return userConfig;
+  const { permissions, ...rest } = userConfig;
+  void permissions;
+  return rest;
+}
+
 async function readAgentRuntimeConfig(configPath, workspace) {
   try {
     const savedConfig = await readPersistentJson(configPath, undefined);
     const config = savedConfig === undefined
-      ? await readPersistentJson(userConfigPath, defaultAgentConfig(workspace))
+      ? seedMemberConfig(await readPersistentJson(userConfigPath, defaultAgentConfig(workspace)))
       : savedConfig;
     if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("Expected a JSON object.");
     return config;
@@ -3062,7 +3105,30 @@ async function withSavedMember(payload) {
   return { ...payload, policy, ...(agent !== incoming ? { profile: "" } : {}), agent, _memberDescriptionProvided: Boolean(payload.agent && typeof payload.agent === "object" && !Array.isArray(payload.agent)) };
 }
 
+// The engine keeps its project-local memory and tools under <workspace>/.autohand.
+// In a fresh repository that folder was the only untracked thing, and Chief of
+// Staff's first review opened with it ("the harness's own scaffolding") before
+// the project. Excluding it through .git/info/exclude keeps it out of status
+// without touching a tracked file; the member is also told what it is.
+const engineWorkspaceFolders = [".autohand/"];
+async function excludeEngineFolders(workspace) {
+  try {
+    const gitDir = join(workspace, ".git");
+    if (!existsSync(gitDir) || !(await stat(gitDir)).isDirectory()) return false;
+    const excludePath = join(gitDir, "info", "exclude");
+    const current = existsSync(excludePath) ? await readFile(excludePath, "utf8") : "";
+    const missing = engineWorkspaceFolders.filter((folder) => !current.split(/\r?\n/).some((line) => line.trim() === folder || line.trim() === folder.replace(/\/$/, "")));
+    if (!missing.length) return false;
+    await mkdir(join(gitDir, "info"), { recursive: true });
+    await writeFile(excludePath, `${current}${current && !current.endsWith("\n") ? "\n" : ""}# Autohand Squad: the engine's project-local folder\n${missing.join("\n")}\n`, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureAgentRuntime(input, workspace) {
+  await excludeEngineFolders(workspace);
   const id = sanitizeAgentId(input.agent?.id || input.agentId);
   const pending = (agentRuntimeWrites.get(id) || Promise.resolve()).catch(() => {}).then(() => ensureAgentRuntimeInner(input, workspace));
   agentRuntimeWrites.set(id, pending);
@@ -3125,7 +3191,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
   // is "allow" (ADR-0107); the person's own MCP entries are always kept.
   const connectorSpecs = !isUtilityAgent(agentId) && connectorsAllowed(agent) ? await connectors.enabledSpecs({ firecrawlBaseUrl }) : [];
   try {
-    const permissionSettings = permissionSettingsFromAgent(agent);
+    const permissionSettings = permissionSettingsFromAgent(agent, { connectors: connectorSpecs.filter((spec) => spec.builtin).map((spec) => spec.serverName) });
     const normalizedPermissions = normalizeAgentPermissions(agent);
     const providerSpecificConfig = providerConfigForResolved(resolvedProvider);
     // Keep each member's auth in sync with the user's login. The config is copied
@@ -3163,6 +3229,17 @@ async function ensureAgentRuntimeInner(input, workspace) {
         defaultRoot: workspace,
         projects,
       },
+      // The CLI's "automatic specialists" experiment (on by default) scans
+      // every prompt for orchestration words plus "team/agents" plus a role
+      // name and, on a match, runs its own planner and implementer sub-agents
+      // before the model answers. Squad's turn context and a replayed
+      // conversation contain exactly those words, and one such detour held a
+      // reply for 29 minutes with only "Thinking" pings (ADR-0161). Squad's
+      // team is the members a person can see; the engine's is switched off.
+      features: {
+        ...(config.features && typeof config.features === "object" ? config.features : {}),
+        automaticSpecialists: false,
+      },
       agent: {
         ...(config.agent && typeof config.agent === "object" ? config.agent : {}),
         idleLogoutEnabled: false,
@@ -3190,7 +3267,10 @@ async function ensureAgentRuntimeInner(input, workspace) {
       ...(describesAgent
         ? {
             permissions: {
-              ...(config.permissions && typeof config.permissions === "object" ? config.permissions : {}),
+              // The rule lists are replaced, not merged: with Built-in tool
+              // rules off they must disappear, and a seeded allowList from
+              // the person's own config never belongs to a member.
+              ...Object.fromEntries(Object.entries(config.permissions && typeof config.permissions === "object" ? config.permissions : {}).filter(([key]) => !builtInRuleKeys.includes(key) && !["allowList", "denyList"].includes(key))),
               ...permissionSettings,
             },
           }
@@ -3282,6 +3362,7 @@ function runtimeMemberInstructions(agentRuntime) {
     memory.trim() ? `Durable memory (MEMORY.md):\n${String(memory).slice(0, 4000)}` : "",
     ...brainCardFieldDefinitions.map(field => `${field.label}: ${String(brain[field.id] || "").slice(0, 1500)}`),
     `Selected workspace: ${agentRuntime.workspace}`,
+    "The .autohand/ folder inside a workspace is the engine's own memory and tools, not project code: ignore it when reviewing the project and never report it as something to fix.",
     `Profile map: ${agentRuntime.profileDocs?.agentsPath || ""}`,
     "Read only the relevant profile files when you need additional context or durable memory. Keep this member's sessions and memory isolated. Propose stable project facts for user review; never store secrets or transient logs as durable memory.",
     `Installed profile skills: ${(agentRuntime.skillInstall?.installed || []).map(skill => skill.id).join(", ") || "none"}. Use only configured, installed skills relevant to the task.`,
@@ -3289,6 +3370,9 @@ function runtimeMemberInstructions(agentRuntime) {
     `Blocked tools: ${Object.entries(policies).filter(([, policy]) => policy === "block").map(([tool]) => tool).join(", ") || "none explicitly configured"}.`,
     `Tools requiring approval: ${Object.entries(policies).filter(([, policy]) => policy === "ask").map(([tool]) => tool).join(", ") || "none explicitly configured"}.`,
     "Current tool permissions govern execution even when a role describes a broader capability. Ask before crossing role or project boundaries, and hand off work to an existing teammate when appropriate. Report observed results and remaining blockers; never invent verification.",
+    // The CLI's follow-up question cannot reach a Squad window, and a
+    // permission prompt now shows as an Allow/Deny card in the chat (ADR-0161).
+    "Questions and permissions in Squad: when you need the person to decide something, end your reply with the question and wait for their next message (ask_followup_question is not available here). A tool that needs permission pauses while the person sees an Allow/Deny card; a denial means they chose not to, so offer the next best step instead of retrying. Before asking where a draft should go, write it to a file in the workspace or save it with squad_remember so it survives a session restart.",
   ].filter(Boolean).join("\n");
 }
 
@@ -3316,6 +3400,7 @@ async function prepareProjectObserverRuntime({ member }) {
     ...(autohandAuthUsable(auth) ? { auth } : {}),
     workspace: { defaultRoot: agentHome, projects: [] },
     permissions: { mode: "restricted" },
+    features: { automaticSpecialists: false },
     mcp: { servers: [] }, hooks: { enabled: false }, memory: { enabled: false },
     agent: { idleLogoutEnabled: false, projects: [], projectLimit: 1 },
   };
@@ -6501,12 +6586,41 @@ function chatStreamEventFromSdkEvent(event) {
     };
   }
 
+  // A sub-agent the engine started (its own delegation or delegate_task) is
+  // otherwise invisible: the chat said "Working" while a planner thought for
+  // sixteen minutes (ADR-0161). Name it and what it is doing.
+  const subagent = subagentStatus(event);
+  if (subagent) return { type: "status", status: "subagent", label: subagent, method: String(event.method), timestamp };
   return {
     type: "status",
     status: String(event?.status || event?.type || "sdk_event"),
     ...(event?.label ? { label: String(event.label) } : {}),
+    // A notification the SDK does not know keeps its method and a short
+    // parameter summary, so a silent turn can be read afterwards (ADR-0161).
+    ...(event?.method ? { method: String(event.method), detail: compactJson(event.params ?? {}, 600) } : {}),
     timestamp,
   };
+}
+
+function subagentStatus(event) {
+  const method = String(event?.method || "");
+  if (!method.startsWith("autohand.hook.subagent")) return "";
+  const params = event.params && typeof event.params === "object" ? event.params : {};
+  const name = String(params.subagentName || "A sub-agent").replace(/^[a-z]/, (letter) => letter.toUpperCase());
+  if (method.endsWith("Start")) return `${name} (engine sub-agent) started...`;
+  if (method.endsWith("Stop") || method.endsWith("End")) return `${name} (engine sub-agent) finished`;
+  return `${name} (engine sub-agent) ${String(params.activity || params.status || "working").toLowerCase()}...`;
+}
+
+// Events that only prove the engine process is alive. A turn that produces
+// nothing else for QUIET_TURN_MS is stopped with a reason a person can read,
+// instead of running until the inactivity window happens to lapse.
+const QUIET_TURN_MS = 10 * 60_000;
+function keepaliveEvent(event) {
+  if (event?.type !== "unknown_notification") return false;
+  const method = String(event.method || "");
+  if (method === "autohand.ping") return String(event.params?.status || "") !== "waiting_permission";
+  return method === "autohand.hook.subagentProgress";
 }
 
 // A member that keeps producing events (tool calls, thinking, text) is
@@ -6576,6 +6690,8 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
       })
     : null;
 
+  let lastSubstantiveAt = Date.now();
+  let lastKeepalive = "";
   const collectPromise = (async () => {
     for await (const event of sdk.streamPrompt(typeof prompt === "string" ? { message: prompt } : prompt)) {
       if (!gotFirstEvent) {
@@ -6587,6 +6703,16 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
         throw new Error(stopMessage(signal));
       }
       events.push(event);
+      changeBatches.observe(sdk, event);
+      if (keepaliveEvent(event)) {
+        lastKeepalive = String(event.params?.subagentName ? `${event.params.subagentName} sub-agent` : event.method || "");
+        if (Date.now() - lastSubstantiveAt > QUIET_TURN_MS) {
+          timedOut = true;
+          throw new Error(`the engine produced nothing but keep-alive pings for ${Math.round(QUIET_TURN_MS / 60000)} minutes${lastKeepalive ? ` (${lastKeepalive} still thinking)` : ""}`);
+        }
+      } else {
+        lastSubstantiveAt = Date.now();
+      }
       armInactivity();
       if (event?.type === "message_update" && event.delta) rawStdout += event.delta;
       if (event?.type === "message_end" && event.content && !rawStdout.includes(event.content)) {
@@ -6598,7 +6724,16 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
       }
       onEvent?.(event);
     }
-    return { events, rawStdout, rawStderr, timedOut };
+    // The turn is over; its staged file changes are decided now, before the
+    // reply is reported, so "Created docs/plan.md" is true when it is read.
+    const changes = await changeBatches.settle(sdk, { accept: !signal?.aborted });
+    const changesLabel = ChangeBatches.summary(changes);
+    if (changesLabel) {
+      const applied = { type: "status", status: changes.errors.length && !changes.applied ? "changes_failed" : "changes_applied", label: changesLabel, files: changes.files, timestamp: new Date().toISOString() };
+      events.push(applied);
+      onEvent?.(applied);
+    }
+    return { events, rawStdout, rawStderr, timedOut, changes };
   })();
 
   try {
@@ -6613,6 +6748,9 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
     if (abortHandler) signal?.removeEventListener("abort", abortHandler);
     if (timedOut || stopped || stalled || signal?.aborted) {
       await sdk.interrupt?.().catch(() => {});
+      // Whatever the cut-short turn had staged is discarded, not applied by
+      // the next turn's decision.
+      await changeBatches.settle(sdk, { accept: false }).catch(() => {});
     }
   }
 }
@@ -6882,16 +7020,29 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     lease = await acquireSdkLease(payload, workspace, context, signal);
     const sdk = lease.sdk;
     started = true;
+    // A session that has not seen this conversation (just created, or warmed
+    // before the window reopened) is told where the conversation stands.
+    const fresh = !primedSessions.has(sdk);
+    primedSessions.add(sdk);
+    const replay = fresh && !payload.ephemeralSession ? conversationReplay(payload.conversationContext) : "";
     stream.send("sdk", {
       type: "status",
-      status: "prompt_start",
-      label: lease.created ? "Sending the request to the model..." : "Reusing the warm session; sending the request...",
+      status: replay ? "session_replay" : "prompt_start",
+      label: replay ? "The engine session restarted; replaying the recent conversation..." : lease.created ? "Sending the request to the model..." : "Reusing the warm session; sending the request...",
       timestamp: new Date().toISOString(),
     });
-    const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, prompt), payload._messageAttachments), timeoutMs, (event) => {
+    const runId = String(payload._computerUseWorkId || "");
+    const agentId = sanitizeAgentId(payload.agent?.id || payload.agentId || "member");
+    const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, replay ? `${replay}\n\n${prompt}` : prompt), payload._messageAttachments), timeoutMs, (event) => {
       eventCount += 1;
+      if (event?.type === "permission_request") {
+        const card = permissionApprovals.request(event, { sdk, runId, agentId, send: (data) => stream.send("sdk", data) });
+        stream.send("sdk", card || chatStreamEventFromSdkEvent(event));
+        return;
+      }
       stream.send("sdk", chatStreamEventFromSdkEvent(event));
     }, signal);
+    await permissionApprovals.settleRun(runId, { reason: "the reply finished" });
     healthy = true;
     const reply = sdkReplyFromEvents(output.events, output.rawStdout);
     // The SDK reports provider and session failures as events, not as thrown
@@ -6951,6 +7102,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     }
     throw error;
   } finally {
+    await permissionApprovals.settleRun(String(payload._computerUseWorkId || ""), { reason: "the turn ended" }).catch(() => {});
     await lease?.release(healthy && !agentRuntime.computerUse && !payload.ephemeralSession);
   }
 }
@@ -7650,6 +7802,7 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
   }
   payload = await withSavedMember(payload);
   delete payload._routeTarget;
+  if (promptsReachPerson(payload)) payload = { ...payload, policy: "ask" };
   payload = { ...payload, _messageAttachments: await resolveAttachments(squadStateDir, payload.attachments) };
   const workId = preparedRun?.id || randomUUID();
   // Always-on (ADR-0125): a person's message stops whatever the agenda
@@ -7800,6 +7953,7 @@ function appendChatRunEvent(run, event) {
       return;
     case "status":
       if (event.label) appendLog(run, "system", event.label);
+      else if (event.method) appendLog(run, "sdk", `${event.method} ${event.detail || ""}`.trim());
       return;
     default:
       return;
@@ -7940,6 +8094,24 @@ function isPersonTurn(payload) {
   if (!payload || payload.collaboration || payload.goalId || payload.goal || payload.mode === "goal") return false;
   if (channelContextFromPayload(payload)) return false;
   return !/^(goal|routine|observer|agenda|draft|run)-/.test(String(payload.requestId || ""));
+}
+
+// Every member chat launched with the CLI's --yes policy (ADR-0114: full
+// access by default), which also answered the ladder's "Ask first" rules
+// without asking: the Permissions page promised a prompt for write_file and
+// the file was simply written. Now that a prompt reaches the person as a
+// card in the chat (ADR-0161), a direct conversation with an Interactive
+// member whose rules say Ask runs without --yes, so those rules ask. Goals,
+// automations, channel threads and queued follow-ups keep --yes: nobody is
+// there to answer, and a prompt would only time out. Unrestricted still
+// never asks; Restricted still never writes.
+function promptsReachPerson(payload) {
+  if (!isPersonTurn(payload) || payload.ephemeralSession || payload.automationDraft || payload.memberThreadId) return false;
+  if (/^(queue)-/.test(String(payload.requestId || ""))) return false;
+  if ((payload.policy || "yes") !== "yes") return false;
+  const permissions = normalizeAgentPermissions(payload.agent);
+  if (permissions.permissionMode !== "interactive" || !permissions.builtInToolPolicyEnabled) return false;
+  return Object.values(permissions.builtInPolicies).includes("ask");
 }
 
 function needsChatAdmission(payload) {
@@ -8264,7 +8436,11 @@ async function handleApi(req, res, url) {
   // (42 s measured against 4 s warm, ADR-0030).
   if (url.pathname === "/api/chat/warm" && req.method === "POST") {
     try {
-      const payload = { ...await withSavedMember(await readBody(req)), _warmSession: true, ephemeralSession: false };
+      let payload = { ...await withSavedMember(await readBody(req)), _warmSession: true, ephemeralSession: false };
+      // The warm session must be the one the conversation will use: a
+      // different launch policy is a different session key, and the warm-up
+      // would only pay for a cold start the first message pays again.
+      if (promptsReachPerson(payload)) payload = { ...payload, policy: "ask" };
       const agentId = sanitizeAgentId(payload.agentId || payload.agent?.id || "");
       // The pool is created on first use, so do not test the lazy handle here:
       // acquireSdkLease builds it. Only a missing member is a reason to stop.
@@ -8294,6 +8470,25 @@ async function handleApi(req, res, url) {
     } catch (error) {
       json(res, 400, { success: false, error: error.message });
     }
+    return true;
+  }
+
+  // A member asked for permission mid-turn; the person answers from the chat
+  // card (ADR-0161). Only once/session scopes are accepted here.
+  if (url.pathname === "/api/chat/permission" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const decided = await permissionApprovals.decide(String(payload.requestId || ""), payload.decision);
+      logEvent(SEVERITY.INFO, `permission ${decided.decision} for ${decided.tool} (${decided.agentId})`, { "event.name": "chat.permission.decided", "autohand.member.id": decided.agentId, "autohand.tool": decided.tool, "autohand.decision": decided.decision });
+      json(res, 200, { success: true, data: decided });
+    } catch (error) {
+      json(res, error instanceof PermissionApprovalError ? error.status : 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/chat/permissions" && req.method === "GET") {
+    json(res, 200, { success: true, data: { pending: permissionApprovals.list(String(url.searchParams.get("agentId") || "")) } });
     return true;
   }
 

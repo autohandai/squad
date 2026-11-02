@@ -12,6 +12,11 @@ list to the section for that version.
 
 ### Added
 
+- When a member's tool needs permission, the chat now shows the request under the reply with Allow once, Allow for this reply and Deny, and the member continues with your answer instead of timing out as declined. In a direct conversation, tools marked Ask first in an Interactive member's Permissions now actually ask; goals, automations and channel work keep running without prompts.
+- Members can propose a team from a conversation (`squad_propose_team`). The roster appears under the reply with Create team; the members are created through the same path as New team at the Edit files level, and nothing exists until you confirm.
+- "Allow for this reply" on a permission card now covers every later request for that tool in the same reply, so a member writing six files asks once.
+- A "Squad team tools" group in Permissions › Built-in tool rules lists every Squad team tool, so what a member may do with teammates is one decision in one place.
+
 - Collective memory brings the squad's saved memories, profile Markdown and isolated Autohand memories into a searchable graph and list, with source details, groups, tags, saved connections and member colors. New Memory settings choose collection sources and shared Markdown folders; Squad MCP lets agents search, read, organize, relate and explicitly share memories within their access.
 - Members can use an ordered list of fallback coding engines and models when their primary engine cannot answer, with visible switching and automatic return after a cooldown. An optional setting lets a member manage its own fallbacks through Squad tools.
 
@@ -21,6 +26,14 @@ list to the section for that version.
 
 ### Fixed
 
+- Files an Autohand member writes now reach the repository. The engine stages edits in a preview batch and waits for a decision Squad never sent, so a member could report "Created docs/plan.md" with nothing on disk; Squad now applies the batch when the reply finishes, discards it when you stop the reply, and says what was written.
+- Squad team tools (teammates, channels, memory, profile), the vault and Computer Use now work on the Autohand engine with Built-in tool rules on, at every ladder level. They were refused at the engine regardless of any Permissions setting.
+- A member no longer loses the conversation when its engine session restarts (idle, Stop, a permission change, a bridge restart): the recent turns are replayed and the chat says so.
+- Members no longer have questions auto-answered "Yes" on their behalf; they ask in the reply and wait. Autohand Code's own in-session teams are no longer offered as a way to create Squad members.
+- New members no longer inherit the approvals from your personal Autohand Code config, and turning Built-in tool rules off removes the previous rule lists instead of leaving them in place.
+- Replies no longer disappear into Autohand Code's own "automatic specialists" detour, which could hold a short answer for half an hour when the conversation mentioned teams or agents; the chat now names an engine sub-agent when one runs, and a turn that only sends keep-alive pings for ten minutes stops with that reason.
+- A member's first review of a fresh repository no longer opens on the engine's own `.autohand/` folder: Squad excludes it from Git status and tells the member what it is.
+- On a phone, the chat header keeps the member's name and status readable; the controls are icons and the secondary ones move out of the header.
 - Quota and silent-startup failures reach the configured fallback without becoming a setup-cancellation reply. Fallbacks keep read-only work in preview mode, replace failed partial answers, and leave your primary engine and permission choices intact.
 - Drag, choose or paste files into member chats, Quick Chat, channels and reply threads. Images show thumbnails; documents, spreadsheets and fonts show file previews. Upload progress, Retry and Remove keep failed files from disappearing when you send.
 - Attachments now reach the member's engine as native image or document inputs and file context, including queued follow-ups, retries and remote members. Saved and reopened conversations keep their files without putting binary data into chat history.

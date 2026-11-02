@@ -295,7 +295,11 @@ import { PreviousChats } from "@/components/chat/PreviousChats";
 import { OutsideSessionsSettings } from "@/components/settings/OutsideSessionsSettings";
 import { runsForMember } from "@/lib/external-sessions";
 import { FolderAccessCard } from "@/components/chat/FolderAccessCard";
+import { PermissionApprovalCard } from "@/components/chat/PermissionApprovalCard";
 import { ScheduleOffer } from "@/components/chat/ScheduleOffer";
+import { TeamProposalCard } from "@/components/chat/TeamProposalCard";
+import { pendingPermissionRequests } from "@/lib/permission-requests";
+import { teamProposalReceipts } from "@/lib/team-proposals";
 import { EffortSlider } from "@/components/chat/EffortSlider";
 import { continuationPrompt, folderNeedsYouRows, foldersNeedingAccess, mentionedPaths, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
 import { archivePayload, conversationHasWork, restoreConversationEvent } from "@/lib/chat-sessions";
@@ -338,7 +342,7 @@ import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { KeyboardShortcuts, openKeyboardShortcuts } from "@/components/shell/KeyboardShortcuts";
 import { isHiddenStopped, useHiddenStopped } from "@/lib/hidden-stopped";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet } from "@/lib/member-roster";
-import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, builtInPoliciesForRank } from "@/lib/permission-policy";
+import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, SQUAD_UNREACHABLE_TOOLS, builtInPoliciesForRank, managedToolPolicies } from "@/lib/permission-policy";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
 import { MEMBER_PROFILE_FIELDS, PROFILE_LIMITS, blankGreeting, blankMemberDraft, isBlankMember, memberProfileRevision, mergeMemberProfile, personalityFileContent, profileNoteFor, profileReceipts, replyWithoutReceipts, teamNoteReceipts, unappliedProfileReceipts } from "@/lib/member-shaping";
@@ -4088,7 +4092,8 @@ function streamActivityLabel(event) {
   if (event.type === "tool_start") return `Using ${event.tool?.name || "a tool"}...`;
   if (event.type === "tool_update") return `Reading ${event.toolName || "tool"} output...`;
   if (event.type === "tool_end") return event.success === false ? `${event.toolName || "Tool"} failed` : `${event.toolName || "Tool"} finished`;
-  if (event.type === "permission_request") return "Waiting for permission...";
+  if (event.type === "permission_request") return "Waiting for your permission...";
+  if (event.type === "permission_resolved") return event.decision?.startsWith("allow") ? "Permission given; continuing..." : "Permission declined; continuing...";
   if (event.type === "status") {
     return statusEventTitle(event.status);
   }
@@ -5577,6 +5582,15 @@ function App() {
   }
   function addTeamFromProposal(proposal) {
     void addTeam(teamDocumentFromProposal(proposal, { roleTemplates, app: "autohand-squad" }), { trusted: true, source: "objective" });
+  }
+  // A roster a member proposed in chat (squad_propose_team, ADR-0161) goes
+  // through the same import as New team. The person's Create team is the
+  // trust step, so each member starts at the default ladder level like a
+  // member made in New member: it can read the repository and asks, through
+  // the chat card, before it writes. At Suggest commands (the level an
+  // imported file gets) a Frontend Developer could not read a single file.
+  function addTeamFromMemberProposal(member, proposal, { workspace = "" } = {}) {
+    void addTeam(teamDocumentFromProposal(proposal, { roleTemplates, app: "autohand-squad" }), { trusted: true, source: "member", workspace: workspace || member?.workspace || "" });
   }
 
   const notificationBell = (
@@ -7522,8 +7536,11 @@ function App() {
               applyProfileReceipts(agentId, shaped);
               for (const receipt of shaped) appliedProfileReceiptsRef.current.add(receipt.id);
             }
+            // A proposed team (ADR-0161) renders as its own card under the
+            // reply; its receipt line leaves the body like a profile note.
+            const teamProposal = teamProposalReceipts(data.channelActions)[0] || null;
             const quiet = [...shaped, ...teamNoteReceipts(data.channelActions)];
-            if (quiet.length) finalResult.reply = replyWithoutReceipts(finalResult.reply, quiet) || finalResult.reply;
+            if (quiet.length || teamProposal) finalResult.reply = replyWithoutReceipts(finalResult.reply, [...quiet, ...(teamProposal ? [teamProposal] : [])]) || finalResult.reply;
             updateMessage(agentId, `${id}-a`, {
               body: finalResult.reply,
               ...(quiet.length ? { profileNote: profileNoteFor(quiet) } : {}),
@@ -7544,6 +7561,7 @@ function App() {
               ...(finalResult.progress ? { progress: finalResult.progress } : {}),
               ...(finalResult.computerUse ? { computerUse: finalResult.computerUse } : {}),
               ...(data.scheduleOffer ? { scheduleOffer: data.scheduleOffer } : {}),
+              ...(teamProposal ? { teamProposal } : {}),
               declined: finalResult.declined,
             });
             return;
@@ -9655,7 +9673,7 @@ function App() {
             routineProposals={routineProposals.filter((proposal) => proposal.memberId === member.id)} onRoutineDecision={decideRoutineProposal} onRoutineSync={syncAutomationRoutine} workPlan={workPlanFor(member.id)}
             openTerminal={openTerminal} navigate={quickNavigate} taskPanelOpen={taskPanelOpen} setTaskPanelOpen={setTaskPanelOpen}
             tasks={markOrphanedTasks(tasks.filter((task) => taskBelongsToAgent(task, member.id)), runs)} automations={automations.filter((item) => automationBelongsToAgent(item, member.id))}
-            setAutomations={setAutomations} runAutomation={runAutomation} updateAgent={updateAgent} chatSettings={chatSettings}
+            setAutomations={setAutomations} runAutomation={runAutomation} updateAgent={updateAgent} chatSettings={chatSettings} onTeamProposal={addTeamFromMemberProposal}
             harnesses={harnesses} harnessesLoading={harnessesLoading} onRefreshHarnesses={() => refreshHarnesses(true)}
             handoffRetryMode={resolveHandoffRetryMode(handoffSettings, runtime)} onCreateHandoff={createHandoff} onCollaborationResult={recordCollaborationResult}
             onCancelHandoff={cancelHandoff} onFailHandoff={markHandoffFailed} onRetryHandoff={retryHandoff}
@@ -10169,6 +10187,7 @@ function App() {
                 setAutomations={setAutomations}
                 runAutomation={runAutomation}
                 updateAgent={updateAgent}
+                onTeamProposal={addTeamFromMemberProposal}
                 requestedWorkspace={requestedWorkspace}
                 initialPrompt={requestedPrompt}
                 onInitialPromptConsumed={() => {
@@ -13609,6 +13628,7 @@ function Conversation({
   onRefreshHarnesses,
   onLocalMessage,
   onUpdateMessage,
+  onTeamProposal,
   initialPanel = null,
   onInitialPanelConsumed,
   canvasRefreshKey = 0,
@@ -14655,6 +14675,23 @@ function Conversation({
     onUpdateMessage?.(agent.id, message.id, { folderAccessDismissed: [...(Array.isArray(message.folderAccessDismissed) ? message.folderAccessDismissed : []), folder], folderRequests: (Array.isArray(message.folderRequests) ? message.folderRequests : []).filter((item) => item !== folder) });
   }
 
+  // The person answers a tool's permission request from the chat card; the
+  // bridge forwards the decision to the engine (ADR-0161). The resolution
+  // event arrives on the stream; the local note hides the card at once.
+  async function decidePermission(message, request, decision) {
+    await api("/api/chat/permission", { method: "POST", body: JSON.stringify({ requestId: request.requestId, decision }) });
+    onUpdateMessage?.(agent.id, message.id, { permissionDecisions: { ...(message.permissionDecisions || {}), [request.requestId]: decision } });
+  }
+
+  // A proposed team (squad_propose_team) is created through the same import
+  // as New team; nothing exists until the person chooses Create team.
+  function decideTeamProposal(message, decision) {
+    const proposal = message.teamProposal?.proposal;
+    if (!proposal) return;
+    if (decision === "create") onTeamProposal?.(agent, proposal, { workspace });
+    onUpdateMessage?.(agent.id, message.id, { teamProposalDecided: decision === "create" ? "created" : "dismissed" });
+  }
+
   function startFreshChat() {
     attachmentDraft.clear();
     stopActiveChat();
@@ -14706,7 +14743,7 @@ function Conversation({
           <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} className="px-3 sm:px-3" />
           <div className="flex flex-col gap-4 px-3 py-3">
             {hasConversationMessages ? localizedMessages.map((message) => (
-              <SquadMessage key={message.id} compact agent={agent} message={message} thread={replyThreads.find(thread => thread.parentMessageId === message.id)} onReply={setReplyRoot} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} memberBusy={Boolean(chatSending)} />
+              <SquadMessage key={message.id} compact agent={agent} message={message} thread={replyThreads.find(thread => thread.parentMessageId === message.id)} onReply={setReplyRoot} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} onPermissionDecision={decidePermission} onTeamProposal={decideTeamProposal} memberBusy={Boolean(chatSending)} />
             )) : <p className="py-3 text-sm text-muted-foreground">Send a message to {agent.name}.</p>}
             <div ref={messagesEndRef} aria-hidden="true" />
           </div>
@@ -14742,7 +14779,7 @@ function Conversation({
   return (
     <div className={cn("flex w-full max-w-full flex-col overflow-x-hidden bg-background/75", compact ? "min-h-0 flex-1" : "h-[calc(100svh-4rem)] min-h-[560px] lg:h-screen lg:min-h-screen", attachmentDraft.dragging && "ring-1 ring-inset ring-primary/60")} data-file-drop-target="member" {...attachmentDraft.bind}>
       <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6" data-tauri-drag-region="deep">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <Popover key={agent.id}>
             <PopoverTrigger asChild>
               <button
@@ -14859,7 +14896,9 @@ function Conversation({
             copy={copy}
             locale={locale}
           />
-          <Button variant="ghost" size="sm" aria-label="Reply threads" onClick={() => setReplyRoot({})}>Threads{replyThreads.some(thread => thread.working) ? " · working" : ""}</Button>
+          {/* On a phone the header is the member's name and status; every
+              control here is an icon so that line keeps its room (ADR-0161). */}
+          <Button variant="ghost" size="sm" className="hidden sm:inline-flex" aria-label="Reply threads" onClick={() => setReplyRoot({})}>Threads{replyThreads.some(thread => thread.working) ? " · working" : ""}</Button>
           {!compact ? <>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -14876,7 +14915,7 @@ function Conversation({
                 size="icon-sm"
                 aria-label={copy.canvasTab || "Canvas"}
                 aria-pressed={view === "canvas"}
-                className={cn(view === "canvas" && "bg-muted text-foreground")}
+                className={cn("hidden sm:inline-flex", view === "canvas" && "bg-muted text-foreground")}
                 onClick={() => setView((current) => (current === "canvas" ? "messages" : "canvas"))}
               >
                 <FileText />
@@ -14886,7 +14925,7 @@ function Conversation({
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={copy.taskList} onClick={() => openPanel("tasks")}>
+              <Button variant="ghost" size="icon-sm" className="hidden sm:inline-flex" aria-label={copy.taskList} onClick={() => openPanel("tasks")}>
                 <ListChecks />
               </Button>
             </TooltipTrigger>
@@ -14894,7 +14933,7 @@ function Conversation({
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" className="relative" aria-label={copy.runsPanel || "Runs"} onClick={() => openPanel("runs")}>
+              <Button variant="ghost" size="icon-sm" className="relative hidden sm:inline-flex" aria-label={copy.runsPanel || "Runs"} onClick={() => openPanel("runs")}>
                 <CircleDot className={cn(runningCount && "text-primary")} />
                 {runningCount ? <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary" aria-hidden="true" /> : null}
               </Button>
@@ -14979,6 +15018,8 @@ function Conversation({
                           onEditResend={editResend}
                           onFolderAccess={decideFolderAccess}
                           onScheduleOffer={decideScheduleOffer}
+                          onPermissionDecision={decidePermission}
+                          onTeamProposal={decideTeamProposal}
                           memberBusy={Boolean(chatSending)}
                         />
                       </Fragment>
@@ -15511,10 +15552,10 @@ function LaunchPermissionWarnings({ warnings = [] }) {
 }
 
 
-const SquadMessage = memo(function SquadMessage({ agent, message, thread, onReply, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onEditResend, onFolderAccess, onScheduleOffer, memberBusy = false }) {
+const SquadMessage = memo(function SquadMessage({ agent, message, thread, onReply, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onEditResend, onFolderAccess, onScheduleOffer, onPermissionDecision, onTeamProposal, memberBusy = false }) {
   const isUser = message.role === "user";
   const replyAction = onReply && message.status !== "loading" && message.body ? <Button type="button" size="sm" variant="ghost" className="h-6 px-1.5 text-xs text-muted-foreground" aria-label="Reply in thread" onClick={() => onReply(thread ? {threadId:thread.id} : message)}>{thread?.replyCount ? `${thread.replyCount} ${thread.replyCount === 1 ? "reply" : "replies"}` : "Reply"}{thread?.working ? " · working" : ""}</Button> : null;
-  if (!isUser) return <AgentResponseMessage replyAction={replyAction} compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onEditResend={onEditResend} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} memberBusy={memberBusy} />;
+  if (!isUser) return <AgentResponseMessage replyAction={replyAction} compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onEditResend={onEditResend} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} onPermissionDecision={onPermissionDecision} onTeamProposal={onTeamProposal} memberBusy={memberBusy} />;
 
   return (
     <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
@@ -15528,8 +15569,11 @@ const SquadMessage = memo(function SquadMessage({ agent, message, thread, onRepl
   );
 });
 
-function AgentResponseMessage({ agent, message, replyAction, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onEditResend, onFolderAccess, onScheduleOffer, memberBusy = false }) {
+function AgentResponseMessage({ agent, message, replyAction, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onEditResend, onFolderAccess, onScheduleOffer, onPermissionDecision, onTeamProposal, memberBusy = false }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
+  // Permission requests the engine is waiting on (ADR-0161): answered from
+  // the card below while the reply is still running.
+  const pendingPermissions = useMemo(() => pendingPermissionRequests(message), [message.streamEvents, message.permissionDecisions]);
   // Trace normalisation and body parsing are the expensive part of a row.
   const view = useMemo(() => buildAgentResponseView(message), [message]);
   const isThinkingPlaceholder = String(message.body || "").trim() === `${agent.name} is thinking...`;
@@ -15585,6 +15629,10 @@ function AgentResponseMessage({ agent, message, replyAction, computerEvidence = 
 
         <AgentTaskChecklist message={message} isLoading={isLoading} />
 
+        {isLoading && onPermissionDecision && pendingPermissions.length ? (
+          <PermissionApprovalCard requests={pendingPermissions} memberName={agent?.name || "The member"} copy={copy} onDecide={(request, decision) => onPermissionDecision(message, request, decision)} />
+        ) : null}
+
         {hasVisibleAnswer && !isError && isNoTextReply(view.answer) ? (
           <p className="text-sm text-muted-foreground">No reply text. Work details shows what ran.</p>
         ) : hasVisibleAnswer && !isError ? (
@@ -15634,6 +15682,9 @@ function AgentResponseMessage({ agent, message, replyAction, computerEvidence = 
         {!isLoading && message.profileNote ? <p data-testid="profile-note" className="mt-2 text-xs text-muted-foreground">{message.profileNote}</p> : null}
         {!isLoading && onScheduleOffer && message.scheduleOffer ? (
           <ScheduleOffer offer={message.scheduleOffer} memberName={agent?.name || "The member"} copy={copy} onSchedule={() => onScheduleOffer(message, "schedule")} onDismiss={() => onScheduleOffer(message, "dismiss")} />
+        ) : null}
+        {!isLoading && onTeamProposal && message.teamProposal?.proposal ? (
+          <TeamProposalCard proposal={message.teamProposal.proposal} memberName={agent?.name || "The member"} decided={message.teamProposalDecided || ""} copy={copy} onCreate={() => onTeamProposal(message, "create")} onDismiss={() => onTeamProposal(message, "dismiss")} />
         ) : null}
 
         {!compact && !isLoading && showRawOutput ? <RawTraceBlock raw={view.raw} /> : null}
@@ -23353,17 +23404,22 @@ function WrenchIcon(props) {
 }
 
 function PermissionConfigPreview({ permissions }) {
-  const managedToolPolicies = permissions.builtInToolPolicyEnabled ? Object.entries(permissions.builtInPolicies) : [];
-  const allowPatterns = managedToolPolicies
+  // Mirrors server.mjs permissionSettingsFromAgent (ADR-0161): the bare rows
+  // plus the engine's mcp__<server>__<tool> names for Squad's managed servers,
+  // with the tools that can never reach a Squad window excluded.
+  const unreachable = new Set(SQUAD_UNREACHABLE_TOOLS);
+  const toolPolicies = permissions.builtInToolPolicyEnabled
+    ? [...Object.entries(permissions.builtInPolicies).map(([kind, mode]) => [kind, unreachable.has(kind) ? "block" : mode]), ...managedToolPolicies(permissions.builtInPolicies)]
+    : [];
+  const allowPatterns = toolPolicies
     .filter(([, mode]) => mode === "allow")
     .map(([kind]) => ({ kind }));
-  const availableTools = managedToolPolicies
+  const availableTools = toolPolicies
     .filter(([, mode]) => mode !== "block")
     .map(([kind]) => ({ kind }));
-  const excludedTools = managedToolPolicies
-    .filter(([, mode]) => mode === "block")
-    .map(([kind]) => ({ kind }));
-  const rules = managedToolPolicies
+  const excludedTools = [...new Set([...unreachable, ...toolPolicies.filter(([, mode]) => mode === "block").map(([kind]) => kind)])]
+    .map((kind) => ({ kind }));
+  const rules = toolPolicies
     .filter(([, mode]) => mode === "ask")
     .map(([tool]) => ({ tool, action: "prompt" }));
   const denyList = permissions.fileGuardEnabled

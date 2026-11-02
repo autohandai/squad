@@ -20,7 +20,10 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
     tools: [
       ["tools_registry", "allow"],
       ["tool_search", "allow"],
-      ["ask_followup_question", "allow"],
+      // The CLI's follow-up question never reaches a Squad window: with --yes
+      // it answers itself "Yes", and without it RPC mode waits on a terminal
+      // modal nobody sees (ADR-0161). A member asks in its reply instead.
+      ["ask_followup_question", "block"],
       ["todo_write", "allow"],
       ["plan", "allow"],
       ["exit_plan_mode", "allow"],
@@ -50,12 +53,52 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
       ["create_meta_tool", "ask"],
       ["delegate_task", "ask"],
       ["delegate_parallel", "ask"],
-      ["create_team", "ask"],
-      ["squad_create_channel", "ask"],
+      // Autohand Code's own teams are processes inside one CLI session, not
+      // Squad members a person can see or talk to. Chief of Staff offered
+      // them when asked to build a team and nothing appeared in Squad
+      // (ADR-0161); the Squad team tools below are the route that works.
+      ["create_team", "block"],
+      ["add_teammate", "block"],
+      ["team_status", "block"],
+      ["send_team_message", "block"],
+    ],
+  },
+  {
+    // Squad's own team, reached through the managed autohand-squad MCP
+    // server (ADR-0134). The engine sees these as mcp__autohand-squad__<tool>;
+    // `managedToolPolicies` writes those names, so this is the one place a
+    // person decides whether a member may message teammates or propose a
+    // team. create_channel and schedule keep their Squad-side decision
+    // (proposal or direct) and are always reachable at the MCP layer.
+    id: "squad-team",
+    title: "Squad team tools",
+    tools: [
+      ["squad_team", "allow"],
+      ["squad_message", "allow"],
+      ["squad_replies", "allow"],
+      ["squad_teach", "allow"],
+      ["squad_remember", "allow"],
+      ["squad_recall", "allow"],
+      ["squad_forget", "allow"],
+      ["squad_set_profile", "allow"],
+      ["squad_get_profile", "allow"],
+      ["squad_update_memory", "allow"],
       ["squad_schedule", "allow"],
-      ["add_teammate", "ask"],
-      ["team_status", "allow"],
-      ["send_team_message", "ask"],
+      ["squad_create_channel", "ask"],
+      ["squad_channels", "allow"],
+      ["squad_channel_messages", "allow"],
+      ["squad_post_channel", "allow"],
+      ["squad_work_plan", "allow"],
+      ["squad_task", "allow"],
+      ["squad_models", "allow"],
+      ["squad_set_fallbacks", "allow"],
+      ["squad_search_memory", "allow"],
+      ["squad_memory_graph", "allow"],
+      ["squad_read_memory", "allow"],
+      ["squad_share_memory", "allow"],
+      ["squad_relate_memories", "allow"],
+      ["squad_organize_memory", "allow"],
+      ["squad_propose_team", "allow"],
     ],
   },
   {
@@ -275,12 +318,10 @@ export function builtInPoliciesForRank(rank) {
     [
       "tools_registry",
       "tool_search",
-      "ask_followup_question",
       "plan",
       "list_goal_templates",
       "recall_memory",
       "smart_context_cropper",
-      "team_status",
       // Using a skill the member is already configured with, and looking up
       // which skills exist, are reads of its own profile rather than actions
       // on the world. These were blocked at every level of the ladder, so a
@@ -302,13 +343,14 @@ export function builtInPoliciesForRank(rank) {
       "save_memory",
       "delegate_task",
       "delegate_parallel",
-      "create_team",
-      "add_teammate",
-      "send_team_message",
       "create_meta_tool",
     ],
     "ask"
   );
+  // Squad's own team is reachable at every rung: the lowest rung is a
+  // conversation, and talking to a teammate or proposing a team is part of
+  // one. Channel creation keeps its Squad-side approval (ADR-0161).
+  applyGroupDefaults("squad-team");
 
   if (rank >= 1) {
     // Installing a skill, writing memory or starting a teammate are changes,
@@ -378,5 +420,81 @@ export function builtInPoliciesForRank(rank) {
 
   setTools([...MERGE_BLOCKED_TOOLS], "block");
   setTools(["delete_path", "git_reset"], "block");
+  setTools([...SQUAD_UNREACHABLE_TOOLS], "block");
   return policies;
+}
+
+// --- tools the engine reaches through Squad's managed MCP servers -------------
+//
+// Autohand Code names an MCP tool `mcp__<server>__<tool>` and matches
+// permission patterns on that exact kind. Squad used to write only the
+// built-in kinds above into `availableTools`, which the CLI treats as a strict
+// allowlist checked before the permission mode, so every Squad team tool, the
+// vault and Computer Use were denied with `not_in_available` whatever the
+// person chose in the UI (ADR-0161). The rows people see keep the bare names;
+// this maps them to the kinds the engine checks.
+
+export const SQUAD_TEAM_MCP_SERVER = "autohand-squad";
+export const VAULT_MCP_SERVER = "autohand-vault";
+export const COMPUTER_USE_MCP_SERVER = "autohand-computer-use";
+
+/** Tools that cannot work for a Squad member on any rung, so every rung blocks them. */
+export const SQUAD_UNREACHABLE_TOOLS = Object.freeze([
+  // Answered "Yes" by --yes or stuck on a terminal modal; never shown in Squad.
+  "ask_followup_question",
+  // Autohand Code's in-process teams are not Squad members (ADR-0161).
+  "create_team",
+  "add_teammate",
+  "team_status",
+  "send_team_message",
+]);
+
+export const SQUAD_TEAM_TOOLS = Object.freeze(
+  BUILT_IN_TOOL_POLICY_GROUPS.find((group) => group.id === "squad-team").tools.map(([tool]) => tool)
+);
+
+// Squad decides these itself (proposal or direct creation, ADR-0110/0126); the
+// MCP layer must let the call through so that decision can happen.
+export const SQUAD_GATED_TOOLS = Object.freeze(["squad_create_channel", "squad_schedule"]);
+
+// Computer Use tools the bridge proxies (server/computer-use.mjs). The proxy
+// checks the member's observe/control grant on every call; the engine only
+// has to be allowed to make the call.
+export const COMPUTER_USE_TOOLS = Object.freeze([
+  "list_apps", "list_windows", "get_window_state", "get_desktop_state", "get_screen_size", "get_cursor_position", "verify_state", "get_session_state", "start_recording", "stop_recording", "get_recording_state",
+  "launch_app", "bring_to_front", "set_window_frame", "invoke_menu", "click", "double_click", "right_click", "drag", "type_text", "press_key", "hotkey", "set_value", "scroll", "move_cursor",
+]);
+
+export const WEB_RESEARCH_TOOLS = Object.freeze(["web_search", "web_fetch"]);
+
+export function mcpToolKind(server, tool) {
+  return `mcp__${server}__${tool}`;
+}
+
+/**
+ * The engine-facing kinds and modes for Squad's managed MCP servers.
+ *
+ *   policies    the member's bare-name policy map (builtInPolicies)
+ *   connectors  server names of enabled built-in web research connectors
+ *
+ * Returns [[kind, mode], ...]. A row the person set to block stays blocked;
+ * gated Squad tools are allowed at this layer because Squad asks itself.
+ */
+export function managedToolPolicies(policies = {}, { connectors = [] } = {}) {
+  const source = policies && typeof policies === "object" ? policies : {};
+  const modeOf = (tool, fallback) => {
+    const value = source[tool] ?? DEFAULT_BUILT_IN_TOOL_POLICIES[tool] ?? fallback;
+    return ["allow", "ask", "block"].includes(value) ? value : fallback;
+  };
+  const rows = [];
+  for (const tool of SQUAD_TEAM_TOOLS) {
+    const mode = modeOf(tool, "allow");
+    rows.push([mcpToolKind(SQUAD_TEAM_MCP_SERVER, tool), SQUAD_GATED_TOOLS.includes(tool) && mode !== "block" ? "allow" : mode]);
+  }
+  for (const tool of VAULT_TOOLS) rows.push([mcpToolKind(VAULT_MCP_SERVER, tool), modeOf(tool, "ask")]);
+  for (const tool of COMPUTER_USE_TOOLS) rows.push([mcpToolKind(COMPUTER_USE_MCP_SERVER, tool), "allow"]);
+  for (const server of connectors) {
+    for (const tool of WEB_RESEARCH_TOOLS) rows.push([mcpToolKind(server, tool), "allow"]);
+  }
+  return rows;
 }

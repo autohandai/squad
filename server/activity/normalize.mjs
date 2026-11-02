@@ -241,6 +241,17 @@ class Feed {
     this.openApproval = null;
   }
 
+  approvalResolved({ decision, source, at }) {
+    if (!this.openApproval) return;
+    const allowed = String(decision || "").startsWith("allow");
+    this.openApproval.outcome = source === "closed"
+      ? "not answered before the reply ended; denied"
+      : allowed ? (decision === "allow_session" ? "allowed for this reply" : "allowed") : (decision === "deny_session" ? "denied for this reply" : "denied");
+    this.openApproval.state = allowed ? "done" : "failed";
+    this.openApproval.endedAt = at || this.openApproval.endedAt;
+    this.openApproval = null;
+  }
+
   // -- messages -------------------------------------------------------------
 
   messageDelta({ messageId, delta, thought, at }) {
@@ -684,6 +695,12 @@ function foldEvent(feed, event) {
     }
     case "permission_request":
       feed.approval({ title: event.title || event.description || event.tool, detail: event.content ?? stringify(event.context), at });
+      return;
+    // The person's answer from the chat card, or the turn ending with the
+    // request still open (ADR-0161). Closes the pending approval with what
+    // happened instead of a bare "answered".
+    case "permission_resolved":
+      feed.approvalResolved({ decision: event.decision, source: event.source, at });
       return;
     case "error":
       feed.error({ message: event.error || event.message || event.title || event.content, at });

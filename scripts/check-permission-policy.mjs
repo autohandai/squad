@@ -14,9 +14,15 @@ import assert from "node:assert/strict";
 
 import {
   BUILT_IN_TOOL_POLICY_GROUPS,
+  COMPUTER_USE_TOOLS,
   DEFAULT_BUILT_IN_TOOL_POLICIES,
   MERGE_BLOCKED_TOOLS,
+  SQUAD_TEAM_TOOLS,
+  SQUAD_UNREACHABLE_TOOLS,
+  VAULT_TOOLS,
   builtInPoliciesForRank,
+  managedToolPolicies,
+  mcpToolKind,
 } from "../src/lib/permission-policy.js";
 
 const RANKS = [1, 2, 3, 4];
@@ -106,6 +112,49 @@ const MODES = new Set(["allow", "ask", "block"]);
     }
     if ("delete_path" in policies) assert.equal(policies.delete_path, "block", `rank ${rank} blocks delete_path`);
   }
+}
+
+// --- the first-run path (ADR-0161) ------------------------------------------
+//
+// Chief of Staff could not reach a single Squad team tool at any rung, the
+// follow-up question answered itself "Yes", and Autohand Code's in-process
+// teams were offered as if they created Squad members.
+
+{
+  for (const rank of RANKS) {
+    const policies = builtInPoliciesForRank(rank);
+    for (const tool of SQUAD_TEAM_TOOLS) {
+      assert.equal(policies[tool], tool === "squad_create_channel" ? "ask" : "allow", `rank ${rank} lets a member reach ${tool}`);
+    }
+    for (const tool of SQUAD_UNREACHABLE_TOOLS) {
+      assert.equal(policies[tool], "block", `rank ${rank} blocks ${tool}, which can never reach a Squad window`);
+    }
+    assert.equal(policies.delegate_task, "ask", `rank ${rank} still lets a member delegate inside its own engine with approval`);
+  }
+  assert.ok(SQUAD_TEAM_TOOLS.includes("squad_propose_team"), "the team-builder route is a team tool");
+  assert.ok(SQUAD_TEAM_TOOLS.includes("squad_message"), "messaging teammates is a team tool");
+
+  // The engine checks mcp__<server>__<tool>; the rows people see are bare names.
+  const managed = new Map(managedToolPolicies(builtInPoliciesForRank(1), { connectors: ["autohand-squad-web"] }));
+  assert.equal(managed.get(mcpToolKind("autohand-squad", "squad_team")), "allow");
+  assert.equal(managed.get(mcpToolKind("autohand-squad", "squad_propose_team")), "allow");
+  assert.equal(managed.get(mcpToolKind("autohand-squad", "squad_create_channel")), "allow", "Squad asks itself about channel creation; the MCP layer lets the call through");
+  assert.equal(managed.get(mcpToolKind("autohand-squad", "squad_schedule")), "allow");
+  assert.equal(managed.get(mcpToolKind("autohand-squad-web", "web_search")), "allow");
+  for (const tool of COMPUTER_USE_TOOLS) assert.equal(managed.get(mcpToolKind("autohand-computer-use", tool)), "allow", `${tool} is reachable; the proxy enforces the grant`);
+  // Rank 1 has no vault; rank 3 does, with the group's own modes.
+  for (const tool of VAULT_TOOLS) assert.equal(managed.get(mcpToolKind("autohand-vault", tool)), "block", `rank 1 keeps ${tool} off`);
+  const vaulted = new Map(managedToolPolicies(builtInPoliciesForRank(3)));
+  assert.equal(vaulted.get(mcpToolKind("autohand-vault", "vault_list")), "allow");
+  assert.equal(vaulted.get(mcpToolKind("autohand-vault", "request_secret")), "ask");
+  // A person's explicit block wins; a gated tool they blocked stays blocked.
+  const blocked = new Map(managedToolPolicies({ ...builtInPoliciesForRank(4), squad_message: "block", squad_create_channel: "block" }));
+  assert.equal(blocked.get(mcpToolKind("autohand-squad", "squad_message")), "block");
+  assert.equal(blocked.get(mcpToolKind("autohand-squad", "squad_create_channel")), "block");
+  // A saved profile from before the group existed still gets the defaults.
+  const legacy = new Map(managedToolPolicies({ read_file: "allow" }));
+  assert.equal(legacy.get(mcpToolKind("autohand-squad", "squad_team")), "allow");
+  assert.equal(legacy.get(mcpToolKind("autohand-squad", "squad_create_channel")), "allow");
 }
 
 console.log("check-permission-policy: ok");
