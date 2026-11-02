@@ -48,6 +48,7 @@ assert.equal(settingKeyFor({ name: "run.finished", status: "stopped" }), null, "
 assert.equal(settingKeyFor({ name: "run.finished", status: "completed", quiet: true }), null, "an agenda run or automation draft never notifies");
 assert.equal(settingKeyFor({ name: "chat.finished", status: "completed" }), null, "a completed chat reply never notifies");
 assert.equal(settingKeyFor({ name: "chat.finished", status: "failed" }), "runFailed");
+assert.equal(settingKeyFor({ name: "chat.finished", status: "failed", teamFromName: "Noah" }), null, "a failed teammate delivery is History, not a desktop notification");
 assert.equal(settingKeyFor({ name: "handoff.pending" }), "handoffPending");
 assert.equal(settingKeyFor({ name: "approval.pending" }), "approvalPending");
 assert.equal(settingKeyFor({ name: "mention.received" }), "mention");

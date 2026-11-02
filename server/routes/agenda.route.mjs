@@ -229,6 +229,8 @@ export async function init(ctx) {
       if (current.has(memberId)) void stopCurrent(bridgeContext, memberId, "You sent a message.").catch(() => {});
     });
     ctx.events.on("chat.finished", (event) => {
+      // A teammate's squad_message is not the person being active.
+      if (event?.teamFromName) return;
       const memberId = String(event?.memberId || "");
       if (memberId && personAt.has(memberId)) personAt.set(memberId, Math.max(personAt.get(memberId), Date.now()));
     });

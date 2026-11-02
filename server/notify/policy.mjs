@@ -49,6 +49,9 @@ export function settingKeyFor(event) {
       if (status === "completed") return "runFinished";
       return null;
     case "chat.finished":
+      // A teammate's answer to squad_message is recorded for History, not
+      // news for the person: they did not send that message.
+      if (event?.teamFromName) return null;
       return status === "failed" ? "runFailed" : null;
     case "handoff.pending":
       return "handoffPending";
