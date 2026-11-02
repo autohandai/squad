@@ -27,13 +27,13 @@ function content(result) {
 // does: the driver from AUTOHAND_CUA_DRIVER_PATH or ~/.local/bin, the macOS
 // host from AUTOHAND_COMPUTER_USE_APP_PATH, a launcher on PATH,
 // ~/Applications or /Applications, identity `ai.autohand.computer-use`.
-// The bundled Squad host below stays as a fallback for a machine where the
-// CLI's install is absent; the Permissions page says which one is in use.
+// Squad also bundles a copy of that same component, built unmodified from
+// its pinned source with the same identity, for a machine where the CLI's
+// install is absent; the Permissions page says which copy is in use.
 export const AUTOHAND_COMPUTER_USE_BUNDLE_ID = 'ai.autohand.computer-use';
 export const AUTOHAND_COMPUTER_USE_APP_NAME = 'Autohand Computer Use';
 const AUTOHAND_COMPUTER_USE_EXECUTABLE = 'AutohandComputerUse';
 const AUTOHAND_COMPUTER_USE_LAUNCHER = 'autohand-computer-use';
-const SQUAD_COMPUTER_USE_BUNDLE_ID = 'ai.autohand.squad.computer-use';
 
 function expandHome(value, homeDir) {
   const text = String(value || '');
@@ -122,9 +122,9 @@ export async function bundledComputerClient(rootDir, options = {}) {
     return filename;
   }
   const driver = await verifiedFile(metadata.driver);
-  const identity = { product: 'Squad Computer Use', bundleId: SQUAD_COMPUTER_USE_BUNDLE_ID, source: 'bundled', driver };
+  const identity = { product: AUTOHAND_COMPUTER_USE_APP_NAME, bundleId: AUTOHAND_COMPUTER_USE_BUNDLE_ID, source: 'bundled', driver };
   if (process.platform === 'darwin') {
-    if (metadata.host?.bundleId !== SQUAD_COMPUTER_USE_BUNDLE_ID) throw error('Computer Use permission identity is invalid.', 503);
+    if (metadata.host?.bundleId !== AUTOHAND_COMPUTER_USE_BUNDLE_ID) throw error('Computer Use permission identity is invalid.', 503);
     const host = await verifiedFile(metadata.host);
     return new NativeComputerClient({ command: host, args: ['mcp', '--driver-path', driver], identity: { ...identity, host }, startupError: Number(release().split('.')[0]) < 22 ? 'Built-in Computer Use requires macOS 13 or later. Squad can still be used on this version of macOS.' : '', ...options });
   }
@@ -133,12 +133,12 @@ export async function bundledComputerClient(rootDir, options = {}) {
 
 /** Native newline JSON-RPC. No shell, inherited stdio, permission prompts or driver telemetry. */
 export class NativeComputerClient {
-  constructor({ command, args, env = {}, spawnProcess = spawn, timeoutMs = 30000, startupError = '', hostBundleId = SQUAD_COMPUTER_USE_BUNDLE_ID, embedded = true, identity = null }) {
+  constructor({ command, args, env = {}, spawnProcess = spawn, timeoutMs = 30000, startupError = '', hostBundleId = AUTOHAND_COMPUTER_USE_BUNDLE_ID, embedded = true, identity = null }) {
     this.command = command; this.args = args; this.env = env; this.spawnProcess = spawnProcess; this.timeoutMs = timeoutMs;
     this.pending = new Map(); this.sequence = 0; this.buffer = ''; this.starting = null; this.child = null;
     this.startupError = startupError;
     this.hostBundleId = hostBundleId; this.embedded = embedded;
-    this.identity = identity || { product: 'Squad Computer Use', bundleId: hostBundleId, source: 'bundled' };
+    this.identity = identity || { product: AUTOHAND_COMPUTER_USE_APP_NAME, bundleId: hostBundleId, source: 'bundled' };
   }
   async start() {
     if (this.startupError) throw error(this.startupError, 503);

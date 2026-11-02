@@ -336,7 +336,7 @@ jobs:
             "$bundle_root/bin/squad" --help
           fi
           if [[ "$RELEASE_OS" == "darwin" ]]; then
-            test -f "$bundle_root/vendor/computer-use/Squad Computer Use.app/Contents/MacOS/AutohandComputerUse"
+            test -f "$bundle_root/vendor/computer-use/Autohand Computer Use.app/Contents/MacOS/AutohandComputerUse"
           fi
 
       - name: Upload runtime artifacts

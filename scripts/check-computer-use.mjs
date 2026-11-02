@@ -86,17 +86,17 @@ try {
     const adapter = new NativeComputerClient({ command: '/mock/host', args: ['mcp'], env: { AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: 'private-native-fixture' }, spawnProcess(_command, _args, value) { options = value; return child; } });
     await adapter.request('tools/list', {}); await adapter.request('tools/list', {}); assert.equal(messages.filter((message) => message.method === 'initialize').length, 1);
     assert.equal(options.env.CUA_DRIVER_PERMISSION_MODE, 'standard'); assert.equal(options.env.CUA_DRIVER_EMBEDDED, '1'); assert.equal(options.env.CUA_DRIVER_RS_TELEMETRY_ENABLED, '0'); assert.equal(options.env.AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN, undefined); adapter.close();
-    assert.equal(options.env.CUA_DRIVER_HOST_BUNDLE_ID, 'ai.autohand.squad.computer-use');
+    assert.equal(options.env.CUA_DRIVER_HOST_BUNDLE_ID, 'ai.autohand.computer-use');
   });
-  await check('macOS host identity must belong to Squad rather than the shared driver host', async () => {
+  await check('the bundled macOS host must be Autohand Computer Use itself (ADR-0162)', async () => {
     if (process.platform !== 'darwin') return;
     const directory = join(temporary, 'identity-fixture', 'vendor', 'computer-use'); await mkdir(directory, { recursive: true });
     await writeFile(join(directory, 'driver'), 'mock'); await writeFile(join(directory, 'host'), 'mock');
     const item = (path) => ({ path, sha256: createHash('sha256').update('mock').digest('hex') });
-    const metadata = { version: '0.28.2', repository: 'autohandai/computer-use', driver: item('driver'), host: { ...item('host'), bundleId: 'ai.autohand.computer-use' } };
+    const metadata = { version: '0.28.2', repository: 'autohandai/computer-use', driver: item('driver'), host: { ...item('host'), bundleId: 'ai.autohand.squad.computer-use' } };
     await writeFile(join(directory, 'BUILD_INFO.json'), JSON.stringify(metadata));
-    await assert.rejects(bundledComputerClient(join(temporary, 'identity-fixture')), /permission identity/);
-    metadata.host.bundleId = 'ai.autohand.squad.computer-use'; await writeFile(join(directory, 'BUILD_INFO.json'), JSON.stringify(metadata));
+    await assert.rejects(bundledComputerClient(join(temporary, 'identity-fixture')), /permission identity/, 'a Squad-branded host from before ADR-0162 is refused');
+    metadata.host.bundleId = 'ai.autohand.computer-use'; await writeFile(join(directory, 'BUILD_INFO.json'), JSON.stringify(metadata));
     const adapter = await bundledComputerClient(join(temporary, 'identity-fixture')); assert.equal(adapter.command, await realpath(join(directory, 'host'))); adapter.close();
   });
   await check('Autohand Computer Use is resolved the way the CLI resolves it (ADR-0162)', async () => {

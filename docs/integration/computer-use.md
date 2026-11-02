@@ -81,8 +81,9 @@ Call `stageComputerUse({rootDir,runtimeDir})` during runtime staging **before**
 app license/build metadata. Provide the pinned archive in
 `vendor/computer-use`, optionally overridden by
 `AUTOHAND_SQUAD_COMPUTER_USE_DIR`. On macOS also provide
-`AUTOHAND_SQUAD_COMPUTER_USE_HOST` pointing at the verified/signed branded app
-with bundle ID `ai.autohand.squad.computer-use`; the engine archive does not contain
+`AUTOHAND_SQUAD_COMPUTER_USE_HOST` pointing at the verified/signed
+`Autohand Computer Use.app` built unmodified from the pinned upstream source,
+bundle ID `ai.autohand.computer-use`; the engine archive does not contain
 this host. Set `AUTOHAND_SQUAD_COMPUTER_USE_HOST_COMMIT` to its exact source ref.
 The helper verifies the immutable archive digest, signs/verifies extracted
 macOS native components (the released arm64 driver signature is invalid),
@@ -117,14 +118,16 @@ This is browser fixture proof, not installed macOS consent or real desktop captu
 
 ## Runtime integration
 
-The permission host is `Squad Computer Use.app`, identified as
-`ai.autohand.squad.computer-use`; the executable remains `AutohandComputerUse`.
-The engine environment and manifest checks require that exact Squad identity.
-The pinned host source receives a minimal recorded branding patch in build
-provenance. This isolates permission attribution from the shared Computer Use
-product and requires fresh explicit user consent; the previous host's grants
-are not copied or changed. It is not evidence that namespace collision caused
-any separate native window-state failure.
+The permission host is `Autohand Computer Use.app`, identified as
+`ai.autohand.computer-use`, the executable `AutohandComputerUse`: the same
+component Autohand Code installs with `autohand computer install`, built
+unmodified from the pinned upstream source (ADR-0162, amended 2026-11-03).
+The engine environment and manifest checks require that exact identity and a
+provenance that says `patched: false`; a host carrying the earlier
+Squad-branded identity (`ai.autohand.squad.computer-use`, ADR-0070) is
+refused. At run time the bridge prefers the CLI's installed copy and falls
+back to the bundled one, so the CLI, Squad and Autohand Desktop share one
+macOS grant.
 
 The main bridge reads the native pairing key from `native-grant-token` in the
 Squad state directory on each confirmation request. It requires an owned,

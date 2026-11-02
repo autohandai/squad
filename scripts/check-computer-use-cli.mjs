@@ -52,10 +52,10 @@ try {
     if (tools.some((tool) => tool.name.includes('get_window_state'))) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  assert.ok(tools.some((tool) => tool.name.includes('get_window_state')), 'Pinned CLI did not discover the Squad Computer Use tool.');
+  assert.ok(tools.some((tool) => tool.name.includes('get_window_state')), 'Pinned CLI did not discover the Computer Use tool through Squad.');
   assert.ok(calls.length > 0 && calls.every((call) => call.method === 'tools/list'));
   assert.ok(authCalls > 0, 'The supported auth base override did not reach the local mock.');
-  console.log('Pinned Autohand CLI 0.9.7 discovered the actual Squad Computer Use proxy through isolated member config; no provider prompts or native actions.');
+  console.log('Pinned Autohand CLI 0.9.7 discovered the actual Computer Use proxy through isolated member config; no provider prompts or native actions.');
 } catch (failure) {
   // This check uses only its isolated fake provider config, never user state.
   const diagnostic = sdk?.client?.transport?.getStderrTail?.();

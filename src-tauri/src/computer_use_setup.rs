@@ -4,10 +4,9 @@ use crate::Shell;
 use std::sync::Arc;
 use tauri::{AppHandle, WebviewWindow};
 
-const HOST_BUNDLE: &str = "Squad Computer Use.app";
-const HOST_BINARY: &str = "Squad Computer Use.app/Contents/MacOS/AutohandComputerUse";
-const HOST_ID: &str = "ai.autohand.squad.computer-use";
-const BRANDING_PATCH_SHA: &str = "1beed4288409b5f2a6143453aa9c645aece207f5ec97ceefd32531a0377e784f";
+const HOST_BUNDLE: &str = "Autohand Computer Use.app";
+const HOST_BINARY: &str = "Autohand Computer Use.app/Contents/MacOS/AutohandComputerUse";
+const HOST_ID: &str = "ai.autohand.computer-use";
 const SOURCE_COMMIT: &str = "fc92b70417cdae941ba8b104a6e7b3b5b52a07e2";
 
 fn host_digest(info: &serde_json::Value) -> Result<&str, String> {
@@ -22,10 +21,16 @@ fn host_digest(info: &serde_json::Value) -> Result<&str, String> {
             .and_then(|value| value.as_str())
             != Some(HOST_ID)
         || info.pointer("/host/path").and_then(|value| value.as_str()) != Some(HOST_BINARY)
+        // The host is Autohand Computer Use built unmodified (ADR-0162): a
+        // provenance that records a source patch is not the upstream host.
+        || info
+            .pointer("/host/branding/patched")
+            .and_then(|value| value.as_bool())
+            != Some(false)
         || info
             .pointer("/host/branding/patchSha256")
             .and_then(|value| value.as_str())
-            != Some(BRANDING_PATCH_SHA)
+            .is_some()
     {
         return Err("The bundled Computer Use permission host has invalid provenance.".into());
     }
@@ -151,12 +156,12 @@ mod tests {
     use super::*;
     #[test]
     fn setup_host_path_and_identity_cannot_be_substituted() {
-        let valid = serde_json::json!({"version":"0.28.2","sourceCommit":SOURCE_COMMIT,"host":{"sourceCommit":SOURCE_COMMIT,"bundleId":HOST_ID,"path":HOST_BINARY,"branding":{"patchSha256":BRANDING_PATCH_SHA},"sha256":"a".repeat(64)}});
+        let valid = serde_json::json!({"version":"0.28.2","sourceCommit":SOURCE_COMMIT,"host":{"sourceCommit":SOURCE_COMMIT,"bundleId":HOST_ID,"path":HOST_BINARY,"branding":{"patched":false},"sha256":"a".repeat(64)}});
         assert!(host_digest(&valid).is_ok());
         for (field, value) in [
             ("path", "../other.app/Contents/MacOS/other"),
             ("bundleId", "com.apple.Terminal"),
-            ("bundleId", "ai.autohand.computer-use"),
+            ("bundleId", "ai.autohand.squad.computer-use"),
             ("sourceCommit", "unverified"),
             ("sha256", "invalid"),
         ] {
@@ -164,8 +169,13 @@ mod tests {
             info["host"][field] = serde_json::json!(value);
             assert!(host_digest(&info).is_err());
         }
-        let mut unverified = valid;
-        unverified["host"]["branding"]["patchSha256"] = serde_json::json!("unverified");
-        assert!(host_digest(&unverified).is_err());
+        // A host built with a source patch (the Squad branding of ADR-0070)
+        // is not the upstream host, whatever identity it claims.
+        let mut patched = valid.clone();
+        patched["host"]["branding"]["patchSha256"] = serde_json::json!("1beed4288409b5f2a6143453aa9c645aece207f5ec97ceefd32531a0377e784f");
+        assert!(host_digest(&patched).is_err());
+        let mut unmarked = valid;
+        unmarked["host"]["branding"] = serde_json::json!({});
+        assert!(host_digest(&unmarked).is_err());
     }
 }

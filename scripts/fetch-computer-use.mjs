@@ -90,8 +90,8 @@ async function verifyHost(host, arches, vendorDir) {
   const identifier = run('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', join(host, 'Contents', 'Info.plist')]).trim();
   if (identifier !== COMPUTER_USE_HOST.bundleId) throw new Error('Computer Use host bundle identity is incorrect.');
   const name = run('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleDisplayName', join(host, 'Contents', 'Info.plist')]).trim();
-  if (name !== COMPUTER_USE_HOST.displayName) throw new Error('Squad Computer Use host display name is incorrect.');
-  if (await sha(join(resources, 'AutohandComputerUse.png')) !== COMPUTER_USE_HOST.iconSha256) throw new Error('Squad Computer Use host icon is incorrect.');
+  if (name !== COMPUTER_USE_HOST.displayName) throw new Error('Autohand Computer Use host display name is incorrect.');
+  if (await sha(join(resources, 'AutohandComputerUse.png')) !== COMPUTER_USE_SOURCE.files['autohand/assets/icon.png']) throw new Error('Autohand Computer Use host icon is not the upstream icon.');
   run('/usr/bin/codesign', ['--verify', '--deep', '--strict', host]);
   const executable = join(host, 'Contents', 'MacOS', EXECUTABLE);
   run('/usr/bin/lipo', [executable, '-verify_arch', ...arches.map((arch) => arch === 'x64' ? 'x86_64' : 'arm64')]);
@@ -110,8 +110,6 @@ async function verifyHost(host, arches, vendorDir) {
 async function buildHost({ root, vendorDir, host, arches, sourceArchive, log }) {
   await verifiedDownload(SOURCE_URL, sourceArchive, COMPUTER_USE_SOURCE.archiveSha256, { check: false, log });
   if (await sha(join(root, LICENSE)) !== LICENSE_SHA) throw new Error('Pinned Apache license input does not match its checksum.');
-  if (await sha(join(root, COMPUTER_USE_HOST.patchPath)) !== COMPUTER_USE_HOST.patchSha256) throw new Error('Reviewed Squad host branding patch changed.');
-  if (await sha(join(root, COMPUTER_USE_HOST.iconPath)) !== COMPUTER_USE_HOST.iconSha256) throw new Error('Pinned Squad host icon changed.');
   const scratch = await mkdtemp(join(tmpdir(), 'squad-computer-use-build-'));
   const publication = await mkdtemp(join(vendorDir, '.computer-use-host-'));
   try {
@@ -122,12 +120,8 @@ async function buildHost({ root, vendorDir, host, arches, sourceArchive, log }) 
     for (const [name, expected] of Object.entries(COMPUTER_USE_SOURCE.files)) {
       if (!await regularFile(join(source, name)) || await sha(join(source, name)) !== expected) throw new Error(`Pinned host source changed: ${name}`);
     }
-    run('/usr/bin/git', ['apply', '--check', join(root, COMPUTER_USE_HOST.patchPath)], { cwd: source });
-    run('/usr/bin/git', ['apply', join(root, COMPUTER_USE_HOST.patchPath)], { cwd: source });
-    if (await sha(join(source, 'autohand/macos/main.swift')) !== COMPUTER_USE_HOST.patchedSourceSha256
-        || await sha(join(source, 'autohand/scripts/build-macos-host.sh')) !== COMPUTER_USE_HOST.patchedBuildScriptSha256) {
-      throw new Error('Squad host branding patch produced unexpected source bytes.');
-    }
+    // The upstream source is built as it is: no patch, no renamed bundle,
+    // no Squad icon. What ships is Autohand Computer Use (ADR-0162).
     const app = join(publication, HOST_NAME);
     const identity = process.env.AUTOHAND_CODESIGN_IDENTITY || process.env.APPLE_SIGNING_IDENTITY || '-';
     run('/bin/bash', [join(source, 'autohand/scripts/build-macos-host.sh'), '--output', app, '--version', COMPUTER_USE_VERSION], { env: { ...process.env, AUTOHAND_CODESIGN_IDENTITY: identity } });
@@ -141,14 +135,13 @@ async function buildHost({ root, vendorDir, host, arches, sourceArchive, log }) 
     if (binaries.length === 1) await cp(binaries[0], executable);
     else run('/usr/bin/lipo', ['-create', ...binaries, '-output', executable]);
     const resources = join(app, 'Contents', 'Resources');
-    await cp(join(root, COMPUTER_USE_HOST.iconPath), join(resources, 'AutohandComputerUse.png'));
-    const branding = { ...COMPUTER_USE_HOST };
+    const branding = { ...COMPUTER_USE_HOST, patched: false };
     const compiler = run('/usr/bin/swiftc', ['--version']).trim();
     // Record the SDK actually linked into each Mach-O slice. xcrun's default
     // SDK lookup can be stale even when swiftc successfully finds its SDK.
     const sdk = [...new Set([...run('/usr/bin/otool', ['-l', executable]).matchAll(/\bsdk\s+([0-9.]+)/g)].map((match) => match[1]))];
     await cp(join(root, LICENSE), join(resources, 'LICENSE-Apache-2.0.txt'));
-    await writeFile(join(resources, 'NOTICE.txt'), `Squad Computer Use permission host\nCopyright 2026 Autohand AI LLC\nSPDX-License-Identifier: Apache-2.0\n\nBuilt from autohandai/computer-use commit ${COMPUTER_USE_SOURCE.commit} (computer-use-v${COMPUTER_USE_VERSION}).\nSquad branding patch ${COMPUTER_USE_HOST.patchSha256} changes only identity, name and permission text; the Squad app icon is separately pinned.\nThe separately bundled Cua engine is MIT licensed; its full notice ships as LICENSE-CUA.md.\nBuild-time preparation targets macOS 13.0. Developer ID signing and notarization are separate release steps.\n`);
+    await writeFile(join(resources, 'NOTICE.txt'), `Autohand Computer Use permission host\nCopyright 2026 Autohand AI LLC\nSPDX-License-Identifier: Apache-2.0\n\nBuilt unmodified from autohandai/computer-use commit ${COMPUTER_USE_SOURCE.commit} (computer-use-v${COMPUTER_USE_VERSION}): the same host, identity and consent text Autohand Code installs.\nThe separately bundled Cua engine is MIT licensed; its full notice ships as LICENSE-CUA.md.\nBuild-time preparation targets macOS 13.0. Developer ID signing and notarization are separate release steps.\n`);
     await writeFile(join(resources, 'BUILD_PROVENANCE.json'), `${JSON.stringify({ schemaVersion: 1, product: COMPUTER_USE_HOST.displayName, repository: 'autohandai/computer-use', sourceCommit: COMPUTER_USE_SOURCE.commit, release: `computer-use-v${COMPUTER_USE_VERSION}`, sourcePath: 'autohand/macos/main.swift', sourceSha256: COMPUTER_USE_SOURCE.files['autohand/macos/main.swift'], buildScriptPath: 'autohand/scripts/build-macos-host.sh', buildScriptSha256: COMPUTER_USE_SOURCE.files['autohand/scripts/build-macos-host.sh'], sourceArchiveSha256: COMPUTER_USE_SOURCE.archiveSha256, target: arches.map((arch) => `${arch === 'x64' ? 'x86_64' : 'arm64'}-apple-macos13.0`), compiler, sdk, branding, builtAt: new Date().toISOString(), signing: identity === '-' ? 'ad hoc, hardened runtime' : 'Developer ID, hardened runtime', notarized: false }, null, 2)}\n`);
     run('/usr/bin/codesign', ['--force', '--deep', '--options', 'runtime', '--sign', identity, '--timestamp=none', app]);
     run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);

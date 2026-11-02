@@ -113,15 +113,14 @@ the permission host from immutable commit
 `fc92b70417cdae941ba8b104a6e7b3b5b52a07e2` in a temporary directory, verifies the
 source archive and individual source hashes, explicitly targets macOS 13.0,
 and includes the Apache license, source notice, and signed build provenance.
-The reviewed `scripts/computer-use-squad-branding.patch` changes only the
-permission host's identity/name and consent wording. The resulting
-`Squad Computer Use.app` uses `ai.autohand.squad.computer-use` and Squad's
-separately pinned app icon. Its provenance records the patch checksum and
-the exact patched source hashes alongside the original upstream pins.
-Users explicitly enable Accessibility and Screen Recording for **Squad
-Computer Use**; existing CLI Computer Use permissions are not reused.
-It requires the Xcode command-line tools. Agents use the packaged inputs;
-they do not download or build the engine while working.
+The host is built unmodified: what ships is `Autohand Computer Use.app` with
+the identity `ai.autohand.computer-use`, the same app, consent text and icon
+that Autohand Code installs with `autohand computer install`, so the CLI,
+Squad and Autohand Desktop share one component and one macOS grant
+(ADR-0162). At run time the bridge prefers the CLI's installed copy and
+falls back to the bundled one. It requires the Xcode command-line tools.
+Agents use the packaged inputs; they do not download or build the engine
+while working.
 
 Use `--check` to verify prepared inputs without downloads or changes,
 `--target linux/x64` (or another supported target) to prepare a specific engine,

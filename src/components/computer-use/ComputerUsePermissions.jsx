@@ -43,9 +43,10 @@ export function ComputerUsePermissions({ member, api }) {
     catch (reason) { setError(reason.message || "Could not open macOS permission setup."); }
     finally { setBusy(false); }
   }
-  // Autohand Computer Use (ADR-0162) is installed and granted through the
-  // Autohand CLI, the same component Autohand Code uses; the bridge runs
-  // `autohand computer install`, which opens the macOS prompts.
+  // Autohand Computer Use (ADR-0162) is the one component across the CLI,
+  // Squad and Autohand Desktop: the bridge prefers the CLI's install and
+  // otherwise runs the copy bundled with Squad, the same app and identity.
+  // Install runs `autohand computer install`, which opens the macOS prompts.
   const [installing, setInstalling] = useState(false);
   const usingAutohand = current?.host?.source === "autohand";
   async function installAutohand() {
@@ -79,8 +80,8 @@ export function ComputerUsePermissions({ member, api }) {
           {usingAutohand
             ? "Using Autohand Computer Use, the same component Autohand Code installs and that you have already granted."
             : current.host.fallbackReason
-              ? `Using Squad’s bundled Computer Use host: ${current.host.fallbackReason}`
-              : "Using Squad’s bundled Computer Use host. Install Autohand Computer Use to share one grant with Autohand Code."}
+              ? `Using the copy of Autohand Computer Use bundled with Squad: ${current.host.fallbackReason}`
+              : "Using the copy of Autohand Computer Use bundled with Squad. Install it with Autohand Code to share one grant across the CLI, Squad and Autohand Desktop."}
         </p>
       ) : null}
       {setupOpened && !ready ? <p className="mt-2 text-sm text-muted-foreground">Finish the macOS permission prompts, then check again. Opening setup does not grant access to this member.</p> : null}

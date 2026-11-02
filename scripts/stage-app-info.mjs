@@ -180,8 +180,8 @@ export async function stageAppInfo({ rootDir, runtimeDir, nodeVersion }) {
   const computerNotices = computer ? [{ ecosystem: 'Native capability', name: 'Computer Use engine', version: computer.version,
     license: 'MIT', text: await notices(join(runtimeDir, 'vendor', 'computer-use')), repository: 'https://github.com/autohandai/computer-use',
     note: `Pinned component ${computer.release}; source ${computer.sourceCommit}.` }] : [];
-  if (computer?.host) computerNotices.push({ ecosystem: 'Native capability', name: 'Squad Computer Use permission host', version: computer.version,
-    license: 'Apache-2.0', text: await notices(join(runtimeDir, 'vendor', 'computer-use', 'Squad Computer Use.app', 'Contents', 'Resources')),
+  if (computer?.host) computerNotices.push({ ecosystem: 'Native capability', name: 'Autohand Computer Use permission host', version: computer.version,
+    license: 'Apache-2.0', text: await notices(join(runtimeDir, 'vendor', 'computer-use', 'Autohand Computer Use.app', 'Contents', 'Resources')),
     repository: 'https://github.com/autohandai/computer-use', note: `Permission identity ${computer.host.bundleId}; source ${computer.host.sourceCommit}.` });
   const thirdPartyLicenses = [...npm, ...rust, node, cli, ...fonts, ...computerNotices]
     .sort((a, b) => a.ecosystem.localeCompare(b.ecosystem) || a.name.localeCompare(b.name) || a.version.localeCompare(b.version));

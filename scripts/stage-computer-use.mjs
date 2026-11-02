@@ -52,7 +52,7 @@ export async function stageComputerUse({ rootDir, runtimeDir, platform = process
         runCommand('/usr/bin/codesign', ['--force', '--options', 'runtime', '--sign', signIdentity, '--timestamp=none', filename]);
         runCommand('/usr/bin/codesign', ['--verify', '--strict', filename]);
       }
-      if (!hostPath) throw new Error('Set AUTOHAND_SQUAD_COMPUTER_USE_HOST to the verified Squad Computer Use.app build.');
+      if (!hostPath) throw new Error('Set AUTOHAND_SQUAD_COMPUTER_USE_HOST to the verified Autohand Computer Use.app build.');
       const source = resolve(hostPath);
       const identifier = runCommand('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', join(source, 'Contents', 'Info.plist')]).trim();
       if (identifier !== COMPUTER_USE_HOST.bundleId) throw new Error('The Computer Use host has an unexpected permission identity.');
@@ -63,9 +63,11 @@ export async function stageComputerUse({ rootDir, runtimeDir, platform = process
       if (!/^[a-f0-9]{40}$/.test(sourceCommit || '') || sourceCommit !== provenance.sourceCommit) throw new Error('The Computer Use host source provenance is missing or inconsistent.');
       runCommand('/usr/bin/lipo', [join(source, 'Contents', 'MacOS', 'AutohandComputerUse'), '-verify_arch', arch === 'arm64' ? 'arm64' : 'x86_64']);
       const hostDestination = join(destination, COMPUTER_USE_HOST.bundleName);
-      // Reused staging directories must not keep the old shared CLI identity.
-      // This path is inside this runtime only, never the user's Applications.
-      await rm(join(destination, 'Autohand Computer Use.app'), { recursive: true, force: true });
+      // A staging directory reused from before ADR-0162 revised the identity
+      // must not keep the Squad-branded host beside the real one. This path
+      // is inside this runtime only, never the user's Applications.
+      await rm(join(destination, 'Squad Computer Use.app'), { recursive: true, force: true });
+      await rm(hostDestination, { recursive: true, force: true });
       await cp(source, hostDestination, { recursive: true, dereference: true });
       host = { bundleId: identifier, sourceCommit, branding: provenance.branding, path: `${COMPUTER_USE_HOST.bundleName}/Contents/MacOS/${COMPUTER_USE_HOST.executable}`, sha256: await sha(join(hostDestination, 'Contents', 'MacOS', COMPUTER_USE_HOST.executable)) };
     }

@@ -40,7 +40,7 @@ fn trusted_bridge(
         || bridge.password().is_some()
         || member.is_some_and(|member| !crate::quick_chat::valid_member_id(member))
     {
-        return Err("Invalid local Squad Computer Use request.".into());
+        return Err("Invalid local Computer Use request.".into());
     }
     Ok(())
 }
@@ -298,7 +298,7 @@ mod macos {
     fn response_json(response: reqwest::blocking::Response) -> Result<serde_json::Value, String> {
         if !response.status().is_success() {
             return Err(format!(
-                "Squad Computer Use request failed (HTTP {}).",
+                "Computer Use request failed (HTTP {}).",
                 response.status()
             ));
         }
@@ -322,7 +322,7 @@ mod macos {
             client
                 .get(status_url)
                 .send()
-                .map_err(|_| "Squad Computer Use did not answer.".to_owned())?,
+                .map_err(|_| "Computer Use did not answer.".to_owned())?,
         )?;
         if status
             .pointer("/data/available")

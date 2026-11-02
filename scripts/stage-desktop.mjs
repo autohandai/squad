@@ -111,7 +111,7 @@ async function stageRuntime() {
   if (nodeProbe.status !== 0 || !/^v\d+\.\d+\.\d+$/.test(nodeProbe.stdout.trim())) throw new Error('The selected desktop Node runtime did not report its version.');
   const selectedNodeVersion = nodeProbe.stdout.trim();
   await writeFile(join(runtimeDir, 'DESKTOP_RUNTIME.json'), `${JSON.stringify({ stagedAt: new Date().toISOString(), triple, appVersion: appPackage.version, cliVersion: info.version, node: selectedNodeVersion }, null, 2)}\n`);
-  await stageComputerUse({ rootDir, runtimeDir, hostPath: process.env.AUTOHAND_SQUAD_COMPUTER_USE_HOST || join(rootDir, 'vendor', 'computer-use', 'Squad Computer Use.app') });
+  await stageComputerUse({ rootDir, runtimeDir, hostPath: process.env.AUTOHAND_SQUAD_COMPUTER_USE_HOST || join(rootDir, 'vendor', 'computer-use', 'Autohand Computer Use.app') });
   await stageAppInfo({ rootDir, runtimeDir, nodeVersion: selectedNodeVersion });
   await stageProductTelemetry({ rootDir, runtimeDir });
   console.log(`Staged runtime for ${triple} (CLI ${info.version}).`);

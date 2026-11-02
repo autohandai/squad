@@ -37,9 +37,17 @@ client launches that host with `mcp --driver-path <driver>` and the identity
 Squad's grants, evidence, member scopes and the stdio proxy are unchanged;
 only the process behind them differs.
 
-Squad's bundled host remains a fallback for a machine where the CLI's
+Squad's bundled copy remains a fallback for a machine where the CLI's
 component is absent, and `AUTOHAND_SQUAD_COMPUTER_USE=bundled` pins it for
-the bridge checks. The Permissions page says which host is in use and offers
+the bridge checks. Amended 2026-11-03: that copy is no longer a Squad-branded
+build. The person asked that the CLI, Squad and Autohand Desktop all use
+`autohandai/computer-use` itself, so the reviewed branding patch of ADR-0070
+is gone: `scripts/fetch-computer-use.mjs` builds the pinned upstream source
+as it is, the bundle is `Autohand Computer Use.app` with
+`ai.autohand.computer-use`, the upstream consent text and icon, and its
+provenance records `patched: false`. The bridge refuses a bundled host that
+still carries the old `ai.autohand.squad.computer-use` identity. One
+component, one identity, one macOS grant, whichever copy starts. The Permissions page says which host is in use and offers
 "Install Autohand Computer Use", which runs `autohand computer install`
 through the bundled CLI (`POST /api/computer-use/install`); the native
 "Set up macOS permissions" button belongs to the bundled host only.
@@ -63,7 +71,10 @@ showing "readiness could not be confirmed".
 - `check-computer-use` covers the resolution order and the launch
   arguments with fixture files; `check-computer-use-bridge` keeps running
   the bundled path under the pin variable.
-- Left undone: the vendored Squad host and its staging scripts still ship,
-  so the runtime is larger than it needs to be; removing them is a follow-up
+- A person who granted Squad Computer Use before this amendment grants
+  Autohand Computer Use once; the Squad Computer Use row in System Settings
+  is dead and can be removed by hand.
+- Left undone: the bundled copy still ships, so the runtime carries the host
+  even on a machine where the CLI installed one; dropping it is a follow-up
   once a release has run on the shared component. Autohand Desktop is a
   separate codebase and is not changed here.

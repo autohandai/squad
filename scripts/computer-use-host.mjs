@@ -1,20 +1,20 @@
-// Squad owns its permission identity. Upstream execution remains pinned; this
-// reviewed patch changes only the host identity, display name and consent text.
+// The macOS permission host Squad bundles is Autohand Computer Use itself
+// (autohandai/computer-use, built unmodified from its pinned source): the
+// same app, the same identity `ai.autohand.computer-use`, the same consent
+// text and icon that Autohand Code installs with `autohand computer install`.
+// One component across the CLI, Squad and Autohand Desktop, one macOS grant
+// (ADR-0162, revising ADR-0070's Squad-branded identity).
 export const COMPUTER_USE_HOST = Object.freeze({
-  bundleName: 'Squad Computer Use.app',
-  displayName: 'Squad Computer Use',
-  bundleId: 'ai.autohand.squad.computer-use',
+  bundleName: 'Autohand Computer Use.app',
+  displayName: 'Autohand Computer Use',
+  bundleId: 'ai.autohand.computer-use',
   executable: 'AutohandComputerUse',
-  patchPath: 'scripts/computer-use-squad-branding.patch',
-  patchSha256: '1beed4288409b5f2a6143453aa9c645aece207f5ec97ceefd32531a0377e784f',
-  patchedSourceSha256: 'ab65142131d73ccfc69e315c48359dd63f0c8d0bfd80681fa909052cb7d62491',
-  patchedBuildScriptSha256: '9332214d3d81dade74a500b722e84596f2b331f0c1ef4941a726ee5070079882',
-  iconPath: 'src-tauri/icons/icon.png',
-  iconSha256: 'fbe8aedafd646c34baf94d8e70a023c44eba40a69b13fc91fd658653e45dc53d',
 });
 
+/** A built host's provenance must say it is the upstream host, unpatched. */
 export function verifyComputerUseBranding(branding) {
-  for (const field of ['bundleId', 'displayName', 'patchSha256', 'patchedSourceSha256', 'patchedBuildScriptSha256', 'iconSha256']) {
-    if (branding?.[field] !== COMPUTER_USE_HOST[field]) throw new Error('Squad Computer Use host has unverified branding provenance.');
+  for (const field of ['bundleId', 'displayName']) {
+    if (branding?.[field] !== COMPUTER_USE_HOST[field]) throw new Error('The Computer Use host is not Autohand Computer Use; Squad ships the upstream host unmodified.');
   }
+  if (branding?.patchSha256 || branding?.patched === true) throw new Error('The Computer Use host carries a source patch; Squad ships the upstream host unmodified.');
 }
