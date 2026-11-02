@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, withoutThinkingPlaceholder } from "../src/lib/chat-recovery.js";
-import { isNoTextReply, restoreRepliesFromRuns, withoutRecoveryNotices } from "../src/lib/chat-recovery.js";
+import { recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, withoutThinkingPlaceholder, isNoTextReply, restoreRepliesFromRuns, withoutRecoveryNotices } from "../src/lib/chat-recovery.js";
 const boot = "2026-10-01T04:00:00.000Z";
 const task = { id: "task", title: "Verify changes", status: "in_progress" };
 const old = { id: "old", role: "agent", body: "Work was in progress.", status: "loading", startedAt: "2026-10-01T03:00:00.000Z", progress: { items: [task] } };

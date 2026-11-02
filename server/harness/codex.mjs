@@ -2,8 +2,7 @@
 // existing stream, trace, and reply helpers in server.mjs work unchanged.
 
 import { join } from "node:path";
-import { existsSync } from "node:fs";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { compareVersions, fileExists, findExecutable, homeDir, parseVersion, probe, redactHome } from "./discovery.mjs";
 import { resolveAccess } from "./access.mjs";
 

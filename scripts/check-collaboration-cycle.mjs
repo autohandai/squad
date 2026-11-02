@@ -10,7 +10,6 @@ async function prepare(directory) {
   const entry=join(directory,'collaboration-sdk.mjs');
   await writeFile(entry,`
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 export class AutohandSDK {
   constructor(options) {this.options=options;}
   async start() {} async close() {} async interrupt() {this.interrupted=true;}

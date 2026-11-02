@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { hostname } from "node:os";
+import { hostname, arch, homedir, platform as osPlatform, release as osRelease, tmpdir } from "node:os";
 import { OtelLogger, SEVERITY, parseLogEnvelope, resourceFromEnv, traceIdFor, spanIdFor } from "./server/otel-logs.mjs";
 import { SdkSessionPool } from "./server/sdk-sessions.mjs";
 import { PermissionApprovalError, PermissionApprovals } from "./server/permission-approvals.mjs";
@@ -47,7 +47,6 @@ import { constants as fsConstants, createReadStream, existsSync, readFileSync, s
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { arch, homedir, platform as osPlatform, release as osRelease, tmpdir } from "node:os";
 import { clientClosedReason, stopMessage } from "./server/harness/stop-reason.mjs";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
