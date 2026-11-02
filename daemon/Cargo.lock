@@ -113,7 +113,7 @@ name = "autohand-squad-runtime"
 version = "0.1.15"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "clap",
  "libc",
  "objc2",
