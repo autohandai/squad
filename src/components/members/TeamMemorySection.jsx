@@ -19,6 +19,10 @@ export function TeamMemorySection({ agent, request, formatTime = () => "" }) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  // Loading failures are kept apart from action errors: a later successful
+  // refresh clears "could not be loaded" but leaves a failed save in view.
+  const [loadError, setLoadError] = useState("");
+  const [notice, setNotice] = useState("");
   const [scope, setScope] = useState("team");
   const [editing, setEditing] = useState(null);
   const projectPaths = [...new Set([agent.workspace, ...(agent.projects || []).map(project => project.path)].filter(Boolean))];
@@ -28,9 +32,10 @@ export function TeamMemorySection({ agent, request, formatTime = () => "" }) {
     try {
       const data = await request("/api/team");
       setMemory(Array.isArray(data?.memory) ? data.memory : []);
+      setLoadError("");
     } catch (failure) {
       setMemory((current) => current || []);
-      setError(failure?.message || "Team memory could not be loaded.");
+      setLoadError(failure?.message || "Team memory could not be loaded.");
     }
   }, [request]);
 
@@ -46,9 +51,12 @@ export function TeamMemorySection({ agent, request, formatTime = () => "" }) {
     if (!text || busy) return;
     setBusy("add");
     setError("");
+    setNotice("");
     try {
-      await request("/api/team/memory", { method: "POST", body: JSON.stringify({ text, scope, ...(scope === "member" ? { memberId: agent.id } : {}), ...(scope === "project" ? { workspace } : {}) }) });
+      const saved = await request("/api/team/memory", { method: "POST", body: JSON.stringify({ text, scope, ...(scope === "member" ? { memberId: agent.id } : {}), ...(scope === "project" ? { workspace } : {}) }) });
       setDraft("");
+      // The store answers with the entry it already had for the same fact.
+      if (saved?.duplicate) setNotice("Already saved; nothing was added.");
       await load();
     } catch (failure) {
       setError(failure?.message || "That could not be saved.");
@@ -135,7 +143,8 @@ export function TeamMemorySection({ agent, request, formatTime = () => "" }) {
         <Button type="submit" size="sm" variant="outline" disabled={!draft.trim() || Boolean(busy)}>Add</Button>
       </form>
       {scope === "project" ? <p className="text-xs text-muted-foreground">{`Shared with members working in ${workspace}.`}</p> : null}
-      {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+      {error || loadError ? <p className="text-sm text-destructive" role="alert">{error || loadError}</p> : null}
+      {notice && !error ? <p className="text-sm text-muted-foreground" role="status">{notice}</p> : null}
     </section>
   );
 }
