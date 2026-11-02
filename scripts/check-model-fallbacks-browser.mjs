@@ -89,9 +89,10 @@ try{
   await browser.fill('textarea[placeholder="Talk to Model Verify..."]','MCP_ROUTING_PROBE');
   await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.getAttribute('aria-label')==='Send chat message'&&!button.disabled)"),'member tool request ready');
   await browser.click('Send chat message');
-  await until(async()=>(await savedMember()).modelRouting.fallbacks[0]?.harness.model==='codex-second','member fallback tool persisted its profile revision');
+  // The member's tool turn runs a real bridge turn on the fixture engine; the CI runner takes longer than the ten-second default (the 30 October and 2 November runs timed out here).
+  await until(async()=>(await savedMember()).modelRouting.fallbacks[0]?.harness.model==='codex-second','member fallback tool persisted its profile revision',60000);
   await browser.navigate(bridge.origin+'/squad-members/'+member.id+'/model');
-  await until(()=>browser.evaluate("document.querySelector('[role=combobox][aria-label=\"Fallback 1 model\"]')?.textContent.includes('codex-second')"),'member tool receipt updates the editor');
+  await until(()=>browser.evaluate("document.querySelector('[role=combobox][aria-label=\"Fallback 1 model\"]')?.textContent.includes('codex-second')"),'member tool receipt updates the editor',60000);
   assert.equal((await savedMember()).modelAssignment.model,'fixture-fantail','The tool leaves the primary model alone');
   await writeFile(join(bridge.directory,'fail-autohand'),'fail');await bridge.api('/api/members/'+member.id+'/model-routing/reset','POST',{});
   const thread=(await bridge.api('/api/members/'+member.id+'/threads','POST',{root:{id:'model-thread-parent',role:'user',body:'Fallback thread verification'}})).data;
