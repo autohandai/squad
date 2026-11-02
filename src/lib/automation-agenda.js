@@ -36,13 +36,18 @@ export function automationAgenda(local = [], routines = []) {
 
 /** Deliver the saved answer once, including runs completed while the app
  * was closed. Never manufacture an answer from a run title or placeholder. */
-export function reconcileAutomationReplies(conversations, routines = []) {
+// Only recent runs become direct messages: a routine's whole recorded history
+// (forty daily runs) arriving in a fresh window, or after New chat cleared
+// the conversation, flooded it with old answers (lane bba3108, ported).
+export const AUTOMATION_REPLY_RECENT_MS = 2 * 24 * 60 * 60 * 1000;
+export function reconcileAutomationReplies(conversations, routines = [], { now = Date.now(), recentMs = AUTOMATION_REPLY_RECENT_MS, startedAt = {} } = {}) {
   let next = conversations;
   for (const routine of routines) {
     if (routine.destination?.channelId) continue;
     const messages = next[routine.memberId] || [];
     const ids = new Set(messages.map(message => message.id));
-    const additions = (routine.runs || []).filter(run => run.status === 'completed' && run.reply?.trim() && !ids.has(`automation-result-${run.id}`)).map(run => ({
+    const since = Math.max(now - recentMs, Date.parse(startedAt[routine.memberId] || '') || 0);
+    const additions = (routine.runs || []).filter(run => run.status === 'completed' && run.reply?.trim() && !ids.has(`automation-result-${run.id}`) && (Date.parse(run.finishedAt || '') || 0) >= since).map(run => ({
       id: `automation-result-${run.id}`, role: 'agent', status: 'complete', body: run.reply,
       source: 'automation', routineId: routine.id, runtimeId: run.memberRunId,
       startedAt: run.startedAt, completedAt: run.finishedAt, createdAt: run.finishedAt,

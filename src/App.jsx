@@ -4709,7 +4709,7 @@ function App() {
     if (runs.length) setMessagesByAgent((current) => restoreRepliesFromRuns(current, runs));
   }, [runs]);
   useEffect(() => {
-    setMessagesByAgent(current => reconcileAutomationReplies(current, routines));
+    setMessagesByAgent(current => reconcileAutomationReplies(current, routines, { startedAt: Object.fromEntries(membersRef.current.map(member => [member.id, member.conversationStartedAt || ''])) }));
   }, [routines]);
   useEffect(() => {
     if (runtime?.serverStartedAt) {
