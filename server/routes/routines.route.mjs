@@ -284,7 +284,7 @@ async function onMemberRunFinished(ctx, event) {
       });
     }
     log(ctx, status === "completed" ? ctx.SEVERITY.INFO : ctx.SEVERITY.WARN, `routine ${routine.title} ${status}`, runAttributes(routine, { ...run, status }, { "event.name": `routine.run.${status}`, "autohand.run.id": memberRunId }));
-    ctx.emit("routine.finished", { routineId: routine.id, routineTitle: routine.title, runId: run.id, memberId: routine.memberId, status, memberRunId, preview: String(event.title || "").slice(0, 400) });
+    ctx.emit("routine.finished", { routineId: routine.id, routineTitle: routine.title, runId: run.id, memberId: routine.memberId, status, memberRunId, preview: reply.slice(0, 400) || String(event.title || "").slice(0, 400) });
     changed(ctx);
     return;
   }

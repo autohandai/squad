@@ -47,7 +47,8 @@ export async function startBridge({ signedIn = true, prepare, cwd = process.cwd(
   const config = join(directory, 'config.json');
   await writeFile(config, JSON.stringify(signedIn ? { provider: 'autohandai', auth: { token: 'fixture-only-no-provider', email: 'reliability@example.test', expiresAt: '2099-01-01T00:00:00Z' } } : {}));
   const prepared = prepare ? await prepare(directory) : {};
-  const env = { ...process.env, ...prepared, AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_USER_CONFIG_PATH: config };
+  // Bridges started for checks never post to the person's desktop (lane 72e49cb).
+  const env = { AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: 'macos', ...process.env, ...prepared, AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_USER_CONFIG_PATH: config };
   let child;
   let logs = '';
   const api = async (path, method = 'GET', body, timeout = 10000) => {
