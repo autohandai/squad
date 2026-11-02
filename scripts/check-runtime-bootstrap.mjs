@@ -2,6 +2,7 @@
 // Fresh installed-runtime reproduction: no system CLI, no bundled CLI and
 // isolated account/state. Exercises the actual bridge, never the user's home.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile, stat, chmod } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -11,6 +12,9 @@ import { tmpdir } from 'node:os';
 import { startBrowser, stop, until } from './lib/reliability-browser.mjs';
 import { CLI_TARGETS } from '../server/runtime/cli-bootstrap.mjs';
 
+// The pinned Autohand Code release this check drives (package.json autohand.cliVersion):
+// hardcoding it made the check time out the day the pin moved from 0.9.7 to 0.9.9.
+const PINNED_CLI = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).autohand.cliVersion;
 const root = process.cwd();
 const directory = await realpath(await mkdtemp(join(tmpdir(), 'squad-first-run-runtime-')));
 const runtimeRoot = join(directory, 'runtime');
@@ -29,7 +33,7 @@ try {
   const target = CLI_TARGETS[`${process.platform}/${process.arch}`];
   const fixtureCli = join(directory, 'archive-content', target.inner);
   await mkdir(join(directory, 'archive-content'));
-  await writeFile(fixtureCli, '#!/bin/sh\nprintf "0.9.7\\n"\n', { mode: 0o700 });
+  await writeFile(fixtureCli, `#!/bin/sh\nprintf "${PINNED_CLI}\\n"\n`, { mode: 0o700 });
   const archive = join(directory, 'fixture.tar.gz');
   execFileSync('tar', ['-czf', archive, '-C', join(directory, 'archive-content'), target.inner]);
   const bytes = await readFile(archive);
@@ -42,7 +46,7 @@ try {
 const original=globalThis.fetch;
 globalThis.fetch=async(url,options)=>{
   const path=String(url);
-  if(!path.startsWith('https://github.com/autohandai/code-cli/releases/download/v0.9.7/'))return original(url,options);
+  if(!path.startsWith('https://github.com/autohandai/code-cli/releases/download/v${PINNED_CLI}/'))return original(url,options);
   if(path.endsWith('.sha256'))return new Response((existsSync(${JSON.stringify(bad)})?'0'.repeat(64):${JSON.stringify(digest)})+'  archive\\n');
   appendFileSync(${JSON.stringify(attempts)},'download\\n');
   const bytes=readFileSync(${JSON.stringify(archive)});
@@ -86,7 +90,7 @@ globalThis.fetch=async(url,options)=>{
   const failed = await until(async () => { const data = await snapshot(); return data.bootstrap.phase === 'error' && data; }, 'checksum refusal');
   assert.equal(failed.available, false);
   assert.match(failed.bootstrap.error, /verification failed/);
-  const installed = join(directory, 'app/runtime/autohand-cli/0.9.7', `${process.platform}-${process.arch}`, target.binary);
+  const installed = join(directory, `app/runtime/autohand-cli/${PINNED_CLI}`, `${process.platform}-${process.arch}`, target.binary);
   assert.equal(await stat(installed).then(() => true).catch(() => false), false, 'an unverified executable is never exposed');
   const downloads = async () => (await readFile(attempts, 'utf8')).trim().split('\n').length;
   assert.equal(await downloads(), 1);
@@ -108,7 +112,7 @@ globalThis.fetch=async(url,options)=>{
   const ready = await until(async () => { const data = await snapshot(); return data.available && data; }, 'verified managed CLI');
   assert.equal(ready.autohandPath, installed);
   assert.equal(ready.autohandSource, 'managed');
-  assert.equal(ready.version, '0.9.7');
+  assert.equal(ready.version, PINNED_CLI);
   assert.equal(await downloads(), 2, 'concurrent setup calls share one download');
   await fetch(origin+'/api/setup/runtime', { method: 'POST' });
   assert.equal(await downloads(), 2, 'a ready runtime is idempotent');
