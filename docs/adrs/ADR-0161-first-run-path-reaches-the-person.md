@@ -216,6 +216,17 @@ source confirmed each one.
     now.", added the next step, and repeated that thirty-six times in four
     minutes without reading a file. `squad_task` now refuses the ninth edit
     in one reply and says to do the task itself; `check-team` covers it.
+    The next reproduction, with the guard in place and a fuller profile,
+    ended in eighty seconds with the engine's own message: "The provider
+    truncated 3 consecutive responses. I stopped without marking the task
+    complete… retry with a narrower requested output or a model with a
+    larger output limit", after four identical "status doing" plan updates.
+    The default engine model (Autohand AI, fantail) was repeating itself
+    until it hit its output limit; a model that repeats into a huge
+    tool-call argument also explains a CLI that falls silent, pings
+    included, while it swallows that output. That is the model's, not
+    Squad's; the demo should run its members on a model that holds up
+    under a long tool-using turn, which is a choice for the person.
 
 ## Consequences and validation
 
