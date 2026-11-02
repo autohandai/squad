@@ -6,8 +6,14 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 
 export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+// GitHub's runners are several times slower than a developer machine for a
+// bridge turn plus a browser render. Fixed bounds sized locally kept timing
+// out there (model fallbacks, queued attachments, runtime bootstrap: CI on
+// 2 November 2026 and the 0.1.15 release run), so on CI every wait is
+// stretched; AUTOHAND_CHECK_WAIT_SCALE overrides the factor.
+const WAIT_SCALE = Number(process.env.AUTOHAND_CHECK_WAIT_SCALE) > 0 ? Number(process.env.AUTOHAND_CHECK_WAIT_SCALE) : process.env.CI ? 3 : 1;
 export async function until(fn, label, timeout = 10000) {
-  const end = Date.now() + timeout;
+  const end = Date.now() + timeout * WAIT_SCALE;
   let last;
   while (Date.now() < end) {
     try { const value = await fn(); if (value) return value; } catch (error) { last = error; }
