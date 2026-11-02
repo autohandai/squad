@@ -113,7 +113,9 @@ export async function startBrowser() {
   try { await send('Page.enable', {}, 60000); await send('Runtime.enable', {}, 60000); }
   catch (error) { ws.close(); await stop(child); await rm(directory, { recursive: true, force: true }); throw error; }
   return { send, evaluate, errors, requests, debugOrigin,
-    navigate: url => send('Page.navigate', { url }),
+    // A navigation on a loaded machine (another suite at full CPU) took more
+    // than the fifteen-second default; the page itself was fine.
+    navigate: url => send('Page.navigate', { url }, 60000),
     click: text => evaluate(`(() => { const element = [...document.querySelectorAll('button')].find(item => (item.innerText.trim() === ${JSON.stringify(text)} || item.getAttribute('aria-label') === ${JSON.stringify(text)}) && item.getBoundingClientRect().width); if (!element) throw new Error('Missing button: ' + ${JSON.stringify(text)}); element.click(); })()`),
     fill: (selector, value) => evaluate(`(() => { const input = document.querySelector(${JSON.stringify(selector)}); if (!input) throw new Error('Missing input'); const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, 'value').set.call(input, ${JSON.stringify(value)}); input.dispatchEvent(new Event('input', { bubbles: true })); })()`),
     screenshot: async path => { await until(() => evaluate(`!document.getElementById('boot')`), 'startup overlay removed'); await mkdir(join(path, '..'), { recursive: true }); const result = await send('Page.captureScreenshot', { format: 'png' }); await writeFile(path, Buffer.from(result.data, 'base64')); },
