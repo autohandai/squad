@@ -65,11 +65,22 @@ source confirmed each one.
    with Allow once, Allow for this reply and Deny; `POST /api/chat/permission`
    carries the answer. Only once/session scopes are offered, so no decision
    writes the member's `allowList`. Work details shows the outcome.
-3. **Exclude what can never reach a window.** `ask_followup_question`,
-   `create_team`, `add_teammate`, `team_status` and `send_team_message` are
-   blocked at every rung and excluded whether or not rules are on. Members are
-   told to end a reply with their question, and to write a draft to a file or
-   memory before asking where it should go.
+3. **Exclude what can never reach a window, and give members a question
+   that can.** `ask_followup_question`, `create_team`, `add_teammate`,
+   `team_status` and `send_team_message` are blocked at every rung and
+   excluded whether or not rules are on. In their place the team server
+   offers `squad_ask` (§2.1): the member calls it when it cannot continue
+   without an answer, the bridge sends a `question_request` event down the
+   reply's own stream, the chat shows the question with its options and an
+   answer field, and `POST /api/chat/question` returns the answer as the
+   tool's result (`server/questions.mjs`). A turn nobody watches, a goal, a
+   queued follow-up or a channel thread, is refused at once with the
+   instruction to end the reply with the question; an unanswered question
+   times out after ten minutes or when the reply ends, and the member hears
+   "no answer". Members are told to use it only when they cannot continue,
+   and to write a draft to a file or memory before asking where it should
+   go. `check-questions` covers the registry and the card's helper;
+   `check-team` drives the tool on an unwatched turn and on a live stream.
 4. **Replay on a fresh session.** The first prompt a session receives carries
    the recent conversation (12 turns, 12 000 characters) in a marked block,
    and the chat says "The engine session restarted; replaying…". Sessions
@@ -251,9 +262,10 @@ source confirmed each one.
 - Left undone: permission requests raised by goals and runs outside chat
   still time out; a reopened window does not fetch requests pending in
   another window (`GET /api/chat/permissions` exists for it); user-added
-  connector tools are not enumerated into `availableTools`; a member's
-  questions arrive as the end of its reply, not as a card (§2.1's stopgap,
-  not its full fix); channel threads stay one session per message, with
+  connector tools are not enumerated into `availableTools`; the CLI's own
+  `ask_followup_question` stays blocked, so a member that forgets
+  `squad_ask` asks at the end of its reply; channel threads stay one
+  session per message, with
   the tool notes of §2.5 in the text history rather than a warm session;
   the bundled CLI is pinned by hand with `check:cli-pin` as the reminder,
   not released automatically when Autohand Code ships; Keychain,

@@ -261,6 +261,10 @@ TOOLS.push({
   name: "squad_read_chat",
   description: "Read one of your saved earlier chats with the person in full (the ones listed under 'Earlier conversations' carry their ids). Use it when the person refers to something from a previous conversation that the short recall line does not cover. Returns the turns, oldest first, bounded.",
   inputSchema: { type: "object", properties: { chat_id: { type: "string", minLength: 1, maxLength: 80, description: "The saved chat's id from the recall list." } }, required: ["chat_id"], additionalProperties: false },
+}, {
+  name: "squad_ask",
+  description: "Ask the person one question and wait for their answer, when you cannot continue without it. The question shows as a card in the live chat; the answer comes back as this tool's result. Only in a conversation the person is watching: a goal, a queued follow-up or a channel turn is refused at once, and then you end your reply with the question instead. Offer up to six short options when the choice is closed.",
+  inputSchema: { type: "object", properties: { question: { type: "string", minLength: 1, maxLength: 2000 }, options: { type: "array", maxItems: 6, items: { type: "string", minLength: 1, maxLength: 120 } } }, required: ["question"], additionalProperties: false },
 });
 
 export const TEAM_TOOL_NAMES = TOOLS.map((tool) => tool.name);
@@ -359,6 +363,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
     "- When the person says remember, keep in mind, note that, or from now on, call squad_remember in that turn (scope team unless it is only about you). Do not only say you will remember: a memory exists only once squad_remember has saved it.",
     "- When the person gives you a new name or role ('your name is Robert', 'I'll call you Robert', 'be our QA lead'), call squad_set_profile with the change, then confirm. Squad tells your teammates.",
     "- For a requested reminder or anything that should happen later or repeat, call squad_schedule in this turn. The request authorizes it: do not ask for confirmation again. Report the persisted receipt. Use mode propose for an unsolicited suggestion or an explicit draft. A scheduled automation is not a blocked task.",
+    "- squad_ask asks the person one question and waits for the answer, when you cannot continue without it, in a conversation they are watching; otherwise end your reply with the question. Do not ask what you can find out with your tools.",
     "- squad_read_chat reads one of your saved earlier chats in full by the id shown in 'Earlier conversations', when the person refers to something the short recall line does not cover.",
     "- To add teammates or build an organisation of agents, call squad_propose_team with each member's role and what they own; the person confirms the roster in Squad and the members are created there. It is the only way to create Squad members. Autohand Code's create_team, add_teammate and delegate_* tools run inside your own session and never create a Squad member; do not offer them as a way to build the team.",
     "- When you need a decision or an answer from the person, finish your reply with the question and wait for their next message; ask_followup_question is not available in Squad. When a tool asks for permission, Squad shows the person an Allow/Deny card for it, so say what you are waiting for rather than treating a denial as final. Keep drafts safe: write the design or brief you promised to a file in the workspace, or save it with squad_remember, before you ask where it should go.",
@@ -375,7 +380,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   return sections.join("\n\n");
 }
 
-export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, channels = {}, chats = null, emit = () => {} }) {
+export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
   const store = createTeamStore({ stateDir });
   const sessions = new Map();
   const byToken = new Map();
@@ -668,6 +673,12 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           addReceipt(session, receipt);
           if (!receipt || ["failed", "blocked"].includes(receipt.status)) return failure(receipt?.message || "The team was not proposed.");
           return text({ status: receipt.status, proposalId: receipt.id, team: receipt.proposal?.name || "", members: (receipt.proposal?.members || []).map((member) => `${member.name} (${member.role})`), message: receipt.message, note: "The person now sees this roster under your reply with a Create team button. Nothing exists until they confirm; say that in one sentence, do not repeat the roster or quote the proposal id, and do not try to create members any other way." });
+        }
+        case "squad_ask": {
+          if (!askPerson) return failure("Questions to the person are unavailable in this runtime.");
+          const outcome = await askPerson({ runId: session.runId, memberId: session.memberId, question: args.question, options: args.options || [] });
+          if (outcome?.status === "answered") return text({ status: "answered", answer: outcome.answer });
+          return failure(`The person did not answer (${outcome?.reason || "no answer"}). Finish your reply with the question; they answer in their next message.`);
         }
         case "squad_read_chat": {
           if (!chats?.read) return failure("Saved chats are unavailable in this runtime.");

@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- A member can ask you a question mid-reply and wait for the answer (`squad_ask`): the question shows as a card under the running reply with its options and an answer field, and your answer goes straight back to the member. In a goal, a queued follow-up or a channel turn the tool refuses and the member asks in its reply instead.
 - When a member's tool needs permission, the chat now shows the request under the reply with Allow once, Allow for this reply and Deny, and the member continues with your answer instead of timing out as declined. In a direct conversation, tools marked Ask first in an Interactive member's Permissions now actually ask; goals, automations and channel work keep running without prompts.
 - Members can propose a team from a conversation (`squad_propose_team`). The roster appears under the reply with Create team; the members are created through the same path as New team at the Edit files level, and nothing exists until you confirm.
 - "Allow for this reply" on a permission card now covers every later request for that tool in the same reply, so a member writing six files asks once.

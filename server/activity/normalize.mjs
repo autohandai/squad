@@ -241,8 +241,16 @@ class Feed {
     this.openApproval = null;
   }
 
-  approvalResolved({ decision, source, at }) {
+  approvalResolved({ decision, source, at, answer = "", reason = "" }) {
     if (!this.openApproval) return;
+    if (decision === "answered" || decision === "unanswered") {
+      // A question to the person: the answer itself is the outcome.
+      this.openApproval.outcome = decision === "answered" ? `answered: ${clamp(text(answer), OUTCOME_MAX)}` : `no answer (${text(reason) || (source === "closed" ? "the reply ended" : "timed out")})`;
+      this.openApproval.state = decision === "answered" ? "done" : "failed";
+      this.openApproval.endedAt = at || this.openApproval.endedAt;
+      this.openApproval = null;
+      return;
+    }
     const allowed = String(decision || "").startsWith("allow");
     this.openApproval.outcome = source === "closed"
       ? "not answered before the reply ended; denied"
@@ -710,6 +718,14 @@ function foldEvent(feed, event) {
     // happened instead of a bare "answered".
     case "permission_resolved":
       feed.approvalResolved({ decision: event.decision, source: event.source, at });
+      return;
+    // A question to the person (squad_ask) and its answer from the chat
+    // card, or the reply moving on without one (ADR-0161 §2.1).
+    case "question_request":
+      feed.approval({ title: `Asks you: ${text(event.question)}`, detail: Array.isArray(event.options) && event.options.length ? `Options: ${event.options.join(" · ")}` : "", at });
+      return;
+    case "question_answered":
+      feed.approvalResolved({ decision: event.answer ? "answered" : "unanswered", source: event.source, answer: event.answer, reason: event.reason, at });
       return;
     case "error":
       feed.error({ message: event.error || event.message || event.title || event.content, at });

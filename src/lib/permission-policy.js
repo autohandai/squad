@@ -74,6 +74,7 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
     title: "Squad team tools",
     tools: [
       ["squad_team", "allow"],
+      ["squad_ask", "allow"],
       ["squad_message", "allow"],
       ["squad_replies", "allow"],
       ["squad_teach", "allow"],

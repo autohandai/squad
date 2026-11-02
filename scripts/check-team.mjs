@@ -151,6 +151,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
       await call('squad_task', { op: 'done', id: added.taskId, outcome: 'Release notes reviewed.' });
     }
     if (scenario === 'task-loop') for (let index = 0; index < 10; index += 1) await call('squad_task', { op: 'add', title: 'Step ' + index });
+    if (scenario === 'ask') await call('squad_ask', { question: 'Which pie should we feature first?', options: ['Apple', 'Cherry'] });
     if (scenario === 'old-name') await call('squad_message', { to: 'Noah', message: 'Still there?', wait_seconds: 30 });
     if (scenario === 'schedule') await call('squad_schedule', { title: 'Call Sam', instructions: 'Remind Igor to call Sam about the contract.', schedule: { kind: 'once', date: '2099-01-02', time: '09:00' }, timezone: 'Pacific/Auckland' });
     if (scenario === 'schedule-nozone') await call('squad_schedule', { title: 'Stretch', instructions: 'Remind Igor to stretch.', schedule: { kind: 'once', date: '2099-01-03', time: '15:00' } });
@@ -162,7 +163,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
 
 try {
   // --- pure pieces --------------------------------------------------------
-  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat"]);
+  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask"]);
   assert.deepEqual([...SQUAD_TEAM_TOOLS].sort(), [...TEAM_TOOL_NAMES].sort(), "the permission rows people see are exactly the tools the team server offers (ADR-0161)");
   const roster = [{ id: "a1", name: "Eva Green" }, { id: "a2", name: "Noah" }, { id: "a3", name: "Max Power" }, { id: "a4", name: "Max Steel" }];
   assert.equal(resolveTeammate("@Eva,", roster).member?.id, "a1", "a first name with @ and a comma finds the teammate");
@@ -270,6 +271,41 @@ try {
   assert.equal(channelMessages.length, 2, "publication is persisted once and the follow-up is in its thread");
   assert.equal(channelMessages[1].parentMessageId, channelMessages[0].id);
   assert.equal(channelCalls.find(entry => entry.name === "squad_create_channel").response.result.structuredContent.status, "proposed", "MCP channel creation retains the person's existing Ask policy");
+
+  // A question to the person (squad_ask, ADR-0161 §2.1). On a turn nobody
+  // watches (the JSON route) it is refused at once; on a live stream the
+  // card event arrives, the answer is posted, and the tool returns it.
+  result = await chat(noah, "team-scenario-ask");
+  log = await entries();
+  const unwatchedAsk = log.filter(entry => entry.scenario === "ask" && entry.name === "squad_ask").at(-1);
+  assert.ok(unwatchedAsk?.response.result.isError && /Finish the reply with the question/.test(JSON.stringify(unwatchedAsk.response.result)), `an unwatched turn is told to ask in its reply: ${JSON.stringify(unwatchedAsk?.response.result).slice(0, 300)}`);
+  {
+    const seen = [];
+    const response = await fetch(`${origin}/api/chat/stream`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: noah.id, agent: noah, workspace: root, prompt: "team-scenario-ask", resumeSession: false, squadMembers, requestId: "chat-ask-1" }) });
+    const decoder = new TextDecoder(); let pending = "";
+    for await (const chunk of response.body) {
+      pending += decoder.decode(chunk, { stream: true }); let end;
+      while ((end = pending.indexOf("\n\n")) >= 0) {
+        const frame = pending.slice(0, end); pending = pending.slice(end + 2);
+        const kind = frame.match(/^event: (.+)$/m)?.[1];
+        const data = frame.split("\n").filter(line => line.startsWith("data: ")).map(line => line.slice(6)).join("\n");
+        if (!kind || !data) continue;
+        const event = JSON.parse(data);
+        seen.push({ kind, type: event.type, requestId: event.requestId, answer: event.answer });
+        if (kind === "sdk" && event.type === "question_request") {
+          assert.deepEqual(event.options, ["Apple", "Cherry"]);
+          const listed = await api(`/api/chat/questions?agentId=${noah.id}`);
+          assert.equal(listed.data.pending.length, 1, "the pending question is listed for a reopened window");
+          const posted = await api("/api/chat/question", { requestId: event.requestId, answer: "Cherry" });
+          assert.equal(posted.success, true, JSON.stringify(posted));
+        }
+      }
+    }
+    assert.ok(seen.some(event => event.type === "question_answered" && event.answer === "Cherry"), `the window hears the answer: ${JSON.stringify(seen.filter(event => /question/.test(String(event.type))))}`);
+    log = await entries();
+    const askedCall = log.filter(entry => entry.scenario === "ask" && entry.name === "squad_ask").at(-1);
+    assert.deepEqual(askedCall.response.result.structuredContent, { status: "answered", answer: "Cherry" }, `the member receives the answer: ${JSON.stringify(askedCall.response.result).slice(0, 300)}`);
+  }
 
   // A member that only edits its plan is told to do the work (ADR-0161 §13).
   result = await chat(noah, "team-scenario-task-loop");

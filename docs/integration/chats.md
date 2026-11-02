@@ -23,6 +23,8 @@ Module files:
 | `DELETE /api/members/:id/chats/:chatId` | `{ removed }` |
 | `GET /api/members/:id/recall` | `{ text, counts }` — the "Earlier conversations" block the member receives on its next direct-message turn (ADR-0115); `counts` is `{ ownChats, otherChats, otherTurns, channels }` |
 | `POST /api/chat/reset` | `{ agentId, closed, forgotten }` — `forgotten` is the number of harness ids cleared |
+| `POST /api/chat/question` | `{ requestId, agentId, question, options, answer }` — the person's answer to a member's `squad_ask` question (ADR-0161 §2.1); body `{ requestId, answer }`. 410 once answered or after the reply ended |
+| `GET /api/chat/questions` | `{ pending: [...] }` — questions still waiting, `?agentId=` to filter; for a reopened window |
 | `GET /api/members/:id/transcript` | `{ messages, turns, live }` — the member's direct conversation from the bridge's runs (ADR-0163), oldest first, two messages per turn with ids `<requestId>-u` / `<requestId>-a`; `?since=<iso>` leaves out turns before a chat was put away, `?limit=` newest turns (60, max 200), `?name=` the member's name for the placeholder bodies. The newest 12 answers carry `trace` |
 
 A summary is `{ id, memberId, title, startedAt, endedAt, createdAt, harness, workspace, messageCount, turns, limited, resumable }`. `limited` means stream events or trace events were dropped to fit; `resumable` means the record holds at least one engine session id.

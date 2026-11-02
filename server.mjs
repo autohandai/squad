@@ -5,6 +5,7 @@ import { SdkSessionPool } from "./server/sdk-sessions.mjs";
 import { PermissionApprovalError, PermissionApprovals } from "./server/permission-approvals.mjs";
 import { ChangeBatches } from "./server/change-batches.mjs";
 import { ENGINE_CLEANUP_MS, withDeadline } from "./server/deadline.mjs";
+import { PersonQuestionError, PersonQuestions } from "./server/questions.mjs";
 import { conversationReplay } from "./server/chats/replay.mjs";
 import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
@@ -335,6 +336,8 @@ const otel = new OtelLogger({
 let sdkSessions = null;
 // Permission requests of live Autohand turns, answered from the chat (ADR-0161).
 const permissionApprovals = new PermissionApprovals({ log: (message) => logEvent(SEVERITY.WARN, message, { "event.name": "chat.permission.warn" }) });
+// Questions a member asks the person mid-reply (squad_ask, ADR-0161 §2.1).
+const personQuestions = new PersonQuestions({ log: (message) => logEvent(SEVERITY.WARN, message, { "event.name": "chat.question.warn" }) });
 // Staged file changes of every SDK turn, accepted at turn end so they land
 // on disk (ADR-0161): the CLI's RPC preview mode waits for this decision.
 const changeBatches = new ChangeBatches({ log: (message) => logEvent(SEVERITY.WARN, message, { "event.name": "chat.changes.warn" }) });
@@ -484,6 +487,7 @@ const team = createTeamService({
   isBusy: (memberId) => isMemberBusy(memberId),
   deliver: deliverTeamMessage,
   runAction: runTeamAction,
+  askPerson: ({ runId, memberId, question, options }) => personQuestions.ask({ runId, agentId: memberId, question, options }),
   getModels: async (memberId, input) => {
     const payload = await withSavedMember({ agentId: memberId });
     const configuration = normalizeModelRouting(payload.agent?.modelRouting);
@@ -3386,7 +3390,7 @@ function runtimeMemberInstructions(agentRuntime) {
     "Current tool permissions govern execution even when a role describes a broader capability. Ask before crossing role or project boundaries, and hand off work to an existing teammate when appropriate. Report observed results and remaining blockers; never invent verification.",
     // The CLI's follow-up question cannot reach a Squad window, and a
     // permission prompt now shows as an Allow/Deny card in the chat (ADR-0161).
-    "Questions and permissions in Squad: when you need the person to decide something, end your reply with the question and wait for their next message (ask_followup_question is not available here). A tool that needs permission pauses while the person sees an Allow/Deny card; a denial means they chose not to, so offer the next best step instead of retrying. Before asking where a draft should go, write it to a file in the workspace or save it with squad_remember so it survives a session restart.",
+    "Questions and permissions in Squad: when you cannot continue without the person's answer, call squad_ask (they see a card and you get the answer back); for anything that can wait, end your reply with the question and they answer in their next message (ask_followup_question is not available here). A tool that needs permission pauses while the person sees an Allow/Deny card; a denial means they chose not to, so offer the next best step instead of retrying. Before asking where a draft should go, write it to a file in the workspace or save it with squad_remember so it survives a session restart.",
   ].filter(Boolean).join("\n");
 }
 
@@ -7837,6 +7841,13 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
   // Every turn is a run (ADR-0113): the Execution panel lists it whichever
   // engine answers, Stop there stops it, and the record survives a restart.
   const run = preparedRun || beginChatRun(payload, workId, startedAt);
+  // A question the member asks mid-reply (squad_ask, ADR-0161 §2.1) reaches
+  // the window through this reply's own stream, on a direct turn a person
+  // is watching; a goal, a queued follow-up or a channel turn stays
+  // unwatched and the tool refuses at once.
+  const detachQuestions = payload._personWatching === true && isPersonTurn(payload)
+    ? personQuestions.attach(workId, (data) => originalStream.send("sdk", data))
+    : () => {};
   const forwardAbort = () => run.abortController?.abort();
   if (signal?.aborted) forwardAbort(); else signal?.addEventListener("abort", forwardAbort, { once: true });
   const runSignal = run.abortController.signal;
@@ -7869,6 +7880,8 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
     throw error;
   } finally {
     signal?.removeEventListener("abort", forwardAbort);
+    personQuestions.settleRun(workId, { reason: runSignal.aborted ? "the reply was stopped" : "the reply ended" });
+    detachQuestions();
     await finishComputerWork(workId).catch(() => {});
     await finishVaultWork(workId).catch(() => {});
     await finishTeamWork(workId).catch(() => {});
@@ -8261,7 +8274,9 @@ async function streamChat(payload, res) {
   const abortStream = () => { if (streamOpen && !controller.signal.aborted) controller.abort(clientClosedReason()); };
   res.on("close", abortStream);
   try {
-    const result = await executeChatTurn(payload, { stream, signal: controller.signal, startedAt });
+    // A person is watching this reply: a member's squad_ask can show its
+    // card here (executeChatTurn attaches the question stream to the run).
+    const result = await executeChatTurn({ ...payload, _personWatching: true }, { stream, signal: controller.signal, startedAt });
     return { status: "completed", preview: String(result?.reply || "").slice(0, 140) };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -8522,6 +8537,24 @@ async function handleApi(req, res, url) {
 
   if (url.pathname === "/api/chat/permissions" && req.method === "GET") {
     json(res, 200, { success: true, data: { pending: permissionApprovals.list(String(url.searchParams.get("agentId") || "")) } });
+    return true;
+  }
+
+  // The person's answer to a member's question (squad_ask, ADR-0161 §2.1).
+  if (url.pathname === "/api/chat/question" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const answered = personQuestions.answer(String(payload.requestId || ""), payload.answer);
+      logEvent(SEVERITY.INFO, `question answered for ${answered.agentId}`, { "event.name": "chat.question.answered", "autohand.member.id": answered.agentId });
+      json(res, 200, { success: true, data: answered });
+    } catch (error) {
+      json(res, error instanceof PersonQuestionError ? error.status : 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/chat/questions" && req.method === "GET") {
+    json(res, 200, { success: true, data: { pending: personQuestions.list(String(url.searchParams.get("agentId") || "")) } });
     return true;
   }
 

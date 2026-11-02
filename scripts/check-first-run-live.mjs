@@ -130,6 +130,8 @@ async function awaitIdle(memberId, label, timeout = 900000) {
 }
 // The member whose chat the page shows, from its URL.
 const currentMemberId = () => browser.evaluate("new URLSearchParams(location.search).get('member') || ''");
+const QUESTION_ANSWER = 'Apple pie first; it is the shop\'s best seller.';
+const questionsAnswered = [];
 async function sendAnswering(prompt, label, choice = 'Allow for this reply', timeout = 900000) {
   const memberId = await currentMemberId();
   if (memberId) await awaitIdle(memberId, label, timeout);
@@ -151,6 +153,16 @@ async function sendAnswering(prompt, label, choice = 'Allow for this reply', tim
         if (answered.includes(requestId)) continue;
         await browser.evaluate(`(() => { const row = document.querySelector('[data-request-id="${requestId}"]'); const button = row && [...row.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(choice)}); if (button) button.click(); })()`);
         answered.push(requestId);
+      }
+      // A question card (squad_ask): take its first option, or type an answer.
+      const questions = await browser.evaluate(`[...document.querySelectorAll('[data-testid="question-request"]')].map(e => e.dataset.requestId)`);
+      for (const requestId of questions) {
+        if (answered.includes(requestId)) continue;
+        const option = await browser.evaluate(`(() => { const row = document.querySelector('[data-request-id="${requestId}"]'); const button = row && [...row.querySelectorAll('button[type="button"]')].find(b => b.textContent.trim()); if (!button) return ''; const label = button.textContent.trim(); button.click(); return label; })()`);
+        if (!option) await browser.evaluate(`(() => { const row = document.querySelector('[data-request-id="${requestId}"]'); const input = row && row.querySelector('textarea'); if (!input) return; const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(input, ${JSON.stringify(QUESTION_ANSWER)}); input.dispatchEvent(new Event('input', { bubbles: true })); row.querySelector('form').requestSubmit(); })()`);
+        answered.push(requestId);
+        questionsAnswered.push({ requestId, answer: option || QUESTION_ANSWER });
+        log(`${label}: answered the member's question with ${JSON.stringify(option || QUESTION_ANSWER)}`);
       }
       return false;
     }, label, timeout);
@@ -229,6 +241,19 @@ try {
   await shot('02-review');
   await save({ status: 'in progress' });
   log('PASS the first review answered');
+
+  // 2b. A question back to the person (§2.1): the member asks with
+  // squad_ask, the card is answered from the chat, and the reply continues
+  // with the answer.
+  const questionsBefore = questionsAnswered.length;
+  const askedBack = await sendAnswering('Before you propose anything: ask me one question with squad_ask about which pie the shop should feature first, offering two options, then continue with my answer in one sentence.', 'question back to me', 'Allow once');
+  assert.ok(questionsAnswered.length > questionsBefore, `the member asked a question through the card: ${JSON.stringify(askedBack.sdk.filter(event => /question/.test(String(event.type))).slice(0, 4))}`);
+  const chosen = questionsAnswered[questionsAnswered.length - 1].answer;
+  assert.ok(new RegExp(chosen.split(/\s+/)[0], 'i').test(askedBack.result.reply), `the reply carries the answer "${chosen}": ${askedBack.result.reply.slice(0, 300)}`);
+  observations.push({ step: 'question', answer: chosen, replyPreview: askedBack.result.reply.slice(0, 300) });
+  await shot('02b-question');
+  await save({ status: 'in progress' });
+  log('PASS a question to the person was answered from the chat');
 
   // 3. A team, through the team builder, from the chat.
   const proposalTurn = await send('Propose a team of three Squad members to build the pie shop website in this repository: a Frontend Developer, a Web Designer and a QA Engineer, each with one sentence on what they own. Use squad_propose_team now, then stop; I will confirm it in Squad.', 'team proposal');

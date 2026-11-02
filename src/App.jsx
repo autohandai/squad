@@ -296,9 +296,11 @@ import { OutsideSessionsSettings } from "@/components/settings/OutsideSessionsSe
 import { runsForMember } from "@/lib/external-sessions";
 import { FolderAccessCard } from "@/components/chat/FolderAccessCard";
 import { PermissionApprovalCard } from "@/components/chat/PermissionApprovalCard";
+import { QuestionCard } from "@/components/chat/QuestionCard";
 import { ScheduleOffer } from "@/components/chat/ScheduleOffer";
 import { TeamProposalCard } from "@/components/chat/TeamProposalCard";
 import { pendingPermissionRequests } from "@/lib/permission-requests";
+import { pendingQuestionRequests, questionActivityLabel } from "@/lib/question-requests";
 import { conversationFileName, conversationMarkdown, conversationRecord } from "@/lib/conversation-export";
 import { teamProposalReceipts } from "@/lib/team-proposals";
 import { EffortSlider } from "@/components/chat/EffortSlider";
@@ -4096,6 +4098,7 @@ function streamActivityLabel(event) {
   if (event.type === "tool_end") return event.success === false ? `${event.toolName || "Tool"} failed` : `${event.toolName || "Tool"} finished`;
   if (event.type === "permission_request") return "Waiting for your permission...";
   if (event.type === "permission_resolved") return event.decision?.startsWith("allow") ? "Permission given; continuing..." : "Permission declined; continuing...";
+  if (event.type === "question_request" || event.type === "question_answered") return questionActivityLabel(event);
   if (event.type === "status") {
     return statusEventTitle(event.status);
   }
@@ -14726,6 +14729,13 @@ function Conversation({
     onUpdateMessage?.(agent.id, message.id, { permissionDecisions: { ...(message.permissionDecisions || {}), [request.requestId]: decision } });
   }
 
+  // The person's answer to a member's question (squad_ask, ADR-0161 §2.1):
+  // it goes back to the member as the tool's result and the reply continues.
+  async function answerQuestion(message, request, answer) {
+    await api("/api/chat/question", { method: "POST", body: JSON.stringify({ requestId: request.requestId, answer }) });
+    onUpdateMessage?.(agent.id, message.id, { questionAnswers: { ...(message.questionAnswers || {}), [request.requestId]: answer } });
+  }
+
   // A proposed team (squad_propose_team) is created through the same import
   // as New team; nothing exists until the person chooses Create team.
   function decideTeamProposal(message, decision) {
@@ -14786,7 +14796,7 @@ function Conversation({
           <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} className="px-3 sm:px-3" />
           <div className="flex flex-col gap-4 px-3 py-3">
             {hasConversationMessages ? localizedMessages.map((message) => (
-              <SquadMessage key={message.id} compact agent={agent} message={message} thread={replyThreads.find(thread => thread.parentMessageId === message.id)} onReply={setReplyRoot} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} onPermissionDecision={decidePermission} onTeamProposal={decideTeamProposal} memberBusy={Boolean(chatSending)} />
+              <SquadMessage key={message.id} compact agent={agent} message={message} thread={replyThreads.find(thread => thread.parentMessageId === message.id)} onReply={setReplyRoot} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} onPermissionDecision={decidePermission} onQuestionAnswer={answerQuestion} onTeamProposal={decideTeamProposal} memberBusy={Boolean(chatSending)} />
             )) : <p className="py-3 text-sm text-muted-foreground">Send a message to {agent.name}.</p>}
             <div ref={messagesEndRef} aria-hidden="true" />
           </div>
@@ -15062,6 +15072,7 @@ function Conversation({
                           onFolderAccess={decideFolderAccess}
                           onScheduleOffer={decideScheduleOffer}
                           onPermissionDecision={decidePermission}
+                          onQuestionAnswer={answerQuestion}
                           onTeamProposal={decideTeamProposal}
                           memberBusy={Boolean(chatSending)}
                         />
@@ -15596,10 +15607,10 @@ function LaunchPermissionWarnings({ warnings = [] }) {
 }
 
 
-const SquadMessage = memo(function SquadMessage({ agent, message, thread, onReply, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onEditResend, onFolderAccess, onScheduleOffer, onPermissionDecision, onTeamProposal, memberBusy = false }) {
+const SquadMessage = memo(function SquadMessage({ agent, message, thread, onReply, computerEvidence = [], compact = false, copy = getLocaleCopy(DEFAULT_LOCALE), chatSettings = DEFAULT_CHAT_SETTINGS, onRetry, onEditResend, onFolderAccess, onScheduleOffer, onPermissionDecision, onQuestionAnswer, onTeamProposal, memberBusy = false }) {
   const isUser = message.role === "user";
   const replyAction = onReply && message.status !== "loading" && message.body ? <Button type="button" size="sm" variant="ghost" className="h-6 px-1.5 text-xs text-muted-foreground" aria-label="Reply in thread" onClick={() => onReply(thread ? {threadId:thread.id} : message)}>{thread?.replyCount ? `${thread.replyCount} ${thread.replyCount === 1 ? "reply" : "replies"}` : "Reply"}{thread?.working ? " · working" : ""}</Button> : null;
-  if (!isUser) return <AgentResponseMessage replyAction={replyAction} compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onEditResend={onEditResend} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} onPermissionDecision={onPermissionDecision} onTeamProposal={onTeamProposal} memberBusy={memberBusy} />;
+  if (!isUser) return <AgentResponseMessage replyAction={replyAction} compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onEditResend={onEditResend} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} onPermissionDecision={onPermissionDecision} onQuestionAnswer={onQuestionAnswer} onTeamProposal={onTeamProposal} memberBusy={memberBusy} />;
 
   return (
     <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
@@ -15613,11 +15624,13 @@ const SquadMessage = memo(function SquadMessage({ agent, message, thread, onRepl
   );
 });
 
-function AgentResponseMessage({ agent, message, replyAction, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onEditResend, onFolderAccess, onScheduleOffer, onPermissionDecision, onTeamProposal, memberBusy = false }) {
+function AgentResponseMessage({ agent, message, replyAction, computerEvidence = [], compact = false, chatSettings = DEFAULT_CHAT_SETTINGS, copy = getLocaleCopy(DEFAULT_LOCALE), onRetry, onEditResend, onFolderAccess, onScheduleOffer, onPermissionDecision, onQuestionAnswer, onTeamProposal, memberBusy = false }) {
   const normalizedChatSettings = normalizeChatSettings(chatSettings);
   // Permission requests the engine is waiting on (ADR-0161): answered from
   // the card below while the reply is still running.
   const pendingPermissions = useMemo(() => pendingPermissionRequests(message), [message.streamEvents, message.permissionDecisions]);
+  // Questions the member asked the person (squad_ask): answered from the card below.
+  const pendingQuestions = useMemo(() => pendingQuestionRequests(message), [message.streamEvents, message.questionAnswers]);
   // Trace normalisation and body parsing are the expensive part of a row.
   const view = useMemo(() => buildAgentResponseView(message), [message]);
   const isThinkingPlaceholder = String(message.body || "").trim() === `${agent.name} is thinking...`;
@@ -15675,6 +15688,9 @@ function AgentResponseMessage({ agent, message, replyAction, computerEvidence = 
 
         {isLoading && onPermissionDecision && pendingPermissions.length ? (
           <PermissionApprovalCard requests={pendingPermissions} memberName={agent?.name || "The member"} copy={copy} onDecide={(request, decision) => onPermissionDecision(message, request, decision)} />
+        ) : null}
+        {isLoading && onQuestionAnswer && pendingQuestions.length ? (
+          <QuestionCard requests={pendingQuestions} memberName={agent?.name || "The member"} copy={copy} onAnswer={(request, answer) => onQuestionAnswer(message, request, answer)} />
         ) : null}
 
         {hasVisibleAnswer && !isError && isNoTextReply(view.answer) ? (
