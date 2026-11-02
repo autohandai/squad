@@ -23033,7 +23033,7 @@ function PermissionLadderPanel({
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">Permission ladder</h3>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            {`Level ${activeLevel.rank}: ${activeLevel.label}. Choosing a level sets every tool below for this folder.`}
+            {`Level ${activeLevel.rank}: ${activeLevel.label}. Choosing a level sets every tool below for this folder and turns Built-in tool rules on.`}
           </p>
         </div>
         <div className="flex items-center gap-2 text-sm">

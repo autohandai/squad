@@ -54,7 +54,10 @@ source confirmed each one.
    "Squad team tools" group lists every team tool (allow at every rung;
    `squad_create_channel` stays ask on Squad's side). A person's explicit
    block still blocks. A saved profile from before the group existed gets the
-   group's defaults.
+   group's defaults. Choosing a ladder level still applies the level's preset,
+   Built-in tool rules on and full lists included (§1.5); the ladder now says
+   so in its one sentence, and team-tool access no longer depends on the
+   level.
 2. **Answer permission requests from the chat.** `server/permission-
    approvals.mjs` acknowledges each request at once, keeps it while the turn is
    live, forwards the person's decision over the SDK, and denies whatever is
@@ -248,9 +251,12 @@ source confirmed each one.
 - Left undone: permission requests raised by goals and runs outside chat
   still time out; a reopened window does not fetch requests pending in
   another window (`GET /api/chat/permissions` exists for it); user-added
-  connector tools are not enumerated into `availableTools`; the bundled CLI
-  stays 0.9.7, so denied tools stay on the model's menu (0.9.9 hides them);
-  there is no in-app Reset or conversation export. Channel thread history
-  still carries text only (ADR-0147).
+  connector tools are not enumerated into `availableTools`; a member's
+  questions arrive as the end of its reply, not as a card (§2.1's stopgap,
+  not its full fix); channel threads stay one session per message, with
+  the tool notes of §2.5 in the text history rather than a warm session;
+  the bundled CLI is pinned by hand with `check:cli-pin` as the reminder,
+  not released automatically when Autohand Code ships; Keychain,
+  `~/Library` and privacy grants stay a hand step after Reset Squad.
 - Blocking the CLI's in-process teams removes a capability some members used
   under "ask". Squad's team is the replacement; `delegate_task` remains.

@@ -28,6 +28,7 @@ list to the section for that version.
 
 ### Changed
 
+- The permission ladder says that choosing a level turns Built-in tool rules on, since a level applies its whole preset.
 - A run in the Execution panel's Runs tab now reads like the chat: "Work details · 2 tools · 1m 12s", the reply text, and the edits, commands and tools it used. The engine command line, the raw log count and the "status updates" rows are gone unless the diagnostic-output chat setting is on.
 - The bundled Autohand Code is 0.9.9 (was 0.9.7), the same release the CLI installs on its own.
 - Computer Use now runs through Autohand Computer Use, the component Autohand Code installs, so the macOS Accessibility and Screen Recording grant you gave the CLI serves Squad too. Squad's own bundled host is used only when that component is missing; the member's Permissions page says which one is active and can install Autohand Computer Use.

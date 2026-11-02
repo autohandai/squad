@@ -143,6 +143,30 @@ their shipped CLI offline. CI and release web checks run
 and controlled release responses; macOS installer smoke boots the actual
 bundled runtime with only `/usr/bin:/bin` on PATH. See ADR-0136.
 
+`bun run check:cli-pin` fails while the pinned version is behind the latest
+Autohand Code release; run it before cutting a release and move the pin when
+the first-run rehearsal below passes against the new version (ADR-0161).
+
+## First-Run Rehearsal
+
+Before a release, run the first-run path the way a new person does, against
+the packaged runtime, with the real account:
+
+```bash
+node scripts/check-first-run-live.mjs --demo --runtime="/Applications/Autohand Squad.app/Contents/Resources/runtime"
+```
+
+It covers a fresh install, Chief of Staff's first review, the team proposal
+and its creation, a permission card answered from the chat, a real sixteen
+minute idle and the continuation after the engine session closed, a message
+to a teammate, the team building the pie shop site through the approval
+cards, QA, a relay with `squad_message`, a channel mention, the Permissions
+config preview, one member on each other ready engine, and Reset Squad back
+to first run. It takes about forty-five minutes and leaves screenshots and a
+JSON record under `.codex-artifacts/first-run-live-packaged-demo/`; on a
+failure it also saves the bridge's runs, queues and sessions. `--phone` runs
+it at 390px.
+
 ## Code Signing And Notarization
 
 Signing is optional and driven entirely by repository secrets. Without them
@@ -254,6 +278,7 @@ Before a release PR, run:
 bun run check:sdk
 bun run check:server
 bun run check:release
+bun run check:cli-pin
 bun run build
 cd daemon
 cargo fmt -- --check
