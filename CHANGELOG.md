@@ -10,6 +10,8 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-11-03
+
 ### Added
 
 - A member can ask you a question mid-reply and wait for the answer (`squad_ask`): the question shows as a card under the running reply with its options and an answer field, and your answer goes straight back to the member. In a goal, a queued follow-up or a channel turn the tool refuses and the member asks in its reply instead.
