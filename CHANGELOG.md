@@ -21,12 +21,14 @@ list to the section for that version.
 - Settings › System has Reset Squad: it moves Squad's data aside and returns to first run, keeping your Autohand Code sign-in.
 - The Permissions config preview shows the member's saved config.json next to the current settings and says when they differ.
 - `bun run check:cli-pin` fails when the bundled Autohand Code is behind the latest release.
+- Opening a member now shows its conversation from any window: a second browser, the phone or a reinstalled app gets the turns the bridge ran, with the member's replies and Work details, merged into whatever that window already had.
 
 - Collective memory brings the squad's saved memories, profile Markdown and isolated Autohand memories into a searchable graph and list, with source details, groups, tags, saved connections and member colors. New Memory settings choose collection sources and shared Markdown folders; Squad MCP lets agents search, read, organize, relate and explicitly share memories within their access.
 - Members can use an ordered list of fallback coding engines and models when their primary engine cannot answer, with visible switching and automatic return after a cooldown. An optional setting lets a member manage its own fallbacks through Squad tools.
 
 ### Changed
 
+- A run in the Execution panel's Runs tab now reads like the chat: "Work details · 2 tools · 1m 12s", the reply text, and the edits, commands and tools it used. The engine command line, the raw log count and the "status updates" rows are gone unless the diagnostic-output chat setting is on.
 - The bundled Autohand Code is 0.9.9 (was 0.9.7), the same release the CLI installs on its own.
 - Computer Use now runs through Autohand Computer Use, the component Autohand Code installs, so the macOS Accessibility and Screen Recording grant you gave the CLI serves Squad too. Squad's own bundled host is used only when that component is missing; the member's Permissions page says which one is active and can install Autohand Computer Use.
 - Model overrides load names and exact IDs from the selected coding engine, with refresh and a custom-ID option, instead of requiring you to guess model names.

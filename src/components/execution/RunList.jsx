@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Workflow } from "lucide-react";
+import { ChevronRight, Workflow } from "lucide-react";
 
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { CopyButton } from "@/components/chat/CopyButton";
 import { Button } from "@/components/ui/button";
-import { normalizeActivity } from "@/lib/activity";
-import { groupRunsByDay, isLiveRun, runMetaParts, runStatusWord, runTimeLabel, trimTitle } from "@/lib/execution-panel";
+import { activityStats, chatWorkActivity, normalizeActivity } from "@/lib/activity";
+import { groupRunsByDay, isLiveRun, runDurationLabel, runMetaParts, runStatusWord, runTimeLabel, trimTitle } from "@/lib/execution-panel";
 import { cn } from "@/lib/utils";
 
 import { EmptyLine, GroupLabel, StatusDot } from "./bits";
@@ -24,7 +24,7 @@ import { EmptyLine, GroupLabel, StatusDot } from "./bits";
  *   onHandoff    (run) => open the handoff dialog
  *   focusRunId   `?panel=runs&run=<id>`: scroll to that run with output open
  */
-export function RunList({ runs = [], tasks = [], agents = [], copy = {}, locale = "en-US", AgentAvatar, api, onHandoff, focusRunId = "", now }) {
+export function RunList({ runs = [], tasks = [], agents = [], copy = {}, locale = "en-US", AgentAvatar, api, onHandoff, focusRunId = "", now, diagnostics = false }) {
   // A history link (?panel=runs&run=<id>) lands on that run with its output open.
   useEffect(() => {
     if (!focusRunId) return;
@@ -56,6 +56,7 @@ export function RunList({ runs = [], tasks = [], agents = [], copy = {}, locale 
                 api={api}
                 onHandoff={onHandoff}
                 focused={Boolean(focusRunId) && run.id === focusRunId}
+                diagnostics={diagnostics}
               />
             ))}
           </div>
@@ -65,7 +66,7 @@ export function RunList({ runs = [], tasks = [], agents = [], copy = {}, locale 
   );
 }
 
-function RunRow({ run, agent, linked, copy, locale, now, AgentAvatar, api, onHandoff, focused }) {
+function RunRow({ run, agent, linked, copy, locale, now, AgentAvatar, api, onHandoff, focused, diagnostics = false }) {
   const [stopping, setStopping] = useState(false);
   const [retry, setRetry] = useState({ busy: false, note: "" });
   const live = isLiveRun(run);
@@ -145,18 +146,25 @@ function RunRow({ run, agent, linked, copy, locale, now, AgentAvatar, api, onHan
           {meta.join(" · ")}
         </p>
         {retry.note ? <p className="mt-0.5 text-xs text-muted-foreground" role="status">{retry.note}</p> : null}
-        <RunActivity run={run} copy={copy} api={api} initialOpen={focused} />
+        <RunActivity run={run} copy={copy} api={api} initialOpen={focused} diagnostics={diagnostics} />
       </div>
     </article>
   );
 }
 
 /**
- * Run output: the activity feed folded from `run.logs` (the tail the runs
- * list carries). Once a run has finished and the disclosure is open, the full
- * history comes from `GET /api/runs/:id/activity`.
+ * What a run did, in the chat's words (ADR-0163): the same Work details line
+ * the reply carries ("Work details · 4 tools · 1m 12s"), the reply text for a
+ * chat turn, and the activity feed with the engine's status chatter, thoughts
+ * and message echoes filtered out. The command line and the Raw toggle appear
+ * only with the diagnostic-output chat setting on; a person reading the Runs
+ * tab is reading what the member did, not how the bridge started it.
+ *
+ * The feed folds `run.logs` (the tail the runs list carries); once a run has
+ * finished and the disclosure is open, the full history comes from
+ * `GET /api/runs/:id/activity`.
  */
-export function RunActivity({ run, copy = {}, api, initialOpen = false }) {
+export function RunActivity({ run, copy = {}, api, initialOpen = false, diagnostics = false }) {
   const [open, setOpen] = useState(Boolean(initialOpen));
   useEffect(() => {
     if (initialOpen) setOpen(true);
@@ -182,27 +190,41 @@ export function RunActivity({ run, copy = {}, api, initialOpen = false }) {
   }, [open, finished, api, run.id, history?.runId, logs]);
 
   const useHistory = finished && history?.runId === run.id;
-  const items = useHistory ? history.items : localItems;
+  const allItems = useHistory ? history.items : localItems;
+  const items = useMemo(() => chatWorkActivity(allItems, { diagnostics }), [allItems, diagnostics]);
   const raw = useHistory ? history.raw : logs;
-  // "Output · 1 lines", and "Waiting for output…" under a run that had
-  // already finished with none, both read wrong.
-  const summary = logs.length === 1
-    ? copy.runOutputLine || "Output · 1 line"
-    : logs.length
-      ? String(copy.runOutputLines || "Output · {count} lines").replace("{count}", String(logs.length))
-      : finished
-        ? copy.runNoOutput || "No output"
-        : copy.runWaitingForOutput || "Waiting for output…";
+  const reply = run.kind === "chat" || run.mode === "chat" ? String(run.reply || "").trim() : "";
+  const stats = activityStats(items);
+  const duration = runDurationLabel(run);
+  // "Work details · 4 tools · 1m 12s"; a turn with nothing but an answer says
+  // so, and a live turn says it is working rather than counting log lines.
+  const summary = stats.rows
+    ? [copy.workDetails || "Work details", stats.tools ? `${stats.tools} ${stats.tools === 1 ? copy.tool || "tool" : copy.tools || "tools"}` : `${stats.rows} ${stats.rows === 1 ? copy.update || "update" : copy.updates || "updates"}`, duration].filter(Boolean).join(" · ")
+    : !finished
+      ? copy.runWorking || "Working…"
+      : reply
+        ? [copy.runReplyOnly || "Reply only", duration].filter(Boolean).join(" · ")
+        : [copy.runNoWork || "No work recorded", duration].filter(Boolean).join(" · ");
+  const copyText = () => [reply, ...raw.map((entry) => (typeof entry === "string" ? entry : entry?.line ?? ""))].filter(Boolean).join("\n");
 
   return (
-    <details className="mt-0.5 text-xs" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details className="mt-0.5 text-xs" open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-testid="run-work">
       <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-3 transition-transform [details[open]>summary>&]:rotate-90" aria-hidden="true" />
         {summary}
-        {/* The output, as text, for a bug report or a terminal. */}
-        {raw.length ? <CopyButton text={() => raw.map((entry) => (typeof entry === "string" ? entry : entry?.line ?? "")).join("\n")} label="Copy output" className="size-5" /> : null}
+        {stats.failed ? <span className="text-destructive/80">· {stats.failed} {copy.failed || "failed"}</span> : null}
+        {/* The reply and the output, as text, for a bug report or a terminal. */}
+        {raw.length || reply ? <CopyButton text={copyText} label={copy.copyOutput || "Copy output"} className="size-5" /> : null}
       </summary>
-      {run.command ? <code className="mt-2 block truncate font-mono text-[11px] text-muted-foreground">{run.command}</code> : null}
-      <ActivityFeed items={items} raw={raw} showRaw={showRaw} onToggleRaw={() => setShowRaw((value) => !value)} copy={copy} className="mt-2" />
+      {reply ? (
+        <p className="mt-2 line-clamp-6 whitespace-pre-wrap break-words text-xs text-foreground" title={reply.length > 600 ? reply : undefined} data-testid="run-reply">
+          {reply.length > 600 ? `${reply.slice(0, 599)}…` : reply}
+        </p>
+      ) : null}
+      {diagnostics && run.command ? <code className="mt-2 block truncate font-mono text-[11px] text-muted-foreground">{run.command}</code> : null}
+      {items.length || (diagnostics && raw.length) ? (
+        <ActivityFeed items={items} raw={raw} showRaw={diagnostics && showRaw} onToggleRaw={diagnostics ? () => setShowRaw((value) => !value) : undefined} copy={copy} className="mt-2" />
+      ) : null}
     </details>
   );
 }

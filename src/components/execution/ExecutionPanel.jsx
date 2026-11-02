@@ -39,6 +39,9 @@ export function ExecutionPanel({
   activeTab = "runs",
   setActiveTab,
   focusRunId = "",
+  // The chat's diagnostic-output setting: with it off the Runs tab hides the
+  // command line, the Raw toggle and the engine's status chatter (ADR-0163).
+  diagnostics = false,
   copy = {},
   locale = "en-US",
   handoffRetryMode = "checkpoint",
@@ -154,6 +157,7 @@ export function ExecutionPanel({
               api={api}
               onHandoff={openRunHandoff}
               focusRunId={focusRunId}
+              diagnostics={diagnostics}
             />
           )}
         </div>

@@ -91,15 +91,17 @@ const alex = {
 };
 const noah = { ...alex, id: "asq_verify_noah", name: "Noah", role: "Frontend engineer", staffId: "verify-noah", avatar: "/avatars/birds/robin.webp", harness: { id: "autohand", executablePath: "", model: "", effort: "", access: "" } };
 const logLines = (count, finished = "completed") => [
-  { source: "stdout", line: "started read_file", at: at(5) },
-  { source: "stdout", line: "read_file completed", at: at(5) },
-  { source: "stdout", line: "started bash", at: at(4) },
-  { source: "stdout", line: finished === "failed" ? "bash failed" : "bash completed", at: at(4) },
+  // Tool lines the way appendLog writes them (source "tool"), so the feed
+  // folds them into tool rows rather than one message row.
+  { source: "tool", line: 'started read_file {"path":"README.md"}', at: at(5) },
+  { source: "tool", line: `read_file completed at ${at(5)}`, at: at(5) },
+  { source: "tool", line: 'started bash {"command":"bun test"}', at: at(4) },
+  { source: "tool", line: `bash ${finished === "failed" ? "failed" : "completed"} at ${at(4)}`, at: at(4) },
   ...Array.from({ length: Math.max(0, count - 4) }, (_, i) => ({ source: "stdout", line: `line ${i + 1} of the reply`, at: at(3) })),
 ];
 function run({ id, title, minutesAgo, duration = 90_000, status = "completed", mode = "chat", harness = "claude", agentId = alex.id, effectiveModel = null, lines = 160, reply = "Done." }) {
   return {
-    id, agentId, title, mode, kind: mode === "chat" ? "chat" : "launch", workspace: root, configPath: "", displayConfigPath: "", agentHome: "",
+    id, agentId, title, prompt: title, mode, kind: mode === "chat" ? "chat" : "launch", workspace: root, configPath: "", displayConfigPath: "", agentHome: "",
     effectiveModel, transport: harness === "autohand" ? "sdk" : harness, harness, harnessVersion: "", command: mode === "chat" ? "" : "autohand run --prompt …",
     logPath: "", status, exitCode: status === "failed" ? 1 : null, startedAt: at(minutesAgo), finishedAt: new Date(NOW - minutesAgo * 60000 + duration).toISOString(),
     durationMs: duration, channel: null, recipeId: null, canvasId: null, reply, sessionId: "", logs: logLines(lines, status),
@@ -237,7 +239,22 @@ try {
     assert.ok(!boundary, `error boundary: ${boundary?.[0]}`);
     await waitFor(async () => (await sheetText()).includes("Compare our onboarding flow"), "the focused run row", 20000);
     const body = await sheetText();
-    assert.ok(/Output · \d+ lines/.test(body), "a run row carries its output disclosure");
+    // The disclosure reads like the chat's Work details (ADR-0163): the work
+    // and the reply, never the command line or the raw count by default.
+    assert.ok(/Work details · \d+ tools?/.test(body), `a run row carries its Work details line: ${body.slice(0, 400)}`);
+    assert.ok(!/Output · \d+ lines|Raw · \d+|status updates?/.test(body), "no output count, raw toggle or status chatter without the diagnostics setting");
+    assert.ok(!body.includes("autohand run --prompt"), "the command line stays out of the Runs tab");
+    assert.ok(body.includes("Done."), "a chat turn's reply shows under its row");
+    // The conversation behind the sheet (ADR-0163): this browser profile sent
+    // none of the seeded turns, so the chat is filled from the bridge's runs,
+    // from the member's conversation start onward, and the one turn the
+    // profile does hold (the focused run's question) is not added twice.
+    // Outermost message rows only: a reply nests a second data-message-id.
+    const chatText = () => cdp.evaluate("[...document.querySelectorAll('[data-message-id]')].filter((el) => !el.parentElement.closest('[data-message-id]')).map((el) => el.innerText || '').join('\\n')");
+    const chat = await waitFor(async () => { const all = await chatText(); return all.includes("Switch plan mode off and write the NZ shortlist") ? all : ""; }, "the transcript from the bridge in the chat", 20000);
+    assert.ok(chat.includes("Done."), "the bridge's reply for that turn is in the chat");
+    assert.ok(!chat.includes("Summarise the pricing thread"), "a turn from before the conversation started (yesterday) is not shown");
+    assert.equal(chat.split("Compare our onboarding flow with the two competitors").length - 1, 1, `the turn this profile already held is not added twice:\n${chat.slice(0, 2000)}`);
     const opened = await cdp.evaluate(`(() => { const el = document.getElementById("run-${FOCUS_ID}"); const d = el && el.querySelector("details"); return Boolean(d && d.open); })()`);
     assert.ok(opened, "the linked run's output is open");
     await shoot(`${theme}-runs`);

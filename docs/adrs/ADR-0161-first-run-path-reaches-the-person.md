@@ -175,8 +175,14 @@ source confirmed each one.
   `check-team-proposals`, `check-permissions`, `check-team` and
   `check-activity` pass. `check-first-run-live` drives the whole path with
   the real account and bundled CLI and saves evidence under
-  `.codex-artifacts/first-run-live/`; its result is recorded in the
-  CHANGELOG entry for this change.
+  `.codex-artifacts/first-run-live*/`. `--phone` runs it at 390px,
+  `--runtime=<dir>` runs a packaged app's own runtime, and `--demo` is the
+  release rehearsal the report asked for: the created team builds the pie
+  shop site through the approval cards, QA tests it, Chief of Staff relays
+  findings with `squad_message`, two members answer a channel mention, the
+  config preview is checked against the saved file, one member on each other
+  ready engine answers a message, the warm session is left idle for sixteen
+  minutes before the continuation, and the run ends with Reset Squad.
 - `check-agent-channel-actions` fails one assertion (a blocked channel
   proposal reports `failed` rather than `blocked`) on HEAD before this change
   as well; left as found.

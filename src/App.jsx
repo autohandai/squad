@@ -390,6 +390,7 @@ import { CanvasList } from "@/components/canvases/CanvasList";
 import { CanvasPanel } from "@/components/canvases/CanvasPanel";
 import { canvasMentionItems, expandCanvasMentions, isCanvasMentionQuery } from "@/lib/canvases";
 import { activityFromTrace, activityStats, chatWorkActivity, classifyTool, normalizeActivity } from "@/lib/activity";
+import { mergeTranscript, transcriptKey } from "@/lib/transcript";
 import { ExecutionPanel } from "@/components/execution/ExecutionPanel";
 import { RunList } from "@/components/execution/RunList";
 import { latestFailedHandoff, latestHandoff, latestPendingHandoff, taskOwner } from "@/lib/handoffs";
@@ -7216,6 +7217,35 @@ function App() {
     setFolderRequests((current) => current.map((item) => item.memberId === agentId && item.folder === folder && item.status === "pending" ? { ...item, status, settledAt: new Date().toISOString() } : item));
   }
 
+  // The conversation from the bridge's side (ADR-0163). A window that did not
+  // send a turn (a second browser, the phone, a reinstalled app) opened the
+  // member to an empty chat while the bridge held every turn as a run. On
+  // opening a member, and whenever one of its chat turns starts or finishes,
+  // the turns this window has never seen are merged in; the window that
+  // sent them already has them under the same ids and sees no change.
+  const activeTranscriptKey = transcriptKey(runs, activeAgent?.id);
+  useEffect(() => {
+    const agent = activeAgent;
+    if (!agent?.id || !bridgeReachable) return undefined;
+    let cancelled = false;
+    const since = agent.conversationStartedAt || "";
+    const query = new URLSearchParams({ name: agent.name || "" });
+    if (since) query.set("since", since);
+    api(`/api/members/${encodeURIComponent(agent.id)}/transcript?${query}`)
+      .then((data) => {
+        if (cancelled || !Array.isArray(data?.messages) || !data.messages.length) return;
+        const formatTime = (iso) => new Date(iso).toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" });
+        setMessagesByAgent((current) => {
+          const existing = Array.isArray(current[agent.id]) ? current[agent.id] : [];
+          const merged = mergeTranscript(existing, data.messages, { since, formatTime });
+          return merged.messages === existing ? current : { ...current, [agent.id]: merged.messages };
+        });
+      })
+      .catch(() => { /* the bridge is away or has no runs for this member; the window keeps what it has */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAgent?.id, activeAgent?.conversationStartedAt, bridgeReachable, activeTranscriptKey]);
+
   async function loadPreviousChats(agentId) {
     if (!agentId) return [];
     setPreviousChatsLoading(true);
@@ -7411,6 +7441,9 @@ function App() {
       agentId,
       mode: launch.mode === "goal" ? "goal" : "prompt",
       prompt: [openingBriefing, canvasAttachment.prompt].filter(Boolean).join("\n\n"),
+      // What the person typed, for the transcript another window reads
+      // (ADR-0163); `prompt` above carries the briefing as well.
+      personPrompt: prompt,
       workspace: selectedWorkspace,
       policy: launch.policy,
       model: launch.model,
@@ -15309,6 +15342,7 @@ function Conversation({
             activeTab={panelTab}
             setActiveTab={setPanelTab}
             focusRunId={focusRunId}
+            diagnostics={normalizeChatSettings(chatSettings).displayCliOutput === true}
             copy={copy}
             locale={locale}
             handoffRetryMode={handoffRetryMode}

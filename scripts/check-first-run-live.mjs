@@ -23,7 +23,7 @@ import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs'
 
 const source = process.env.SQUAD_LIVE_CONFIG || process.env.AUTOHAND_USER_CONFIG_PATH || join(process.env.AUTOHAND_HOME || join(homedir(), '.autohand'), 'config.json');
 const original = JSON.parse(await readFile(source, 'utf8'));
-const evidenceDir = resolve('.codex-artifacts', `first-run-live${process.argv.includes('--phone') ? '-phone' : ''}${process.argv.some(argument => argument.startsWith('--runtime=')) ? '-packaged' : ''}`);
+const evidenceDir = resolve('.codex-artifacts', `first-run-live${process.argv.includes('--phone') ? '-phone' : ''}${process.argv.some(argument => argument.startsWith('--runtime=')) ? '-packaged' : ''}${process.argv.includes('--demo') ? '-demo' : ''}`);
 await mkdir(evidenceDir, { recursive: true });
 const repoArgument = process.argv.find(argument => argument.startsWith('--repo='))?.slice('--repo='.length);
 const runtimeDir = process.argv.find(argument => argument.startsWith('--runtime='))?.slice('--runtime='.length) || '';
@@ -52,6 +52,14 @@ const bridge = await startBridge({ ...(runtimeDir ? { cwd: resolve(runtimeDir), 
 } });
 let browser;
 const phoneRun = process.argv.includes('--phone');
+// --demo: after the first-run path, have the created team build the pie shop
+// site (writes approved from the cards), screenshot it at both widths, have
+// QA test it, Chief of Staff relay findings with squad_message, two members
+// answer a channel mention, check the Permissions config preview against the
+// saved file (§1.6), create one member on each other ready engine, and wait
+// a real sixteen minutes before the continuation so the idle close is the one
+// the person hits. About forty minutes.
+const demoRun = process.argv.includes('--demo');
 const desktop = phoneRun ? { width: 390, height: 844, deviceScaleFactor: 2, mobile: true } : { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false };
 const phone = { width: 390, height: 844, deviceScaleFactor: 2, mobile: true };
 async function shot(name) {
@@ -86,6 +94,30 @@ async function send(prompt, label, timeout = 600000) {
       return turn?.result ? turn : false;
     }, label, timeout);
   } finally { clearInterval(ticker); }
+}
+// Like send(), answering every permission card with one choice while the reply runs.
+async function sendAnswering(prompt, label, choice = 'Allow for this reply', timeout = 900000) {
+  const before = await submit(prompt, label);
+  const ticker = setInterval(() => log(`waiting: ${label}`), 30000);
+  const answered = [];
+  try {
+    return await until(async () => {
+      const turn = (await turns())[before];
+      if (turn?.error || turn?.captureError) throw new Error(JSON.stringify(turn.error || turn.captureError));
+      if (turn?.result) return { ...turn, answered };
+      const pending = await browser.evaluate(`[...document.querySelectorAll('[data-testid="permission-request"]')].map(e => e.dataset.requestId)`);
+      for (const requestId of pending) {
+        if (answered.includes(requestId)) continue;
+        await browser.evaluate(`(() => { const row = document.querySelector('[data-request-id="${requestId}"]'); const button = row && [...row.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(choice)}); if (button) button.click(); })()`);
+        answered.push(requestId);
+      }
+      return false;
+    }, label, timeout);
+  } finally { clearInterval(ticker); }
+}
+async function openChat(memberId) {
+  await browser.navigate(bridge.origin + '/conversations/new?member=' + encodeURIComponent(memberId));
+  await until(() => browser.evaluate(`!!document.querySelector('main textarea') && !document.getElementById('boot')`), 'member conversation', 30000);
 }
 const members = async () => Object.entries((await bridge.api('/api/channels')).data.agentChannelAccess || {}).filter(([, record]) => record?.agent && !record.removed).map(([id, record]) => ({ id, name: record.agent.name, role: record.agent.role }));
 
@@ -191,7 +223,14 @@ try {
   log('PASS a permission request was approved from the chat and the file exists');
 
   // 5. The engine session is lost; the conversation is not.
-  await bridge.api('/api/sessions', 'DELETE');
+  if (demoRun) {
+    // The idle close the person hits: the warm session's TTL is fifteen minutes.
+    log('idling sixteen minutes so the warm session closes on its own');
+    await new Promise(resolve => setTimeout(resolve, 16 * 60_000));
+    assert.equal((await bridge.api('/api/sessions')).data.sessions.filter(session => session.agentId === id).length, 0, 'the idle session was closed by the pool');
+  } else {
+    await bridge.api('/api/sessions', 'DELETE');
+  }
   const recalled = await send('Without reading any files: what file did you just create for me, and what were its three section headings?', 'continuation after the engine restarted');
   assert.ok(recalled.sdk.some(event => event.status === 'session_replay'), `the restarted session replayed the conversation: ${JSON.stringify(recalled.sdk.slice(0, 6))}`);
   assert.match(recalled.result.reply, /plan\.md/i, `the member kept its place: ${recalled.result.reply.slice(0, 400)}`);
@@ -208,6 +247,106 @@ try {
   await shot('05-teammate');
   assert.deepEqual(browser.errors, [], 'no browser exceptions');
   log('PASS first-run path: review, team, approval, restart, teammate');
+
+  if (demoRun) {
+    const { createServer } = await import('node:http');
+    const { readFile: readFileAsync } = await import('node:fs/promises');
+    const frontend = team.find(member => /frontend/i.test(member.role)) || team.find(member => member.id !== id);
+    const qa = team.find(member => /qa|test/i.test(member.role)) || team.find(member => member.id !== id && member.id !== frontend.id);
+
+    // D1. The team builds the site; every write is approved from the cards.
+    await openChat(frontend.id);
+    const built = await sendAnswering('Build the pie shop website in this repository now: a static site with index.html (home with hero and featured pies), menu.html (six pies with prices), hours.html (opening hours and address), order.html (an order form with name, phone, pie, quantity, pickup time and a client-side confirmation), one shared styles.css (warm neighbourhood-bakery look, mobile-first, readable on a 390px phone and a 1440px desktop) and one app.js. Use your file tools; I will approve the writes. When done, list the files you created.', 'site build');
+    const files = ['index.html', 'menu.html', 'hours.html', 'order.html', 'styles.css'];
+    for (const file of files) await access(join(repo, file));
+    observations.push({ step: 'build', files, approvals: built.answered.length, replyPreview: String(built.result.reply || '').slice(0, 300) });
+    await save({ status: 'in progress' });
+    log(`PASS the Frontend Developer built the site (${built.answered.length} permission cards answered for this reply)`);
+
+    // D2. The site at both widths.
+    const server = createServer(async (request, response) => {
+      const file = resolve(repo, '.' + (new URL(request.url, 'http://x').pathname === '/' ? '/index.html' : new URL(request.url, 'http://x').pathname));
+      if (!file.startsWith(repo + '/')) { response.writeHead(403); response.end(); return; }
+      let body;
+      try { body = await readFileAsync(file); } catch { response.writeHead(404); response.end(); return; }
+      response.writeHead(200, { 'content-type': file.endsWith('.css') ? 'text/css' : file.endsWith('.js') ? 'text/javascript' : 'text/html' });
+      response.end(body);
+    });
+    await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
+    const site = `http://127.0.0.1:${server.address().port}`;
+    for (const page of ['index', 'menu', 'order']) {
+      await browser.navigate(`${site}/${page}.html`);
+      await until(() => browser.evaluate(`document.readyState === 'complete' && document.body.innerText.length > 20`), `${page} renders`, 15000);
+      await shot(`site-${page}`);
+    }
+    const siteTitle = await browser.evaluate('document.title');
+    server.close();
+    observations.push({ step: 'site', title: siteTitle });
+
+    // D3. QA tests it (reads allowed at Edit files; any command is approved from the card).
+    await openChat(qa.id);
+    const tested = await sendAnswering('Test the pie shop site the Frontend Developer built in this repository (index.html, menu.html, hours.html, order.html, styles.css, app.js): read every file, check every internal link resolves to an existing file, check the CSS handles a 390px phone and a 1440px desktop, and check the order form validation in app.js. Report findings as a short list with severity. Do not edit any file.', 'QA report');
+    assert.ok(/high|medium|low|finding|issue/i.test(tested.result.reply), `QA reported findings: ${tested.result.reply.slice(0, 200)}`);
+    observations.push({ step: 'qa', replyPreview: tested.result.reply.slice(0, 600), ...toolSummary(tested) });
+    await shot('06-qa');
+    log('PASS the QA Engineer tested the site');
+
+    // D4. Chief of Staff relays the findings between teammates.
+    await openChat(id);
+    const relayed = await sendAnswering(`Ask ${qa.name} with squad_message for their top finding on the pie shop site, then send it to ${frontend.name} with squad_message asking them to fix it now and reply when done (use squad_replies if needed). Report what each said.`, 'coordination');
+    const relayTools = (relayed.result.trace?.toolCalls || []).map(call => call.name);
+    assert.ok(relayTools.some(name => /squad_message/.test(name)), `messages between agents were used: ${relayTools.join(', ')}`);
+    observations.push({ step: 'coordination', tools: relayTools, receipts: (relayed.result.channelActions || []).map(action => [action.type, action.status]), replyPreview: relayed.result.reply.slice(0, 500) });
+    await shot('07-coordination');
+    log('PASS Chief of Staff relayed findings between teammates with squad_message');
+
+    // D5. A channel mention answered by two members.
+    const channel = (await bridge.api('/api/channels')).data.channels.find(item => item.memberIds?.includes(frontend.id) && item.memberIds?.includes(qa.id));
+    assert.ok(channel, 'the team channel exists');
+    await browser.navigate(bridge.origin + '/channels/' + encodeURIComponent(channel.id));
+    await until(() => browser.evaluate(`!!document.querySelector('main textarea')`), 'team channel', 30000);
+    await browser.fill('main textarea', `@${qa.name} in one sentence, is the order form safe to demo? @${frontend.name} in one sentence, what would you polish first?`);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await browser.evaluate(`(() => { const b = [...document.querySelectorAll('main button')].find(x => /send/i.test(x.getAttribute('aria-label') || '')); if (!b) throw new Error('no send button'); b.click(); })()`);
+    const replies = await until(async () => {
+      const state = (await bridge.api('/api/channels')).data;
+      const list = state.messages.filter(message => message.channelId === channel.id && message.role !== 'user' && message.body && !/is typing/.test(message.body) && message.status !== 'error');
+      return list.length >= 2 ? list : false;
+    }, 'two channel replies', 600000);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    await shot('08-channel');
+    observations.push({ step: 'channel', channel: channel.name, replies: replies.map(message => ({ from: message.authorName || message.agentId, preview: String(message.body).slice(0, 160) })) });
+    log('PASS two members answered a channel mention');
+
+    // D6. §1.6: the config preview shows the saved file and says it matches.
+    await browser.navigate(bridge.origin + '/squad-members/' + encodeURIComponent(id) + '/permissions');
+    await until(() => browser.evaluate(`!!document.querySelector('[data-testid="permission-config-preview"] summary')`), 'config preview', 30000);
+    await browser.evaluate(`document.querySelector('[data-testid="permission-config-preview"] summary').click()`);
+    await until(() => browser.evaluate(`/matches these settings|differs from these settings/.test(document.querySelector('[data-testid="permission-config-preview"]').textContent)`), 'saved config read from disk', 30000);
+    const previewText = await browser.evaluate(`document.querySelector('[data-testid="permission-config-preview"]').textContent`);
+    assert.ok(previewText.includes('Saved on disk'), 'the saved config.json is shown');
+    assert.ok(previewText.includes('mcp__autohand-squad__squad_team'), 'the saved file carries the team tool names');
+    await shot('09-config-preview');
+    observations.push({ step: 'config-preview', verdict: previewText.includes('matches these settings') ? 'matches' : 'differs' });
+    log('PASS the Permissions preview shows the saved config.json');
+
+    // D7. One member on each other ready engine, each answering one message.
+    const harnesses = (await bridge.api('/api/harnesses')).data;
+    const ready = (harnesses.harnesses || harnesses || []).filter(item => ['codex', 'claude'].includes(item.id) && item.status === 'ready');
+    const engines = [];
+    for (const engine of ready) {
+      const memberId = `asq_engine_${engine.id}`;
+      const agent = { id: memberId, name: `${engine.label} Reviewer`, role: 'Reviewer', status: 'online', workspace: repo, projects: [{ path: repo }], harness: { id: engine.id }, permissions: { permissionMode: 'restricted' } };
+      await bridge.api(`/api/members/${memberId}/channel-access`, 'PUT', { agent, profile: 'Act as a reviewer. Answer briefly.', profilePatch: {} });
+      const started = Date.now();
+      const answer = await bridge.api('/api/chat', 'POST', { agentId: memberId, agent, workspace: repo, mode: 'prompt', policy: 'restricted', prompt: 'Reply with one sentence naming which engine you are running on and the name of this repository.' }, 600000).catch(error => ({ success: false, error: error.message }));
+      engines.push({ engine: engine.id, version: engine.version, member: memberId, ok: answer.success === true && Boolean(answer.data?.reply), durationMs: Date.now() - started, replyPreview: String(answer.data?.reply || answer.error || '').slice(0, 200) });
+      log(`${answer.success ? 'PASS' : 'FAIL'} a ${engine.label} member answered`);
+    }
+    assert.ok(engines.length >= 1 && engines.every(item => item.ok), `a member on each other ready engine answered: ${JSON.stringify(engines)}`);
+    observations.push({ step: 'engines', engines });
+    await save({ status: 'in progress' });
+  }
 
   // 7. Reset Squad from Settings (ADR-0161 §3.1): the bridge moves its folders
   // aside and exits; after a restart the app is a clean install at /welcome.

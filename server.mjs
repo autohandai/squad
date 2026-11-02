@@ -4435,6 +4435,8 @@ function runSummary(run) {
     finishedAt: run.finishedAt,
     channel: run.channel || null,
     reply: run.reply || "",
+    requestId: run.requestId || "",
+    person: run.person === true,
     // Interrupted by a restart (ADR-0123): Retry is offered while the launch
     // payload is still held and the run has not been retried yet.
     interrupted: run.interrupted === true,
@@ -7886,6 +7888,13 @@ function beginChatRun(payload, workId, startedAt) {
     agentId: String(payload.agentId || payload.agent?.id || ""),
     title: prompt.length > 140 ? `${prompt.slice(0, 139)}…` : prompt || "Chat",
     prompt,
+    // The transcript a window that did not send this turn can read
+    // (ADR-0163): the browser's request id names the two bubbles, `person`
+    // says the turn was a direct message, and `personPrompt` is what the
+    // person typed, without the briefing the first message carries.
+    requestId: String(payload.requestId || ""),
+    person: isPersonTurn(payload),
+    personPrompt: String(payload.personPrompt || "").slice(0, 20000),
     mode: "chat",
     kind: "chat",
     channel: channelContextFromPayload(payload),

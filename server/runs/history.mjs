@@ -27,6 +27,20 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+// A chat turn's trace feeds Work details in the transcript (ADR-0163). The
+// file holds 200 runs, so a trace is kept only while it is small; a bigger
+// one is dropped and the transcript's Work details for that turn come from
+// the run's log lines instead.
+export const RUN_HISTORY_TRACE_BYTES = 64 * 1024;
+export function boundedTrace(trace) {
+  if (!isPlainObject(trace)) return null;
+  try {
+    return JSON.stringify(trace).length <= RUN_HISTORY_TRACE_BYTES ? trace : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The part of a run worth keeping: every finished run, and a live chat turn
  * (so a crash leaves a trace). A live launched run is still never recorded;
@@ -40,6 +54,9 @@ export function historyRecord(run) {
   return {
     id: String(run.id || ""),
     prompt: String(run.prompt || "").slice(0, 20000),
+    requestId: String(run.requestId || ""),
+    person: run.person === true,
+    personPrompt: String(run.personPrompt || "").slice(0, 20000),
     launch: liveChat || run.status === "interrupted" ? (isPlainObject(run.launch) ? run.launch : null) : null,
     interrupted: run.interrupted === true,
     retriedAt: String(run.retriedAt || ""),
@@ -68,6 +85,7 @@ export function historyRecord(run) {
     recipeId: run.recipeId || null,
     canvasId: run.canvasId || null,
     reply: String(run.reply || "").slice(0, 20000),
+    trace: boundedTrace(run.trace),
     sessionId: String(run.sessionId || ""),
     logs: logs.map((entry) => ({ source: String(entry?.source || "stdout"), line: String(entry?.line || ""), at: String(entry?.at || "") })),
   };
