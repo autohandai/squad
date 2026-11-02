@@ -6966,6 +6966,18 @@ function App() {
       return next;
     });
     setAutomations((current) => current.filter((automation) => !automationBelongsToAgent(automation, normalized)));
+    // Its routines live on the bridge and kept firing for a member nobody
+    // could open, each one queued for the app and then marked missed. Its
+    // pending schedule proposals go too.
+    const ownRoutines = routines.filter((item) => normalizeSquadMemberId(item.memberId) === normalized);
+    const ownProposals = routineProposals.filter((item) => normalizeSquadMemberId(item.memberId) === normalized);
+    setRoutineProposals((current) => current.filter((item) => normalizeSquadMemberId(item.memberId) !== normalized));
+    if (ownRoutines.length || ownProposals.length) {
+      Promise.allSettled([
+        ...ownRoutines.map((routine) => api(`/api/routines/${encodeURIComponent(routine.id)}`, { method: "DELETE" })),
+        ...ownProposals.map((proposal) => api(`/api/routines/proposals/${encodeURIComponent(proposal.id)}/decline`, { method: "POST", body: "{}" })),
+      ]).then(() => loadRoutines()).catch(() => {});
+    }
     if (isMemberRouteForAgent(route, normalized)) {
       navigate(squadDirectoryPath());
     }
