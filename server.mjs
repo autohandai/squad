@@ -8434,6 +8434,10 @@ function routeContext() {
     get sdkSessions() {
       return sdkSessions;
     },
+    // Reset Squad (ADR-0161 §3.1) stops every engine before moving the
+    // folders aside: a warm session left running recreated member state
+    // under the original path and the restarted bridge saw an existing install.
+    stopManagedRuns,
     readChannelsState,
     writeChannelsState,
     mutateChannelsState,

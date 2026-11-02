@@ -197,7 +197,12 @@ source confirmed each one.
     moves its state, the members' homes and working folders aside with a
     date, keeps `~/.autohand` sign-in, exits for its supervisor to restart
     it, and the window returns to first run (§3.1); Keychain, `~/Library`
-    and privacy grants stay a hand step in SETUP_GUIDE. The config preview
+    and privacy grants stay a hand step in SETUP_GUIDE. The reset stops every
+    engine process before the folders move: on the installed app a warm
+    session that outlived the bridge wrote its session files under the
+    original path and the restarted bridge saw an existing install, so the
+    bridge now stops managed runs first and exits as soon as its answer is
+    on the wire. The config preview
     shows the saved `config.json` beside the form and says when they differ
     (§1.6). `check:cli-pin` fails a release check while the pinned CLI is
     behind the latest release (side note). The pin moved to 0.9.9 once the

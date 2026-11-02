@@ -72,6 +72,11 @@ export async function handle(req, res, url, ctx) {
       return true;
     }
     try {
+      // Every engine process goes first: a warm session (a member's direct
+      // chat, a channel thread) that outlived the bridge wrote its session
+      // files under the original path after the rename, and the restarted
+      // bridge found an existing install (demo run 14 on the installed app).
+      if (typeof ctx.stopManagedRuns === "function") await ctx.stopManagedRuns("Squad reset by the person").catch(() => {});
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const moved = [];
       const candidates = [ctx.squadStateDir, appStateDirFor(ctx), ...(Array.isArray(ctx.memberWorkspaceRoots) ? ctx.memberWorkspaceRoots : [])].filter(Boolean);
@@ -81,10 +86,11 @@ export async function handle(req, res, url, ctx) {
         catch (error) { if (error?.code !== "ENOENT") throw error; }
       }
       ctx.logEvent?.(ctx.SEVERITY?.WARN, `Squad reset by the person; ${moved.length} folders moved aside`, { "event.name": "system.reset", "autohand.reset.folders": moved.map((entry) => entry.folder).join(",") });
-      ctx.json(res, 200, { success: true, data: { moved, restarting: true } });
       // Leave nothing of the old state in memory: let the supervisor bring
-      // the bridge back empty.
-      setTimeout(() => process.exit(0), 400).unref?.();
+      // the bridge back empty, as soon as the answer is on the wire so no
+      // later request writes state into the fresh folder.
+      res.once("finish", () => setTimeout(() => process.exit(0), 50));
+      ctx.json(res, 200, { success: true, data: { moved, restarting: true } });
     } catch (error) {
       ctx.json(res, 500, { success: false, error: error?.message || "Squad could not be reset." });
     }

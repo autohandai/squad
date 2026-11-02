@@ -445,7 +445,12 @@ try {
   await browser.evaluate(`document.querySelector('[data-testid="system-reset-confirm"]').click()`);
   await until(async () => { try { await bridge.api('/api/runtime'); return false; } catch { return true; } }, 'the bridge exits after reset', 15000);
   await bridge.restart();
-  assert.equal((await bridge.api('/api/setup')).data.status, 'new', 'after reset the bridge is a clean install');
+  const afterReset = (await bridge.api('/api/setup')).data;
+  if (afterReset.status !== 'new') {
+    const channels = (await bridge.api('/api/channels')).data || {};
+    log(`after reset the bridge still sees: ${channels.channels?.length || 0} channels, members ${Object.keys(channels.agentChannelAccess || {}).join(',') || 'none'}`);
+  }
+  assert.equal(afterReset.status, 'new', 'after reset the bridge is a clean install');
   await browser.navigate(bridge.origin + '/');
   await until(() => browser.evaluate(`location.pathname === '/welcome' && !!document.querySelector('#first-run-repository')`), 'first run again after reset', 60000);
   await shot('07-after-reset');
