@@ -10,6 +10,29 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- A Codex member's next message continues its conversation; every resume used to fail on an unsupported option and silently start over. A resumed thread also keeps the member's access and extra folders, Squad's team, vault and connector tools no longer stop for approval, a tool result shows its text instead of "[object Object]", a recovered stream retry no longer fails the reply, and the reply names the model Codex used.
+- An engine that rejects one of its options says so, instead of being taken for an expired session and losing the conversation. An engine refusal is logged once per reply, not three times.
+- An Autohand model's "Reflection:" note no longer opens replies or reaches teammates a reply is relayed to.
+- A Claude Code reply cut short by a reloaded page no longer reads "stopped by the user".
+- Routines: a run says it is the routine and carries the member's profile; a reminder whose time has already passed is refused instead of saved to never run; times like "5pm" and "7:30 PM" and "daily" are understood; a new Once schedule defaults to the next 09:00 still ahead; the routine's notification shows what the member said; only one open Squad window runs an app routine; an app-started routine no longer posts its instructions as if you had said them; only answers from the last two days appear in direct messages.
+- "Schedule this?" reads "at 6.30pm" as 18:30, "every evening at 6" as 18:00 and "on the 15th" as monthly.
+- Removing a member deletes its routines and declines its schedule proposals; they kept firing for a member nobody could open.
+- A handoff to a busy teammate waits up to ten minutes instead of failing with "already working", and carries the members' newest memory.
+- Memory: a long MEMORY.md keeps its newest entries in the prompt; a member made with starter notes still gets what it remembers; accepting a proposal that holds a password or key is refused; Accept takes the text you edited; proposals are flat rows that say who wants to remember what; Team memory clears a stale load error and says when a fact is already saved.
+- Instructions a member sets for itself replace the old ones in the profile bridge-started turns read.
+- Channels: a reply left typing by a reload or restart is settled from its run; a reply sent in the same millisecond as its prompt sits under it; an Auto channel still picks a responder when a message names a project; a targeted message shows its member once.
+- A reply stopped by a reload no longer takes the next message's answer. A teammate's answer to squad_message appears in its History.
+- Agenda runs and New Automation drafts no longer post "finished" to the desktop.
+- Keep working between messages says why nothing is starting.
+- A link to a member this window does not have says so, instead of opening another member's page.
+- Expired schedule proposals stop showing a day after they expire.
+
+### Changed
+
+- GitHub Actions setup-node 7.1.0, upload-artifact 7.0.2 and download-artifact 8.0.2; the daemon's runtime dependencies and base64 0.23.
+
 ## [0.1.15] - 2026-11-03
 
 ### Added

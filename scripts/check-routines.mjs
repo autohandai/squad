@@ -31,7 +31,7 @@ import {
   wallToUtc,
 } from "../server/routines/schedule.mjs";
 import { normalizeRoutine, upsertRun, activeRun, lastRun } from "../server/routines/store.mjs";
-import { routineNextLabel, automationsForRoutines, reconcileRoutineRuns, routineDraft, scheduleFromDraft } from "../src/lib/routines.js";
+import { routineNextLabel, routineDraft, scheduleFromDraft } from "../src/lib/routines.js";
 
 const failures = [];
 let checks = 0;
