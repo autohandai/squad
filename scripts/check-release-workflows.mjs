@@ -220,10 +220,10 @@ assertIncludes(releaseWorkflow, 'smoke_root="${smoke_root//\\\\//}"', 'Windows p
 assertIncludes(releaseWorkflow, "import('@autohandai/agent-sdk')", 'Portable smoke test imports the bundled Agent SDK');
 assertIncludes(releaseWorkflow, 'NODE_VERSION: "22.23.1"', 'Release workflow pins the bundled Node.js runtime');
 assertIncludes(releaseWorkflow, 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1', 'Release workflow uses current checkout action');
-assertIncludes(releaseWorkflow, 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0', 'Release workflow uses current setup-node action');
+assertIncludes(releaseWorkflow, 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0', 'Release workflow uses current setup-node action');
 assertIncludes(releaseWorkflow, 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0', 'Release workflow uses current cache action');
-assertIncludes(releaseWorkflow, 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1', 'Release workflow uses current download-artifact action');
-assertIncludes(releaseWorkflow, 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1', 'Release workflow uses current upload-artifact action');
+assertIncludes(releaseWorkflow, 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2', 'Release workflow uses current download-artifact action');
+assertIncludes(releaseWorkflow, 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2', 'Release workflow uses current upload-artifact action');
 assertIncludes(releaseWorkflow, 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0', 'Release workflow uses current setup-bun action');
 assertNotIncludes(releaseWorkflow, 'package-manager-cache:', 'Release workflow avoids unsupported setup-node cache inputs');
 assertIncludes(releaseWorkflow, 'bun run release:desktop', 'Release workflow packages the desktop installers');
