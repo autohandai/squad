@@ -18,6 +18,7 @@ list to the section for that version.
 - "Allow for this reply" on a permission card now covers every later request for that tool in the same reply, so a member writing six files asks once.
 - A "Squad team tools" group in Permissions › Built-in tool rules lists every Squad team tool, so what a member may do with teammates is one decision in one place.
 - Members can read one of their saved chats in full (`squad_read_chat`) when you refer to an earlier conversation, and channel threads tell teammates which tools each reply used.
+- A channel thread now keeps one warm engine session across its turns on the Autohand engine, as a direct chat does, so a member's tool state and what it read carry into its next reply in that thread.
 - Export conversation, in the chat menu, saves the open conversation as Markdown and JSON with each reply's tools, permission decisions and written files.
 - Settings › System has Reset Squad: it moves Squad's data aside and returns to first run, keeping your Autohand Code sign-in.
 - The Permissions config preview shows the member's saved config.json next to the current settings and says when they differ.

@@ -39,6 +39,10 @@ Live chat turns are written too (ADR-0123), with `prompt` and the launch payload
 
 Cold starts (ADR-0123): when an engine exits with no events, the bridge classifies it (`server/harness/cold-start.mjs`: `disk-space`, `binary-missing`, `not-signed-in`, `bad-flag`, `engine-crash`), retries a transient one once after 750 ms with the same resume id, and the `error` event's `error` text is the classified reason. The run log gets `system` lines (`cold start: …; retrying once in 750 ms`, `… started on the second attempt`). The structured log carries `harness.cold_start` with `autohand.cold_start.kind`. The stale-session retry (forget the resume id, run again fresh) only fires when the engine named the session as the problem.
 
+## Channel threads
+
+A channel thread turn is `ephemeralSession: true` (the member's direct-message resume id is never used) with `_threadSession: thread:<channelId>/<threadId>`: the team and vault servers scope their session to the thread, their config copies are `thread-<hash>.json`, and a healthy session is kept in the pool under that key, so the thread's next turn reuses it until the idle TTL (ADR-0161 §2.5). The thread history (`_channelThreadContext`, with `toolsUsed` per reply) rides on every prompt. `check-thread-warmth` covers it with a fixture SDK.
+
 ## Browser
 
 Transcript (ADR-0163): on opening a member, and when one of its chat runs starts or finishes, the app fetches `…/transcript?since=<conversationStartedAt>&name=` and merges it with `mergeTranscript` (`src/lib/transcript.js`): ids and request ids already held are skipped, so is a question with the same words within two minutes (turns from before request ids were recorded), and new turns go in time order. The window that sent the turns sees no change.

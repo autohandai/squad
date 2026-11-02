@@ -667,18 +667,26 @@ async function finishComputerWork(workId) {
   }
 }
 
+// The private config copy a turn's managed servers are written to: per work
+// for a one-off turn, per thread for a channel thread (ADR-0161 §2.5).
+function workScopeFileName(input) {
+  if (input._threadSession) return `thread-${createHash("sha256").update(String(input._threadSession)).digest("hex").slice(0, 16)}`;
+  return String(input._computerUseWorkId);
+}
+
 async function prepareVaultWork(agentRuntime, input) {
   const warming = input._warmSession === true && !input._computerUseWorkId;
   if (isUtilityAgent(agentRuntime.agentId) || (!input._computerUseWorkId && !warming)) return agentRuntime;
   if (!vaultToolsAllowed(normalizeAgentPermissions(agentRuntime.agent))) return agentRuntime;
-  const scope = input.ephemeralSession ? input._computerUseWorkId : "";
+  const scope = input._threadSession || (input.ephemeralSession ? input._computerUseWorkId : "");
   const session = await vault[warming ? "prepareMember" : "openWork"]({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, channelId: input.channel?.id || "", scope });
   const directory = join(agentRuntime.agentHome, "vault-configs");
   // Stable paths keep ordinary chat warm; ephemeral turns and Computer Use
-  // get separate private copies for their concurrent work scopes.
+  // get separate private copies for their concurrent work scopes. A channel
+  // thread's copy is stable per thread, so its session key is too.
   const perWork = Boolean(agentRuntime.computerUse || input.ephemeralSession);
-  const configPath = join(directory, perWork ? `${input._computerUseWorkId}.json` : "member.json");
-  const runtime = { ...agentRuntime, configPath, vault: { ...session, perWork } };
+  const configPath = join(directory, perWork ? `${workScopeFileName(input)}.json` : "member.json");
+  const runtime = { ...agentRuntime, configPath, vault: { ...session, perWork, threadSession: Boolean(input._threadSession) } };
   if (!warming) vaultWorkRuntimes.set(input._computerUseWorkId, runtime);
   try {
     const config = JSON.parse(await readFile(agentRuntime.configPath, "utf8"));
@@ -693,7 +701,7 @@ async function finishVaultWork(workId) {
   vault.finishWork(workId);
   const runtime = vaultWorkRuntimes.get(workId); if (!runtime) return;
   vaultWorkRuntimes.delete(workId);
-  if (runtime.vault.perWork) await Promise.allSettled([rm(runtime.configPath, { force: true }), ...(runtime.vault.externalConfigPath ? [rm(runtime.vault.externalConfigPath, { force: true })] : [])]);
+  if (runtime.vault.perWork && !runtime.vault.threadSession) await Promise.allSettled([rm(runtime.configPath, { force: true }), ...(runtime.vault.externalConfigPath ? [rm(runtime.vault.externalConfigPath, { force: true })] : [])]);
 }
 
 async function prepareTeamWork(agentRuntime, input) {
@@ -701,12 +709,13 @@ async function prepareTeamWork(agentRuntime, input) {
   if (isUtilityAgent(agentRuntime.agentId) || (!input._computerUseWorkId && !warming)) return agentRuntime;
   const engine = agentRuntime.harness?.id || harnessAssignmentFromAgent(agentRuntime.agent).id;
   const maxWaitSeconds = engine === "autohand" || engine === "autohand-acp" ? AUTOHAND_TEAM_WAIT_SECONDS : 50;
-  const session = await team[warming ? "prepareMember" : "openWork"]({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, workspace: agentRuntime.workspace, depth: Number(input._teamDepth) || 0, ancestorIds: input.teamMessage?.ancestorIds || [], channel: channelContextFromPayload(input), maxWaitSeconds, automationDraft: input.automationDraft === true, scope: input.ephemeralSession ? input._computerUseWorkId : "" });
+  const session = await team[warming ? "prepareMember" : "openWork"]({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId, workspace: agentRuntime.workspace, depth: Number(input._teamDepth) || 0, ancestorIds: input.teamMessage?.ancestorIds || [], channel: channelContextFromPayload(input), maxWaitSeconds, automationDraft: input.automationDraft === true, scope: input._threadSession || (input.ephemeralSession ? input._computerUseWorkId : "") });
   const directory = join(agentRuntime.agentHome, "team-configs");
-  // A stable path, as the vault's, keeps a warm session's key (ADR-0030).
+  // A stable path, as the vault's, keeps a warm session's key (ADR-0030);
+  // a channel thread's path is stable per thread for the same reason.
   const perWork = Boolean(agentRuntime.computerUse || input.ephemeralSession);
-  const configPath = join(directory, perWork ? `${input._computerUseWorkId}.json` : "member.json");
-  const runtime = { ...agentRuntime, configPath, team: { ...session, perWork } };
+  const configPath = join(directory, perWork ? `${workScopeFileName(input)}.json` : "member.json");
+  const runtime = { ...agentRuntime, configPath, team: { ...session, perWork, threadSession: Boolean(input._threadSession) } };
   if (!warming) teamWorkRuntimes.set(input._computerUseWorkId, runtime);
   try {
     const config = JSON.parse(await readFile(agentRuntime.configPath, "utf8"));
@@ -721,7 +730,7 @@ async function finishTeamWork(workId) {
   team.finishWork(workId);
   const runtime = teamWorkRuntimes.get(workId); if (!runtime) return;
   teamWorkRuntimes.delete(workId);
-  if (runtime.team.perWork) await Promise.allSettled([rm(runtime.configPath, { force: true }), ...(runtime.team.externalConfigPath ? [rm(runtime.team.externalConfigPath, { force: true })] : [])]);
+  if (runtime.team.perWork && !runtime.team.threadSession) await Promise.allSettled([rm(runtime.configPath, { force: true }), ...(runtime.team.externalConfigPath ? [rm(runtime.team.externalConfigPath, { force: true })] : [])]);
 }
 
 function teamInstructionsFor(runtime) {
@@ -3084,8 +3093,11 @@ async function withSavedMember(payload) {
   const id = sanitizeAgentId(payload.agent?.id || payload.agentId);
   const channel = channelContextFromPayload(payload);
   if (channel) {
-    // Each channel thread owns its engine session and MCP work scope.
-    payload = { ...payload, ephemeralSession: true, resumeSession: false, _channelThreadContext: "" };
+    // Each channel thread owns its engine session and MCP work scope. The
+    // session is kept warm per thread (ADR-0161 §2.5): its turns reuse one
+    // engine process and its tool state, as a direct chat does, without
+    // touching the member's direct-message session.
+    payload = { ...payload, ephemeralSession: true, resumeSession: false, _channelThreadContext: "", _threadSession: channel.threadId ? `thread:${channel.channelId}/${channel.threadId}` : "" };
     const state = await readChannelsState();
     const savedChannel = state.channels.find(item => item.id === channel.channelId && item.memberIds.includes(id));
     if (savedChannel && channel.threadId) {
@@ -6981,7 +6993,7 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     }
     throw error;
   } finally {
-    await lease?.release(healthy && !agentRuntime.computerUse && !payload.ephemeralSession);
+    await lease?.release(healthy && !agentRuntime.computerUse && (!payload.ephemeralSession || Boolean(payload._threadSession)));
   }
 }
 
@@ -7129,7 +7141,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     throw error;
   } finally {
     await permissionApprovals.settleRun(String(payload._computerUseWorkId || ""), { reason: "the turn ended" }).catch(() => {});
-    await lease?.release(healthy && !agentRuntime.computerUse && !payload.ephemeralSession);
+    await lease?.release(healthy && !agentRuntime.computerUse && (!payload.ephemeralSession || Boolean(payload._threadSession)));
   }
 }
 

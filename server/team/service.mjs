@@ -743,7 +743,10 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
     finishWork: runId => {
       for (const [key, session] of sessions) if (session.runId === runId) {
         session.active = false;
-        if (session.scope) { sessions.delete(key); byToken.delete(session.token); }
+        // A per-work scope goes with its turn; a thread scope ("thread:…")
+        // outlives it so the thread's warm engine session keeps the same
+        // managed server token (ADR-0161 §2.5).
+        if (session.scope && !session.scope.startsWith("thread:")) { sessions.delete(key); byToken.delete(session.token); }
       }
     },
     recover: () => store.recover(),

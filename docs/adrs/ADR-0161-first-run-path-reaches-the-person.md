@@ -249,6 +249,23 @@ source confirmed each one.
     Squad's; the demo should run its members on a model that holds up
     under a long tool-using turn, which is a choice for the person.
 
+14. **A channel thread keeps its engine session warm (§2.5).** Each
+    channel turn started a fresh engine session with the thread's earlier
+    messages as text, so a reply's tool state and anything a member had
+    read were gone by the next turn. The thread history now names the
+    tools each reply used, and a thread's turns reuse one warm session:
+    the team and vault servers are scoped per thread instead of per turn
+    (`thread:<channel>/<thread>`, a stable config copy, a token that
+    outlives the turn), the pool keeps a healthy thread session, and the
+    member's direct-message session is never touched. The thread history
+    still rides on every prompt, because teammates may have posted between
+    the member's turns; the cost is repeated context, the gain is nothing
+    missed. `check-thread-warmth` drives two turns in one thread (one SDK
+    start, the token valid on both), a second thread and a direct message
+    (sessions of their own) and a third turn back on the first thread
+    (still warm). Autohand engine only; Codex and Claude Code members run
+    one process per turn as before.
+
 ## Consequences and validation
 
 - `check-permission-policy`, `check-permission-approvals`,
@@ -271,9 +288,9 @@ source confirmed each one.
   another window (`GET /api/chat/permissions` exists for it); user-added
   connector tools are not enumerated into `availableTools`; the CLI's own
   `ask_followup_question` stays blocked, so a member that forgets
-  `squad_ask` asks at the end of its reply; channel threads stay one
-  session per message, with
-  the tool notes of §2.5 in the text history rather than a warm session;
+  `squad_ask` asks at the end of its reply; a thread's warm session closes
+  after the pool's fifteen idle minutes like any other, and Codex and
+  Claude Code members still run one process per channel turn;
   the bundled CLI is pinned by hand with `check:cli-pin` as the reminder,
   not released automatically when Autohand Code ships; Keychain,
   `~/Library` and privacy grants stay a hand step after Reset Squad.

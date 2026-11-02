@@ -31,7 +31,7 @@ below pass on `main`.
 | 2.2 Permission requests time out as declined | Fixed | Every request is acknowledged at once; the chat shows a card with Allow once, Allow for this reply and Deny, answered over RPC; unanswered requests are denied when the reply ends. The walkthrough answers one and checks the file exists. | `server/permission-approvals.mjs`, `POST /api/chat/permission`, `PermissionApprovalCard.jsx`; `check-permission-approvals` |
 | 2.3 Conversation lost on a new engine session | Fixed | The first prompt of a fresh session carries the recent conversation; the chat says "The engine session restarted; replaying…". The walkthrough idles sixteen real minutes and checks the member still knows what it wrote. | `server/chats/replay.mjs` |
 | 2.4 Saved chats reach the agent as short notes | Fixed | `squad_read_chat` reads a saved chat in full by the id the recall list now carries. | `server/team/service.mjs`, `server/chats/recall.mjs` |
-| 2.5 Channel threads carry text only | Partly | Thread history now names the tools each reply used. Threads are still one session per message. | `withSavedMember` thread history in `server.mjs` |
+| 2.5 Channel threads carry text only | Fixed | Thread history names the tools each reply used, and a thread's turns reuse one warm engine session on the Autohand engine (team and vault scoped per thread), so tool state carries across a thread's replies. Codex and Claude Code members still run one process per turn. | `withSavedMember`, `prepareTeamWork`/`prepareVaultWork` in `server.mjs`; `check-thread-warmth` |
 
 ## 3. Operations
 
