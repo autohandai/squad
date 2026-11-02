@@ -81,6 +81,13 @@ source confirmed each one.
    and to write a draft to a file or memory before asking where it should
    go. `check-questions` covers the registry and the card's helper;
    `check-team` drives the tool on an unwatched turn and on a live stream.
+   Live, the first run of the question step showed the card, took the
+   person's option in four seconds and handed it to the member; the reply
+   then ended with the CLI's own guard, "The model kept announcing steps
+   instead of executing them through 2 tool-free recoveries", because the
+   prompt said "continue with my answer" and the model narrated what it
+   would do next. A question's follow-up is a statement, and the
+   walkthrough asks for one.
 4. **Replay on a fresh session.** The first prompt a session receives carries
    the recent conversation (12 turns, 12 000 characters) in a marked block,
    and the chat says "The engine session restarted; replaying…". Sessions

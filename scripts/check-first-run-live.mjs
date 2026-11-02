@@ -246,7 +246,10 @@ try {
   // squad_ask, the card is answered from the chat, and the reply continues
   // with the answer.
   const questionsBefore = questionsAnswered.length;
-  const askedBack = await sendAnswering('Before you propose anything: ask me one question with squad_ask about which pie the shop should feature first, offering two options, then continue with my answer in one sentence.', 'question back to me', 'Allow once');
+  // The prompt asks for a plain statement after the answer: the CLI ends a
+  // reply whose text announces steps without executing them ("2 tool-free
+  // recoveries"), and "continue with my answer" invited exactly that.
+  const askedBack = await sendAnswering('Ask me one question with squad_ask: which pie should the shop feature first? Offer two options. When you have my answer, reply with a single sentence that states my choice and nothing else; do not plan or start any other work.', 'question back to me', 'Allow once');
   assert.ok(questionsAnswered.length > questionsBefore, `the member asked a question through the card: ${JSON.stringify(askedBack.sdk.filter(event => /question/.test(String(event.type))).slice(0, 4))}`);
   const chosen = questionsAnswered[questionsAnswered.length - 1].answer;
   assert.ok(new RegExp(chosen.split(/\s+/)[0], 'i').test(askedBack.result.reply), `the reply carries the answer "${chosen}": ${askedBack.result.reply.slice(0, 300)}`);
