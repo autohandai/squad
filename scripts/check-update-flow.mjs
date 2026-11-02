@@ -209,6 +209,11 @@ try {
   await assert.rejects(staleDiscovery.install(), /Download and verify/);
   assert.equal(staleDiscovery.status().phase, "complete"); assert.equal(staleStoppedWork, false);
   await staleDiscovery.flush();
+  // A hand-installed build ahead of the public release reads as a preview, not "Updated to".
+  const ahead = updateView({ appVersion: "0.1.16", status: "up-to-date", snapshot: { success: true, source: "squad-api", latestAllowedVersion: "0.1.14" } }, { phase: "complete", version: "0.1.14", verified: true, message: "Updated to 0.1.14." });
+  assert.equal(ahead.phase, "idle"); assert.equal(ahead.title, "You’re running a preview");
+  const caughtUp = updateView({ appVersion: "0.1.8", status: "up-to-date", snapshot: { success: true, source: "squad-api", latestAllowedVersion: "0.1.8" } }, { phase: "failed", version: "0.1.7", verified: true, error: "x" });
+  assert.equal(caughtUp.phase, "complete", "a manual upgrade to the public release still reads as updated");
   assert.equal(compareUpdateVersions("0.1.8-canary.9", "0.1.8"), -1);
   assert.equal(compareUpdateVersions("0.1.8", "0.1.8-canary.9"), 1);
   assert.equal(compareUpdateVersions("0.1.8-canary.10", "0.1.8-canary.9"), 1);

@@ -42,6 +42,11 @@ export function updateView(
   const latest = snapshot?.latestAllowedVersion || "";
   operation = reconcileUpdateOperation(operation, current);
   const comparison = compareUpdateVersions(current, latest);
+  // A build newer than the latest public release (installed by hand, or a
+  // preview) was not "Updated to" by this updater: "Updated to 0.1.16."
+  // showed beside "Latest public release 0.1.14". An unverified completion
+  // the reconcile above inferred gives way to the preview state below.
+  if (operation.phase === "complete" && !operation.verified && latest && comparison !== null && comparison > 0) operation = { phase: "idle" };
   const available =
     updates?.status === "available" &&
     snapshot?.success === true &&
