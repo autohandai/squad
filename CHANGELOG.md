@@ -10,8 +10,53 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-11-03
+
+### Added
+
+- A member can ask you a question mid-reply and wait for the answer (`squad_ask`): the question shows as a card under the running reply with its options and an answer field, and your answer goes straight back to the member. In a goal, a queued follow-up or a channel turn the tool refuses and the member asks in its reply instead.
+- Task-scoped local skill discovery with qualified origins and exact complete-package revisions. Member snapshots retain scripts and assets, reject unsafe or oversized packages, and remain available offline.
+- When a member's tool needs permission, the chat now shows the request under the reply with Allow once, Allow for this reply and Deny, and the member continues with your answer instead of timing out as declined. In a direct conversation, tools marked Ask first in an Interactive member's Permissions now actually ask; goals, automations and channel work keep running without prompts.
+- Members can propose a team from a conversation (`squad_propose_team`). The roster appears under the reply with Create team; the members are created through the same path as New team at the Edit files level, and nothing exists until you confirm.
+- "Allow for this reply" on a permission card now covers every later request for that tool in the same reply, so a member writing six files asks once.
+- A "Squad team tools" group in Permissions › Built-in tool rules lists every Squad team tool, so what a member may do with teammates is one decision in one place.
+- Members can read one of their saved chats in full (`squad_read_chat`) when you refer to an earlier conversation, and channel threads tell teammates which tools each reply used.
+- A channel thread now keeps one warm engine session across its turns on the Autohand engine, as a direct chat does, so a member's tool state and what it read carry into its next reply in that thread.
+- Export conversation, in the chat menu, saves the open conversation as Markdown and JSON with each reply's tools, permission decisions and written files.
+- Settings › System has Reset Squad: it moves Squad's data aside and returns to first run, keeping your Autohand Code sign-in.
+- The Permissions config preview shows the member's saved config.json next to the current settings and says when they differ.
+- `bun run check:cli-pin` fails when the bundled Autohand Code is behind the latest release.
+- Opening a member now shows its conversation from any window: a second browser, the phone or a reinstalled app gets the turns the bridge ran, with the member's replies and Work details, merged into whatever that window already had.
+- Collective memory brings the squad's saved memories, profile Markdown and isolated Autohand memories into a searchable graph and list, with source details, groups, tags, saved connections and member colors. New Memory settings choose collection sources and shared Markdown folders; Squad MCP lets agents search, read, organize, relate and explicitly share memories within their access.
+- Members can use an ordered list of fallback coding engines and models when their primary engine cannot answer, with visible switching and automatic return after a cooldown. An optional setting lets a member manage its own fallbacks through Squad tools.
+
+### Changed
+
+- The permission ladder says that choosing a level turns Built-in tool rules on, since a level applies its whole preset.
+- A run in the Execution panel's Runs tab now reads like the chat: "Work details · 2 tools · 1m 12s", the reply text, and the edits, commands and tools it used. The engine command line, the raw log count and the "status updates" rows are gone unless the diagnostic-output chat setting is on.
+- The bundled Autohand Code is 0.9.9 (was 0.9.7), the same release the CLI installs on its own.
+- Computer Use now runs through Autohand Computer Use, the component Autohand Code installs, so the macOS Accessibility and Screen Recording grant you gave the CLI serves Squad too. The copy bundled with Squad is that same component, built unmodified with the same identity; the Squad-branded "Squad Computer Use" host is gone. The member's Permissions page says which copy is active and can install Autohand Computer Use.
+- Model overrides load names and exact IDs from the selected coding engine, with refresh and a custom-ID option, instead of requiring you to guess model names.
+- GitHub Actions setup-node 7.1.0, upload-artifact 7.0.2 and download-artifact 8.0.2; the daemon's runtime dependencies and base64 0.23.
+
 ### Fixed
 
+- A member can no longer spend a whole reply editing its work plan: after eight plan changes in one reply the team tool refuses and tells it to do the task itself.
+- The sidebar no longer keeps saying "Updated to 0.1.14." with a Details button after an update has finished; Settings › Updates still shows it, the sidebar only speaks while there is something to download, install or fix.
+- Work details shows one row per permission request again; a request with a multi-line command used to appear as several rows, each marked answered.
+- A member whose engine stops responding mid-reply now ends the reply within the inactivity window instead of showing "Working…" for twenty minutes: the engine session is closed without waiting on requests it will never answer.
+- Skill Work details now distinguish instructions supplied to an engine from instructions observed in a native provider request. Duplicate receipts coalesce and historical receipts remain labelled as past observations.
+- Files an Autohand member writes now reach the repository. The engine stages edits in a preview batch and waits for a decision Squad never sent, so a member could report "Created docs/plan.md" with nothing on disk; Squad now applies the batch when the reply finishes, discards it when you stop the reply, and says what was written.
+- Squad team tools (teammates, channels, memory, profile), the vault and Computer Use now work on the Autohand engine with Built-in tool rules on, at every ladder level. They were refused at the engine regardless of any Permissions setting.
+- A member no longer loses the conversation when its engine session restarts (idle, Stop, a permission change, a bridge restart): the recent turns are replayed and the chat says so.
+- Members no longer have questions auto-answered "Yes" on their behalf; they ask in the reply and wait. Autohand Code's own in-session teams are no longer offered as a way to create Squad members.
+- New members no longer inherit the approvals from your personal Autohand Code config, and turning Built-in tool rules off removes the previous rule lists instead of leaving them in place.
+- Replies no longer disappear into Autohand Code's own "automatic specialists" detour, which could hold a short answer for half an hour when the conversation mentioned teams or agents; the chat now names an engine sub-agent when one runs, and a turn that only sends keep-alive pings for ten minutes stops with that reason.
+- A member's first review of a fresh repository no longer opens on the engine's own `.autohand/` folder: Squad excludes it from Git status and tells the member what it is.
+- On a phone, the chat header keeps the member's name and status readable; the controls are icons and the secondary ones move out of the header.
+- Quota and silent-startup failures reach the configured fallback without becoming a setup-cancellation reply. Fallbacks keep read-only work in preview mode, replace failed partial answers, and leave your primary engine and permission choices intact.
+- Drag, choose or paste files into member chats, Quick Chat, channels and reply threads. Images show thumbnails; documents, spreadsheets and fonts show file previews. Upload progress, Retry and Remove keep failed files from disappearing when you send.
+- Attachments now reach the member's engine as native image or document inputs and file context, including queued follow-ups, retries and remote members. Saved and reopened conversations keep their files without putting binary data into chat history.
 - A Codex member's next message continues its conversation; every resume used to fail on an unsupported option and silently start over. A resumed thread also keeps the member's access and extra folders, Squad's team, vault and connector tools no longer stop for approval, a tool result shows its text instead of "[object Object]", a recovered stream retry no longer fails the reply, and the reply names the model Codex used.
 - An engine that rejects one of its options says so, instead of being taken for an expired session and losing the conversation. An engine refusal is logged once per reply, not three times.
 - An Autohand model's "Reflection:" note no longer opens replies or reaches teammates a reply is relayed to.
@@ -28,60 +73,6 @@ list to the section for that version.
 - Keep working between messages says why nothing is starting.
 - A link to a member this window does not have says so, instead of opening another member's page.
 - Expired schedule proposals stop showing a day after they expire.
-
-### Changed
-
-- GitHub Actions setup-node 7.1.0, upload-artifact 7.0.2 and download-artifact 8.0.2; the daemon's runtime dependencies and base64 0.23.
-
-## [0.1.15] - 2026-11-03
-
-### Added
-
-- A member can ask you a question mid-reply and wait for the answer (`squad_ask`): the question shows as a card under the running reply with its options and an answer field, and your answer goes straight back to the member. In a goal, a queued follow-up or a channel turn the tool refuses and the member asks in its reply instead.
-- Task-scoped local skill discovery with qualified origins and exact complete-package revisions. Member snapshots retain scripts and assets, reject unsafe or oversized packages, and remain available offline.
-
-- When a member's tool needs permission, the chat now shows the request under the reply with Allow once, Allow for this reply and Deny, and the member continues with your answer instead of timing out as declined. In a direct conversation, tools marked Ask first in an Interactive member's Permissions now actually ask; goals, automations and channel work keep running without prompts.
-- Members can propose a team from a conversation (`squad_propose_team`). The roster appears under the reply with Create team; the members are created through the same path as New team at the Edit files level, and nothing exists until you confirm.
-- "Allow for this reply" on a permission card now covers every later request for that tool in the same reply, so a member writing six files asks once.
-- A "Squad team tools" group in Permissions › Built-in tool rules lists every Squad team tool, so what a member may do with teammates is one decision in one place.
-- Members can read one of their saved chats in full (`squad_read_chat`) when you refer to an earlier conversation, and channel threads tell teammates which tools each reply used.
-- A channel thread now keeps one warm engine session across its turns on the Autohand engine, as a direct chat does, so a member's tool state and what it read carry into its next reply in that thread.
-- Export conversation, in the chat menu, saves the open conversation as Markdown and JSON with each reply's tools, permission decisions and written files.
-- Settings › System has Reset Squad: it moves Squad's data aside and returns to first run, keeping your Autohand Code sign-in.
-- The Permissions config preview shows the member's saved config.json next to the current settings and says when they differ.
-- `bun run check:cli-pin` fails when the bundled Autohand Code is behind the latest release.
-- Opening a member now shows its conversation from any window: a second browser, the phone or a reinstalled app gets the turns the bridge ran, with the member's replies and Work details, merged into whatever that window already had.
-
-- Collective memory brings the squad's saved memories, profile Markdown and isolated Autohand memories into a searchable graph and list, with source details, groups, tags, saved connections and member colors. New Memory settings choose collection sources and shared Markdown folders; Squad MCP lets agents search, read, organize, relate and explicitly share memories within their access.
-- Members can use an ordered list of fallback coding engines and models when their primary engine cannot answer, with visible switching and automatic return after a cooldown. An optional setting lets a member manage its own fallbacks through Squad tools.
-
-### Changed
-
-- The permission ladder says that choosing a level turns Built-in tool rules on, since a level applies its whole preset.
-- A run in the Execution panel's Runs tab now reads like the chat: "Work details · 2 tools · 1m 12s", the reply text, and the edits, commands and tools it used. The engine command line, the raw log count and the "status updates" rows are gone unless the diagnostic-output chat setting is on.
-- The bundled Autohand Code is 0.9.9 (was 0.9.7), the same release the CLI installs on its own.
-- Computer Use now runs through Autohand Computer Use, the component Autohand Code installs, so the macOS Accessibility and Screen Recording grant you gave the CLI serves Squad too. The copy bundled with Squad is that same component, built unmodified with the same identity; the Squad-branded "Squad Computer Use" host is gone. The member's Permissions page says which copy is active and can install Autohand Computer Use.
-- Model overrides load names and exact IDs from the selected coding engine, with refresh and a custom-ID option, instead of requiring you to guess model names.
-
-### Fixed
-
-- A member can no longer spend a whole reply editing its work plan: after eight plan changes in one reply the team tool refuses and tells it to do the task itself.
-- The sidebar no longer keeps saying "Updated to 0.1.14." with a Details button after an update has finished; Settings › Updates still shows it, the sidebar only speaks while there is something to download, install or fix.
-- Work details shows one row per permission request again; a request with a multi-line command used to appear as several rows, each marked answered.
-- A member whose engine stops responding mid-reply now ends the reply within the inactivity window instead of showing "Working…" for twenty minutes: the engine session is closed without waiting on requests it will never answer.
-- Skill Work details now distinguish instructions supplied to an engine from instructions observed in a native provider request. Duplicate receipts coalesce and historical receipts remain labelled as past observations.
-
-- Files an Autohand member writes now reach the repository. The engine stages edits in a preview batch and waits for a decision Squad never sent, so a member could report "Created docs/plan.md" with nothing on disk; Squad now applies the batch when the reply finishes, discards it when you stop the reply, and says what was written.
-- Squad team tools (teammates, channels, memory, profile), the vault and Computer Use now work on the Autohand engine with Built-in tool rules on, at every ladder level. They were refused at the engine regardless of any Permissions setting.
-- A member no longer loses the conversation when its engine session restarts (idle, Stop, a permission change, a bridge restart): the recent turns are replayed and the chat says so.
-- Members no longer have questions auto-answered "Yes" on their behalf; they ask in the reply and wait. Autohand Code's own in-session teams are no longer offered as a way to create Squad members.
-- New members no longer inherit the approvals from your personal Autohand Code config, and turning Built-in tool rules off removes the previous rule lists instead of leaving them in place.
-- Replies no longer disappear into Autohand Code's own "automatic specialists" detour, which could hold a short answer for half an hour when the conversation mentioned teams or agents; the chat now names an engine sub-agent when one runs, and a turn that only sends keep-alive pings for ten minutes stops with that reason.
-- A member's first review of a fresh repository no longer opens on the engine's own `.autohand/` folder: Squad excludes it from Git status and tells the member what it is.
-- On a phone, the chat header keeps the member's name and status readable; the controls are icons and the secondary ones move out of the header.
-- Quota and silent-startup failures reach the configured fallback without becoming a setup-cancellation reply. Fallbacks keep read-only work in preview mode, replace failed partial answers, and leave your primary engine and permission choices intact.
-- Drag, choose or paste files into member chats, Quick Chat, channels and reply threads. Images show thumbnails; documents, spreadsheets and fonts show file previews. Upload progress, Retry and Remove keep failed files from disappearing when you send.
-- Attachments now reach the member's engine as native image or document inputs and file context, including queued follow-ups, retries and remote members. Saved and reopened conversations keep their files without putting binary data into chat history.
 
 ## [0.1.14] - 2026-10-28
 
