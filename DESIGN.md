@@ -285,7 +285,7 @@
 
 - Computer Use setup is an explicit action; macOS Accessibility and Screen Recording permission do not grant a member access. Recover evidence by its exact work session and keep another member’s screenshots out of the conversation.
 
-- Squad’s Computer Use permission host has its own product identity and System Settings entry. It must not share permission identity with another Autohand product whose signer or lifecycle differs.
+- Computer Use runs through Autohand Computer Use, the component Autohand Code installs (`ai.autohand.computer-use`), so one macOS grant serves the CLI and Squad (ADR-0162). Squad’s own bundled host is only a fallback when that component is absent; the Permissions page names the host in use in one muted line and offers "Install Autohand Computer Use" rather than a second identity.
 
 - A handoff retry executes the saved receiving checkpoint explicitly; retain completed source work, attempt history and final result return. Busy recipients decline without hidden queueing. Every @mention dispatches immediately; ordered delegation mentions only the next recipient.
 

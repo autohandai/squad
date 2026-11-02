@@ -1,10 +1,11 @@
 // Squad owns grants and evidence; the bundled engine owns OS consent and actions.
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { release } from 'node:os';
+import os, { release } from 'node:os';
 import { readPersistentJson, writePersistentJson } from './persistent-json.mjs';
 
 const OBSERVE = new Set(['list_apps', 'list_windows', 'get_window_state', 'get_desktop_state', 'get_screen_size', 'get_cursor_position', 'verify_state', 'get_session_state', 'start_recording', 'stop_recording', 'get_recording_state']);
@@ -20,6 +21,95 @@ function content(result) {
   return {};
 }
 
+// Autohand Computer Use (ADR-0162): the component Autohand Code installs
+// (`autohand computer install`) and that the person already granted
+// Accessibility and Screen Recording to. Squad resolves it the way the CLI
+// does: the driver from AUTOHAND_CUA_DRIVER_PATH or ~/.local/bin, the macOS
+// host from AUTOHAND_COMPUTER_USE_APP_PATH, a launcher on PATH,
+// ~/Applications or /Applications, identity `ai.autohand.computer-use`.
+// The bundled Squad host below stays as a fallback for a machine where the
+// CLI's install is absent; the Permissions page says which one is in use.
+export const AUTOHAND_COMPUTER_USE_BUNDLE_ID = 'ai.autohand.computer-use';
+export const AUTOHAND_COMPUTER_USE_APP_NAME = 'Autohand Computer Use';
+const AUTOHAND_COMPUTER_USE_EXECUTABLE = 'AutohandComputerUse';
+const AUTOHAND_COMPUTER_USE_LAUNCHER = 'autohand-computer-use';
+const SQUAD_COMPUTER_USE_BUNDLE_ID = 'ai.autohand.squad.computer-use';
+
+function expandHome(value, homeDir) {
+  const text = String(value || '');
+  return text === '~' ? homeDir : text.startsWith('~/') ? join(homeDir, text.slice(2)) : text;
+}
+async function executable(candidate) {
+  try { const info = await stat(candidate); if (!info.isFile()) return ''; await access(candidate, fsConstants.X_OK); return await realpath(candidate); }
+  catch { return ''; }
+}
+
+/** Where Autohand Computer Use is on this machine, or what is missing. */
+export async function resolveAutohandComputerUse({ homeDir = os.homedir(), env = process.env, platform = process.platform } = {}) {
+  const autohandHome = expandHome(env.AUTOHAND_HOME || join(homeDir, '.autohand'), homeDir);
+  const driverCandidates = [
+    env.AUTOHAND_CUA_DRIVER_PATH ? expandHome(env.AUTOHAND_CUA_DRIVER_PATH, homeDir) : '',
+    ...String(env.PATH || '').split(platform === 'win32' ? ';' : ':').filter(Boolean).map((directory) => join(directory, platform === 'win32' ? 'cua-driver.exe' : 'cua-driver')),
+    join(homeDir, '.local', 'bin', platform === 'win32' ? 'cua-driver.exe' : 'cua-driver'),
+  ].filter(Boolean);
+  let driver = '';
+  for (const candidate of driverCandidates) { driver = await executable(candidate); if (driver) break; }
+  let host = '';
+  if (platform === 'darwin') {
+    const appExecutable = (app) => join(app, 'Contents', 'MacOS', AUTOHAND_COMPUTER_USE_EXECUTABLE);
+    const configured = env.AUTOHAND_COMPUTER_USE_APP_PATH ? expandHome(env.AUTOHAND_COMPUTER_USE_APP_PATH, homeDir) : '';
+    const hostCandidates = [
+      configured ? (configured.endsWith('.app') ? appExecutable(configured) : configured) : '',
+      ...String(env.PATH || '').split(':').filter(Boolean).map((directory) => join(directory, AUTOHAND_COMPUTER_USE_LAUNCHER)),
+      appExecutable(join(homeDir, 'Applications', `${AUTOHAND_COMPUTER_USE_APP_NAME}.app`)),
+      appExecutable(join('/Applications', `${AUTOHAND_COMPUTER_USE_APP_NAME}.app`)),
+    ].filter(Boolean);
+    for (const candidate of hostCandidates) { host = await executable(candidate); if (host) break; }
+  }
+  const missing = !driver ? 'the cua-driver engine' : platform === 'darwin' && !host ? `${AUTOHAND_COMPUTER_USE_APP_NAME}.app` : '';
+  return { driver, host, cursorThemes: join(autohandHome, 'computer-use', 'cursor-themes'), missing };
+}
+
+export async function autohandComputerClient(where = {}, options = {}) {
+  const found = await resolveAutohandComputerUse(where);
+  if (found.missing) throw error(`${AUTOHAND_COMPUTER_USE_APP_NAME} is not installed (${found.missing} was not found). Run \`autohand computer install\`.`, 503);
+  const platform = where.platform || process.platform;
+  const identity = { product: AUTOHAND_COMPUTER_USE_APP_NAME, bundleId: AUTOHAND_COMPUTER_USE_BUNDLE_ID, source: 'autohand', driver: found.driver, host: found.host };
+  const env = { CUA_DRIVER_CURSOR_THEME_DIR: found.cursorThemes };
+  if (platform === 'darwin') {
+    return new NativeComputerClient({ command: found.host, args: ['mcp', '--driver-path', found.driver], env, hostBundleId: AUTOHAND_COMPUTER_USE_BUNDLE_ID, identity, startupError: Number(release().split('.')[0]) < 22 ? `${AUTOHAND_COMPUTER_USE_APP_NAME} requires macOS 13 or later.` : '', ...options });
+  }
+  return new NativeComputerClient({ command: found.driver, args: ['mcp'], env, embedded: false, identity, ...options });
+}
+
+/**
+ * The client Squad uses: Autohand Computer Use when it is installed and
+ * starts, else Squad's bundled host. The start is probed here because an
+ * installed host can still fail to run (one built for a newer macOS than
+ * the machine's exits at dyld); the Permissions page then says why Squad is
+ * on its bundled host.
+ */
+export async function preferredComputerClient(rootDir, { where = {}, log = () => {}, probe = true } = {}) {
+  let reason = '';
+  try {
+    const client = await autohandComputerClient(where);
+    if (!probe) return client;
+    try {
+      await client.request('tools/list', {});
+      return client;
+    } catch (failure) {
+      client.close();
+      reason = `${AUTOHAND_COMPUTER_USE_APP_NAME} is installed but did not start (${failure?.message || failure}). Run \`autohand computer doctor\`.`;
+    }
+  } catch (missing) {
+    reason = missing?.message || String(missing);
+  }
+  log(`Autohand Computer Use unavailable (${reason}); trying Squad's bundled host`);
+  const bundled = await bundledComputerClient(rootDir);
+  bundled.identity = { ...bundled.identity, fallbackReason: reason };
+  return bundled;
+}
+
 export async function bundledComputerClient(rootDir, options = {}) {
   const directory = join(rootDir, 'vendor', 'computer-use');
   const metadata = JSON.parse(await readFile(join(directory, 'BUILD_INFO.json'), 'utf8'));
@@ -32,25 +122,29 @@ export async function bundledComputerClient(rootDir, options = {}) {
     return filename;
   }
   const driver = await verifiedFile(metadata.driver);
+  const identity = { product: 'Squad Computer Use', bundleId: SQUAD_COMPUTER_USE_BUNDLE_ID, source: 'bundled', driver };
   if (process.platform === 'darwin') {
-    if (metadata.host?.bundleId !== 'ai.autohand.squad.computer-use') throw error('Computer Use permission identity is invalid.', 503);
-    return new NativeComputerClient({ command: await verifiedFile(metadata.host), args: ['mcp', '--driver-path', driver], startupError: Number(release().split('.')[0]) < 22 ? 'Built-in Computer Use requires macOS 13 or later. Squad can still be used on this version of macOS.' : '', ...options });
+    if (metadata.host?.bundleId !== SQUAD_COMPUTER_USE_BUNDLE_ID) throw error('Computer Use permission identity is invalid.', 503);
+    const host = await verifiedFile(metadata.host);
+    return new NativeComputerClient({ command: host, args: ['mcp', '--driver-path', driver], identity: { ...identity, host }, startupError: Number(release().split('.')[0]) < 22 ? 'Built-in Computer Use requires macOS 13 or later. Squad can still be used on this version of macOS.' : '', ...options });
   }
-  return new NativeComputerClient({ command: driver, args: ['mcp'], ...options });
+  return new NativeComputerClient({ command: driver, args: ['mcp'], identity, ...options });
 }
 
 /** Native newline JSON-RPC. No shell, inherited stdio, permission prompts or driver telemetry. */
 export class NativeComputerClient {
-  constructor({ command, args, env = {}, spawnProcess = spawn, timeoutMs = 30000, startupError = '' }) {
+  constructor({ command, args, env = {}, spawnProcess = spawn, timeoutMs = 30000, startupError = '', hostBundleId = SQUAD_COMPUTER_USE_BUNDLE_ID, embedded = true, identity = null }) {
     this.command = command; this.args = args; this.env = env; this.spawnProcess = spawnProcess; this.timeoutMs = timeoutMs;
     this.pending = new Map(); this.sequence = 0; this.buffer = ''; this.starting = null; this.child = null;
     this.startupError = startupError;
+    this.hostBundleId = hostBundleId; this.embedded = embedded;
+    this.identity = identity || { product: 'Squad Computer Use', bundleId: hostBundleId, source: 'bundled' };
   }
   async start() {
     if (this.startupError) throw error(this.startupError, 503);
     if (this.starting) return this.starting;
     this.starting = (async () => {
-      const env = { ...process.env, ...this.env, CUA_DRIVER_PERMISSION_MODE: 'standard', CUA_DRIVER_RS_TELEMETRY_ENABLED: '0', CUA_DRIVER_EMBEDDED: '1', CUA_DRIVER_HOST_BUNDLE_ID: 'ai.autohand.squad.computer-use' };
+      const env = { ...process.env, ...this.env, CUA_DRIVER_PERMISSION_MODE: 'standard', CUA_DRIVER_RS_TELEMETRY_ENABLED: '0', ...(this.embedded ? { CUA_DRIVER_EMBEDDED: '1', CUA_DRIVER_HOST_BUNDLE_ID: this.hostBundleId } : {}) };
       delete env.AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN;
       const child = this.spawnProcess(this.command, this.args, { stdio: ['pipe', 'pipe', 'pipe'], env, windowsHide: true });
       this.child = child;
@@ -106,7 +200,7 @@ export function createComputerUse({ stateDir, rootDir, bridgeUrl, nativeClient, 
     const stored = await grants();
     let os; let readinessError = null;
     try { os = await serial(permission); } catch (failure) { os = { available: false, accessibility: false, screenRecording: false }; readinessError = String(failure.message || 'Could not confirm Computer Use readiness.').slice(0, 240); }
-    return { ...os, bundled: Boolean(nativeClient), readinessError, memberId: memberId || null, grant: memberId ? stored.members[id(memberId)] || { scope: 'none' } : null, sessions: [...sessions.values()].filter((session) => !memberId || session.memberId === memberId).map(publicSession) };
+    return { ...os, bundled: Boolean(nativeClient), host: nativeClient?.identity ? { product: nativeClient.identity.product, bundleId: nativeClient.identity.bundleId, source: nativeClient.identity.source, ...(nativeClient.identity.fallbackReason ? { fallbackReason: nativeClient.identity.fallbackReason } : {}) } : null, readinessError, memberId: memberId || null, grant: memberId ? stored.members[id(memberId)] || { scope: 'none' } : null, sessions: [...sessions.values()].filter((session) => !memberId || session.memberId === memberId).map(publicSession) };
   }
   async function setGrant(memberId, scope) {
     memberId = id(memberId);
@@ -167,7 +261,7 @@ export function createComputerUse({ stateDir, rootDir, bridgeUrl, nativeClient, 
       const grant = (await grants()).members[session.memberId]?.scope;
       if (grant !== 'control' && !(grant === 'observe' && scope === 'observe')) throw error('Ask the human to allow Computer Use in this member’s permissions.', 403);
       const os = await permission();
-      if (!os.accessibility || !os.screenRecording) throw error('Allow Accessibility and Screen Recording for Squad Computer Use in System Settings.', 403);
+      if (!os.accessibility || !os.screenRecording) throw error(`Allow Accessibility and Screen Recording for ${nativeClient?.identity?.product || 'Computer Use'} in System Settings.`, 403);
       const incoming = request.params.arguments ?? {};
       if (!record(incoming)) throw error('Computer Use arguments must be an object.');
       const args = { ...incoming, session: session.id };

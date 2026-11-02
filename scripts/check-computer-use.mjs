@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
-import { bundledComputerClient, createComputerUse, NativeComputerClient, runComputerUseProxy } from '../server/computer-use.mjs';
+import { autohandComputerClient, bundledComputerClient, createComputerUse, NativeComputerClient, preferredComputerClient, resolveAutohandComputerUse, runComputerUseProxy } from '../server/computer-use.mjs';
 import { handle } from '../server/routes/computer-use.route.mjs';
 import { COMPUTER_USE_ASSETS, stageComputerUse } from './stage-computer-use.mjs';
 
@@ -98,6 +98,35 @@ try {
     await assert.rejects(bundledComputerClient(join(temporary, 'identity-fixture')), /permission identity/);
     metadata.host.bundleId = 'ai.autohand.squad.computer-use'; await writeFile(join(directory, 'BUILD_INFO.json'), JSON.stringify(metadata));
     const adapter = await bundledComputerClient(join(temporary, 'identity-fixture')); assert.equal(adapter.command, await realpath(join(directory, 'host'))); adapter.close();
+  });
+  await check('Autohand Computer Use is resolved the way the CLI resolves it (ADR-0162)', async () => {
+    const home = join(temporary, 'autohand-home'); const apps = join(home, 'Applications', 'Autohand Computer Use.app', 'Contents', 'MacOS');
+    await mkdir(join(home, '.local', 'bin'), { recursive: true }); await mkdir(apps, { recursive: true });
+    const driver = join(home, '.local', 'bin', 'cua-driver'); const host = join(apps, 'AutohandComputerUse');
+    await writeFile(driver, '#!/bin/sh\n', { mode: 0o755 }); await writeFile(host, '#!/bin/sh\n', { mode: 0o755 });
+    const found = await resolveAutohandComputerUse({ homeDir: home, env: { PATH: '' }, platform: 'darwin' });
+    assert.equal(found.driver, await realpath(driver)); assert.equal(found.host, await realpath(host)); assert.equal(found.missing, '');
+    assert.equal(found.cursorThemes, join(home, '.autohand', 'computer-use', 'cursor-themes'));
+    const client = await autohandComputerClient({ homeDir: home, env: { PATH: '' }, platform: 'darwin' });
+    assert.equal(client.command, await realpath(host)); assert.deepEqual(client.args, ['mcp', '--driver-path', await realpath(driver)]);
+    assert.equal(client.hostBundleId, 'ai.autohand.computer-use'); assert.equal(client.identity.source, 'autohand'); assert.equal(client.identity.product, 'Autohand Computer Use');
+    // An explicit driver path and app path win, as in the CLI.
+    const custom = join(temporary, 'custom'); await mkdir(join(custom, 'App.app', 'Contents', 'MacOS'), { recursive: true });
+    await writeFile(join(custom, 'driver'), '#!/bin/sh\n', { mode: 0o755 }); await writeFile(join(custom, 'App.app', 'Contents', 'MacOS', 'AutohandComputerUse'), '#!/bin/sh\n', { mode: 0o755 });
+    const explicit = await resolveAutohandComputerUse({ homeDir: home, env: { PATH: '', AUTOHAND_CUA_DRIVER_PATH: join(custom, 'driver'), AUTOHAND_COMPUTER_USE_APP_PATH: join(custom, 'App.app') }, platform: 'darwin' });
+    assert.equal(explicit.driver, await realpath(join(custom, 'driver'))); assert.equal(explicit.host, await realpath(join(custom, 'App.app', 'Contents', 'MacOS', 'AutohandComputerUse')));
+    // Without the component, the client says what is missing and the bridge falls back to the bundled host.
+    const empty = join(temporary, 'empty-home'); await mkdir(empty, { recursive: true });
+    await assert.rejects(autohandComputerClient({ homeDir: empty, env: { PATH: '' }, platform: 'darwin' }), /not installed \(the cua-driver engine was not found\)/);
+    const onlyDriver = join(temporary, 'driver-only-home'); await mkdir(join(onlyDriver, '.local', 'bin'), { recursive: true }); await writeFile(join(onlyDriver, '.local', 'bin', 'cua-driver'), '#!/bin/sh\n', { mode: 0o755 });
+    await assert.rejects(autohandComputerClient({ homeDir: onlyDriver, env: { PATH: '' }, platform: 'darwin' }), /Autohand Computer Use\.app/);
+    const linux = await autohandComputerClient({ homeDir: onlyDriver, env: { PATH: '' }, platform: 'linux' });
+    assert.deepEqual(linux.args, ['mcp']); assert.equal(linux.embedded, false);
+    const notes = []; const fallback = await preferredComputerClient(join(temporary, 'identity-fixture'), { where: { homeDir: empty, env: { PATH: '' }, platform: 'darwin' }, log: (m) => notes.push(m) }).catch(() => null);
+    assert.ok(notes[0]?.includes('Autohand Computer Use unavailable'), 'the fallback is logged'); assert.match(fallback?.identity?.fallbackReason || '', /not installed/); fallback?.close?.();
+    // An installed host that exits at launch (built for a newer macOS) also falls back, with the reason kept for the Permissions page.
+    const probed = []; const broken = await preferredComputerClient(join(temporary, 'identity-fixture'), { where: { homeDir: home, env: { PATH: '' }, platform: 'darwin' }, log: (m) => probed.push(m) }).catch(() => null);
+    assert.equal(broken?.identity?.source, 'bundled'); assert.match(broken?.identity?.fallbackReason || '', /did not start/); assert.match(broken?.identity?.fallbackReason || '', /autohand computer doctor/); broken?.close?.();
   });
   await check('runtime checksum detects a changed bundled driver', async () => { const directory = join(temporary, 'vendor', 'computer-use'); await mkdir(directory, { recursive: true }); await writeFile(join(directory, 'cua-driver'), 'changed'); await writeFile(join(directory, 'BUILD_INFO.json'), JSON.stringify({ version: '0.28.2', repository: 'autohandai/computer-use', driver: { path: 'cua-driver', sha256: createHash('sha256').update('original').digest('hex') } })); await assert.rejects(bundledComputerClient(temporary), /checksum/); });
   await check('stage refuses an archive that differs from the immutable digest', async () => { const asset = COMPUTER_USE_ASSETS[`${process.platform}/${process.arch}`]; await writeFile(join(temporary, asset.name), 'not the release'); let extracted = false; await assert.rejects(stageComputerUse({ rootDir: temporary, runtimeDir: join(temporary, 'stage'), sourceDir: temporary, runCommand() { extracted = true; } }), /checksum/); assert.equal(extracted, false); });

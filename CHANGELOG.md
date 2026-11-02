@@ -28,6 +28,7 @@ list to the section for that version.
 ### Changed
 
 - The bundled Autohand Code is 0.9.9 (was 0.9.7), the same release the CLI installs on its own.
+- Computer Use now runs through Autohand Computer Use, the component Autohand Code installs, so the macOS Accessibility and Screen Recording grant you gave the CLI serves Squad too. Squad's own bundled host is used only when that component is missing; the member's Permissions page says which one is active and can install Autohand Computer Use.
 - Model overrides load names and exact IDs from the selected coding engine, with refresh and a custom-ID option, instead of requiring you to guess model names.
 
 ### Fixed

@@ -16,7 +16,7 @@ import { desktopUpdateStatus, openDesktopTarget, RELEASES_URL } from "./server/d
 import { createUsageLedgerCache, usageLedger } from "./server/usage/ledger.mjs";
 import { autoCheckUpdatesEnabled, readSystemSettings } from "./server/system/settings.mjs";
 import { readAppInfo } from "./server/app-info.mjs";
-import { bundledComputerClient, createComputerUse } from "./server/computer-use.mjs";
+import { createComputerUse, preferredComputerClient } from "./server/computer-use.mjs";
 import { createConnectorStore } from "./server/connectors/store.mjs";
 import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
 import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
@@ -454,7 +454,13 @@ const runHistory = createRunHistory({ path: runHistoryPath(appStateDir), runs, l
 // Previous chats (ADR-0113) read here for recall (ADR-0115); the chats route owns writes.
 const chatStore = new ChatStore({ squadStateDir });
 let nativeGrantKey = await readNativeComputerGrantKey();
-const computerClient = await bundledComputerClient(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR ? resolve(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR) : rootDir).catch(() => null);
+// Autohand Computer Use first (ADR-0162): the component the CLI installs and
+// the person already granted; Squad's bundled host only when it is absent.
+// AUTOHAND_SQUAD_COMPUTER_USE=bundled pins the bundled host (checks).
+const computerClient = await preferredComputerClient(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR ? resolve(process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR) : rootDir, {
+  where: process.env.AUTOHAND_SQUAD_COMPUTER_USE === "bundled" ? { env: { ...process.env, PATH: "" }, homeDir: join(squadStateDir, "no-autohand-computer-use") } : {},
+  log: (message) => logEvent(SEVERITY.INFO, message, { "event.name": "computer-use.host" }),
+}).catch(() => null);
 const computerUse = createComputerUse({ stateDir: squadStateDir, rootDir, bridgeUrl: `http://127.0.0.1:${port}`, nativeClient: computerClient, emit: emitBridgeEvent });
 const computerWorkRuntimes = new Map();
 // Connectors (ADR-0107): MCP servers the person added plus the built-in Web
@@ -8335,6 +8341,9 @@ function routeContext() {
     appStateDir,
     squadWorkspaceRoot,
     memberWorkspaceRoots: [squadWorkspaceRoot, ...legacySquadWorkspaceRoots],
+    // The bundled Autohand CLI, for routes that run one of its commands
+    // (`autohand computer install`, ADR-0162).
+    autohandBinary: () => resolveAutohandBinary(),
     homeDir,
     packageMetadata,
     modelCatalog,

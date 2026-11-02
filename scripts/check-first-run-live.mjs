@@ -8,8 +8,12 @@
 // then have it message a teammate. Evidence (JSON and screenshots at desktop
 // and phone widths) lands in .codex-artifacts/first-run-live/.
 //
-//   node scripts/check-first-run-live.mjs [--repo=/path/to/repo] [--phone]
+//   node scripts/check-first-run-live.mjs [--repo=/path/to/repo] [--phone] [--runtime=<dir>]
 //   --phone runs every step at a 390px phone viewport instead of the desktop.
+//   --runtime runs the packaged runtime folder of a built app (for example
+//   "/Applications/Autohand Squad.app/Contents/Resources/runtime") instead of
+//   this checkout's dev server: the shipped bridge, built UI and bundled CLI,
+//   with isolated state. The run ends with Reset Squad back to first run.
 import assert from 'node:assert/strict';
 import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -19,9 +23,10 @@ import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs'
 
 const source = process.env.SQUAD_LIVE_CONFIG || process.env.AUTOHAND_USER_CONFIG_PATH || join(process.env.AUTOHAND_HOME || join(homedir(), '.autohand'), 'config.json');
 const original = JSON.parse(await readFile(source, 'utf8'));
-const evidenceDir = resolve('.codex-artifacts', process.argv.includes('--phone') ? 'first-run-live-phone' : 'first-run-live');
+const evidenceDir = resolve('.codex-artifacts', `first-run-live${process.argv.includes('--phone') ? '-phone' : ''}${process.argv.some(argument => argument.startsWith('--runtime=')) ? '-packaged' : ''}`);
 await mkdir(evidenceDir, { recursive: true });
 const repoArgument = process.argv.find(argument => argument.startsWith('--repo='))?.slice('--repo='.length);
+const runtimeDir = process.argv.find(argument => argument.startsWith('--runtime='))?.slice('--runtime='.length) || '';
 const repo = repoArgument ? resolve(repoArgument) : await (async () => {
   const path = join(evidenceDir, 'pie-shop');
   await rm(path, { recursive: true, force: true });
@@ -38,7 +43,7 @@ const log = message => console.log(`${new Date().toISOString().slice(11, 19)} ${
 
 // The bridge sees only the account/provider part of the person's config, plus
 // a permissions block that must NOT reach the member (ADR-0161 §1.1).
-const bridge = await startBridge({ prepare: async directory => {
+const bridge = await startBridge({ ...(runtimeDir ? { cwd: resolve(runtimeDir), development: false } : {}), prepare: async directory => {
   const config = Object.fromEntries(['provider', 'auth', 'autohandai', 'openrouter', 'openai', 'ollama', 'llmgateway', 'bedrock', 'deepseek', 'zai', 'nvidia', 'cerebras'].filter(key => original[key] !== undefined).map(key => [key, original[key]]));
   config.mcp = { servers: [] }; config.hooks = {};
   config.permissions = { allowList: ['write_file:/tmp/*', 'run_command:rm -rf /tmp/anything'], denyList: [] };
@@ -202,8 +207,25 @@ try {
   observations.push({ step: 'teammate', teammate, toolNames, replyPreview: asked2.result.reply.slice(0, 500) });
   await shot('05-teammate');
   assert.deepEqual(browser.errors, [], 'no browser exceptions');
-  await save({ status: 'passed' });
   log('PASS first-run path: review, team, approval, restart, teammate');
+
+  // 7. Reset Squad from Settings (ADR-0161 §3.1): the bridge moves its folders
+  // aside and exits; after a restart the app is a clean install at /welcome.
+  await browser.navigate(bridge.origin + '/settings/system');
+  await until(() => browser.evaluate(`[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Reset Squad…')`), 'Reset Squad row', 30000);
+  await browser.click('Reset Squad…');
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid="system-reset-confirm"]')`), 'reset confirmation', 10000);
+  await shot('06-reset-confirm');
+  await browser.evaluate(`document.querySelector('[data-testid="system-reset-confirm"]').click()`);
+  await until(async () => { try { await bridge.api('/api/runtime'); return false; } catch { return true; } }, 'the bridge exits after reset', 15000);
+  await bridge.restart();
+  assert.equal((await bridge.api('/api/setup')).data.status, 'new', 'after reset the bridge is a clean install');
+  await browser.navigate(bridge.origin + '/');
+  await until(() => browser.evaluate(`location.pathname === '/welcome' && !!document.querySelector('#first-run-repository')`), 'first run again after reset', 60000);
+  await shot('07-after-reset');
+  observations.push({ step: 'reset', backups: (await readFile(join(evidenceDir, 'first-run-live.json'), 'utf8')).length > 0 });
+  await save({ status: 'passed', runtime: runtimeDir || 'checkout dev server' });
+  log('PASS Reset Squad returns the app to first run');
 } catch (error) {
   await save({ status: 'failed', error: error.message, logs: bridge.logs.slice(-6000) });
   await browser?.screenshot(join(evidenceDir, 'failure.png')).catch(() => {});
