@@ -153,6 +153,21 @@ source confirmed each one.
     chat and of the site at 1440px and 390px are in
     `.codex-artifacts/first-run-live/`.
 
+    The second demo run on the packaged runtime stopped at the QA step
+    with "QA report timed out" while the QA Engineer's chat showed a
+    complete test report. The Frontend Developer's build reply had
+    @mentioned the QA Engineer, the window started that handoff turn at
+    once, and the QA prompt the walkthrough typed two seconds later was
+    queued behind it (ADR-0111: the stream answers `queued`, the dispatcher
+    runs the item when the member is free). The walkthrough only waited
+    for a `done` event. Reproduced against the bridge alone: a turn whose
+    client goes away is stopped, the next message is queued and runs
+    within three seconds, so the bridge was right and the script was not.
+    It now waits for the member to be idle before typing, as a person
+    seeing "Working" would, and follows a queued message through the
+    queue. The handoff itself is the demo working as intended: the team
+    tests its own build without being asked.
+
 12. **The rest of the report.** `squad_read_chat` reads a saved chat in
     full by the id the recall list now carries (§2.4). Channel thread
     history names the tools each reply used (§2.5). The chat menu has

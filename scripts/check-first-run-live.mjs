@@ -84,6 +84,8 @@ async function submit(prompt, label) {
 }
 const toolSummary = turn => ({ tools: (turn.result?.trace?.toolCalls || []).map(call => call.name), failed: (turn.result?.trace?.toolResults || []).filter(result => /error|failed|denied/i.test(String(result.content || '').slice(0, 200))).map(result => `${result.name}: ${String(result.content || '').slice(0, 160)}`) });
 async function send(prompt, label, timeout = 600000) {
+  const memberId = await currentMemberId();
+  if (memberId) await awaitIdle(memberId, label, timeout);
   const before = await submit(prompt, label);
   const ticker = setInterval(() => log(`waiting: ${label}`), 30000);
   try {
@@ -91,12 +93,56 @@ async function send(prompt, label, timeout = 600000) {
       const list = await turns();
       const turn = list[before];
       if (turn?.error || turn?.captureError) throw new Error(JSON.stringify(turn.error || turn.captureError));
+      if (turn?.queued?.item?.id) {
+        clearInterval(ticker);
+        log(`${label}: the message was queued behind the member's current turn; waiting for the queue`);
+        return { ...turn, ...(await queuedReply(memberId || turn.request?.agentId, turn.queued.item.id, label, timeout)) };
+      }
       return turn?.result ? turn : false;
     }, label, timeout);
   } finally { clearInterval(ticker); }
 }
 // Like send(), answering every permission card with one choice while the reply runs.
+// A message sent while the member is busy is queued by the bridge (ADR-0111):
+// the stream answers `queued` with the item and the dispatcher runs it once
+// the member is free. The second demo run on the packaged runtime timed out
+// here: the Frontend Developer's reply @mentioned the QA Engineer, the window
+// started that handoff turn, and the QA prompt sent two seconds later was
+// queued behind it, which the wait for a `done` event never saw.
+async function queuedReply(memberId, itemId, label, timeout) {
+  return until(async () => {
+    const queue = (await bridge.api('/api/queues')).data?.queues?.[memberId];
+    const item = (queue?.items || []).find(entry => entry.id === itemId);
+    if (!item) throw new Error(`${label}: queued item ${itemId} disappeared`);
+    if (item.status === 'failed' || item.status === 'cancelled') throw new Error(`${label}: queued item ${item.status}: ${item.error || ''}`);
+    return item.status === 'done' ? { result: { reply: item.reply || '', trace: null, queued: true, durationMs: item.result?.durationMs }, queued: item } : false;
+  }, `${label} (queued)`, timeout);
+}
+// Live turns for a member: a reply running from any window, a handoff a
+// teammate's reply started, a queued follow-up being dispatched.
+async function memberWorking(memberId) {
+  const runs = (await bridge.api('/api/runs')).data || [];
+  if (runs.some(run => run.agentId === memberId && ['queued', 'running', 'launching'].includes(run.status))) return true;
+  const queue = (await bridge.api('/api/queues')).data?.queues?.[memberId];
+  return (queue?.items || []).some(item => ['queued', 'running'].includes(item.status));
+}
+// What a person does when the member shows "Working": wait for it to finish
+// before typing, so the prompt is answered now rather than queued.
+async function awaitIdle(memberId, label, timeout = 900000) {
+  const started = Date.now();
+  let noted = false;
+  await until(async () => {
+    const working = await memberWorking(memberId);
+    if (working && !noted) { noted = true; log(`waiting: ${label}: the member is busy with another turn (a handoff or a queued follow-up)`); }
+    return !working;
+  }, `${label}: member idle`, timeout);
+  if (noted) log(`${label}: the member is idle after ${Math.round((Date.now() - started) / 1000)} s`);
+}
+// The member whose chat the page shows, from its URL.
+const currentMemberId = () => browser.evaluate("new URLSearchParams(location.search).get('member') || ''");
 async function sendAnswering(prompt, label, choice = 'Allow for this reply', timeout = 900000) {
+  const memberId = await currentMemberId();
+  if (memberId) await awaitIdle(memberId, label, timeout);
   const before = await submit(prompt, label);
   const ticker = setInterval(() => log(`waiting: ${label}`), 30000);
   const answered = [];
@@ -105,6 +151,11 @@ async function sendAnswering(prompt, label, choice = 'Allow for this reply', tim
       const turn = (await turns())[before];
       if (turn?.error || turn?.captureError) throw new Error(JSON.stringify(turn.error || turn.captureError));
       if (turn?.result) return { ...turn, answered };
+      if (turn?.queued?.item?.id) {
+        clearInterval(ticker);
+        log(`${label}: the message was queued behind the member's current turn; waiting for the queue`);
+        return { ...turn, ...(await queuedReply(memberId || turn.request?.agentId, turn.queued.item.id, label, timeout)), answered };
+      }
       const pending = await browser.evaluate(`[...document.querySelectorAll('[data-testid="permission-request"]')].map(e => e.dataset.requestId)`);
       for (const requestId of pending) {
         if (answered.includes(requestId)) continue;
@@ -144,6 +195,7 @@ try {
               if (!data) continue; record.events++;
               if (kind === 'sdk') { const e = JSON.parse(data); record.sdk.push({type: e.type, status: e.status, label: e.label, requestId: e.requestId, tool: e.tool || e.tool?.name, decision: e.decision, source: e.source}); }
               if (kind === 'done') record.result = JSON.parse(data);
+              if (kind === 'queued') record.queued = JSON.parse(data);
               if (kind === 'error') record.error = JSON.parse(data);
             }
           }
@@ -322,7 +374,11 @@ try {
     await browser.navigate(bridge.origin + '/squad-members/' + encodeURIComponent(id) + '/permissions');
     await until(() => browser.evaluate(`!!document.querySelector('[data-testid="permission-config-preview"] summary')`), 'config preview', 30000);
     await browser.evaluate(`document.querySelector('[data-testid="permission-config-preview"] summary').click()`);
-    await until(() => browser.evaluate(`/matches these settings|differs from these settings/.test(document.querySelector('[data-testid="permission-config-preview"]').textContent)`), 'saved config read from disk', 30000);
+    // Run 3 on the installed runtime timed out here at 30 s right after the
+    // channel step, while the same step alone passes in eight seconds; the
+    // wait is longer and a timeout now says what the preview showed.
+    const previewState = () => browser.evaluate(`(document.querySelector('[data-testid="permission-config-preview"]') || {}).textContent || ''`);
+    await until(async () => /matches these settings|differs from these settings/.test(await previewState()), 'saved config read from disk', 90000).catch(async error => { throw new Error(`${error.message}; preview showed: ${String(await previewState()).slice(0, 300)}`); });
     const previewText = await browser.evaluate(`document.querySelector('[data-testid="permission-config-preview"]').textContent`);
     assert.ok(previewText.includes('Saved on disk'), 'the saved config.json is shown');
     assert.ok(previewText.includes('mcp__autohand-squad__squad_team'), 'the saved file carries the team tool names');
