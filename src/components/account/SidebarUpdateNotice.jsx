@@ -17,13 +17,17 @@ export function SidebarUpdateNotice({
 }) {
   const view = updateView(updates, operation, { checking, error });
   const visibleOperation = view.operation;
+  // A finished update is not news the sidebar should keep: "Updated to
+  // 0.1.14." with a Details button sat under the account row for days.
+  // Settings › Updates still says it; the sidebar speaks only while there
+  // is something to download, install, watch or fix.
   if (
     !view.available &&
     !view.busy &&
-    !["ready", "failed", "complete", "installer-open"].includes(view.phase)
+    !["ready", "failed", "installer-open"].includes(view.phase)
   )
     return null;
-  const ready = ["ready", "installer-open", "complete"].includes(view.phase);
+  const ready = ["ready", "installer-open"].includes(view.phase);
   const installAction = updateInstallAction(visibleOperation);
   return (
     <section

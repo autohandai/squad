@@ -431,8 +431,8 @@ async function main() {
     assert(!await cdp.evaluate("Array.from(document.querySelector('#settings-updates').querySelectorAll('button')).some(button=>/Install and restart|Install update|Open installer/.test(button.textContent))"),'Settings cannot install a superseded download');
     assert(!await cdp.evaluate("Boolean(document.querySelector('#settings-updates [role=alert]'))"),'Settings clears obsolete install errors');
     await navigate('/squad');
-    await waitFor(()=>cdp.evaluate("document.querySelector('[data-testid=sidebar-update-notice]')?.textContent.includes('Updated to 0.1.5.')"),'manual upgrade retires failed installer in sidebar');
-    assert(!await cdp.evaluate("Array.from(document.querySelector('[data-testid=sidebar-update-notice]').querySelectorAll('button')).some(button=>/Install and restart|Install update|Open installer/.test(button.textContent))"),'sidebar cannot restore an obsolete install action');
+    // A finished update leaves the sidebar alone: Settings says "Updated to", the sidebar shows nothing.
+    await waitFor(()=>cdp.evaluate("!document.querySelector('[data-testid=sidebar-update-notice]')"),'manual upgrade retires the sidebar notice');
     await screenshot('update-manual-recovery');
     await cdp.evaluate("localStorage.setItem('workProfileVerify.operation',JSON.stringify({phase:'idle'}))");
     await navigate('/settings/cloud');

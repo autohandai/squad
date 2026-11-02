@@ -35,12 +35,13 @@ list to the section for that version.
 - The permission ladder says that choosing a level turns Built-in tool rules on, since a level applies its whole preset.
 - A run in the Execution panel's Runs tab now reads like the chat: "Work details · 2 tools · 1m 12s", the reply text, and the edits, commands and tools it used. The engine command line, the raw log count and the "status updates" rows are gone unless the diagnostic-output chat setting is on.
 - The bundled Autohand Code is 0.9.9 (was 0.9.7), the same release the CLI installs on its own.
-- Computer Use now runs through Autohand Computer Use, the component Autohand Code installs, so the macOS Accessibility and Screen Recording grant you gave the CLI serves Squad too. Squad's own bundled host is used only when that component is missing; the member's Permissions page says which one is active and can install Autohand Computer Use.
+- Computer Use now runs through Autohand Computer Use, the component Autohand Code installs, so the macOS Accessibility and Screen Recording grant you gave the CLI serves Squad too. The copy bundled with Squad is that same component, built unmodified with the same identity; the Squad-branded "Squad Computer Use" host is gone. The member's Permissions page says which copy is active and can install Autohand Computer Use.
 - Model overrides load names and exact IDs from the selected coding engine, with refresh and a custom-ID option, instead of requiring you to guess model names.
 
 ### Fixed
 
 - A member can no longer spend a whole reply editing its work plan: after eight plan changes in one reply the team tool refuses and tells it to do the task itself.
+- The sidebar no longer keeps saying "Updated to 0.1.14." with a Details button after an update has finished; Settings › Updates still shows it, the sidebar only speaks while there is something to download, install or fix.
 - Work details shows one row per permission request again; a request with a multi-line command used to appear as several rows, each marked answered.
 - A member whose engine stops responding mid-reply now ends the reply within the inactivity window instead of showing "Working…" for twenty minutes: the engine session is closed without waiting on requests it will never answer.
 - Skill Work details now distinguish instructions supplied to an engine from instructions observed in a native provider request. Duplicate receipts coalesce and historical receipts remain labelled as past observations.
