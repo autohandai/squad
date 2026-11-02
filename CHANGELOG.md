@@ -41,6 +41,7 @@ list to the section for that version.
 
 ### Fixed
 
+- A member named for its role, like Chief of Staff, is no longer named twice in the phone header, the member's history page and the team proposal card.
 - Settings › Updates no longer says "Updated to" a version you installed by hand when it is newer than the latest public release; it reads as a preview instead.
 - A member without Computer Use permission no longer reaches Autohand Code's own Computer Use, which ignored the member's grant and could fail its whole reply when macOS permissions were not yet given.
 - An Autohand member's file writes are on disk the moment it makes them, so it no longer mistakes its own work for a failed tool, rewrites it through the shell, and has an earlier draft overwrite the result when the reply ends.

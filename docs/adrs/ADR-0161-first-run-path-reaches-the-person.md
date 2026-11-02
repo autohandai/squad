@@ -305,6 +305,18 @@ source confirmed each one.
   config preview is checked against the saved file, one member on each other
   ready engine answers a message, the warm session is left idle for sixteen
   minutes before the continuation, and the run ends with Reset Squad.
+- A dev-server rehearsal on 3 November stopped the Frontend Developer two
+  files into the build, with "Interrupted" in the chat. The engine had not
+  failed: the run log ended with `index.html` written and then
+  "autohand reply stopped", with no stop reason, and the page's own turn
+  record was empty because the page had been reloaded. Without `--repo` the
+  demo repository lives under `.codex-artifacts/` inside this checkout, and
+  the dev bridge runs Vite over the whole checkout, so a member writing an
+  HTML file there set off a full page reload. The reload closed the chat
+  stream, and a closed stream stops the reply on purpose. `vite.config.js`
+  now leaves `.codex-artifacts/` out of the watcher. The packaged app has no
+  dev server and was never affected. A member working on this checkout's
+  own `src/` in dev mode still reloads the page, as any Vite edit does.
 - `check-agent-channel-actions` fails one assertion (a blocked channel
   proposal reports `failed` rather than `blocked`) on HEAD before this change
   as well; left as found.

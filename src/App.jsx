@@ -13372,8 +13372,16 @@ function NavButton({ active, onClick, children }) {
 }
 
 
+// A member named for its role ("Chief of Staff", the first-run coordinator)
+// read "Chief of Staff / Chief of Staff"; the role is said once.
+function nameWithRole(name, role) {
+  const label = String(name || "").trim();
+  const roleLabel = String(role || "").trim();
+  return !roleLabel || roleLabel.toLowerCase() === label.toLowerCase() ? label : `${label} / ${roleLabel}`;
+}
+
 function MobileTopbar({ activeAgent, showsMember = false, theme, copy = getLocaleCopy(DEFAULT_LOCALE), onMenu, onSettings, onMissionControl, onOnboarding, onAnalytics }) {
-  const subtitle = showsMember && activeAgent ? `${activeAgent.name} / ${localizedRole(activeAgent, copy)}` : "";
+  const subtitle = showsMember && activeAgent ? nameWithRole(activeAgent.name, localizedRole(activeAgent, copy)) : "";
   return (
     <div className="sticky top-0 z-30 flex h-16 items-center justify-between border-b bg-background/90 px-3 backdrop-blur lg:hidden">
       <Button variant="ghost" size="icon" onClick={onMenu} aria-label={copy.sidebar}>
@@ -22312,7 +22320,7 @@ function MemberHistoryPage({ agent, copy = getLocaleCopy(DEFAULT_LOCALE), locale
       <PageTitle title={localizedSectionLabel("history", copy)} />
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
         <p className="text-sm text-muted-foreground">
-          {agent.name} / {localizedRole(agent, copy)}
+          {nameWithRole(agent.name, localizedRole(agent, copy))}
         </p>
         <MemberHistory
           records={records}

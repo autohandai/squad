@@ -276,6 +276,8 @@
 
 - What a team tool did in a turn ("Asked Eva", "Remembered for the team: …", "Robert is now called Rob") is one quiet line under the reply, the same line a profile change uses; never a card.
 
+- A member whose name is its role ("Chief of Staff", a proposed "Frontend Developer") is named once: where a surface shows "name / role" or a name beside a role, a role equal to the name is left out.
+
 ## Maintenance
 
 - Reopening the desktop reuses healthy local Squad services and recovers verified stale analytics without a confirmation. Keep the desktop's address stable because its WebKit storage belongs to that origin; never hide saved chats by silently moving the UI to another port. An unrelated listener is left running and a real conflict explains the next action.

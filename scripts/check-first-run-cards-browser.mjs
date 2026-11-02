@@ -95,6 +95,8 @@ try {
   assert.match(team, /Chief of Staff proposes a team: Pie shop site/);
   assert.ok(team.includes('Frontend Developer') && team.includes('QA Engineer') && team.includes('leads'), 'the roster and lead render');
   assert.ok(team.includes('Create team · 2 members'), 'Create team names the count');
+  const frontendRow = await browser.evaluate("[...document.querySelectorAll('[data-testid=\"team-proposal\"] li')].map(li => li.textContent).find(text => text.includes('Frontend Developer')) || ''");
+  assert.equal(frontendRow.split('Frontend Developer').length - 1, 1, `a member named for its role says the role once: ${frontendRow}`);
   assert.ok(!(await browser.evaluate("document.querySelector('[data-message-id=proposal-answer]').textContent")).includes('proposes the Pie shop site team.'), 'the receipt line does not repeat in the reply body');
   await browser.screenshot(artifact + '/team-proposal-desktop.png');
   await browser.evaluate("[...document.querySelectorAll('[data-testid=\"team-proposal\"] button')].find(b => b.textContent === 'Not now').click()");

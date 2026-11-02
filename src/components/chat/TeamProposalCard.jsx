@@ -31,7 +31,8 @@ export function TeamProposalCard({ proposal, memberName = "The member", decided 
         {members.map((member) => (
           <li key={member.key || member.name} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 py-2">
             <span className="text-foreground">{member.name}</span>
-            <span className="text-muted-foreground">{member.role}</span>
+            {/* A member named for its role says the role once. */}
+            {member.role && member.role.trim().toLowerCase() !== String(member.name || "").trim().toLowerCase() ? <span className="text-muted-foreground">{member.role}</span> : null}
             {member.key === proposal.leadKey ? <span className="text-xs text-muted-foreground">· {copy.teamLead || "leads"}</span> : null}
             {member.purpose ? <span className="basis-full text-xs text-muted-foreground">{member.purpose}</span> : null}
           </li>
