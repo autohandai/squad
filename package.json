@@ -76,6 +76,8 @@
     "check:team-builder": "node scripts/check-team-builder.mjs",
     "check:team-builder:browser": "node scripts/check-team-builder-browser.mjs",
     "check:local-skills": "node scripts/check-local-skills.mjs",
+    "check:adaptive-skills": "node scripts/check-adaptive-skills.mjs",
+    "check:skill-receipt-transport": "node scripts/check-skill-receipt-transport.mjs",
     "check:permissions": "node scripts/check-permissions.mjs",
     "check:permission-policy": "node scripts/check-permission-policy.mjs",
     "check:member-suggestions": "node scripts/check-member-suggestions.mjs",

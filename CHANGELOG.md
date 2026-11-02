@@ -13,6 +13,8 @@ list to the section for that version.
 ### Added
 
 - A member can ask you a question mid-reply and wait for the answer (`squad_ask`): the question shows as a card under the running reply with its options and an answer field, and your answer goes straight back to the member. In a goal, a queued follow-up or a channel turn the tool refuses and the member asks in its reply instead.
+- Task-scoped local skill discovery with qualified origins and exact complete-package revisions. Member snapshots retain scripts and assets, reject unsafe or oversized packages, and remain available offline.
+
 - When a member's tool needs permission, the chat now shows the request under the reply with Allow once, Allow for this reply and Deny, and the member continues with your answer instead of timing out as declined. In a direct conversation, tools marked Ask first in an Interactive member's Permissions now actually ask; goals, automations and channel work keep running without prompts.
 - Members can propose a team from a conversation (`squad_propose_team`). The roster appears under the reply with Create team; the members are created through the same path as New team at the Edit files level, and nothing exists until you confirm.
 - "Allow for this reply" on a permission card now covers every later request for that tool in the same reply, so a member writing six files asks once.
@@ -41,6 +43,8 @@ list to the section for that version.
 - A member can no longer spend a whole reply editing its work plan: after eight plan changes in one reply the team tool refuses and tells it to do the task itself.
 - Work details shows one row per permission request again; a request with a multi-line command used to appear as several rows, each marked answered.
 - A member whose engine stops responding mid-reply now ends the reply within the inactivity window instead of showing "Working…" for twenty minutes: the engine session is closed without waiting on requests it will never answer.
+- Skill Work details now distinguish instructions supplied to an engine from instructions observed in a native provider request. Duplicate receipts coalesce and historical receipts remain labelled as past observations.
+
 - Files an Autohand member writes now reach the repository. The engine stages edits in a preview batch and waits for a decision Squad never sent, so a member could report "Created docs/plan.md" with nothing on disk; Squad now applies the batch when the reply finishes, discards it when you stop the reply, and says what was written.
 - Squad team tools (teammates, channels, memory, profile), the vault and Computer Use now work on the Autohand engine with Built-in tool rules on, at every ladder level. They were refused at the engine regardless of any Permissions setting.
 - A member no longer loses the conversation when its engine session restarts (idle, Stop, a permission change, a bridge restart): the recent turns are replayed and the chat says so.

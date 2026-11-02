@@ -11584,6 +11584,7 @@ function normalizeTrace(trace) {
         reflection: String(event?.reflection || ""),
         call: event?.call || null,
         result: event?.result || null,
+        receipt: event?.receipt || null,
         index: Number.isFinite(Number(event?.index)) ? Number(event.index) : null,
       }))
       .filter((event) => event.type),

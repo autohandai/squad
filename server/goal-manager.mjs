@@ -35,14 +35,14 @@ function reportFor(result) {
 }
 
 export function goalTurnPrompt(goal) {
-  const state = goal.turnCount ? `\nCheckpoint after ${goal.turnCount} turn(s):\n${JSON.stringify({ checklist: goal.checklist, summary: goal.summary, evidence: goal.evidence })}\nLatest reply:\n${goal.latestReply.slice(0, 6000)}` : '';
-  return `Pursue this explicit goal until it is achieved or you need a human decision:\n${goal.prompt}${state}\n\nWork in the currently assigned harness and workspace. Continue the remaining work, inspect and verify the actual result. Do not stop simply because one answer is complete. Respect the member's permission boundary; if a decision or authorization is needed, report blocked and explain what is needed. Maintain concrete named checklist items; only mark items completed when supported by work you performed or verified. Keep the final human response concise: the outcome and material remaining limits.\n\nAt the end of this turn append exactly one private report (valid JSON) in this format:\n<squad_goal>{"status":"continue","summary":"what changed and what remains","checklist":[{"id":"stable-id","title":"concrete task","status":"pending|in_progress|completed|failed|cancelled"}],"evidence":["observed validation or artifact"]}</squad_goal>\nUse status completed only when the entire goal is achieved, every checklist item is completed, and evidence names the verification. Use blocked when you cannot proceed without human input. If you still have work, use continue. This goal has an explicit safety boundary of ${goal.maxTurns} turns and ${Math.round(goal.maxRuntimeMs / 60000)} minutes per pursuit; reaching it pauses the goal for a person to resume.`;
+  const state = goal.turnCount || goal.checkpoint ? `\nCheckpoint after ${goal.turnCount} turn(s):\n${JSON.stringify({ checklist: goal.checklist, summary: goal.summary, evidence: goal.evidence, checkpoint: goal.checkpoint })}\nLatest reply:\n${goal.latestReply.slice(0, 6000)}` : '';
+  return `Pursue this explicit goal until it is achieved or you need a human decision:\n${goal.prompt}${state}\n\nWork in the currently assigned harness and workspace. Continue the remaining work, inspect and verify the actual result. Do not stop simply because one answer is complete. Never retry an external effect recorded as completed in the checkpoint; inspect its recorded observation and continue from the result. Respect the member's permission boundary; if a decision or authorization is needed, report blocked and explain what is needed. Maintain concrete named checklist items; only mark items completed when supported by work you performed or verified. Keep the final human response concise: the outcome and material remaining limits.\n\nAt the end of this turn append exactly one private report (valid JSON) in this format:\n<squad_goal>{"status":"continue","summary":"what changed and what remains","checklist":[{"id":"stable-id","title":"concrete task","status":"pending|in_progress|completed|failed|cancelled"}],"evidence":["observed validation or artifact"]}</squad_goal>\nUse status completed only when the entire goal is achieved, every checklist item is completed, and evidence names the verification. Use blocked when you cannot proceed without human input. If you still have work, use continue. This goal has an explicit safety boundary of ${goal.maxTurns} turns and ${Math.round(goal.maxRuntimeMs / 60000)} minutes per pursuit; reaching it pauses the goal for a person to resume.`;
 }
 
 export class GoalManager {
-  constructor({ squadStateDir, executeTurn, assertCanWork, emit = () => {}, now = () => Date.now() }) {
+  constructor({ squadStateDir, executeTurn, assertCanWork, resolveContinuityContext, emit = () => {}, now = () => Date.now() }) {
     this.filename = join(squadStateDir, 'goals.json');
-    this.executeTurn = executeTurn; this.assertCanWork = assertCanWork; this.emit = emit; this.now = now;
+    this.executeTurn = executeTurn; this.assertCanWork = assertCanWork; this.resolveContinuityContext = resolveContinuityContext; this.emit = emit; this.now = now;
     this.records = new Map(); this.workers = new Map(); this.events = new EventEmitter(); this.events.setMaxListeners(100);
     this.writing = Promise.resolve();
     this.ready = this.load();
@@ -56,6 +56,8 @@ export class GoalManager {
         record.status = 'paused'; record.pausedAt = new Date(this.now()).toISOString();
         record.pauseReason = 'The bridge restarted. Resume when you are ready to continue.'; changed = true;
       }
+      if (record.checkpoint) record.checkpoint = parseCheckpoint(record.checkpoint, true);
+      if (record.checkpointHistory) record.checkpointHistory = checkpointHistory(record.checkpointHistory);
       this.records.set(record.id, record);
     }
     if (changed) await this.save();
@@ -84,7 +86,7 @@ export class GoalManager {
       turnCount: 0, maxTurns: Math.trunc(Math.min(Math.max(Number(payload.goalMaxTurns) || DEFAULT_MAX_TURNS, 1), 100)),
       maxRuntimeMs: Math.min(Math.max(Number(payload.goalMaxRuntimeMs) || DEFAULT_RUNTIME_MS, 60_000), 24 * 60 * 60_000),
       startedAt: at, updatedAt: at, finishedAt: null, pausedAt: null, pauseReason: '', error: null,
-      launch: privateLaunch(payload) };
+      launch: privateLaunch(payload), ...(payload.goalCheckpoint ? { checkpoint: parseCheckpoint(payload.goalCheckpoint) } : {}) };
     this.records.set(goal.id, goal);
     try { await this.save(); } catch (error) { this.records.delete(goal.id); throw error; }
     // Let the stream attach before the first harness event arrives.
@@ -103,6 +105,7 @@ export class GoalManager {
     if (FINISHED.has(goal.status)) return publicGoal(goal);
     if (action === 'resume') {
       if (goal.status === 'running') return publicGoal(goal);
+      const resumeVersion = JSON.stringify(publicGoal(goal));
       await this.assertCanWork?.(goal.launch);
       if ([...this.records.values()].some((other) => other.id !== id && other.agentId === goal.agentId && ACTIVE.has(other.status))) throw Object.assign(new Error('This member already has another running goal.'), { status: 409 });
       const previous = this.workers.get(id);
@@ -111,7 +114,11 @@ export class GoalManager {
         const stopped = await Promise.race([previous.done.then(() => true), new Promise((resolve) => { timer = setTimeout(() => resolve(false), 3500); })]).finally(() => clearTimeout(timer));
         if (!stopped) throw Object.assign(new Error('The previous goal turn is still stopping. Retry resume after it exits.'), { status: 409 });
       }
-      await this.transition(goal, { status: 'running', pausedAt: null, pauseReason: '', error: null, finishedAt: null });
+      const checkpoint = await preflightCheckpoint(goal, this.resolveContinuityContext, this.now);
+      if (JSON.stringify(publicGoal(goal)) !== resumeVersion) throw Object.assign(new Error('The goal changed during resume preflight. Review its current state before retrying.'), { status: 409 });
+      if ([...this.records.values()].some((other) => other.id !== id && other.agentId === goal.agentId && ACTIVE.has(other.status))) throw Object.assign(new Error('This member already has another running goal.'), { status: 409 });
+      const history = JSON.stringify(checkpoint) !== JSON.stringify(goal.checkpoint) ? appendCheckpoint(goal, checkpoint) : goal.checkpointHistory;
+      await this.transition(goal, { checkpoint, checkpointHistory: history, status: 'running', pausedAt: null, pauseReason: '', error: null, finishedAt: null });
       setImmediate(() => this.run(goal));
     } else {
       const status = action === 'cancel' ? 'cancelled' : 'paused';
@@ -122,6 +129,23 @@ export class GoalManager {
       if (!this.workers.has(id)) this.notify(goal, 'done', { reply: action === 'cancel' ? 'Goal cancelled.' : goal.pauseReason, goal: publicGoal(goal), goalId: goal.id });
     }
     return publicGoal(goal);
+  }
+  async checkpoint(id, input) {
+    await this.ready;
+    const goal = this.records.get(id); if (!goal) throw Object.assign(new Error('goal not found'), { status: 404 });
+    const checkpoint = parseCheckpoint(input);
+    if (checkpoint.continuity === undefined && goal.checkpoint?.continuity) checkpoint.continuity = structuredClone(goal.checkpoint.continuity);
+    preserveUnknownEffects(goal.checkpoint?.continuity, checkpoint.continuity);
+    const history = appendCheckpoint(goal, checkpoint);
+    await this.transition(goal, { checkpoint, checkpointHistory: history });
+    return publicGoal(goal);
+  }
+  async upgradeSkillPins(id, references) {
+    await this.ready;
+    const goal = this.records.get(id); if (!goal) throw Object.assign(new Error('goal not found'), { status: 404 });
+    if (goal.status === 'running') throw Object.assign(new Error('Pause the goal before explicitly upgrading skill pins.'), { status: 409 });
+    if (!goal.checkpoint?.continuity) throw Object.assign(new Error('No pinned checkpoint exists for this goal.'), { status: 409 });
+    return this.checkpoint(id, { ...goal.checkpoint, continuity: { ...goal.checkpoint.continuity, skills: references } });
   }
   async pauseForMember(agentId, reason = 'Member stopped.') {
     await this.ready;
@@ -150,8 +174,13 @@ export class GoalManager {
         if (goal.turnCount - initialTurnCount >= goal.maxTurns || this.now() - pursuitStartedAt >= goal.maxRuntimeMs) {
           await this.transition(goal, { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: 'The visible pursuit limit was reached. Review progress and resume to continue.' }); break;
         }
-        const result = cleanWorkResult(await this.executeTurn({ ...goal.launch, requestId: `goal-${goal.id}-turn-${goal.turnCount}`, mode: 'prompt', prompt: goalTurnPrompt(goal), resumeSession: true }, {
+        const result = cleanWorkResult(await this.executeTurn({ ...goal.launch, requestId: `goal-${goal.id}-turn-${goal.turnCount}`, mode: 'prompt', prompt: goalTurnPrompt(goal), resumeSession: true, skillReferences: goal.checkpoint?.continuity?.skills || [] }, {
           signal: controller.signal,
+          onSkillContinuity: async (evidence) => {
+            if (goal.status !== 'running' || controller.signal.aborted) throw new Error('Goal stopped before skill dispatch.');
+            const checkpoint = checkpointFromSkills(goal, evidence, this.now());
+            if (checkpoint) await this.transition(goal, { checkpoint, checkpointHistory: appendCheckpoint(goal, checkpoint) });
+          },
           onEvent: (event, data) => {
             if (goal.status !== 'running') return;
             if (event === 'progress' && data?.items?.length) {
@@ -168,6 +197,8 @@ export class GoalManager {
         const patch = { turnCount: goal.turnCount + 1, latestReply: String(result.reply || '').slice(0, 16000),
           lastResult: { ...result, reply: String(result.reply || '').slice(0, 16000), goalReport: undefined } };
         if (report) Object.assign(patch, { checklist: report.checklist.length ? report.checklist : goal.checklist, summary: report.summary, evidence: report.evidence });
+        const checkpoint = checkpointFromSkills(goal, result, this.now());
+        if (checkpoint) Object.assign(patch, { checkpoint, checkpointHistory: appendCheckpoint(goal, checkpoint) });
         await this.transition(goal, patch);
         if (report?.status === 'blocked') { await this.transition(goal, { status: 'blocked', finishedAt: new Date(this.now()).toISOString() }); break; }
         if (report?.status === 'completed' && report.evidence.length && goal.checklist.length && goal.checklist.every((item) => item.status === 'completed')) {
@@ -179,7 +210,8 @@ export class GoalManager {
       }
       if (goal.status === 'running' && controller.signal.aborted) await this.transition(goal, { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: 'The goal runtime boundary was reached. Resume to continue.' });
     } catch (error) {
-      if (goal.status === 'running') await this.transition(goal, error?.reason === 'break' ? { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: 'Member is on a break.' }
+      if (goal.status === 'running') await this.transition(goal, error?.reason === 'continuity' ? { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: error.message }
+        : error?.reason === 'break' ? { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: 'Member is on a break.' }
         : controller.signal.aborted ? { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: 'The goal runtime boundary was reached. Resume to continue.' }
           : { status: 'failed', error: error?.message || String(error), finishedAt: new Date(this.now()).toISOString() });
     } finally {
@@ -189,4 +221,124 @@ export class GoalManager {
       this.emit('goal.finished', { memberId: goal.agentId, goal: publicGoal(goal) }); finish();
     }
   }
+}
+
+function continuityRecord(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('Goal continuity must be an object.');
+  return value;
+}
+function continuityText(value, name) {
+  if (typeof value !== 'string' || !value.trim() || value.length > 4000) throw new TypeError(`${name} must contain at most 4000 non-empty characters.`);
+  return value.trim();
+}
+function continuityItems(value, name, limit = 32) {
+  if (!Array.isArray(value) || value.length > limit) throw new TypeError(`${name} must contain at most ${limit} entries.`);
+  return value;
+}
+function continuityTimestamp(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new TypeError('Continuity timestamps must be non-negative numbers.');
+  return value;
+}
+function pinnedSkill(value) {
+  const raw = continuityRecord(value);
+  const resource = raw.resource === undefined ? 'SKILL.md' : continuityText(raw.resource, 'skill resource');
+  if (resource && (resource.startsWith('/') || /^[a-z]:/i.test(resource) || resource.includes('\0') || resource.includes('\\') || resource.split('/').some(part => part === '.' || part === '..'))) throw new TypeError('Skill resource must be a contained package-relative path.');
+  return { authority: continuityText(raw.authority, 'skill authority'), packageId: continuityText(raw.packageId, 'skill package ID'), revision: continuityText(raw.revision, 'exact skill revision'), ...(resource ? { resource } : {}) };
+}
+function effectObservation(value) {
+  const raw = continuityRecord(value);
+  if (!['unknown', 'absent', 'completed'].includes(raw.status)) throw new TypeError('Invalid external effect observation.');
+  return { status: raw.status, evidence: continuityText(raw.evidence, 'observation evidence'), observedAt: continuityTimestamp(raw.observedAt) };
+}
+function pendingEffect(value) {
+  const raw = continuityRecord(value);
+  if (!['pending', 'unknown', 'observed'].includes(raw.status)) throw new TypeError('Invalid pending effect status.');
+  const observation = raw.observation === undefined ? undefined : effectObservation(raw.observation);
+  if (raw.status === 'observed' && (!observation || observation.status === 'unknown')) throw new TypeError('Observed effects require conclusive external evidence.');
+  if (raw.status !== 'observed' && observation) throw new TypeError('Only observed effects can contain an observation.');
+  return { id: continuityText(raw.id, 'effect ID'), description: continuityText(raw.description, 'effect description'), status: raw.status, ...(observation ? { observation } : {}) };
+}
+function parseContinuity(value) {
+  if (value === undefined) return undefined;
+  const raw = continuityRecord(value); const freshness = continuityRecord(raw.freshness);
+  if (raw.version !== 1) throw new TypeError('Unsupported goal continuity version.');
+  if (freshness.maxAgeMs !== undefined && !(continuityTimestamp(freshness.maxAgeMs) > 0)) throw new TypeError('Freshness maxAgeMs must be positive.');
+  return { version: 1, approvedIntent: continuityText(raw.approvedIntent, 'approved intent'), workspaceId: continuityText(raw.workspaceId, 'workspace identity'),
+    skills: continuityItems(raw.skills, 'skill pins').map(pinnedSkill), checkReferences: continuityItems(raw.checkReferences, 'check references').map(item => continuityText(item, 'check reference')),
+    pendingEffects: continuityItems(raw.pendingEffects, 'pending effects').map(pendingEffect),
+    freshness: { runtimeVersion: continuityText(freshness.runtimeVersion, 'runtime version'), providerId: continuityText(freshness.providerId, 'provider identity'),
+      permissionEpoch: continuityText(freshness.permissionEpoch, 'permission epoch'), capturedAt: continuityTimestamp(freshness.capturedAt), ...(freshness.maxAgeMs === undefined ? {} : { maxAgeMs: freshness.maxAgeMs }) } };
+}
+function parseCheckpoint(value, stored = false) {
+  const raw = continuityRecord(value);
+  return { summary: continuityText(raw.summary, 'checkpoint summary'), ...(raw.nextStep === undefined ? {} : { nextStep: continuityText(raw.nextStep, 'checkpoint next step') }),
+    ...(raw.artifacts === undefined ? {} : { artifacts: continuityItems(raw.artifacts, 'artifacts', 20).map(item => continuityText(item, 'artifact reference')) }),
+    ...(raw.continuity === undefined ? {} : { continuity: parseContinuity(raw.continuity) }), recordedAt: stored ? continuityTimestamp(raw.recordedAt) : Date.now() };
+}
+function checkpointHistory(value) { return continuityItems(value, 'checkpoint history', 128).map(checkpoint => parseCheckpoint(checkpoint, true)); }
+function appendCheckpoint(goal, replacement) {
+  if (!goal.checkpoint?.continuity || continuitySignature(goal.checkpoint.continuity) === continuitySignature(replacement?.continuity)) return goal.checkpointHistory;
+  if ((goal.checkpointHistory?.length || 0) >= 128) throw new TypeError('Goal checkpoint history limit reached. Preserve this goal before creating more checkpoints.');
+  return [...(goal.checkpointHistory || []), structuredClone(goal.checkpoint)];
+}
+function preserveUnknownEffects(previous, next) {
+  for (const effect of previous?.pendingEffects || []) {
+    if (effect.status !== 'unknown') continue;
+    if (JSON.stringify(next?.pendingEffects.find(item => item.id === effect.id)) !== JSON.stringify(effect)) throw new TypeError(`Cannot discard uncertain external effect ${effect.id}; observe it before retrying or replacing the checkpoint.`);
+  }
+}
+async function preflightCheckpoint(goal, resolver, clock) {
+  const checkpoint = goal.checkpoint; const continuity = checkpoint?.continuity;
+  if (!continuity) return checkpoint;
+  if (!resolver) throw Object.assign(new Error('Cannot resume: current context validation is unavailable for this checkpoint.'), { status: 409 });
+  const context = await resolver(publicGoal(goal));
+  const now = clock();
+  if (!Number.isFinite(context.checkedAt) || context.checkedAt > now || now - context.checkedAt > 60_000) throw Object.assign(new Error('Cannot resume: current context attestation is stale or invalid.'), { status: 409 });
+  if (continuity.freshness.capturedAt > now || now - continuity.freshness.capturedAt > (continuity.freshness.maxAgeMs || 24 * 60 * 60_000)) throw Object.assign(new Error('Cannot resume: checkpoint is stale; explicitly revalidate it before continuing.'), { status: 409 });
+  for (const key of ['workspaceId', 'runtimeVersion', 'providerId', 'permissionEpoch']) {
+    if (!context[key] || context[key] !== (key === 'workspaceId' ? continuity.workspaceId : continuity.freshness[key])) throw Object.assign(new Error(`Cannot resume: ${key} changed; explicitly revalidate the checkpoint under the current context.`), { status: 409 });
+  }
+  for (const reference of continuity.skills) {
+    const resolved = await context.resolveSkill({ ...reference });
+    if (!resolved || resolved.authority !== reference.authority || resolved.packageId !== reference.packageId || resolved.revision !== reference.revision || resolved.resource !== reference.resource) throw Object.assign(new Error(`Cannot resume: pinned skill revision unavailable: ${reference.authority}/${reference.packageId}@${reference.revision}. Choose an explicit replacement; aliases are not substituted.`), { status: 409 });
+  }
+  const next = structuredClone(checkpoint);
+  for (const effect of next.continuity.pendingEffects) {
+    if (effect.status !== 'unknown') continue;
+    if (!context.observeEffect) throw Object.assign(new Error(`Cannot resume: observe uncertain external effect ${effect.id} before retrying.`), { status: 409 });
+    const observation = effectObservation(await context.observeEffect(structuredClone(effect)));
+    if (observation.status === 'unknown' || observation.observedAt > clock() || observation.observedAt < context.checkedAt) throw Object.assign(new Error(`Cannot resume: external effect ${effect.id} remains uncertain; observe it before retrying.`), { status: 409 });
+    effect.status = 'observed'; effect.observation = observation;
+  }
+  if (JSON.stringify(next) !== JSON.stringify(checkpoint)) next.recordedAt = now;
+  return next;
+}
+
+function continuitySignature(continuity) {
+  return JSON.stringify(continuity && { ...continuity, freshness: { ...continuity.freshness, capturedAt: undefined } });
+}
+function checkpointFromSkills(goal, result, now) {
+  const receipts = (Array.isArray(result.skillReceipts) ? result.skillReceipts : []).filter(receipt => receipt.current !== false && ['prepared', 'supplied', 'submitted', 'engine-confirmed'].includes(receipt.state));
+  if (!result.skillContinuityContext) return null;
+  try {
+    const previous = goal.checkpoint?.continuity;
+    const skills = [...(previous?.skills || [])];
+    for (const receipt of receipts) {
+      const reference = pinnedSkill(receipt.reference);
+      const existing = skills.find(pin => pin.authority === reference.authority && pin.packageId === reference.packageId && pin.resource === reference.resource);
+      if (existing && existing.revision !== reference.revision) throw new Error('A pinned skill changed during the goal. Pause and choose an explicit skill upgrade before continuing.');
+      if (!existing) skills.push(reference);
+    }
+    const observed = result.skillContinuityContext;
+    const freshness = { runtimeVersion: observed.runtimeVersion, providerId: observed.providerId || 'unattested:external', permissionEpoch: observed.permissionEpoch, capturedAt: observed.capturedAt ?? now };
+    if (previous && (previous.workspaceId !== observed.workspaceId || ['runtimeVersion', 'providerId', 'permissionEpoch'].some(key => previous.freshness[key] !== freshness[key]))) {
+      throw new Error('Goal execution context changed. Explicitly revalidate the checkpoint before continuing.');
+    }
+    const report = reportFor(result);
+    return parseCheckpoint({ summary: report?.summary || goal.summary || goal.checkpoint?.summary || 'Skill dependencies prepared for the approved goal.',
+      nextStep: (report?.checklist || goal.checklist || []).find(item => item.status === 'pending' || item.status === 'in_progress')?.title || goal.checkpoint?.nextStep || 'Review the current checkpoint before further work.',
+      artifacts: goal.checkpoint?.artifacts,
+      continuity: { version: 1, approvedIntent: previous?.approvedIntent || (goal.prompt.length <= 4000 ? goal.prompt : `The approved objective is retained in goal ${goal.id}.`),
+        workspaceId: observed.workspaceId, skills, checkReferences: report?.evidence || previous?.checkReferences || [], pendingEffects: previous?.pendingEffects || [], freshness } });
+  } catch (error) { throw Object.assign(new Error(`Goal continuity checkpoint: ${error.message}`, { cause: error }), { reason: 'continuity' }); }
 }

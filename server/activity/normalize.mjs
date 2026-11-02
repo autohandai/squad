@@ -18,7 +18,7 @@
 //
 // Output: ActivityItem[]
 //   { id, kind, verb, object, outcome, state, quiet, startedAt, endedAt, detail, refs }
-//   kind:  tool | edit | shell | message | thought | plan | approval | error | status
+//   kind:  tool | edit | shell | skill | message | thought | plan | approval | error | status
 //   state: pending | done | failed
 //   quiet: true for rows a feed collapses by default (reads, thoughts, status)
 //
@@ -423,6 +423,19 @@ class Feed {
 
   // -- everything else ------------------------------------------------------
 
+  skill(receipt, at) {
+    if (!receipt?.reference || !['supplied', 'submitted', 'engine-confirmed'].includes(receipt.state)) return;
+    const confirmed = receipt.state === 'submitted' && receipt.adapter === 'autohand' && receipt.capability === 'provider-request';
+    const id = `skill:${receipt.taskId}:${receipt.contentManifestId}:${receipt.reference.authority}:${receipt.reference.packageId}:${receipt.reference.revision}:${receipt.reference.resource || 'SKILL.md'}:${receipt.current === false ? 'historical' : 'task'}`;
+    const object = receipt.current === false ? `Previously ${confirmed ? 'loaded' : 'supplied'} ${receipt.name}` : confirmed ? `Loaded ${receipt.name} · this task` : `Supplied ${receipt.name} · engine confirmation unavailable`;
+    const existing = this.byId.get(id);
+    const values = { object, verb: confirmed ? 'load' : 'supply', detail: stringify(receipt), endedAt: at || receipt.at };
+    if (existing) { if (existing.verb !== 'load' || confirmed) Object.assign(existing, values); return existing; }
+    this.closeText();
+    this.closeRuns();
+    return this.add({ id, kind: 'skill', ...values, startedAt: at || receipt.at, refs: [{ type: 'skill', value: `${receipt.reference.authority}::${receipt.reference.packageId}@${receipt.reference.revision}` }] });
+  }
+
   status({ status, label, at }) {
     this.closeText();
     this.openStderr = null;
@@ -504,6 +517,7 @@ class Feed {
     const src = text(source);
     const body = text(line);
     if (!body.trim()) return;
+    if (src === 'skill') { this.skill(parseJson(body), at); return; }
 
     if (this.logArgs) {
       // Continuation of a pretty-printed JSON args block: appendLog splits one
@@ -673,6 +687,9 @@ function eventTime(event) {
 function foldEvent(feed, event) {
   const at = eventTime(event);
   switch (event.type) {
+    case 'skill_attachment':
+      feed.skill(event.receipt, at);
+      return;
     case "message_delta":
     case "message_update":
       feed.messageDelta({ messageId: event.messageId, delta: text(event.delta), thought: text(event.thought), at });

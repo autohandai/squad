@@ -73,6 +73,8 @@ const VERB_LABELS = {
   fail: ["Failing", "Failed"],
   status: ["", ""],
   output: ["", ""],
+  load: ["", ""],
+  supply: ["", ""],
 };
 
 function verbLabel(item) {

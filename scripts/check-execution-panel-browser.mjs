@@ -117,6 +117,12 @@ const runs = [
   run({ id: FOCUS_ID, title: "Compare our onboarding flow with the two competitors' and tell me what we are missing", minutesAgo: 20, lines: 73, effectiveModel: { provider: "anthropic", label: "Anthropic", model: "opus" } }),
   run({ id: "run_verify_t_3", title: "Goal: keep the outreach sheet in sync", minutesAgo: 6, mode: "goal", harness: "claude", lines: 9 }),
 ];
+const skillReceipt = (name, state, current = true) => ({ version: 1, taskId: FOCUS_ID, requestId: 'fixture-request', reference: { authority: 'fixture:project', packageId: name, revision: 'a'.repeat(64), resource: 'SKILL.md' }, resources: [{ path: 'SKILL.md', sha256: 'b'.repeat(64), bytes: 30 }], name, scope: 'project', state, adapter: state === 'submitted' ? 'autohand' : 'codex', capability: state === 'submitted' ? 'provider-request' : 'external-handoff', current, contentManifestId: `fixture-${name}`, at: at(19) });
+runs.find(item => item.id === FOCUS_ID).logs.unshift(...[
+  skillReceipt('review-fixture', 'supplied'), skillReceipt('review-fixture', 'supplied'),
+  skillReceipt('review-fixture', 'submitted'), skillReceipt('external-fixture', 'supplied'),
+  skillReceipt('old-fixture', 'supplied', false),
+].map(receipt => ({ source: 'skill', line: JSON.stringify(receipt), at: receipt.at })));
 const tasks = [{
   id: "task_verify_review",
   title: "Review the onboarding comparison before it goes to the team",
@@ -257,6 +263,11 @@ try {
     assert.equal(chat.split("Compare our onboarding flow with the two competitors").length - 1, 1, `the turn this profile already held is not added twice:\n${chat.slice(0, 2000)}`);
     const opened = await cdp.evaluate(`(() => { const el = document.getElementById("run-${FOCUS_ID}"); const d = el && el.querySelector("details"); return Boolean(d && d.open); })()`);
     assert.ok(opened, "the linked run's output is open");
+    assert.ok(body.includes('Loaded review-fixture'), 'confirmed native request attachment renders in Work details');
+    assert.ok(body.includes('Supplied external-fixture'), 'external handoff renders as supplied');
+    assert.ok(body.includes('engine confirmation unavailable'), 'external limitation stays visible');
+    assert.ok(body.includes('Previously supplied old-fixture'), 'historical receipts do not claim current attachment');
+    assert.equal(body.split('Loaded review-fixture').length - 1, 1, 'duplicate receipt observations coalesce');
     await shoot(`${theme}-runs`);
 
     assert.ok(await clickTab("Tasks"), "a Tasks tab");

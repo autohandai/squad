@@ -1,0 +1,208 @@
+{
+  "capturedAt": "2026-11-02T02:24:27.022Z",
+  "scope": "Local HTTP and PTY fixtures; copied project AGENTS.md; discovered user skill locations; empty fixture memory store. Token counts are estimates, not provider billing measurements. No raw prompts or credentials persisted.",
+  "results": [
+    {
+      "variant": "installed-ec2372",
+      "requestCount": 1,
+      "requests": [
+        {
+          "tools": 127,
+          "messageCount": 5,
+          "messageChars": 81624,
+          "estimatedMessageTokens": 35841,
+          "messages": [
+            {
+              "role": "system",
+              "chars": 80033,
+              "estimatedTokens": 35180
+            },
+            {
+              "role": "system",
+              "chars": 691,
+              "estimatedTokens": 304
+            },
+            {
+              "role": "user",
+              "chars": 5,
+              "estimatedTokens": 2
+            },
+            {
+              "role": "system",
+              "chars": 639,
+              "estimatedTokens": 281
+            },
+            {
+              "role": "system",
+              "chars": 256,
+              "estimatedTokens": 74
+            }
+          ],
+          "largestSections": [
+            {
+              "heading": "## Available Skills",
+              "chars": 47678,
+              "estimatedTokens": 20958
+            },
+            {
+              "heading": "## ReAct Pattern (Reason + Reflect + Act)",
+              "chars": 8223,
+              "estimatedTokens": 3615
+            },
+            {
+              "heading": "## Workflow Phases",
+              "chars": 4411,
+              "estimatedTokens": 1939
+            },
+            {
+              "heading": "## Available Agents",
+              "chars": 3850,
+              "estimatedTokens": 1693
+            },
+            {
+              "heading": "## Current Repository Architecture",
+              "chars": 2016,
+              "estimatedTokens": 576
+            },
+            {
+              "heading": "## Code Style",
+              "chars": 1668,
+              "estimatedTokens": 477
+            },
+            {
+              "heading": "## Engineering Workflow",
+              "chars": 1545,
+              "estimatedTokens": 680
+            },
+            {
+              "heading": "## Final Answer",
+              "chars": 1380,
+              "estimatedTokens": 395
+            },
+            {
+              "heading": "## Memory & User Preferences",
+              "chars": 1366,
+              "estimatedTokens": 601
+            },
+            {
+              "heading": "## Dynamic Tool Creation (Meta-Tools)",
+              "chars": 885,
+              "estimatedTokens": 390
+            },
+            {
+              "heading": "## Testing",
+              "chars": 780,
+              "estimatedTokens": 223
+            },
+            {
+              "heading": "## Project Instructions (AGENTS.md)",
+              "chars": 617,
+              "estimatedTokens": 272
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "updated-7012-plus-cache",
+      "requestCount": 1,
+      "requests": [
+        {
+          "tools": 3,
+          "messageCount": 5,
+          "messageChars": 80880,
+          "estimatedMessageTokens": 35508,
+          "messages": [
+            {
+              "role": "system",
+              "chars": 79172,
+              "estimatedTokens": 34801
+            },
+            {
+              "role": "user",
+              "chars": 5,
+              "estimatedTokens": 2
+            },
+            {
+              "role": "user",
+              "chars": 678,
+              "estimatedTokens": 299
+            },
+            {
+              "role": "user",
+              "chars": 295,
+              "estimatedTokens": 85
+            },
+            {
+              "role": "user",
+              "chars": 730,
+              "estimatedTokens": 321
+            }
+          ],
+          "largestSections": [
+            {
+              "heading": "## Available Skills",
+              "chars": 47678,
+              "estimatedTokens": 20958
+            },
+            {
+              "heading": "## ReAct Pattern (Reason + Reflect + Act)",
+              "chars": 7259,
+              "estimatedTokens": 3191
+            },
+            {
+              "heading": "## Workflow Phases",
+              "chars": 4411,
+              "estimatedTokens": 1939
+            },
+            {
+              "heading": "## Available Agents",
+              "chars": 3850,
+              "estimatedTokens": 1693
+            },
+            {
+              "heading": "## Current Repository Architecture",
+              "chars": 2016,
+              "estimatedTokens": 576
+            },
+            {
+              "heading": "## Code Style",
+              "chars": 1668,
+              "estimatedTokens": 477
+            },
+            {
+              "heading": "## Engineering Workflow",
+              "chars": 1545,
+              "estimatedTokens": 680
+            },
+            {
+              "heading": "## Final Answer",
+              "chars": 1380,
+              "estimatedTokens": 395
+            },
+            {
+              "heading": "## Memory & User Preferences",
+              "chars": 1366,
+              "estimatedTokens": 601
+            },
+            {
+              "heading": "## Dynamic Tool Creation (Meta-Tools)",
+              "chars": 885,
+              "estimatedTokens": 390
+            },
+            {
+              "heading": "## Testing",
+              "chars": 780,
+              "estimatedTokens": 223
+            },
+            {
+              "heading": "## Project Instructions (AGENTS.md)",
+              "chars": 617,
+              "estimatedTokens": 272
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

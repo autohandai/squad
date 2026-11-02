@@ -51,7 +51,8 @@ import { arch, homedir, platform as osPlatform, release as osRelease, tmpdir } f
 import { clientClosedReason, stopMessage } from "./server/harness/stop-reason.mjs";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
-import { listLocalSkills, localSkillRoots, readSkillFolder } from "./server/skills/local.mjs";
+import { listLocalSkillPackages, localSkillRootDescriptors, ensureSkillWorkspaceIdentity, readSkillWorkspaceIdentity, readSkillPackage, readSkillFrontmatter, copySkillPackage, writeSkillPackage } from "./server/skills/local.mjs";
+import { SKILL_DISCOVERY_CONTRACT, prepareSkillContext, acknowledgeSkillContext, coalesceSkillReceipts, validateSkillReferences, observeSkillAttachment, nativeSkillAttachmentEvent } from "./server/skills/runtime.mjs";
 import { startTracking } from "./server/workspace-git.mjs";
 import { channelError, createChannelsStore } from "./server/channels-store.mjs";
 import { createAgentChannelActions } from "./server/agent-channel-actions.mjs";
@@ -761,10 +762,10 @@ bridgeEvents.on("computer-use.evidence", (evidence) => {
 });
 // One bridge-owned turn launcher for goals and member queues (ADR-0111):
 // the same chat turn the streaming route runs, with events as callbacks.
-const executeBridgeTurn = (payload, { signal, onEvent }) => {
+const executeBridgeTurn = (payload, { signal, onEvent, onSkillContinuity }) => {
   if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   return executeChatTurn(payload, {
-  signal, stream: { send: onEvent }, startedAt: Date.now(),
+  signal, stream: { send: onEvent }, startedAt: Date.now(), onSkillContinuity,
   });
 };
 const goals = new GoalManager({
@@ -776,6 +777,25 @@ const goals = new GoalManager({
   },
   emit: emitBridgeEvent,
   executeTurn: executeBridgeTurn,
+  resolveContinuityContext: async (goal) => {
+    const memberId = sanitizeAgentId(goal.agentId);
+    const agentHome = join(isolatedAgentsDir, memberId);
+    const { agent = {} } = await withSavedMember({ agentId: memberId });
+    const workspace = goal.workspace;
+    const workspaceId = await readSkillWorkspaceIdentity(workspace);
+    const assignment = harnessAssignmentFromAgent(agent);
+    const providerId = isExternalHarness(assignment) ? '' : (await resolveProviderForAgent(agent)).provider;
+    const installed = (await readPersistentJson(join(agentHome, 'skills', 'installed-skills.json'), {})).installed || [];
+    const enabled = new Set(uniqueSkillIds(agent.skills));
+    return {
+      workspaceId: workspaceId || '', runtimeVersion: packageMetadata.version, providerId, permissionEpoch: skillPolicyEpoch(agent), checkedAt: Date.now(),
+      resolveSkill: async (reference) => {
+        try { return (await validateSkillReferences([reference], { installed: installed.filter(entry => enabled.has(entry.id)), actor: { memberId, workspace }, agentHome }))[0]; }
+        catch { return null; }
+      },
+      observeEffect: async () => ({ status: 'unknown', evidence: 'No current external-effect observation is available from this engine adapter.', observedAt: Date.now() }),
+    };
+  },
 });
 // Everything the bridge holds for a member that means "working": the queue
 // dispatcher waits for all of it before starting the next follow-up.
@@ -1853,8 +1873,14 @@ function sanitizeSkillId(input) {
     .replace(/^@?skill\//i, "")
     .replace(/^https:\/\/skilled\.autohand\.ai\/skill\//i, "")
     .toLowerCase();
+  const packagePath = raw.split('::').at(-1);
+  if (/^(?:[a-z0-9][a-z0-9_.:-]*::)?[a-z0-9.][a-z0-9_./-]*$/.test(raw) && !packagePath.split('/').some(part => !part || part === '.' || part === '..') && (raw.includes('::') || raw.includes('/'))) return raw;
   const safe = raw.replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
   return skillAliases.get(safe) || safe;
+}
+
+function skillSnapshotFolder(id) {
+  return id.includes('::') || id.includes('/') ? `qualified-${createHash('sha256').update(id).digest('hex').slice(0, 24)}` : id;
 }
 
 function uniqueSkillIds(input) {
@@ -1950,7 +1976,9 @@ async function loadSkillCatalog() {
 
 function normalizeSkillFileList(skill) {
   const files = Array.isArray(skill.files) && skill.files.length ? skill.files : ["SKILL.md"];
-  const safeFiles = files.map(safePathSegment).filter(Boolean);
+  if (files.length > 200 || files.some(file => typeof file !== 'string' || !file || isAbsolute(file) || file.includes('\\') || file.includes('\0') || file.split('/').some(part => !part || part === '.' || part === '..' || part === '.git' || part === '.hg'))) throw new Error('Skill package declares unsafe paths or exceeds the file limit');
+  const safeFiles = [...new Set(files)];
+  if (safeFiles.length !== files.length) throw new Error('Skill package declares duplicate resources');
   return safeFiles.includes("SKILL.md") ? safeFiles : ["SKILL.md", ...safeFiles];
 }
 
@@ -1961,13 +1989,8 @@ async function readLocalSkillFiles(skill) {
   const skillRoot = safeJoin(localCommunitySkillsDir, directory);
   if (!existsSync(skillRoot)) return null;
 
-  const files = new Map();
-  for (const file of normalizeSkillFileList(skill)) {
-    const filePath = safeJoin(skillRoot, file);
-    if (!existsSync(filePath)) return null;
-    files.set(file, await readFile(filePath, "utf8"));
-  }
-  return files;
+  normalizeSkillFileList(skill);
+  return new Map((await readSkillPackage(skillRoot)).files);
 }
 
 function skillRepo(skill) {
@@ -1996,11 +2019,24 @@ async function fetchRemoteSkillFiles(skill) {
 
   for (const branch of branches) {
     const fetchedFiles = new Map();
+    let total = 0;
     try {
       for (const file of files) {
         const response = await fetchWithTimeout(githubRawUrl(repo, branch, `${directory}/${file}`), {}, 15000);
-        if (!response.ok) throw new Error(`${file} returned ${response.status}`);
-        fetchedFiles.set(file, await response.text());
+        if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error(`${file} returned ${response.status}`); }
+        const chunks = [];
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error(`${file} returned no resource body`);
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            total += value.byteLength;
+            if (total > 2_000_000) { await reader.cancel(); throw new Error('Skill package exceeds the complete-package byte limit'); }
+            chunks.push(Buffer.from(value));
+          }
+        } finally { reader.releaseLock(); }
+        fetchedFiles.set(file, Buffer.concat(chunks));
       }
       return fetchedFiles;
     } catch (error) {
@@ -2033,120 +2069,75 @@ async function installAgentSkills(agent, agentHome, agentId) {
   const skillsDir = join(agentHome, "skills");
   const displaySkillsDir = `.autohand/agents/${agentId}/skills`;
   await mkdir(skillsDir, { recursive: true });
-  // Removed skills must leave the runtime's active discovery directory. Keep
-  // authored bytes outside the agent home so re-enabling can restore them.
+  const saved = await readPersistentJson(join(skillsDir, "installed-skills.json"), {});
+  const previous = new Map([...(saved.retained || []), ...(saved.installed || [])].map(skill => [skill.id, skill]));
   const disabledDir = join(isolatedAgentsDir, "disabled-skills", agentId);
-  const requested = new Set(requestedSkills);
+  const requested = new Set(requestedSkills.map(skillSnapshotFolder));
   for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || requested.has(entry.name) || !existsSync(join(skillsDir, entry.name, "SKILL.md"))) continue;
+    if (!entry.isDirectory() || entry.name.includes('.staging-') || requested.has(entry.name) || !existsSync(join(skillsDir, entry.name, "SKILL.md"))) continue;
     await mkdir(disabledDir, { recursive: true });
     const target = join(disabledDir, entry.name);
     if (existsSync(target)) throw new Error(`Cannot disable ${entry.name}: a retained copy already exists. Resolve the duplicate before retrying.`);
     await rename(join(skillsDir, entry.name), target);
   }
   for (const id of requestedSkills) {
-    const retained = join(disabledDir, id);
-    if (existsSync(join(retained, "SKILL.md")) && !existsSync(join(skillsDir, id))) await rename(retained, join(skillsDir, id));
+    const folder = skillSnapshotFolder(id);
+    const retained = join(disabledDir, folder);
+    if (existsSync(join(retained, "SKILL.md")) && !existsSync(join(skillsDir, folder))) await rename(retained, join(skillsDir, folder));
   }
-
-  if (!requestedSkills.length) {
-    const emptyInstall = {
-      source: skilledBaseUrl,
-      repository: defaultSkillsRepo,
-      path: skillsDir,
-      displayPath: displaySkillsDir,
-      requested: [],
-      installed: [],
-      failed: [],
-      updatedAt: new Date().toISOString(),
-    };
-    await writeFile(join(skillsDir, "installed-skills.json"), JSON.stringify(emptyInstall, null, 2), "utf8");
-    return emptyInstall;
+  const workspaceId = requestedSkills.length && agent.workspace ? await ensureSkillWorkspaceIdentity(agent.workspace) : '';
+  const localRoots = localSkillRootDescriptors({ homeDir, squadStateDir, workspace: String(agent?.workspace || ""), workspaceId, memberId: agentId });
+  const locals = requestedSkills.length ? await listLocalSkillPackages(localRoots) : [];
+  const localById = new Map();
+  for (const skill of locals) {
+    if (!localById.has(skill.id)) localById.set(skill.id, skill);
+    if (skill.qualifiedId) localById.set(skill.qualifiedId, skill);
   }
-
-  // Skills the person already has on this machine answer first. A skill in
-  // ~/.claude/skills used to be invisible here, so asking for it produced
-  // "not found in Skilled catalog" however plainly it was sitting on disk.
-  const localRoots = localSkillRoots({ homeDir, squadStateDir, workspace: String(agent?.workspace || "") });
-  const localById = new Map((await listLocalSkills(localRoots)).map((skill) => [skill.id, skill]));
-
-  const catalog = await loadSkillCatalog().catch(() => ({ skills: [] }));
-  const catalogById = new Map((catalog?.skills || []).map((skill) => [skill.id, skill]));
-  const install = {
-    source: skilledBaseUrl,
-    repository: defaultSkillsRepo,
-    path: skillsDir,
-    displayPath: displaySkillsDir,
-    requested: requestedSkills,
-    installed: [],
-    failed: [],
-    updatedAt: new Date().toISOString(),
-  };
-
+  let catalogById;
+  const install = { version: 1, source: skilledBaseUrl, repository: defaultSkillsRepo, path: skillsDir, displayPath: displaySkillsDir, requested: requestedSkills, installed: [], retained: [...previous.values()].filter(skill => !requestedSkills.includes(skill.id)), failed: [], updatedAt: new Date().toISOString() };
   for (const skillId of requestedSkills) {
-    const presentPath = join(skillsDir, skillId, "SKILL.md");
-    if (existsSync(presentPath)) {
-      install.installed.push({ id: skillId, name: skillId, source: "member-home", status: "present", path: presentPath });
-      continue;
-    }
-    const local = localById.get(skillId);
-    if (local) {
-      const targetDir = join(skillsDir, skillId);
-      const skillPath = join(targetDir, "SKILL.md");
-      const summary = { id: local.id, name: local.name, category: local.category, author: "", source: "local", url: "" };
+    const targetDir = join(skillsDir, skillSnapshotFolder(skillId));
+    const skillPath = join(targetDir, "SKILL.md");
+    try {
       if (existsSync(skillPath)) {
-        install.installed.push({ ...summary, status: "present", path: skillPath });
+        const retained = previous.get(skillId);
+        const { manifest, files } = await readSkillPackage(targetDir);
+        const metadata = readSkillFrontmatter(files.find(([path]) => path === 'SKILL.md')[1].toString('utf8'));
+        if (retained?.reference?.revision && retained.reference.revision !== manifest.revision) throw new Error(`Pinned skill revision changed: ${skillId}. Restore the snapshot or explicitly replace its revision.`);
+        const reference = retained?.reference || { authority: `local:member:${agentId}`, packageId: skillId, revision: manifest.revision, resource: 'SKILL.md' };
+        const workspace = reference.authority.startsWith(`local:workspace:${workspaceId}:`) ? agent.workspace : retained?.workspace || '';
+        install.installed.push({ ...retained, id: skillId, name: retained?.name || metadata.name || skillId, description: retained?.description || metadata.description || '', source: retained?.source || "member-home", scope: retained?.scope || 'member', workspace, ownerId: agentId, status: "present", dir: targetDir, path: skillPath, reference, manifest });
         continue;
       }
-      try {
-        for (const [relativePath, content] of await readSkillFolder(local.dir)) {
-          const targetPath = safeJoin(targetDir, relativePath);
-          await mkdir(dirname(targetPath), { recursive: true });
-          await writeFile(targetPath, content, "utf8");
-        }
-        install.installed.push({ ...summary, status: "installed", path: skillPath, from: local.root });
-      } catch (error) {
-        install.failed.push({ id: skillId, status: "error", reason: `could not copy from ${local.root}: ${error.message}` });
+      const retainedReference = previous.get(skillId)?.reference;
+      const local = retainedReference ? locals.find(entry => entry.reference.authority === retainedReference.authority && entry.reference.packageId === retainedReference.packageId) : localById.get(skillId);
+      if (local) {
+        if (!local.reference.authority) throw new Error('The source skill has no stable origin identity');
+        const snapshot = await copySkillPackage(local.dir, targetDir, retainedReference || local.reference);
+        install.installed.push({ ...local, id: skillId, ...snapshot, status: 'installed', dir: targetDir, path: skillPath, from: local.root, ownerId: agentId });
+        continue;
       }
-      continue;
-    }
-
-    const skill = catalogById.get(skillId);
-    if (!skill) {
-      install.failed.push({
-        id: skillId,
-        status: "missing",
-        reason: `not in the Skilled catalog, and no SKILL.md under ${localRoots.length} local skill folders`,
-      });
-      continue;
-    }
-
-    const targetDir = join(skillsDir, skillId);
-    const skillPath = join(targetDir, "SKILL.md");
-    const summary = skillSummary(skill);
-    if (existsSync(skillPath)) {
-      install.installed.push({ ...summary, status: "present", path: skillPath });
-      continue;
-    }
-
-    try {
-      const files = await getSkillFiles(skill);
-      for (const [relativePath, content] of files) {
-        const targetPath = safeJoin(targetDir, relativePath);
-        await mkdir(dirname(targetPath), { recursive: true });
-        await writeFile(targetPath, content, "utf8");
-      }
-      install.installed.push({ ...summary, status: "installed", path: skillPath });
+      if (!catalogById) catalogById = new Map(((await loadSkillCatalog().catch(() => ({ skills: [] }))).skills || []).map(skill => [skill.id, skill]));
+      const skill = catalogById.get(skillId);
+      if (!skill) throw new Error(`No configured local or registry package resolves ${skillId}`);
+      const reference = { authority: `registry:${skillRepo(skill)}`, packageId: skill.directory || skill.id, resource: 'SKILL.md' };
+      const directory = safePathSegment(skill.directory || skill.id);
+      const localPackage = directory && safeJoin(localCommunitySkillsDir, directory);
+      const pinnedReference = retainedReference || reference;
+      if (pinnedReference.authority !== reference.authority || pinnedReference.packageId !== reference.packageId) throw new Error('The pinned skill origin is unavailable; choose an explicit replacement before continuing.');
+      const snapshot = localPackage && existsSync(localPackage) ? await copySkillPackage(localPackage, targetDir, pinnedReference) : await writeSkillPackage(await getSkillFiles(skill), targetDir, pinnedReference);
+      install.installed.push({ ...skillSummary(skill), ...snapshot, description: skill.description || '', scope: 'member', ownerId: agentId, status: 'installed', dir: targetDir, path: skillPath });
     } catch (error) {
-      install.failed.push({
-        id: skillId,
-        status: "failed",
-        reason: error instanceof Error ? error.message : "could not install skill",
-      });
+      if (existsSync(targetDir)) {
+        const rejectedDir = join(agentHome, 'rejected-skills');
+        await mkdir(rejectedDir, { recursive: true });
+        await rename(targetDir, join(rejectedDir, randomUUID()));
+      }
+      install.failed.push({ id: skillId, status: 'error', reason: error.message || 'Could not prepare the complete skill package' });
     }
   }
-
-  await writeFile(join(skillsDir, "installed-skills.json"), JSON.stringify(install, null, 2), "utf8");
+  install.retained = [...previous.values()].filter(skill => !install.installed.some(active => active.id === skill.id));
+  await writePersistentJson(join(skillsDir, "installed-skills.json"), install);
   return install;
 }
 
@@ -2817,7 +2808,7 @@ function genericBrainCardForAgent(agent, skillInstall) {
     allowedTools: [
       "- Autohand CLI inside this squad member's isolated home.",
       "- Local read/search/edit/build/test tools allowed by the current permission policy.",
-      skills.length ? skills.map((skill) => `- ${skill}`).join("\n") : "- Installed profile skills when they match the task.",
+      "- Configured profile skills discovered locally when they match the task.",
     ].join("\n"),
     escalationRules: [
       "- Ask before destructive changes, secret access, or crossing repository boundaries.",
@@ -3183,7 +3174,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
       catch (error) { if (error.code !== "ENOENT") throw error; }
     }
   }
-  const agent = memberProfileDefaults({ ...saved, ...(savedFiles.length ? { profileFiles: savedFiles } : {}), ...(input.agent && typeof input.agent === "object" && !Array.isArray(input.agent) ? input.agent : {}), id: agentId });
+  const agent = memberProfileDefaults({ ...saved, ...(savedFiles.length ? { profileFiles: savedFiles } : {}), ...(input.agent && typeof input.agent === "object" && !Array.isArray(input.agent) ? input.agent : {}), id: agentId, workspace });
   const configPath = join(agentHome, "config.json");
   const displayConfigPath = `.autohand/agents/${agentId}/config.json`;
   const displayProfileDir = `.autohand/agents/${agentId}/profile`;
@@ -3198,7 +3189,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
     mkdir(join(agentHome, "skills"), { recursive: true }),
   ]);
 
-  const skillInstall = await installAgentSkills(agent, agentHome, agentId);
+  const skillInstall = await installAgentSkills({ ...agent, workspace }, agentHome, agentId);
   const projects = normalizeAgentProjects(agent, workspace, true);
   const brainCard = normalizeBrainCard(agent, skillInstall);
   const profilePlan = planAgentProfileDocs(agent, agentHome, agentId, workspace, skillInstall);
@@ -3352,7 +3343,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
     autohandAuthUsable(readAutohandAuth(configPath)) ||
     autohandAuthUsable(readAutohandAuth(userConfigPath));
 
-  return prepareTeamWork(await prepareVaultWork(await prepareComputerWork({
+  return prepareTeamWork(await prepareVaultWork(await prepareComputerWork(await prepareRuntimeSkills({
     agent,
     agentId,
     agentHome,
@@ -3370,7 +3361,60 @@ async function ensureAgentRuntimeInner(input, workspace) {
     harness: harnessAssignment,
     // Launch specs carry connector secrets; keep them out of public summaries.
     connectorServers: connectorSpecs,
-  }, input), input), input);
+  }, input), input), input), input);
+}
+
+async function prepareRuntimeSkills(agentRuntime, input) {
+  const workspaceId = await readSkillWorkspaceIdentity(agentRuntime.workspace) || ((input.goalId || input.mode === 'goal' || String(input.requestId || '').startsWith('goal-')) ? await ensureSkillWorkspaceIdentity(agentRuntime.workspace) : '');
+  const prepared = await prepareSkillContext({
+    prompt: input.prompt || '', installed: agentRuntime.skillInstall?.installed || [],
+    actor: { memberId: agentRuntime.agentId, workspace: agentRuntime.workspace }, agentHome: agentRuntime.agentHome,
+    references: input.goalCheckpoint?.continuity?.skills || input.skillReferences || [],
+    exclusions: Array.isArray(input.excludedSkills) ? input.excludedSkills : [],
+    taskId: String(input.goalId || input.taskId || input._computerUseWorkId || input.requestId || ''),
+    requestId: String(input.requestId || input._computerUseWorkId || ''), policyEpoch: skillPolicyEpoch(agentRuntime.agent),
+  });
+  return { ...agentRuntime, workId: String(input._computerUseWorkId || ''), skillContext: prepared, skillReceipts: prepared.receipts,
+    skillContinuityContext: { workspaceId, runtimeVersion: packageMetadata.version, providerId: isExternalHarness(agentRuntime.harness) ? '' : agentRuntime.resolvedProvider?.provider || '', permissionEpoch: skillPolicyEpoch(agentRuntime.agent), capturedAt: Date.now() } };
+}
+
+function skillPolicyEpoch(agent) {
+  return createHash('sha256').update(JSON.stringify({ permissions: normalizeAgentPermissions(agent), harness: harnessAssignmentFromAgent(agent), modelAssignment: modelAssignmentFromAgent(agent), workspace: agent?.workspace || '', skills: agent?.skills || [] })).digest('hex');
+}
+
+async function handoffRuntimeSkills(agentRuntime, adapter, onEvent = () => {}) {
+  const prepared = agentRuntime.skillContext;
+  if (!prepared) return;
+  await agentRuntime.onSkillContinuity?.({ skillReceipts: prepared.receipts, skillContinuityContext: agentRuntime.skillContinuityContext });
+  const access = await agentChannelActions.memberAccess(agentRuntime.agentId);
+  const saved = await readPersistentJson(join(agentRuntime.agentHome, 'profile.json'), null);
+  const current = mergeMemberProfile({ ...saved, ...access?.agent, id: agentRuntime.agentId }, saved);
+  if (access?.removed || ((saved || access?.agent) && skillPolicyEpoch(current) !== skillPolicyEpoch(agentRuntime.agent))) throw new Error('Member skill scope or permissions changed before the engine handoff; retry under the current settings.');
+  await validateSkillReferences(prepared.packets.map(packet => packet.reference), { installed: agentRuntime.skillInstall.installed, actor: { memberId: agentRuntime.agentId, workspace: agentRuntime.workspace }, agentHome: agentRuntime.agentHome });
+  if (!prepared.packets.length) return;
+  agentRuntime.skillReceipts = coalesceSkillReceipts(acknowledgeSkillContext(prepared, { adapter, supplied: true }));
+  const run = runs.get(agentRuntime.workId);
+  if (run) { run.skillReceipts = agentRuntime.skillReceipts; if (run.contextLayers) run.contextLayers.skillReceipts = agentRuntime.skillReceipts; }
+  for (const receipt of agentRuntime.skillReceipts) onEvent({ type: 'skill_attachment', receipt, timestamp: receipt.at });
+}
+
+function skillTurnInstructions(agentRuntime) {
+  return agentRuntime.skillContext?.text || '';
+}
+
+function skillRuntimeResult(agentRuntime) {
+  return { skillReceipts: coalesceSkillReceipts(agentRuntime.skillReceipts || []), skillContinuityContext: agentRuntime.skillContinuityContext };
+}
+
+function observeRuntimeSkillEvent(agentRuntime, event) {
+  const attachment = nativeSkillAttachmentEvent(event);
+  if (!attachment) return event;
+  const receipt = observeSkillAttachment(agentRuntime.skillContext, attachment, agentRuntime.skillInstall?.installed || []);
+  if (!receipt) return null;
+  agentRuntime.skillReceipts = coalesceSkillReceipts([...(agentRuntime.skillReceipts || []), receipt]);
+  const run = runs.get(agentRuntime.workId);
+  if (run) { run.skillReceipts = agentRuntime.skillReceipts; if (run.contextLayers) run.contextLayers.skillReceipts = agentRuntime.skillReceipts; }
+  return { type: 'skill_attachment', receipt, timestamp: receipt.at };
 }
 
 function runtimeMemberInstructions(agentRuntime) {
@@ -3395,8 +3439,8 @@ function runtimeMemberInstructions(agentRuntime) {
     "The .autohand/ folder inside a workspace is the engine's own memory and tools, not project code: ignore it when reviewing the project and never report it as something to fix.",
     `Profile map: ${agentRuntime.profileDocs?.agentsPath || ""}`,
     "Read only the relevant profile files when you need additional context or durable memory. Keep this member's sessions and memory isolated. Propose stable project facts for user review; never store secrets or transient logs as durable memory.",
-    `Installed profile skills: ${(agentRuntime.skillInstall?.installed || []).map(skill => skill.id).join(", ") || "none"}. Use only configured, installed skills relevant to the task.`,
-    agentRuntime.skillInstall?.failed?.length ? `Unavailable requested skills: ${agentRuntime.skillInstall.failed.map(skill => skill.id).join(", ")}. Do not claim these skills were loaded.` : "",
+    SKILL_DISCOVERY_CONTRACT,
+    agentRuntime.skillInstall?.failed?.length ? `${agentRuntime.skillInstall.failed.length} requested skill package(s) are unavailable. Do not claim these skills were loaded.` : "",
     `Blocked tools: ${Object.entries(policies).filter(([, policy]) => policy === "block").map(([tool]) => tool).join(", ") || "none explicitly configured"}.`,
     `Tools requiring approval: ${Object.entries(policies).filter(([, policy]) => policy === "ask").map(([tool]) => tool).join(", ") || "none explicitly configured"}.`,
     "Current tool permissions govern execution even when a role describes a broader capability. Ask before crossing role or project boundaries, and hand off work to an existing teammate when appropriate. Report observed results and remaining blockers; never invent verification.",
@@ -3455,7 +3499,7 @@ async function autohandArgs(input) {
   const prompt = attachmentPrompt(String(input.prompt || "").trim(), input._messageAttachments);
   let profile = String(input.profile || "").trim().slice(0, 12000);
   const agentRuntime = await ensureAgentRuntime(input, workspace);
-  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), teamInstructionsFor(agentRuntime), recallInstructions(input), workPlanInstructions(input), memberShapingInstructions(input)].filter(Boolean).join("\n\n");
+  profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime), teamInstructionsFor(agentRuntime), recallInstructions(input), workPlanInstructions(input), memberShapingInstructions(input), skillTurnInstructions(agentRuntime)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
   const args = ["--path", workspace, "--config", agentRuntime.configPath];
@@ -3481,6 +3525,10 @@ async function autohandArgs(input) {
   if (agentRuntime.profileDocs?.path) {
     args.push("--add-dir", agentRuntime.profileDocs.path);
     displayArgs.push("--add-dir", agentRuntime.profileDocs.displayPath || "<agent-profile-dir>");
+  }
+  if (agentRuntime.skillContext?.packets.length) {
+    args.push('--add-dir', join(agentRuntime.agentHome, 'skills'));
+    displayArgs.push('--add-dir', '<member-skill-snapshots>');
   }
   for (const project of associatedProjects) {
     if (project.path === workspace) continue;
@@ -3526,6 +3574,7 @@ function agentRuntimeEnvVars(agentRuntime) {
     AUTOHAND_HOME: agentRuntime.agentHome,
     AUTOHAND_CONFIG: agentRuntime.configPath,
     AUTOHAND_CLIENT_NAME: autohandClientName(agentRuntime),
+    AUTOHAND_SKILL_SNAPSHOT_MANAGED: '1',
     AUTOHAND_NO_IDLE_LOGOUT: "1",
     AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: "",
     ...(agentRuntime.computerUse ? { AUTOHAND_SQUAD_COMPUTER_USE_SESSION: agentRuntime.computerUse.id } : {}),
@@ -3547,7 +3596,7 @@ function sdkTransportEnabled(input, mode) {
 }
 
 function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
-  const turnContext = [vaultInstructions(agentRuntime), teamInstructionsFor(agentRuntime), recallInstructions(input), input._channelThreadContext, input._workPlan?.text, memberShapingInstructions(input)].filter(Boolean).join("\n\n");
+  const turnContext = [vaultInstructions(agentRuntime), teamInstructionsFor(agentRuntime), recallInstructions(input), input._channelThreadContext, input._workPlan?.text, memberShapingInstructions(input), skillTurnInstructions(agentRuntime)].filter(Boolean).join("\n\n");
   profile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), workPlanCapabilityInstructions(input)].filter(Boolean).join("\n\n");
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const associatedProjects = normalizeAgentProjects(agentRuntime.agent);
@@ -3558,6 +3607,10 @@ function sdkRuntimeContext(input, workspace, profile, agentRuntime) {
   if (agentRuntime.profileDocs?.path) {
     addDir.push(agentRuntime.profileDocs.path);
     displayAddDir.push(agentRuntime.profileDocs.displayPath || "<agent-profile-dir>");
+  }
+  if (agentRuntime.skillContext?.packets.length) {
+    addDir.push(join(agentRuntime.agentHome, 'skills'));
+    displayAddDir.push('<member-skill-snapshots>');
   }
 
   for (const project of associatedProjects) {
@@ -4204,6 +4257,8 @@ function assembleContextLayers(mode, payload, agentRuntime) {
 // resulting trace into the toolTranscript layer so it is recorded, not skipped.
 function chatContextLayers(payload, agentRuntime, trace) {
   const manifest = assembleContextLayers("chat", payload, agentRuntime);
+  manifest.skillReceipts = coalesceSkillReceipts(agentRuntime.skillReceipts || []);
+  if (trace && manifest.skillReceipts.length) trace.events = [...(trace.events || []).filter(event => event.type !== 'skill_attachment'), ...manifest.skillReceipts.map(receipt => ({ type: 'skill_attachment', receipt, timestamp: receipt.at }))];
   const transcript = manifest.layers.find((layer) => layer.name === "toolTranscript");
   if (transcript) {
     const steps = Array.isArray(trace?.steps) ? trace.steps : [];
@@ -4439,6 +4494,7 @@ function runSummary(run) {
     effectiveModel: run.effectiveModel || null,
     routing: run.routing || null,
     skillInstall: run.skillInstall,
+    skillReceipts: coalesceSkillReceipts(run.skillReceipts || []),
     profileDocs: run.profileDocs,
     brainCard: run.brainCard,
     transport: run.transport || "cli",
@@ -6384,6 +6440,7 @@ function sdkEventTimestamp(event) {
 function appendSdkEventLog(run, event) {
   if (!event || typeof event !== "object") return;
   const timestamp = sdkEventTimestamp(event);
+  if (event.type === 'skill_attachment') { appendLog(run, 'skill', JSON.stringify(event.receipt)); return; }
   if (event.type === "message_update" && event.delta) {
     appendLog(run, "stdout", event.delta);
     return;
@@ -6432,6 +6489,7 @@ function sdkTraceFromEvents(events, rawStdout = "", rawStderr = "") {
   for (const event of events) {
     if (!event || typeof event !== "object") continue;
     const timestamp = sdkEventTimestamp(event);
+    if (event.type === 'skill_attachment') { orderedEvents.push({ ...event, timestamp }); continue; }
 
     if (event.type === "plan_update") {
       orderedEvents.push({ ...event, timestamp });
@@ -6545,6 +6603,7 @@ function sdkReplyFromEvents(events, rawStdout = "") {
 
 function chatStreamEventFromSdkEvent(event) {
   const timestamp = sdkEventTimestamp(event);
+  if (event?.type === 'skill_attachment') return { ...event, timestamp };
 
   if (event?.type === "plan_update") return { ...event, timestamp };
 
@@ -6822,7 +6881,8 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
 
   void (async () => {
     try {
-      const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, prompt), payload._messageAttachments), 300000, (event) => appendSdkEventLog(run, event), run.abortController.signal);
+      await handoffRuntimeSkills(agentRuntime, 'autohand', event => appendSdkEventLog(run, event));
+      const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, prompt), payload._messageAttachments), 300000, (event) => { const observed = observeRuntimeSkillEvent(agentRuntime, event); if (observed) appendSdkEventLog(run, observed); }, run.abortController.signal);
       if (run.status !== "stopped") {
         run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
         const reply = sdkReplyFromEvents(output.events, output.rawStdout);
@@ -6852,8 +6912,9 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
   })();
 }
 
-function startCliRun(run, args, workspace, agentRuntime, payload) {
+async function startCliRun(run, args, workspace, agentRuntime, payload) {
   run.transport = "cli";
+  await handoffRuntimeSkills(agentRuntime, 'autohand', event => appendSdkEventLog(run, event));
   const child = spawn(resolveAutohandBinary() || "autohand", args, {
     cwd: workspace,
     env: {
@@ -6941,8 +7002,10 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     lease = await acquireSdkLease(payload, workspace, context);
     const sdk = lease.sdk;
     started = true;
-    const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, prompt), payload._messageAttachments), timeoutMs, () => {
+    await handoffRuntimeSkills(agentRuntime, 'autohand');
+    const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, prompt), payload._messageAttachments), timeoutMs, event => {
       eventCount += 1;
+      observeRuntimeSkillEvent(agentRuntime, event);
     });
     healthy = true;
     const reply = sdkReplyFromEvents(output.events, output.rawStdout);
@@ -6975,6 +7038,7 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
       agentHome: agentRuntime.agentHome,
       effectiveModel: agentRuntime.effectiveModel,
       skillInstall: agentRuntime.skillInstall,
+      ...skillRuntimeResult(agentRuntime),
       profileDocs: agentRuntime.profileDocs,
       brainCard: agentRuntime.brainCard,
       channel: channelContextFromPayload(payload),
@@ -7071,8 +7135,11 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     });
     const runId = String(payload._computerUseWorkId || "");
     const agentId = sanitizeAgentId(payload.agent?.id || payload.agentId || "member");
+    await handoffRuntimeSkills(agentRuntime, 'autohand', event => stream.send('sdk', event));
     const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, replay ? `${replay}\n\n${prompt}` : prompt), payload._messageAttachments), timeoutMs, (event) => {
       eventCount += 1;
+      event = observeRuntimeSkillEvent(agentRuntime, event);
+      if (!event) return;
       if (event?.type === "permission_request") {
         const card = permissionApprovals.request(event, { sdk, runId, agentId, send: (data) => stream.send("sdk", data) });
         stream.send("sdk", card || chatStreamEventFromSdkEvent(event));
@@ -7112,6 +7179,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
       agentHome: agentRuntime.agentHome,
       effectiveModel: agentRuntime.effectiveModel,
       skillInstall: agentRuntime.skillInstall,
+      ...skillRuntimeResult(agentRuntime),
       profileDocs: agentRuntime.profileDocs,
       brainCard: agentRuntime.brainCard,
       channel: channelContextFromPayload(payload),
@@ -7167,12 +7235,13 @@ async function prepareExternalHarness(payload, { mode = "prompt" } = {}) {
   // which has no system prompt, can be sent the context on every turn and
   // the instructions only when they change (ADR-0134).
   const stableProfile = [runtimeProfilePrompt(profile, agentRuntime), computerUseInstructions(agentRuntime), connectorInstructions(agentRuntime.connectorServers), vaultInstructions(agentRuntime)].filter(Boolean).join("\n\n");
-  const turnContext = [teamInstructionsFor(agentRuntime), recallInstructions(payload), workPlanInstructions(payload), memberShapingInstructions(payload)].filter(Boolean).join("\n\n");
+  const turnContext = [teamInstructionsFor(agentRuntime), recallInstructions(payload), workPlanInstructions(payload), memberShapingInstructions(payload), skillTurnInstructions(agentRuntime)].filter(Boolean).join("\n\n");
   profile = [stableProfile, turnContext].filter(Boolean).join("\n\n");
   const readiness = await assertHarnessReady(assignment, { context: harnessContextFor(assignment.id) });
   const permissions = normalizeAgentPermissions(agentRuntime.agent);
   const addDirs = [];
   if (agentRuntime.profileDocs?.path) addDirs.push(agentRuntime.profileDocs.path);
+  if (agentRuntime.skillContext?.packets.length) addDirs.push(join(agentRuntime.agentHome, 'skills'));
   if (canvasDirFor(payload)) addDirs.push(canvasDirFor(payload));
   for (const project of normalizeAgentProjects(agentRuntime.agent)) {
     if (project.path !== workspace) addDirs.push(project.path);
@@ -7303,7 +7372,9 @@ async function executeExternalHarness(prepared, { timeoutMs, inactivityMs = 0, s
   };
   // ACP agents (ADR-0122) speak JSON-RPC over stdio and bring their own
   // runner; the turn travels in `attempt.turn`. Everything after is shared.
-  const runOnce = (attempt) => (adapter.transport === "acp"
+  const runOnce = async (attempt) => {
+    await handoffRuntimeSkills(agentRuntime, adapter.id, onEvent);
+    return (adapter.transport === "acp"
     ? adapter.run({ adapter, executable, args: attempt.args, cwd: workspace, env: envVars, turn: attempt.turn, timeoutMs, inactivityMs, signal, onEvent, terminate: terminateChildProcess, clientVersion: packageMetadata.version })
     : runExternalHarness({ adapter, executable, args: attempt.args, cwd: workspace, env: envVars, timeoutMs, inactivityMs, signal, onEvent, terminate: terminateChildProcess,
       harnessVersion: prepared.readiness.version, models: prepared.readiness.models || [],
@@ -7311,6 +7382,7 @@ async function executeExternalHarness(prepared, { timeoutMs, inactivityMs = 0, s
       modelAccountKey: `${prepared.readiness.account?.method || ''}:${prepared.readiness.account?.label || ''}`,
       attachments: prepared.attachments,
     }));
+  };
   // What a start failure looked like, in words (ADR-0123): the engine's own
   // disk and the workspace's are measured once per turn, only when needed.
   const classify = (output) => classifyColdStart({
@@ -7389,6 +7461,7 @@ function externalHarnessResult(prepared, output, { startedAt, payload }) {
     agentHome: agentRuntime.agentHome,
     effectiveModel: { provider: adapter.vendor.toLowerCase(), model: output.effectiveModel || [...output.events].reverse().find(event => event.type === 'agent_start' && event.model)?.model || prepared.model || '' },
     skillInstall: agentRuntime.skillInstall,
+      ...skillRuntimeResult(agentRuntime),
     profileDocs: agentRuntime.profileDocs,
     brainCard: agentRuntime.brainCard,
     channel: channelContextFromPayload(payload),
@@ -7414,8 +7487,9 @@ async function chatOnceWithExternalHarness(payload) {
   return result;
 }
 
-async function streamChatWithExternalHarness(payload, { stream, signal, startedAt, assignedRun = null }) {
+async function streamChatWithExternalHarness(payload, { stream, signal, startedAt, assignedRun = null, onSkillContinuity }) {
   const prepared = await prepareExternalHarness(payload, { mode: assignedRun?.mode || "prompt" });
+  prepared.agentRuntime.onSkillContinuity = onSkillContinuity;
   payload = prepareAssignedRunContext(assignedRun, payload, prepared.agentRuntime, prepared.workspace);
   await memberAvailability.assertCanWork(payload);
   if (!prepared.prompt) throw new Error("prompt is required");
@@ -7486,6 +7560,7 @@ async function startExternalHarnessRun(payload) {
     agentHome: agentRuntime.agentHome,
     effectiveModel: { provider: adapter.vendor.toLowerCase(), model: prepared.model },
     skillInstall: agentRuntime.skillInstall,
+      ...skillRuntimeResult(agentRuntime),
     profileDocs: agentRuntime.profileDocs,
     brainCard: agentRuntime.brainCard,
     transport: adapter.id,
@@ -7621,6 +7696,7 @@ async function startPreparedRun(payload) {
     agentHome: agentRuntime.agentHome,
     effectiveModel: agentRuntime.effectiveModel,
     skillInstall: agentRuntime.skillInstall,
+      ...skillRuntimeResult(agentRuntime),
     profileDocs: agentRuntime.profileDocs,
     brainCard: agentRuntime.brainCard,
     transport: "cli",
@@ -7671,7 +7747,7 @@ async function startPreparedRun(payload) {
     appendLog(run, "system", `SDK transport not used for ${mode} mode; using direct CLI transport`);
   }
 
-  startCliRun(run, args, workspace, agentRuntime, payload);
+  await startCliRun(run, args, workspace, agentRuntime, payload);
 
   return runSummary(run);
 }
@@ -7685,6 +7761,7 @@ async function chatOnce(payload) {
 }
 
 async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt, agentRuntime, timeoutMs, startedAt, stream, signal }) {
+  await handoffRuntimeSkills(agentRuntime, 'autohand', event => stream.send('sdk', event));
   const command = `autohand ${displayArgs.map(shellQuote).join(" ")}`;
   let stdout = "";
   let stderr = "";
@@ -7809,6 +7886,7 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
     agentHome: agentRuntime.agentHome,
     effectiveModel: agentRuntime.effectiveModel,
     skillInstall: agentRuntime.skillInstall,
+      ...skillRuntimeResult(agentRuntime),
     profileDocs: agentRuntime.profileDocs,
     brainCard: agentRuntime.brainCard,
     channel: channelContextFromPayload(payload),
@@ -7826,7 +7904,7 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
 // Resolves with `{ status, preview }` once the stream has ended: "completed"
 // with the reply's first line, or "failed" with the error message, so the
 // route can emit chat.finished with an honest status.
-async function executeChatTurn(payload, { stream, signal, startedAt = Date.now(), preparedRun = null }) {
+async function executeChatTurn(payload, { stream, signal, startedAt = Date.now(), preparedRun = null, onSkillContinuity }) {
   if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   const memberId = String(payload.agentId || payload.agent?.id || "");
   if (payload.collaboration?.role === "receiver" && (
@@ -7873,7 +7951,7 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
     const result = await fallbackRouter.execute(turn, {
       stream: delayedDone, signal: runSignal,
       history: Array.isArray(payload.conversationContext) ? payload.conversationContext.slice(-12).map(message => ({ role: String(message.role || ''), body: String(message.body || '').slice(-2400) })) : [],
-      execute: (attempt, context) => executeChatTurnInner(attempt, { ...context, startedAt, assignedRun: preparedRun }),
+      execute: (attempt, context) => executeChatTurnInner(attempt, { ...context, startedAt, assignedRun: preparedRun, onSkillContinuity }),
     });
     const evidence = await finishComputerWork(workId);
     const finished = await agentChannelActions.finish(actionContext, { ...cleanWorkResult(result), ...(evidence ? { computerUse: evidence } : {}) }, runSignal);
@@ -7986,6 +8064,9 @@ function chatRunStream(run, stream) {
 function appendChatRunEvent(run, event) {
   if (run.logs.length >= 4000) return;
   switch (event.type) {
+    case 'skill_attachment':
+      appendLog(run, 'skill', JSON.stringify(event.receipt));
+      return;
     case "message_end":
       if (event.content) appendLog(run, "stdout", event.content);
       return;
@@ -8234,25 +8315,27 @@ function prepareAssignedRunContext(run, payload, agentRuntime, workspace) {
     contextPack, contextLayers: assembleContextLayers(run.mode, layerPayload, agentRuntime),
     configPath: agentRuntime.configPath, displayConfigPath: agentRuntime.displayConfigPath,
     agentHome: agentRuntime.agentHome, skillInstall: agentRuntime.skillInstall,
+      ...skillRuntimeResult(agentRuntime),
     profileDocs: agentRuntime.profileDocs, brainCard: agentRuntime.brainCard,
   });
   runHistory.persist();
   return layerPayload;
 }
 
-async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.now(), assignedRun = null }) {
+async function executeChatTurnInner(payload, { stream, signal, startedAt = Date.now(), assignedRun = null, onSkillContinuity }) {
   if (signal?.aborted) throw new Error(stopMessage(signal));
   await memberAvailability.assertCanWork(payload);
   payload = { ...payload, _recall: await recallForTurn(payload), _workPlan: await workPlanForTurn(payload) };
   stream = withWorkProgress(stream);
   let result;
   if (isExternalHarness(payload._routeTarget?.harness || harnessAssignmentFromAgent(payload.agent))) {
-    result = await streamChatWithExternalHarness(payload, { stream, signal, startedAt, assignedRun });
+    result = await streamChatWithExternalHarness(payload, { stream, signal, startedAt, assignedRun, onSkillContinuity });
     return cleanWorkResult(result);
   }
   const dryRun = payload._routeTarget ? payload.dryRun === true : false;
   const mode = assignedRun?.mode || "prompt";
   const { args, displayArgs, workspace, prompt, agentRuntime } = await autohandArgs({ ...payload, mode, dryRun });
+  agentRuntime.onSkillContinuity = onSkillContinuity;
   payload = prepareAssignedRunContext(assignedRun, payload, agentRuntime, workspace);
   if (!prompt) throw new Error("prompt is required");
   assertAutohandAuth(agentRuntime);
@@ -8368,6 +8451,7 @@ async function openTerminal(payload) {
     displayConfigPath: agentRuntime.displayConfigPath,
     effectiveModel: agentRuntime.effectiveModel,
     skillInstall: agentRuntime.skillInstall,
+      ...skillRuntimeResult(agentRuntime),
     profileDocs: agentRuntime.profileDocs,
     brainCard: agentRuntime.brainCard,
   };
@@ -8967,6 +9051,7 @@ async function handleApi(req, res, url) {
           profileDocs: agentRuntime.profileDocs,
           effectiveModel: agentRuntime.effectiveModel,
           skillInstall: agentRuntime.skillInstall,
+      ...skillRuntimeResult(agentRuntime),
           harness: agentRuntime.harness,
         },
       });
@@ -9317,23 +9402,37 @@ async function handleApi(req, res, url) {
       const query = String(url.searchParams.get("q") || "").trim().toLowerCase();
       // What the person already has comes first, and a missing catalog no
       // longer empties the list: local skills are the ones that always work.
-      const localRoots = localSkillRoots({ homeDir, squadStateDir, workspace: String(url.searchParams.get("workspace") || "") });
-      const local = (await listLocalSkills(localRoots).catch(() => [])).map((skill) => ({
+      const workspace = String(url.searchParams.get('workspace') || '');
+      const workspaceId = workspace ? await readSkillWorkspaceIdentity(workspace).catch(() => null) : '';
+      const localRoots = localSkillRootDescriptors({ homeDir, squadStateDir, workspace, workspaceId });
+      const local = (await listLocalSkillPackages(localRoots).catch(() => [])).map((skill) => ({
         id: skill.id,
         name: skill.name,
         category: skill.category,
         author: "",
         description: skill.description,
         local: true,
+        reference: skill.reference,
+        qualifiedId: skill.qualifiedId,
+        identityState: skill.identityState,
+        scope: skill.scope,
+        _dir: skill.dir,
       }));
       const catalog = await loadSkillCatalog().catch(() => ({ skills: [] }));
       const seen = new Set(local.map((skill) => skill.id));
-      const remote = (catalog?.skills || [])
-        .filter((skill) => !seen.has(skill.id))
-        .map((skill) => ({ id: skill.id, name: skill.name || skill.id, category: skill.category || "", author: skill.author || "", local: false }));
-      const matches = (skill) => !query || `${skill.id} ${skill.name || ""} ${skill.category || ""} ${skill.description || ""}`.toLowerCase().includes(query);
-      const skills = [...local, ...remote].filter(matches).slice(0, 40);
-      json(res, 200, { success: true, data: { skills } });
+      const remote = (catalog?.skills || []).map((skill) => ({ id: skill.id, name: skill.name || skill.id, category: skill.category || "", author: skill.author || "", local: false, qualifiedId: `registry:${skillRepo(skill)}::${skill.directory || skill.id}`, reference: { authority: `registry:${skillRepo(skill)}`, packageId: skill.directory || skill.id }, shadowedAlias: seen.has(skill.id) }));
+      const matches = (skill) => !query || `${skill.id} ${skill.qualifiedId || ''} ${skill.name || ""} ${skill.category || ""} ${skill.description || ""}`.toLowerCase().includes(query);
+      const candidates = [...local, ...remote].filter(matches);
+      const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+      const skills = [];
+      for (const { _dir, ...skill } of candidates.slice(offset, offset + 40)) {
+        if (_dir && skill.reference.authority) {
+          try { const { manifest } = await readSkillPackage(_dir); skill.reference = { ...skill.reference, revision: manifest.revision }; skill.manifest = manifest; }
+          catch (error) { skill.unavailable = true; skill.reason = error.message; }
+        }
+        skills.push(skill);
+      }
+      json(res, 200, { success: true, data: { skills, total: candidates.length, offset, hasMore: offset + skills.length < candidates.length } });
     } catch (error) {
       json(res, 500, { success: false, error: error.message });
     }
