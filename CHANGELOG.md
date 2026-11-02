@@ -27,6 +27,7 @@ list to the section for that version.
 
 ### Changed
 
+- The bundled Autohand Code is 0.9.9 (was 0.9.7), the same release the CLI installs on its own.
 - Model overrides load names and exact IDs from the selected coding engine, with refresh and a custom-ID option, instead of requiring you to guess model names.
 
 ### Fixed

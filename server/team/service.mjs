@@ -233,7 +233,7 @@ TOOLS.push({
       // object"); the service accepts either and parses the string form.
       members: {
         type: "array", minItems: 1, maxItems: 8,
-        description: "One entry per member: an object {name?, role, purpose, instructions?, skills?}. A JSON string of that object, or 'Role: what they own', is accepted too.",
+        description: "One entry per member: an object {name?, role, purpose, instructions?, skills?}, for example {\"role\":\"SOC 2 Auditor\",\"purpose\":\"Maps controls to SOC 2 criteria and keeps evidence current.\"}. A JSON string of that object, or a line like 'SOC 2 Auditor: maps controls to SOC 2 criteria', is accepted too.",
         items: {
           anyOf: [
             {

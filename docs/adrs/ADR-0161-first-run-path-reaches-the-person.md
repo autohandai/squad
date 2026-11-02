@@ -164,8 +164,10 @@ source confirmed each one.
     and privacy grants stay a hand step in SETUP_GUIDE. The config preview
     shows the saved `config.json` beside the form and says when they differ
     (§1.6). `check:cli-pin` fails a release check while the pinned CLI is
-    behind the latest release (side note); the pin itself stays 0.9.7 until
-    the first-run walkthrough has been run against 0.9.9.
+    behind the latest release (side note). The pin moved to 0.9.9 once the
+    live walkthrough passed against it; 0.9.9 also hides tools the
+    permissions can never allow from the model's menu, so the retry loop the
+    reporter saw cannot recur on it.
 
 ## Consequences and validation
 

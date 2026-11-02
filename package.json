@@ -14,7 +14,7 @@
   "homepage": "https://github.com/autohandai/squad#readme",
   "type": "module",
   "autohand": {
-    "cliVersion": "0.9.7",
+    "cliVersion": "0.9.9",
     "cliRepository": "autohandai/code-cli"
   },
   "scripts": {

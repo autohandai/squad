@@ -28,9 +28,12 @@ function memberEntry(given) {
   }
   const match = text.match(/^(.{2,120}?)\s*(?::|—|–|-)\s+(.+)$/s);
   if (!match) return null;
-  const [, role, rest] = match;
-  const named = role.match(/^(.+?)\s*\((.+)\)$/);
-  return named ? { name: named[1].trim(), role: named[2].trim(), purpose: rest.trim() } : { role: role.trim(), purpose: rest.trim() };
+  const [, head, rest] = match;
+  // "Role: Frontend Developer — owns the pages": the placeholder word taken
+  // literally (seen on the 0.9.9 CLI); the real role is the next segment.
+  if (/^(role|name|member|title)$/i.test(head.trim())) return memberEntry(rest.trim());
+  const named = head.match(/^(.+?)\s*\((.+)\)$/);
+  return named ? { name: named[1].trim(), role: named[2].trim(), purpose: rest.trim() } : { role: head.trim(), purpose: rest.trim() };
 }
 
 function uniqueName(name, taken) {

@@ -57,6 +57,9 @@ import { roleTemplates } from "../src/lib/member-profiles.js";
   ] });
   assert.deepEqual(stringy.members.map((member) => [member.name, member.role, member.purpose]), [["SOC 2 Auditor", "SOC 2 Auditor", "Maps controls to SOC 2."], ["ISO 27001 Auditor", "ISO 27001 Auditor", "Maps the ISMS to Annex A."], ["Eva", "QA Engineer", "Tests the exports."]]);
   fail({ objective: "o", members: ["just words"] }, /Member 1 must be an object/);
+  // The placeholder word taken literally (0.9.9 produced "Role: Frontend Developer — owns the pages").
+  const literal = memberTeamProposal({ objective: "o", members: ["Role: Frontend Developer — owns the HTML, CSS and JS.", "Role: QA Engineer: verifies the order flow."] });
+  assert.deepEqual(literal.members.map((member) => [member.role, member.purpose]), [["Frontend Developer", "owns the HTML, CSS and JS."], ["QA Engineer", "verifies the order flow."]]);
   // A team without a name is named after its first role.
   assert.equal(memberTeamProposal({ objective: "o", members: [{ role: "Release Manager", purpose: "p" }] }).name, "Release Manager team");
 }

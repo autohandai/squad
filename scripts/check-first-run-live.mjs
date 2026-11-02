@@ -156,6 +156,7 @@ try {
   const proposal = (proposalTurn.result.channelActions || []).find(action => action.type === 'team');
   assert.equal(proposal?.status, 'proposed', `squad_propose_team produced a proposal: ${JSON.stringify(proposalTurn.result.channelActions)}\n${proposalTurn.result.reply}`);
   assert.ok(proposal.proposal.members.length >= 2 && proposal.proposal.members.length <= 8);
+  assert.ok(proposal.proposal.members.every(member => !/^(role|name|member)$/i.test(member.role) && member.role.length > 2), `member roles came through as written: ${proposal.proposal.members.map(member => member.role).join(', ')}`);
   await until(() => browser.evaluate(`!!document.querySelector('[data-testid="team-proposal"]')`), 'team proposal card', 15000);
   await shot('03-team-proposal');
   await browser.evaluate(`(() => { const b=[...document.querySelectorAll('[data-testid="team-proposal"] button')].find(x=>x.textContent.startsWith('Create team')); if(!b) throw new Error('no Create team'); b.click(); })()`);
