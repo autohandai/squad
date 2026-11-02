@@ -184,6 +184,29 @@ source confirmed each one.
     permissions can never allow from the model's menu, so the retry loop the
     reporter saw cannot recur on it.
 
+13. **An engine that goes silent ends the turn in minutes, not twenty.**
+    Two demo runs on the installed runtime stalled in the Frontend
+    Developer's build turn: thirteen and twenty-two tools in, right after a
+    `run_command` completed, the engine stopped sending anything at all,
+    keep-alive pings included (the CLI sends `autohand.ping` every fifteen
+    seconds for the whole turn, so silence means the process is wedged or
+    gone), and the chat read "Working…" for twenty minutes. The bridge's
+    inactivity window had fired after three to five minutes; what followed
+    was Squad's own cleanup. Each Agent SDK request waits five minutes by
+    default, and the cleanup sent three in a row to an engine that would
+    never answer: `interrupt`, the change-batch decision, then `interrupt`
+    again from the pool before `close`, which kills the process in two
+    seconds. `server/deadline.mjs` bounds those calls to three seconds; a
+    turn that timed out skips them and discards its staged batches locally
+    (`ChangeBatches.discard`), and the pool's `close` is bounded at ten
+    seconds and reports `session_close_timeout`. `check-sdk-sessions`
+    covers a session whose interrupt and close never settle. The engine's
+    silence after a shell command is the CLI's to explain
+    (`.codex-artifacts/first-run-live-packaged-demo/failure-bridge.json`
+    holds the run); the rehearsal's build prompt now asks for file tools
+    only, since the site needs no shell and the demo should not ride on
+    that path.
+
 ## Consequences and validation
 
 - `check-permission-policy`, `check-permission-approvals`,

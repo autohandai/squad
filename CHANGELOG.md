@@ -35,6 +35,7 @@ list to the section for that version.
 
 ### Fixed
 
+- A member whose engine stops responding mid-reply now ends the reply within the inactivity window instead of showing "Working…" for twenty minutes: the engine session is closed without waiting on requests it will never answer.
 - Files an Autohand member writes now reach the repository. The engine stages edits in a preview batch and waits for a decision Squad never sent, so a member could report "Created docs/plan.md" with nothing on disk; Squad now applies the batch when the reply finishes, discards it when you stop the reply, and says what was written.
 - Squad team tools (teammates, channels, memory, profile), the vault and Computer Use now work on the Autohand engine with Built-in tool rules on, at every ladder level. They were refused at the engine regardless of any Permissions setting.
 - A member no longer loses the conversation when its engine session restarts (idle, Stop, a permission change, a bridge restart): the recent turns are replayed and the chat says so.

@@ -100,3 +100,23 @@ try{
   await active.release(true);const nextLease=await next;assert.equal(nextLease.sdk,active.sdk);await nextLease.release(true);
 }finally{await serial.closeAll();}
 console.log('SDK session pool checks passed.');
+
+// An engine that stopped answering (ADR-0161 §13): interrupt and close never
+// settle, and the pool still drops the session within the cleanup bound
+// instead of waiting five minutes per request.
+{
+  const { CLOSE_DEADLINE_MS } = await import('../server/sdk-sessions.mjs');
+  const { ENGINE_CLEANUP_MS } = await import('../server/deadline.mjs');
+  const events = [];
+  const wedged = new SdkSessionPool({ sweepMs: 10_000, onEvent: (name, session, detail) => events.push([name, detail]), createSdk: () => ({ async start() {}, interrupt: () => new Promise(() => {}), close: () => new Promise(() => {}) }) });
+  const lease = await wedged.acquire({ agentId: 'w', workspace: '/w', options: { cliPath: '/x' } });
+  const started = Date.now();
+  await lease.release(false);
+  const took = Date.now() - started;
+  assert.ok(took < ENGINE_CLEANUP_MS + CLOSE_DEADLINE_MS + 500, `release of a wedged session returns within the bounds: ${took} ms`);
+  assert.ok(took >= ENGINE_CLEANUP_MS, `the interrupt bound was waited for: ${took} ms`);
+  assert.equal(wedged.stats().active, 0, 'the wedged session is gone from the pool');
+  assert.ok(events.some(([name]) => name === 'session_close_timeout'), `the timeout is reported: ${JSON.stringify(events)}`);
+  await wedged.closeAll();
+}
+console.log('sdk-sessions: wedged engine closes within the bound');

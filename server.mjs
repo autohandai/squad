@@ -4,6 +4,7 @@ import { OtelLogger, SEVERITY, parseLogEnvelope, resourceFromEnv, traceIdFor, sp
 import { SdkSessionPool } from "./server/sdk-sessions.mjs";
 import { PermissionApprovalError, PermissionApprovals } from "./server/permission-approvals.mjs";
 import { ChangeBatches } from "./server/change-batches.mjs";
+import { ENGINE_CLEANUP_MS, withDeadline } from "./server/deadline.mjs";
 import { conversationReplay } from "./server/chats/replay.mjs";
 import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
@@ -6761,11 +6762,17 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
     if (ceiling) clearTimeout(ceiling);
     if (firstEventTimer) clearTimeout(firstEventTimer);
     if (abortHandler) signal?.removeEventListener("abort", abortHandler);
-    if (timedOut || stopped || stalled || signal?.aborted) {
-      await sdk.interrupt?.().catch(() => {});
+    if (timedOut) {
+      // The engine stopped answering (no event for the inactivity window, or
+      // the ceiling): nothing it is asked now will be answered either, and
+      // the lease is released unhealthy so the pool kills the process. Its
+      // staged changes go with it (ADR-0161 §13).
+      changeBatches.discard(sdk);
+    } else if (stopped || stalled || signal?.aborted) {
+      await withDeadline(sdk.interrupt?.(), ENGINE_CLEANUP_MS, "interrupt").catch(() => {});
       // Whatever the cut-short turn had staged is discarded, not applied by
       // the next turn's decision.
-      await changeBatches.settle(sdk, { accept: false }).catch(() => {});
+      await changeBatches.settle(sdk, { accept: false, deadlineMs: ENGINE_CLEANUP_MS }).catch(() => {});
     }
   }
 }

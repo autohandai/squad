@@ -278,8 +278,21 @@ try {
   if (demoRun) {
     // The idle close the person hits: the warm session's TTL is fifteen minutes.
     log('idling sixteen minutes so the warm session closes on its own');
-    await new Promise(resolve => setTimeout(resolve, 16 * 60_000));
-    assert.equal((await bridge.api('/api/sessions')).data.sessions.filter(session => session.agentId === id).length, 0, 'the idle session was closed by the pool');
+    // Run 4 on the installed runtime came back from this idle to a page that
+    // no longer answered Runtime.evaluate: a trivial evaluation every half
+    // minute keeps the headless page and its DevTools session awake, and a
+    // page that stops answering is reported here rather than at the next step.
+    const idleEnd = Date.now() + 16 * 60_000;
+    while (Date.now() < idleEnd) {
+      await new Promise(resolve => setTimeout(resolve, Math.min(30_000, idleEnd - Date.now())));
+      try { await browser.evaluate('document.title'); } catch (error) { log(`during the idle the page stopped answering: ${error.message}`); throw error; }
+    }
+    // The pool closes a session after fifteen idle minutes on a once-a-minute
+    // sweep, measured from the last release, which came a little after the
+    // reply above; run 7 asserted at exactly sixteen minutes and found it one
+    // sweep away. The continuation waits for the close rather than a clock.
+    await until(async () => (await bridge.api('/api/sessions')).data.sessions.filter(session => session.agentId === id).length === 0, 'the idle session closed by the pool', 4 * 60_000);
+    log('the warm session closed on its own; continuing the conversation');
   } else {
     await bridge.api('/api/sessions', 'DELETE');
   }
@@ -308,7 +321,7 @@ try {
 
     // D1. The team builds the site; every write is approved from the cards.
     await openChat(frontend.id);
-    const built = await sendAnswering('Build the pie shop website in this repository now: a static site with index.html (home with hero and featured pies), menu.html (six pies with prices), hours.html (opening hours and address), order.html (an order form with name, phone, pie, quantity, pickup time and a client-side confirmation), one shared styles.css (warm neighbourhood-bakery look, mobile-first, readable on a 390px phone and a 1440px desktop) and one app.js. Use your file tools; I will approve the writes. When done, list the files you created.', 'site build');
+    const built = await sendAnswering('Build the pie shop website in this repository now: a static site with index.html (home with hero and featured pies), menu.html (six pies with prices), hours.html (opening hours and address), order.html (an order form with name, phone, pie, quantity, pickup time and a client-side confirmation), one shared styles.css (warm neighbourhood-bakery look, mobile-first, readable on a 390px phone and a 1440px desktop) and one app.js. Use your file tools only and do not run shell commands; I will approve the writes. When done, list the files you created.', 'site build');
     const files = ['index.html', 'menu.html', 'hours.html', 'order.html', 'styles.css'];
     for (const file of files) await access(join(repo, file));
     observations.push({ step: 'build', files, approvals: built.answered.length, replyPreview: String(built.result.reply || '').slice(0, 300) });
@@ -424,5 +437,21 @@ try {
 } catch (error) {
   await save({ status: 'failed', error: error.message, logs: bridge.logs.slice(-6000) });
   await browser?.screenshot(join(evidenceDir, 'failure.png')).catch(() => {});
+  // The bridge's state dir is removed on close, so what the members were
+  // doing when a step timed out (run 8 on the installed runtime: a site build
+  // turn still "Working…" after nineteen minutes with thirteen tools and one
+  // failed) is saved here: every run with its activity feed and raw log,
+  // the queues and the sessions.
+  try {
+    const runs = (await bridge.api('/api/runs')).data || [];
+    const details = [];
+    for (const run of runs.slice(0, 12)) {
+      const activity = await bridge.api(`/api/runs/${encodeURIComponent(run.id)}/activity`).catch(error => ({ error: error.message }));
+      details.push({ run: { ...run, logs: undefined }, activity: activity.data || activity, logs: run.logs });
+    }
+    const queues = (await bridge.api('/api/queues')).data;
+    const sessions = (await bridge.api('/api/sessions')).data;
+    await writeFile(join(evidenceDir, 'failure-bridge.json'), JSON.stringify({ at: new Date().toISOString(), runs: details, queues, sessions }, null, 2));
+  } catch (dumpError) { log(`could not save the bridge state: ${dumpError.message}`); }
   throw error;
 } finally { await browser?.close(); await bridge.close(); }

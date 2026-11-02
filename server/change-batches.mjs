@@ -10,6 +10,8 @@
 // batch that reaches its end is therefore accepted, and a turn the person
 // stopped is rejected rather than half-applied.
 
+import { withDeadline } from "./deadline.mjs";
+
 export const CHANGES_BATCH_END = "autohand.changesBatchEnd";
 export const CHANGES_BATCH_UPDATE = "autohand.changesBatchUpdate";
 
@@ -50,7 +52,19 @@ export class ChangeBatches {
    * Decide every ended batch of this session: accept them, or reject them when
    * the turn was stopped. Returns { applied, rejected, files, errors }.
    */
-  async settle(sdk, { accept = true } = {}) {
+  /**
+   * Forget a session's staged batches without asking the engine: for a turn
+   * whose engine stopped answering (ADR-0161 §13), the decision request
+   * would wait five minutes for a reply that never comes, and the process is
+   * about to be killed with its staging area.
+   */
+  discard(sdk) {
+    const batches = this.open.get(sdk);
+    this.open.delete(sdk);
+    return batches ? batches.size : 0;
+  }
+
+  async settle(sdk, { accept = true, deadlineMs = 0 } = {}) {
     const batches = this.open.get(sdk);
     const result = { applied: 0, rejected: 0, files: [], errors: [] };
     if (!batches) return result;
@@ -61,7 +75,8 @@ export class ChangeBatches {
       const decide = sdk?.client?.decideChanges?.bind(sdk.client) || sdk?.decideChanges?.bind(sdk);
       if (!decide) { result.errors.push(`${entry.batchId}: the SDK cannot decide change batches`); continue; }
       try {
-        const outcome = await decide({ batchId: entry.batchId, action: accept ? "accept_all" : "reject_all" });
+        const decision = decide({ batchId: entry.batchId, action: accept ? "accept_all" : "reject_all" });
+        const outcome = await (deadlineMs > 0 ? withDeadline(decision, deadlineMs, "the change decision") : decision);
         if (accept) {
           result.applied += Number(outcome?.appliedCount ?? entry.changeCount) || 0;
           result.files.push(...entry.files);

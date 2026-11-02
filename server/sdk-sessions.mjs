@@ -9,6 +9,11 @@
 // error), when the member starts a new conversation, after an idle TTL, or
 // when the pool is over capacity (least recently used first).
 
+import { ENGINE_CLEANUP_MS, withDeadline } from "./deadline.mjs";
+
+// The SDK's own close sends SIGTERM then SIGKILL within about two seconds;
+// anything longer means it is waiting on output that will never come.
+export const CLOSE_DEADLINE_MS = 10_000;
 import { createHash } from "node:crypto";
 
 async function untilCancelled(promise, signal) {
@@ -143,11 +148,14 @@ export class SdkSessionPool {
     try {
       // A silent startup is exactly what cancellation must be able to stop.
       // Its SDK is assigned before start(), so close the owned process
-      // without waiting for that startup promise to settle first.
-      if (session.ready) await session.sdk?.interrupt?.().catch(() => {});
-      await session.sdk?.close?.();
-    } catch {
+      // without waiting for that startup promise to settle first. Both calls
+      // are bounded: an engine that has stopped answering (ADR-0161 §13)
+      // would otherwise hold this for five minutes per request.
+      if (session.ready) await withDeadline(session.sdk?.interrupt?.(), ENGINE_CLEANUP_MS, "interrupt").catch(() => {});
+      await withDeadline(session.sdk?.close?.(), CLOSE_DEADLINE_MS, "close");
+    } catch (error) {
       // Closing is best effort; the process is dropped either way.
+      if (error?.code === "ENGINE_DEADLINE") this.onEvent("session_close_timeout", session, `${reason}: ${error.message}`);
     }
     return true;
   }

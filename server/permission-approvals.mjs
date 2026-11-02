@@ -19,6 +19,8 @@ const DECISIONS = new Map([
   ["deny_session", "deny_session"],
 ]);
 
+import { ENGINE_CLEANUP_MS, withDeadline } from "./deadline.mjs";
+
 export const PERMISSION_DECISIONS = Object.freeze([...new Set(DECISIONS.values())]);
 
 export function normalizePermissionDecision(value) {
@@ -147,7 +149,9 @@ export class PermissionApprovals {
     const open = Array.from(this.pending.values()).filter((pending) => pending.runId === String(runId || ""));
     for (const pending of open) {
       this.pending.delete(pending.requestId);
-      await pending.sdk?.permissionResponse?.({ requestId: pending.requestId, decision: "deny_once" }).catch(() => {});
+      // Bounded: at the end of a turn whose engine stopped answering, this
+      // request would otherwise wait five minutes (ADR-0161 §13).
+      await withDeadline(pending.sdk?.permissionResponse?.({ requestId: pending.requestId, decision: "deny_once" }), ENGINE_CLEANUP_MS, "the permission reply").catch(() => {});
       pending.send({ type: "permission_resolved", requestId: pending.requestId, tool: pending.tool, decision: "deny_once", source: "closed", reason, timestamp: this.now() });
     }
     return open.length;

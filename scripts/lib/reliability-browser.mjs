@@ -63,7 +63,7 @@ export async function startBrowser() {
   const chrome = [process.env.CHROME_PATH, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'].filter(Boolean).find(existsSync);
   if (!chrome) throw new Error('Chrome is required for the rendered reliability checks. Set CHROME_PATH.');
   const directory = await mkdtemp(join(tmpdir(), 'squad-reliability-chrome-'));
-  const child = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-extensions', '--disable-gpu', '--window-size=1440,1100', 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-extensions', '--disable-gpu', '--window-size=1440,1100', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling', 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = ''; child.stderr.on('data', data => { logs += data; });
   let ws, debugOrigin;
   try {
@@ -91,7 +91,16 @@ export async function startBrowser() {
     pending.delete(message.id); clearTimeout(entry.timer);
     if (message.error) entry.reject(new Error(message.error.message)); else entry.resolve(message.result);
   });
+  // A DevTools socket that closes (the headless page went away during a long
+  // idle in the demo walkthrough) used to leave every later call waiting on
+  // nothing; the pending calls fail at once and later ones fail without a wait.
+  let socketClosed = '';
+  ws.addEventListener('close', event => {
+    socketClosed = `DevTools socket closed (${event.code || 'no code'})`;
+    for (const [requestId, entry] of pending) { pending.delete(requestId); clearTimeout(entry.timer); entry.reject(new Error(socketClosed)); }
+  });
   const send = (method, params = {}, timeout = 15000) => new Promise((resolve, reject) => {
+    if (socketClosed) { reject(new Error(`${method}: ${socketClosed}`)); return; }
     const requestId = ++id;
     const timer = setTimeout(() => { pending.delete(requestId); reject(new Error(`${method} timed out`)); }, timeout);
     pending.set(requestId, { resolve, reject, timer }); ws.send(JSON.stringify({ id: requestId, method, params }));
