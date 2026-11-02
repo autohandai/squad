@@ -83,24 +83,14 @@ async function submit(prompt, label) {
   return before;
 }
 const toolSummary = turn => ({ tools: (turn.result?.trace?.toolCalls || []).map(call => call.name), failed: (turn.result?.trace?.toolResults || []).filter(result => /error|failed|denied/i.test(String(result.content || '').slice(0, 200))).map(result => `${result.name}: ${String(result.content || '').slice(0, 160)}`) });
+// Every message answers permission cards the way a person at the demo would
+// (Allow once). Run 10 on the installed runtime stalled in the first review:
+// the model chose a shell command for its look around, the card sat
+// unanswered, and the engine waited on it for sixteen minutes, which is the
+// product doing what Ask rules promise. The walkthrough had only answered
+// cards in the steps that expected writes.
 async function send(prompt, label, timeout = 600000) {
-  const memberId = await currentMemberId();
-  if (memberId) await awaitIdle(memberId, label, timeout);
-  const before = await submit(prompt, label);
-  const ticker = setInterval(() => log(`waiting: ${label}`), 30000);
-  try {
-    return await until(async () => {
-      const list = await turns();
-      const turn = list[before];
-      if (turn?.error || turn?.captureError) throw new Error(JSON.stringify(turn.error || turn.captureError));
-      if (turn?.queued?.item?.id) {
-        clearInterval(ticker);
-        log(`${label}: the message was queued behind the member's current turn; waiting for the queue`);
-        return { ...turn, ...(await queuedReply(memberId || turn.request?.agentId, turn.queued.item.id, label, timeout)) };
-      }
-      return turn?.result ? turn : false;
-    }, label, timeout);
-  } finally { clearInterval(ticker); }
+  return sendAnswering(prompt, label, 'Allow once', timeout);
 }
 // Like send(), answering every permission card with one choice while the reply runs.
 // A message sent while the member is busy is queued by the bridge (ADR-0111):

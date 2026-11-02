@@ -205,7 +205,17 @@ source confirmed each one.
     (`.codex-artifacts/first-run-live-packaged-demo/failure-bridge.json`
     holds the run); the rehearsal's build prompt now asks for file tools
     only, since the site needs no shell and the demo should not ride on
-    that path.
+    that path. Reading that run's Work details showed a second fault: the
+    twenty-two commands appeared as 169 approval rows, each "answered" by
+    the next, because a request's description is logged one line per
+    line and every line opened a row. A continuation line now joins the
+    open request, so one request is one row, pending until the engine
+    moves on. Reproducing the stall on the workbench with the same QA
+    prompt found a third fault instead: the member added "Read index.html"
+    to its work plan, marked it done with the outcome "Reading index.html
+    now.", added the next step, and repeated that thirty-six times in four
+    minutes without reading a file. `squad_task` now refuses the ninth edit
+    in one reply and says to do the task itself; `check-team` covers it.
 
 ## Consequences and validation
 

@@ -571,6 +571,15 @@ class Feed {
     }
 
     if (src === "permission") {
+      // A request's description spans lines (the command on one, its JSON
+      // context on the next); appendLog writes each as its own "permission"
+      // line. A continuation (indented, or a JSON brace or field) belongs to
+      // the open request; a run of twenty-two commands once read as 169
+      // approval rows, each marked answered by the next.
+      if (this.openApproval?.state === "pending" && /^(\s|[{}"])/.test(body)) {
+        this.openApproval.detail = appendDetail(this.openApproval.detail, body);
+        return;
+      }
       const match = body.match(PERMISSION_LOG_RE);
       this.approval({ title: match ? `${match[1]}: ${match[2] || "permission requested"}` : body, detail: body, at });
       return;

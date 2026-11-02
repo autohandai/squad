@@ -380,6 +380,13 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
   const sessions = new Map();
   const byToken = new Map();
   const receipts = new Map();
+  // squad_task calls per turn. A QA member on the workbench spent a whole
+  // turn adding "Read index.html" to its plan, marking it done with "Reading
+  // index.html now." and adding the next, thirty-six times, without reading
+  // a file (ADR-0161 §13). The plan is bookkeeping; past this many edits in
+  // one turn the tool refuses and says so.
+  const planEdits = new Map();
+  const PLAN_EDITS_PER_TURN = 8;
   const live = new Map();
   const deliveriesByMember = new Map();
 
@@ -430,6 +437,7 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
   function takeReceipts(runId) {
     const list = receipts.get(String(runId || "")) || [];
     receipts.delete(String(runId || ""));
+    planEdits.delete(String(runId || ""));
     return list;
   }
 
@@ -670,6 +678,9 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
         }
         case "squad_work_plan": return getWorkPlan ? text({ tasks: await getWorkPlan(session.memberId) }) : failure("The work plan is unavailable in this runtime.");
         case "squad_task": {
+          const edits = (planEdits.get(session.runId) || 0) + 1;
+          planEdits.set(session.runId, edits);
+          if (edits > PLAN_EDITS_PER_TURN) return failure(`Your plan has been edited ${PLAN_EDITS_PER_TURN} times in this reply and no other work was done. Do the task itself now (read the files, run the checks, write the answer) and update the plan once something is actually finished.`);
           const receipt = await runAction("task", args, operation);
           addReceipt(session, receipt);
           if (!receipt || ["failed", "blocked"].includes(receipt.status)) return failure(receipt?.message || "Task not changed.");

@@ -247,6 +247,30 @@ const logItems = normalizeActivity(logs, { status: "completed" });
 const kinds = logItems.map((item) => `${item.kind}:${item.state}${item.quiet ? ":q" : ""}`);
 assert.deepEqual(kinds, ["status:done:q", "tool:done:q", "shell:failed", "message:done", "approval:done", "status:done:q", "status:done:q"], kinds.join(", "));
 assert.equal(logItems[1].object, "src/App.jsx", "multi-line JSON args parse back into an object");
+
+// A multi-line permission request is one approval row, pending while the
+// engine waits (pings are status rows) and answered once a tool starts.
+{
+  const lines = [
+    { source: "permission", line: "Run this command?", at: "2026-11-02T14:37:09.000Z" },
+    { source: "permission", line: '  $ ls -la && find . -type f | head -50', at: "2026-11-02T14:37:09.000Z" },
+    { source: "permission", line: "{", at: "2026-11-02T14:37:09.000Z" },
+    { source: "permission", line: '  "command": "ls -la && find . -type f | head -50"', at: "2026-11-02T14:37:09.000Z" },
+    { source: "permission", line: "}", at: "2026-11-02T14:37:09.000Z" },
+    { source: "sdk", line: "autohand.ping {", at: "2026-11-02T14:37:10.000Z" },
+    { source: "sdk", line: '  "status": "waiting_permission"', at: "2026-11-02T14:37:10.000Z" },
+    { source: "sdk", line: "}", at: "2026-11-02T14:37:10.000Z" },
+  ];
+  const waiting = normalizeActivity(lines, { status: "running", live: true });
+  const approvals = waiting.filter((item) => item.kind === "approval");
+  assert.equal(approvals.length, 1, `one approval row for one request: ${waiting.map((item) => `${item.kind}:${item.state}`).join(", ")}`);
+  assert.equal(approvals[0].state, "pending", "still waiting while the engine pings");
+  assert.ok(approvals[0].detail.includes('"command"'), "the JSON context stays with the request");
+  const moved = normalizeActivity([...lines, { source: "tool", line: 'started run_command {"command":"ls -la"}', at: "2026-11-02T14:37:20.000Z" }], { status: "running", live: true });
+  const answered = moved.find((item) => item.kind === "approval");
+  assert.equal(answered.state, "done");
+  assert.equal(answered.outcome, "answered");
+}
 assert.equal(logItems[2].object, "cargo test");
 assert.equal(logItems[2].endedAt, "2026-09-26T10:06:00.000Z");
 assert.ok(logItems[2].detail.includes("[stderr] test db::migrate ... FAILED"));

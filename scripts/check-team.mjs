@@ -150,6 +150,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
       await call('squad_task', { op: 'update', id: added.taskId, status: 'doing' });
       await call('squad_task', { op: 'done', id: added.taskId, outcome: 'Release notes reviewed.' });
     }
+    if (scenario === 'task-loop') for (let index = 0; index < 10; index += 1) await call('squad_task', { op: 'add', title: 'Step ' + index });
     if (scenario === 'old-name') await call('squad_message', { to: 'Noah', message: 'Still there?', wait_seconds: 30 });
     if (scenario === 'schedule') await call('squad_schedule', { title: 'Call Sam', instructions: 'Remind Igor to call Sam about the contract.', schedule: { kind: 'once', date: '2099-01-02', time: '09:00' }, timezone: 'Pacific/Auckland' });
     if (scenario === 'schedule-nozone') await call('squad_schedule', { title: 'Stretch', instructions: 'Remind Igor to stretch.', schedule: { kind: 'once', date: '2099-01-03', time: '15:00' } });
@@ -270,6 +271,13 @@ try {
   assert.equal(channelMessages[1].parentMessageId, channelMessages[0].id);
   assert.equal(channelCalls.find(entry => entry.name === "squad_create_channel").response.result.structuredContent.status, "proposed", "MCP channel creation retains the person's existing Ask policy");
 
+  // A member that only edits its plan is told to do the work (ADR-0161 §13).
+  result = await chat(noah, "team-scenario-task-loop");
+  log = await entries();
+  const loopCalls = log.filter(entry => entry.scenario === "task-loop" && entry.name === "squad_task");
+  assert.equal(loopCalls.length, 10, "the fixture made ten plan edits in one turn");
+  assert.ok(loopCalls.slice(0, 8).every(entry => !entry.response.result.isError), "eight plan edits in a turn are fine");
+  assert.ok(loopCalls.slice(8).every(entry => entry.response.result.isError && /Do the task itself now/.test(JSON.stringify(entry.response.result))), `the ninth and tenth are refused with the reason: ${JSON.stringify(loopCalls[8].response.result).slice(0, 300)}`);
   result = await chat(noah, "team-scenario-tasks");
   assert.equal(result.success, true, result.text);
   log = await entries();
