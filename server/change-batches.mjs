@@ -10,15 +10,81 @@
 // batch that reaches its end is therefore accepted, and a turn the person
 // stopped is rejected rather than half-applied.
 
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+
 import { withDeadline } from "./deadline.mjs";
+
+// Write-through (ADR-0161 §15). Staged changes were invisible on disk until
+// the reply ended, so a member that checked its work with `ls` or `cat` saw
+// nothing, concluded its file tools were broken, rewrote everything through
+// the shell, and then the batch applied at the end on top of the shell's
+// files: on the 0.1.16 demo run an 11-line test index.html replaced the
+// real one. Each staged change inside the turn's folders is now written as
+// it is announced, so the disk always matches what the member was told; at
+// the end only what could not be written (outside those folders) is accepted
+// and the engine's staged copy of the rest is dropped.
 
 export const CHANGES_BATCH_END = "autohand.changesBatchEnd";
 export const CHANGES_BATCH_UPDATE = "autohand.changesBatchUpdate";
 
 export class ChangeBatches {
-  constructor({ log = () => {} } = {}) {
+  constructor({ log = () => {}, fs = { mkdir, realpath, rm, writeFile } } = {}) {
     this.log = log;
+    this.fs = fs;
     this.open = new Map();
+    this.roots = new WeakMap();
+    this.writes = new WeakMap();
+  }
+
+  /** The folders this session's turn may write in: the workspace and its extra folders. */
+  bind(sdk, roots = []) {
+    const list = [...new Set((Array.isArray(roots) ? roots : []).filter((root) => typeof root === "string" && isAbsolute(root)).map((root) => resolve(root)))];
+    this.roots.set(sdk, list);
+  }
+
+  /** Where a staged change lands, or "" when it is outside every bound folder. */
+  async target(sdk, filePath) {
+    const roots = this.roots.get(sdk) || [];
+    if (!roots.length || !filePath) return "";
+    const absolute = isAbsolute(filePath) ? resolve(filePath) : resolve(roots[0], filePath);
+    // Resolve the nearest existing parent, so a symlink cannot carry a write out.
+    let probe = dirname(absolute);
+    let real = "";
+    while (!real) {
+      try { real = await this.fs.realpath(probe); } catch { const up = dirname(probe); if (up === probe) return ""; probe = up; }
+    }
+    const landing = resolve(real, relative(probe, absolute));
+    for (const root of roots) {
+      let realRoot = root;
+      try { realRoot = await this.fs.realpath(root); } catch { continue; }
+      if (landing === realRoot || landing.startsWith(realRoot + sep)) return landing;
+    }
+    return "";
+  }
+
+  /** Apply one staged change to disk, in announcement order per session. */
+  writeThrough(sdk, entry, change) {
+    const previous = this.writes.get(sdk) || Promise.resolve();
+    const next = previous.then(async () => {
+      const id = String(change?.id || "");
+      const path = await this.target(sdk, String(change?.filePath || ""));
+      if (!path || !id) { if (id) entry.pending.add(id); return; }
+      try {
+        if (change.changeType === "delete") await this.fs.rm(path, { force: true });
+        else {
+          await this.fs.mkdir(dirname(path), { recursive: true });
+          await this.fs.writeFile(path, String(change.proposedContent ?? ""), "utf8");
+        }
+        entry.written.add(id);
+        entry.pending.delete(id);
+      } catch (error) {
+        entry.pending.add(id);
+        this.log(`change ${id} could not be written through to ${path}: ${error?.message || error}`);
+      }
+    });
+    this.writes.set(sdk, next.catch(() => {}));
+    return next;
   }
 
   /** Record what an engine event says about staged changes. Returns true when the event was a batch event. */
@@ -30,6 +96,10 @@ export class ChangeBatches {
       const entry = this.entry(sdk, batchId);
       const path = String(params.change?.filePath || "");
       if (path && !entry.files.includes(path)) entry.files.push(path);
+      if (params.change && typeof params.change === "object") {
+        if (this.roots.get(sdk)?.length) void this.writeThrough(sdk, entry, params.change);
+        else if (params.change.id) entry.pending.add(String(params.change.id));
+      }
       return true;
     }
     if (event.method === CHANGES_BATCH_END && batchId) {
@@ -44,7 +114,7 @@ export class ChangeBatches {
   entry(sdk, batchId) {
     const batches = this.open.get(sdk) || new Map();
     this.open.set(sdk, batches);
-    if (!batches.has(batchId)) batches.set(batchId, { batchId, files: [], changeCount: 0, ended: false });
+    if (!batches.has(batchId)) batches.set(batchId, { batchId, files: [], changeCount: 0, ended: false, written: new Set(), pending: new Set() });
     return batches.get(batchId);
   }
 
@@ -65,6 +135,8 @@ export class ChangeBatches {
   }
 
   async settle(sdk, { accept = true, deadlineMs = 0 } = {}) {
+    // Writes still on their way to disk finish before the batch is decided.
+    await (this.writes.get(sdk) || Promise.resolve());
     const batches = this.open.get(sdk);
     const result = { applied: 0, rejected: 0, files: [], errors: [] };
     if (!batches) return result;
@@ -72,21 +144,29 @@ export class ChangeBatches {
       if (!entry.ended) continue;
       batches.delete(entry.batchId);
       if (!entry.changeCount) continue;
+      const written = entry.written.size;
+      const pending = [...entry.pending];
+      // Written through: the disk already has it; the engine's staged copy
+      // is dropped so it cannot replay older content over later shell work.
+      // Not written (outside the turn's folders, or no folders bound): the
+      // engine applies it, or discards it when the reply was stopped.
+      const action = !accept ? "reject_all" : !written ? "accept_all" : pending.length ? "accept_selected" : "reject_all";
       const decide = sdk?.client?.decideChanges?.bind(sdk.client) || sdk?.decideChanges?.bind(sdk);
+      if (written) { result.applied += written; result.files.push(...entry.files); }
       if (!decide) { result.errors.push(`${entry.batchId}: the SDK cannot decide change batches`); continue; }
       try {
-        const decision = decide({ batchId: entry.batchId, action: accept ? "accept_all" : "reject_all" });
+        const decision = decide({ batchId: entry.batchId, action, ...(action === "accept_selected" ? { selectedChangeIds: pending } : {}) });
         const outcome = await (deadlineMs > 0 ? withDeadline(decision, deadlineMs, "the change decision") : decision);
-        if (accept) {
-          result.applied += Number(outcome?.appliedCount ?? entry.changeCount) || 0;
-          result.files.push(...entry.files);
-          for (const failure of Array.isArray(outcome?.errors) ? outcome.errors : []) result.errors.push(`${failure.changeId || entry.batchId}: ${failure.error || "could not apply"}`);
+        if (action === "reject_all") {
+          if (!accept) result.rejected += written ? pending.length : entry.changeCount;
         } else {
-          result.rejected += entry.changeCount;
+          result.applied += Number(outcome?.appliedCount ?? (action === "accept_all" ? entry.changeCount : pending.length)) || 0;
+          if (!written) result.files.push(...entry.files);
+          for (const failure of Array.isArray(outcome?.errors) ? outcome.errors : []) result.errors.push(`${failure.changeId || entry.batchId}: ${failure.error || "could not apply"}`);
         }
       } catch (error) {
         result.errors.push(`${entry.batchId}: ${error?.message || error}`);
-        this.log(`change batch ${entry.batchId} was not ${accept ? "applied" : "rejected"}: ${error?.message || error}`);
+        this.log(`change batch ${entry.batchId} was not decided (${action}): ${error?.message || error}`);
       }
     }
     if (!batches.size) this.open.delete(sdk);

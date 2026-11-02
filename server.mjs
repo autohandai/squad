@@ -6922,6 +6922,7 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
   void (async () => {
     try {
       await handoffRuntimeSkills(agentRuntime, 'autohand', event => appendSdkEventLog(run, event));
+      changeBatches.bind(sdk, [context.options.cwd, ...(Array.isArray(context.options.addDir) ? context.options.addDir : [])]);
       const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, prompt), payload._messageAttachments), 300000, (event) => { const observed = observeRuntimeSkillEvent(agentRuntime, event); if (observed) appendSdkEventLog(run, observed); }, run.abortController.signal);
       if (run.status !== "stopped") {
         run.trace = sdkTraceFromEvents(output.events, output.rawStdout, output.rawStderr);
@@ -7043,6 +7044,7 @@ async function chatOnceWithSdk(payload, { workspace, prompt, agentRuntime, timeo
     const sdk = lease.sdk;
     started = true;
     await handoffRuntimeSkills(agentRuntime, 'autohand');
+    changeBatches.bind(sdk, [context.options.cwd, ...(Array.isArray(context.options.addDir) ? context.options.addDir : [])]);
     const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, prompt), payload._messageAttachments), timeoutMs, event => {
       eventCount += 1;
       observeRuntimeSkillEvent(agentRuntime, event);
@@ -7176,6 +7178,7 @@ async function streamChatWithSdk(payload, { workspace, prompt, agentRuntime, tim
     const runId = String(payload._computerUseWorkId || "");
     const agentId = sanitizeAgentId(payload.agent?.id || payload.agentId || "member");
     await handoffRuntimeSkills(agentRuntime, 'autohand', event => stream.send('sdk', event));
+    changeBatches.bind(sdk, [context.options.cwd, ...(Array.isArray(context.options.addDir) ? context.options.addDir : [])]);
     const output = await collectSdkPrompt(sdk, await autohandPromptInput(sdkPromptForTurn(context, replay ? `${replay}\n\n${prompt}` : prompt), payload._messageAttachments), timeoutMs, (event) => {
       eventCount += 1;
       event = observeRuntimeSkillEvent(agentRuntime, event);

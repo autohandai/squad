@@ -271,6 +271,26 @@ source confirmed each one.
     (still warm). Autohand engine only; Codex and Claude Code members run
     one process per turn as before.
 
+15. **Staged writes reach the disk as they happen.** §10 accepted the
+    engine's change batch at the end of the reply. On the 0.1.16 demo run
+    that was not enough: in RPC mode the engine stages every write, so a
+    member that checked its own work with `ls` and `cat` mid-reply saw no
+    files, concluded write_file was broken, wrote two probe files, asked
+    through the new question card whether it could use the shell, and
+    rewrote the site with heredocs. Then the batch applied at the end, in
+    order, and the 11-line probe `index.html` replaced the real page. The
+    engine has no switch for preview mode (`previewModeEnabled` is fixed on
+    in `adapter.ts`), so `server/change-batches.mjs` now writes each staged
+    change into the turn's folders (the workspace and its extra folders,
+    symlinks resolved) the moment it is announced, in order. At the end it
+    drops the engine's staged copy of what was written (`reject_all`, which
+    only clears the staging area) and accepts only what could not be written
+    (`accept_selected`), so a staged change can never replay over later
+    shell work. A stopped reply keeps what already landed, as Codex and
+    Claude Code members do. `check-change-batches` covers order, deletes,
+    the folder boundary, symlink escape, later shell writes and the stopped
+    case.
+
 ## Consequences and validation
 
 - `check-permission-policy`, `check-permission-approvals`,
