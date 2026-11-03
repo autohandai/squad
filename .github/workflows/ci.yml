@@ -117,6 +117,7 @@ jobs:
           AUTOHAND_REQUIRE_BROWSER: "1"
         run: |
           bun run check:member-profiles
+          bun run check:workspace-aliases
           bun run check:agent-channel-actions
           bun run check:member-by-chat:browser
 

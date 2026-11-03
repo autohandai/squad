@@ -34,7 +34,9 @@ candidate and daemon one and two patch versions ahead. A release bump must
 keep exercising a newer candidate, rather than silently turning the scenario
 into an already-current check. The existing `v0.1.16` tag resolves to
 `7c7192a429ad7636e74187272361c9d79cb05a4c`; its failed release is not retagged.
-Prepare 0.1.17 with matching web, daemon and native-shell versions.
+The subsequent 0.1.17 release was canceled before publication after native
+preflight found a saved-workspace compatibility failure (ADR-0172). Preserve
+that tag too; prepare 0.1.18 with matching web, daemon and native-shell versions.
 
 Retain traces/screenshots for failed Playwright cases. Do not hide failures
 with retries or delete assertions to make CI green. Existing CDP coverage still
@@ -47,6 +49,30 @@ The browser scenario runs after the web build and requires Chrome rather than
 silently skipping when it is missing.
 
 ## Consequences
+
+### Correction: rule definitions are not the account's effective merge permission
+
+On 4 November, the user challenged the claim that two reviews and a missing
+Dependabot context prevented this task from proceeding. The active ruleset
+`19511781` does list those requirements, and the PR reports `BLOCKED` and
+`REVIEW_REQUIRED`. That was incomplete evidence: its bypass list also grants
+existing access, and the PR's GraphQL field `viewerCanMergeAsAdmin` is `true`
+for the authenticated account. Treating the definitions as an absolute blocker
+and requesting a second authorization was the wrong conclusion.
+
+After checking that effective permission and confirming all 12 CI jobs passed
+at the unchanged head `ee40b5d`, the authorized merge succeeded with
+`gh pr merge 45 --admin --squash --match-head-commit` at
+`15cfe4c8c1876631a423268572d7c68ba785d09f`. No repository rule was changed.
+The merged tree is identical to the checked PR tree. The immutable `v0.1.17`
+tag targets that merge. Its release was later canceled before publication for
+the independent compatibility issue recorded in ADR-0172.
+
+For future authorized work, inspect the actor's effective merge permission
+alongside the rule definitions. Existing bypass access can be used within the
+task's scope; an actual server refusal must still be respected. An admin label
+alone is not evidence of effective bypass access, and CI results must still
+match the intended source.
 
 - Adds browser runtime and a pinned Playwright development dependency. Uses
   Chrome already required by the existing rendered checks.

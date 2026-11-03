@@ -10,7 +10,7 @@ list to the section for that version.
 
 ## [Unreleased]
 
-## [0.1.17] - 2026-11-03
+## [0.1.18] - 2026-11-04
 
 ### Added
 
@@ -22,6 +22,8 @@ list to the section for that version.
 - Automatic update checks now live in Settings › Updates alongside the automatic-download switch.
 
 ### Fixed
+
+- Existing members and new teammates can use saved project folder aliases inside your home. Workspace identity resolves the real folder while preserving your selected path and per-project permissions.
 
 - Release checks now cover preparing a new member, restoring the same saved skills, and refusing removed members and blocked channel actions, without depending on the machine's engine sign-ins.
 - Sending a message to a member now stops work it started through Keep working between messages before admitting the message. Background agenda work no longer keeps the person waiting behind itself.

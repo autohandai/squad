@@ -2,6 +2,11 @@
 
 Date: 2026-11-03. Source baseline: Squad `837ec2f`, site `0fe5507b`, API `f0721f7`.
 
+Follow-up: 2026-11-04. PR 45 merged at `15cfe4c`; immutable tag `v0.1.17`
+targets that merge. Release workflow [41715030042](https://github.com/autohandai/squad/actions/runs/41715030042)
+was canceled before publication when native preflight found the saved-workspace
+alias regression described in ADR-0172. The compatibility fix targets 0.1.18.
+
 ## Requirements and current proof
 
 | Requirement | Evidence | Boundary |
@@ -17,19 +22,22 @@ Date: 2026-11-03. Source baseline: Squad `837ec2f`, site `0fe5507b`, API `f0721f
 | Release-failure regression | `AUTOHAND_CHECK_CPU_THROTTLE=6 AUTOHAND_CHECK_WAIT_SCALE=3 node scripts/check-chat-attachments-browser.mjs` passed, including saved/reopened file history | Real bridge, fixture harness |
 | Source/build integration | JSX imports, bridge imports, release workflow/packaging contracts, lifecycle checks and Squad build pass. Site build and frozen install with Bun 1.4.0 pass. API typecheck passes | Local |
 | Aggregate local CI | Complete `bun run ci` exited 0 across 116 sequential stages on the diff committed as `4aa0d20`, using Node 22.23.2 and the installed Rust 1.97.1 toolchain on PATH | Fixture engines and local rendered checks; no live provider claim |
-| Hosted CI | Run 41594743403 passed all 12 jobs at `e9ffefd`, including all four release dry runs and combined manifest validation | The later three added member-contract gates require a new hosted run |
+| Hosted CI | Run 41601101968 passed all 12 jobs at `ee40b5d`, including the new member-contract gates, all four release dry runs and combined manifest validation | The merged `15cfe4c` tree is identical to that checked tree |
+| Main CI | Run 41714861612 passed at merged `15cfe4c` | Before the 0.1.18 compatibility fix |
+| Saved workspace compatibility | The real bridge regression failed with HTTP 400 before the fix and passes with alias identity, permission-key preservation and outside-home refusal; read-only preflight accepts all 16 existing saved workspace folders | Two other saved folders were already missing; no user project was modified |
 | Installed native app | Computer Use opened account → Settings → Updates and clicked Check for updates. Installed UI still shows 0.1.16/public 0.1.14 and old controls | Baseline inspected; new build not installed |
 
 ## Remaining release evidence
 
-Squad hosted checks on the final source, including the three added member
-contract gates, and the new native installation check remain required before
-calling the complete goal shipped. The API and editor
+The final hosted checks passed, including the three added member-contract gates.
+Public release publication and the new native installation check remain required
+before calling the complete goal shipped. The API and editor
 deployments below are verified. No production announcement was sent. The
 existing app and its saved data have been backed up and have not been replaced.
-GitHub main rules require two approving reviews and a Dependabot status context
-that this feature PR does not emit. No rule has been bypassed or changed; the
-merge/release decision is pending. Website
+The earlier merge-blocker diagnosis was incomplete: the rules list two reviews
+and a Dependabot context, but GitHub reports `viewerCanMergeAsAdmin=true` for
+the authenticated account. Using that existing permission merged PR 45 without
+changing repository rules. ADR-0167 retains the correction and evidence. Website
 `public/docs-manifest.json` was already modified and is excluded from the PR.
 
 ## Integrated and deployed announcements
@@ -81,7 +89,8 @@ merge/release decision is pending. Website
   and release gates. Production validation rules were not relaxed.
 - Browser release fixtures now derive the running version from package.json,
   with newer candidate/daemon versions. The immutable failed `v0.1.16` tag is
-  preserved; 0.1.17 is prepared with matching package and Cargo versions.
+  preserved. The 0.1.17 release was canceled before publication; 0.1.18 carries
+  the alias fix with matching package and Cargo versions.
 - The member-by-chat fixture now supplies only its known checkout as the
   runtime default workspace. It keeps real provisioning and profile receipts;
   it no longer depends on the person's legacy Documents symlink. The channel
@@ -95,8 +104,8 @@ merge/release decision is pending. Website
   dependency after the complete local pass: its fake Codex executable was
   installed but the fresh runner had no sign-in. The fixture now supplies an
   explicitly fake key to its controlled child, preserving real readiness
-  checks without using personal credentials. Its new-source hosted result
-  remains required. ADR-0171 retains this correction rather than treating the
+  checks without using personal credentials. Final hosted run 41601101968
+  passed at that correction. ADR-0171 retains this correction rather than treating the
   local aggregate as proof of a fresh unsigned-in machine.
 
 Browser captures/traces live under `.codex-artifacts/updates-playwright/` and
