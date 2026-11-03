@@ -5,15 +5,20 @@ import { join } from "node:path";
 import { startBridge } from "../scripts/lib/reliability-browser.mjs";
 
 let bridge, daemon;
-let checks, failCheck, releasedVersion;
+let checks, failCheck, releasedVersion, announcementReads;
 const { version: installedVersion } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const nextVersion = offset => installedVersion.replace(/^(\d+\.\d+\.)(\d+).*$/, (_match, prefix, patch) => `${prefix}${Number(patch) + offset}`);
 const availableVersion = nextVersion(1);
 const snapshot = () => ({ success: true, checkedAt: new Date().toISOString(), source: "squad-api", currentVersion: nextVersion(2), updateAvailable: false, latestAllowedVersion: releasedVersion, notes: "A clearer update experience.", downloadName: `autohand-squad-${releasedVersion}-macos-arm64.dmg`, downloadUrl: `https://github.com/autohandai/squad/releases/download/v${releasedVersion}/autohand-squad-${releasedVersion}-macos-arm64.dmg`, downloadSha256: "a".repeat(64) });
 
 test.beforeAll(async () => {
-  checks = 0; failCheck = false; releasedVersion = availableVersion;
+  checks = 0; announcementReads = 0; failCheck = false; releasedVersion = availableVersion;
   daemon = createServer(async (req, res) => {
+    if (req.url.startsWith("/v1/announcements?")) {
+      announcementReads++;
+      res.setHeader("content-type", "application/json");
+      res.end('{"announcements":[]}'); return;
+    }
     if (req.url === "/updates/check") {
       checks++;
       if (failCheck) { res.writeHead(503); res.end("unavailable"); return; }
@@ -24,10 +29,12 @@ test.beforeAll(async () => {
     res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ success: true, data: {} }));
   });
   await new Promise(resolve => daemon.listen(0, "127.0.0.1", resolve));
+  const fixtureOrigin = `http://127.0.0.1:${daemon.address().port}`;
   bridge = await startBridge({ prepare: async directory => {
     await mkdir(join(directory, "squad"), { recursive: true });
-    await writeFile(join(directory, "squad", "daemon.json"), JSON.stringify({ url: `http://127.0.0.1:${daemon.address().port}` }));
+    await writeFile(join(directory, "squad", "daemon.json"), JSON.stringify({ url: fixtureOrigin }));
     await writeFile(join(directory, "squad", "update.json"), JSON.stringify(snapshot()));
+    return { AUTOHAND_API_URL: fixtureOrigin };
   } });
 });
 test.afterAll(async () => { await bridge?.close(); await new Promise(resolve => daemon?.close(resolve)); });
@@ -51,6 +58,7 @@ test("new release is discovered, preferences persist, and install waits for cons
     localStorage.setItem("autohandSquad.v1.theme", JSON.stringify({ mode: "dark", lightTheme: "autohand-light", darkTheme: "autohand-dark" }));
   });
   await page.goto(bridge.origin + "/settings/updates");
+  await expect.poll(() => announcementReads).toBeGreaterThan(0);
   const update = page.getByTestId("software-update");
   await expect(update.getByRole("status")).toHaveText(`Version ${availableVersion} is available`);
   await expect(update).not.toContainText(`Updated to ${installedVersion}.`);

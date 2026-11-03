@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Update browser checks use an isolated news feed, so remote announcement availability no longer affects their screenshots.
+
 ## [0.1.18] - 2026-11-04
 
 ### Added
