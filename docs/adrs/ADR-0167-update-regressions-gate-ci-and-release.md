@@ -29,6 +29,13 @@ preferences survive reload, failures remain visible, the phone layout fits,
 and installation occurs only after clicking Install. Installer endpoints are
 mocked; release discovery and preference routes use the real bridge.
 
+Derive the browser fixture's installed version from package metadata, with the
+candidate and daemon one and two patch versions ahead. A release bump must
+keep exercising a newer candidate, rather than silently turning the scenario
+into an already-current check. The existing `v0.1.16` tag resolves to
+`7c7192a429ad7636e74187272361c9d79cb05a4c`; its failed release is not retagged.
+Prepare 0.1.17 with matching web, daemon and native-shell versions.
+
 Retain traces/screenshots for failed Playwright cases. Do not hide failures
 with retries or delete assertions to make CI green. Existing CDP coverage still
 tests measured byte progress and lifecycle states.

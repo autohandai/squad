@@ -1,15 +1,18 @@
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBridge } from "../scripts/lib/reliability-browser.mjs";
 
 let bridge, daemon;
 let checks, failCheck, releasedVersion;
-const snapshot = () => ({ success: true, checkedAt: new Date().toISOString(), source: "squad-api", currentVersion: "0.1.18", updateAvailable: false, latestAllowedVersion: releasedVersion, notes: "A clearer update experience.", downloadName: `autohand-squad-${releasedVersion}-macos-arm64.dmg`, downloadUrl: `https://github.com/autohandai/squad/releases/download/v${releasedVersion}/autohand-squad-${releasedVersion}-macos-arm64.dmg`, downloadSha256: "a".repeat(64) });
+const { version: installedVersion } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const nextVersion = offset => installedVersion.replace(/^(\d+\.\d+\.)(\d+).*$/, (_match, prefix, patch) => `${prefix}${Number(patch) + offset}`);
+const availableVersion = nextVersion(1);
+const snapshot = () => ({ success: true, checkedAt: new Date().toISOString(), source: "squad-api", currentVersion: nextVersion(2), updateAvailable: false, latestAllowedVersion: releasedVersion, notes: "A clearer update experience.", downloadName: `autohand-squad-${releasedVersion}-macos-arm64.dmg`, downloadUrl: `https://github.com/autohandai/squad/releases/download/v${releasedVersion}/autohand-squad-${releasedVersion}-macos-arm64.dmg`, downloadSha256: "a".repeat(64) });
 
 test.beforeAll(async () => {
-  checks = 0; failCheck = false; releasedVersion = "0.1.17";
+  checks = 0; failCheck = false; releasedVersion = availableVersion;
   daemon = createServer(async (req, res) => {
     if (req.url === "/updates/check") {
       checks++;
@@ -30,7 +33,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => { await bridge?.close(); await new Promise(resolve => daemon?.close(resolve)); });
 
 test("new release is discovered, preferences persist, and install waits for consent", async ({ page }, testInfo) => {
-  let operation = { phase: "complete", version: "0.1.16", message: "Updated to 0.1.16." };
+  let operation = { phase: "complete", version: installedVersion, message: `Updated to ${installedVersion}.` };
   let installs = 0, downloads = 0;
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -38,7 +41,7 @@ test("new release is discovered, preferences persist, and install waits for cons
   // endpoints are fixtures: this test never downloads or executes a binary.
   await page.route("**/api/updates/*", async route => {
     const path = new URL(route.request().url()).pathname;
-    if (path === "/api/updates/upgrade") { downloads++; operation = { phase: "ready", version: "0.1.17", verified: true, installMode: "restart" }; }
+    if (path === "/api/updates/upgrade") { downloads++; operation = { phase: "ready", version: availableVersion, verified: true, installMode: "restart" }; }
     else if (path === "/api/updates/install") { installs++; operation = { ...operation, phase: "installer-open", message: "Installer opened with consent." }; }
     else if (path !== "/api/updates/progress") return route.continue();
     await route.fulfill({ json: { success: true, data: operation } });
@@ -49,12 +52,12 @@ test("new release is discovered, preferences persist, and install waits for cons
   });
   await page.goto(bridge.origin + "/settings/updates");
   const update = page.getByTestId("software-update");
-  await expect(update.getByRole("status")).toHaveText("Version 0.1.17 is available");
-  await expect(update).not.toContainText("Updated to 0.1.16.");
+  await expect(update.getByRole("status")).toHaveText(`Version ${availableVersion} is available`);
+  await expect(update).not.toContainText(`Updated to ${installedVersion}.`);
   const before = checks;
   await update.getByRole("button", { name: "Check for updates", exact: true }).click();
   await expect.poll(() => checks).toBeGreaterThan(before);
-  await expect(update.getByRole("status")).toHaveText("Version 0.1.17 is available");
+  await expect(update.getByRole("status")).toHaveText(`Version ${availableVersion} is available`);
   await page.screenshot({ path: testInfo.outputPath("available.png"), fullPage: true });
 
   const autoCheck = page.getByRole("switch", { name: "Check for updates automatically", exact: true });
@@ -79,7 +82,7 @@ test("new release is discovered, preferences persist, and install waits for cons
   const disabledBefore = checks;
   await update.getByRole("button", { name: "Check for updates", exact: true }).click();
   await expect.poll(() => checks).toBeGreaterThan(disabledBefore);
-  await expect(update.getByRole("status")).toHaveText("Version 0.1.17 is available");
+  await expect(update.getByRole("status")).toHaveText(`Version ${availableVersion} is available`);
 
   failCheck = true;
   await update.getByRole("button", { name: "Check for updates", exact: true }).click();
@@ -100,7 +103,7 @@ test("new release is discovered, preferences persist, and install waits for cons
   await page.goto(bridge.origin + "/settings/system");
   await expect(page.getByRole("switch", { name: "Check for updates automatically", exact: true })).toHaveCount(0);
   const notice = page.getByTestId("update-consent-notice");
-  await expect(notice).toContainText("0.1.17 is ready");
+  await expect(notice).toContainText(`${availableVersion} is ready`);
   await notice.getByRole("button", { name: "Later", exact: true }).click();
   await expect(notice).toHaveCount(0);
   await page.reload(); await expect(notice).toHaveCount(0);
