@@ -13,6 +13,7 @@ Date: 2026-11-03. Source baseline: Squad `837ec2f`, site `0fe5507b`, API `f0721f
 | Squad admin authoring | Site Playwright: two passing desktop/phone cases for notice/modal and exact audience | Mocked admin endpoints; no published content |
 | Feed/reading/dismissal | `check:announcements`; API focused suites: 58 passing tests, including real D1 targeting and per-user dismissal | API fixture auth in tests |
 | Repeatable UI regressions | Eight passing Playwright runs (two repetitions of both scenarios at desktop/phone), followed by four passes after adding valid media fixtures and dark update mode | Chrome, not native WebKit |
+| Additional interaction guards | Six passing desktop/phone cases cover failed preference saves and deferral of automatic announcement modals while another dialog is open | Isolated local bridge |
 | Release-failure regression | `AUTOHAND_CHECK_CPU_THROTTLE=6 AUTOHAND_CHECK_WAIT_SCALE=3 node scripts/check-chat-attachments-browser.mjs` passed, including saved/reopened file history | Real bridge, fixture harness |
 | Source/build integration | JSX imports, bridge imports, release workflow/packaging contracts, lifecycle checks and Squad build pass. Site build and frozen install with Bun 1.4.0 pass. API typecheck passes | Local |
 | Aggregate local CI | `bun run ci` stopped at `check:memory`: `spawnSync cargo ENOENT` | Not a passing aggregate run; preceding SDK/harness/model routing stages passed |

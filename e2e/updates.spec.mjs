@@ -60,6 +60,14 @@ test("new release is discovered, preferences persist, and install waits for cons
   const autoCheck = page.getByRole("switch", { name: "Check for updates automatically", exact: true });
   const autoDownload = page.getByRole("switch", { name: "Download updates automatically", exact: true });
   await expect(autoCheck).toBeChecked(); await expect(autoDownload).not.toBeChecked();
+  await page.route("**/api/system/settings", route => route.request().method() === "PUT"
+    ? route.fulfill({ status: 500, json: { success: false, error: "Preference save refused" } })
+    : route.continue());
+  await autoDownload.click();
+  await expect(page.getByTestId("update-preferences").getByRole("alert")).toContainText("Preference save refused");
+  await expect(autoDownload).not.toBeChecked();
+  expect((await bridge.api("/api/system/settings")).data.autoDownloadUpdates).toBe(false);
+  await page.unroute("**/api/system/settings");
   // These controls reflect the saved bridge preference, so wait for its
   // response instead of setChecked's synchronous DOM-state requirement.
   await autoCheck.click(); await expect(autoCheck).not.toBeChecked();
