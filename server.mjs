@@ -68,6 +68,7 @@ import { createModelCatalog } from "./server/harness/model-catalog.mjs";
 import { createFallbackRouter, routingFailure } from "./server/harness/fallback-router.mjs";
 import { normalizeModelRouting } from "./src/lib/model-routing.js";
 import { admitChat } from "./server/routes/queues.route.mjs";
+import { personMessageArrived } from "./server/routes/agenda.route.mjs";
 import { buildRecall, collectRecallSources } from "./server/chats/recall.mjs";
 import { workPlanFor } from "./server/work/plan.mjs";
 import { describeSchedule, isValidTimeZone, normalizeSchedule, validateSchedule } from "./server/routines/schedule.mjs";
@@ -9199,6 +9200,7 @@ async function handleApi(req, res, url) {
         json(res, 201, { success: true, data: { reply: "Goal started.", goal, goalId: goal.id } });
         return true;
       }
+      if (isPersonTurn(payload) && !payload.memberThreadId && !payload.ephemeralSession) await personMessageArrived(String(payload.agentId || payload.agent?.id || ""));
       admission = needsChatAdmission(payload) ? await admitChat(payload) : null;
       if (admission?.item) {
         json(res, 201, { success: true, data: { queued: true, item: admission.item } });
@@ -9239,6 +9241,7 @@ async function handleApi(req, res, url) {
         return true;
       }
       if (pursuingGoal) { await streamGoal(payload, res); return true; }
+      if (isPersonTurn(payload) && !payload.memberThreadId && !payload.ephemeralSession) await personMessageArrived(String(payload.agentId || payload.agent?.id || ""));
       admission = needsChatAdmission(payload) ? await admitChat(payload) : null;
       if (admission?.item) {
         const stream = startEventStream(res);

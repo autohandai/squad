@@ -60,6 +60,7 @@
 
 ## Settings
 
+- A committed member-profile receipt projects every supplied profile field, including fallback models and memory, with its saved revision. The profile form's derived identity fields must not drop other committed fields or let a stale receipt overwrite a later edit.
 - Updates owns automatic checks and opt-in automatic downloads. Each switch reflects the saved preference and reports failures inline. A verified download always waits for explicit installation and restart consent. A quiet version notice with Review update and Later remains reachable with the sidebar hidden or collapsed; it never interrupts a conversation with a modal. A newer release and a failed fresh check take precedence over an older installation receipt.
 - Product announcements use one compact From Autohand notice and the shared dialog for text, optional images/video and walkthrough steps. Modal announcements wait for an idle, visible window after onboarding, with no active form or other dialog. Dismissal is acknowledged by the server before the item disappears and follows the signed-in user across installations. Announcement content never initiates an update or grants permissions.
 - Settings has a Back action that returns to the screen where it was opened, including its route parameters and member-chat draft. Changing sections or reloading Settings keeps that origin. A direct Settings link without an origin returns to Squad.

@@ -94,11 +94,16 @@ try{
   assert.equal(await browser.evaluate("document.body.innerText.includes('Partial answer that must be replaced.')"),false,'A failed partial answer is replaced, not concatenated to the fallback');
   await browser.screenshot(artifact+'/fallback-answer.png');
   await rm(join(bridge.directory,'partial-autohand'));await bridge.api('/api/members/'+member.id+'/model-routing/reset','POST',{});
+  // Reproduce the receipt-before-roster ordering from hosted run
+  // 41590739539. A channel refresh sometimes hid the missing receipt field.
+  await browser.evaluate(`(async()=>{window.__modelHeldChannels=await(await fetch('/api/channels')).json();window.__modelHoldChannels=true;const original=window.fetch.bind(window);window.fetch=(input,options)=>{const path=new URL(typeof input==='string'?input:input.url,location.origin).pathname;if(window.__modelHoldChannels&&path==='/api/channels')return Promise.resolve(new Response(JSON.stringify(window.__modelHeldChannels),{headers:{'content-type':'application/json'}}));return original(input,options);};})()`);
   await browser.fill('textarea[placeholder="Talk to Model Verify..."]','MCP_ROUTING_PROBE');
   await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.getAttribute('aria-label')==='Send chat message'&&!button.disabled)"),'member tool request ready');
   await browser.click('Send chat message');
   // The member's tool turn runs a real bridge turn on the fixture engine; the CI runner takes longer than the ten-second default (the 30 October and 2 November runs timed out here).
   await until(async()=>(await savedMember()).modelRouting.fallbacks[0]?.harness.model==='codex-second','member fallback tool persisted its profile revision',60000);
+  await until(()=>browser.evaluate("JSON.parse(localStorage.getItem('autohandSquad.v1.agents')||'[]').find(agent=>agent.id==='asq_model_fixture')?.modelRouting?.fallbacks[0]?.harness.model==='codex-second'"),'committed receipt projects the fallback model before a roster refresh',5000);
+  await browser.evaluate('window.__modelHoldChannels=false');
   await browser.navigate(bridge.origin+'/squad-members/'+member.id+'/model');
   await until(()=>browser.evaluate("document.querySelector('[role=combobox][aria-label=\"Fallback 1 model\"]')?.textContent.includes('codex-second')"),'member tool receipt updates the editor',60000);
   assert.equal((await savedMember()).modelAssignment.model,'fixture-fantail','The tool leaves the primary model alone');

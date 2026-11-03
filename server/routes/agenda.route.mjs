@@ -31,6 +31,14 @@ const TICK_MS = Number(process.env.AUTOHAND_SQUAD_AGENDA_TICK_MS) || 30_000;
 const IDLE_MS = Number.isFinite(Number(process.env.AUTOHAND_SQUAD_AGENDA_IDLE_MS)) && process.env.AUTOHAND_SQUAD_AGENDA_IDLE_MS !== "" ? Number(process.env.AUTOHAND_SQUAD_AGENDA_IDLE_MS) : 10 * 60_000;
 export const PERSON_PAUSE_REASON = "Paused because you sent a message. Keep working between messages resumes it once the member is idle again.";
 
+// Called at DM arrival, before queue admission. Waiting until chat.started
+// meant the agenda itself kept the person's message from ever starting.
+export async function personMessageArrived(memberId) {
+  if (!memberId || !bridgeContext) return;
+  personAt.set(memberId, Date.now());
+  if (current.has(memberId)) await stopCurrent(bridgeContext, memberId, "You sent a message.");
+}
+
 let store = null;
 let bridgeContext = null;
 let timer = null;

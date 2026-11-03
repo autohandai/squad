@@ -8951,10 +8951,15 @@ function App() {
     const others = membersRef.current.filter((member) => member.id !== agentId).map((member) => member.name);
     if (merged.name) merged.name = uniqueName(merged.name, others);
     const revision = Math.max(...pending.map(receipt => receipt.profileRevision || 0));
-    if (!revision) { void updateAgent(agentId, profilePatchFor(current, merged)); return; }
+    // Preserve every field in the bridge's committed patch. The profile form
+    // derives identity files but does not carry modelRouting or memory; taking
+    // its projection alone stamped the new revision onto old fallback data.
+    const fields = Object.fromEntries(MEMBER_PROFILE_FIELDS.filter(key => key in merged).map(key => [key, merged[key]]));
+    const projected = { ...profilePatchFor(current, merged), ...fields };
+    if (!revision) { void updateAgent(agentId, projected); return; }
     // The operation has already committed. A receipt projects it into this
     // window; it must not write an older copy back over the bridge.
-    const patch = { ...profilePatchFor(current, merged), profileRevision: revision };
+    const patch = { ...projected, profileRevision: revision };
     setAgents(items => items.map(member => member.id === agentId && memberProfileRevision(member) <= revision ? { ...member, ...patch } : member));
     sharedConversationChannelRef.current?.postMessage({ type: "member.patch", memberId: agentId, patch, at: new Date().toISOString() });
   }
