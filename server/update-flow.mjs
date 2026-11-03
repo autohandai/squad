@@ -92,12 +92,12 @@ export function createUpdateFlow({
     })();
     return loadPromise;
   }
-  async function start() {
+  async function start({ version = "", automatic = false } = {}) {
     await load();
     if (installBusy || ACTIVE.has(state.phase))
       throw fail("An update is already in progress.");
     controller = new AbortController();
-    state = { phase: "checking" };
+    state = { phase: "checking", version, automatic };
     publish({ phase: "checking", bytes: 0, totalBytes: null, error: "" }, true);
     const signal = controller.signal;
     void (async () => {

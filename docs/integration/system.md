@@ -15,8 +15,8 @@ Auto-loaded from `server/routes/system.route.mjs`:
 | Route | Purpose |
 | --- | --- |
 | `GET /api/system/summary` | `{ members, channels, threads, messages, memoryEntries, memoryDocuments, dataFolder, memberStateFolder, membersSource, revealLabel, updatedAt }` |
-| `GET /api/system/settings` | `{ autoCheckUpdates }` from `<squadStateDir>/settings.json` (default `true`) |
-| `PUT /api/system/settings` | body `{ autoCheckUpdates: boolean }`; other keys ignored, unknown stored keys preserved; 400 on a non-boolean |
+| `GET /api/system/settings` | `{ autoCheckUpdates, autoDownloadUpdates }` from `<squadStateDir>/settings.json` (defaults `true`, `false`) |
+| `PUT /api/system/settings` | body may patch either boolean; other keys ignored, unknown stored keys preserved; 400 on a non-boolean; concurrent writes serialize |
 | `POST /api/system/reveal` | opens `squadStateDir` with the platform opener; no body; 502 when the opener fails |
 
 `server.mjs` edits (done):
@@ -46,10 +46,11 @@ Row shape in every ledger table:
 - `SETTINGS_SECTION_IDS` includes `"system"`; `settingsSections` has
   `{ id: "system", icon: Database, label: copy.system, detail: copy.systemDetail }`
   after Updates; the DOM section `#settings-system` follows `#settings-updates`
-  and renders `<SystemSettings api={api} locale copy onAutoCheckUpdatesChange />`.
-  The component fetches the two GET routes on mount.
+  and renders `<SystemSettings api={api} locale copy />`.
+  The component fetches the summary route on mount. Update preferences now
+  belong to `UpdatePreferences` within Updates (ADR-0166).
 - `onAutoCheckUpdatesChange` maps to `() => refreshUpdates(false)` so the
-  app's `updates` state learns the new `autoCheck`; the 30-minute timer
+  app's `updates` state learns the new `autoCheck`; the five-minute timer
   checks `shouldAutoCheckUpdates(updates)` through a ref before each tick.
 - Copy keys in `src/locales.js` (`en`): `system`, `systemDetail`,
   `systemDescription`, `systemMembers`, `systemChannels`, `systemThreads`,

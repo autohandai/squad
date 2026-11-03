@@ -63,6 +63,10 @@ jobs:
         run: |
           bun run check:work-attention
           bun run check:desktop-updates
+          bun run check:update-flow
+          bun run check:automatic-updates
+          bun run check:announcements
+          bun run check:updates:playwright
           bun run check:app-info
 
       - name: Check durable goals, progress, telemetry and native notification controls
@@ -107,6 +111,23 @@ jobs:
 
       - name: Build web app
         run: bun run build
+
+      - name: Check member setup, retained skills and channel permission boundaries
+        env:
+          AUTOHAND_REQUIRE_BROWSER: "1"
+        run: |
+          bun run check:member-profiles
+          bun run check:agent-channel-actions
+          bun run check:member-by-chat:browser
+
+      - name: Upload update regression evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: updates-playwright-${{ github.sha }}
+          path: .codex-artifacts/updates-playwright
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload web build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

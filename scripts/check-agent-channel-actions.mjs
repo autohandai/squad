@@ -17,7 +17,7 @@ export class AutohandSDK {
  async *streamPrompt({ message }) {
   appendFileSync(calls, JSON.stringify({ member: this.member, message, cwd: this.options.cwd, profile: this.options.appendSystemPrompt }) + '\\n');
   if (message.includes('WAIT_FOR_RELEASE')) while (!existsSync(${JSON.stringify(join(directory, 'release'))})) await new Promise(resolve => setTimeout(resolve, 20));
-  const action = message.match(/REQUEST:(.*)/)?.[1];
+  const action = [...message.matchAll(/^REQUEST:(.*)$/gm)].at(-1)?.[1];
   yield { type: 'message_end', content: action ? 'Organising work.\\nSQUAD_ACTION: ' + action : 'Purpose received by ' + this.member + '.' };
  }
  async interrupt() {}
@@ -76,7 +76,7 @@ try {
   checked('allow creates from trusted actor with durable retry deduplication');
 
   const blocked = await bridge.api('/api/chat', 'POST', launch(member('asq_block', 'block'), 'block-request', action('blocked-work')));
-  assert.equal(blocked.data.channelActions[0].status, 'blocked');
+  assert.equal(blocked.data.channelActions[0].status, 'blocked', JSON.stringify(blocked.data.channelActions[0]));
   assert.ok(!(await state()).channels.some(c => c.name === 'blocked-work'));
   const forged = await bridge.api('/api/chat', 'POST', launch(allow, 'forged-request', action('forged-work', { actorId: ask.id, permission: 'allow' })));
   assert.equal(forged.data.channelActions[0].status, 'failed');
@@ -135,8 +135,12 @@ try {
   assert.equal(deletedReplay.data.channelActions[0].status, 'failed');
   assert.ok(!(await state()).channels.some(c => c.name === 'allowed-work'));
   await bridge.api('/api/members/' + streamingMember.id + '/channel-access', 'PUT', { removed: true });
+  const callsBeforeRemoval = (await calls()).length;
   const removed = await bridge.api('/api/chat', 'POST', launch(streamingMember, 'removed-request', action('removed-work')));
-  assert.equal(removed.data.channelActions[0].status, 'failed');
+  assert.equal(removed.success, false, JSON.stringify(removed));
+  assert.equal(removed.status, 400);
+  assert.match(removed.error, /Member skill scope or permissions changed before the engine handoff/);
+  assert.equal((await calls()).length, callsBeforeRemoval, 'A removed member never reaches the engine.');
   assert.ok(!(await state()).channels.some(c => c.name === 'removed-work'));
   checked('expired proposals, removed members and deleted-channel retries cannot create or revive channels');
 

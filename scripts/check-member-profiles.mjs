@@ -10,7 +10,7 @@ const bridge = await startBridge({ prepare: async directory => {
   const skills = [...new Set(roleTemplates.flatMap(role => role.skills))].map(id => ({ id, name: id, directory: id, files: ['SKILL.md'] }));
   for (const skill of skills) {
     await mkdir(join(skillsDir, skill.id), { recursive: true });
-    await writeFile(join(skillsDir, skill.id, 'SKILL.md'), `---\nname: ${skill.id}\ndescription: Controlled profile regression skill.\n---\nOnly use in this disposable test.\n`);
+    await writeFile(join(skillsDir, skill.id, 'SKILL.md'), `---\nname: ${skill.id}\ndescription: Controlled profile regression skill.\n---\nOnly use in this disposable test.\nCUSTOM_SKILL_BYTES\n`);
   }
   await writeFile(join(skillsDir, 'registry.json'), JSON.stringify({ skills }));
   const preload = join(directory, 'skill-fixture.mjs');
@@ -40,7 +40,10 @@ export class AutohandSDK {
  async close() {}
 }
 `);
-  return { AUTOHAND_SKILLS_REPO_DIR: skillsDir, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --import=${preload}`.trim(), AUTOHAND_AGENT_SDK_ENTRY: entry, AUTOHAND_AGENT_SDK_DIR: directory };
+  // Readiness checks credentials before asking the fake executable for login
+  // status. This child runs only fixture-codex, so it needs its own fake key
+  // instead of depending on the person's ~/.codex/auth.json.
+  return { OPENAI_API_KEY: 'fixture-only-no-provider', AUTOHAND_SKILLS_REPO_DIR: skillsDir, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --import=${preload}`.trim(), AUTOHAND_AGENT_SDK_ENTRY: entry, AUTOHAND_AGENT_SDK_DIR: directory };
 } });
 const workspace = process.cwd();
 const profilePath = id => join(bridge.directory, 'app', 'agents', id, 'profile.json');
@@ -102,20 +105,24 @@ try {
     const provision = await bridge.api('/api/agents/provision', 'POST', { agentId: id, agent, workspace });
     assert.equal(provision.success, true);
     const skill = provision.data.skillInstall.installed[0];
-    await writeFile(skill.path, '# Keep this authored skill file\nCUSTOM_SKILL_BYTES\n');
+    const authoredBytes = await readFile(skill.path, 'utf8');
+    assert.match(authoredBytes, /CUSTOM_SKILL_BYTES/);
     const disabled = await bridge.api('/api/agents/provision', 'POST', { agentId: id, agent: { ...agent, skills: [] }, workspace });
     assert.equal(disabled.success, true);
     await assert.rejects(access(skill.path), { code: 'ENOENT' });
     const restored = await bridge.api('/api/agents/provision', 'POST', { agentId: id, agent, workspace });
     assert.equal(restored.success, true);
-    assert.match(await readFile(restored.data.skillInstall.installed.find(item => item.id === skill.id).path, 'utf8'), /CUSTOM_SKILL_BYTES/);
+    const restoredSkill = restored.data.skillInstall.installed.find(item => item.id === skill.id);
+    assert.ok(restoredSkill, JSON.stringify(restored.data.skillInstall));
+    assert.equal(await readFile(restoredSkill.path, 'utf8'), authoredBytes);
+    assert.equal(restoredSkill.reference.revision, skill.reference.revision);
   });
   await check('unavailable skills are reported to the runtime and corrupt profiles are not overwritten', async () => {
     const id = 'asq_missing_skill';
     const response = await bridge.api('/api/chat', 'POST', { agentId: id, agent: { ...member(roleTemplates[0], id), skills: ['squad-missing-profile-fixture'] }, workspace, prompt: 'Check configured skill availability.' });
     assert.equal(response.success, true);
     assert.equal(response.data.skillInstall.failed[0].id, 'squad-missing-profile-fixture');
-    assert.match((await recordings()).find(row => row.id === id).system, /Unavailable requested skills: squad-missing-profile-fixture/);
+    assert.match((await recordings()).find(row => row.id === id).system, /1 requested skill package\(s\) are unavailable\. Do not claim these skills were loaded\./);
     const intact = await readFile(profilePath(id), 'utf8');
     await writeFile(profilePath(id), '{damaged');
     assert.equal((await bridge.api('/api/chat/warm', 'POST', { agentId: id, workspace })).success, false);

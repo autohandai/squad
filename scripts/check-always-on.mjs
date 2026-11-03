@@ -49,8 +49,8 @@ check('a recorded Claude reply reads "Claude default", an Autohand one keeps the
 // ---------- pure: instruction, signal, nudge ----------
 const instruction = scheduleActionInstruction('Pacific/Auckland');
 check('the schedule instruction opens with the repeat-work rule', instruction.startsWith(REPEAT_WORK_MARKER));
-check('it asks exactly one short question when a detail is missing, and repeats the action on yes', /ask exactly one short question/.test(instruction) && /"yes", "do it"/.test(instruction) && /time, the days, the time zone, where the result should go or which folder/.test(instruction));
-check('it carries two examples and the action format exactly once', (instruction.match(/Example:/g) || []).length === 2 && instruction.split('"type":"schedule","title"').length === 2);
+check('requested work authorizes creation and only a genuinely missing detail needs a question', /authorizes creating a real Automation in this turn/.test(instruction) && /Do not ask for approval again/.test(instruction) && /ask one short question only when a necessary detail truly cannot be inferred/.test(instruction));
+check('unsolicited suggestions remain proposals and the action format is supplied exactly once', /unsolicited suggestion/.test(instruction) && /mode "propose"/.test(instruction) && /For requested work use the default mode "create"/.test(instruction) && instruction.split('SQUAD_ACTION: {"type":"schedule","title"').length === 2);
 check('"again" is a repeat, "try again" and a question are not', detectRepeatRequest('pull the signups again')?.phrase === 'pull the signups again' && detectRepeatRequest('try again please') === null && detectRepeatRequest('what did you do again?') === null);
 check('"as usual", "like yesterday", "keep doing" are repeats', detectRepeatRequest('as usual, draft the update') && detectRepeatRequest('send me the report like yesterday') && detectRepeatRequest('keep doing the outreach'));
 check('repeat words never invent a schedule offer', detectRecurringWork('pull the signups again') === null && detectRecurringWork('as usual, draft the update') === null);

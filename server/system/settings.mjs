@@ -1,6 +1,6 @@
 // Bridge-held app settings (ADR-0105): <squadStateDir>/settings.json. Today it
-// carries one key, `autoCheckUpdates`, which the bridge's update status and
-// the browser's automatic check both honour. Unknown keys are preserved so a
+// carries update preferences, which the bridge policy and browser honour.
+// Unknown keys are preserved so a
 // later section can add its own without a migration.
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -10,6 +10,7 @@ export const SETTINGS_FILE = "settings.json";
 
 export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
   autoCheckUpdates: true,
+  autoDownloadUpdates: false,
 });
 
 export function settingsPath(squadStateDir) {
@@ -21,13 +22,14 @@ export function normalizeSystemSettings(input) {
   return {
     ...source,
     autoCheckUpdates: typeof source.autoCheckUpdates === "boolean" ? source.autoCheckUpdates : DEFAULT_SYSTEM_SETTINGS.autoCheckUpdates,
+    autoDownloadUpdates: source.autoDownloadUpdates === true,
   };
 }
 
 /** The public shape: known keys only. */
 export function publicSystemSettings(settings) {
   const normalized = normalizeSystemSettings(settings);
-  return { autoCheckUpdates: normalized.autoCheckUpdates };
+  return { autoCheckUpdates: normalized.autoCheckUpdates, autoDownloadUpdates: normalized.autoDownloadUpdates };
 }
 
 export async function readSystemSettings(squadStateDir) {
@@ -40,11 +42,19 @@ export async function readSystemSettings(squadStateDir) {
 }
 
 /** Merge a patch into the stored settings; only known keys are accepted from the patch. */
-export async function writeSystemSettings(squadStateDir, patch = {}) {
+const pendingWrites = new Map();
+export function writeSystemSettings(squadStateDir, patch = {}) {
+  const path = settingsPath(squadStateDir);
+  const pending = (pendingWrites.get(path) || Promise.resolve()).catch(() => {}).then(() => saveSystemSettings(squadStateDir, patch));
+  pendingWrites.set(path, pending);
+  return pending.finally(() => { if (pendingWrites.get(path) === pending) pendingWrites.delete(path); });
+}
+async function saveSystemSettings(squadStateDir, patch) {
   const current = await readSystemSettings(squadStateDir);
   const next = { ...current };
   if (patch && typeof patch === "object") {
     if (typeof patch.autoCheckUpdates === "boolean") next.autoCheckUpdates = patch.autoCheckUpdates;
+    if (typeof patch.autoDownloadUpdates === "boolean") next.autoDownloadUpdates = patch.autoDownloadUpdates;
   }
   const path = settingsPath(squadStateDir);
   await mkdir(dirname(path), { recursive: true });

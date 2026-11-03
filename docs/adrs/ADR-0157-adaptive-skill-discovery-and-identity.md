@@ -73,3 +73,14 @@ again. `check:member-profiles` still fails two skill-discovery cases
 ("Cannot read properties of undefined (reading 'path')" and the unavailable
 skills line); they are not this guard and are left for the skills work. CI
 and the release do not run that check.
+
+### Follow-up: member profile fixture contracts
+
+ADR-0171 resolves those two outstanding profile checks without changing skill
+loading. The restoration fixture now authors its bytes before the initial pin
+and verifies identical bytes and revision after restoration; editing a pinned
+snapshot was correctly refused. The runtime warning check follows the bounded
+unavailable-package count while independently checking the failed skill ID.
+All six profile cases, including all 17 built-in roles, pass individually and
+in the complete 116-stage local aggregate. Hosted CI and release now include
+the check; their new-source run remains a separate proof requirement.

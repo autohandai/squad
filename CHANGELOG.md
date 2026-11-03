@@ -10,6 +10,24 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-11-03
+
+### Added
+
+- Squad can receive product announcements from the website admin, with optional images/video, walkthrough steps, and dismissal saved to your account.
+- Updates settings can download new releases automatically when you opt in, with installation and restart left to you. A version notice offers Review update or Later, including while the sidebar is hidden.
+
+### Changed
+
+- Automatic update checks now live in Settings › Updates alongside the automatic-download switch.
+
+### Fixed
+
+- Release checks now cover preparing a new member, restoring the same saved skills, and refusing removed members and blocked channel actions, without depending on the machine's engine sign-ins.
+- Sending a message to a member now stops work it started through Keep working between messages before admitting the message. Background agenda work no longer keeps the person waiting behind itself.
+- When a member changes its permitted fallback models, the editor now shows the committed change immediately. A timing race no longer leaves the old models attached to the new profile revision.
+- A previous “Updated to…” result no longer hides a newer release or a failed check. Update availability compares the release with the running app even when the shared daemon runs a different version.
+
 ## [0.1.16] - 2026-11-03
 
 ### Added

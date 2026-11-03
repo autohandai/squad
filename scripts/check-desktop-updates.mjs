@@ -5,6 +5,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { desktopUpdateStatus, openDesktopTarget, RELEASES_URL, upgradeDesktop, verifiedInstaller } from "../server/desktop-updates.mjs";
+import { updateView } from "../src/lib/update-status.js";
 
 const content = Buffer.from("verified installer fixture; never executed");
 const name = "autohand-squad-0.1.6-macos-arm64.dmg";
@@ -20,6 +21,19 @@ function checked() { checks += 1; }
 const directory = await mkdtemp(join(tmpdir(), "squad-updates-check-"));
 
 try {
+  const newerRelease = { appVersion: "0.1.5", status: "available", snapshot };
+  assert.equal(updateView(newerRelease, { phase: "complete", version: "0.1.5", message: "Updated to 0.1.5." }).title, "Version 0.1.6 is available", "a previous completed install must not hide the next release");
+  assert.equal(updateView({ ...newerRelease, status: "check-failed" }, { phase: "complete", version: "0.1.5" }).title, "Could not check for updates");
+  assert.equal(updateView(newerRelease, { phase: "complete", version: "0.1.5" }, { checking: true }).title, "Checking for updates…");
+  assert.equal(updateView(newerRelease, { phase: "cancelled", version: "0.1.6" }).title, "Download cancelled");
+  const daemonAhead = await desktopUpdateStatus({
+    squadStateDir: directory, appVersion: "0.1.5", refresh: true,
+    readJsonImpl: async path => path.endsWith("daemon.json") ? { url: "http://127.0.0.1:19820" } : null,
+    fetchImpl: async url => new Response(JSON.stringify(url.endsWith("/health") ? {} : { ...snapshot, currentVersion: "0.1.6", updateAvailable: false })),
+  });
+  assert.equal(daemonAhead.status, "available", "compare the release with this app, even when the daemon runs a different version");
+  assert.equal(daemonAhead.snapshot.updateAvailable, true);
+
   assert.equal(verifiedInstaller(snapshot, { platform: "darwin", arch: "arm64" }).name, name); checked();
   for (const changed of [
     { downloadUrl: "https://example.com/installer.dmg" },
