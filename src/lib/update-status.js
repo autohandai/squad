@@ -57,6 +57,9 @@ export function updateView(
     snapshot.downloadUrl &&
     snapshot.downloadName &&
     /^[a-f0-9]{64}$/i.test(snapshot.downloadSha256 || "");
+  // A receipt for the previous release must yield to the next release.
+  const newerThanCancellation = operation.phase === "cancelled" && compareUpdateVersions(operation.version, latest) === -1;
+  if (["complete", "cancelled"].includes(operation.phase) && ((available && (operation.phase === "complete" || newerThanCancellation)) || checking || error || ["check-failed", "offline"].includes(updates?.status))) operation = { phase: "idle" };
   const phase = operation.phase || "idle";
   const busy = UPDATE_BUSY_PHASES.has(phase);
   const rawFailure =

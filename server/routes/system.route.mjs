@@ -43,8 +43,9 @@ export async function handle(req, res, url, ctx) {
 
   if (url.pathname === "/api/system/settings" && (req.method === "PUT" || req.method === "POST")) {
     const body = await ctx.readBody(req);
-    if ("autoCheckUpdates" in body && typeof body.autoCheckUpdates !== "boolean") {
-      ctx.json(res, 400, { success: false, error: "autoCheckUpdates must be true or false." });
+    const invalid = ["autoCheckUpdates", "autoDownloadUpdates"].find(key => key in body && typeof body[key] !== "boolean");
+    if (invalid) {
+      ctx.json(res, 400, { success: false, error: `${invalid} must be true or false.` });
       return true;
     }
     try {

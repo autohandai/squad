@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldContent, FieldDescription, FieldTitle } from "@/components/ui/field";
-import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { formatUsageCount, systemCountRows } from "@/lib/system-settings";
 import { copyText } from "@/lib/copy-text";
@@ -25,20 +24,13 @@ function Row({ title, description, children, htmlFor }) {
  *   api(path, options) -> data   the app's bridge helper; this component
  *                                fetches on mount (docs/integration/system.md)
  *     GET /api/system/summary    counts + dataFolder + revealLabel
- *     GET /api/system/settings   { autoCheckUpdates }
- *     PUT /api/system/settings   { autoCheckUpdates }
  *     POST /api/system/reveal    open the data folder
- *   onAutoCheckUpdatesChange(enabled)  optional; the integrator refreshes its
- *                                      update status so the browser's own
- *                                      automatic check follows the switch
  *   locale, copy                 locale strings (fallbacks inline)
  * The heading is rendered by the integrator's SettingsSectionHeader.
  */
-export function SystemSettings({ api, locale = "en", copy = {}, onAutoCheckUpdatesChange, className }) {
+export function SystemSettings({ api, locale = "en", copy = {}, className }) {
   const [summary, setSummary] = useState(null);
-  const [settings, setSettings] = useState({ autoCheckUpdates: true });
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
   const [reveal, setReveal] = useState({ state: "idle", error: "" });
   // Reset Squad (ADR-0161 §3.1): the bridge moves its folders aside and
   // restarts; the window forgets its own storage and returns to first run.
@@ -60,10 +52,9 @@ export function SystemSettings({ api, locale = "en", copy = {}, onAutoCheckUpdat
     let cancelled = false;
     (async () => {
       try {
-        const [nextSummary, nextSettings] = await Promise.all([api("/api/system/summary"), api("/api/system/settings")]);
+        const nextSummary = await api("/api/system/summary");
         if (cancelled) return;
         setSummary(nextSummary);
-        setSettings({ autoCheckUpdates: nextSettings?.autoCheckUpdates !== false });
         setError("");
       } catch (failure) {
         if (!cancelled) setError(failure?.message || String(failure));
@@ -73,24 +64,6 @@ export function SystemSettings({ api, locale = "en", copy = {}, onAutoCheckUpdat
       cancelled = true;
     };
   }, [api]);
-
-  async function toggleAutoCheck(checked) {
-    const enabled = checked === true;
-    const previous = settings;
-    setSettings({ autoCheckUpdates: enabled });
-    setSaving(true);
-    setError("");
-    try {
-      const stored = await api("/api/system/settings", { method: "PUT", body: JSON.stringify({ autoCheckUpdates: enabled }) });
-      setSettings({ autoCheckUpdates: stored?.autoCheckUpdates !== false });
-      onAutoCheckUpdatesChange?.(stored?.autoCheckUpdates !== false);
-    } catch (failure) {
-      setSettings(previous);
-      setError(failure?.message || String(failure));
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function revealFolder() {
     setReveal({ state: "opening", error: "" });
@@ -147,14 +120,6 @@ export function SystemSettings({ api, locale = "en", copy = {}, onAutoCheckUpdat
             {reveal.error}
           </p>
         ) : null}
-
-        <Row
-          htmlFor="system-auto-check-updates"
-          title={copy.systemAutoCheckUpdates || "Check for updates automatically"}
-          description={copy.systemAutoCheckUpdatesDetail || "Off, the app only checks GitHub when you ask it to."}
-        >
-          <Switch id="system-auto-check-updates" checked={settings.autoCheckUpdates} disabled={saving || !api} onCheckedChange={toggleAutoCheck} />
-        </Row>
 
         <Row title={copy.systemReset || "Reset Squad"} description={copy.systemResetDetail || "Start again as a clean install. Your Autohand Code sign-in stays."}>
           <Button type="button" variant="outline" size="sm" disabled={!api || reset.state === "working"} onClick={() => setReset({ state: "confirm", error: "" })}>

@@ -14,6 +14,8 @@ list to the section for that version.
 
 ### Added
 
+- Squad can receive product announcements from the website admin, with optional images/video, walkthrough steps, and dismissal saved to your account.
+- Updates settings can download new releases automatically when you opt in, with installation and restart left to you. A version notice offers Review update or Later, including while the sidebar is hidden.
 - A member can ask you a question mid-reply and wait for the answer (`squad_ask`): the question shows as a card under the running reply with its options and an answer field, and your answer goes straight back to the member. In a goal, a queued follow-up or a channel turn the tool refuses and the member asks in its reply instead.
 - Task-scoped local skill discovery with qualified origins and exact complete-package revisions. Member snapshots retain scripts and assets, reject unsafe or oversized packages, and remain available offline.
 - When a member's tool needs permission, the chat now shows the request under the reply with Allow once, Allow for this reply and Deny, and the member continues with your answer instead of timing out as declined. In a direct conversation, tools marked Ask first in an Interactive member's Permissions now actually ask; goals, automations and channel work keep running without prompts.
@@ -32,6 +34,7 @@ list to the section for that version.
 
 ### Changed
 
+- Automatic update checks now live in Settings › Updates alongside the automatic-download switch.
 - The permission ladder says that choosing a level turns Built-in tool rules on, since a level applies its whole preset.
 - A run in the Execution panel's Runs tab now reads like the chat: "Work details · 2 tools · 1m 12s", the reply text, and the edits, commands and tools it used. The engine command line, the raw log count and the "status updates" rows are gone unless the diagnostic-output chat setting is on.
 - The bundled Autohand Code is 0.9.9 (was 0.9.7), the same release the CLI installs on its own.
@@ -41,6 +44,7 @@ list to the section for that version.
 
 ### Fixed
 
+- A previous “Updated to…” result no longer hides a newer release or a failed check. Update availability compares the release with the running app even when the shared daemon runs a different version.
 - Opening a previous chat no longer comes back empty and drops the chat from Previous chats when a queued follow-up had been shown twice; the follow-up is no longer shown twice either.
 - Squad no longer freezes loading channels and saving members while macOS fetches an iCloud Drive folder: the workspace list scans the home folder once at a time, reuses the result for a minute, and stops at a folder that does not answer.
 - Autohand members saved before the latest tool-rule defaults, or created outside the app, no longer fail every reply with "Member skill scope or permissions changed before the engine handoff"; their fallbacks take over again when the primary engine fails.

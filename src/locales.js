@@ -650,7 +650,7 @@ const UI_COPY_BY_LANGUAGE = {
     relaySettings: "Relay settings…",
     system: "System",
     systemDetail: "Counts and data folder",
-    systemDescription: "What this squad holds on this computer, where it lives, and whether the app looks for releases on its own.",
+    systemDescription: "What this squad holds on this computer and where it lives.",
     systemMembers: "Members",
     systemChannels: "Channels",
     systemThreads: "Channel threads",

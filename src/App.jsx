@@ -376,6 +376,8 @@ import { FollowUpQueue } from "@/components/chat/FollowUpQueue";
 import { ContextGaugeMeta, ContextWarningLine } from "@/components/chat/ContextGauge";
 import { taskProgressFromMessage } from "@/lib/task-progress";
 import { SidebarUpdateNotice } from "@/components/account/SidebarUpdateNotice";
+import { UpdateConsentNotice } from "@/components/account/UpdateConsentNotice";
+import { SquadAnnouncements } from "@/components/account/SquadAnnouncements";
 import { UpdatesSettings } from "@/components/settings/UpdatesSettings";
 import { UPDATE_BUSY_PHASES, updateView } from "@/lib/update-status";
 import { identifySquadTelemetry, recordSignInStarted, recordMemberCreated, recordMemberUsed, recordFeatureUsed } from "@/lib/product-telemetry";
@@ -9962,6 +9964,8 @@ function App() {
             onCollapsedChange={setDesktopSidebarCollapsed}
           />}
           <main className="app-main min-w-0">
+            <SquadAnnouncements key={runtime?.account?.email || "signed-out"} api={api} enabled={!isOnboarding && runtime?.account?.signedIn === true} busy={agents.some(agent => entryFor(agent).state === "working")} showErrors={routePath === "/settings/updates"} />
+            <UpdateConsentNotice updates={updates} operation={updatesUpgradeResult} onReview={() => openSettings("updates")} hidden={isOnboarding || routePath === "/settings/updates"} />
             {bridgeLine ? <div role="status" aria-live="polite" data-testid="bridge-status" className="px-6 py-2 text-xs text-muted-foreground">{bridgeLine}</div> : null}
             {channelOperationError ? (
               <div role="alert" className="flex items-start gap-3 px-6 py-3 text-sm text-destructive">
@@ -25433,7 +25437,7 @@ function SettingsPage({
           title="Updates"
           description="Keep Squad current."
         />
-        <UpdatesSettings updates={updates} checking={updatesChecking} error={updatesError} operation={updatesUpgradeResult || {}} onCheck={onCheckUpdates} onDownload={onUpgradeApp} onInstall={onInstallUpdate} onCancel={onCancelUpdate} onOpenReleases={onOpenReleases} renderNotes={(text) => <MarkdownBlocks text={text} muted />} />
+        <UpdatesSettings api={api} onPreferencesChange={onAutoCheckUpdatesChange} updates={updates} checking={updatesChecking} error={updatesError} operation={updatesUpgradeResult || {}} onCheck={onCheckUpdates} onDownload={onUpgradeApp} onInstall={onInstallUpdate} onCancel={onCancelUpdate} onOpenReleases={onOpenReleases} renderNotes={(text) => <MarkdownBlocks text={text} muted />} />
       </>
     ),
     memory: () => (<><SettingsSectionHeader title="Memory" description="Collect and connect what your squad learns." /><Suspense fallback={<p className="text-sm text-muted-foreground">Loading memory settings…</p>}><MemorySettings api={api} onOpenLibrary={() => navigate("/memory")} /></Suspense></>),
@@ -25442,9 +25446,9 @@ function SettingsPage({
       <>
         <SettingsSectionHeader
           title={copy.system || "System"}
-          description={copy.systemDescription || "What this squad holds on this computer, where it lives, and whether the app looks for releases on its own."}
+          description={copy.systemDescription || "What this squad holds on this computer and where it lives."}
         />
-        <SystemSettings api={api} locale={activeLocale} copy={copy} onAutoCheckUpdatesChange={onAutoCheckUpdatesChange} />
+        <SystemSettings api={api} locale={activeLocale} copy={copy} />
       </>
     ),
   };

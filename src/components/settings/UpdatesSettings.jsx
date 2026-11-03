@@ -2,6 +2,7 @@ import { ArrowDownToLine, RefreshCw, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { UpdateProgress } from "@/components/account/UpdateProgress";
+import { UpdatePreferences } from "./UpdatePreferences";
 import { checkedTime, updateView, updateInstallAction } from "@/lib/update-status";
 export function UpdatesSettings({
   updates,
@@ -14,6 +15,8 @@ export function UpdatesSettings({
   onCancel,
   onOpenReleases,
   renderNotes,
+  api,
+  onPreferencesChange,
 }) {
   const view = updateView(updates, operation, { checking, error });
   const visibleOperation = view.operation;
@@ -139,6 +142,7 @@ export function UpdatesSettings({
           for downloads.
         </p>
       ) : null}
+      {api ? <UpdatePreferences api={api} onChange={onPreferencesChange} /> : null}
     </section>
   );
 }

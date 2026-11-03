@@ -151,6 +151,11 @@ jobs:
           bun run check:recruiting
           bun run check:server
           bun run check:runtime-bootstrap
+          bun run check:desktop-updates
+          bun run check:update-flow
+          bun run check:automatic-updates
+          bun run check:announcements
+          bun run check:updates:playwright
           bun run check:release
           bun run build
 

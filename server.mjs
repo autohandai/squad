@@ -14,6 +14,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { profileWorkspace } from "./server/workspace-profile.mjs";
 import { updateDaemonAdmission } from "./server/mac-update.mjs";
 import { createUpdateFlow } from "./server/update-flow.mjs";
+import { createAutomaticUpdates } from "./server/automatic-updates.mjs";
+import { createAnnouncements } from "./server/announcements.mjs";
 import { desktopUpdateStatus, openDesktopTarget, RELEASES_URL } from "./server/desktop-updates.mjs";
 import { createUsageLedgerCache, usageLedger } from "./server/usage/ledger.mjs";
 import { autoCheckUpdatesEnabled, readSystemSettings } from "./server/system/settings.mjs";
@@ -447,6 +449,10 @@ const channelsStatePath = join(squadStateDir, "channels.json");
 const squadDeviceIdPath = join(squadStateDir, "device-id");
 const feedbackBackupDir = join(squadStateDir, "feedback");
 const feedbackApiBaseUrl = (process.env.AUTOHAND_SQUAD_API_BASE_URL || process.env.AUTOHAND_API_URL || "https://api.autohand.ai").replace(/\/+$/, "");
+const announcements = createAnnouncements({ version: packageMetadata.version || "", token: () => {
+  const auth = readAutohandAuth(userConfigPath);
+  return autohandAuthUsable(auth) ? auth.token : String(readJsonFileSync(squadConfigPath)?.apiAuthToken || "");
+} });
 const desktopUpdates = createUpdateFlow({
   appStateDir, serviceStateDir: squadStateDir, appVersion: packageMetadata.version || "",
   checkFresh: () => desktopUpdateStatus({ squadStateDir, appVersion: packageMetadata.version || "", refresh: true }),
@@ -466,6 +472,16 @@ const desktopUpdates = createUpdateFlow({
     } catch (error) { desktopInstallLocked = false; await releaseDesktopDaemonAdmission(); throw error; }
   },
 });
+const automaticUpdates = createAutomaticUpdates({
+  settings: () => readSystemSettings(squadStateDir),
+  status: () => desktopUpdateStatus({ squadStateDir, appVersion: packageMetadata.version || "" }),
+  flow: desktopUpdates,
+  onError: error => logEvent(SEVERITY.WARN, "Automatic update download failed", { "event.name": "update.automatic.failed", error: error.message }),
+});
+// Keep discovery/downloads alive when a window is hidden. Downloads never
+// invoke the installer, stop work, or close the application.
+const automaticUpdateTimer = setInterval(() => void automaticUpdates.check(), 5 * 60_000);
+automaticUpdateTimer.unref();
 const runs = new Map();
 const memberAvailability = new MemberAvailability(squadStateDir);
 const activeChats = new Map();
@@ -8559,6 +8575,7 @@ const fallbackRouter = createFallbackRouter({ stateDir: squadStateDir });
 
 function routeContext() {
   return {
+    announcements,
     rootDir,
     squadStateDir,
     appStateDir,
@@ -9453,12 +9470,15 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/updates" && req.method === "GET") {
     // Settings → System "Check for updates automatically" (ADR-0091) gates
     // unattended checks only; refresh=1 is the person asking and always runs.
+    const settings = await readSystemSettings(squadStateDir);
     const data = await desktopUpdateStatus({
       squadStateDir,
       appVersion: packageMetadata.version || "",
       refresh: url.searchParams.get("refresh") === "1",
-      autoCheck: autoCheckUpdatesEnabled(await readSystemSettings(squadStateDir)),
+      autoCheck: autoCheckUpdatesEnabled(settings),
     });
+    data.autoDownload = settings.autoDownloadUpdates;
+    void automaticUpdates.check(data);
     json(res, 200, { success: true, data });
     return true;
   }

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
+import { compareUpdateVersions } from "../src/lib/update-version.js";
 
 export const UPDATE_REPOSITORY = "autohandai/squad";
 export const RELEASES_URL = `https://github.com/${UPDATE_REPOSITORY}/releases`;
@@ -68,6 +69,12 @@ export async function desktopUpdateStatus({ squadStateDir, appVersion, refresh =
         } catch (error) { checkError = error.message || "The repository update check failed."; }
       }
     } catch (error) { checkError = error.message || "The local update service is unavailable."; }
+  }
+  // The shared daemon can outlive the app it serves. Its version comparison
+  // is not authoritative for the running app (nor a source checkout).
+  if (daemonReachable && !checkError && !snapshot?.error && snapshot?.success === true) {
+    const comparison = compareUpdateVersions(appVersion, snapshot.latestAllowedVersion);
+    if (comparison !== null) snapshot = { ...snapshot, currentVersion: appVersion, updateAvailable: comparison < 0 };
   }
   const status = !daemonReachable ? "offline" : checkError || snapshot?.error || snapshot?.success === false ? "check-failed" : !snapshot?.checkedAt || snapshot?.success !== true ? "never-checked" : snapshot.updateAvailable ? "available" : "up-to-date";
   return { daemonReachable, appVersion, repository: UPDATE_REPOSITORY, releasesUrl: RELEASES_URL, snapshot, status, checkError: checkError || snapshot?.error || "", fresh, autoCheck: autoCheck !== false, skipped: !refresh && autoCheck === false };
