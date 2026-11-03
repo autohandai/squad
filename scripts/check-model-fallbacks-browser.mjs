@@ -15,7 +15,11 @@ try{
   // "Save fallbacks" reads "Saving…" until the window has handled the save,
   // which can be after the bridge copy already shows it. The 0.1.16 release
   // run clicked during that gap: "Missing button: Save fallbacks".
-  const saveFallbacks=async()=>{await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&!button.disabled)"),'Save fallbacks ready');await browser.click('Save fallbacks');};
+  // A save that succeeds is finished only when the window shows it saved:
+  // until then the editor resets its draft to the incoming saved copy, which
+  // undid the switch flip CI made right after the bridge had the save
+  // ("Save fallbacks ready timed out", 3 November).
+  const saveFallbacks=async({settle=true}={})=>{await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&!button.disabled)"),'Save fallbacks ready');await browser.click('Save fallbacks');if(settle)await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&button.disabled)"),'fallback save settled in the window');};
   const savedMember=async()=>(await bridge.api('/api/channels')).data.agentChannelAccess[member.id].agent;
   browser=await startBrowser();
   await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`if(!localStorage.getItem('modelVerify.seeded')){localStorage.setItem('autohandSquad.v1.agents',${JSON.stringify(JSON.stringify([member]))});localStorage.setItem('autohandSquad.v1.onboarding','{"version":1,"status":"skipped"}');localStorage.setItem('modelVerify.seeded','1');}`});
@@ -49,7 +53,7 @@ try{
   await chooseOption('fixture-fantail');await browser.evaluate('window.__modelFailRefresh=false');await browser.click('Refresh model list');
   await until(()=>browser.evaluate("document.querySelector('button')&&[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Add fallback'&&!button.disabled)"),'connected engines loaded');
   await browser.click('Add fallback');await choose('Fallback 1 model','codex-recovery');
-  await browser.evaluate('window.__modelFailSave=true');await saveFallbacks();
+  await browser.evaluate('window.__modelFailSave=true');await saveFallbacks({settle:false});
   await until(()=>browser.evaluate("[...document.querySelectorAll('section[aria-label=Fallbacks] [role=alert]')].some(element=>element.textContent.includes('Fixture save refused'))"),'failed fallback save is visible');
   await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&!button.disabled)"),'fallback save ready to retry');
   assert(!(await savedMember()).modelRouting?.fallbacks?.length,'A failed fallback save leaves the persisted list alone');
