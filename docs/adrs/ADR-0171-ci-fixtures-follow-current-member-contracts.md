@@ -29,6 +29,12 @@ skill identity reader correctly refused. It therefore timed out waiting for a
 member to be saved. This was dependence on the person's filesystem, not a
 reason to increase the timeout or relax workspace validation.
 
+The first hosted run with these new gates, `41600308306` at `4aa0d20`, passed
+the first five profile cases but refused the fake Codex harness as unsigned-in.
+Its `login status` handler was insufficient: readiness first checks for a saved
+credential file or API key. The complete local run had hidden this dependency
+because this computer already has a Codex login.
+
 ## Decision
 
 Author the fixture skill before its first snapshot, then assert byte-for-byte
@@ -44,6 +50,11 @@ The browser supplies only its known checkout as `defaultWorkspace` in the real
 runtime response. All other runtime fields, provisioning, channel access,
 engine execution and profile receipts remain real. Add these three checks to
 both hosted CI and release gates after building the browser assets.
+
+Give the profile bridge child an explicitly fake `OPENAI_API_KEY`. Only its
+controlled executable runs, with no provider call. This keeps real readiness
+validation while removing dependence on personal credentials; it does not copy
+a user's credential file or relax the production sign-in requirement.
 
 ## Consequences and limits
 

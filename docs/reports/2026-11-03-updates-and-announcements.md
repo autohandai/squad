@@ -16,7 +16,7 @@ Date: 2026-11-03. Source baseline: Squad `837ec2f`, site `0fe5507b`, API `f0721f
 | Additional interaction guards | Six passing desktop/phone cases cover failed preference saves and deferral of automatic announcement modals while another dialog is open | Isolated local bridge |
 | Release-failure regression | `AUTOHAND_CHECK_CPU_THROTTLE=6 AUTOHAND_CHECK_WAIT_SCALE=3 node scripts/check-chat-attachments-browser.mjs` passed, including saved/reopened file history | Real bridge, fixture harness |
 | Source/build integration | JSX imports, bridge imports, release workflow/packaging contracts, lifecycle checks and Squad build pass. Site build and frozen install with Bun 1.4.0 pass. API typecheck passes | Local |
-| Aggregate local CI | Complete `bun run ci` exited 0 across 116 sequential stages, using Node 22.23.2 and the installed Rust 1.97.1 toolchain on PATH | Fixture engines and local rendered checks; no live provider claim |
+| Aggregate local CI | Complete `bun run ci` exited 0 across 116 sequential stages on the diff committed as `4aa0d20`, using Node 22.23.2 and the installed Rust 1.97.1 toolchain on PATH | Fixture engines and local rendered checks; no live provider claim |
 | Hosted CI | Run 41594743403 passed all 12 jobs at `e9ffefd`, including all four release dry runs and combined manifest validation | The later three added member-contract gates require a new hosted run |
 | Installed native app | Computer Use opened account → Settings → Updates and clicked Check for updates. Installed UI still shows 0.1.16/public 0.1.14 and old controls | Baseline inspected; new build not installed |
 
@@ -91,6 +91,13 @@ merge/release decision is pending. Website
 - Native follow-up attempts encountered `cgWindowNotFound` and
   `AXError.cannotComplete`. These automation errors are not installation proof.
   The backed-up app, data and WebKit store remain intact.
+- Hosted run `41600308306` at `4aa0d20` caught another profile-fixture
+  dependency after the complete local pass: its fake Codex executable was
+  installed but the fresh runner had no sign-in. The fixture now supplies an
+  explicitly fake key to its controlled child, preserving real readiness
+  checks without using personal credentials. Its new-source hosted result
+  remains required. ADR-0171 retains this correction rather than treating the
+  local aggregate as proof of a fresh unsigned-in machine.
 
 Browser captures/traces live under `.codex-artifacts/updates-playwright/` and
 the site's `test-results/squad-announcements/`. CI retains update test artifacts.

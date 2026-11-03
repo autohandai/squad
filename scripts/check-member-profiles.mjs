@@ -40,7 +40,10 @@ export class AutohandSDK {
  async close() {}
 }
 `);
-  return { AUTOHAND_SKILLS_REPO_DIR: skillsDir, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --import=${preload}`.trim(), AUTOHAND_AGENT_SDK_ENTRY: entry, AUTOHAND_AGENT_SDK_DIR: directory };
+  // Readiness checks credentials before asking the fake executable for login
+  // status. This child runs only fixture-codex, so it needs its own fake key
+  // instead of depending on the person's ~/.codex/auth.json.
+  return { OPENAI_API_KEY: 'fixture-only-no-provider', AUTOHAND_SKILLS_REPO_DIR: skillsDir, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --import=${preload}`.trim(), AUTOHAND_AGENT_SDK_ENTRY: entry, AUTOHAND_AGENT_SDK_DIR: directory };
 } });
 const workspace = process.cwd();
 const profilePath = id => join(bridge.directory, 'app', 'agents', id, 'profile.json');
