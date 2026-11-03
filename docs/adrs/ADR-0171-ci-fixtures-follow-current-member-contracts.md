@@ -56,6 +56,24 @@ controlled executable runs, with no provider call. This keeps real readiness
 validation while removing dependence on personal credentials; it does not copy
 a user's credential file or relax the production sign-in requirement.
 
+### Follow-up: keep update screenshots independent of the live news service
+
+Reviewing the 0.1.18 Playwright capture showed a news-unavailable banner. The
+update fixture used isolated sign-in credentials but left `AUTOHAND_API_URL`
+pointing at the live service. The update assertions passed while that unrelated
+request failed, so the screenshot also depended on external availability.
+
+Serve an empty announcement feed from the existing loopback fixture and point
+only this bridge child at it. Assert that the fixture receives the announcement
+read before capturing the update UI. This retains the real bridge/client path;
+the separate announcement cases still test targeting, media, steps, dismissal,
+failure recovery and modal deferral. No installed runtime or release artifact
+changes are needed for this test-only correction.
+
+`bun run check:updates:playwright` passed all six desktop/phone cases after
+this correction. The update capture no longer contains the unrelated news
+error. These captures still use simulated release versions and installers.
+
 ## Consequences and limits
 
 - These changes repair fixture inputs and expectations; production permission,

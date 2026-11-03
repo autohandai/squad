@@ -15,8 +15,11 @@ fixture's dependency on a particular machine's workspace (ADR-0171).
 
 A read-only pass over the backed-up 18 saved profiles found 16 existing
 workspace folders accepted by the corrected resolver and two previously
-missing folders. No existing folder was rejected, moved, or recreated. Thirteen
-profiles use an alias locator. The pass called `canonicalWorkspaceRoot` and
+missing folders. No existing folder was rejected, moved, or recreated. A
+follow-up `realpath`/`lstat` pass distinguishes 13 direct workspace-root links
+and three paths with a linked ancestor: all 16 existing locators involve an
+alias. The initial count of 13 covered root links only. The preflight called
+`canonicalWorkspaceRoot` and
 the read-only skill identity reader; it did not run a member or write an
 identity into a user's project.
 
