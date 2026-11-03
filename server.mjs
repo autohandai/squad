@@ -53,7 +53,8 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { clientClosedReason, stopMessage } from "./server/harness/stop-reason.mjs";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
-import { listLocalSkillPackages, localSkillRootDescriptors, ensureSkillWorkspaceIdentity, readSkillWorkspaceIdentity, readSkillPackage, readSkillFrontmatter, copySkillPackage, writeSkillPackage } from "./server/skills/local.mjs";
+import { listLocalSkillPackages, localSkillRootDescriptors, ensureSkillWorkspaceIdentity as ensurePhysicalSkillWorkspaceIdentity, readSkillWorkspaceIdentity as readPhysicalSkillWorkspaceIdentity, readSkillPackage, readSkillFrontmatter, copySkillPackage, writeSkillPackage } from "./server/skills/local.mjs";
+import { canonicalWorkspaceRoot } from "./server/workspace-root.mjs";
 import { SKILL_DISCOVERY_CONTRACT, prepareSkillContext, acknowledgeSkillContext, coalesceSkillReceipts, validateSkillReferences, observeSkillAttachment, nativeSkillAttachmentEvent } from "./server/skills/runtime.mjs";
 import { startTracking } from "./server/workspace-git.mjs";
 import { channelError, createChannelsStore } from "./server/channels-store.mjs";
@@ -1617,10 +1618,17 @@ async function cleanWorkspace(workspace) {
   if (isHomeDir(resolved)) {
     throw new Error("the home directory is blocked by Autohand CLI; choose a project folder or git repo");
   }
-  if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
-    throw new Error("workspace folder does not exist");
-  }
+  await canonicalWorkspaceRoot(resolved, homeDir);
   return resolved;
+}
+
+// Keep package-root validation strict. Only a validated workspace locator is
+// resolved here, so an in-home alias shares its target's existing identity.
+async function readSkillWorkspaceIdentity(workspace) {
+  return readPhysicalSkillWorkspaceIdentity(await canonicalWorkspaceRoot(workspace, homeDir));
+}
+async function ensureSkillWorkspaceIdentity(workspace) {
+  return ensurePhysicalSkillWorkspaceIdentity(await canonicalWorkspaceRoot(workspace, homeDir));
 }
 
 const ignoredWorkspaceDirs = new Set([
