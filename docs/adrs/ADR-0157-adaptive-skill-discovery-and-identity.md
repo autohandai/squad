@@ -41,3 +41,35 @@ Reading the installed `@autohandai/agent-sdk` 1.0.5 runtime showed that unknown 
 `node scripts/check-skill-receipt-transport.mjs` uses the installed SDK and a real local child process over stdio. Its native receipt survives serialization intact; response-text claims, malformed resources, unrelated methods and rejected requests cannot become loading evidence. CLI adapter tests exercise the actual RPC/ACP switches. This is protocol-fixture evidence, without a live provider. A currently installed CLI that predates the notification continues to show supplied; forwarding support in the SDK does not imply that an older CLI can emit request evidence. No SDK dependency was patched or published.
 
 The member native launch carries `AUTOHAND_SKILL_SNAPSHOT_MANAGED=1`. The canonical CLI reader restricts managed discovery to valid host-enrolled snapshots, preserving the source reference/scope and rehashing the entire package. A missing or invalid managed manifest never implicitly authorizes unrelated host personal skill directories. Canonical revisions are `sha256:<hex>` over the sorted complete resource manifest; individual resource SHA-256 values remain raw hex.
+
+### Amendment 2026-11-03: the hand-off recheck compares the stored member with itself
+
+"All handoffs recheck current saved scope/permissions" was implemented as a
+comparison between the bridge's stored member and the member copy the turn
+carried from the window. The two are not the same record. The window fills in
+built-in tool-rule defaults its stored copy may lack; the bridge keeps the
+member as saved. A member saved before a default existed, created through the
+API, or seeded with `permissions: {}` therefore failed every Autohand turn
+with "Member skill scope or permissions changed before the engine handoff;
+retry under the current settings", and the retry failed the same way. With
+a fallback configured, the failed primary did not fall back either.
+
+It was found on 3 November through the 0.1.16 release run and a day of red CI.
+The fallback check's member is saved with empty permissions; locally its
+turns failed at once, and a temporary diagnostic showed the only difference
+was `permissions.builtInPolicies` (`{}` stored, the preset in the window's
+copy). The same guard was why `check:acp` had failed since this morning.
+
+The guard now records the stored member's policy fingerprint when the turn is
+prepared and compares the stored member at hand-off with that, so a real
+change between preparation and hand-off (permissions, engine, model,
+workspace or skills saved meanwhile, or the member removed) is still refused.
+What the guard no longer does is reject the window's copy for differing from
+the stored one; which permissions the engine runs with is decided where the
+runtime config is written, not here. `check-model-routing-bridge` sends a
+turn whose copy carries default tool rules for a member stored without them;
+it failed with the old guard and passes with this one. `check:acp` passes
+again. `check:member-profiles` still fails two skill-discovery cases
+("Cannot read properties of undefined (reading 'path')" and the unavailable
+skills line); they are not this guard and are left for the skills work. CI
+and the release do not run that check.

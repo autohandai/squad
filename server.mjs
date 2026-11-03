@@ -45,6 +45,7 @@ import { isRemoteTransport } from "./server/remote/auth.mjs";
 import { StringDecoder } from "node:string_decoder";
 import { constants as fsConstants, createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { FolderReadStalled, readFolderWithin, sharedScan } from "./server/workspace-scan.mjs";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { clientClosedReason, stopMessage } from "./server/harness/stop-reason.mjs";
@@ -1673,7 +1674,9 @@ function shouldSkipWorkspaceDir(name) {
   return name.startsWith(".") || ignoredWorkspaceDirs.has(name);
 }
 
-async function listWorkspaces() {
+const listWorkspaces = sharedScan(scanWorkspaces);
+
+async function scanWorkspaces() {
   const maxDepth = 7;
   const maxScannedDirs = 6000;
   const queue = [{ path: homeDir, depth: 0 }];
@@ -1702,8 +1705,11 @@ async function listWorkspaces() {
     scannedDirs += 1;
     let entries = [];
     try {
-      entries = await readdir(current.path, { withFileTypes: true });
-    } catch {
+      entries = await readFolderWithin(readdir, current.path);
+    } catch (error) {
+      // A folder that does not answer (iCloud Drive fetching it) ends the
+      // scan: reading on would park more of the bridge's file threads.
+      if (error instanceof FolderReadStalled) break;
       continue;
     }
 
@@ -3399,7 +3405,22 @@ async function prepareRuntimeSkills(agentRuntime, input) {
     requestId: String(input.requestId || input._computerUseWorkId || ''), policyEpoch: skillPolicyEpoch(agentRuntime.agent),
   });
   return { ...agentRuntime, workId: String(input._computerUseWorkId || ''), skillContext: prepared, skillReceipts: prepared.receipts,
+    storedPolicyEpoch: (await storedSkillPolicy(agentRuntime)).epoch,
     skillContinuityContext: { workspaceId, runtimeVersion: packageMetadata.version, providerId: isExternalHarness(agentRuntime.harness) ? '' : agentRuntime.resolvedProvider?.provider || '', permissionEpoch: skillPolicyEpoch(agentRuntime.agent), capturedAt: Date.now() } };
+}
+
+// The bridge's stored copy of a member, as the hand-off guard reads it. The
+// guard compares this copy when the turn was prepared with the same copy at
+// hand-off. It used to compare the window's copy with the stored one, and the
+// window fills in tool-rule defaults the stored copy may lack (a member saved
+// before a default was added, or created through the API), so every Autohand
+// turn for such a member was refused and "retry" failed the same way.
+async function storedSkillPolicy(agentRuntime) {
+  const access = await agentChannelActions.memberAccess(agentRuntime.agentId);
+  const saved = await readPersistentJson(join(agentRuntime.agentHome, 'profile.json'), null);
+  if (access?.removed) return { removed: true, epoch: '' };
+  if (!saved && !access?.agent) return { removed: false, epoch: '' };
+  return { removed: false, epoch: skillPolicyEpoch(mergeMemberProfile({ ...saved, ...access?.agent, id: agentRuntime.agentId }, saved)) };
 }
 
 function skillPolicyEpoch(agent) {
@@ -3410,10 +3431,8 @@ async function handoffRuntimeSkills(agentRuntime, adapter, onEvent = () => {}) {
   const prepared = agentRuntime.skillContext;
   if (!prepared) return;
   await agentRuntime.onSkillContinuity?.({ skillReceipts: prepared.receipts, skillContinuityContext: agentRuntime.skillContinuityContext });
-  const access = await agentChannelActions.memberAccess(agentRuntime.agentId);
-  const saved = await readPersistentJson(join(agentRuntime.agentHome, 'profile.json'), null);
-  const current = mergeMemberProfile({ ...saved, ...access?.agent, id: agentRuntime.agentId }, saved);
-  if (access?.removed || ((saved || access?.agent) && skillPolicyEpoch(current) !== skillPolicyEpoch(agentRuntime.agent))) throw new Error('Member skill scope or permissions changed before the engine handoff; retry under the current settings.');
+  const stored = await storedSkillPolicy(agentRuntime);
+  if (stored.removed || (agentRuntime.storedPolicyEpoch !== undefined && stored.epoch !== agentRuntime.storedPolicyEpoch)) throw new Error('Member skill scope or permissions changed before the engine handoff; retry under the current settings.');
   await validateSkillReferences(prepared.packets.map(packet => packet.reference), { installed: agentRuntime.skillInstall.installed, actor: { memberId: agentRuntime.agentId, workspace: agentRuntime.workspace }, agentHome: agentRuntime.agentHome });
   if (!prepared.packets.length) return;
   agentRuntime.skillReceipts = coalesceSkillReceipts(acknowledgeSkillContext(prepared, { adapter, supplied: true }));

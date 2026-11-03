@@ -18,6 +18,13 @@ try{
   const payload={agentId:agent.id,agent,workspace:process.cwd(),policy:'restricted',profile:'Keep this same member and memory.'};
   assert.equal((await bridge.api('/api/agents/provision','POST',payload)).success,true);
   assert.equal((await bridge.api('/api/members/'+agent.id+'/channel-access','PUT',{agent,profile:''})).success,true);
+  // The window fills in tool-rule defaults the bridge's stored copy may not
+  // have (a member saved before a default existed, or created through the
+  // API). The skill hand-off guard refused every such Autohand turn with
+  // "Member skill scope or permissions changed before the engine handoff".
+  const windowCopy={...agent,permissions:{...agent.permissions,builtInPolicies:{ask_followup_question:'block',todo_write:'block'}}};
+  const filledIn=await bridge.api('/api/chat','POST',{...payload,agent:windowCopy,prompt:'A turn from a window whose copy carries default tool rules.'},25000);
+  assert.equal(filledIn.success,true,JSON.stringify(filledIn).slice(0,600));assert.equal(filledIn.data.harness,'autohand');assert.equal(filledIn.data.routing?.fallback||false,false,'the primary answered, not a fallback');
   await writeFile(join(bridge.directory,'fail-autohand'),'fail');
   const upload=await fetch(bridge.origin+'/api/attachments',{method:'POST',headers:{'x-file-name':'fallback.png','content-type':'image/png'},body:fixturePng});const image=(await upload.json()).data;assert(image?.id);
   const answer=await bridge.api('/api/chat','POST',{...payload,prompt:'Continue the same task.',attachments:[image],conversationContext:[{role:'user',body:'Our release code is NZ-42.'}]},25000);

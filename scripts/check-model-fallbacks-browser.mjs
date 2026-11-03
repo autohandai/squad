@@ -12,6 +12,10 @@ let browser;
 try{
   const member={id:'asq_model_fixture',name:'Model Verify',role:'Reviewer',workspace:process.cwd(),projects:[{path:process.cwd()}],harness:{id:'autohand'},modelAssignment:{mode:'override',provider:'autohandai',model:'fixture-moa'},permissions:{}};
   await bridge.api('/api/members/'+member.id+'/channel-access','PUT',{agent:member,profile:''});
+  // "Save fallbacks" reads "Saving…" until the window has handled the save,
+  // which can be after the bridge copy already shows it. The 0.1.16 release
+  // run clicked during that gap: "Missing button: Save fallbacks".
+  const saveFallbacks=async()=>{await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&!button.disabled)"),'Save fallbacks ready');await browser.click('Save fallbacks');};
   const savedMember=async()=>(await bridge.api('/api/channels')).data.agentChannelAccess[member.id].agent;
   browser=await startBrowser();
   await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`if(!localStorage.getItem('modelVerify.seeded')){localStorage.setItem('autohandSquad.v1.agents',${JSON.stringify(JSON.stringify([member]))});localStorage.setItem('autohandSquad.v1.onboarding','{"version":1,"status":"skipped"}');localStorage.setItem('modelVerify.seeded','1');}`});
@@ -45,23 +49,23 @@ try{
   await chooseOption('fixture-fantail');await browser.evaluate('window.__modelFailRefresh=false');await browser.click('Refresh model list');
   await until(()=>browser.evaluate("document.querySelector('button')&&[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Add fallback'&&!button.disabled)"),'connected engines loaded');
   await browser.click('Add fallback');await choose('Fallback 1 model','codex-recovery');
-  await browser.evaluate('window.__modelFailSave=true');await browser.click('Save fallbacks');
+  await browser.evaluate('window.__modelFailSave=true');await saveFallbacks();
   await until(()=>browser.evaluate("[...document.querySelectorAll('section[aria-label=Fallbacks] [role=alert]')].some(element=>element.textContent.includes('Fixture save refused'))"),'failed fallback save is visible');
   await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&!button.disabled)"),'fallback save ready to retry');
   assert(!(await savedMember()).modelRouting?.fallbacks?.length,'A failed fallback save leaves the persisted list alone');
   assert(await browser.evaluate("document.querySelector('[role=combobox][aria-label=\"Fallback 1 model\"]').textContent.includes('codex-recovery')"),'The unsaved fallback choice survives failure');
-  await browser.evaluate('window.__modelFailSave=false');await browser.click('Save fallbacks');
+  await browser.evaluate('window.__modelFailSave=false');await saveFallbacks();
   await until(async()=>(await savedMember()).modelRouting?.fallbacks[0]?.harness.model==='codex-recovery','fallback model saved');
   await browser.click('Add fallback');await choose('Fallback engine 2','Claude Code');await choose('Fallback 2 model','claude-fixture');
-  await browser.click('Move fallback 2 up');await browser.click('Save fallbacks');
+  await browser.click('Move fallback 2 up');await saveFallbacks();
   await until(async()=>(await savedMember()).modelRouting?.fallbacks[0]?.harness.id==='claude','fallback order saved');
   await browser.screenshot(artifact+'/fallback-editor.png');
   await browser.evaluate('window.beforeRoutingReload=true');await browser.send('Page.reload');
   await until(()=>browser.evaluate("!window.beforeRoutingReload&&document.querySelector('[data-fallback-row=\"0\"]')?.textContent.includes('Claude')"),'saved fallback ordering reloaded');
-  await browser.click('Move fallback 1 down');await browser.click('Save fallbacks');
+  await browser.click('Move fallback 1 down');await saveFallbacks();
   await until(async()=>(await savedMember()).modelRouting?.fallbacks[0]?.harness.id==='codex','Codex first again');
   assert.equal((await savedMember()).modelRouting.allowAgentChanges,false,'Agent edits start disabled');
-  await browser.evaluate("document.querySelector('[role=switch][aria-label=\"Let this member manage fallbacks\"]').click()");await browser.click('Save fallbacks');
+  await browser.evaluate("document.querySelector('[role=switch][aria-label=\"Let this member manage fallbacks\"]').click()");await until(()=>browser.evaluate("document.querySelector('[role=switch][aria-label=\"Let this member manage fallbacks\"]')?.getAttribute('aria-checked')==='true'"),'member fallback permission switched on');await saveFallbacks();
   await until(async()=>(await savedMember()).modelRouting.allowAgentChanges===true,'optional agent permission saved');
 
   await writeFile(join(bridge.directory,'fail-autohand'),'fail');
@@ -110,5 +114,8 @@ try{
   assert.equal((await bridge.api('/api/members/'+member.id+'/threads/'+thread.id)).data.messages.find(message=>message.role==='agent').routing.used.model,'codex-second');
   assert.deepEqual(browser.errors,[]);
   console.log('PASS catalog IDs/names, failed save/refresh recovery, connected engine/model selection, ordered edits, optional member tools, reload persistence, native failover identity and partial-answer replacement in one chat.');
-}catch(error){if(browser){await browser.screenshot(artifact+'/model-picker.png').catch(()=>{});console.error(await browser.evaluate("JSON.stringify({text:document.body.innerText.slice(-3500),errors:window.__modelVerifyErrors,buttons:[...document.querySelectorAll('button')].filter(button=>button.getAttribute('aria-label')?.includes('chat message')).map(button=>({label:button.getAttribute('aria-label'),disabled:button.disabled}))})").catch(()=>''));}console.error(bridge.logs.slice(-1500));throw error;}
+}catch(error){
+  // The bridge's side of a failure: CI shows only this output.
+  try{const runs=(await bridge.api('/api/runs')).data||[];console.error('bridge runs',JSON.stringify(runs.slice(0,3).map(run=>({status:run.status,harness:run.harness,title:String(run.title||'').slice(0,60),reply:String(run.reply||'').slice(0,80),logs:(run.logs||[]).slice(-10).map(entry=>`${entry.source}: ${String(entry.line).slice(0,300)}`)})),null,1));const toolRows=(await readFile(join(bridge.directory,'model-calls.jsonl'),'utf8').catch(()=>'')).trim().split('\n').filter(line=>line.includes('routing-tool')).slice(-2);console.error('member tool responses',toolRows.map(line=>line.slice(0,600)).join('\n'));const member=(await bridge.api('/api/channels')).data.agentChannelAccess['asq_model_fixture']?.agent;console.error('bridge member',JSON.stringify({profileRevision:member?.profileRevision,fallbacks:member?.modelRouting?.fallbacks?.map(route=>route.harness.model)}));if(browser)console.error('window member',await browser.evaluate("JSON.stringify(JSON.parse(localStorage.getItem('autohandSquad.v1.agents')||'[]').filter(agent=>agent.id==='asq_model_fixture').map(agent=>({profileRevision:agent.profileRevision,fallbacks:agent.modelRouting?.fallbacks?.map(route=>route.harness.model)})))"));}catch(dumpError){console.error('bridge state unavailable:',dumpError.message);}
+  if(browser){await browser.screenshot(artifact+'/model-picker.png').catch(()=>{});console.error(await browser.evaluate("JSON.stringify({text:document.body.innerText.slice(-3500),errors:window.__modelVerifyErrors,buttons:[...document.querySelectorAll('button')].filter(button=>button.getAttribute('aria-label')?.includes('chat message')).map(button=>({label:button.getAttribute('aria-label'),disabled:button.disabled}))})").catch(()=>''));}console.error(bridge.logs.slice(-1500));throw error;}
 finally{await browser?.close();await bridge.close();}

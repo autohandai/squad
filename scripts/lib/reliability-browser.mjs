@@ -12,11 +12,16 @@ export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 // 2 November 2026 and the 0.1.15 release run), so on CI every wait is
 // stretched; AUTOHAND_CHECK_WAIT_SCALE overrides the factor.
 const WAIT_SCALE = Number(process.env.AUTOHAND_CHECK_WAIT_SCALE) > 0 ? Number(process.env.AUTOHAND_CHECK_WAIT_SCALE) : process.env.CI ? 3 : 1;
+// AUTOHAND_CHECK_TRACE=1 prints each wait as it starts and ends, so a check
+// that stalls shows the step it stalled on.
+const TRACE = process.env.AUTOHAND_CHECK_TRACE === '1';
 export async function until(fn, label, timeout = 10000) {
-  const end = Date.now() + timeout * WAIT_SCALE;
+  const started = Date.now();
+  const end = started + timeout * WAIT_SCALE;
+  if (TRACE) console.error(`[wait] ${label}`);
   let last;
   while (Date.now() < end) {
-    try { const value = await fn(); if (value) return value; } catch (error) { last = error; }
+    try { const value = await fn(); if (value) { if (TRACE) console.error(`[done] ${label} ${Date.now() - started} ms`); return value; } } catch (error) { last = error; }
     await delay(50);
   }
   throw new Error(`${label} timed out${last ? `: ${last.message}` : ''}`);
@@ -51,7 +56,9 @@ export async function startBridge({ signedIn = true, prepare, cwd = process.cwd(
   const env = { AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: 'macos', ...process.env, ...prepared, AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_USER_CONFIG_PATH: config };
   let child;
   let logs = '';
-  const api = async (path, method = 'GET', body, timeout = 10000) => {
+  // A bridge call stretches with the waits: a busy runner (or a dev bridge
+  // compiling App.jsx on its main thread) can hold a ten-second reset call.
+  const api = async (path, method = 'GET', body, timeout = 10000 * WAIT_SCALE) => {
     try {
       const response = await fetch(origin + path, { method, signal: AbortSignal.timeout(timeout), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       return { status: response.status, ...await response.json() };

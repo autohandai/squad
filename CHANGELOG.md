@@ -41,6 +41,8 @@ list to the section for that version.
 
 ### Fixed
 
+- Squad no longer freezes loading channels and saving members while macOS fetches an iCloud Drive folder: the workspace list scans the home folder once at a time, reuses the result for a minute, and stops at a folder that does not answer.
+- Autohand members saved before the latest tool-rule defaults, or created outside the app, no longer fail every reply with "Member skill scope or permissions changed before the engine handoff"; their fallbacks take over again when the primary engine fails.
 - A member named for its role, like Chief of Staff, is no longer named twice in the phone header, the member's history page and the team proposal card.
 - Settings › Updates no longer says "Updated to" a version you installed by hand when it is newer than the latest public release; it reads as a preview instead.
 - A member without Computer Use permission no longer reaches Autohand Code's own Computer Use, which ignored the member's grant and could fail its whole reply when macOS permissions were not yet given.
