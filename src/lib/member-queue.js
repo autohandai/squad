@@ -111,7 +111,11 @@ export function reconcileQueueMessages(current, queues, members, locale = "en") 
     for (const item of Array.isArray(queue.items) ? queue.items : []) {
       if (!item?.id || item.status === "queued") continue;
       const messages = next[member.id] || [];
-      const existing = messages.find((message) => message.queueItemId === item.id && message.role === "agent");
+      // The bridge transcript (ADR-0163) names the same turn queue-<id>-u and
+      // queue-<id>-a without queueItemId. Arriving first, it was not
+      // recognised here and the pair was added again under the same ids, and
+      // a chat holding repeated ids could not be reopened from Previous chats.
+      const existing = messages.find((message) => message.role === "agent" && (message.queueItemId === item.id || message.id === `queue-${item.id}-a`));
       // A cancelled item that never ran leaves no trace in the conversation;
       // a fresh conversation (/new) must not refill with older items.
       if (!existing && item.status === "cancelled" && !item.startedAt) continue;
@@ -126,11 +130,17 @@ export function reconcileQueueMessages(current, queues, members, locale = "en") 
         ...existing, ...patch,
       };
       if (next === current) next = { ...current };
+      const userMessage = { id: `queue-${item.id}-u`, role: "user", body: item.text, attachments: item.attachments || [], time, createdAt: startedAt, startedAt, requestId: `queue-${item.id}`, queueItemId: item.id };
+      // The transcript's copy of the question has no files: the queue's own
+      // row carries them, so it fills in what that copy lacks.
+      const fillQuestion = (message) => (message.id === userMessage.id && !message.queueItemId
+        ? { ...userMessage, ...message, attachments: message.attachments?.length ? message.attachments : userMessage.attachments, queueItemId: item.id }
+        : message);
       if (existing) {
-        next[member.id] = messages.map((message) => (message.id === existing.id ? agentMessage : message));
+        next[member.id] = messages.map((message) => (message.id === existing.id ? agentMessage : fillQuestion(message)));
       } else {
-        const userMessage = { id: `queue-${item.id}-u`, role: "user", body: item.text, attachments: item.attachments || [], time, createdAt: startedAt, startedAt, requestId: `queue-${item.id}`, queueItemId: item.id };
-        next[member.id] = insertByTime(insertByTime(messages, userMessage), agentMessage);
+        const withQuestion = messages.some((message) => message.id === userMessage.id) ? messages.map(fillQuestion) : insertByTime(messages, userMessage);
+        next[member.id] = insertByTime(withQuestion, agentMessage);
       }
     }
   }

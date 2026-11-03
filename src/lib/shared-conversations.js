@@ -82,7 +82,11 @@ export function applySharedConversationEvent(currentMessages, event) {
     const ids = new Set();
     for (const raw of event.messages || []) {
       const message = clonePayload(raw);
-      if (!message || !validId(message.id) || ids.has(message.id)) return currentMessages;
+      if (!message || !validId(message.id)) return currentMessages;
+      // A repeated id keeps its first copy. Rejecting the whole reset lost a
+      // reopened chat outright: the bridge had already moved it out of
+      // Previous chats, and the window showed an empty conversation.
+      if (ids.has(message.id)) continue;
       ids.add(message.id);
       messages.push({ ...message, updatedAt: event.at, startedAt: event.at });
     }

@@ -102,3 +102,35 @@ second machine's browser, or after a profile reset.
   another window shows as "thinking" until it finishes.
 - The run history file grows by the traces it now keeps, at most 200 ×
   64 KB.
+
+## Amendment 2026-11-03: a queued turn added twice, and a chat that could not be reopened
+
+CI's attachments check failed on "reopened chat retains file previews", and
+had already failed there on the morning of 3 November. It reproduced locally
+about one run in two with the page's CPU throttled sixfold
+(`AUTOHAND_CHECK_CPU_THROTTLE=6`, added to the browser helper for this).
+After New chat, opening the saved conversation showed an empty chat, and the
+bridge no longer listed it under Previous chats.
+
+The saved conversation held the queued follow-up's question and answer twice
+under the same ids (`queue-<id>-u`, `queue-<id>-a`). The transcript merge
+above names a queued turn exactly that way but without `queueItemId`; when it
+arrived before the queue's own update, `reconcileQueueMessages` looked only for
+`queueItemId`, did not recognise the row, and inserted the pair again. Nothing
+showed it on screen beyond a repeated turn. Reopening was what failed: the
+restore is a `messages.reset` event, and `applySharedConversationEvent`
+rejected a reset with any repeated id as a whole, after the bridge's open had
+already moved the chat out of Previous chats. The conversation was in neither
+place.
+
+- `reconcileQueueMessages` recognises its turn by `queue-<id>-a` as well and
+  does not insert a question row that is already there.
+- A reset keeps the first copy of a repeated id instead of being rejected.
+  Invalid ids still reject it.
+
+`check-queues` and `check-shared-conversations` carry the two cases; both fail
+without the change. The first local reading, that the check was merely slow on
+CI, was wrong: the same steps lost a conversation on a slow page. Not done: a
+chat already saved with repeated ids reopens with one copy, but nothing
+rewrites archives saved before this change; the bridge's open still removes
+the chat before the window confirms the restore.

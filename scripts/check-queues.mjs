@@ -55,6 +55,15 @@ assert.deepEqual(reconcileQueueMessages({ eva: [] }, { eva: { memberId: 'eva', i
 const queue = { items: [{ id: 'a', status: 'queued' }, { id: 'b', status: 'queued' }, { id: 'c', status: 'queued' }, { id: 'r', status: 'running' }] };
 assert.deepEqual(movedQueueIds(queue, 'c', -1), ['a', 'c', 'b']); assert.equal(movedQueueIds(queue, 'a', -1), null); assert.equal(movedQueueIds(queue, 'c', 1), null);
 assert.deepEqual(queuedItems(queue).map((i) => i.id), ['a', 'b', 'c']);
+// The bridge transcript (ADR-0163) names a queued turn queue-<id>-u/-a
+// without queueItemId. Arriving before the queue, it was not recognised and
+// the pair was added again under the same ids (CI, 3 November).
+const fromTranscript = [olderMessage, { id: 'queue-i1-u', role: 'user', body: 'Check the build', requestId: 'queue-i1', fromBridge: true, startedAt: running.startedAt }, { id: 'queue-i1-a', role: 'agent', body: 'Build is green.', requestId: 'queue-i1', fromBridge: true, status: 'complete', startedAt: running.startedAt }];
+const afterTranscript = reconcileQueueMessages({ eva: fromTranscript }, { eva: { memberId: 'eva', items: [done] } }, members);
+assert.deepEqual(afterTranscript.eva.map((m) => m.id), ['m1', 'queue-i1-u', 'queue-i1-a'], 'a turn the transcript already added is updated, not added again');
+assert.equal(afterTranscript.eva[2].queueItemId, 'i1');
+const withFile = reconcileQueueMessages({ eva: fromTranscript }, { eva: { memberId: 'eva', items: [{ ...done, attachments: [{ id: 'f1', name: 'queued.pdf' }] }] } }, members);
+assert.deepEqual(withFile.eva[1].attachments.map((file) => file.name), ['queued.pdf'], 'the queue fills in the files the transcript copy of the question lacks');
 console.log('Queue pure checks passed: gauge arithmetic, reconciliation, reorder.');
 
 // ---------- bridge ----------

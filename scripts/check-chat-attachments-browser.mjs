@@ -182,6 +182,14 @@ try {
   await browser.screenshot(`${artifact}/channel-files.png`);
   assert.deepEqual(browser.errors, []);
   console.log(`PASS ${fixtures.length} file types: drop, thumbnails, attachment-only request, native input, saved/reopened history, upload failure/retry, size and corrupt-image errors, plain text paste, reply-thread paste, queued sends, Quick Chat and channel follow-up delivery.`);
+} catch (error) {
+  // CI shows only this output: what the window rendered and what the bridge saved.
+  try {
+    if (browser) console.error("window", await browser.evaluate("JSON.stringify({path:location.pathname+location.search,previews:document.querySelectorAll('[data-message-id] [data-attachment-id]').length,messages:document.querySelectorAll('[data-message-id]').length,dialog:Boolean(document.querySelector('[role=dialog]')),text:document.querySelector('main')?.innerText.slice(-1200)})"));
+    const chats = (await bridge.api("/api/members/attachment-fixture/chats")).data.chats || [];
+    console.error("saved chats", JSON.stringify(chats.map(chat => ({ id: chat.id, title: chat.title, messages: chat.messageCount ?? chat.messages?.length }))));
+  } catch (dumpError) { console.error("state unavailable:", dumpError.message); }
+  throw error;
 } finally {
   await browser?.close();
   await bridge.close();

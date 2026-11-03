@@ -29,6 +29,11 @@ assert.deepEqual(resetMain.noah, []);
 assert.equal(resetMain.eva, otherMessages);
 assert.equal(apply(resetMain, reset), resetMain);
 assert.equal(apply(resetMain, { ...reset, at: time(9), cutoff: time(9) }), resetMain);
+// A reopened chat whose messages repeat an id keeps the first copy; rejecting
+// the whole reset showed an empty chat after the bridge had already moved the
+// conversation out of Previous chats.
+const reopened = apply(resetMain, { type: "messages.reset", memberId: "noah", at: time(11), cutoff: time(11), messages: [{ id: "q-u", role: "user", body: "Question" }, { id: "q-a", role: "agent", body: "Answer" }, { id: "q-u", role: "user", body: "Question" }, { id: "q-a", role: "agent", body: "Answer" }] });
+assert.deepEqual(reopened.noah.map(message => message.id), ["q-u", "q-a"]);
 assert.equal(apply(resetMain, append("late-old-append", 8)), resetMain);
 assert.equal(apply(resetMain, append("old-thread-late-work", 12, { startedAt: time(1) })), resetMain);
 assert.equal(apply(resetMain, patch("main-answer", 12, { body: "Post-reset old reply" })), resetMain);

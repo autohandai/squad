@@ -126,6 +126,10 @@ export async function startBrowser() {
   };
   try { await send('Page.enable', {}, 60000); await send('Runtime.enable', {}, 60000); }
   catch (error) { ws.close(); await stop(child); await rm(directory, { recursive: true, force: true }); throw error; }
+  // AUTOHAND_CHECK_CPU_THROTTLE=6 slows the page's CPU sixfold, to reproduce
+  // on a developer machine what only failed on GitHub's slower runners.
+  const throttle = Number(process.env.AUTOHAND_CHECK_CPU_THROTTLE);
+  if (throttle > 1) await send('Emulation.setCPUThrottlingRate', { rate: throttle });
   return { send, evaluate, errors, requests, debugOrigin,
     // A navigation on a loaded machine (another suite at full CPU) took more
     // than the fifteen-second default; the page itself was fine.
