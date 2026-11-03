@@ -16,16 +16,20 @@ Date: 2026-11-03. Source baseline: Squad `837ec2f`, site `0fe5507b`, API `f0721f
 | Additional interaction guards | Six passing desktop/phone cases cover failed preference saves and deferral of automatic announcement modals while another dialog is open | Isolated local bridge |
 | Release-failure regression | `AUTOHAND_CHECK_CPU_THROTTLE=6 AUTOHAND_CHECK_WAIT_SCALE=3 node scripts/check-chat-attachments-browser.mjs` passed, including saved/reopened file history | Real bridge, fixture harness |
 | Source/build integration | JSX imports, bridge imports, release workflow/packaging contracts, lifecycle checks and Squad build pass. Site build and frozen install with Bun 1.4.0 pass. API typecheck passes | Local |
-| Aggregate local CI | Resumed with the installed Rust toolchain on PATH; 57 of the final 60 checks passed, including runtime formatting/tests/build | Not a passing aggregate run; three legacy checks still fail (below) |
-| Existing hosted CI | Main run 41571476517 passed all 12 jobs at `837ec2f` | Baseline only, not new changes |
+| Aggregate local CI | Complete `bun run ci` exited 0 across 116 sequential stages, using Node 22.23.2 and the installed Rust 1.97.1 toolchain on PATH | Fixture engines and local rendered checks; no live provider claim |
+| Hosted CI | Run 41594743403 passed all 12 jobs at `e9ffefd`, including all four release dry runs and combined manifest validation | The later three added member-contract gates require a new hosted run |
 | Installed native app | Computer Use opened account → Settings → Updates and clicked Check for updates. Installed UI still shows 0.1.16/public 0.1.14 and old controls | Baseline inspected; new build not installed |
 
 ## Remaining release evidence
 
-Squad hosted checks on the final source and the new native installation check
-remain required before calling the complete goal shipped. The API and editor
+Squad hosted checks on the final source, including the three added member
+contract gates, and the new native installation check remain required before
+calling the complete goal shipped. The API and editor
 deployments below are verified. No production announcement was sent. The
-existing app and its saved data have not yet been replaced. Website
+existing app and its saved data have been backed up and have not been replaced.
+GitHub main rules require two approving reviews and a Dependabot status context
+that this feature PR does not emit. No rule has been bypassed or changed; the
+merge/release decision is pending. Website
 `public/docs-manifest.json` was already modified and is excluded from the PR.
 
 ## Integrated and deployed announcements
@@ -67,15 +71,26 @@ existing app and its saved data have not yet been replaced. Website
   61 checks and queue admission across all four harnesses passed. A work-plan
   check timed out once under parallel build/test load; its standalone replay
   passed all 76 checks. This observation is not called a proven timeout fix.
-- The final 60-check sweep failed `check:member-profiles` (two skill-discovery
+- The initial 60-check sweep failed `check:member-profiles` (two skill-discovery
   expectations, already recorded as outstanding in ADR-0157),
   `check:agent-channel-actions` (`failed` versus expected `blocked`), and
   `check:member-by-chat:browser` (new-member-save timeout). These checks are not
-  part of the hosted release gate. They are disclosed as unresolved local
-  aggregate gaps; their assertions were not weakened to claim a green run.
+  part of the hosted release gate. ADR-0171 records their independently
+  reproduced fixture causes and corrections. The three checks pass on their
+  own and in the complete 116-stage aggregate; they are now added to hosted CI
+  and release gates. Production validation rules were not relaxed.
 - Browser release fixtures now derive the running version from package.json,
   with newer candidate/daemon versions. The immutable failed `v0.1.16` tag is
   preserved; 0.1.17 is prepared with matching package and Cargo versions.
+- The member-by-chat fixture now supplies only its known checkout as the
+  runtime default workspace. It keeps real provisioning and profile receipts;
+  it no longer depends on the person's legacy Documents symlink. The channel
+  fixture reads the current request instead of a truncated historical request,
+  and verifies removed members never reach the engine. The skill fixture keeps
+  authored bytes unchanged after pinning and verifies the restored revision.
+- Native follow-up attempts encountered `cgWindowNotFound` and
+  `AXError.cannotComplete`. These automation errors are not installation proof.
+  The backed-up app, data and WebKit store remain intact.
 
 Browser captures/traces live under `.codex-artifacts/updates-playwright/` and
 the site's `test-results/squad-announcements/`. CI retains update test artifacts.

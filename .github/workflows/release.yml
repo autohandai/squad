@@ -158,6 +158,9 @@ jobs:
           bun run check:updates:playwright
           bun run check:release
           bun run build
+          AUTOHAND_REQUIRE_BROWSER=1 bun run check:member-profiles
+          AUTOHAND_REQUIRE_BROWSER=1 bun run check:agent-channel-actions
+          AUTOHAND_REQUIRE_BROWSER=1 bun run check:member-by-chat:browser
 
       - name: Package web server bundle
         shell: bash

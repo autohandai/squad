@@ -40,6 +40,12 @@ Retain traces/screenshots for failed Playwright cases. Do not hide failures
 with retries or delete assertions to make CI green. Existing CDP coverage still
 tests measured byte progress and lifecycle states.
 
+The full local audit also exposed three checks that were absent from hosted
+gates. After correcting their fixture contracts (ADR-0171), run member profiles,
+agent channel actions and the member-by-chat browser scenario in CI and release.
+The browser scenario runs after the web build and requires Chrome rather than
+silently skipping when it is missing.
+
 ## Consequences
 
 - Adds browser runtime and a pinned Playwright development dependency. Uses

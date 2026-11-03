@@ -95,8 +95,16 @@ const member = {
   memory: [], skills: [], permissions: {}, stats: {}, modelAssignment: { mode: "inherit" },
   harness: { id: "autohand", executablePath: "", model: "", effort: "", access: "" },
 };
-const fixtures = { agents: [member], removedAgents: initialAgents.map((agent) => agent.id), seedChannelIds: initialChannels.map((channel) => channel.id), now };
+const fixtures = { root, agents: [member], removedAgents: initialAgents.map((agent) => agent.id), seedChannelIds: initialChannels.map((channel) => channel.id), now };
 function installFixtures(data) {
+  const originalFetch = window.fetch;
+  window.fetch = async (...args) => {
+    const response = await originalFetch(...args);
+    if (new URL(String(args[0]), location.origin).pathname !== '/api/runtime' || !response.ok) return response;
+    const payload = await response.json();
+    payload.data.defaultWorkspace = data.root;
+    return new Response(JSON.stringify(payload), { status: response.status, headers: response.headers });
+  };
   const store = (key, value) => localStorage.setItem(`autohandSquad.v1.${key}`, JSON.stringify(value));
   if (!localStorage.getItem("memberByChatVerify.initialized")) {
     localStorage.clear();

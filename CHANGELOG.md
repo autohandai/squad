@@ -23,6 +23,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Release checks now cover preparing a new member, restoring the same saved skills, and refusing removed members and blocked channel actions.
 - Sending a message to a member now stops work it started through Keep working between messages before admitting the message. Background agenda work no longer keeps the person waiting behind itself.
 - When a member changes its permitted fallback models, the editor now shows the committed change immediately. A timing race no longer leaves the old models attached to the new profile revision.
 - A previous “Updated to…” result no longer hides a newer release or a failed check. Update availability compares the release with the running app even when the shared daemon runs a different version.
