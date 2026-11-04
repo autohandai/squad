@@ -2,6 +2,19 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { appleSigningConfiguration } from "./prepare-apple-signing.mjs";
+import { signMacCode } from "./lib/macos-signing.mjs";
+
+const signingCalls = [];
+const recordSigning = (command, args) => signingCalls.push({ command, args });
+signMacCode('/fixture/cli', { identity: 'Developer ID Application: Fixture (J59GX2DRN2)', entitlements: '/fixture/entitlements.plist', runCommand: recordSigning });
+assert.ok(signingCalls[0].args.includes('--timestamp'));
+assert.ok(!signingCalls[0].args.includes('--timestamp=none'));
+assert.ok(signingCalls[0].args.includes('runtime'));
+assert.deepEqual(signingCalls[0].args.slice(-3), ['--entitlements', '/fixture/entitlements.plist', '/fixture/cli']);
+assert.deepEqual(signingCalls[1].args, ['--verify', '--strict', '/fixture/cli']);
+signMacCode('/fixture/preview', { runCommand: recordSigning });
+assert.ok(signingCalls[2].args.includes('--timestamp=none'));
+assert.throws(() => signMacCode('/fixture/cli', { runCommand() { throw new Error('timestamp service unavailable'); } }), /timestamp service unavailable/);
 
 const fixture = { APPLE_CERTIFICATE: "fixture-certificate", APPLE_CERTIFICATE_PASSWORD: "fixture-password", APPLE_TEAM_ID: "J59GX2DRN2", APPLE_API_KEY: "-----BEGIN PRIVATE KEY-----\nfixture-only\n-----END PRIVATE KEY-----", APPLE_API_KEY_ID: "T678YJKXZ2", APPLE_API_ISSUER: "8bee8102-92b0-4657-aa5c-641420a8830f" };
 assert.deepEqual(appleSigningConfiguration(fixture), { team: "J59GX2DRN2", mode: "api" });

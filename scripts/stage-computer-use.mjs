@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative, sep } from 'node:path';
 import { COMPUTER_USE_HOST, verifyComputerUseBranding } from './computer-use-host.mjs';
+import { signMacCode } from './lib/macos-signing.mjs';
 
 export const COMPUTER_USE_VERSION = '0.28.2';
 export const COMPUTER_USE_ASSETS = Object.freeze({
@@ -49,8 +50,7 @@ export async function stageComputerUse({ rootDir, runtimeDir, platform = process
       // Sign the staged native code before hashing it, preserving archive proof.
       for (const name of ['cua-driver', 'cua-cursor-theme', 'libcua_driver_sdk.dylib', 'cua_driver_node_runtime.node']) {
         const filename = join(destination, name);
-        runCommand('/usr/bin/codesign', ['--force', '--options', 'runtime', '--sign', signIdentity, '--timestamp=none', filename]);
-        runCommand('/usr/bin/codesign', ['--verify', '--strict', filename]);
+        signMacCode(filename, { identity: signIdentity, runCommand });
       }
       if (!hostPath) throw new Error('Set AUTOHAND_SQUAD_COMPUTER_USE_HOST to the verified Autohand Computer Use.app build.');
       const source = resolve(hostPath);
@@ -69,6 +69,10 @@ export async function stageComputerUse({ rootDir, runtimeDir, platform = process
       await rm(join(destination, 'Squad Computer Use.app'), { recursive: true, force: true });
       await rm(hostDestination, { recursive: true, force: true });
       await cp(source, hostDestination, { recursive: true, dereference: true });
+      // Reused build inputs may carry an old ad-hoc or untimestamped signature.
+      // Re-sign only the staged copy, then record its final bytes below.
+      signMacCode(join(hostDestination, 'Contents', 'MacOS', COMPUTER_USE_HOST.executable), { identity: signIdentity, runCommand });
+      signMacCode(hostDestination, { identity: signIdentity, runCommand });
       host = { bundleId: identifier, sourceCommit, branding: provenance.branding, path: `${COMPUTER_USE_HOST.bundleName}/Contents/MacOS/${COMPUTER_USE_HOST.executable}`, sha256: await sha(join(hostDestination, 'Contents', 'MacOS', COMPUTER_USE_HOST.executable)) };
     }
     const files = [];

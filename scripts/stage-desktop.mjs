@@ -20,6 +20,7 @@ import { stageProductTelemetry } from './stage-product-telemetry.mjs';
 import { stageComputerUse } from './stage-computer-use.mjs';
 import { stageClaudeSdk } from './stage-claude-sdk.mjs';
 import { stageRuntimeSources } from './lib/stage-runtime-sources.mjs';
+import { signMacCode } from './lib/macos-signing.mjs';
 
 const rootDir = process.cwd();
 const tauriDir = join(rootDir, 'src-tauri');
@@ -105,7 +106,15 @@ async function stageRuntime() {
   await mkdir(cliDestination, { recursive: true });
   await copyFile(cliSource, join(cliDestination, cliName));
   if (!isWindows) await chmod(join(cliDestination, cliName), 0o755);
-  await copyFile(join(vendorDir, 'BUILD_INFO.json'), join(cliDestination, 'BUILD_INFO.json'));
+  if (process.platform === 'darwin') {
+    const identity = process.env.AUTOHAND_CODESIGN_IDENTITY || process.env.APPLE_SIGNING_IDENTITY || '-';
+    signMacCode(join(cliDestination, cliName), { identity, entitlements: join(tauriDir, 'entitlements.plist') });
+    const signedDigest = createHash('sha256').update(await readFile(join(cliDestination, cliName))).digest('hex');
+    info.upstreamSha256 = { ...info.sha256 };
+    info.sha256 = { ...info.sha256, [cliName]: signedDigest };
+    info.signing = { identity: identity === '-' ? 'ad-hoc' : identity, hardenedRuntime: true, secureTimestamp: identity !== '-' };
+  }
+  await writeFile(join(cliDestination, 'BUILD_INFO.json'), `${JSON.stringify(info, null, 2)}\n`);
   const selectedNode = process.env.NODE_RUNTIME_PATH ? resolve(process.env.NODE_RUNTIME_PATH) : process.execPath;
   const nodeProbe = spawnSync(selectedNode, ['--version'], { encoding: 'utf8' });
   if (nodeProbe.status !== 0 || !/^v\d+\.\d+\.\d+$/.test(nodeProbe.stdout.trim())) throw new Error('The selected desktop Node runtime did not report its version.');
