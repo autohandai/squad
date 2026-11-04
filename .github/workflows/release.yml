@@ -227,7 +227,7 @@ jobs:
   runtime-artifacts:
     name: Runtime artifacts (${{ matrix.id }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+    timeout-minutes: ${{ matrix.id == 'macos-x64' && 60 || 35 }}
     needs:
       - setup
       - web-bundle
