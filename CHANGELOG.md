@@ -13,6 +13,7 @@ list to the section for that version.
 ### Fixed
 
 - Reset recovery checks wait for Node to reach its exit request before measuring child reaping, so slow startup does not masquerade as a reset failure.
+- Builds retry interrupted Computer Use downloads with bounded backoff, while keeping pinned checksum validation and incomplete-file rejection.
 
 ## [0.1.20] - 2026-11-04
 
