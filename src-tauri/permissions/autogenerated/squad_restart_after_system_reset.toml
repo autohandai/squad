@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-squad-restart-after-system-reset"
+description = "Enables the squad_restart_after_system_reset command without any pre-configured scope."
+commands.allow = ["squad_restart_after_system_reset"]
+
+[[permission]]
+identifier = "deny-squad-restart-after-system-reset"
+description = "Denies the squad_restart_after_system_reset command without any pre-configured scope."
+commands.deny = ["squad_restart_after_system_reset"]

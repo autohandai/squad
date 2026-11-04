@@ -407,6 +407,13 @@ function logEvent(severityNumber, body, attributes = {}, { traceId = "", spanId 
 }
 const distDir = join(rootDir, "dist");
 const homeDir = resolve(homedir());
+let systemResetOwner = null;
+function holdSystemReset(requestId) {
+  if (systemResetOwner) throw Object.assign(new Error("Squad is already being reset."), { status: 409 });
+  const owner = { requestId };
+  systemResetOwner = owner;
+  return () => { if (systemResetOwner === owner) systemResetOwner = null; };
+}
 const squadMemberIdPrefix = "asq_";
 const legacySquadMemberIdPrefixes = ["wk_"];
 const squadWorkspaceRoot = join(homeDir, ".autohandsquad");
@@ -8590,6 +8597,8 @@ function routeContext() {
     appStateDir,
     squadWorkspaceRoot,
     memberWorkspaceRoots: [squadWorkspaceRoot, ...legacySquadWorkspaceRoots],
+    holdSystemReset,
+    currentSystemReset: () => systemResetOwner,
     // The bundled Autohand CLI, for routes that run one of its commands
     // (`autohand computer install`, ADR-0162).
     autohandBinary: () => resolveAutohandBinary(),
@@ -9709,6 +9718,10 @@ server = createServer(async (req, res) => {
       });
     } else if (!requestOriginAllowed(req, url)) {
       json(res, 403, { success: false, error: "cross-origin requests to the local bridge are not allowed" });
+      return;
+    }
+    if (systemResetOwner && !["GET", "HEAD"].includes(req.method) && url.pathname !== "/api/system/reset") {
+      json(res, 503, { success: false, error: "Squad was reset. Restart Squad to continue." });
       return;
     }
     if (desktopInstallLocked && !["GET", "HEAD"].includes(req.method) && !url.pathname.startsWith("/api/updates/")) {

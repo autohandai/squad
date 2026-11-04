@@ -199,10 +199,10 @@ assertIncludes(releaseWorkflow, 'required: true', 'Manual release version is req
 assertIncludes(releaseWorkflow, 'name: Setup', 'Release workflow has a shared setup job');
 assertIncludes(releaseWorkflow, "if: github.repository == 'autohandai/squad'", 'Release setup cannot publish from a fork');
 assertIncludes(releaseWorkflow, 'source_sha: ${{ steps.source.outputs.source_sha }}', 'Release setup exports the verified source SHA');
-assertCount(releaseWorkflow, 'scripts/verify-release-ref.sh v "$VERSION"', 6, 'Every release job verifies the tag-bound source');
-assertCount(releaseWorkflow, 'ref: ${{ needs.setup.outputs.source_sha }}', 5, 'Every build and publish job checks out the verified source SHA');
-assertCount(releaseWorkflow, 'fetch-depth: 0', 6, 'Every release checkout fetches tag history');
-assertCount(releaseWorkflow, 'persist-credentials: false', 6, 'Every release checkout drops persisted credentials');
+assertCount(releaseWorkflow, 'scripts/verify-release-ref.sh v "$VERSION"', 7, 'Every release job verifies the tag-bound source');
+assertCount(releaseWorkflow, 'ref: ${{ needs.setup.outputs.source_sha }}', 6, 'Every build and publish job checks out the verified source SHA');
+assertCount(releaseWorkflow, 'fetch-depth: 0', 7, 'Every release checkout fetches tag history');
+assertCount(releaseWorkflow, 'persist-credentials: false', 7, 'Every release checkout drops persisted credentials');
 assertIncludes(releaseWorkflow, 'macos-26-intel', 'Release workflow builds macOS Intel');
 assertNativeReleaseMatrix(releaseWorkflow, [
   ['linux-x64', 'ubuntu-24.04', 'linux', 'x64'],
@@ -277,7 +277,10 @@ assertIncludes(installerPackager, "'server'", 'Native installer stages the bridg
 assertIncludes(portablePackager, "'linux/arm64': 'autohand-linux-arm64'", 'Portable bundle knows the arm64 Agent SDK CLI');
 assertIncludes(portablePackager, "join(bundleRoot, 'server')", 'Portable bundle stages the bridge runtime modules');
 assertIncludes(releaseWorkflow, 'APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}', 'Release workflow hands the Apple signing certificate to tauri build when configured');
-assertIncludes(releaseWorkflow, 'export APPLE_SIGNING_IDENTITY="-"', 'Release workflow ad-hoc signs the macOS bundle without a Developer ID');
+assertIncludes(releaseWorkflow, 'node scripts/prepare-apple-signing.mjs', 'Public releases validate Developer ID and notarization credentials');
+assertIncludes(releaseWorkflow, 'xcrun stapler validate "$app"', 'Public macOS artifacts require a stapled notarization ticket');
+assertNotIncludes(releaseWorkflow, 'export APPLE_SIGNING_IDENTITY="-"', 'Public macOS releases cannot fall back to ad-hoc signing');
+assertNotIncludes(releaseWorkflow, '|| echo "::warning::Gatekeeper', 'Gatekeeper rejection blocks publication');
 assertIncludes(releaseWorkflow, 'name: Prepare Windows code signing', 'Release workflow imports the Windows signing certificate when configured');
 assertIncludes(releaseWorkflow, 'codesign --verify --deep --strict', 'macOS smoke test verifies the bundle signature');
 assertIncludes(releaseWorkflow, 'cp -R dist server server.mjs', 'Web bundle stages the bridge runtime modules');

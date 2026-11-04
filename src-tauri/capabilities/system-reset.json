@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "system-reset",
+  "description": "Guard reset confirmation and restart only after a matching terminal receipt and healthy bridge. Rust validates the main window and exact bridge origin.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"] },
+  "permissions": ["allow-squad-set-system-reset-stage", "allow-squad-system-reset-status", "allow-squad-restart-after-system-reset"]
+}

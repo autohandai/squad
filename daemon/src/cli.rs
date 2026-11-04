@@ -1976,11 +1976,19 @@ pub(crate) fn spawn_web_server(
         command.arg("--dev");
     }
     detach_background(&mut command);
-    let child = command
+    let mut child = command
         .spawn()
         .with_context(|| format!("start {} {}", node_runtime.display(), server_path.display()))?;
+    let pid = child.id();
+    // The desktop shell (and later the daemon) outlives this bridge. Dropping
+    // Child without wait leaves a zombie on Unix; kill(pid, 0) then makes the
+    // supervisor wait for its entire unhealthy-but-alive timeout after reset.
+    // Reap only this exact child, without a process-wide SIGCHLD handler.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     let record = WebServerRecord {
-        pid: child.id(),
+        pid,
         host: config.host.clone(),
         port: web_port,
         url: format!("http://{}:{}", config.host, web_port),
@@ -2212,6 +2220,24 @@ mod tests {
             "autohand-squad-cli-test-{}-{nonce}",
             std::process::id()
         )))
+    }
+
+    #[cfg(target_family = "unix")]
+    #[test]
+    fn exited_bridge_child_is_reaped_while_its_launcher_stays_alive() {
+        let paths = temp_state_paths();
+        paths.ensure().unwrap();
+        let server = paths.root.join("exit-immediately.mjs");
+        std::fs::write(&server, "process.exit(0);\n").unwrap();
+        spawn_web_server(&paths, &SquadConfig::defaults(), &server, false, 0).unwrap();
+        let pid = read_web_server_record(&paths).unwrap().unwrap().pid;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while process_is_running(pid) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let reaped = !process_is_running(pid);
+        std::fs::remove_dir_all(&paths.root).unwrap();
+        assert!(reaped, "A native launcher stays alive after reset; its exited bridge must not remain a zombie that delays supervision.");
     }
 
     #[tokio::test]

@@ -10,8 +10,16 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-11-04
+
+### Changed
+
+- Public macOS releases require Developer ID signing, Apple notarization, a stapled ticket and Gatekeeper acceptance before publication.
+
 ### Fixed
 
+- Reset Squad shows progress and waits for you to choose Restart Squad when finished. Quit and window close are blocked while confirming or resetting; Cancel is available before reset starts.
+- Reset reliably brings its local service back, keeps dated backups and your Autohand Code sign-in, and checks completion safely when its response is interrupted.
 - Update browser checks use an isolated news feed, so remote announcement availability no longer affects their screenshots.
 
 ## [0.1.18] - 2026-11-04

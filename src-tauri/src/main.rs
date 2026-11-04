@@ -32,6 +32,7 @@ mod computer_use_setup;
 mod dock_badge;
 mod native_notifications;
 mod quick_chat;
+mod system_reset;
 mod update_swap;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
@@ -56,6 +57,7 @@ struct Shell {
     runtime: Runtime,
     tray: Mutex<Option<TrayIcon<Wry>>>,
     usage: Mutex<UsageCache>,
+    reset: Mutex<system_reset::ResetGuard>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -75,7 +77,10 @@ fn main() {
             native_notifications::squad_notification_permission,
             native_notifications::squad_notification_test,
             native_notifications::squad_notification_settings,
-            squad_quit_for_update
+            squad_quit_for_update,
+            system_reset::squad_set_system_reset_stage,
+            system_reset::squad_system_reset_status,
+            system_reset::squad_restart_after_system_reset
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app);
@@ -89,6 +94,7 @@ fn main() {
                 runtime: Runtime::new()?,
                 tray: Mutex::new(None),
                 usage: Mutex::new(UsageCache::default()),
+                reset: Mutex::new(system_reset::ResetGuard::default()),
             });
             app.manage(shell.clone());
             #[cfg(target_os = "macos")]
@@ -113,7 +119,12 @@ fn main() {
                     .inner_size(1280.0, 840.0)
                     .min_inner_size(960.0, 640.0)
                     .user_agent(&user_agent)
-                    .on_navigation(info_navigation_handler(app.handle(), shell.clone(), false))
+                    .on_navigation({
+                        let navigation =
+                            info_navigation_handler(app.handle(), shell.clone(), false);
+                        let shell = shell.clone();
+                        move |url| !lock(&shell.reset).blocks_quit() && navigation(url)
+                    })
                     .center();
             #[cfg(target_os = "macos")]
             {
@@ -186,6 +197,10 @@ fn main() {
             Ok(())
         })
         .on_menu_event(|app, event| {
+            if system_reset::blocked(app) {
+                focus_main_window(app);
+                return;
+            }
             let id = event.id().as_ref();
             if let Some(action) = id.strip_prefix("menu:") {
                 dispatch_menu_action(app, action);
@@ -198,6 +213,9 @@ fn main() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == MAIN_WINDOW {
                     api.prevent_close();
+                    if system_reset::blocked(window.app_handle()) {
+                        return;
+                    }
                     // Closing keeps the bridge alive, but a pending sign-in
                     // must not trap the person when this window is reopened.
                     if let Some(webview) = window.app_handle().get_webview_window(MAIN_WINDOW) {
@@ -211,8 +229,16 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Autohand Squad");
+        .build(tauri::generate_context!())
+        .expect("error while building Autohand Squad")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if system_reset::blocked(app) {
+                    api.prevent_exit();
+                    focus_main_window(app);
+                }
+            }
+        });
 }
 
 /// The bundle carries the bridge under Resources/runtime and the Node runtime,
@@ -272,6 +298,9 @@ async fn squad_quit_for_update(
     window: tauri::WebviewWindow,
     shell: tauri::State<'_, Arc<Shell>>,
 ) -> Result<(), String> {
+    if system_reset::blocked(&app) {
+        return Err("Finish the reset before installing an update.".into());
+    }
     let base = lock(&shell.app_url)
         .clone()
         .ok_or("Squad is still starting.")?;
@@ -410,7 +439,7 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 &PredefinedMenuItem::separator(app)?,
                 &PredefinedMenuItem::services(app, None)?,
                 &PredefinedMenuItem::separator(app)?,
-                &PredefinedMenuItem::hide(app, None)?,
+                &item("hide", "Hide Autohand Squad", Some("CmdOrCtrl+H"))?,
                 &PredefinedMenuItem::hide_others(app, None)?,
                 &PredefinedMenuItem::show_all(app, None)?,
                 &PredefinedMenuItem::separator(app)?,
@@ -433,6 +462,15 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
 /// Menu selections reach the page as one DOM event; the web app routes them.
 fn dispatch_menu_action(app: &AppHandle, action: &str) {
+    if system_reset::blocked(app) {
+        focus_main_window(app);
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    if action == "hide" {
+        let _ = app.hide();
+        return;
+    }
     #[cfg(target_os = "macos")]
     if action == "quick-chat" {
         let shell = app.state::<Arc<Shell>>().inner().clone();
@@ -624,6 +662,10 @@ fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wr
 }
 
 fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
+    if system_reset::blocked(handle) {
+        focus_main_window(handle);
+        return;
+    }
     let paths = default_paths();
     match id {
         "open" => focus_main_window(handle),
@@ -725,6 +767,10 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
 
 /// Route the single-page app to `path` (client-side, no reload) and focus it.
 fn navigate_app(handle: &AppHandle, shell: &Shell, path: &str) {
+    if system_reset::blocked(handle) {
+        focus_main_window(handle);
+        return;
+    }
     let Some(window) = handle.get_webview_window(MAIN_WINDOW) else {
         return;
     };

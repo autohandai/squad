@@ -99,11 +99,44 @@ jobs:
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "title=Autohand Squad $VERSION" >> "$GITHUB_OUTPUT"
 
+  apple-signing:
+    name: Verify Apple signing and notarization credentials
+    needs: setup
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.setup.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the signing preflight uses the release tag source
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+        run: scripts/verify-release-ref.sh v "$VERSION"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Validate the actual signing identity and Apple authentication
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: node scripts/prepare-apple-signing.mjs
+      - name: Remove temporary Apple credentials
+        if: always()
+        run: node scripts/prepare-apple-signing.mjs --cleanup
+
   web-bundle:
     name: Web bundle
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: setup
+    needs: [setup, apple-signing]
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -152,6 +185,8 @@ jobs:
           bun run check:server
           bun run check:runtime-bootstrap
           bun run check:desktop-updates
+          bun run check:apple-signing
+          bun run check:system-reset
           bun run check:update-flow
           bun run check:automatic-updates
           bun run check:announcements
@@ -494,47 +529,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-          # Import the Developer ID certificate ourselves so a missing or
-          # malformed secret degrades to an ad-hoc signed build instead of
-          # failing inside tauri build. Tauri only sees the resulting identity.
-          identity=""
-          if [[ -n "${APPLE_CERTIFICATE:-}" ]]; then
-            keychain="$RUNNER_TEMP/squad-signing.keychain-db"
-            keychain_password="$(openssl rand -hex 24)"
-            certificate="$RUNNER_TEMP/developer-id.p12"
-            if printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate" 2>/dev/null \
-              && security create-keychain -p "$keychain_password" "$keychain" \
-              && security set-keychain-settings -lut 21600 "$keychain" \
-              && security unlock-keychain -p "$keychain_password" "$keychain" \
-              && security import "$certificate" -k "$keychain" -P "${APPLE_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign -T /usr/bin/security \
-              && security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null; then
-              security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
-              identity="$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*"' | head -n1 | tr -d '"' || true)"
-            fi
-            rm -f "$certificate"
-            if [[ -z "$identity" ]]; then
-              echo "::warning::APPLE_CERTIFICATE could not be imported as a Developer ID Application identity; the macOS bundle will be ad-hoc signed and not notarized."
-            fi
-          else
-            echo "APPLE_CERTIFICATE secret is not set; the macOS bundle will be ad-hoc signed."
-          fi
-          if [[ -n "$identity" ]]; then
-            echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
-            if [[ -n "${APPLE_ID:-}" && -n "${APPLE_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
-              {
-                echo "APPLE_ID=$APPLE_ID"
-                echo "APPLE_PASSWORD=$APPLE_PASSWORD"
-                echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
-              } >> "$GITHUB_ENV"
-              echo "Signing as $identity with notarization."
-            else
-              echo "::warning::Notarization credentials are incomplete; the app will be signed but not notarized."
-            fi
-          else
-            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
-          fi
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: node scripts/prepare-apple-signing.mjs
 
       - name: Prepare pinned Computer Use component
         shell: bash
@@ -552,12 +550,9 @@ jobs:
           AUTOHAND_SQUAD_RELEASE_VERSION: ${{ needs.setup.outputs.version }}
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == "macOS" && -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
-            # No Developer ID: ad-hoc sign the bundle (sealed resources, hardened
-            # runtime) so codesign --verify and the smoke test pass. Tauri leaves
-            # the bundle with only the linker signature otherwise.
-            export APPLE_SIGNING_IDENTITY="-"
-            echo "No APPLE_SIGNING_IDENTITY; ad-hoc signing the macOS bundle."
+          if [[ "$RUNNER_OS" == "macOS" && ( -z "${APPLE_SIGNING_IDENTITY:-}" || "$APPLE_SIGNING_IDENTITY" == "-" ) ]]; then
+            echo "::error::A verified Developer ID identity is required for a public release."
+            exit 1
           fi
           args=(build)
           if [[ -n "${TAURI_CONFIG_OVERRIDE:-}" ]]; then
@@ -608,9 +603,8 @@ jobs:
           test -f "$app/Contents/Resources/runtime/server/harness/index.mjs"
           test -f "$app/Contents/Resources/runtime/vendor/autohand-cli/BUILD_INFO.json"
           codesign --verify --deep --strict --verbose=2 "$app"
-          if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
-            spctl --assess --type execute --verbose=2 "$app" || echo "::warning::Gatekeeper assessment failed; notarization may be incomplete."
-          fi
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
           "$node_bin" --version
           "$squad" --help
           # `squad serve` waits for the bridge itself and exits non-zero when it
@@ -703,6 +697,10 @@ jobs:
           test -x "$appimage_root/squashfs-root/usr/bin/autohand-squad"
           test -x "$appimage_root/squashfs-root/usr/bin/squad"
           find "$appimage_root/squashfs-root" -name server.mjs | grep -q . || { echo "::error::server.mjs missing from the AppImage"; exit 1; }
+
+      - name: Remove temporary Apple credentials
+        if: always() && matrix.os == 'darwin'
+        run: node scripts/prepare-apple-signing.mjs --cleanup
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

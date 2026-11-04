@@ -6,12 +6,13 @@
 //   PUT  /api/system/settings  { autoCheckUpdates? } -> stored settings
 //   POST /api/system/reveal    open the data folder in Finder / Explorer
 
-import { rename } from "node:fs/promises";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { countMemoryEntries, systemSummary } from "../system/summary.mjs";
 import { publicSystemSettings, readSystemSettings, writeSystemSettings } from "../system/settings.mjs";
 import { revealActionLabel, revealFolder } from "../system/reveal.mjs";
+import { archiveSquadState, readResetProgress, writeResetProgress } from "../system/reset.mjs";
 
 export const name = "system";
 
@@ -20,6 +21,16 @@ function appStateDirFor(ctx) {
 }
 
 export async function handle(req, res, url, ctx) {
+  if (url.pathname === "/api/system/reset/status" && req.method === "GET") {
+    const requestId = url.searchParams.get("requestId");
+    const active = ctx.currentSystemReset?.();
+    const progress = await readResetProgress(ctx.squadStateDir);
+    let data = progress?.requestId === requestId ? progress : null;
+    if (active?.requestId === requestId) data ||= { requestId, phase: "working", previousPid: process.pid };
+    else if (!data && Number(url.searchParams.get("previousPid")) === process.pid) data = { requestId, phase: "not-started", previousPid: process.pid, error: "The reset did not start. Restart Squad and try again." };
+    ctx.json(res, 200, { success: true, data });
+    return true;
+  }
   if (url.pathname === "/api/system/summary" && req.method === "GET") {
     try {
       const appStateDir = appStateDirFor(ctx);
@@ -72,28 +83,43 @@ export async function handle(req, res, url, ctx) {
       ctx.json(res, 400, { success: false, error: "Send { confirm: \"RESET\" } to reset Squad." });
       return true;
     }
+    const requestId = body.requestId || randomUUID();
+    if (!/^[a-f0-9-]{36}$/i.test(requestId)) {
+      ctx.json(res, 400, { success: false, error: "A valid reset request ID is required." });
+      return true;
+    }
+    const previous = await readResetProgress(ctx.squadStateDir);
+    if (previous?.requestId === requestId && previous.phase === "complete") {
+      ctx.json(res, 200, { success: true, data: previous });
+      return true;
+    }
+    let releaseReset;
     try {
       // Every engine process goes first: a warm session (a member's direct
       // chat, a channel thread) that outlived the bridge wrote its session
       // files under the original path after the rename, and the restarted
       // bridge found an existing install (demo run 14 on the installed app).
-      if (typeof ctx.stopManagedRuns === "function") await ctx.stopManagedRuns("Squad reset by the person").catch(() => {});
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const moved = [];
-      const candidates = [ctx.squadStateDir, appStateDirFor(ctx), ...(Array.isArray(ctx.memberWorkspaceRoots) ? ctx.memberWorkspaceRoots : [])].filter(Boolean);
-      for (const folder of [...new Set(candidates)]) {
-        const backup = `${folder.replace(/\/+$/, "")}.reset-${stamp}`;
-        try { await rename(folder, backup); moved.push({ folder, backup }); }
-        catch (error) { if (error?.code !== "ENOENT") throw error; }
+      releaseReset = ctx.holdSystemReset?.(requestId);
+      await writeResetProgress(ctx.squadStateDir, { requestId, phase: "working", previousPid: process.pid });
+      if (typeof ctx.stopManagedRuns === "function") {
+        let timer;
+        try {
+          await Promise.race([ctx.stopManagedRuns("Squad reset by the person"), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Squad could not finish stopping its work. No folders have been moved; restart Squad and try again.")), 20_000); })]);
+        } finally { clearTimeout(timer); }
       }
+      const receipt = { ...await archiveSquadState({ squadStateDir: ctx.squadStateDir, appStateDir: appStateDirFor(ctx), memberWorkspaceRoots: ctx.memberWorkspaceRoots }), requestId, phase: "complete" };
+      await writeResetProgress(ctx.squadStateDir, receipt);
+      const { moved } = receipt;
       ctx.logEvent?.(ctx.SEVERITY?.WARN, `Squad reset by the person; ${moved.length} folders moved aside`, { "event.name": "system.reset", "autohand.reset.folders": moved.map((entry) => entry.folder).join(",") });
       // Leave nothing of the old state in memory: let the supervisor bring
       // the bridge back empty, as soon as the answer is on the wire so no
       // later request writes state into the fresh folder.
       res.once("finish", () => setTimeout(() => process.exit(0), 50));
-      ctx.json(res, 200, { success: true, data: { moved, restarting: true } });
+      ctx.json(res, 200, { success: true, data: receipt });
     } catch (error) {
-      ctx.json(res, 500, { success: false, error: error?.message || "Squad could not be reset." });
+      if (releaseReset) await writeResetProgress(ctx.squadStateDir, { requestId, phase: "failed", previousPid: process.pid, error: error.message }).catch(() => {});
+      releaseReset?.();
+      ctx.json(res, error.status || 500, { success: false, error: error?.message || "Squad could not be reset." });
     }
     return true;
   }

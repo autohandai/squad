@@ -63,6 +63,8 @@ jobs:
         run: |
           bun run check:work-attention
           bun run check:desktop-updates
+          bun run check:apple-signing
+          bun run check:system-reset
           bun run check:update-flow
           bun run check:automatic-updates
           bun run check:announcements
@@ -224,6 +226,10 @@ jobs:
         run: cargo build --bins -j1
         working-directory: daemon
 
+      - name: Check reset with the real service supervisor
+        if: runner.os == 'Linux'
+        run: bun run check:system-reset:supervisor
+
       - name: Check collective memory, TurboVec and managed MCP on native targets
         run: node scripts/check-memory-library.mjs
 
@@ -286,6 +292,9 @@ jobs:
 
       - name: Stage runtime and sidecars
         run: bun run desktop:stage
+
+      - name: Check native reset guard
+        run: cargo test --manifest-path src-tauri/Cargo.toml system_reset -- --test-threads=1
 
       - name: Check the desktop shell compiles
         run: bun run desktop:check

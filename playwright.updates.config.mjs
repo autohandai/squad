@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: ["updates.spec.mjs", "announcements.spec.mjs"],
+  testMatch: ["updates.spec.mjs", "announcements.spec.mjs", "system-reset.spec.mjs"],
   outputDir: ".codex-artifacts/updates-playwright",
   timeout: 60_000,
   workers: 1,

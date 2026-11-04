@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-squad-set-system-reset-stage"
+description = "Enables the squad_set_system_reset_stage command without any pre-configured scope."
+commands.allow = ["squad_set_system_reset_stage"]
+
+[[permission]]
+identifier = "deny-squad-set-system-reset-stage"
+description = "Denies the squad_set_system_reset_stage command without any pre-configured scope."
+commands.deny = ["squad_set_system_reset_stage"]

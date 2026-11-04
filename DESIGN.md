@@ -285,6 +285,8 @@
 
 ## Maintenance
 
+- Reset Squad guards native Quit and window close from confirmation until Cancel or a verified outcome. While resetting, show a spinner and plain progress text with no dismissal. Completion stays open with only **Restart Squad**; never reload on a timer. A lost response checks the same reset receipt before offering restart.
+
 - Reopening the desktop reuses healthy local Squad services and recovers verified stale analytics without a confirmation. Keep the desktop's address stable because its WebKit storage belongs to that origin; never hide saved chats by silently moving the UI to another port. An unrelated listener is left running and a real conflict explains the next action.
 
 - When a durable user UI preference emerges, update this file in the same change so future UI work reflects it.
