@@ -287,6 +287,7 @@
 
 - Connectors lists Autohand Squad’s managed MCP connection alongside added servers, with its actual tool list and member permissions explained. Core tools have no misleading third-party on/off switch.
 - A member’s Library is a dated divider list of files they published, with search, an in-app preview and download. The same artifact opens from its chat receipt and its source entry in the knowledge base. Preview keeps the conversation behind it and opens without zoom so embedded controls stay in place; generated HTML runs in an opaque frame with no access to app storage or native commands.
+- Artifact links in quick chat open the same preview in the main Squad window, keeping the compact conversation available.
 
 - Reset Squad guards native Quit and window close from confirmation until Cancel or a verified outcome. While resetting, show a spinner and plain progress text with no dismissal. Completion stays open with only **Restart Squad**; never reload on a timer. A lost response checks the same reset receipt before offering restart.
 

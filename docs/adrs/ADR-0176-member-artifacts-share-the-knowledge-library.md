@@ -21,6 +21,8 @@ HTML preview is fetched as text and mounted as `srcdoc` with a first-in-document
 
 ## Consequences and limits
 
+Quick chat has a separate render tree. Its artifact links forward the allowlisted member Library route to the main window, whose reader handles repeated navigation even when that artifact URL is already open. The compact conversation stays available. The reader ignores new open requests while a data reset is pending.
+
 An artifact exists only after a real file was published successfully. Existing arbitrary workspace files are not silently imported; a member can publish an existing deliverable when asked. The UI lists the current published revision, not a complete revision-history editor. Saved blobs are retained; lifecycle/storage collection is not implemented here. A file can be up to 20 MB and the registry holds up to 5,000 current entries.
 
 Knowledge collection stores the artifact's description and provenance, not its entire binary or HTML body. Sharing a memory source does not implicitly grant another member tool access to private artifact bytes. Missing or removed members' files are not reassigned to someone else. Preview resource connections are restricted; external libraries/assets may need a standalone export. Arbitrary HTML network/navigation capabilities are not a general browser sandbox guarantee. No live provider success is inferred from mock engine tests.

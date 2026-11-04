@@ -298,7 +298,9 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml system_reset -- --test-threads=1
 
       - name: Check native artifact navigation guard
-        run: cargo test --manifest-path src-tauri/Cargo.toml artifact_preview -- --test-threads=1
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml artifact_preview -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml compact_chat_links_route_only_known_main_surfaces -- --test-threads=1
 
       - name: Check the desktop shell compiles
         run: bun run desktop:check

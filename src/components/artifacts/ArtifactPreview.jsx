@@ -3,11 +3,16 @@ import { ArrowUpRight, Download, FileText, LoaderCircle, X } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { artifactDate, artifactIdFromHref, openArtifact } from "@/lib/artifacts";
+import { isSystemResetPending } from "@/lib/system-reset";
 
 /** Chat links use the same saved artifact as the member's Library. */
-export function ArtifactCard({ id, title }) {
+export function ArtifactCard({ id, title, href }) {
+  function show() {
+    if (window.location.pathname === '/quick-chat') window.location.assign(href);
+    else openArtifact(id);
+  }
   return <span className="my-3 inline-flex w-full max-w-md align-top">
-    <button type="button" className="group flex w-full items-center gap-3 rounded-md border border-border/70 px-4 py-4 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => openArtifact(id)} aria-label={`Open artifact: ${title}`}>
+    <button type="button" className="group flex w-full items-center gap-3 rounded-md border border-border/70 px-4 py-4 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={show} aria-label={`Open artifact: ${title}`}>
       <FileText className="size-6 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="min-w-0"><span className="block truncate font-medium text-foreground">{title}</span><span className="mt-0.5 block text-xs text-muted-foreground">Artifact · Open preview</span></span>
       <ArrowUpRight className="ml-auto size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -37,20 +42,25 @@ function ArtifactBody({ artifact, renderMarkdown }) {
 }
 
 export function ArtifactPreviewController({ api, renderMarkdown }) {
-  const [id, setId] = useState(''), [artifact, setArtifact] = useState(null), [error, setError] = useState('');
+  const [id, setId] = useState(''), [artifact, setArtifact] = useState(null), [error, setError] = useState(''), [request, setRequest] = useState(0);
   useEffect(() => {
-    const show = event => { setArtifact(null); setError(''); setId(event.detail.id); };
+    const showId = next => { if (!next || isSystemResetPending()) return; setArtifact(null); setError(''); setId(next); setRequest(value => value + 1); };
+    const show = event => showId(event.detail?.id);
+    const locationChanged = () => {
+      const next = artifactIdFromHref(window.location.pathname + window.location.search);
+      showId(next);
+    };
     window.addEventListener('squad:open-artifact', show);
-    const initial = artifactIdFromHref(window.location.pathname + window.location.search);
-    if (initial) setId(initial);
-    return () => window.removeEventListener('squad:open-artifact', show);
+    window.addEventListener('popstate', locationChanged);
+    locationChanged();
+    return () => { window.removeEventListener('squad:open-artifact', show); window.removeEventListener('popstate', locationChanged); };
   }, []);
   useEffect(() => {
     if (!id) return;
     const controller = new AbortController();
     api(`/api/artifacts/${encodeURIComponent(id)}`, { signal: controller.signal }).then(value => { if (!controller.signal.aborted) setArtifact(value); }, failure => { if (!controller.signal.aborted) setError(failure.message); });
     return () => controller.abort();
-  }, [api, id]);
+  }, [api, id, request]);
   function close() { setId(''); setArtifact(null); setError(''); }
   async function openInBrowser(event) {
     const invoke = window.__TAURI_INTERNALS__?.invoke;

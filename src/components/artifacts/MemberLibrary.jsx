@@ -6,17 +6,17 @@ import { artifactDate, artifactIdFromHref, artifactSize, openArtifact } from "@/
 
 export function MemberLibrary({ agent, api, navigate }) {
   const [records, setRecords] = useState([]), [query, setQuery] = useState(''), [error, setError] = useState(''), [loading, setLoading] = useState(true), [refresh, setRefresh] = useState(0);
+  const requestedArtifact = artifactIdFromHref(window.location.pathname + window.location.search);
   useEffect(() => {
     const controller = new AbortController(); setLoading(true); setError('');
     api(`/api/artifacts?owner=${encodeURIComponent(agent.id)}`, { signal: controller.signal }).then(data => { if (!controller.signal.aborted) setRecords(data.artifacts); }, failure => { if (!controller.signal.aborted) setError(failure.message); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [agent.id, api, refresh]);
   useEffect(() => {
-    const id = artifactIdFromHref(window.location.pathname + window.location.search);
-    if (!id) return;
-    const frame = requestAnimationFrame(() => openArtifact(id));
+    if (!requestedArtifact) return;
+    const frame = requestAnimationFrame(() => openArtifact(requestedArtifact));
     return () => cancelAnimationFrame(frame);
-  }, [agent.id]);
+  }, [agent.id, requestedArtifact]);
   const shown = useMemo(() => records.filter(record => `${record.title} ${record.description} ${record.filename}`.toLowerCase().includes(query.trim().toLowerCase())), [records, query]);
   return <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-8" data-testid="member-artifact-library">
     <div className="flex items-start justify-between gap-5"><div><h1 className="text-xl font-semibold">Library</h1><p className="mt-2 text-sm leading-6 text-muted-foreground">Files {agent.name} created and saved for you.</p></div><Button variant="ghost" size="sm" onClick={() => navigate(`/memory?owner=${encodeURIComponent(agent.id)}`)}><BookOpen className="size-4" />Knowledge base</Button></div>

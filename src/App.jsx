@@ -12066,7 +12066,7 @@ function InlineMarkdown({ text }) {
     if (part.type === "strong") return <strong key={index}>{part.value}</strong>;
     if (part.type === "link") {
       const artifactId = artifactIdFromHref(part.href);
-      if (artifactId) return <ArtifactCard key={index} id={artifactId} title={part.value} />;
+      if (artifactId) return <ArtifactCard key={index} id={artifactId} title={part.value} href={part.href} />;
       const internal = part.href.startsWith("/");
       return (
         <a key={index} href={part.href} target={internal ? undefined : "_blank"} rel={internal ? undefined : "noreferrer"} className="text-primary underline underline-offset-4">

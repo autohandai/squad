@@ -94,6 +94,18 @@ test('Squad MCP is visible and generated artifacts open from chat, Library and k
   await card.click();
   await expect(preview.getByRole('heading')).toHaveText(title);
   await preview.getByRole('button', { name: 'Close artifact' }).click();
+  await page.goto(bridge.origin + `/quick-chat?member=${member.id}`);
+  await page.getByRole('button', { name: 'Open artifact: Release research', exact: true }).last().click();
+  await expect(page).toHaveURL(bridge.origin + saved.href);
+  await expect(preview.getByRole('heading')).toHaveText(title);
+  await preview.getByRole('button', { name: 'Close artifact' }).click();
+  // Native quick-chat forwarding emits popstate even if the main window
+  // is already at this exact artifact URL. Closing must not make it stale.
+  await page.evaluate(() => window.dispatchEvent(new PopStateEvent('popstate')));
+  await expect(preview.getByRole('heading')).toHaveText(title);
+  await page.evaluate(() => window.dispatchEvent(new PopStateEvent('popstate')));
+  await expect(preview.getByRole('heading')).toHaveText(title);
+  await preview.getByRole('button', { name: 'Close artifact' }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
 });

@@ -264,6 +264,7 @@ fn main_route(url: &Url) -> Option<String> {
                     | "automations"
                     | "tasks"
                     | "memory"
+                    | "library"
                     | "history"
                     | "model"
                     | "harness"
@@ -583,6 +584,7 @@ mod tests {
     fn compact_chat_links_route_only_known_main_surfaces() {
         for route in [
             "/squad-members/noah/home",
+            "/squad-members/noah/library?artifact=artifact_12345678-1234-1234-1234-123456789abc",
             "/work?view=needs-you",
             "/conversations/new?member=noah",
             "/settings",
