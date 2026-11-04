@@ -442,7 +442,10 @@ fn vector_id(id: &str) -> u64 {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn fingerprint(documents: &BTreeMap<String, String>) -> String {
@@ -454,7 +457,10 @@ fn fingerprint(documents: &BTreeMap<String, String>) -> String {
             hash.update(field.as_bytes());
         }
     }
-    format!("{:x}", hash.finalize())
+    hash.finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn features(text: &str, max_tokens: usize) -> Option<Vec<f32>> {
@@ -641,6 +647,26 @@ fn serve(state: &mut MemoryIndex, input: &mut impl BufRead, output: &mut impl Wr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sha256_output_preserves_existing_memory_cache_format() {
+        assert_eq!(
+            digest(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            digest(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let documents = BTreeMap::from([(
+            "memory-one".to_string(),
+            "Keep a leading zero in every byte.".to_string(),
+        )]);
+        assert_eq!(
+            fingerprint(&documents),
+            "9ed8f708a88d1be8a5d9d69d5f13228b63525a3b6193bb87c82b7ba1720cf9f9"
+        );
+    }
 
     struct Scratch(PathBuf);
     impl Scratch {

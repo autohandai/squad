@@ -10,6 +10,14 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Changed
+
+- Updated the runtime dependency used to verify downloads and saved memory.
+
+### Fixed
+
+- Existing memory indexes retain the same checksums after the dependency update.
+
 ## [0.1.21] - 2026-11-04
 
 ### Added
