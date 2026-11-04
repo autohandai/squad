@@ -1,6 +1,7 @@
 import React, { Fragment, Suspense, createContext, lazy, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectObserver } from "@/lib/use-project-observer";
 import { onDesktopMenu } from "@/lib/desktop-menu";
+import { isSystemResetPending, pendingSystemReset } from "@/lib/system-reset";
 import { FirstRun } from "@/components/onboarding/FirstRun";
 import { ChannelDetailsSettings } from "@/components/channels/ChannelDetailsSettings";
 import { AnsweredByTag } from "@/components/channels/ResponderSettings";
@@ -3682,6 +3683,7 @@ function highlightSearchHit(find, { attempts = 40, delay = 350 } = {}) {
 // under "Could not answer". Say what happened instead; an abort stays an abort.
 const BRIDGE_UNREACHABLE_MESSAGE = "Squad's local service did not answer, so this was not sent. Retry once it is back; nothing was lost.";
 async function bridgeFetch(path, init) {
+  if (isSystemResetPending() && !["GET", "HEAD"].includes((init?.method || "GET").toUpperCase()) && String(path).split("?")[0] !== "/api/system/reset") throw new Error("Restart Squad to continue after resetting its data.");
   try {
     return await fetch(path, init);
   } catch (error) {
@@ -4403,7 +4405,7 @@ function presenceRecordIsFresh(record, maxAgeMs) {
 
 
 function App() {
-  const [route, setRoute] = useState(() => window.location.pathname + window.location.search);
+  const [route, setRoute] = useState(() => pendingSystemReset() ? "/settings/system" : window.location.pathname + window.location.search);
   // Unsent drafts outlive a reload or a crash: typing a long message and
   // losing it to a restart was the one thing the composer could not recover.
   const [chatDraftsByAgent, setChatDraftsByAgent] = useState(() => {
@@ -4728,6 +4730,12 @@ function App() {
   }, [tasks]);
   useEffect(() => {
     const path = route.split("?")[0];
+    if (isSystemResetPending()) {
+      if (path !== "/settings/system" || window.location.pathname !== path) {
+        window.history.replaceState({}, "", "/settings/system"); setRoute("/settings/system");
+      }
+      return;
+    }
     const feature = path === "/work" || path === "/inbox" || path === "/mission-control" ? "needs_you"
       : path === "/squad" ? "squad" : path.startsWith("/settings") ? "settings"
         : path.startsWith("/channels") ? "channels" : path.startsWith("/squad-members/new") ? "member_creation"
@@ -6765,6 +6773,7 @@ function App() {
   }, [route]);
 
   function navigate(path) {
+    if (isSystemResetPending()) return;
     const state = {};
     if (isSettingsDestination(path)) {
       state.squadSettingsReturn = isSettingsDestination(route)
@@ -6780,6 +6789,7 @@ function App() {
   }
 
   function returnFromSettings() {
+    if (isSystemResetPending()) return;
     const previous = readSettingsReturn();
     const target = previous?.route || squadDirectoryPath();
     rememberSettingsReturn(null);

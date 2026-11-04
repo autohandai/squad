@@ -9,6 +9,9 @@ fn main() {
             "squad_notification_test",
             "squad_notification_settings",
             "squad_quit_for_update",
+            "squad_set_system_reset_stage",
+            "squad_system_reset_status",
+            "squad_restart_after_system_reset",
         ]),
     ))
     .expect("build Squad native permissions")
