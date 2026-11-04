@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Reset recovery checks wait for Node to reach its exit request before measuring child reaping, so slow startup does not masquerade as a reset failure.
+
 ## [0.1.20] - 2026-11-04
 
 ### Added
