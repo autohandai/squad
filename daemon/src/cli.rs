@@ -2228,16 +2228,70 @@ mod tests {
         let paths = temp_state_paths();
         paths.ensure().unwrap();
         let server = paths.root.join("exit-immediately.mjs");
-        std::fs::write(&server, "process.exit(0);\n").unwrap();
+        let exit_marker = paths.root.join("exit-requested");
+        std::fs::write(
+            &server,
+            format!(
+                "import {{ writeFileSync, renameSync }} from 'node:fs';\nconst marker = {};\nwriteFileSync(marker + '.tmp', String(process.pid));\nrenameSync(marker + '.tmp', marker);\nprocess.exit(0);\n",
+                serde_json::to_string(&exit_marker).unwrap()
+            ),
+        )
+        .unwrap();
+        let node_runtime = locate_node_runtime().unwrap();
         spawn_web_server(&paths, &SquadConfig::defaults(), &server, false, 0).unwrap();
         let pid = read_web_server_record(&paths).unwrap().unwrap().pid;
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        while process_is_running(pid) && std::time::Instant::now() < deadline {
+        // A cold Node launch on a hosted runner is not child reaping. Start
+        // the short reaping deadline only once the fixture requests its exit.
+        let startup_began = std::time::Instant::now();
+        let startup_deadline = startup_began + Duration::from_secs(30);
+        while !exit_marker.exists()
+            && process_is_running(pid)
+            && std::time::Instant::now() < startup_deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let exit_pid = std::fs::read_to_string(&exit_marker)
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok());
+        let started = exit_pid == Some(pid);
+        let startup_elapsed = startup_began.elapsed();
+        let reaping_began = std::time::Instant::now();
+        let deadline = reaping_began + Duration::from_secs(3);
+        while started && process_is_running(pid) && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
         let reaped = !process_is_running(pid);
+        let reaping_elapsed = reaping_began.elapsed();
+        let diagnostics = if !started || !reaped {
+            let status = non_bridge_command("ps")
+                .args(["-o", "stat=,ppid=,etime=,comm=", "-p", &pid.to_string()])
+                .output()
+                .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+                .unwrap_or_default();
+            format!(
+                "node={node_runtime:?}, pid={pid}, exit marker pid={exit_pid:?}, startup={startup_elapsed:?}, reaping={reaping_elapsed:?}, process={status:?}, bridge log={:?}",
+                std::fs::read_to_string(&paths.web_server_log).unwrap_or_default()
+            )
+        } else {
+            String::new()
+        };
+        if !started && !reaped {
+            // Only this fixture's recorded child may be stopped on startup
+            // failure; the production waiter remains responsible for reaping.
+            let _ = non_bridge_command("kill")
+                .args(["-TERM", &pid.to_string()])
+                .status();
+            let stop_deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while process_is_running(pid) && std::time::Instant::now() < stop_deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
         std::fs::remove_dir_all(&paths.root).unwrap();
-        assert!(reaped, "A native launcher stays alive after reset; its exited bridge must not remain a zombie that delays supervision.");
+        assert!(
+            started,
+            "The bridge fixture never reached its exit request. {diagnostics}"
+        );
+        assert!(reaped, "A native launcher stays alive after reset; its exited bridge must not remain a zombie that delays supervision. {diagnostics}");
     }
 
     #[tokio::test]

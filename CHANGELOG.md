@@ -10,7 +10,7 @@ list to the section for that version.
 
 ## [Unreleased]
 
-## [0.1.20] - 2026-11-04
+## [0.1.21] - 2026-11-04
 
 ### Added
 
@@ -21,10 +21,15 @@ list to the section for that version.
 
 - macOS release signing includes the bundled Autohand CLI and secure timestamps for Computer Use, so Apple's notarization check can validate every nested executable.
 - Reset Squad shows progress, restores its local service reliably and waits for you to choose Restart Squad. Quit and window close are blocked during confirmation and reset; dated backups and your Autohand Code sign-in are kept.
+- Release checks separate Node startup from child reaping and retry interrupted pinned component downloads. Cold Intel runtime builds have a 60-minute budget; other targets keep their existing limits.
+
+## [0.1.20] - 2026-11-04
+
+This tag was not published: Intel runtime checks failed and a subsequent cold build exceeded its job limit. Its product changes first reach stable downloads in 0.1.21.
 
 ## [0.1.19] - 2026-11-04
 
-This tag was not published: Apple rejected nested executable signatures. These changes first reach stable downloads in 0.1.20.
+This tag was not published: Apple rejected nested executable signatures. These changes first reach stable downloads in 0.1.21.
 
 ### Changed
 

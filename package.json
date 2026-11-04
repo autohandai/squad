@@ -1,6 +1,6 @@
 {
   "name": "autohandswe",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "private": true,
   "description": "A native workspace for human and agent teams",
   "license": "MIT",
@@ -146,7 +146,7 @@
     "check:chat-recovery": "node scripts/check-chat-recovery.mjs",
     "check:attention-badge": "node scripts/check-attention-badge.mjs",
     "check:project-observer": "node scripts/check-project-observer.mjs",
-    "check:computer-use": "node scripts/check-computer-use.mjs",
+    "check:computer-use": "node scripts/check-computer-use.mjs && node scripts/check-computer-use-download.mjs",
     "check:computer-use-cli": "node scripts/check-computer-use-cli.mjs",
     "check:computer-use-ui": "node scripts/check-computer-use-ui.mjs",
     "check:observer-watch": "node scripts/check-observer-watch.mjs",

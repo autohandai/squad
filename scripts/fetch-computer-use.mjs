@@ -48,7 +48,7 @@ async function regularFile(filename) {
   if (info && !info.isFile()) throw new Error(`Expected a regular input file: ${filename}`);
   return Boolean(info);
 }
-async function verifiedDownload(url, filename, expected, { check, log }) {
+export async function verifiedDownload(url, filename, expected, { check, log, fetchImpl = fetch, wait = milliseconds => new Promise(done => setTimeout(done, milliseconds)) }) {
   if (await regularFile(filename)) {
     if (await sha(filename) !== expected) throw new Error(`Pinned checksum mismatch: ${filename}`);
     log(`Verified existing ${filename}.`);
@@ -59,17 +59,32 @@ async function verifiedDownload(url, filename, expected, { check, log }) {
   const scratch = await mkdtemp(join(resolve(filename, '..'), '.computer-use-download-'));
   const download = join(scratch, 'archive');
   try {
-    log(`Downloading pinned Computer Use input: ${url}`);
-    const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
-    if (!response.ok || !response.body) throw new Error(`Download failed (HTTP ${response.status}): ${url}`);
-    let bytes = 0;
-    const bounded = new Transform({ transform(chunk, _encoding, callback) {
-      bytes += chunk.length;
-      callback(bytes > 512 * 1024 * 1024 ? new Error('Computer Use download exceeded 512 MiB.') : null, chunk);
-    } });
-    await pipeline(Readable.fromWeb(response.body), bounded, createWriteStream(download, { flags: 'wx' }));
-    if (await sha(download) !== expected) throw new Error(`Downloaded Computer Use input failed its pinned checksum: ${url}`);
-    await rename(download, filename);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        log(`Downloading pinned Computer Use input: ${url}`);
+        const response = await fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
+        if (!response.ok || !response.body) {
+          await response.body?.cancel().catch(() => {});
+          throw Object.assign(new Error(`Download failed (HTTP ${response.status}): ${url}`), { retryable: response.status === 408 || (response.status >= 500 && response.status < 600) });
+        }
+        let bytes = 0;
+        const bounded = new Transform({ transform(chunk, _encoding, callback) {
+          bytes += chunk.length;
+          callback(bytes > 512 * 1024 * 1024 ? new Error('Computer Use download exceeded 512 MiB.') : null, chunk);
+        } });
+        await pipeline(Readable.fromWeb(response.body), bounded, createWriteStream(download, { flags: 'wx' }));
+        if (await sha(download) !== expected) throw new Error(`Downloaded Computer Use input failed its pinned checksum: ${url}`);
+        await rename(download, filename);
+        return;
+      } catch (error) {
+        await rm(download, { force: true });
+        const networkCode = error.cause?.code || error.code;
+        const retryable = error.retryable === true || error.name === 'TimeoutError' || ['ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'].includes(networkCode);
+        if (!retryable || attempt === 3) throw error;
+        log(`Retrying pinned Computer Use download (${attempt + 1}/3) after a temporary transfer failure.`);
+        await wait(attempt * 1000);
+      }
+    }
   } finally { await rm(scratch, { recursive: true, force: true }); }
 }
 
