@@ -5,9 +5,9 @@ import { cleanMemoryText, looksSecret } from '../team/store.mjs';
 import { collectMemories, digest, teamMemoryRecord } from './collect.mjs';
 import { createMemoryVectorClient } from './vector-client.mjs';
 
-export const MEMORY_KINDS = Object.freeze(['memory', 'lesson', 'decision', 'preference', 'discovery']);
+export const MEMORY_KINDS = Object.freeze(['memory', 'lesson', 'decision', 'preference', 'discovery', 'artifact']);
 export const MEMORY_RELATIONS = Object.freeze(['references', 'supports', 'contradicts']);
-export const DEFAULT_COLLECTION = Object.freeze({ team: true, members: true, profiles: true, cli: true, folders: [], colors: {} });
+export const DEFAULT_COLLECTION = Object.freeze({ team: true, members: true, profiles: true, cli: true, artifacts: true, folders: [], colors: {} });
 const empty = () => ({ version: 1, settings: { ...DEFAULT_COLLECTION }, groups: [], metadata: {}, links: [] });
 const error = (message, status = 400) => Object.assign(new Error(message), { status });
 const label = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -22,7 +22,7 @@ function canChange(record, actor) {
 }
 
 /** One collection, one authorization boundary for the app and managed MCP. */
-export function createMemoryService({ stateDir, rootDir, agentsDir, members, teamStore, emit = () => {}, vectorClient } = {}) {
+export function createMemoryService({ stateDir, rootDir, agentsDir, members, teamStore, emit = () => {}, vectorClient, artifacts = async () => [] } = {}) {
   const file = join(stateDir, 'memory', 'library.json');
   const vectors = vectorClient || createMemoryVectorClient({ rootDir, stateDir });
   let mutation = Promise.resolve(), collection;
@@ -52,6 +52,10 @@ export function createMemoryService({ stateDir, rootDir, agentsDir, members, tea
       await mutation;
       const saved = await state();
       const collected = await collectMemories({ members, teamStore, settings: saved.settings, agentsDir });
+      if (saved.settings.artifacts) {
+        collected.records.push(...await artifacts());
+        collected.sources.push({ id: 'artifacts', label: 'Member artifacts', enabled: true });
+      }
       const records = collected.records.map(item => ({ ...item, ...(saved.metadata[item.id] || {}), sourceTitle: item.title, title: saved.metadata[item.id]?.title || item.title, sharedWith: saved.metadata[item.id]?.sharedWith || [], tags: [...new Set([...(item.tags || []), ...(saved.metadata[item.id]?.tags || [])])] }));
       // Source fields and visibility cannot be replaced by curation metadata.
       return { ...collected, records, groups: saved.groups, settings: saved.settings, links: saved.links };
@@ -139,7 +143,7 @@ export function createMemoryService({ stateDir, rootDir, agentsDir, members, tea
   async function updateSettings(input) {
     return mutate(saved => {
       const next = { ...saved.settings };
-      for (const key of ['team', 'members', 'profiles', 'cli']) if (key in input) next[key] = input[key] === true;
+      for (const key of ['team', 'members', 'profiles', 'cli', 'artifacts']) if (key in input) next[key] = input[key] === true;
       if ('colors' in input) {
         if (!input.colors || typeof input.colors !== 'object' || Array.isArray(input.colors) || Object.keys(input.colors).length > 1000) throw error('Choose valid member colors.');
         next.colors = Object.fromEntries(Object.entries(input.colors).filter(([id, color]) => /^[A-Za-z0-9_.:-]{1,200}$/.test(id) && /^#[0-9a-f]{6}$/i.test(color)));

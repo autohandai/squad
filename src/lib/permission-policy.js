@@ -101,6 +101,7 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
       ["squad_organize_memory", "allow"],
       ["squad_propose_team", "allow"],
       ["squad_read_chat", "allow"],
+      ["squad_publish_artifact", "allow"],
     ],
   },
   {

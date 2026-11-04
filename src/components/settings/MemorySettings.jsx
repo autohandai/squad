@@ -9,6 +9,7 @@ const SOURCES = [
   ['team', 'Squad memories', 'Shared, private and project memories saved by you or through Squad MCP.'],
   ['members', 'Member memories', 'Durable facts saved in each member’s profile.'],
   ['profiles', 'Profile Markdown', 'The memory documents attached to each member.'],
+  ['artifacts', 'Member artifacts', 'Files created and published by members, with a link to their saved preview.'],
   ['cli', 'Autohand memory', 'Canonical memories in each member’s isolated Autohand home. Session logs and stale summary caches are excluded.'],
 ];
 

@@ -10,6 +10,13 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-11-04
+
+### Added
+
+- Autohand Squad’s built-in MCP connection appears in Connectors with its available tools.
+- Each member has a Library for saved reports, HTML pages, documents, images and datasets. Open artifacts from chat, preview interactive HTML in Squad, download the original file, and find the same work in the knowledge base.
+
 ## [0.1.19] - 2026-11-04
 
 ### Changed

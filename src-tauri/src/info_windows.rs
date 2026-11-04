@@ -90,6 +90,9 @@ pub(crate) fn info_navigation_handler(
 ) -> impl Fn(&Url) -> bool + Send + 'static {
     let app = app.clone();
     move |url| {
+        if crate::artifact_preview::blocks_navigation(url) {
+            return false;
+        }
         if from_info_window && !bridge_origin_matches(url, lock(&shell.app_url).as_deref()) {
             if external_link_allowed(url) {
                 // The installed documents contain ordinary external and

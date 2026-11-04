@@ -1,4 +1,4 @@
-export const MEMORY_KINDS = ['memory', 'lesson', 'decision', 'preference', 'discovery'];
+export const MEMORY_KINDS = ['memory', 'lesson', 'decision', 'preference', 'discovery', 'artifact'];
 export const MEMORY_COLORS = ['#518cce', '#bb7ace', '#d28c46', '#4a9f88', '#ca7086', '#829a44', '#7082c8', '#ae905c', '#4b9fac'];
 const hash = value => [...String(value)].reduce((result, character) => Math.imul(result ^ character.codePointAt(0), 16777619) >>> 0, 2166136261);
 export const memoryColor = (id, preferred) => /^#[0-9a-f]{6}$/i.test(preferred || '') ? preferred : MEMORY_COLORS[hash(id) % MEMORY_COLORS.length];

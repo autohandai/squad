@@ -125,10 +125,13 @@ console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture clau
 
   start(); await until(async () => (await api('/api/connectors')).success);
 
-  // --- list: the built-in row comes first, off, without a key ---
+  // --- discovery: managed Squad tools, then optional external connectors ---
   let listed = (await api('/api/connectors')).data.connectors;
-  assert.equal(listed[0].id, 'web-research'); assert.equal(listed[0].builtin, true); assert.equal(listed[0].enabled, false); assert.equal(listed[0].hasKey, false);
-  assert.equal(listed.length, 1);
+  assert.equal(listed[0].id, 'autohand-squad'); assert.equal(listed[0].managed, true);
+  assert.ok(listed[0].tools.some(tool => tool.name === 'squad_publish_artifact'));
+  const researchRecord = listed.find(connector => connector.id === 'web-research');
+  assert.equal(researchRecord.builtin, true); assert.equal(researchRecord.enabled, false); assert.equal(researchRecord.hasKey, false);
+  assert.equal(listed.length, 2);
   const stateFile = await stat(join(state, 'connectors.json')).catch(() => null);
   assert.ok(!stateFile, 'nothing is written until something is saved');
 
@@ -289,7 +292,8 @@ console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture clau
   // --- the state survives a bridge restart; delete removes a connector ---
   await stop(); start(); await until(async () => (await api('/api/connectors')).success);
   listed = (await api('/api/connectors')).data.connectors;
-  assert.equal(listed[0].id, 'web-research'); assert.equal(listed[0].enabled, true); assert.equal(listed[0].hasKey, true); assert.equal(listed[0].lastTest.credits, 4321);
+  const persistedResearch = listed.find(connector => connector.id === 'web-research');
+  assert.equal(persistedResearch.enabled, true); assert.equal(persistedResearch.hasKey, true); assert.equal(persistedResearch.lastTest.credits, 4321);
   const restored = listed.find((item) => item.id === newline.id); assert.equal(restored.enabled, true); assert.equal(restored.lastTest.ok, true); assert.equal(restored.env.find((pair) => pair.key === 'API_TOKEN').hint, '…1234');
   assert.equal(listed.find((item) => item.id === http.id).enabled, false);
   assert.equal((await api(`/api/connectors/${failing.id}`, undefined, 'DELETE')).status, 200);

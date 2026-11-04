@@ -62,7 +62,7 @@ function MemoryInspector({ record, data, api, onChanged, onSelect, onClose, navi
       <h3 className="text-xs font-medium">Source</h3><p className="mt-2 text-sm">{record.sourceLabel}</p><p className="mt-1 text-xs text-muted-foreground">{record.authorName ? `Saved by ${record.authorName} · ` : ''}{when(record.updatedAt || record.createdAt)}</p>
       {record.workspace ? <p className="mt-2 break-all text-xs text-muted-foreground select-text">Project: {record.workspace}</p> : null}
       {record.sourcePath ? <p className="mt-2 break-all font-mono text-[11px] leading-relaxed text-muted-foreground select-text">{record.sourcePath}{record.sourceLine ? `:${record.sourceLine}` : ''}</p> : null}
-      {record.sourceHref ? <Button variant="ghost" size="sm" className="mt-2 h-7 gap-1 px-0 text-xs" onClick={() => navigate(record.sourceHref)}>Open member memory<ArrowUpRight className="size-3" /></Button> : null}
+      {record.sourceHref ? <Button variant="ghost" size="sm" className="mt-2 h-7 gap-1 px-0 text-xs" onClick={() => navigate(record.sourceHref)}>{record.sourceType === 'artifact' ? 'Open artifact' : 'Open member memory'}<ArrowUpRight className="size-3" /></Button> : null}
     </section>
     <section className="mt-6 grid gap-3 border-t pt-5" aria-label="Organize memory">
       <h3 className="text-xs font-medium">Organize</h3>

@@ -1,0 +1,82 @@
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { createArtifactService } from '../server/artifacts/service.mjs';
+import { createTeamService } from '../server/team/service.mjs';
+import { createMemoryService } from '../server/memory/service.mjs';
+import { handle as artifactRoute } from '../server/routes/artifacts.route.mjs';
+import { handle as connectorRoute } from '../server/routes/connectors.route.mjs';
+
+const directory = await mkdtemp(join(tmpdir(), 'squad-artifacts-'));
+let server;
+try {
+  const workspace = join(directory, 'workspace'), outside = join(directory, 'outside'), stateDir = join(directory, 'squad');
+  await mkdir(workspace); await mkdir(outside); await mkdir(stateDir);
+  const people = [{ id: 'artifact-noah', name: 'Noah' }, { id: 'artifact-eva', name: 'Eva' }];
+  const members = async () => people;
+  const artifacts = createArtifactService({ stateDir, members });
+  const team = createTeamService({ stateDir, rootDir: resolve('.'), bridgeUrl: 'http://127.0.0.1:1', members, artifacts });
+  const session = await team.openWork({ memberId: people[0].id, runId: 'artifact-work', workspace });
+  const token = session.mcpServer.env.AUTOHAND_SQUAD_TEAM_TOKEN;
+  let sequence = 0;
+  const call = arguments_ => team.dispatch(token, { jsonrpc: '2.0', id: ++sequence, method: 'tools/call', params: { name: 'squad_publish_artifact', arguments: arguments_ } });
+  const html = '<!doctype html><h1>Release research</h1><button onclick="this.textContent=\'Reviewed\'">Review</button>';
+  await writeFile(join(workspace, 'research.html'), html);
+  const result = await call({ path: 'research.html', title: 'Release research', description: 'Sources and release decisions.' });
+  assert.equal(result.isError, undefined, JSON.stringify(result));
+  const saved = JSON.parse(result.content[0].text);
+  assert.equal(saved.ownerId, people[0].id); assert.equal(saved.runId, 'artifact-work');
+  assert.equal(saved.revision, 1); assert.match(saved.href, /\/library\?artifact=artifact_/);
+  assert.equal((await artifacts.content(saved.id)).bytes.toString(), html);
+  const receipts = team.takeReceipts('artifact-work'); assert.equal(receipts[0].type, 'artifact'); assert.ok(receipts[0].message.includes(saved.href));
+  await writeFile(join(workspace, 'research.html'), '<h1>Updated research</h1>');
+  assert.equal((await artifacts.content(saved.id)).bytes.toString(), html, 'a later workspace edit cannot silently replace the published snapshot');
+  const revised = JSON.parse((await call({ path: 'research.html', title: 'Release research' })).content[0].text);
+  assert.equal(revised.id, saved.id); assert.equal(revised.revision, 2);
+  assert.equal(revised.description, saved.description, 'republishing a changed file keeps its existing description');
+  const duplicate = JSON.parse((await call({ path: 'research.html' })).content[0].text); assert.equal(duplicate.revision, 2);
+  assert.equal((await createArtifactService({ stateDir, members }).get(saved.id)).revision, 2, 'the library survives a service restart');
+  assert.equal((await artifacts.list({ actor: { memberId: people[1].id } })).length, 0);
+  await assert.rejects(artifacts.content(saved.id, { memberId: people[1].id }), { status: 404 });
+  await writeFile(join(outside, 'private.txt'), 'not in this workspace');
+  assert.equal((await call({ path: '../outside/private.txt' })).isError, true);
+  assert.equal((await call({ path: 'research.html', ownerId: people[1].id })).isError, true);
+  if (process.platform !== 'win32') { await symlink(join(outside, 'private.txt'), join(workspace, 'outside-link')); assert.equal((await call({ path: 'outside-link' })).isError, true); }
+  const prepared = await team.prepareMember({ memberId: people[1].id, workspace });
+  await assert.rejects(team.dispatch(prepared.mcpServer.env.AUTOHAND_SQUAD_TEAM_TOKEN, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'squad_publish_artifact', arguments: { path: 'research.html' } } }), /no active Squad turn/);
+  console.log('PASS managed MCP publishes attributed snapshots, persistent revisions and chat receipts; workspace escape, symlink escape, identity spoofing and inactive turns are refused.');
+
+  const memory = createMemoryService({ stateDir, rootDir: resolve('.'), agentsDir: join(directory, 'agents'), members, teamStore: team.store, artifacts: () => artifacts.memoryRecords(), vectorClient: { request: async () => { throw Error('fixture keyword search'); } } });
+  const found = await memory.list({ actor: { memberId: people[0].id }, kind: 'artifact', query: 'Release research' });
+  assert.equal(found.records[0].id, saved.id); assert.equal(found.records[0].sourceHref, saved.href);
+  assert.equal((await memory.list({ actor: { memberId: people[1].id }, kind: 'artifact' })).records.length, 0);
+  await memory.updateSettings({ artifacts: false }); assert.equal((await memory.list({ kind: 'artifact' })).records.length, 0);
+  assert.equal((await artifacts.get(saved.id)).id, saved.id, 'excluding collection never deletes the file');
+  await memory.updateSettings({ artifacts: true }); assert.equal((await memory.list({ kind: 'artifact' })).records.length, 1);
+  console.log('PASS artifacts join the existing memory library with member ownership, source links, search and reversible collection settings.');
+
+  const ctx = { artifacts, team, connectors: { list: async () => [] }, json: (res, code, value) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); } };
+  server = createServer(async (req,res) => { const url = new URL(req.url, 'http://127.0.0.1'); if (!await artifactRoute(req,res,url,ctx) && !await connectorRoute(req,res,url,ctx)) { res.writeHead(404); res.end(); } });
+  await new Promise(done => server.listen(0, '127.0.0.1', done));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const response = await fetch(origin + saved.contentUrl);
+  assert.match(await response.text(), /<h1>Updated research<\/h1>/);
+  assert.match(response.headers.get('content-security-policy'), /sandbox allow-scripts allow-downloads/);
+  assert.match(response.headers.get('content-security-policy'), /connect-src 'none'/);
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+  assert.match((await fetch(origin + saved.downloadUrl)).headers.get('content-disposition'), /^attachment;/);
+  const connection = (await (await fetch(origin + '/api/connectors')).json()).data.connectors[0];
+  assert.equal(connection.name, 'Autohand Squad'); assert.equal(connection.managed, true);
+  assert.ok(connection.tools.some(tool => tool.name === 'squad_publish_artifact'));
+  assert.equal((await fetch(origin + '/api/connectors/autohand-squad/disable', { method: 'POST' })).status, 403);
+  assert.equal((await fetch(origin + '/api/artifacts', { method: 'POST' })).status, 405);
+  const stored = JSON.parse(await readFile(join(stateDir, 'artifacts/library.json'))).records[0];
+  await writeFile(join(stateDir, 'artifacts/files', stored.contentHash), 'corrupted');
+  assert.equal((await fetch(origin + saved.contentUrl)).status, 503, 'corrupt snapshots fail before serving content');
+  console.log('PASS artifact HTTP preview/export uses verified snapshots and an opaque sandbox policy; built-in MCP discovery reports real tools and rejects external-connector mutations.');
+} finally {
+  if (server) await new Promise(done => server.close(done));
+  await rm(directory, { recursive: true, force: true });
+}

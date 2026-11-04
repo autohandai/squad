@@ -16,6 +16,11 @@ import { boundedError } from '../connectors/framing.mjs';
 
 export const name = 'connectors';
 
+function squadConnection(ctx) {
+  const tools = (ctx.team?.tools || []).map(({ name, description }) => ({ name, description }));
+  return { id: 'autohand-squad', name: 'Autohand Squad', kind: 'managed', managed: true, enabled: true, available: tools.length > 0, tools, description: 'Team conversations, channels, memory, tasks and saved artifacts. Squad provides this connection to members on every engine; their permissions still apply.' };
+}
+
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 
 async function firecrawlCredits(baseUrl, apiKey) {
@@ -50,7 +55,7 @@ export async function handle(req, res, url, ctx) {
     const store = ctx.connectors;
     if (!store) throw fail('Connectors are not available in this runtime.', 503);
     if (url.pathname === '/api/connectors' && req.method === 'GET') {
-      ctx.json(res, 200, { success: true, data: { connectors: await store.list() } });
+      ctx.json(res, 200, { success: true, data: { connectors: [squadConnection(ctx), ...await store.list()] } });
       return true;
     }
     if (url.pathname === '/api/connectors' && req.method === 'POST') {
@@ -60,6 +65,10 @@ export async function handle(req, res, url, ctx) {
     const match = url.pathname.match(/^\/api\/connectors\/([A-Za-z0-9_-]{1,64})(?:\/(test|enable|disable))?$/);
     if (!match) throw fail('Connector route not found.', 404);
     const [, id, action] = match;
+    if (id === 'autohand-squad') {
+      if (!action && req.method === 'GET') { ctx.json(res, 200, { success: true, data: squadConnection(ctx) }); return true; }
+      throw fail('Squad manages this built-in connection. Set each member’s permissions to control what they can do.', 403);
+    }
     if (!action && req.method === 'GET') { ctx.json(res, 200, { success: true, data: await store.get(id) }); return true; }
     if (!action && req.method === 'PUT') { ctx.json(res, 200, { success: true, data: await store.update(id, await ctx.readBody(req)) }); return true; }
     if (!action && req.method === 'DELETE') { ctx.json(res, 200, { success: true, data: await store.remove(id) }); return true; }

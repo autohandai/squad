@@ -1,6 +1,6 @@
 [package]
 name = "autohand-squad-desktop"
-version = "0.1.19"
+version = "0.1.20"
 description = "Autohand Squad desktop shell (Tauri 2)"
 edition = "2021"
 rust-version = "1.80"
