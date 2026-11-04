@@ -26,6 +26,7 @@ import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstruct
 import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
 import { AUTOHAND_TEAM_WAIT_SECONDS, TEAM_MCP_SERVER_NAME, createTeamService, teamMessagePrompt } from "./server/team/service.mjs";
 import { createMemoryService } from "./server/memory/service.mjs";
+import { createArtifactService } from "./server/artifacts/service.mjs";
 import { createSquadCloud } from "./server/squad-cloud/service.mjs";
 import { createTeamChannels } from "./server/team/channels.mjs";
 import { createCliBootstrap, createCliProbe } from "./server/runtime/cli-bootstrap.mjs";
@@ -520,12 +521,14 @@ const vaultWorkRuntimes = new Map();
 bridgeEvents.on("member.stopped", ({ memberId }) => vault.closeMember(memberId));
 // The team (ADR-0134): roster, messages between members and shared memory,
 // reached by every member through one managed MCP server on any engine.
+const artifacts = createArtifactService({ stateDir: squadStateDir, members: teamMembers, emit: emitBridgeEvent });
 const team = createTeamService({
   stateDir: squadStateDir,
   rootDir,
   bridgeUrl: `http://127.0.0.1:${port}`,
   members: teamMembers,
   memoryLibrary: () => memoryLibrary,
+  artifacts,
   isBusy: (memberId) => isMemberBusy(memberId),
   deliver: deliverTeamMessage,
   runAction: runTeamAction,
@@ -578,8 +581,10 @@ const memoryLibrary = createMemoryService({
   stateDir: squadStateDir, rootDir, agentsDir: isolatedAgentsDir, teamStore: team.store,
   members: async () => Object.entries((await readChannelsState())?.agentChannelAccess || {}).filter(([id]) => !isUtilityAgent(id)).map(([id, access]) => ({ ...access.agent, id, removed: Boolean(access.removed) })),
   emit: emitBridgeEvent,
+  artifacts: () => artifacts.memoryRecords(),
 });
 bridgeEvents.on("team.memory.changed", () => memoryLibrary.invalidate());
+bridgeEvents.on("artifacts.changed", () => memoryLibrary.invalidate());
 const cloud = createSquadCloud({ stateDir: squadStateDir, store: team.store, readIdentityToken: () => {
   const auth = readAutohandAuth(userConfigPath);
   return autohandAuthUsable(auth) ? auth.token : "";
@@ -8098,7 +8103,7 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
 // one quiet line each.
 function withTeamReceipts(result, receipts = []) {
   if (!receipts.length) return result;
-  const lines = receipts.filter((receipt) => receipt?.message && receipt.type !== "team_message").map((receipt) => receipt.message);
+  const lines = [...new Set(receipts.filter((receipt) => receipt?.message && receipt.type !== "team_message" && !(receipt.type === "artifact" && String(result.reply || "").includes(`?artifact=${receipt.artifactId}`))).map((receipt) => receipt.message))];
   return { ...result, reply: [String(result.reply || "").trim(), ...lines].filter(Boolean).join("\n\n"), channelActions: [...(Array.isArray(result.channelActions) ? result.channelActions : []), ...receipts] };
 }
 
@@ -8639,6 +8644,7 @@ function routeContext() {
     vault,
     team,
     memoryLibrary,
+    artifacts,
     cloud,
     authorizeComputerUseGrant,
     connectors,

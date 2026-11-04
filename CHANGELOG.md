@@ -10,7 +10,21 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-11-04
+
+### Added
+
+- Autohand Squad’s built-in MCP connection appears in Connectors with its available tools.
+- Each member has a Library for saved reports, HTML pages, documents, images and datasets. Open artifacts from chat, preview interactive HTML in Squad, download the original file, and find the same work in the knowledge base.
+
+### Fixed
+
+- macOS release signing includes the bundled Autohand CLI and secure timestamps for Computer Use, so Apple's notarization check can validate every nested executable.
+- Reset Squad shows progress, restores its local service reliably and waits for you to choose Restart Squad. Quit and window close are blocked during confirmation and reset; dated backups and your Autohand Code sign-in are kept.
+
 ## [0.1.19] - 2026-11-04
+
+This tag was not published: Apple rejected nested executable signatures. These changes first reach stable downloads in 0.1.20.
 
 ### Changed
 

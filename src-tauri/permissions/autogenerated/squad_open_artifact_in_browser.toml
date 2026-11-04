@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-squad-open-artifact-in-browser"
+description = "Enables the squad_open_artifact_in_browser command without any pre-configured scope."
+commands.allow = ["squad_open_artifact_in_browser"]
+
+[[permission]]
+identifier = "deny-squad-open-artifact-in-browser"
+description = "Denies the squad_open_artifact_in_browser command without any pre-configured scope."
+commands.deny = ["squad_open_artifact_in_browser"]

@@ -267,6 +267,11 @@ TOOLS.push({
   inputSchema: { type: "object", properties: { question: { type: "string", minLength: 1, maxLength: 2000 }, options: { type: "array", maxItems: 6, items: { type: "string", minLength: 1, maxLength: 120 } } }, required: ["question"], additionalProperties: false },
 });
 
+TOOLS.push({
+  name: "squad_publish_artifact",
+  description: "Save a completed file you created inside this turn's workspace as an artifact in your Library and the person's chat. Saves a durable snapshot attributed to you; publishing the same file updates its revision. For interactive HTML, publish one self-contained file with inline CSS/scripts and embedded images; external assets are unavailable in the preview. Markdown, images, PDF and other files can be viewed or downloaded. Return the saved artifact link to the person.",
+  inputSchema: { type: "object", properties: { path: { type: "string", minLength: 1, maxLength: 4000, description: "Completed file path inside this turn's workspace." }, title: { type: "string", maxLength: 160 }, description: { type: "string", maxLength: 2000, description: "What this file contains, in plain language. Do not include passwords or keys." } }, required: ["path"], additionalProperties: false },
+});
 export const TEAM_TOOL_NAMES = TOOLS.map((tool) => tool.name);
 const CHAT_READ_CHARS = 14_000;
 
@@ -360,6 +365,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
     "- squad_update_memory corrects a saved entry; squad_forget removes one. Project memories stay with this turn's workspace; personal memories stay with you.",
     "- squad_search_memory finds older collected memories across saved profiles and your CLI memory using local text similarity. squad_read_memory inspects a source; squad_memory_graph shows saved links. Private and project access is enforced by Squad, never by tool arguments. Similarity is a suggestion, not evidence. Share, relate and organize what you own with squad_share_memory, squad_relate_memories and squad_organize_memory.",
     "- squad_work_plan reads your commitments and ids; squad_task adds, updates or completes your own tasks, with the same receipts as the Tasks view.",
+    "- After creating a deliverable file (a report, HTML page, document, image or dataset), use squad_publish_artifact with its real path and title. Make HTML self-contained, with inline CSS/scripts and embedded images, so its preview works without external assets. This saves it in your Library, links it in the conversation and makes its description discoverable in memory. Finish writing the file before publishing; never call it saved before the tool succeeds.",
     "- When the person says remember, keep in mind, note that, or from now on, call squad_remember in that turn (scope team unless it is only about you). Do not only say you will remember: a memory exists only once squad_remember has saved it.",
     "- When the person gives you a new name or role ('your name is Robert', 'I'll call you Robert', 'be our QA lead'), call squad_set_profile with the change, then confirm. Squad tells your teammates.",
     "- For a requested reminder or anything that should happen later or repeat, call squad_schedule in this turn. The request authorizes it: do not ask for confirmation again. Report the persisted receipt. Use mode propose for an unsolicited suggestion or an explicit draft. A scheduled automation is not a blocked task.",
@@ -380,7 +386,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   return sections.join("\n\n");
 }
 
-export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
+export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, artifacts, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
   const store = createTeamStore({ stateDir });
   const sessions = new Map();
   const byToken = new Map();
@@ -658,6 +664,12 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           const ids = new Set(memories.map(item => item.id));
           const links = result.links.filter(item => ids.has(item.from) && ids.has(item.to)).slice(0, 30).map(({ id, from, to, relation, evidence, derived }) => ({ id, from, to, relation, evidence: clip(evidence, 160), derived }));
           return text({ memories, groups: result.groups.slice(0, 30), ...(name === "squad_memory_graph" ? { links } : {}), total: result.total, hasMore: memories.length < result.total, note: "Excerpts are bounded. Use squad_read_memory for complete text.", warnings: result.warnings.slice(0, 8), search: result.index.available ? "turbovec-local-text" : "keyword-only" });
+        }
+        case "squad_publish_artifact": {
+          if (!artifacts) return failure("The artifact library is unavailable in this runtime.");
+          const artifact = await artifacts.publish(args, session);
+          addReceipt(session, { id: artifact.id, type: "artifact", actorId: session.memberId, status: "applied", artifactId: artifact.id, message: `[${artifact.title.replace(/[\[\]]/g, '')}](${artifact.href})` });
+          return text(artifact);
         }
         case "squad_channels": return text({ channels: await channels.list(session.memberId) });
         case "squad_channel_messages": return text(await channels.read(session.memberId, args));

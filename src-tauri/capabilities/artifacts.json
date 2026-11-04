@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "artifacts",
+  "description": "Open a verified saved artifact in the system browser. Only the main bridge origin is authorized by Rust.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"] },
+  "permissions": ["allow-squad-open-artifact-in-browser"]
+}

@@ -25,6 +25,7 @@ use autohand_squad_runtime::ui::{
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+mod artifact_preview;
 mod info_windows;
 use info_windows::{info_navigation_handler, open_info_window, InfoPage};
 mod computer_use_grant;
@@ -80,7 +81,8 @@ fn main() {
             squad_quit_for_update,
             system_reset::squad_set_system_reset_stage,
             system_reset::squad_system_reset_status,
-            system_reset::squad_restart_after_system_reset
+            system_reset::squad_restart_after_system_reset,
+            artifact_preview::squad_open_artifact_in_browser
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app);
@@ -124,6 +126,13 @@ fn main() {
                             info_navigation_handler(app.handle(), shell.clone(), false);
                         let shell = shell.clone();
                         move |url| !lock(&shell.reset).blocks_quit() && navigation(url)
+                    })
+                    .on_new_window({
+                        let handle = app.handle().clone();
+                        move |url, _features| {
+                            artifact_preview::open_external_window(&handle, &url);
+                            tauri::webview::NewWindowResponse::Deny
+                        }
                     })
                     .center();
             #[cfg(target_os = "macos")]

@@ -195,6 +195,7 @@ export function ConnectorsSettings({ connectors = [], onCreate, onUpdate, onDele
   const [busy, setBusy] = useState({});
   const [errors, setErrors] = useState({});
   const [armedId, setArmedId] = useState("");
+  const [showSquadTools, setShowSquadTools] = useState(false);
 
   async function run(id, action, operation) {
     setBusy((current) => ({ ...current, [id]: action }));
@@ -205,10 +206,17 @@ export function ConnectorsSettings({ connectors = [], onCreate, onUpdate, onDele
   }
 
   const builtin = connectors.find((connector) => connector.builtin);
-  const custom = connectors.filter((connector) => !connector.builtin);
+  const custom = connectors.filter((connector) => !connector.builtin && !connector.managed);
+  const managed = connectors.filter(connector => connector.managed);
 
   return (
     <div className={cn("divide-y divide-border/65", className)}>
+      {managed.map(connector => <div key={connector.id} data-testid="squad-managed-connector">
+        <Row title={connector.name} description={connector.description} status={{ text: connector.available ? `Managed by Squad · ${connector.tools.length} tools` : "The built-in connection is unavailable. Restart Squad to try again.", tone: connector.available ? "muted" : "error" }}>
+          <Button type="button" variant="ghost" size="sm" aria-expanded={showSquadTools} aria-controls="squad-connector-tools" onClick={() => setShowSquadTools(value => !value)}>{showSquadTools ? "Hide tools" : "View tools"}</Button>
+        </Row>
+        {showSquadTools ? <ul id="squad-connector-tools" className="divide-y pb-4 sm:pl-6">{connector.tools.map(tool => <li key={tool.name} className="py-3"><code className="text-xs">{tool.name}</code><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">{tool.description}</p></li>)}</ul> : null}
+      </div>)}
       {builtin ? (
         <WebResearchRows
           connector={builtin}

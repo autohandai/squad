@@ -12,6 +12,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { COMPUTER_USE_ASSETS, COMPUTER_USE_VERSION } from './stage-computer-use.mjs';
 import { COMPUTER_USE_HOST, verifyComputerUseBranding } from './computer-use-host.mjs';
+import { signMacCode } from './lib/macos-signing.mjs';
 
 export const COMPUTER_USE_SOURCE = Object.freeze({
   commit: 'fc92b70417cdae941ba8b104a6e7b3b5b52a07e2',
@@ -143,7 +144,8 @@ async function buildHost({ root, vendorDir, host, arches, sourceArchive, log }) 
     await cp(join(root, LICENSE), join(resources, 'LICENSE-Apache-2.0.txt'));
     await writeFile(join(resources, 'NOTICE.txt'), `Autohand Computer Use permission host\nCopyright 2026 Autohand AI LLC\nSPDX-License-Identifier: Apache-2.0\n\nBuilt unmodified from autohandai/computer-use commit ${COMPUTER_USE_SOURCE.commit} (computer-use-v${COMPUTER_USE_VERSION}): the same host, identity and consent text Autohand Code installs.\nThe separately bundled Cua engine is MIT licensed; its full notice ships as LICENSE-CUA.md.\nBuild-time preparation targets macOS 13.0. Developer ID signing and notarization are separate release steps.\n`);
     await writeFile(join(resources, 'BUILD_PROVENANCE.json'), `${JSON.stringify({ schemaVersion: 1, product: COMPUTER_USE_HOST.displayName, repository: 'autohandai/computer-use', sourceCommit: COMPUTER_USE_SOURCE.commit, release: `computer-use-v${COMPUTER_USE_VERSION}`, sourcePath: 'autohand/macos/main.swift', sourceSha256: COMPUTER_USE_SOURCE.files['autohand/macos/main.swift'], buildScriptPath: 'autohand/scripts/build-macos-host.sh', buildScriptSha256: COMPUTER_USE_SOURCE.files['autohand/scripts/build-macos-host.sh'], sourceArchiveSha256: COMPUTER_USE_SOURCE.archiveSha256, target: arches.map((arch) => `${arch === 'x64' ? 'x86_64' : 'arm64'}-apple-macos13.0`), compiler, sdk, branding, builtAt: new Date().toISOString(), signing: identity === '-' ? 'ad hoc, hardened runtime' : 'Developer ID, hardened runtime', notarized: false }, null, 2)}\n`);
-    run('/usr/bin/codesign', ['--force', '--deep', '--options', 'runtime', '--sign', identity, '--timestamp=none', app]);
+    signMacCode(executable, { identity });
+    signMacCode(app, { identity });
     run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
     const hostReceipt = { path: HOST_NAME, sourceCommit: COMPUTER_USE_SOURCE.commit, executableSha256: await sha(executable), arches, minimumMacOS: '13.0' };
     const temporaryReceipt = join(publication, 'PREPARED_INPUTS.json');

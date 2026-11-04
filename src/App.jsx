@@ -2,6 +2,9 @@ import React, { Fragment, Suspense, createContext, lazy, memo, useCallback, useC
 import { useProjectObserver } from "@/lib/use-project-observer";
 import { onDesktopMenu } from "@/lib/desktop-menu";
 import { isSystemResetPending, pendingSystemReset } from "@/lib/system-reset";
+import { artifactIdFromHref } from "@/lib/artifacts";
+import { ArtifactCard, ArtifactPreviewController } from "@/components/artifacts/ArtifactPreview";
+import { MemberLibrary } from "@/components/artifacts/MemberLibrary";
 import { FirstRun } from "@/components/onboarding/FirstRun";
 import { ChannelDetailsSettings } from "@/components/channels/ChannelDetailsSettings";
 import { AnsweredByTag } from "@/components/channels/ResponderSettings";
@@ -1961,6 +1964,7 @@ const MEMBER_SECTIONS = [
   { id: "project", label: "Projects", icon: Folders },
   { id: "triggers", label: "Automations", icon: Clock3 },
   { id: "task", label: "Tasks", icon: CalendarCheck2 },
+  { id: "library", label: "Library", icon: BookOpen },
   { id: "memory", label: "Memory", icon: BrainCog },
   { id: "history", label: "History", icon: History },
   { id: "model", label: "Model", icon: Brain },
@@ -10361,6 +10365,7 @@ function App() {
           </main>
         </div>
 
+        <ArtifactPreviewController api={api} renderMarkdown={text => <MarkdownBlocks text={text} />} />
         <FeedbackDialog
           kind={feedbackKind || "feedback"}
           open={Boolean(feedbackKind)}
@@ -12060,6 +12065,8 @@ function InlineMarkdown({ text }) {
     }
     if (part.type === "strong") return <strong key={index}>{part.value}</strong>;
     if (part.type === "link") {
+      const artifactId = artifactIdFromHref(part.href);
+      if (artifactId) return <ArtifactCard key={index} id={artifactId} title={part.value} href={part.href} />;
       const internal = part.href.startsWith("/");
       return (
         <a key={index} href={part.href} target={internal ? undefined : "_blank"} rel={internal ? undefined : "noreferrer"} className="text-primary underline underline-offset-4">
@@ -22185,6 +22192,10 @@ function SquadMemberSectionPage({
     return <MemberHistoryPage agent={agent} copy={copy} locale={locale} navigate={navigate} />;
   }
 
+  if (section === "library") {
+    return <MemberLibrary agent={agent} api={api} navigate={navigate} />;
+  }
+
   if (section === "memory") {
     return (
       <MemoryInboxPage
@@ -25433,7 +25444,7 @@ function SettingsPage({
       <>
         <SettingsSectionHeader
           title={copy.connectors || "Connectors"}
-          description={copy.connectorsDescription || "MCP servers every member can reach. A member uses them only when its MCP connectors permission is set to Allow."}
+          description={copy.connectorsDescription || "MCP servers available to your members. Squad manages its built-in connection; added connectors follow each member’s MCP connectors permission."}
         />
         <ConnectorsSettings
           connectors={connectors}
