@@ -31,7 +31,7 @@ wide code and tables scroll inside their own blocks while prose wraps.
 
 Store three independent preferences in bridge-owned settings.json:
 `quickChatEnabled` (true), `quickChatMenuBarMode` (single by default, or
-active-agents), and `quickChatShowUsage` (true). Settings has a dedicated
+active-agents), and `quickChatShowUsage` (true). `quickChatAppearance` is recorded in ADR-0183. Settings has a dedicated
 Quick Chat section. Disabling hides the mounted panel and removes extra
 status items, preserving drafts and ongoing agent work. The primary Squad
 icon remains available and its ordinary native menu still works.
@@ -39,8 +39,13 @@ The Window submenu owns the shortcut item. Tauri's `Menu::get` searches only
 immediate children, so enablement is applied through that submenu rather
 than a root-menu lookup that silently finds nothing.
 
-In active-agent mode, each currently working member gets its own stable status
-item. Merely online members do not count. The existing 90-second snapshot
+The initial active-agent implementation gave only working members a status
+item. This was too restrictive: the user expected available bots to remain
+visible while waiting for work. The regression `active_icons_include_available_idle_members`
+failed with zero icons for an available Eva before the correction. Active-agent
+mode now gives online, ready, idle and other available members stable status
+items; explicitly paused/offline/disabled/archived states win over a live
+session. The native tray model now carries the stored member status. The existing 90-second snapshot
 freshness rule prevents stale working icons. Clicks use the originating icon's
 live rectangle and existing monitor-scale/clamping rules. Native status items
 must be removed from Tauri's resource table and released on the main thread;
@@ -113,3 +118,14 @@ snapshot and reset times can elapse before the next successful read.
 
 - [Codex app-server account rate limits](https://learn.chatgpt.com/docs/app-server).
 - Installed `@anthropic-ai/claude-agent-sdk` 0.3.296, `sdk.d.ts`: `Query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`, `skipBehaviors` and `SDKControlGetUsageResponse`. The method remains experimental and feature-detected.
+
+## Follow-up diagnosis: preview and installed settings
+
+The reported screenshot still selected One Squad icon, which deliberately
+has no individual status items. Read-only checks also distinguished two
+instances: the installed bridge at 19821 exposed only update preferences,
+while the preview at 20771 exposed Quick Chat preferences in its own state
+folder. The preview does not configure or upgrade the installed app.
+The option now says Agent avatars and describes idle/available membership.
+A failed native refresh reports that an updated desktop shell is needed,
+rather than silently treating a saved web preference as an applied native UI.

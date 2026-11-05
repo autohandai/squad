@@ -596,4 +596,4 @@ html[data-skin] [data-slot="avatar"] {
 [data-testid="mac-quick-chat"] .quick-chat-toolbar { -webkit-user-select: none; user-select: none; }
 
 html[data-quick-chat="true"], html[data-quick-chat="true"] body, html[data-quick-chat="true"] #root { background: transparent !important; }
-html[data-quick-chat="true"] [data-testid="mac-quick-chat"] { background: color-mix(in srgb, var(--background) 90%, transparent); }
+html[data-quick-chat="true"][data-quick-chat-appearance="glass"] [data-testid="mac-quick-chat"] { background: color-mix(in srgb, var(--background) 65%, transparent); }
