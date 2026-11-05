@@ -122,6 +122,7 @@ jobs:
           bun run check:member-profiles
           bun run check:workspace-aliases
           bun run check:agent-channel-actions
+          bun run check:control-plane
           bun run check:member-by-chat:browser
 
       - name: Upload update regression evidence

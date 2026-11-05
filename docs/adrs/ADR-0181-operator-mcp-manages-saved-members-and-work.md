@@ -65,7 +65,9 @@ conflicts and stale snapshots, rejected folder escapes, actual engine grants,
 next-turn local and qualified registry skill installation, channel membership, two replies persisted
 after sender disconnect, waiter deduplication, routine preview and manual
 execution, restart persistence, catalog argument forwarding and older-bridge
-upgrade errors. No real member is messaged or reconfigured.
+upgrade errors. No real member is messaged or reconfigured. The Web checks workflow now
+runs this MCP regression check explicitly; it was previously present only
+in the broader local `ci` script.
 
 Related checks pass: member profiles (all 17 built-ins through controlled SDK
 configuration), member shaping, channel actions, permissions, local skills,
