@@ -90,8 +90,10 @@ it does not establish an app navigation or provider failure.
 The first PR Web job stopped at the automatic-update check: its concurrent
 write assertion compared the complete settings object with the two update
 keys, so the three new default Quick Chat keys caused a strict-shape failure.
-The expected shape now includes those defaults and still verifies both
-concurrent update edits. This was a stale test expectation, not a lost write.
+The same old shape appeared in the desktop/mobile Playwright update scenario.
+Both expected shapes now include those defaults and still verify the saved
+update edits. These were stale test expectations, not lost writes. All 16
+Playwright scenarios passed locally after correcting the browser assertion.
 
 ## Consequences
 
