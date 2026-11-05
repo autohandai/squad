@@ -56,11 +56,38 @@ the bridge did not answer.
 
 ## Tools
 
+The operator server now has 18 tools. For a direct conversation, use
+`list_members` → `message_member` → `wait_for_message`; `send_message` keeps
+its original independent run/goal behavior for existing integrations.
+
+Autohand Code includes this operator MCP at runtime under `autohand-squad`.
+With the next CLI release, `/squad` opens an agent picker, `/message <text>`
+sends to the selected agent, and `/message squad <agent-id> <text>` addresses
+one explicitly. `/squad history` reads replies and `/squad queue` shows
+delivery state. `/message team <name> <text>` addresses a local CLI teammate;
+`/squad clear` clears the desktop recipient. Outside an interactive session:
+
+```sh
+autohand squad agents
+autohand squad message kai "Please review the latest changes"
+autohand squad history kai
+autohand squad mcp
+```
+
+The CLI discovers the local bridge from `AUTOHAND_SQUAD_BRIDGE_URL`, then
+`$AUTOHAND_SQUAD_HOME/web-server.json` (default `~/.autohand/squad`), then
+`http://127.0.0.1:19821`. It does not launch/install the app during MCP startup.
+`/squad app` explicitly opens or installs it. Bare, offline and no-daemon CLI
+sessions do not add the built-in connection; `mcp.enabled: false` disables it,
+and `AUTOHAND_DISABLE_SQUAD=1` opts out of the built-in server only. A managed
+Squad member retains its existing identity-scoped MCP and never receives this
+operator connection.
+
 | Tool | Arguments | What it does on the bridge |
 | --- | --- | --- |
 | `list_members` | — | `GET /api/status/snapshot` (the app's `web-status.json` mirror: id, name, role, status), `GET /api/members/presence`, plus the harness and workspace of the member's latest run or goal from `GET /api/runs` and `GET /api/goals`. |
 | `list_channels` | — | `GET /api/channels`: id, name, visibility, members, projects, thread and message counts. |
-| `get_messages` | `channel_id`, `thread_id?`, `limit?`, `before?` or `member_id`, `limit?`, `before?` | Channel: threads and messages from channel state, oldest first, newest `limit` (max 200). Member: bridge-owned runs and goals with redacted replies and tails. Direct-message history lives in the app and is not returned; the result says so. |
+| `get_messages` | `channel_id`, `thread_id?`, `limit?`, `before?` or `member_id`, `limit?`, `before?` | Channel: threads and messages from channel state, oldest first, newest `limit` (max 200). Member: run/goal summaries; use `get_conversation` for the transcript. |
 | `search` | `query`, `types?`, `limit?` | `GET /api/search`. |
 | `create_member` | `name?`, `role?` | Always the error `not_available_from_bridge`: members are created in the app. |
 | `create_channel` | `name`, `visibility?`, `member_ids?`, `section?` | `POST /api/channels`; the app reloads channel state on the bridge's `changed` event. |
@@ -68,6 +95,21 @@ the bridge did not answer.
 | `wait_for_reply` | `run_id` or `goal_id`, `timeout_ms?` (≤ 600000), `tail_lines?` (≤ 60) | Polls `GET /api/runs/:id` or `GET /api/goals/:id` every 400 ms. Outcomes: `settled`, `needs-you`, `failed`, `timed-out`. A settled or failed channel run posts its reply into the thread. |
 | `interrupt` | exactly one of `run_id`, `goal_id`, `member_id` | `POST /api/runs/:id/stop`, `POST /api/goals/:id/pause`, or `POST /api/members/:id/stop`. |
 | `set_model` | `member_id?`, `model?`, `provider?` | Always the error `not_available_from_bridge`: the member's harness and model are chosen in the app and sent with each turn. |
+| `message_member` | `member_id`, `text`, `workspace?` | Queue a direct conversation turn via `POST /api/queues/:member/items`. Returns `message_id`, workspace and pause state immediately. Reuses saved work/profile workspace; rejects unknown recipients. |
+| `get_conversation` | `member_id`, `limit?` (≤60 turns), `since?` | Read direct-message transcript from bridge history, including app and CLI turns. `since` filters a conversation boundary; archived chat files are not read. |
+| `get_member_queue` | `member_id`, `limit?` (≤200 items) | Read durable receipts, replies, failures and queue pause state. |
+| `wait_for_message` | `member_id`, `message_id`, `timeout_ms?` (≤25000) | Wait for `settled`, `failed`, `needs-you` or `timed-out`. A timeout or cancelled wait retains the message. Repeat the wait with the same receipt; do not resend it. |
+| `list_artifacts` | `member_id?`, `query?`, `limit?` (≤100) | Find published artifact metadata in Library. |
+| `get_artifact` | `artifact_id` | Read published metadata and local preview/download links; does not execute content or read arbitrary files. |
+| `list_memories` | `member_id?`, `query?`, `limit?` (≤100), `offset?` | Search the person's knowledge library, optionally by owner. |
+| `read_memory` | `memory_id` | Read one knowledge-library entry; no editing/sharing/deletion. |
+
+Messages wait behind current work and preserve paused queues. They use the
+member's current saved harness and restrictions; the connection does not send
+an engine, permission override or API key with the message. The receipt means
+accepted into the durable queue, not that the agent has replied. If a send
+loses its response, inspect the member queue before retrying: sending is not
+automatically retried or deduplicated.
 
 Outcome mapping. Runs: `completed` → `settled`, unless a channel action is
 `proposed` → `needs-you`; `stopped` and `failed` → `failed` with the reason
@@ -95,8 +137,8 @@ JSON body `{ error, code?, status? }`.
 - Redaction: replies, log tails and failure reasons pass through
   `redactSecrets` (vendor `sk-`/`pk-` keys, GitHub and Slack tokens, AWS
   access keys, JWTs, bearer headers, `key=value` secrets, long bare hex or
-  base64 runs). Paths survive. Channel message bodies are returned as stored,
-  capped at 4,000 characters.
+  base64 runs). Paths survive. Tool output strings are redacted, including
+  channel bodies (capped at 4,000 characters), transcripts and library reads.
 - Bounded reads: 200 messages per `get_messages`, 100 search hits, 60 tail
   lines, 10 minutes per wait.
 - What the bridge does not hold: the member roster is a read-only mirror the
