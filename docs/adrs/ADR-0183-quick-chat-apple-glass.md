@@ -65,8 +65,21 @@ callback contract. Unit/browser checks cannot execute this AppKit/Wry mutex
 path, so it still requires a native interaction check. Cua refused
 termination because launch ownership was not attested; manual closure was
 requested. Native material pixels and avatar interaction therefore remain
-pending. This host can exercise only the macOS 15 fallback, not the macOS 26
-Liquid Glass pixels; compilation is not proof of either rendering outcome.
+pending for that preview.
+
+A second preview used a different bundle identity, isolated fixture directories
+and port 20871; it did not terminate or replace either running app. Native
+`list_windows` returned the main Squad status item and four separate member
+status items; window captures show the members' portraits. Invoking Window →
+Quick chat opened the 420×600 panel and its captured contents include the
+conversation, composer and usage rows. A subsequent accessibility read of the
+main window returned its normal member controls, establishing that native
+callback completion did not freeze the app. The driver's later click/settings
+requests were refused because those windows were not confirmed AX contexts;
+direct avatar-click and native Settings interaction remain unverified.
+
+This host can exercise only the macOS 15 fallback, not macOS 26 Liquid Glass.
+The panel capture proves the fallback renders, not that Liquid Glass renders.
 
 ## Consequences
 
