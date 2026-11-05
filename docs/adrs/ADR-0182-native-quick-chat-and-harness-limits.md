@@ -35,6 +35,9 @@ active-agents), and `quickChatShowUsage` (true). Settings has a dedicated
 Quick Chat section. Disabling hides the mounted panel and removes extra
 status items, preserving drafts and ongoing agent work. The primary Squad
 icon remains available and its ordinary native menu still works.
+The Window submenu owns the shortcut item. Tauri's `Menu::get` searches only
+immediate children, so enablement is applied through that submenu rather
+than a root-menu lookup that silently finds nothing.
 
 In active-agent mode, each currently working member gets its own stable status
 item. Merely online members do not count. The existing 90-second snapshot

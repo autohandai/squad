@@ -148,10 +148,18 @@ pub(crate) fn apply(
             let _ = tray.set_show_menu_on_left_click(!prefs.quick_chat_enabled);
         }
     }
-    if let Some(tauri::menu::MenuItemKind::MenuItem(item)) =
-        app.menu().and_then(|menu| menu.get("menu:quick-chat"))
-    {
-        let _ = item.set_enabled(prefs.quick_chat_enabled);
+    // Menu::get searches immediate children. Quick Chat belongs to Window.
+    if let Some(menu) = app.menu() {
+        for entry in menu.items().unwrap_or_default() {
+            if let tauri::menu::MenuItemKind::Submenu(submenu) = entry {
+                if let Some(tauri::menu::MenuItemKind::MenuItem(item)) =
+                    submenu.get("menu:quick-chat")
+                {
+                    let _ = item.set_enabled(prefs.quick_chat_enabled);
+                    break;
+                }
+            }
+        }
     }
     if !prefs.quick_chat_enabled {
         if let Some(window) = app.get_webview_window(quick_chat::QUICK_CHAT_WINDOW) {
