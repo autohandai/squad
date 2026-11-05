@@ -20,7 +20,7 @@ try {
   let flow = createUpdateFlow(flowOptions);
   const settings = () => readSystemSettings(directory);
   await Promise.all([writeSystemSettings(directory, { autoCheckUpdates: false }), writeSystemSettings(directory, { autoDownloadUpdates: true })]);
-  assert.deepEqual(await settings(), { autoCheckUpdates: false, autoDownloadUpdates: true }, "concurrent window edits retain both preferences");
+  assert.deepEqual(await settings(), { autoCheckUpdates: false, autoDownloadUpdates: true, quickChatEnabled: true, quickChatMenuBarMode: "single", quickChatShowUsage: true }, "concurrent window edits retain both update preferences and Quick Chat defaults");
   await writeSystemSettings(directory, { autoCheckUpdates: true, autoDownloadUpdates: false });
   const policy = () => createAutomaticUpdates({ settings, status: async () => release, flow, platform: "win32", arch: "x64", onError: error => { throw error; } });
   let automatic = policy();

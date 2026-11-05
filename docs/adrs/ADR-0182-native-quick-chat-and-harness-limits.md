@@ -87,6 +87,12 @@ the stall. This points to frozen pages retaining EventSource connections and
 consuming the connection pool. The test opts out of back-forward caching;
 it does not establish an app navigation or provider failure.
 
+The first PR Web job stopped at the automatic-update check: its concurrent
+write assertion compared the complete settings object with the two update
+keys, so the three new default Quick Chat keys caused a strict-shape failure.
+The expected shape now includes those defaults and still verifies both
+concurrent update edits. This was a stale test expectation, not a lost write.
+
 ## Consequences
 
 A webview retains the existing conversation, attachments, queues and drafts,
