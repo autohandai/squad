@@ -332,3 +332,5 @@
 
 - A member rename or profile receipt updates the header, sidebar, composer and profile from the same saved revision. A stale tab or old receipt cannot restore an earlier identity. Prose promising a change is not a saved change (ADR-0134).
 - “Replied” avatars count only completed, linked answers with real text or attachments. Typing, queued/streaming work, failures and empty runs never count; presence stays in the reserved lane under the composer (ADR-0135).
+
+- Operator MCP profile, folder, skill and ability edits share the member profile revision. App snapshots cannot restore an earlier saved configuration; new work inherits the saved configuration, while current work keeps its existing settings.

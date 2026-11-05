@@ -6,9 +6,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+
+import { createBridgeClient, createTools } from '../server/control-plane/runtime.mjs';
 
 import {
   TOOL_NAMES, decodeFrames, goalOutcome, parseBridgeUrl, redactSecrets, runOutcome, validateArgs, TOOLS,
@@ -18,7 +19,8 @@ const rootDir = resolve(new URL('..', import.meta.url).pathname);
 const mcpEntry = join(rootDir, 'server', 'control-plane', 'mcp-server.mjs');
 const SECRET_A = 'sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const SECRET_B = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123';
-const EXPECTED_TOOLS = ['list_members', 'list_channels', 'get_messages', 'search', 'create_member', 'create_channel', 'send_message', 'wait_for_reply', 'interrupt', 'set_model', 'message_member', 'get_conversation', 'get_member_queue', 'wait_for_message', 'list_artifacts', 'get_artifact', 'list_memories', 'read_memory'];
+const MANAGEMENT_TOOLS = ['get_member_profile', 'update_member_profile', 'set_member_abilities', 'add_member_directory', 'remove_member_directory', 'list_skills', 'set_member_skills', 'get_channel', 'update_channel', 'set_channel_members', 'list_channel_threads', 'create_group_chat', 'send_channel_message', 'list_routines', 'get_routine', 'preview_routine', 'create_routine', 'update_routine', 'run_routine'];
+const EXPECTED_TOOLS = ['list_members', 'list_channels', 'get_messages', 'search', 'create_member', 'create_channel', 'send_message', 'wait_for_reply', 'interrupt', 'set_model', 'message_member', 'get_conversation', 'get_member_queue', 'wait_for_message', 'list_artifacts', 'get_artifact', 'list_memories', 'read_memory', ...MANAGEMENT_TOOLS];
 
 let passed = 0;
 const ok = (condition, label) => { assert.ok(condition, label); passed += 1; };
@@ -56,12 +58,26 @@ assert.deepEqual(decoded.frames.map((frame) => [JSON.parse(frame.body.toString()
 eq(decoded.rest.toString(), 'Content-Length: 2', 'partial header kept for the next chunk');
 assert.deepEqual(TOOL_NAMES, EXPECTED_TOOLS); passed += 1;
 
+const catalogReads = [];
+const catalogTools = createTools({ get: async path => { catalogReads.push(path); return path.startsWith('/api/control-plane/') ? { workspace: '/fixture/project' } : { skills: [{ id: 'fixture-skill' }] }; } });
+const catalog = await catalogTools.list_skills({ member_id: 'kai', query: 'fixture', offset: 40 });
+eq(catalog.skills[0].id, 'fixture-skill', 'skill discovery returns catalog packages');
+const catalogUrl = new URL(catalogReads[1], 'http://localhost');
+eq(catalogUrl.searchParams.get('workspace'), '/fixture/project', 'catalog uses saved member workspace');
+eq(catalogUrl.searchParams.get('offset'), '40', 'catalog pagination is passed through');
+const oldBridge = createBridgeClient('http://127.0.0.1:19821', { fetchImpl: async () => new Response(JSON.stringify({ success: false, error: 'Not found' }), { status: 404 }) });
+await assert.rejects(() => oldBridge.get('/api/control-plane/members/kai'), /Update Autohand Squad/); passed++;
+const monthlySchema = TOOLS.find(tool => tool.name === 'preview_routine').inputSchema;
+eq(validateArgs(monthlySchema, { schedule: { kind: 'monthly', day: 'last', time: '09:00', timeZone: 'UTC' } }).length, 0, 'monthly last-day schedule passes MCP validation');
+
 // ---- isolated bridge ------------------------------------------------------
 
-const directory = await mkdtemp(join(tmpdir(), 'squad-control-plane-'));
+await mkdir(join(rootDir, '.codex-artifacts'), { recursive: true });
+const directory = await mkdtemp(join(rootDir, '.codex-artifacts', 'squad-control-plane-'));
+const workspaceDir = join(directory, 'workspace');
 const squadHome = join(directory, 'squad');
 const callsFile = join(directory, 'calls.jsonl');
-const fake = join(directory, 'fixture-codex');
+const fake = join(directory, 'fixture-codex.cjs');
 const socket = createServer();
 await new Promise((done) => socket.listen(0, '127.0.0.1', done));
 const port = socket.address().port;
@@ -95,6 +111,8 @@ function startBridge() {
       OPENAI_API_KEY: 'fixture-only-no-provider',
       ANTHROPIC_API_KEY: 'fixture-only-no-provider',
       AUTOHAND_SQUAD_BRIDGE_URL: '',
+      AUTOHAND_SKILLS_REPO_DIR: join(directory, 'skill-repo'),
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --import=${join(directory, 'skill-fixture.mjs')}`.trim(),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -173,6 +191,7 @@ function mcpClient(framing, args = ['--bridge', origin]) {
 
 try {
   // Seed the state the app would have written.
+  await mkdir(workspaceDir, { recursive: true });
   await mkdir(squadHome, { recursive: true });
   await mkdir(join(directory, 'codex'), { recursive: true });
   await writeFile(join(directory, 'codex', 'auth.json'), '{}');
@@ -187,7 +206,7 @@ try {
   await writeFile(join(squadHome, 'channels.json'), JSON.stringify({
     version: 1,
     revision: 3,
-    channels: [{ id: 'channel-general', name: 'general', visibility: 'public', memberIds: ['kai', 'iris'], projects: [{ path: rootDir, name: 'autohandSWE' }], createdAt: seededAt, updatedAt: seededAt }],
+    channels: [{ id: 'channel-general', name: 'general', visibility: 'public', memberIds: ['kai', 'iris'], projects: [{ path: workspaceDir, name: 'autohandSWE' }], createdAt: seededAt, updatedAt: seededAt }],
     threads: [{ id: 'thread-seeded', channelId: 'channel-general', title: 'Seeded kickoff', creatorId: 'iris', memberIds: ['kai'], replyCount: 1, createdAt: seededAt, updatedAt: seededAt }],
     messages: { 'channel-general': [
       { id: 'msg-seeded-root', role: 'user', agentId: '', authorName: 'Iris', body: 'Seeded kickoff: please review the launch checklist', threadId: 'thread-seeded', status: 'complete', createdAt: seededAt, updatedAt: seededAt },
@@ -204,21 +223,28 @@ if(args[0]==='auth'){console.log(JSON.stringify({loggedIn:true,authMethod:'fixtu
 const prompt=args.at(-1);
 const member=process.env.AUTOHAND_SQUAD_MEMBER;
 const append=x=>fs.appendFileSync(file,JSON.stringify(x)+'\\n');
-append({kind:'start',member,prompt,cwd:process.cwd()});
+append({kind:'start',member,prompt,cwd:process.cwd(),args});
 process.on('SIGTERM',()=>{append({kind:'abort',member});process.exit(143);});
 const emit=x=>console.log(JSON.stringify(x));
 emit({type:'thread.started',thread_id:'fixture-'+member});
 if(prompt.includes('HOLD fixture')){setTimeout(()=>process.exit(0),45000);return;}
+const finish=()=>{
 const text='Fixture reply for: '+prompt.split('\\n').at(-1).slice(0,60)+'. Token ${SECRET_A} and ${SECRET_B} end.';
 emit({type:'item.completed',item:{id:'reply',type:'agent_message',text}});
 emit({type:'turn.completed'});
+};
+if(prompt.includes('DELAY GROUP fixture'))setTimeout(finish,600);else finish();
 `);
   await chmod(fake, 0o700);
+  const registry = { skills: [{ id: 'fixture-registry', name: 'Registry fixture', directory: 'fixture-registry', files: ['SKILL.md'] }] };
+  await mkdir(join(directory, 'skill-repo', 'fixture-registry'), { recursive: true });
+  await writeFile(join(directory, 'skill-repo', 'fixture-registry', 'SKILL.md'), '---\nname: Registry fixture\n---\nRegistry fixture package.\n');
+  await writeFile(join(directory, 'skill-fixture.mjs'), `const original = globalThis.fetch; globalThis.fetch = (url, options) => String(url) === 'https://skilled.autohand.ai/skills-index.json' ? Promise.resolve(new Response(${JSON.stringify(JSON.stringify(registry))}, { headers: { 'content-type': 'application/json' } })) : original(url, options);`);
   await startBridge();
 
   // The app prepares a member before its first turn; the bridge keeps that
   // profile (harness, projects) and reuses it for bridge-owned runs.
-  const provision = await api('/api/agents/provision', { agentId: 'kai', agent: { id: 'kai', name: 'Kai', role: 'Engineer', harness: { id: 'codex', executablePath: fake }, projects: [{ path: rootDir }] }, workspace: rootDir });
+  const provision = await api('/api/agents/provision', { agentId: 'kai', agent: { id: 'kai', name: 'Kai', role: 'Engineer', harness: { id: 'codex', executablePath: fake }, projects: [{ path: workspaceDir }] }, workspace: workspaceDir });
   ok(provision.success, `member prepared on the bridge: ${provision.error || ''}`);
 
   // ---- newline framing -----------------------------------------------------
@@ -266,7 +292,7 @@ emit({type:'turn.completed'});
   ok(String(memberHistory.data.note).includes('get_conversation'), 'summary history points to the actual transcript tool');
 
   {
-    const direct = await client.call('message_member', { member_id: 'kai', text: 'CLI direct conversation fixture', workspace: rootDir });
+    const direct = await client.call('message_member', { member_id: 'kai', text: 'CLI direct conversation fixture', workspace: workspaceDir });
     ok(!direct.isError, `direct message accepted: ${direct.data?.error || ''}`);
     ok(direct.data.message_id, 'direct message returns a durable receipt');
     const directReply = await client.call('wait_for_message', { member_id: 'kai', message_id: direct.data.message_id, timeout_ms: 15000 });
@@ -313,7 +339,7 @@ emit({type:'turn.completed'});
   eq(threadReply.data.message.thread_id, 'thread-seeded', 'reply keeps the thread');
 
   // Direct message to a member: a bridge-owned run on the fake harness.
-  const direct = await client.call('send_message', { member_id: 'kai', text: 'Reply with the fixture secret', workspace: rootDir });
+  const direct = await client.call('send_message', { member_id: 'kai', text: 'Reply with the fixture secret', workspace: workspaceDir });
   ok(!direct.isError, `send_message member ok: ${direct.data?.error || ''}`);
   ok(direct.data.run_id, 'run id returned'); eq(direct.data.kind, 'run', 'direct message starts a run'); eq(direct.data.harness, 'codex', 'run uses the member\'s saved harness');
   const settled = await client.call('wait_for_reply', { run_id: direct.data.run_id, timeout_ms: 20000 }, 30000);
@@ -325,23 +351,23 @@ emit({type:'turn.completed'});
   const settledJson = JSON.stringify(settled);
   ok(!settledJson.includes(SECRET_A) && !settledJson.includes(SECRET_B) && !settledJson.includes('ghp_'), 'no token-like string in the wait result');
   const runCalls = (await calls()).filter((call) => call.kind === 'start' && call.member === 'kai');
-  eq(runCalls.length, 2, 'direct queue and legacy run each reached the fake harness'); eq(runCalls[1].cwd, rootDir, 'run used the given workspace');
+  eq(runCalls.length, 2, 'direct queue and legacy run each reached the fake harness'); eq(runCalls[1].cwd, workspaceDir, 'run used the given workspace');
   const historyAfterRun = await client.call('get_messages', { member_id: 'kai' });
   eq(historyAfterRun.data.items.length, 2, 'direct chat and legacy run listed for the member'); eq(historyAfterRun.data.items[0].status, 'completed', 'listed with its status');
   ok(!JSON.stringify(historyAfterRun).includes(SECRET_A), 'member history is redacted');
   const membersAfterRun = await client.call('list_members');
-  eq(membersAfterRun.data.members.find((member) => member.id === 'kai')?.harness, 'codex', 'harness learnt from the run'); eq(membersAfterRun.data.members.find((member) => member.id === 'kai')?.lastWorkspace, rootDir, 'last workspace learnt from the run');
+  eq(membersAfterRun.data.members.find((member) => member.id === 'kai')?.harness, 'codex', 'harness learnt from the run'); eq(membersAfterRun.data.members.find((member) => member.id === 'kai')?.lastWorkspace, workspaceDir, 'last workspace learnt from the run');
 
   // Workspace reuse: omit it and the member's last bridge-owned workspace is used.
   const reuse = await client.call('send_message', { member_id: 'kai', text: 'Second direct turn' });
-  ok(!reuse.isError, `workspace reused: ${reuse.data?.error || ''}`); eq(reuse.data.workspace, rootDir, 'reused workspace');
+  ok(!reuse.isError, `workspace reused: ${reuse.data?.error || ''}`); eq(reuse.data.workspace, workspaceDir, 'reused workspace');
   const reuseSettled = await client.call('wait_for_reply', { run_id: reuse.data.run_id, timeout_ms: 20000 }, 30000);
   eq(reuseSettled.data.outcome, 'settled', 'second run settled');
   const noWorkspace = await client.call('send_message', { member_id: 'iris', text: 'No workspace known' });
   eq(noWorkspace.isError, true, 'unknown workspace is refused'); ok(String(noWorkspace.data.error).includes('workspace is required'), 'refusal explains the workspace');
 
   // Channel dispatch: post, run the member in the thread, mirror the reply.
-  const dispatched = await client.call('send_message', { channel_id: 'channel-general', member_id: 'kai', text: 'Kai, summarise the seeded thread', workspace: rootDir });
+  const dispatched = await client.call('send_message', { channel_id: 'channel-general', member_id: 'kai', text: 'Kai, summarise the seeded thread', workspace: workspaceDir });
   ok(!dispatched.isError, `channel dispatch ok: ${dispatched.data?.error || ''}`);
   eq(dispatched.data.dispatched, true, 'member dispatched in the channel'); ok(dispatched.data.run_id, 'channel run id');
   const channelSettled = await client.call('wait_for_reply', { run_id: dispatched.data.run_id, timeout_ms: 20000 }, 30000);
@@ -357,7 +383,7 @@ emit({type:'turn.completed'});
   ok(bridgeThreads.data.some((thread) => thread.id === dispatched.data.message.thread_id && thread.replyCount >= 1), 'bridge counted the dispatch on the thread');
 
   // Interrupt a running fake turn and a timed-out wait.
-  const held = await client.call('send_message', { member_id: 'kai', text: 'HOLD fixture until interrupted', workspace: rootDir });
+  const held = await client.call('send_message', { member_id: 'kai', text: 'HOLD fixture until interrupted', workspace: workspaceDir });
   ok(!held.isError, 'held run started');
   await until(async () => (await calls()).some((call) => call.kind === 'start' && call.prompt.includes('HOLD fixture')), 'held fixture running');
   const busyMessage = await client.call('message_member', { member_id: 'kai', text: 'Wait behind current work fixture' });
@@ -413,7 +439,132 @@ emit({type:'turn.completed'});
   ok(persistedSearch.data.results.some((hit) => hit.type === 'message'), 'posted message is indexed after restart');
   const ping = await afterRestart.request('ping', {});
   assert.deepEqual(ping.result, {}); passed += 1;
+
+  const beforeProfile = await afterRestart.call('get_member_profile', { member_id: 'kai' });
+  eq(beforeProfile.isError, false, 'read canonical member profile');
+  const changedProfile = await afterRestart.call('update_member_profile', { member_id: 'kai', expected_revision: beforeProfile.data.revision, name: 'Morgan', personality: 'Calm and precise.', instructions: 'Verify each result.' });
+  eq(changedProfile.isError, false, `profile changed: ${changedProfile.data?.error || ''}`);
+  eq(changedProfile.data.name, 'Morgan', 'member rename is saved');
+  ok(changedProfile.data.personality.includes('Calm and precise.'), 'personality is saved');
+  const stale = await afterRestart.call('update_member_profile', { member_id: 'kai', expected_revision: beforeProfile.data.revision, name: 'Stale' });
+  eq(stale.data.status, 409, 'stale profile edit cannot overwrite a later change');
+  const extraDirectory = join(directory, 'extra-project');
+  await mkdir(extraDirectory);
+  const granted = await afterRestart.call('add_member_directory', { member_id: 'kai', path: extraDirectory });
+  eq(granted.isError, false, `directory granted: ${granted.data?.error || ''}`);
+  ok(granted.data.projects.some(project => project.path === extraDirectory), 'directory saved on member');
+  const abilities = await afterRestart.call('set_member_abilities', { member_id: 'kai', capabilities: [{ id: 'web.fetch', mode: 'block' }], tool_policies: [{ id: 'write_file', mode: 'ask' }] });
+  eq(abilities.data.permissions.modes['web.fetch'], 'block', 'capability saved');
+  eq(abilities.data.permissions.builtInPolicies.write_file, 'ask', 'tool ability saved');
+  const invalidAbility = await afterRestart.call('set_member_abilities', { member_id: 'kai', capabilities: [{ id: 'invented.ability', mode: 'allow' }] });
+  eq(invalidAbility.isError, true, 'unknown capabilities are rejected');
+  const duplicateGrant = await afterRestart.call('add_member_directory', { member_id: 'kai', path: extraDirectory });
+  eq(duplicateGrant.data.projects.filter(item => item.path === extraDirectory).length, 1, 'folder grant is idempotent');
+  const escaped = join(directory, 'outside-link');
+  await symlink('/etc', escaped);
+  for (const path of [process.env.HOME, escaped, join(directory, 'missing')]) {
+    const refused = await afterRestart.call('add_member_directory', { member_id: 'kai', path });
+    eq(refused.isError, true, 'home, escaped symlink and missing folder grants are refused');
+  }
+  const staleSnapshot = await api('/api/members/kai/channel-access', { agent: { id: 'kai', name: 'Kai', projects: [{ path: workspaceDir }], permissions: {}, profileRevision: beforeProfile.data.revision } }, 'PUT');
+  ok(staleSnapshot.success, 'old tab snapshot is accepted without restoring old fields');
+  const currentProfile = await afterRestart.call('get_member_profile', { member_id: 'kai' });
+  eq(currentProfile.data.name, 'Morgan', 'stale tab cannot restore old identity');
+  ok(currentProfile.data.projects.some(item => item.path === extraDirectory), 'stale tab cannot revoke a folder grant');
+  eq(currentProfile.data.permissions.modes['web.fetch'], 'block', 'stale tab cannot restore old policies');
+
+  await mkdir(join(squadHome, 'skills', 'fixture-skill'), { recursive: true });
+  await writeFile(join(squadHome, 'skills', 'fixture-skill', 'SKILL.md'), '---\nname: Fixture skill\ndescription: Local fixture package\n---\nVerify fixture results.\n');
+  const discoveredSkills = await afterRestart.call('list_skills', { member_id: 'kai', query: 'fixture' });
+  ok(discoveredSkills.data.skills.some(item => item.id === 'fixture-skill' && item.local), 'local skill appears in catalog');
+  ok(discoveredSkills.data.skills.some(item => item.qualifiedId === 'registry:autohandai/community-skills::fixture-registry'), 'registry skill has a qualified package ID');
+  const selectedSkills = await afterRestart.call('set_member_skills', { member_id: 'kai', skill_ids: ['fixture-skill', 'registry:autohandai/community-skills::fixture-registry'] });
+  eq(selectedSkills.isError, false, `skill assignment: ${selectedSkills.data?.error || ''}`);
+  assert.deepEqual(selectedSkills.data.skills, ['fixture-skill', 'registry:autohandai/community-skills::fixture-registry']); passed++;
+  const grantedRun = await afterRestart.call('send_message', { channel_id: 'channel-general', member_id: 'kai', text: 'Verify added directory and skills', workspace: workspaceDir });
+  eq(grantedRun.isError, false, `granted run: ${grantedRun.data?.error || ''}`);
+  const grantedReply = await afterRestart.call('wait_for_reply', { run_id: grantedRun.data.run_id, timeout_ms: 10000 });
+  eq(grantedReply.data.outcome, 'settled', 'run with granted folder completes');
+  const latestCall = (await calls()).filter(item => item.kind === 'start').at(-1);
+  ok(latestCall.args.some((arg, index) => arg === '--add-dir' && latestCall.args[index + 1] === extraDirectory) || latestCall.args.some(arg => arg.startsWith('sandbox_workspace_write.writable_roots=') && JSON.parse(arg.split('=').slice(1).join('=')).includes(extraDirectory)), 'extra folder reaches fresh or resumed engine access settings');
+  const savedProfile = JSON.parse(await readFile(join(directory, 'app', 'agents', 'kai', 'profile.json'), 'utf8'));
+  eq(savedProfile.name, 'Morgan', 'profile projection preserves rename');
+  ok(savedProfile.skillInstall.installed.some(item => item.id === 'fixture-skill'), 'selected skill package is installed on next turn');
+  ok(savedProfile.skillInstall.installed.some(item => item.id === 'registry:autohandai/community-skills::fixture-registry' && item.reference.authority === 'registry:autohandai/community-skills'), 'qualified registry package installs with its explicit origin');
+  const revoked = await afterRestart.call('remove_member_directory', { member_id: 'kai', path: extraDirectory });
+  eq(revoked.data.projects.some(item => item.path === extraDirectory), false, 'extra grant is removed');
+  await writeFile(join(extraDirectory, 'still-here.txt'), 'preserved');
+  eq(await readFile(join(extraDirectory, 'still-here.txt'), 'utf8'), 'preserved', 'revoking a grant leaves files untouched');
+  const primaryRemoval = await afterRestart.call('remove_member_directory', { member_id: 'kai', path: workspaceDir });
+  eq(primaryRemoval.isError, true, 'primary workspace cannot be removed');
+
+  const irisProvision = await api('/api/agents/provision', { agentId: 'iris', agent: { id: 'iris', name: 'Iris', role: 'Reviewer', harness: { id: 'codex', executablePath: fake }, projects: [{ path: workspaceDir }] }, workspace: workspaceDir });
+  ok(irisProvision.success, 'second group member prepared');
+  await api('/api/members/iris/channel-access', { agent: { id: 'iris', name: 'Iris', role: 'Reviewer', harness: { id: 'codex', executablePath: fake }, projects: [{ path: workspaceDir }] } }, 'PUT');
+  const group = await afterRestart.call('create_group_chat', { name: 'Fixture review', member_ids: ['kai', 'iris'] });
+  eq(group.isError, false, `group created: ${group.data?.error || ''}`);
+  const groupId = group.data.channel.id;
+  const groupSettings = await afterRestart.call('get_channel', { channel_id: groupId });
+  eq(groupSettings.data.visibility, 'private', 'group is private');
+  const renamedGroup = await afterRestart.call('update_channel', { channel_id: groupId, name: 'Fixture renamed', purpose: 'Review fixtures' });
+  eq(renamedGroup.data.name, 'Fixture renamed', 'channel settings are saved');
+  const removedMember = await afterRestart.call('set_channel_members', { channel_id: groupId, remove: ['iris'] });
+  eq(removedMember.isError, false, 'channel member removed');
+  const nonMember = await afterRestart.call('send_channel_message', { channel_id: groupId, text: 'Must not dispatch', member_ids: ['iris'] });
+  eq(nonMember.isError, true, 'nonmember dispatch rejected');
+  await afterRestart.call('set_channel_members', { channel_id: groupId, add: ['iris'] });
+  const sender = mcpClient('newline');
+  await sender.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'group-sender', version: '1' } });
+  const groupSend = await sender.call('send_channel_message', { channel_id: groupId, text: 'DELAY GROUP fixture review', member_ids: ['kai', 'iris'] });
+  eq(groupSend.isError, false, `group send: ${groupSend.data?.error || ''}`);
+  eq(groupSend.data.deliveries.length, 2, 'only selected members dispatched');
+  ok(groupSend.data.deliveries.every(item => item.run_id), 'both recipients return run receipts');
+  await sender.close();
+  const groupMessages = await until(async () => {
+    const result = await afterRestart.call('get_messages', { channel_id: groupId, thread_id: groupSend.data.thread_id });
+    return result.data?.messages?.filter(item => item.role === 'agent').length === 2 && result.data.messages;
+  }, 'group replies persist after sender disconnect');
+  eq(groupMessages.length, 3, 'one prompt and two replies persisted without polling runs');
+  for (const delivery of groupSend.data.deliveries) await afterRestart.call('wait_for_reply', { run_id: delivery.run_id, timeout_ms: 1000 });
+  const deduped = await afterRestart.call('get_messages', { channel_id: groupId, thread_id: groupSend.data.thread_id });
+  eq(deduped.data.messages.length, 3, 'wait_for_reply does not duplicate persisted group replies');
+  const threads = await afterRestart.call('list_channel_threads', { channel_id: groupId });
+  ok(threads.data.threads.some(item => item.id === groupSend.data.thread_id), 'group thread appears in channel thread list');
+  const postOnly = await afterRestart.call('send_channel_message', { channel_id: groupId, thread_id: groupSend.data.thread_id, text: 'Saved without starting work' });
+  eq(postOnly.data.deliveries.length, 0, 'post-only message starts no work');
+
+  const schedule = { kind: 'once', date: '2099-11-05', time: '09:00', timeZone: 'UTC' };
+  const preview = await afterRestart.call('preview_routine', { schedule });
+  eq(preview.data.next[0], '2099-11-05T09:00:00.000Z', 'routine preview uses explicit timezone');
+  const routine = await afterRestart.call('create_routine', { member_id: 'kai', title: 'Fixture routine', instructions: 'Verify this fixture.', schedule });
+  eq(routine.isError, false, `routine created: ${routine.data?.error || ''}`);
+  eq(routine.data.enabled, false, 'new routine is disabled by default');
+  const routineId = routine.data.id;
+  const enabledRoutine = await afterRestart.call('update_routine', { routine_id: routineId, enabled: true });
+  eq(enabledRoutine.data.enabled, true, 'explicit enable schedules the routine');
+  const pausedRoutine = await afterRestart.call('update_routine', { routine_id: routineId, enabled: false, title: 'Fixture paused' });
+  eq(pausedRoutine.data.enabled, false, 'explicit disable pauses scheduling');
+  const routineList = await afterRestart.call('list_routines', { member_id: 'kai' });
+  ok(routineList.data.routines.some(item => item.id === routineId), 'routine listed for its member');
+  const manualRun = await afterRestart.call('run_routine', { routine_id: routineId });
+  eq(manualRun.isError, false, `manual routine run: ${manualRun.data?.error || ''}`);
+  const settledRoutine = await until(async () => {
+    const result = await afterRestart.call('get_routine', { routine_id: routineId });
+    return result.data?.runs?.some(item => item.id === manualRun.data.run.id && item.status === 'completed') && result.data;
+  }, 'manual routine run settles');
+  ok(settledRoutine.runs[0].reply.includes('Fixture reply'), 'manual routine reply saved in routine history');
   await afterRestart.close();
+  await stopBridge();
+  await startBridge();
+  const finalReader = mcpClient('newline');
+  const restoredProfile = await finalReader.call('get_member_profile', { member_id: 'kai' });
+  eq(restoredProfile.data.name, 'Morgan', 'managed profile survives bridge restart');
+  eq(restoredProfile.data.permissions.modes['web.fetch'], 'block', 'ability policy survives bridge restart');
+  const restoredRoutine = await finalReader.call('get_routine', { routine_id: routineId });
+  eq(restoredRoutine.data.title, 'Fixture paused', 'routine edits survive bridge restart');
+  const restoredGroup = await finalReader.call('get_messages', { channel_id: groupId, thread_id: groupSend.data.thread_id });
+  eq(restoredGroup.data.messages.length, 4, 'group history survives bridge restart');
+  await finalReader.close();
 
   // ---- refusals at start-up ------------------------------------------------
   for (const bad of ['http://10.1.2.3:19821', 'http://example.com:19821']) {
@@ -435,7 +586,7 @@ emit({type:'turn.completed'});
   eq(downCall.isError, true, 'unreachable bridge is a tool error'); ok(String(downCall.data.error).includes('did not answer'), 'unreachable bridge explained');
   await down.close();
 
-  console.log(`Control plane checks passed (${passed}): loopback refusal, redaction, both framings, exact tool set, seeded roster/channels/messages/search, channel creation across restart, channel post and member dispatch with mirrored reply, interrupt, timed-out wait, and documented not-available errors.`);
+  console.log(`Control plane checks passed (${passed}): loopback refusal, redaction, both framings, exact tool set, seeded roster/channels/messages/search, channel creation across restart, channel post and member dispatch with mirrored reply, interrupt, timed-out wait, member profile revisions, engine folder grants and skill installation, disconnected group replies, routine execution, and documented not-available errors.`);
 } finally {
   for (const child of children) child.kill('SIGKILL');
   await stopBridge();

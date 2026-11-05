@@ -12,6 +12,10 @@ list to the section for that version.
 
 ### Added
 
+- Manage Squad agents from MCP: rename them, edit personality and instructions, grant extra project folders, set abilities, and select skills.
+- Create private group chats, edit channel membership and settings, send to selected agents, and read replies even after the MCP client disconnects.
+- Preview, create, edit, pause, resume and manually run agent routines with explicit timezones.
+
 - Send direct messages to Squad agents from Autohand Code, follow delivery receipts, and read their conversations without interrupting current work. The external Squad MCP also exposes published artifacts and the knowledge library.
 
 ### Changed
