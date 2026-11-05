@@ -33,6 +33,14 @@ creation, edits, pause/resume and manual execution. Keep the managed member
 MCP identity-scoped and the existing operator tools compatible.
 
 Member edits use narrow patches with an atomic expected-revision comparison.
+Reject revision-checked writes when the member has been removed, even if
+the last profile revision still matches: deleting a member does not itself
+increment its profile revision. This closes a race between asynchronous
+selection validation and a concurrent removal. The regression check applies
+a previously prepared edit after removal and verifies the tombstone remains.
+Revision-checked patches rebase onto the latest canonical agent so an
+unrelated concurrent engine setting (outside the profile revision) is also
+preserved. A separate check exercises that interleaving.
 Include projects and permissions in that same canonical profile revision,
 so a stale app snapshot cannot undo an external grant or policy edit. An
 explicit expected revision protects a caller's earlier read; when omitted,
@@ -59,7 +67,7 @@ separate explicit actions. There is no routine deletion tool.
 
 ## Validation
 
-`node scripts/check-control-plane.mjs` passes 219 assertions against a real
+`node scripts/check-control-plane.mjs` passes 225 assertions against a real
 isolated bridge and fake Codex executable. New coverage includes profile
 conflicts and stale snapshots, rejected folder escapes, actual engine grants,
 next-turn local and qualified registry skill installation, channel membership, two replies persisted

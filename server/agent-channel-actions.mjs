@@ -76,7 +76,7 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
     let profileChanged = false;
     const result = await store.mutate(state => {
       const previous = state.agentChannelAccess[id];
-      if (input.expectedProfileRevision !== undefined && (!Number.isSafeInteger(input.expectedProfileRevision) || input.expectedProfileRevision !== memberProfileRevision(previous?.agent))) throw channelError('Member profile changed. Read it again before applying this edit.', 409);
+      if (input.expectedProfileRevision !== undefined && (!previous?.agent || previous.removed || !Number.isSafeInteger(input.expectedProfileRevision) || input.expectedProfileRevision !== memberProfileRevision(previous.agent))) throw channelError('Member profile changed. Read it again before applying this edit.', 409);
       const before = String(previous?.agent?.name || '').trim();
       if (input.removed === true) {
         state.agentChannelAccess[id] = { ...previous, removed: true, mode: 'block', updatedAt: at() };
@@ -86,10 +86,10 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
         const agentRouting = input.modelRoutingActor === 'agent';
         if (agentRouting && (previous?.removed || !normalizeModelRouting(previous?.agent?.modelRouting).allowAgentChanges || input.profilePatch?.modelRouting?.allowAgentChanges !== true)) throw channelError('The person has not allowed this member to manage fallbacks.', 403);
         if (agentRouting && Object.keys(input.profilePatch || {}).some(key => key !== 'modelRouting')) throw channelError('A fallback tool may only change its fallback configuration.', 403);
-        // Catalog discovery is asynchronous. Rebase a managed tool's narrow
-        // patch on the latest member, including any primary/permission edits
+        // Catalog discovery is asynchronous. Rebase managed/revision-checked
+        // patches on the latest member, including any primary/permission edits
         // made by the person while that discovery was running.
-        const incoming = agentRouting ? previous.agent : input.agent;
+        const incoming = agentRouting || input.expectedProfileRevision !== undefined ? previous.agent : input.agent;
         const agent = { ...mergeMemberProfile(memberCopy(incoming, id), previous?.agent), ...(input.profilePatch || {}) };
         if (agent.modelRouting) agent.modelRouting = normalizeModelRouting(agent.modelRouting, { strict: Boolean(input.profilePatch?.modelRouting) });
         if (input.profilePatch?.name && input.profilePatch.name !== before) {
