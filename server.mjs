@@ -1941,7 +1941,7 @@ function sanitizeSkillId(input) {
     .replace(/^https:\/\/skilled\.autohand\.ai\/skill\//i, "")
     .toLowerCase();
   const packagePath = raw.split('::').at(-1);
-  if (/^(?:[a-z0-9][a-z0-9_.:-]*::)?[a-z0-9.][a-z0-9_./-]*$/.test(raw) && !packagePath.split('/').some(part => !part || part === '.' || part === '..') && (raw.includes('::') || raw.includes('/'))) return raw;
+  if (/^(?:[a-z0-9][a-z0-9_.:/-]*::)?[a-z0-9.][a-z0-9_./-]*$/.test(raw) && !packagePath.split('/').some(part => !part || part === '.' || part === '..') && (raw.includes('::') || raw.includes('/'))) return raw;
   const safe = raw.replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
   return skillAliases.get(safe) || safe;
 }
@@ -2184,7 +2184,7 @@ async function installAgentSkills(agent, agentHome, agentId) {
         install.installed.push({ ...local, id: skillId, ...snapshot, status: 'installed', dir: targetDir, path: skillPath, from: local.root, ownerId: agentId });
         continue;
       }
-      if (!catalogById) catalogById = new Map(((await loadSkillCatalog().catch(() => ({ skills: [] }))).skills || []).map(skill => [skill.id, skill]));
+      if (!catalogById) catalogById = new Map(((await loadSkillCatalog().catch(() => ({ skills: [] }))).skills || []).flatMap(skill => [[skill.id, skill], [`registry:${skillRepo(skill)}::${skill.directory || skill.id}`, skill]]));
       const skill = catalogById.get(skillId);
       if (!skill) throw new Error(`No configured local or registry package resolves ${skillId}`);
       const reference = { authority: `registry:${skillRepo(skill)}`, packageId: skill.directory || skill.id, resource: 'SKILL.md' };
@@ -2193,7 +2193,7 @@ async function installAgentSkills(agent, agentHome, agentId) {
       const pinnedReference = retainedReference || reference;
       if (pinnedReference.authority !== reference.authority || pinnedReference.packageId !== reference.packageId) throw new Error('The pinned skill origin is unavailable; choose an explicit replacement before continuing.');
       const snapshot = localPackage && existsSync(localPackage) ? await copySkillPackage(localPackage, targetDir, pinnedReference) : await writeSkillPackage(await getSkillFiles(skill), targetDir, pinnedReference);
-      install.installed.push({ ...skillSummary(skill), ...snapshot, description: skill.description || '', scope: 'member', ownerId: agentId, status: 'installed', dir: targetDir, path: skillPath });
+      install.installed.push({ ...skillSummary(skill), ...snapshot, id: skillId, description: skill.description || '', scope: 'member', ownerId: agentId, status: 'installed', dir: targetDir, path: skillPath });
     } catch (error) {
       if (existsSync(targetDir)) {
         const rejectedDir = join(agentHome, 'rejected-skills');
@@ -5778,6 +5778,7 @@ function channelContextFromPayload(payload) {
     channelId,
     threadId: String(payload?.threadId || nested.threadId || "").trim(),
     parentMessageId: String(payload?.parentMessageId || nested.parentMessageId || "").trim(),
+    operatorReply: nested.operatorReply === true,
     visibility: normalizeChannelVisibility(payload?.visibility || nested.visibility),
     memberIds: normalizeChannelMemberIds(payload?.memberIds || nested.memberIds),
     autoModeDefault: payload?.autoModeDefault === true || nested.autoModeDefault === true || runtime.autoMode === true,
@@ -8602,6 +8603,7 @@ function routeContext() {
     appStateDir,
     squadWorkspaceRoot,
     memberWorkspaceRoots: [squadWorkspaceRoot, ...legacySquadWorkspaceRoots],
+    maxProjectsPerMember,
     holdSystemReset,
     currentSystemReset: () => systemResetOwner,
     // The bundled Autohand CLI, for routes that run one of its commands
@@ -8675,6 +8677,15 @@ function routeContext() {
     getRuntime,
     cleanWorkspace,
     provisionAgent: ensureAgentRuntime,
+    validateSkillSelections: async (agent, selected) => {
+      if (!selected.length) return;
+      const workspaceId = agent.workspace ? await ensureSkillWorkspaceIdentity(agent.workspace) : '';
+      const local = await listLocalSkillPackages(localSkillRootDescriptors({ homeDir, squadStateDir, workspace: agent.workspace || '', workspaceId, memberId: agent.id }));
+      const available = new Set(local.flatMap(skill => [skill.id, skill.qualifiedId].filter(Boolean)));
+      const missing = selected.filter(id => !available.has(id));
+      if (missing.length) for (const skill of (await loadSkillCatalog()).skills || []) { available.add(skill.id); available.add(`registry:${skillRepo(skill)}::${skill.directory || skill.id}`); }
+      for (const id of selected) if (!available.has(id)) throw new Error(`Skill ${id} is not available. Choose an ID from list_skills.`);
+    },
     spawnSync,
     // Member homes: <agentsDir>/<member id>/{skills,profile}. Read-only use
     // by team export (server/teams, ADR-0106); provisioning stays here.

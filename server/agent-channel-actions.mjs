@@ -76,6 +76,7 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
     let profileChanged = false;
     const result = await store.mutate(state => {
       const previous = state.agentChannelAccess[id];
+      if (input.expectedProfileRevision !== undefined && (!Number.isSafeInteger(input.expectedProfileRevision) || input.expectedProfileRevision !== memberProfileRevision(previous?.agent))) throw channelError('Member profile changed. Read it again before applying this edit.', 409);
       const before = String(previous?.agent?.name || '').trim();
       if (input.removed === true) {
         state.agentChannelAccess[id] = { ...previous, removed: true, mode: 'block', updatedAt: at() };

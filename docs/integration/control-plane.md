@@ -2,7 +2,7 @@
 
 Lets Autohand Code and other MCP clients coordinate this Squad: select
 members, exchange direct messages, read Library, post to channels, and manage
-independent runs/goals. The server uses existing bridge routes. This is the
+independent runs/goals, member profiles, folder grants, skills and routines. The server uses existing bridge routes. This is the
 person's operator connection; the [managed member MCP](teams.md) has a separate
 identity and permissions and is supplied to each Squad agent automatically.
 
@@ -15,6 +15,8 @@ Module files:
   validation, loopback check, secret redaction, outcome mapping, framing codec.
 - `server/control-plane/runtime.mjs` — reusable bridge client, tool handlers,
   RPC dispatch and stdio transport; bundled by Autohand Code.
+- `server/control-plane/management.mjs` — operator management schemas and handlers,
+  bundled with the runtime by Autohand Code.
 - `scripts/check-control-plane.mjs` — Node check (`bun run check:control-plane`).
 - `daemon/src/cli.rs` — `squad mcp` execs the bundled Node on the entry.
 
@@ -59,7 +61,7 @@ the bridge did not answer.
 
 ## Tools
 
-The operator server now has 18 tools. For a direct conversation, use
+The operator server now has 37 tools. For a direct conversation, use
 `list_members` → `message_member` → `wait_for_message`; `send_message` keeps
 its original independent run/goal behavior for existing integrations.
 
@@ -106,6 +108,56 @@ operator connection.
 | `get_artifact` | `artifact_id` | Read published metadata and local preview/download links; does not execute content or read arbitrary files. |
 | `list_memories` | `member_id?`, `query?`, `limit?` (≤100), `offset?` | Search the person's knowledge library, optionally by owner. |
 | `read_memory` | `memory_id` | Read one knowledge-library entry; no editing/sharing/deletion. |
+
+| `get_member_profile` | `member_id` | Read saved profile, revision, projects, skills, permissions and supported ability IDs. |
+| `update_member_profile` | `member_id`, `expected_revision?`, `name?`, `role?`, `description?`, `instructions?`, `personality?` | Patch the canonical profile; stale revisions return 409. |
+| `set_member_abilities` | `member_id`, `expected_revision?`, `capabilities?`, `tool_policies?`, `workspace?` | Patch specific `{id, mode}` policies (`allow`, `ask`, `block`), optionally in a workspace override. Other policies and safety guards are preserved. |
+| `add_member_directory` / `remove_member_directory` | `member_id`, `path`, `expected_revision?` | Grant/revoke an extra project folder for later turns. Existing folders inside the physical home only; no deleting files or removing the primary workspace. |
+| `list_skills` | `member_id`, `query?`, `offset?` | Discover local and registry packages for the saved workspace, including qualified IDs. |
+| `set_member_skills` | `member_id`, `skill_ids`, `expected_revision?` | Replace selections; empty clears. Existing engine preparation installs/pins them on the next turn. |
+| `get_channel` / `update_channel` | `channel_id`, plus update `name?`, `purpose?`, `section?` | Read or patch channel settings without replacing history or membership. |
+| `set_channel_members` | `channel_id`, `add?`, `remove?` | Atomically add/remove existing member IDs; dispatches no work. |
+| `list_channel_threads` | `channel_id`, `limit?` (≤100) | Read newest saved threads. |
+| `create_group_chat` | `name`, `member_ids` (≥2 distinct) | Create a persistent private channel; dispatches no work. |
+| `send_channel_message` | `channel_id`, `text`, `thread_id?`, `member_ids?` | Save a threaded message; dispatch only explicitly selected channel members. Omitted recipients means post only. Returns per-member run receipts/errors. |
+| `list_routines` / `get_routine` | `member_id?` / `routine_id` | Read saved schedules and run history. |
+| `preview_routine` | `schedule` | Validate and preview up to three occurrences without saving. |
+| `create_routine` | `member_id`, `title`, `instructions`, `schedule`, `workspace?`, `enabled?`, `max_run_minutes?` | Save disabled by default. Explicit `enabled:true` schedules it; does not run immediately. |
+| `update_routine` | `routine_id`, fields from create except member | Patch saved settings; `enabled:false` pauses future scheduling, without stopping current work. |
+| `run_routine` | `routine_id` | Explicit manual run with saved settings; refuses overlap. Read completion in `get_routine`. |
+
+Member management requires the updated Squad bridge. An older running app
+returns an upgrade instruction; MCP never installs, restarts or upgrades it.
+The operator can change policy settings, but cannot grant macOS permissions,
+change engine login, bypass proposal approval or disable safety guards.
+
+Read `get_member_profile` before editing. An explicit `expected_revision`
+protects a decision based on that read. When omitted, MCP reads the current
+revision just before the patch and rejects a concurrent change. Folder grants
+are canonical member projects, passed through each engine's existing directory
+mechanism (`--add-dir` on fresh CLI turns; Codex resume uses sandbox config).
+Current work keeps its existing settings. Removing a grant never deletes files.
+Skills receipts confirm selection, not successful installation; installation
+happens during the next engine preparation using the existing pinned packages.
+
+For example, create a group with `create_group_chat({name:"Release review",
+member_ids:["kai","iris"]})`, then use its returned channel ID with
+`send_channel_message({channel_id:"…",text:"Review the release",
+member_ids:["kai","iris"]})`. Keep the returned thread and per-member run IDs.
+Replies are saved by the bridge even if the client disconnects; use
+`get_messages` for the thread and `wait_for_reply` for each run. Retrying a send
+creates a new prompt and new runs; inspect receipts before resending. Partial
+recipient failures are returned individually. Channel threads reuse their own
+saved context and do not replace members' direct-message conversations.
+
+Schedules require `kind` and an explicit IANA `timeZone`. Supported kinds and
+fields follow the existing routine scheduler: `once` (`date`, `time`),
+`weekdays` (`days` 0–6, `time`), `interval` (`everyMinutes`, optional
+`startDate`/`startTime`), `monthly` (`day` 1–31 or `"last"`, `time`), `yearly`
+(`month`, `day`, `time`), and `cron` (`cron`). Preview before enabling.
+Example: `{kind:"weekdays",days:[1,2,3,4,5],time:"09:00",
+timeZone:"Pacific/Auckland"}`. A disabled routine can still be run manually
+with `run_routine`; manual execution is distinct from enabling its schedule.
 
 Messages wait behind current work and preserve paused queues. They use the
 member's current saved harness and restrictions; the connection does not send
