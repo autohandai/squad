@@ -1,9 +1,10 @@
 # Control plane: stdio MCP server over the bridge (ADR-0109)
 
-Lets Claude Desktop, Cursor or any MCP client coordinate this Squad: read
-members and channels, post to channels, start bridge-owned work for a member,
-wait for it, stop it. Nothing here edits `server.mjs` or `App.jsx`; the
-server is a client of the bridge's existing routes.
+Lets Autohand Code and other MCP clients coordinate this Squad: select
+members, exchange direct messages, read Library, post to channels, and manage
+independent runs/goals. The server uses existing bridge routes. This is the
+person's operator connection; the [managed member MCP](teams.md) has a separate
+identity and permissions and is supplied to each Squad agent automatically.
 
 Module files:
 
@@ -12,6 +13,8 @@ Module files:
   `tools/call`, `notifications/cancelled`).
 - `server/control-plane/control-plane.mjs` — pure: tool schemas, argument
   validation, loopback check, secret redaction, outcome mapping, framing codec.
+- `server/control-plane/runtime.mjs` — reusable bridge client, tool handlers,
+  RPC dispatch and stdio transport; bundled by Autohand Code.
 - `scripts/check-control-plane.mjs` — Node check (`bun run check:control-plane`).
 - `daemon/src/cli.rs` — `squad mcp` execs the bundled Node on the entry.
 
@@ -141,10 +144,10 @@ JSON body `{ error, code?, status? }`.
   channel bodies (capped at 4,000 characters), transcripts and library reads.
 - Bounded reads: 200 messages per `get_messages`, 100 search hits, 60 tail
   lines, 10 minutes per wait.
-- What the bridge does not hold: the member roster is a read-only mirror the
-  app rewrites about every 15 seconds, so a member created in the app appears
-  after the next write and a member cannot be created or re-modelled here.
-  Direct-message history is browser-only.
+- Roster and history: registered member profiles supplement the app's status
+  mirror and live presence. Direct-message turns are available through
+  `get_conversation`; archived chat files are outside this tool's scope.
+  Members cannot be created or re-modelled here.
 
 ## Packaging
 
