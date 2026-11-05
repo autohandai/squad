@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- Send direct messages to Squad agents from Autohand Code, follow delivery receipts, and read their conversations without interrupting current work. The external Squad MCP also exposes published artifacts and the knowledge library.
+
 ### Changed
 
 - Updated the runtime dependency used to verify downloads and saved memory.

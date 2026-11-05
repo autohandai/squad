@@ -18,7 +18,7 @@ const rootDir = resolve(new URL('..', import.meta.url).pathname);
 const mcpEntry = join(rootDir, 'server', 'control-plane', 'mcp-server.mjs');
 const SECRET_A = 'sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const SECRET_B = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123';
-const EXPECTED_TOOLS = ['list_members', 'list_channels', 'get_messages', 'search', 'create_member', 'create_channel', 'send_message', 'wait_for_reply', 'interrupt', 'set_model'];
+const EXPECTED_TOOLS = ['list_members', 'list_channels', 'get_messages', 'search', 'create_member', 'create_channel', 'send_message', 'wait_for_reply', 'interrupt', 'set_model', 'message_member', 'get_conversation', 'get_member_queue', 'wait_for_message', 'list_artifacts', 'get_artifact', 'list_memories', 'read_memory'];
 
 let passed = 0;
 const ok = (condition, label) => { assert.ok(condition, label); passed += 1; };
@@ -168,7 +168,7 @@ function mcpClient(framing, args = ['--bridge', origin]) {
     return { ...response.result, data: response.result.structuredContent };
   };
   const close = async () => { child.stdin.end(); await Promise.race([exited, delay(3000).then(() => child.kill('SIGKILL'))]); children.delete(child); };
-  return { request, notify, call, close, exited, stderr: () => stderr, raw: () => raw, framingMatches: () => framing === 'header' ? /^Content-Length: \d+\r\n\r\n\{/.test(raw) : raw.startsWith('{') };
+  return { request, notify, call, close, exited, nextRequestId: () => nextId, stderr: () => stderr, raw: () => raw, framingMatches: () => framing === 'header' ? /^Content-Length: \d+\r\n\r\n\{/.test(raw) : raw.startsWith('{') };
 }
 
 try {
@@ -242,7 +242,7 @@ emit({type:'turn.completed'});
   const kai = members.data.members.find((member) => member.id === 'kai');
   const iris = members.data.members.find((member) => member.id === 'iris');
   eq(kai?.name, 'Kai', 'seeded member name'); eq(kai?.role, 'Engineer', 'seeded member role'); eq(kai?.presence, 'online', 'presence from the bridge');
-  eq(iris?.presence, 'offline', 'offline member presence'); eq(kai?.harness, null, 'harness unknown before any bridge-owned run');
+  eq(iris?.presence, 'offline', 'offline member presence'); eq(kai?.harness, null, 'provisioned-only fixture has no registered roster profile before the first turn');
   ok(String(members.data.source.roster).includes('web-status.json'), 'roster source is stated');
 
   const channels = await client.call('list_channels');
@@ -263,7 +263,24 @@ emit({type:'turn.completed'});
   const memberHistory = await client.call('get_messages', { member_id: 'kai' });
   ok(!memberHistory.isError, 'get_messages member ok');
   eq(memberHistory.data.items.length, 0, 'no bridge-owned items yet');
-  ok(String(memberHistory.data.note).includes('not mirrored to the bridge'), 'browser-only history is disclosed');
+  ok(String(memberHistory.data.note).includes('get_conversation'), 'summary history points to the actual transcript tool');
+
+  {
+    const direct = await client.call('message_member', { member_id: 'kai', text: 'CLI direct conversation fixture', workspace: rootDir });
+    ok(!direct.isError, `direct message accepted: ${direct.data?.error || ''}`);
+    ok(direct.data.message_id, 'direct message returns a durable receipt');
+    const directReply = await client.call('wait_for_message', { member_id: 'kai', message_id: direct.data.message_id, timeout_ms: 15000 });
+    eq(directReply.data.outcome, 'settled', `direct reply settled: ${JSON.stringify(directReply.data)}`);
+    ok(!JSON.stringify(directReply.data).includes(SECRET_A), 'direct replies redact secrets');
+    const conversation = await client.call('get_conversation', { member_id: 'kai' });
+    ok(conversation.data.messages.some(message => message.role === 'user' && message.body?.includes('CLI direct conversation fixture')), 'CLI message appears in the actual member conversation');
+    const queue = await client.call('get_member_queue', { member_id: 'kai' });
+    eq(queue.data.items.find(item => item.id === direct.data.message_id)?.status, 'done', 'queue receipt agrees with completed delivery');
+    const artifacts = await client.call('list_artifacts', { member_id: 'kai' });
+    eq(artifacts.isError, false, 'artifact library can be read');
+    const memories = await client.call('list_memories', { member_id: 'kai', query: 'fixture' });
+    eq(memories.isError, false, 'memory library can be searched');
+  }
 
   const search = await client.call('search', { query: 'checklist' });
   ok(!search.isError, `search ok: ${search.data?.error || ''}`);
@@ -308,9 +325,9 @@ emit({type:'turn.completed'});
   const settledJson = JSON.stringify(settled);
   ok(!settledJson.includes(SECRET_A) && !settledJson.includes(SECRET_B) && !settledJson.includes('ghp_'), 'no token-like string in the wait result');
   const runCalls = (await calls()).filter((call) => call.kind === 'start' && call.member === 'kai');
-  eq(runCalls.length, 1, 'fake harness ran once'); eq(runCalls[0].cwd, rootDir, 'run used the given workspace');
+  eq(runCalls.length, 2, 'direct queue and legacy run each reached the fake harness'); eq(runCalls[1].cwd, rootDir, 'run used the given workspace');
   const historyAfterRun = await client.call('get_messages', { member_id: 'kai' });
-  eq(historyAfterRun.data.items.length, 1, 'bridge-owned run listed for the member'); eq(historyAfterRun.data.items[0].status, 'completed', 'listed with its status');
+  eq(historyAfterRun.data.items.length, 2, 'direct chat and legacy run listed for the member'); eq(historyAfterRun.data.items[0].status, 'completed', 'listed with its status');
   ok(!JSON.stringify(historyAfterRun).includes(SECRET_A), 'member history is redacted');
   const membersAfterRun = await client.call('list_members');
   eq(membersAfterRun.data.members.find((member) => member.id === 'kai')?.harness, 'codex', 'harness learnt from the run'); eq(membersAfterRun.data.members.find((member) => member.id === 'kai')?.lastWorkspace, rootDir, 'last workspace learnt from the run');
@@ -343,6 +360,25 @@ emit({type:'turn.completed'});
   const held = await client.call('send_message', { member_id: 'kai', text: 'HOLD fixture until interrupted', workspace: rootDir });
   ok(!held.isError, 'held run started');
   await until(async () => (await calls()).some((call) => call.kind === 'start' && call.prompt.includes('HOLD fixture')), 'held fixture running');
+  const busyMessage = await client.call('message_member', { member_id: 'kai', text: 'Wait behind current work fixture' });
+  eq(busyMessage.isError, false, 'busy member accepts a queued direct message');
+  const busyQueue = await client.call('get_member_queue', { member_id: 'kai' });
+  eq(busyQueue.data.items.find(item => item.id === busyMessage.data.message_id)?.status, 'queued', 'busy member message stays queued');
+  ok(!(await calls()).some(call => call.prompt?.includes('Wait behind current work fixture')), 'message never interrupts current work');
+  const busyTimeout = await client.call('wait_for_message', { member_id: 'kai', message_id: busyMessage.data.message_id, timeout_ms: 1000 });
+  eq(busyTimeout.data.outcome, 'timed-out', 'a queued message wait times out without resending');
+  await api('/api/queues/kai/pause', {});
+  const pausedMessage = await client.call('wait_for_message', { member_id: 'kai', message_id: busyMessage.data.message_id });
+  eq(pausedMessage.data.outcome, 'needs-you', 'a paused queue returns needs-you immediately');
+  await api('/api/queues/kai/resume', {});
+  const waitId = client.nextRequestId();
+  const cancelledWait = client.call('wait_for_message', { member_id: 'kai', message_id: busyMessage.data.message_id, timeout_ms: 15000 }, 3000);
+  await delay(50);
+  client.notify('notifications/cancelled', { requestId: waitId });
+  const cancelledReply = await cancelledWait;
+  eq(cancelledReply.isError, true, 'a waiting MCP request can be cancelled while other frames are handled');
+  ok(String(cancelledReply.data.error).includes('cancelled'), 'cancelled wait explains that delivery is retained');
+  await api(`/api/queues/items/${busyMessage.data.message_id}/cancel`, {});
   const timedOut = await client.call('wait_for_reply', { run_id: held.data.run_id, timeout_ms: 1000 }, 10000);
   eq(timedOut.data.outcome, 'timed-out', 'short wait times out'); eq(timedOut.data.status, 'running', 'still running when timed out');
   const interrupted = await client.call('interrupt', { run_id: held.data.run_id });

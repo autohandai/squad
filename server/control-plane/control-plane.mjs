@@ -107,7 +107,7 @@ const id = (description) => ({ type: 'string', minLength: 1, maxLength: 200, des
 export const TOOLS = [
   {
     name: 'list_members',
-    description: 'Members of this Squad as the bridge sees them: id, name, role, status, presence (working, idle, online, offline), and the harness and workspace of their latest bridge-owned run or goal. The roster is the app\'s status mirror (web-status.json); members created in the app appear here within about 15 seconds.',
+    description: 'List Squad agents by id, name, role, presence, harness and workspace. Uses registered profiles and live presence, supplemented by the app\'s status mirror. Use member ids to address messages unambiguously.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -117,7 +117,7 @@ export const TOOLS = [
   },
   {
     name: 'get_messages',
-    description: 'Read a channel\'s threads and messages (channel_id, optional thread_id), or what the bridge holds for one member (member_id): its bridge-owned runs and goals with replies and a redacted log tail. A member\'s direct-message history lives in the app and is not included.',
+    description: 'Read a channel\'s threads and messages, or a member\'s bridge-owned run and goal summaries with redacted replies and log tails. Use get_conversation for the actual direct-message transcript.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -217,6 +217,46 @@ export const TOOLS = [
       properties: { member_id: id('Member.'), model: { type: 'string', maxLength: 120 }, provider: { type: 'string', maxLength: 60 } },
       additionalProperties: false,
     },
+  },
+  {
+    name: 'message_member',
+    description: 'Send a real direct message to an existing Squad member. Returns a durable message_id immediately. Messages run in queue order without interrupting current work, reuse the member\'s saved workspace when omitted, and appear in the app conversation. Does not resume a paused queue. Use wait_for_message for the reply.',
+    inputSchema: { type: 'object', properties: { member_id: id('Recipient member id from list_members.'), text: { type: 'string', minLength: 1, maxLength: 20000 }, workspace: { type: 'string', minLength: 1, maxLength: 1000, description: 'Explicit project override; otherwise reuse the member workspace.' } }, required: ['member_id', 'text'], additionalProperties: false },
+  },
+  {
+    name: 'get_conversation',
+    description: 'Read recent direct-message turns, including messages sent from the app or CLI, from the bridge history. Up to 60 turns; use since to filter a conversation boundary. Does not read archived chat files.',
+    inputSchema: { type: 'object', properties: { member_id: id('Member id.'), limit: { type: 'integer', minimum: 1, maximum: 60 }, since: { type: 'string', maxLength: 40, description: 'Only turns after this ISO timestamp.' } }, required: ['member_id'], additionalProperties: false },
+  },
+  {
+    name: 'get_member_queue',
+    description: 'Read a member\'s queued messages and delivery receipts, replies, failures and pause reason. Does not change queue state.',
+    inputSchema: { type: 'object', properties: { member_id: id('Member id.'), limit: { type: 'integer', minimum: 1, maximum: 200 } }, required: ['member_id'], additionalProperties: false },
+  },
+  {
+    name: 'wait_for_message',
+    description: 'Wait for a direct-message receipt from message_member. Returns settled, failed, needs-you (paused queue), or timed-out; waiting never cancels or resends the message.',
+    inputSchema: { type: 'object', properties: { member_id: id('Recipient member id.'), message_id: id('Durable message receipt id.'), timeout_ms: { type: 'integer', minimum: 1000, maximum: 25000, description: 'Default 20000; repeat with the same receipt if timed out.' } }, required: ['member_id', 'message_id'], additionalProperties: false },
+  },
+  {
+    name: 'list_artifacts',
+    description: 'Find published agent artifacts in the Squad Library. Returns metadata and local preview/download links, without executing artifact content.',
+    inputSchema: { type: 'object', properties: { member_id: id('Filter by owner.'), query: { type: 'string', maxLength: 500 }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, additionalProperties: false },
+  },
+  {
+    name: 'get_artifact',
+    description: 'Read metadata for one published artifact, including its local preview/download links. Does not read arbitrary workspace files.',
+    inputSchema: { type: 'object', properties: { artifact_id: id('Artifact id from list_artifacts.') }, required: ['artifact_id'], additionalProperties: false },
+  },
+  {
+    name: 'list_memories',
+    description: 'Search the Squad knowledge library, optionally by member. This operator connection reads memories visible to the person; it is never supplied to a managed Squad member.',
+    inputSchema: { type: 'object', properties: { member_id: id('Filter by owner.'), query: { type: 'string', maxLength: 500 }, limit: { type: 'integer', minimum: 1, maximum: 100 }, offset: { type: 'integer', minimum: 0, maximum: 100000 } }, additionalProperties: false },
+  },
+  {
+    name: 'read_memory',
+    description: 'Read one entry from the Squad knowledge library. Read-only operator access; does not edit or share memories.',
+    inputSchema: { type: 'object', properties: { memory_id: id('Memory id from list_memories.') }, required: ['memory_id'], additionalProperties: false },
   },
 ];
 
