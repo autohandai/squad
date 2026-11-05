@@ -32,6 +32,13 @@ pub(crate) fn apply(window: &WebviewWindow, shell: &Arc<Shell>, prefs: &Preferen
     use objc2_app_kit::{NSGlassEffectView, NSView};
     use objc2_foundation::NSObjectProtocol;
 
+    // All callers dispatch here through the AppKit loop. Enforce that contract
+    // so with_webview completes inline before publishing through Webview::eval.
+    if objc2::MainThreadMarker::new().is_none() {
+        eprintln!("quick chat material must be applied on the AppKit thread");
+        return;
+    }
+
     // Class lookup is safe on pre-26 macOS; don't construct the newer class there.
     let glass_available = AnyClass::get(c"NSGlassEffectView").is_some();
     let desired = if prefs.quick_chat_appearance == "solid" {
@@ -97,9 +104,15 @@ pub(crate) fn apply(window: &WebviewWindow, shell: &Arc<Shell>, prefs: &Preferen
             Material::Vibrancy
         };
         *lock(&state.quick_chat_material) = Some(actual);
-        publish(&target, actual);
     }) {
         eprintln!("quick chat material: {error}");
+        return;
+    }
+    // with_webview holds Wry's webview-ID mutex until its callback returns.
+    // eval takes that same mutex; re-entering it inside the callback deadlocks.
+    let actual = *lock(&shell.quick_chat_material);
+    if let Some(actual) = actual {
+        publish(window, actual);
     }
 }
 

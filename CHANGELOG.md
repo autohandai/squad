@@ -30,6 +30,7 @@ list to the section for that version.
 - Stopping or restarting one Squad instance preserves other running instances and their agents.
 
 - Available bots keep their menu-bar avatars while waiting for work. Paused and offline bots stay out of the menu bar, and older desktop shells report when saved settings need an updated app.
+- Applying Quick Chat's native glass material avoids a WebKit callback deadlock.
 
 - Long replies, code and tables stay readable inside Quick Chat. Its macOS panel now uses native material, system typography and a compact toolbar.
 

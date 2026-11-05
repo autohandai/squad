@@ -32,7 +32,10 @@ Gate construction with runtime class availability. Older macOS uses the
 existing native Popover material. Solid clears native effects. All hierarchy
 work runs through Tauri's AppKit-thread callback; a per-window material cache
 prevents repeated insertion during status refresh. The cache resets when the
-Quick Chat window is created. The native layer publishes the actual material
+Quick Chat window is created. Enforce AppKit-thread entry and publish only after
+`with_webview` returns: Wry holds its webview-ID mutex through the callback, and
+`eval` acquires that same mutex. Calling `eval` inside the callback deadlocks.
+The native layer publishes the actual material
 as `data-quick-chat-material`; web appearance changes retain the conversation
 and drafts. A 65-percent skin-colored surface lets native material show
 through while keeping the app's chosen foreground readable. CSS does not
@@ -52,7 +55,14 @@ also passed with the expanded settings shape.
 The full native unit suite passed 31 tests and the packaged preview passed
 strict signature verification. The native inspector then stalled the preview
 while traversing the Apple menu. A process sample showed AppKit waiting on
-Recent Items shared-file-list IPC, rather than a Rust lock. Cua refused
+Recent Items shared-file-list IPC. That sample did not establish whether the
+material path was safe: a later review of Tauri 2.11.6 / tauri-runtime-wry
+2.11.4 found a separate definite self-deadlock in our initial `publish` call
+inside `with_webview` (`with_webview` holds `window_id` through synchronous
+main-thread dispatch; `eval_script` locks it again). Publication now happens
+after the callback returns. A main-thread marker enforces the synchronous
+callback contract. Unit/browser checks cannot execute this AppKit/Wry mutex
+path, so it still requires a native interaction check. Cua refused
 termination because launch ownership was not attested; manual closure was
 requested. Native material pixels and avatar interaction therefore remain
 pending. This host can exercise only the macOS 15 fallback, not the macOS 26
