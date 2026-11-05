@@ -467,15 +467,9 @@ async fn stop_stack(paths: &StatePaths, config: &SquadConfig) -> Result<CommandO
         output.push(result.stderr);
     }
 
-    match terminate_squad_member_processes() {
-        Ok(count) if count > 0 => output.push(format!(
-            "Autohand Squad member processes stopped: {count}\n"
-        )),
-        Ok(_) => {}
-        Err(error) => output.push(format!(
-            "Autohand Squad member process cleanup skipped: {error:#}\n"
-        )),
-    }
+    // The selected bridge shuts down its own tracked sessions and children.
+    // A process name or a shared member home cannot prove instance ownership.
+    // Never sweep other Squad instances after this root-scoped shutdown.
 
     let analytics_port = crate::startup_ports::analytics_port_for(paths, &config.host);
     for result in [
@@ -487,16 +481,6 @@ async fn stop_stack(paths: &StatePaths, config: &SquadConfig) -> Result<CommandO
         }
         output.push(result.stdout);
         output.push(result.stderr);
-    }
-
-    match terminate_associated_squad_processes() {
-        Ok(count) if count > 0 => output.push(format!(
-            "Autohand Squad leftover processes stopped: {count}\n"
-        )),
-        Ok(_) => {}
-        Err(error) => output.push(format!(
-            "Autohand Squad leftover process cleanup skipped: {error:#}\n"
-        )),
     }
 
     Ok(CommandOutput {
@@ -1089,176 +1073,6 @@ fn is_squad_web_runtime(value: &serde_json::Value) -> bool {
             .pointer("/data/autohandPath")
             .and_then(|item| item.as_str())
             .is_some()
-}
-
-fn terminate_squad_member_processes() -> Result<usize> {
-    #[cfg(target_family = "unix")]
-    {
-        let output = non_bridge_command("ps")
-            .args(["-axo", "pid=,command="])
-            .output()
-            .context("list Squad member processes")?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut stopped = 0;
-        for pid in squad_member_pids_from_process_list(&stdout, std::process::id()) {
-            if terminate_process(pid) {
-                stopped += 1;
-            }
-        }
-        Ok(stopped)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut command = non_bridge_command("powershell");
-        command.args([
-            "-NoProfile",
-            "-Command",
-            r#"Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { "$($_.ProcessId)`t$($_.CommandLine)" } }"#,
-        ]);
-        detach_background(&mut command);
-        let output = command.output().context("list Squad member processes")?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut stopped = 0;
-        for pid in squad_member_pids_from_process_list(&stdout, std::process::id()) {
-            if terminate_process(pid) {
-                stopped += 1;
-            }
-        }
-        Ok(stopped)
-    }
-
-    #[cfg(not(any(target_family = "unix", target_os = "windows")))]
-    {
-        Ok(0)
-    }
-}
-
-fn terminate_associated_squad_processes() -> Result<usize> {
-    #[cfg(target_family = "unix")]
-    {
-        let output = non_bridge_command("ps")
-            .args(["-axo", "pid=,command="])
-            .output()
-            .context("list Autohand Squad processes")?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut stopped = 0;
-        for pid in associated_squad_pids_from_process_list(&stdout, std::process::id()) {
-            if terminate_process(pid) {
-                stopped += 1;
-            }
-        }
-        Ok(stopped)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut command = non_bridge_command("powershell");
-        command.args([
-            "-NoProfile",
-            "-Command",
-            r#"Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { "$($_.ProcessId)`t$($_.CommandLine)" } }"#,
-        ]);
-        detach_background(&mut command);
-        let output = command.output().context("list Autohand Squad processes")?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut stopped = 0;
-        for pid in associated_squad_pids_from_process_list(&stdout, std::process::id()) {
-            if terminate_process(pid) {
-                stopped += 1;
-            }
-        }
-        Ok(stopped)
-    }
-
-    #[cfg(not(any(target_family = "unix", target_os = "windows")))]
-    {
-        Ok(0)
-    }
-}
-
-fn squad_member_pids_from_process_list(output: &str, current_pid: u32) -> Vec<u32> {
-    output
-        .lines()
-        .filter_map(parse_ps_pid_and_command)
-        .filter(|(pid, _)| *pid != current_pid)
-        .filter(|(_, command)| is_squad_member_process(command))
-        .map(|(pid, _)| pid)
-        .collect()
-}
-
-fn associated_squad_pids_from_process_list(output: &str, current_pid: u32) -> Vec<u32> {
-    output
-        .lines()
-        .filter_map(parse_ps_pid_and_command)
-        .filter(|(pid, _)| *pid != current_pid)
-        .filter(|(_, command)| is_associated_squad_process(command))
-        .map(|(pid, _)| pid)
-        .collect()
-}
-
-fn parse_ps_pid_and_command(line: &str) -> Option<(u32, &str)> {
-    let trimmed = line.trim_start();
-    let split_at = trimmed.find(char::is_whitespace)?;
-    let pid = trimmed[..split_at].parse::<u32>().ok()?;
-    Some((pid, trimmed[split_at..].trim_start()))
-}
-
-fn is_squad_member_process(command: &str) -> bool {
-    let command = command.replace("\\012", "\n");
-    let command = command.replace('\\', "/");
-    let lower = command.to_ascii_lowercase().replace(['"', '\''], "");
-    let is_autohand = is_autohand_cli_process(&lower);
-    let is_squad_runtime = lower.contains("autohand-squad-daemon")
-        || lower.contains("autohand-squad-analytics")
-        || lower.contains("autohand-squad-tray")
-        || lower.contains("autohand-squad-ui");
-    is_autohand
-        && !is_squad_runtime
-        && (lower.contains(".autohand/agents/")
-            || lower.contains(".autohandsquad/data/workers/")
-            || lower.contains("autohand_client_name=autohand-squad-")
-            || lower.contains("autohand squad member profile"))
-}
-
-fn is_autohand_cli_process(lower: &str) -> bool {
-    lower.starts_with("autohand ")
-        || lower.starts_with("autohand.exe ")
-        || lower.starts_with("autohand.cmd ")
-        || lower.ends_with("/autohand")
-        || lower.ends_with("/autohand.exe")
-        || lower.ends_with("/autohand.cmd")
-        || lower.contains("/autohand ")
-        || lower.contains("/autohand.exe ")
-        || lower.contains("/autohand.cmd ")
-        || lower.contains(" autohand ")
-        || lower.contains(" autohand.exe ")
-        || lower.contains(" autohand.cmd ")
-        || lower.contains("/autohand-cli/")
-        || lower.contains("\\autohand-cli\\")
-        || lower.contains("@autohandai/autohand")
-        || lower.contains("@autohandai/cli")
-        || lower.contains("agent-sdk/cli/autohand-")
-        || lower.contains("autohand-macos-arm64")
-        || lower.contains("autohand-macos-x64")
-        || lower.contains("autohand-linux-x64")
-        || lower.contains("autohand-linux-arm64")
-        || lower.contains("autohand-windows-x64.exe")
-}
-
-fn is_associated_squad_process(command: &str) -> bool {
-    is_squad_member_process(command)
-        || is_squad_runtime_process(command)
-        || is_squad_web_process(command)
-}
-
-fn is_squad_runtime_process(command: &str) -> bool {
-    let command = command.replace('\\', "/");
-    let lower = command.to_ascii_lowercase().replace(['"', '\''], "");
-    lower.contains("autohand-squad-daemon")
-        || lower.contains("autohand-squad-analytics")
-        || lower.contains("autohand-squad-tray")
-        || lower.contains("autohand-squad-ui")
 }
 
 fn terminate_squad_web_listener(web_port: u16) -> bool {
@@ -2441,94 +2255,6 @@ mod tests {
         assert!(output.stdout.contains("\"id\": \"one\""));
         assert!(output.stdout.contains("\"success\": true"));
         let _ = fs::remove_dir_all(cleanup_root);
-    }
-
-    #[test]
-    fn detects_squad_member_processes_without_matching_runtime_binaries() {
-        assert!(is_squad_member_process(
-            "autohand --path /tmp/work --config /repo/.autohand/agents/b3/config.json --prompt hi"
-        ));
-        assert!(is_squad_member_process(
-            r#"C:\Users\me\.local\bin\autohand.exe --path C:\repo --config C:\repo\.autohand\agents\b3\config.json --prompt hi"#
-        ));
-        assert!(is_squad_member_process(
-            r#""C:\Users\me\.local\bin\autohand.exe" --path C:\repo --config C:\repo\.autohand\agents\b3\config.json --prompt hi"#
-        ));
-        assert!(is_squad_member_process(
-            "autohand --path /Users/me/.autohandsquad/data/workers/b3 --append-sys-prompt Autohand Squad member profile"
-        ));
-        assert!(is_squad_member_process(
-            r#"cmd /C set AUTOHAND_CLIENT_NAME=autohand-squad-b3 && C:\bin\autohand.exe --path C:\repo"#
-        ));
-        assert!(is_squad_member_process(
-            r#"C:\Users\me\AppData\Roaming\npm\autohand.cmd --path C:\repo --config C:\repo\.autohand\agents\b3\config.json --prompt hi"#
-        ));
-        assert!(is_squad_member_process(
-            "node /Users/me/.npm/_npx/123/node_modules/autohand-cli/dist/index.js --path /repo --config /repo/.autohand/agents/b3/config.json --prompt hi"
-        ));
-        assert!(is_squad_member_process(
-            "bun /Users/me/project/node_modules/@autohandai/cli/dist/index.js --path /repo --config /repo/.autohand/agents/b3/config.json --prompt hi"
-        ));
-        assert!(!is_squad_member_process(
-            "/Users/me/.autohand/squad/bin/autohand-squad-tray --port 19822"
-        ));
-        assert!(!is_squad_member_process("node server.mjs --port 19821"));
-        assert!(!is_squad_member_process(
-            "node /Users/me/.npm/_npx/123/node_modules/autohand-cli/dist/index.js --path /tmp/other --prompt hi"
-        ));
-    }
-
-    #[test]
-    fn parses_squad_member_pids_from_ps_output() {
-        let output = "\
- 123 node server.mjs --port 19821
- 456 autohand --path /tmp/work --config /repo/.autohand/agents/b3/config.json
- 789 /Users/me/.autohand/squad/bin/autohand-squad-daemon --port 19822
- 101 C:\\Users\\me\\.local\\bin\\autohand.exe --config C:\\repo\\.autohand\\agents\\b3\\config.json
- 202 node /Users/me/node_modules/autohand-cli/dist/index.js --config /repo/.autohand/agents/b4/config.json
-	";
-        assert_eq!(
-            squad_member_pids_from_process_list(output, 0),
-            vec![456, 101, 202]
-        );
-    }
-
-    #[test]
-    fn detects_associated_squad_processes_for_quit_cleanup() {
-        assert!(is_associated_squad_process(
-            "/Users/me/.autohand/squad/bin/autohand-squad-daemon --port 19822"
-        ));
-        assert!(is_associated_squad_process(
-            "C:\\Users\\me\\.autohand\\squad\\bin\\autohand-squad-analytics.exe --port 19823"
-        ));
-        assert!(is_associated_squad_process(
-            "/Users/me/.autohand/squad/bin/autohand-squad-tray --port 19822"
-        ));
-        assert!(is_associated_squad_process(
-            "node /Users/me/Documents/autohand/web/prototypes/autohandSWE/server.mjs --port 19821"
-        ));
-        assert!(is_associated_squad_process(
-            "autohand --path /tmp/work --config /repo/.autohand/agents/b3/config.json --prompt hi"
-        ));
-        assert!(!is_associated_squad_process(
-            "autohand --path /tmp/other --prompt not a squad member"
-        ));
-        assert!(!is_associated_squad_process(
-            "/Users/me/.local/bin/not-autohand --prompt hi"
-        ));
-    }
-
-    #[test]
-    fn associated_cleanup_skips_current_process() {
-        let output = "\
- 111 /Users/me/.autohand/squad/bin/autohand-squad-tray --port 19822
- 222 node /Users/me/Documents/autohand/web/prototypes/autohandSWE/server.mjs --port 19821
- 333 autohand --path /tmp/work --config /repo/.autohand/agents/b3/config.json
-";
-        assert_eq!(
-            associated_squad_pids_from_process_list(output, 111),
-            vec![222, 333]
-        );
     }
 
     #[test]

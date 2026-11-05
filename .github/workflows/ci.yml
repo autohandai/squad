@@ -236,6 +236,10 @@ jobs:
         run: cargo build --bins -j1
         working-directory: daemon
 
+      - name: Check stop keeps sibling Squad instances alive
+        if: runner.os == 'Linux'
+        run: bun run check:stop-isolation
+
       - name: Check reset with the real service supervisor
         if: runner.os == 'Linux'
         run: bun run check:system-reset:supervisor
