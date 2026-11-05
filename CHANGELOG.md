@@ -28,6 +28,8 @@ list to the section for that version.
 ### Fixed
 
 - Stopping or restarting one Squad instance preserves other running instances and their agents.
+- Desktop builds using a shared Cargo directory package the freshly built runtime instead of stale sidecars from a different directory.
+- Waiting for a queued message through MCP reports a timeout when the final queue check exhausts its deadline, preserving the message receipt for another wait.
 
 - Available bots keep their menu-bar avatars while waiting for work. Paused and offline bots stay out of the menu bar, and older desktop shells report when saved settings need an updated app.
 - Applying Quick Chat's native glass material avoids a WebKit callback deadlock.

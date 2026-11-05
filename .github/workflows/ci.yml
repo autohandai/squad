@@ -213,6 +213,9 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt
           rustup default stable
 
+      - name: Check desktop Cargo output resolution
+        run: node scripts/check-desktop-cargo-output.mjs
+
       - name: Cache Cargo packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

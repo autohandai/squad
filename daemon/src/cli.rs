@@ -78,6 +78,7 @@ pub enum SquadCommand {
     Doctor,
     Status,
     Restart,
+    /// Stop only services owned by the selected Squad state root.
     Stop,
     Queue,
     Open,
