@@ -70,6 +70,33 @@ await assert.rejects(() => oldBridge.get('/api/control-plane/members/kai'), /Upd
 const monthlySchema = TOOLS.find(tool => tool.name === 'preview_routine').inputSchema;
 eq(validateArgs(monthlySchema, { schedule: { kind: 'monthly', day: 'last', time: '09:00', timeZone: 'UTC' } }).length, 0, 'monthly last-day schedule passes MCP validation');
 
+// A final queue poll can exhaust the remaining HTTP budget. A known queued
+// receipt must still return timed-out, while cancellation and earlier bridge
+// failures remain errors. Pin the clock to exercise that boundary deterministically.
+const realNow = Date.now;
+try {
+  for (const scenario of ['deadline', 'early-error', 'cancelled']) {
+    let now = 1000, reads = 0;
+    const controller = new AbortController();
+    Date.now = () => now;
+    const waitTools = createTools({ get: async () => {
+      if (++reads === 1) return { paused: false, items: [{ id: 'queued-receipt', status: 'queued' }] };
+      if (scenario !== 'early-error') now = 2001;
+      if (scenario === 'cancelled') controller.abort();
+      throw new Error('Fixture queue fetch failed');
+    } });
+    const waiting = waitTools.wait_for_message({ member_id: 'kai', message_id: 'queued-receipt', timeout_ms: 1000 }, { signal: controller.signal });
+    if (scenario === 'deadline') {
+      eq((await waiting).outcome, 'timed-out', 'queue deadline returns the known receipt instead of a final-poll HTTP error');
+    } else {
+      await assert.rejects(waiting, scenario === 'cancelled' ? /cancelled/ : /Fixture queue fetch failed/); passed++;
+    }
+    eq(reads, 2, `${scenario} does not resend or keep polling`);
+  }
+} finally {
+  Date.now = realNow;
+}
+
 // ---- isolated bridge ------------------------------------------------------
 
 await mkdir(join(rootDir, '.codex-artifacts'), { recursive: true });

@@ -37,7 +37,7 @@ while waits are pending; concurrent tool requests are bounded at 64.
 
 ## Validation
 
-Run `node scripts/check-control-plane.mjs`: 158 assertions pass against an
+Run `node scripts/check-control-plane.mjs`: 231 assertions pass against an
 isolated real bridge with a fake harness. This covers a queued message and
 reply in the actual chat transcript, a receipt matching queue state, redacted
 replies, busy-member ordering, cancellation of a wait without cancelling
@@ -45,6 +45,17 @@ delivery, library listing, the legacy run/channel flows and both framings.
 The CLI's Tuistory scenario additionally exercises keyboard selection,
 direct delivery/history and discovery/calling the bundled MCP through the
 normal tool-search and permission path. No real member is messaged.
+
+On 2026-11-06, CI run 42114582748 failed the queued-message timeout assertion:
+the reply contained an error instead of `outcome: timed-out`. The final poll's
+HTTP timeout used the shrinking remainder of the wait budget; expiry during
+that fetch escaped before the known receipt could be returned. A deterministic
+tool-level check now advances a pinned clock across the deadline during a
+failed second poll. Return the last known queue snapshot only when that poll
+crossed the deadline. Earlier fetch errors and cancellation remain errors;
+waiting never resends or cancels the message. This trades a last-moment fresh
+queue read for a bounded, truthful last-known receipt outcome. The caller can
+wait again using the same receipt.
 
 ## Consequences
 

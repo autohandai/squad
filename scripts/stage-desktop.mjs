@@ -21,6 +21,7 @@ import { stageComputerUse } from './stage-computer-use.mjs';
 import { stageClaudeSdk } from './stage-claude-sdk.mjs';
 import { stageRuntimeSources } from './lib/stage-runtime-sources.mjs';
 import { signMacCode } from './lib/macos-signing.mjs';
+import { cargoReleaseDirectory } from './lib/cargo-output.mjs';
 
 const rootDir = process.cwd();
 const tauriDir = join(rootDir, 'src-tauri');
@@ -159,7 +160,9 @@ async function stageSidecars({ buildRust = true } = {}) {
     );
     if (result.status !== 0) throw new Error('cargo build of the runtime binaries failed');
   }
-  const targetDir = join(rootDir, 'daemon', 'target', 'release');
+  // Cargo may use CARGO_TARGET_DIR or a local target-dir config. Copy exactly
+  // the directory just built; a hardcoded path can silently ship stale code.
+  const targetDir = cargoReleaseDirectory(rootDir);
   for (const name of ['autohand-squad-daemon', 'autohand-squad-analytics', 'squad']) {
     const source = join(targetDir, exe(name));
     await assertFile(source);

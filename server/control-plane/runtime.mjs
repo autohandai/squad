@@ -393,7 +393,19 @@ export function createTools(bridge) {
       while (true) {
         if (signal?.aborted) throw new Error('Wait cancelled; the message remains queued.');
         const remaining = deadline - Date.now();
-        const queue = remaining <= 0 && previousQueue ? previousQueue : await bridge.get(`/api/queues/${encodeURIComponent(member_id)}`, { signal, timeoutMs: Math.max(1, Math.min(HTTP_TIMEOUT_MS, remaining)) });
+        let queue = previousQueue;
+        if (remaining > 0 || !queue) {
+          try {
+            queue = await bridge.get(`/api/queues/${encodeURIComponent(member_id)}`, { signal, timeoutMs: Math.max(1, Math.min(HTTP_TIMEOUT_MS, remaining)) });
+          } catch (error) {
+            if (signal?.aborted) throw new Error('Wait cancelled; the message remains queued.');
+            if (!previousQueue || Date.now() < deadline) throw error;
+            // The receipt was known before the last poll used up the wait
+            // budget. Report its last state; never resend or cancel delivery.
+            queue = previousQueue;
+          }
+        }
+        if (signal?.aborted) throw new Error('Wait cancelled; the message remains queued.');
         previousQueue = queue;
         const item = (queue.items || []).find(item => item.id === message_id);
         if (!item) throw Object.assign(new Error('Message receipt not found for this member.'), { status: 404 });

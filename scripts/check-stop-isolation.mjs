@@ -1,16 +1,16 @@
 // Exercise the real stop path with two isolated bridges and an unrelated
 // member-looking process. Never use the installed CLI: it may predate this fix.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { access, mkdir, stat, writeFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { startBridge, stop, until } from './lib/reliability-browser.mjs';
 
-const cli = resolve(process.env.SQUAD_TEST_CLI || join('daemon', 'target', 'debug', process.platform === 'win32' ? 'squad.exe' : 'squad'));
-await access(cli);
-assert.ok((await stat(cli)).mtimeMs >= (await stat('daemon/src/cli.rs')).mtimeMs,
-  'Build the current source CLI before running isolation checks; older binaries contain an unsafe global cleanup.');
+const candidate = resolve(process.env.SQUAD_TEST_CLI || join('daemon', 'target', 'debug', process.platform === 'win32' ? 'squad.exe' : 'squad'));
+const binaryDir = await mkdtemp(join(tmpdir(), 'squad-stop-binary-'));
+const cli = join(binaryDir, process.platform === 'win32' ? 'squad.exe' : 'squad');
 async function freePort() {
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -20,6 +20,13 @@ async function freePort() {
 }
 let a, b, member;
 try {
+  // Tauri may replace its shared debug output. Probe and execute one private
+  // copy, never a mutable build pathname. Fresh mtimes cannot identify code.
+  await copyFile(candidate, cli);
+  await chmod(cli, 0o500);
+  const probe = spawnSync(cli, ['stop', '--help'], { encoding: 'utf8', timeout: 5000 });
+  assert.ok(probe.status === 0 && probe.stdout.includes('Stop only services owned by the selected Squad state root'),
+    'Build the current source CLI before running isolation checks; this binary lacks instance-scoped stop.');
   a = await startBridge({ development: false });
   b = await startBridge({ development: false });
   const original = (await a.api('/api/health')).pid;
@@ -49,4 +56,5 @@ try {
   await stop(member);
   await b?.close();
   await a?.close();
+  await rm(binaryDir, { recursive: true, force: true });
 }
