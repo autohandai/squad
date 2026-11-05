@@ -7,7 +7,7 @@ use crate::account_usage::{fetch_account_usage_blocking, now_unix, usage_line, A
 use crate::cli::{fetch_status_blocking, stack_daemon_config, web_port_for};
 use crate::config::{read_autohand_user_auth, resolve_config, ConfigOverrides, SquadConfig};
 use crate::daemon::StatusResponse;
-use crate::live_status::{read_live_status_snapshot, LiveStatusMember};
+use crate::live_status::{read_fresh_live_status_snapshot, LiveStatusMember};
 use crate::state::StatePaths;
 use anyhow::Result;
 
@@ -53,6 +53,7 @@ pub struct TrayMember {
     pub id: String,
     pub name: String,
     pub label: String,
+    pub working: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -99,7 +100,7 @@ pub fn load_desktop_tray_model(
     let daemon_config = stack_daemon_config(&config, Some(web_port_for(&config)));
     let status = fetch_status_blocking(&daemon_config).ok();
     let live = if status.is_none() {
-        read_live_status_snapshot(paths)
+        read_fresh_live_status_snapshot(paths)
     } else {
         None
     };
@@ -181,6 +182,7 @@ pub fn build_model(
             id: member.id.clone(),
             name: member.name.clone(),
             label: member_label(member),
+            working: member.working,
         })
         .collect();
 

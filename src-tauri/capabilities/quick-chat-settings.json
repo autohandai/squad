@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick-chat-settings",
+  "description": "Only the real main window at the active bridge origin can apply saved Quick Chat preferences.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"] },
+  "permissions": ["allow-squad-refresh-quick-chat"]
+}

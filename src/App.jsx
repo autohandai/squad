@@ -1,3 +1,5 @@
+import { QuickChatPanel } from "@/components/chat/QuickChatPanel";
+import { QuickChatPreferences } from "@/components/settings/QuickChatPreferences";
 import React, { Fragment, Suspense, createContext, lazy, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectObserver } from "@/lib/use-project-observer";
 import { onDesktopMenu } from "@/lib/desktop-menu";
@@ -9802,7 +9804,7 @@ function App() {
       <PresenceContext.Provider value={presenceContextValue}>
       <RemoteMembersContext.Provider value={remoteMembersContextValue}>
       <TooltipProvider>
-        <div className="flex h-[100svh] min-h-0 flex-col bg-background text-foreground" data-testid="mac-quick-chat">
+        <QuickChatPanel api={api} member={member} chatPath={member ? memberChatPath(member.id) : "/squad"}>
           <QuickChatMemberPicker members={agents} activeMemberId={member?.id} entryFor={entryFor} copy={localeCopy} onSelect={(id) => navigate(`/quick-chat?member=${encodeURIComponent(id)}`)} renderAvatar={(item, className) => <AgentAvatar agent={item} className={className} />} />
           {member ? <Conversation
             promptByAgent={chatDraftsByAgent} setPromptByAgent={setChatDraftsByAgent}
@@ -9822,7 +9824,7 @@ function App() {
             handoffRetryMode={resolveHandoffRetryMode(handoffSettings, runtime)} onCreateHandoff={createHandoff} onCollaborationResult={recordCollaborationResult}
             onCancelHandoff={cancelHandoff} onFailHandoff={markHandoffFailed} onRetryHandoff={retryHandoff}
           /> : <p className="px-4 py-6 text-sm text-muted-foreground">Add a member in Squad to start chatting.</p>}
-        </div>
+        </QuickChatPanel>
       </TooltipProvider>
       </RemoteMembersContext.Provider>
       </PresenceContext.Provider>
@@ -14911,10 +14913,10 @@ function Conversation({
 
   if (compact) {
     return (
-      <div className={cn("flex min-h-0 flex-1 flex-col bg-background", attachmentDraft.dragging && "ring-1 ring-inset ring-primary/60")} data-testid="quick-chat-conversation" {...attachmentDraft.bind}>
+      <div className={cn("flex min-h-0 min-w-0 w-full flex-1 flex-col", attachmentDraft.dragging && "ring-1 ring-inset ring-primary/60")} data-testid="quick-chat-conversation" {...attachmentDraft.bind}>
         {replySheet}
         {currentGoal ? <div className="shrink-0 px-3"><MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /></div> : null}
-        <ScrollArea className="min-h-0 flex-1">
+        <ScrollArea className="quick-chat-history min-h-0 min-w-0 flex-1">
           <div className="flex flex-col gap-4 px-3 py-3">
             {hasConversationMessages ? localizedMessages.map((message) => (
               <SquadMessage key={message.id} compact agent={agent} message={message} thread={replyThreads.find(thread => thread.parentMessageId === message.id)} onReply={setReplyRoot} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} onPermissionDecision={decidePermission} onQuestionAnswer={answerQuestion} onTeamProposal={decideTeamProposal} memberBusy={Boolean(chatSending)} />
@@ -24912,6 +24914,7 @@ function SettingsPage({
     { id: "language", label: copy.language },
     { id: "providers", label: "LLM Providers" },
     { id: "chat", label: copy.chat },
+    { id: "quick-chat", label: "Quick Chat" },
     { id: "notifications", label: copy.notifications || "Notifications" },
     { id: "voice", label: copy.voice || "Voice" },
     { id: "vault", label: copy.vault || "Vault" },
@@ -25468,6 +25471,7 @@ function SettingsPage({
     ),
     memory: () => (<><SettingsSectionHeader title="Memory" description="Collect and connect what your squad learns." /><Suspense fallback={<p className="text-sm text-muted-foreground">Loading memory settings…</p>}><MemorySettings api={api} onOpenLibrary={() => navigate("/memory")} /></Suspense></>),
     cloud: () => (<><SettingsSectionHeader title="Cloud sync" description="Keep shared team memories together." /><CloudSyncSettings api={api} /></>),
+    "quick-chat": () => (<><SettingsSectionHeader title="Quick Chat" description="A conversation from your macOS menu bar." /><QuickChatPreferences api={api} /></>),
     system: () => (
       <>
         <SettingsSectionHeader

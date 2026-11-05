@@ -12,6 +12,9 @@ list to the section for that version.
 
 ### Added
 
+- Configure Quick Chat from Settings: keep one Squad menu-bar icon, show individual working-agent icons, hide usage limits, or disable Quick Chat while agents keep working.
+- See connected Claude Code and Codex usage windows, model-specific limits and reset times in Quick Chat and the native menu.
+
 - Manage Squad agents from MCP: rename them, edit personality and instructions, grant extra project folders, set abilities, and select skills.
 - Create private group chats, edit channel membership and settings, send to selected agents, and read replies even after the MCP client disconnects.
 - Preview, create, edit, pause, resume and manually run agent routines with explicit timezones.
@@ -23,6 +26,8 @@ list to the section for that version.
 - Updated the runtime dependency used to verify downloads and saved memory.
 
 ### Fixed
+
+- Long replies, code and tables stay readable inside Quick Chat. Its macOS panel now uses native material, system typography and a compact toolbar.
 
 - Existing memory indexes retain the same checksums after the dependency update.
 

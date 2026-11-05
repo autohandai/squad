@@ -9,6 +9,7 @@ fn main() {
             "squad_notification_test",
             "squad_notification_settings",
             "squad_quit_for_update",
+            "squad_refresh_quick_chat",
             "squad_set_system_reset_stage",
             "squad_system_reset_status",
             "squad_restart_after_system_reset",

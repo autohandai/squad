@@ -587,3 +587,13 @@ html[data-skin] [data-slot="avatar"] {
   .settings-nav-indicator { transition: none !important; }
   .settings-section-enter { animation: none; }
 }
+
+/* A vertical Quick Chat history must not inherit a wide table's intrinsic width. */
+.quick-chat-history > [data-slot="scroll-area-viewport"] > div { display: block !important; min-width: 0; }
+[data-testid="mac-quick-chat"] { width: 100%; max-width: 100vw; height: 100svh; overflow: hidden; border-radius: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; }
+[data-testid="mac-quick-chat"] .quick-chat-history { overscroll-behavior: contain; }
+[data-testid="mac-quick-chat"] [data-message-id] { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+[data-testid="mac-quick-chat"] .quick-chat-toolbar { -webkit-user-select: none; user-select: none; }
+
+html[data-quick-chat="true"], html[data-quick-chat="true"] body, html[data-quick-chat="true"] #root { background: transparent !important; }
+html[data-quick-chat="true"] [data-testid="mac-quick-chat"] { background: color-mix(in srgb, var(--background) 90%, transparent); }

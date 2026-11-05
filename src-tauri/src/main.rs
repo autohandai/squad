@@ -33,6 +33,7 @@ mod computer_use_setup;
 mod dock_badge;
 mod native_notifications;
 mod quick_chat;
+mod quick_chat_preferences;
 mod system_reset;
 mod update_swap;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -43,8 +44,8 @@ use tokio::runtime::Runtime;
 const MAIN_WINDOW: &str = "main";
 /// Squad status (members, daemon) is re-read on this cadence; account usage
 /// every `USAGE_REFRESH_TICKS` of them, or on demand from the tray.
-const TRAY_REFRESH: Duration = Duration::from_secs(60);
-const USAGE_REFRESH_TICKS: u32 = 5;
+const TRAY_REFRESH: Duration = Duration::from_secs(5);
+const USAGE_REFRESH_TICKS: u32 = 60;
 
 #[derive(Default)]
 struct UsageCache {
@@ -57,6 +58,13 @@ struct Shell {
     app_url: Mutex<Option<String>>,
     runtime: Runtime,
     tray: Mutex<Option<TrayIcon<Wry>>>,
+    member_trays: Mutex<std::collections::HashMap<String, TrayIcon<Wry>>>,
+    popup_anchor: Mutex<Option<String>>,
+    member_portraits: Mutex<std::collections::HashMap<String, u64>>,
+    harness_usage: Mutex<Vec<quick_chat_preferences::HarnessUsage>>,
+    usage_refreshing: std::sync::atomic::AtomicBool,
+    usage_refresh_requested: std::sync::atomic::AtomicBool,
+    tray_refreshing: std::sync::atomic::AtomicBool,
     usage: Mutex<UsageCache>,
     reset: Mutex<system_reset::ResetGuard>,
 }
@@ -79,6 +87,7 @@ fn main() {
             native_notifications::squad_notification_test,
             native_notifications::squad_notification_settings,
             squad_quit_for_update,
+            quick_chat_preferences::squad_refresh_quick_chat,
             system_reset::squad_set_system_reset_stage,
             system_reset::squad_system_reset_status,
             system_reset::squad_restart_after_system_reset,
@@ -95,6 +104,13 @@ fn main() {
                 app_url: Mutex::new(None),
                 runtime: Runtime::new()?,
                 tray: Mutex::new(None),
+                member_trays: Mutex::new(std::collections::HashMap::new()),
+                popup_anchor: Mutex::new(None),
+                member_portraits: Mutex::new(std::collections::HashMap::new()),
+                harness_usage: Mutex::new(Vec::new()),
+                usage_refreshing: std::sync::atomic::AtomicBool::new(false),
+                usage_refresh_requested: std::sync::atomic::AtomicBool::new(false),
+                tray_refreshing: std::sync::atomic::AtomicBool::new(false),
                 usage: Mutex::new(UsageCache::default()),
                 reset: Mutex::new(system_reset::ResetGuard::default()),
             });
@@ -572,11 +588,40 @@ fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wr
     if let Some(plan) = &model.plan_label {
         owned.push(Box::new(info("plan", plan)?));
     }
-    for (index, line) in model.usage_lines.iter().enumerate() {
+    let preferences = quick_chat_preferences::read();
+    for (index, line) in model
+        .usage_lines
+        .iter()
+        .filter(|_| preferences.quick_chat_show_usage)
+        .enumerate()
+    {
         owned.push(Box::new(info(&format!("usage-{index}"), line)?));
     }
-    if let Some(note) = &model.usage_note {
+    if let Some(note) = model
+        .usage_note
+        .as_ref()
+        .filter(|_| preferences.quick_chat_show_usage)
+    {
         owned.push(Box::new(info("usage-note", note)?));
+    }
+    if preferences.quick_chat_show_usage {
+        let harness_usage = lock(&app.state::<Arc<Shell>>().harness_usage).clone();
+        for harness in &harness_usage {
+            owned.push(Box::new(PredefinedMenuItem::separator(app)?));
+            owned.push(Box::new(info(
+                &format!("harness-{}", harness.id),
+                &harness.label,
+            )?));
+            for (index, line) in quick_chat_preferences::usage_lines(harness)
+                .iter()
+                .enumerate()
+            {
+                owned.push(Box::new(info(
+                    &format!("harness-{}-{index}", harness.id),
+                    line,
+                )?));
+            }
+        }
     }
     if let Some(squad) = &model.squad_line {
         owned.push(Box::new(info("squad", squad)?));
@@ -623,7 +668,7 @@ fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wr
     owned.push(Box::new(action(
         "refresh",
         "Refresh usage",
-        model.signed_in,
+        preferences.quick_chat_show_usage,
     )?));
     owned.push(Box::new(PredefinedMenuItem::separator(app)?));
 
@@ -747,8 +792,17 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
             if let Some(member_id) = other.strip_prefix("member:") {
                 #[cfg(target_os = "macos")]
                 {
-                    if let Err(error) = quick_chat::open_quick_chat(handle, &shell, member_id) {
-                        eprintln!("quick chat failed: {error}");
+                    *lock(&shell.popup_anchor) = None;
+                    if quick_chat_preferences::read().quick_chat_enabled {
+                        if let Err(error) = quick_chat::open_quick_chat(handle, &shell, member_id) {
+                            eprintln!("quick chat failed: {error}");
+                        }
+                    } else if quick_chat::valid_member_id(member_id) {
+                        navigate_app(
+                            handle,
+                            &shell,
+                            &format!("/conversations/new?member={member_id}"),
+                        );
                     }
                     return;
                 }
@@ -812,35 +866,94 @@ fn start_tray_refresh(handle: AppHandle, shell: Arc<Shell>) {
 /// Rebuild the tray menu from fresh squad status and (optionally) fresh
 /// account usage. Runs off the main thread; the menu swap is dispatched.
 fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
+    if refresh_usage {
+        shell
+            .usage_refresh_requested
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+    if shell
+        .tray_refreshing
+        .swap(true, std::sync::atomic::Ordering::AcqRel)
+    {
+        return;
+    }
     std::thread::spawn(move || {
         let paths = default_paths();
         let overrides = PartialSquadConfig::default();
-        if refresh_usage {
-            let result = resolve_config(&paths, overrides.clone())
-                .map(|config| refresh_account_usage(&config));
-            let mut cache = lock(&shell.usage);
-            match result {
-                Ok(Ok(Some(snapshot))) => {
-                    cache.snapshot = Some(snapshot);
-                    cache.error = None;
+        if shell
+            .usage_refresh_requested
+            .load(std::sync::atomic::Ordering::Acquire)
+            && !shell
+                .usage_refreshing
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            shell
+                .usage_refresh_requested
+                .store(false, std::sync::atomic::Ordering::Release);
+            let usage_shell = shell.clone();
+            let usage_handle = handle.clone();
+            std::thread::spawn(move || {
+                let paths = default_paths();
+                let overrides = PartialSquadConfig::default();
+
+                let result = resolve_config(&paths, overrides.clone())
+                    .map(|config| refresh_account_usage(&config));
+                let mut cache = lock(&usage_shell.usage);
+                match result {
+                    Ok(Ok(Some(snapshot))) => {
+                        cache.snapshot = Some(snapshot);
+                        cache.error = None;
+                    }
+                    Ok(Ok(None)) => {
+                        cache.snapshot = None;
+                        cache.error = None;
+                    }
+                    Ok(Err(error)) | Err(error) => {
+                        cache.error = Some(format!("{error:#}"));
+                    }
                 }
-                Ok(Ok(None)) => {
-                    cache.snapshot = None;
-                    cache.error = None;
+
+                drop(cache);
+                if quick_chat_preferences::read().quick_chat_show_usage {
+                    let base = lock(&usage_shell.app_url).clone();
+                    if let Some(base) = base {
+                        *lock(&usage_shell.harness_usage) =
+                            quick_chat_preferences::fetch_usage(&base);
+                    }
+                } else {
+                    lock(&usage_shell.harness_usage).clear();
                 }
-                Ok(Err(error)) | Err(error) => {
-                    cache.error = Some(format!("{error:#}"));
-                }
-            }
+                usage_shell
+                    .usage_refreshing
+                    .store(false, std::sync::atomic::Ordering::Release);
+                refresh_tray(usage_handle, usage_shell, false);
+            });
         }
         let (usage, error) = {
             let cache = lock(&shell.usage);
             (cache.snapshot.clone(), cache.error.clone())
         };
         let model = load_desktop_tray_model(&paths, &overrides, usage.as_ref(), error.as_deref());
+        #[cfg(target_os = "macos")]
+        let icons = if !quick_chat_preferences::working_ids(&model, &quick_chat_preferences::read())
+            .is_empty()
+        {
+            quick_chat::member_icons(&handle, &shell)
+        } else {
+            std::collections::HashMap::new()
+        };
+        #[cfg(not(target_os = "macos"))]
+        let icons = std::collections::HashMap::new();
+        let apply_handle = handle.clone();
+        let apply_shell = shell.clone();
+        let apply_model = model.clone();
+        let _ = handle.run_on_main_thread(move || {
+            quick_chat_preferences::apply(&apply_handle, &apply_shell, &apply_model, &icons)
+        });
         match tray_menu(&handle, &model) {
             Ok(menu) => {
-                if let Some(tray) = lock(&shell.tray).as_ref() {
+                let tray = lock(&shell.tray).clone();
+                if let Some(tray) = tray {
                     if let Err(error) = tray.set_menu(Some(menu)) {
                         eprintln!("tray menu update failed: {error}");
                     }
@@ -848,6 +961,9 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
             }
             Err(error) => eprintln!("tray menu build failed: {error}"),
         }
+        shell
+            .tray_refreshing
+            .store(false, std::sync::atomic::Ordering::Release);
     });
 }
 

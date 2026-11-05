@@ -73,11 +73,12 @@ export async function startBridge({ signedIn = true, prepare, cwd = process.cwd(
   return { directory, origin, api, get logs() { return logs; }, restart: async () => { await stop(child); await start(); }, close: async () => { await stop(child); await rm(directory, { recursive: true, force: true }); } };
 }
 
-export async function startBrowser() {
+// Full-navigation tests can opt out of frozen pages retaining SSE connections.
+export async function startBrowser({ disableBackForwardCache = false } = {}) {
   const chrome = [process.env.CHROME_PATH, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'].filter(Boolean).find(existsSync);
   if (!chrome) throw new Error('Chrome is required for the rendered reliability checks. Set CHROME_PATH.');
   const directory = await mkdtemp(join(tmpdir(), 'squad-reliability-chrome-'));
-  const child = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-extensions', '--disable-gpu', '--window-size=1440,1100', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling', 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(chrome, ['--headless=new', ...(disableBackForwardCache ? ['--disable-back-forward-cache'] : []), '--remote-debugging-port=0', `--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-extensions', '--disable-gpu', '--window-size=1440,1100', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling', 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = ''; child.stderr.on('data', data => { logs += data; });
   let ws, debugOrigin;
   try {

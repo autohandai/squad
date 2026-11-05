@@ -1,3 +1,4 @@
+import { createHarnessUsage } from './server/harness/usage.mjs';
 import { createServer } from "node:http";
 import { hostname, arch, homedir, platform as osPlatform, release as osRelease, tmpdir } from "node:os";
 import { OtelLogger, SEVERITY, parseLogEnvelope, resourceFromEnv, traceIdFor, spanIdFor } from "./server/otel-logs.mjs";
@@ -8592,6 +8593,7 @@ async function openTerminal(payload) {
 }
 
 // Bridge context handed to route plug-ins (docs/integration/CONTRACT.md).
+const harnessUsage = createHarnessUsage({ listHarnesses: () => listHarnesses({ contextFor: harnessContextFor }), cwd: squadStateDir });
 const modelCatalog = createModelCatalog({ autohandHomeDir, readProviderSettings, contextFor: harnessContextFor, defaultWorkspace: getDefaultWorkspace });
 const fallbackRouter = createFallbackRouter({ stateDir: squadStateDir });
 
@@ -8675,6 +8677,7 @@ function routeContext() {
     events: bridgeEvents,
     emit: emitBridgeEvent,
     getRuntime,
+    harnessUsage,
     cleanWorkspace,
     provisionAgent: ensureAgentRuntime,
     validateSkillSelections: async (agent, selected) => {
