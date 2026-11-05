@@ -206,7 +206,8 @@
     "check:artifacts:browser": "playwright test --config playwright.updates.config.mjs artifacts.spec.mjs",
     "check:harness-usage": "node scripts/check-harness-usage.mjs",
     "check:quick-chat-settings": "node scripts/check-quick-chat-settings.mjs",
-    "check:quick-chat:browser": "node scripts/check-quick-chat-layout.mjs"
+    "check:quick-chat:browser": "node scripts/check-quick-chat-layout.mjs",
+    "check:stop-isolation": "node scripts/check-stop-isolation.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.296",
