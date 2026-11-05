@@ -56,6 +56,9 @@ export async function handle(req, res, url, ctx) {
     const body = await ctx.readBody(req);
     if (!body || typeof body !== "object" || Array.isArray(body)) { ctx.json(res, 400, { success: false, error: "Settings must be an object." }); return true; }
     const invalid = ["autoCheckUpdates", "autoDownloadUpdates", "quickChatEnabled", "quickChatShowUsage"].find(key => key in body && typeof body[key] !== "boolean");
+    if ("quickChatAppearance" in body && !["glass", "solid"].includes(body.quickChatAppearance)) {
+      ctx.json(res, 400, { success: false, error: "Choose glass or solid for Quick Chat appearance." }); return true;
+    }
     if ("quickChatMenuBarMode" in body && !["single", "active-agents"].includes(body.quickChatMenuBarMode)) {
       ctx.json(res, 400, { success: false, error: "Choose single or active-agents for the menu bar." }); return true;
     }

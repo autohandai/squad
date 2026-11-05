@@ -20,6 +20,10 @@ export function QuickChatPanel({ api, member, chatPath, children }) {
   const [settings, setSettings] = useState(null);
   const [usage, setUsage] = useState(null);
   const [usageError, setUsageError] = useState("");
+  useEffect(() => {
+    document.documentElement.dataset.quickChatAppearance = settings?.quickChatAppearance || "glass";
+    return () => { delete document.documentElement.dataset.quickChatAppearance; };
+  }, [settings?.quickChatAppearance]);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let disposed = false;

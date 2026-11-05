@@ -14,6 +14,7 @@ pub(crate) struct Preferences {
     pub quick_chat_enabled: bool,
     pub quick_chat_menu_bar_mode: String,
     pub quick_chat_show_usage: bool,
+    pub quick_chat_appearance: String,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -21,6 +22,7 @@ impl Default for Preferences {
             quick_chat_enabled: true,
             quick_chat_menu_bar_mode: "single".into(),
             quick_chat_show_usage: true,
+            quick_chat_appearance: "glass".into(),
         }
     }
 }
@@ -123,14 +125,37 @@ pub(crate) fn fetch_usage(base: &str) -> Vec<HarnessUsage> {
         .unwrap_or_default()
 }
 
-pub(crate) fn working_ids(model: &DesktopTrayModel, prefs: &Preferences) -> Vec<String> {
+fn available(member: &autohand_squad_runtime::desktop_tray::TrayMember) -> bool {
+    let status = member.status.trim().to_ascii_lowercase();
+    if matches!(
+        status.as_str(),
+        "offline"
+            | "archived"
+            | "disabled"
+            | "paused"
+            | "suspended"
+            | "hold"
+            | "break"
+            | "on-break"
+            | "unknown"
+    ) {
+        return false;
+    }
+    member.working
+        || matches!(
+            status.as_str(),
+            "online" | "ready" | "idle" | "active" | "available" | "working" | "busy"
+        )
+}
+
+pub(crate) fn visible_ids(model: &DesktopTrayModel, prefs: &Preferences) -> Vec<String> {
     if !prefs.quick_chat_enabled || prefs.quick_chat_menu_bar_mode != "active-agents" {
         return vec![];
     }
     model
         .members
         .iter()
-        .filter(|member| member.working && quick_chat::valid_member_id(&member.id))
+        .filter(|member| available(member) && quick_chat::valid_member_id(&member.id))
         .map(|member| member.id.clone())
         .collect()
 }
@@ -142,6 +167,9 @@ pub(crate) fn apply(
     icons: &std::collections::HashMap<String, tauri::image::Image<'static>>,
 ) {
     let prefs = read();
+    if let Some(window) = app.get_webview_window(quick_chat::QUICK_CHAT_WINDOW) {
+        crate::quick_chat_appearance::apply(&window, shell, &prefs);
+    }
     let main = lock(&shell.tray).clone();
     if cfg!(target_os = "macos") {
         if let Some(tray) = main {
@@ -168,7 +196,7 @@ pub(crate) fn apply(
     }
     #[cfg(target_os = "macos")]
     {
-        let wanted: HashSet<String> = working_ids(model, &prefs).into_iter().collect();
+        let wanted: HashSet<String> = visible_ids(model, &prefs).into_iter().collect();
         let stale: Vec<String> = lock(&shell.member_trays)
             .keys()
             .filter(|id| !wanted.contains(*id))
@@ -179,7 +207,7 @@ pub(crate) fn apply(
             lock(&shell.member_trays).remove(&member);
             lock(&shell.member_portraits).remove(&member);
         }
-        let missing: Vec<_> = working_ids(model, &prefs)
+        let missing: Vec<_> = visible_ids(model, &prefs)
             .into_iter()
             .filter(|id| !lock(&shell.member_trays).contains_key(id))
             .collect();
@@ -309,6 +337,15 @@ pub(crate) async fn squad_refresh_quick_chat(
             )
         })
         .map_err(|error| error.to_string())?;
+    } else {
+        let handle = app.clone();
+        let state = shell.inner().clone();
+        app.run_on_main_thread(move || {
+            if let Some(window) = handle.get_webview_window(quick_chat::QUICK_CHAT_WINDOW) {
+                crate::quick_chat_appearance::apply(&window, &state, &read());
+            }
+        })
+        .map_err(|error| error.to_string())?;
     }
     crate::refresh_tray(app, shell.inner().clone(), true);
     Ok(())
@@ -319,27 +356,96 @@ mod tests {
     use super::*;
     use autohand_squad_runtime::desktop_tray::TrayMember;
     #[test]
-    fn active_icons_are_opt_in_and_only_working() {
+    fn active_icons_include_available_idle_members() {
+        let model = DesktopTrayModel {
+            members: vec![TrayMember {
+                id: "idle-eva".into(),
+                name: "Eva".into(),
+                label: "Eva · Online".into(),
+                status: "online".into(),
+                working: false,
+            }],
+            ..Default::default()
+        };
+        let prefs = Preferences {
+            quick_chat_menu_bar_mode: "active-agents".into(),
+            ..Default::default()
+        };
+        assert_eq!(visible_ids(&model, &prefs), vec!["idle-eva"]);
+    }
+    #[test]
+    fn unavailable_members_never_get_icons_even_with_a_running_session() {
+        let statuses = [
+            "online",
+            "ready",
+            "idle",
+            "active",
+            "available",
+            "busy",
+            "offline",
+            "paused",
+            "disabled",
+            "archived",
+            "hold",
+            "suspended",
+            "on-break",
+            "unknown",
+        ];
+        let mut members: Vec<_> = statuses
+            .iter()
+            .enumerate()
+            .map(|(i, status)| TrayMember {
+                id: format!("member-{i}"),
+                name: "Agent".into(),
+                label: "Agent".into(),
+                status: status.to_string(),
+                working: i >= 5,
+            })
+            .collect();
+        members.push(TrayMember {
+            id: "invalid/path".into(),
+            name: "Agent".into(),
+            label: "Agent".into(),
+            status: "online".into(),
+            working: true,
+        });
+        let model = DesktopTrayModel {
+            members,
+            ..Default::default()
+        };
+        let prefs = Preferences {
+            quick_chat_menu_bar_mode: "active-agents".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            visible_ids(&model, &prefs),
+            (0..6).map(|i| format!("member-{i}")).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn active_icons_are_opt_in_and_follow_availability() {
         let model = DesktopTrayModel {
             members: (0..20)
                 .map(|id| TrayMember {
                     id: format!("agent-{id}"),
                     name: "Agent".into(),
                     label: "Agent".into(),
+                    status: "online".into(),
                     working: id != 0,
                 })
                 .collect(),
             ..Default::default()
         };
-        assert!(working_ids(&model, &Preferences::default()).is_empty());
+        assert!(visible_ids(&model, &Preferences::default()).is_empty());
         let prefs = Preferences {
             quick_chat_menu_bar_mode: "active-agents".into(),
             ..Default::default()
         };
-        let ids = working_ids(&model, &prefs);
-        assert_eq!(ids.len(), 19);
-        assert!(!ids.contains(&"agent-0".into()));
-        assert!(working_ids(
+        let ids = visible_ids(&model, &prefs);
+        assert_eq!(ids.len(), 20);
+        assert!(ids.contains(&"agent-0".into()));
+        assert!(visible_ids(
             &model,
             &Preferences {
                 quick_chat_enabled: false,

@@ -53,6 +53,7 @@ pub struct TrayMember {
     pub id: String,
     pub name: String,
     pub label: String,
+    pub status: String,
     pub working: bool,
 }
 
@@ -182,6 +183,7 @@ pub fn build_model(
             id: member.id.clone(),
             name: member.name.clone(),
             label: member_label(member),
+            status: member.status.clone(),
             working: member.working,
         })
         .collect();

@@ -1,5 +1,10 @@
 # Repository Guidance
 
+## Pull Requests
+
+- Create normal pull requests, never drafts, authenticated as `igorcosta`.
+- Target `main`; complete the change, run the required checks and merge it into `main` as instructed by the repository owner. Report the actual merge result and any enforced GitHub gate that prevents it.
+
 ## Design Guidance
 
 - Before changing visible UI, read `DESIGN.md` and preserve its product style.

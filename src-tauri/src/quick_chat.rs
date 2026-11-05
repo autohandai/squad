@@ -377,15 +377,8 @@ pub(crate) fn open_quick_chat(
         })
         .build()
         .map_err(|error| error.to_string())?;
-    #[cfg(target_os = "macos")]
-    {
-        let _ = window_vibrancy::apply_vibrancy(
-            &window,
-            window_vibrancy::NSVisualEffectMaterial::Popover,
-            Some(window_vibrancy::NSVisualEffectState::Active),
-            Some(12.0),
-        );
-    }
+    *lock(&shell.quick_chat_material) = None;
+    crate::quick_chat_appearance::apply(&window, shell, &crate::quick_chat_preferences::read());
     show_popup(app, shell, &window)
 }
 

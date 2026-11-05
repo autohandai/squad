@@ -12,7 +12,7 @@ list to the section for that version.
 
 ### Added
 
-- Configure Quick Chat from Settings: keep one Squad menu-bar icon, show individual working-agent icons, hide usage limits, or disable Quick Chat while agents keep working.
+- Configure Quick Chat from Settings: keep one Squad menu-bar icon, show individual available-agent avatars, choose Apple glass or Solid, hide usage limits, or disable Quick Chat while agents keep working. Apple Liquid Glass is used on macOS 26+, with native translucency on earlier versions.
 - See connected Claude Code and Codex usage windows, model-specific limits and reset times in Quick Chat and the native menu.
 
 - Manage Squad agents from MCP: rename them, edit personality and instructions, grant extra project folders, set abilities, and select skills.
@@ -26,6 +26,8 @@ list to the section for that version.
 - Updated the runtime dependency used to verify downloads and saved memory.
 
 ### Fixed
+
+- Available bots keep their menu-bar avatars while waiting for work. Paused and offline bots stay out of the menu bar, and older desktop shells report when saved settings need an updated app.
 
 - Long replies, code and tables stay readable inside Quick Chat. Its macOS panel now uses native material, system typography and a compact toolbar.
 

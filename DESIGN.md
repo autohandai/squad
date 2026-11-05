@@ -5,7 +5,7 @@
 - Product UI should feel simple, functional, and Notion-like: calm document surfaces, clear hierarchy, whitespace, and concise controls.
 - Avoid bento-style layouts, boxed dashboards, and card walls. Do not turn each designated area into a bordered or tinted rectangle.
 - Use borders, background fills, and framed panels only when they materially improve scanning, form containment, or interaction affordance.
-- Keep border radius restrained, usually in the 4px to 8px range. Avoid heavy bevels, bulbous corners, glassy panels, and decorative gradients.
+- Keep border radius restrained, usually in the 4px to 8px range. Avoid heavy bevels, bulbous corners, decorative gradients and glass effects in ordinary content. Native Quick Chat is the macOS material exception described below.
 - Prefer subtle separators, text scale, alignment, and spacing over colorful section backgrounds to show grouping.
 - Keep colors neutral and restrained. Use accent color for actions, status, and focus states, not as broad section fill.
 - Use shadcn/ui components and tokens as the baseline. This repo is configured through `components.json`; add missing registry components to `src/components/ui` before writing custom primitives.
@@ -335,5 +335,6 @@
 
 - Operator MCP profile, folder, skill and ability edits share the member profile revision. App snapshots cannot restore an earlier saved configuration; new work inherits the saved configuration, while current work keeps its existing settings.
 
-- Quick Chat is a compact 420×600 macOS popover surface with native material, restrained corners, a quiet toolbar, wrapped reply prose and locally scrolling wide code/tables. Settings › Quick Chat independently controls enablement, one Squad icon versus individual currently-working agent icons, and harness usage visibility. Turning it off preserves drafts and running work. The default is one Squad icon; it remains available in either mode.
+- Quick Chat is a compact 420×600 macOS popover surface with native material, restrained corners, a quiet toolbar, wrapped reply prose and locally scrolling wide code/tables. Settings › Quick Chat independently controls enablement, one Squad icon versus individual available-agent avatars, appearance and harness usage visibility. Available agents include online/idle members waiting for work; paused, on-break, offline, disabled and archived members do not get status items. Turning it off preserves drafts and running work. The default is one Squad icon; it remains available in either mode. Explain that Agent avatars must be selected to put bots directly in the menu bar.
+- Quick Chat's Apple glass appearance uses real `NSGlassEffectView` on macOS 26+, with the existing webview assigned as `contentView`; earlier macOS versions use native popover translucency. Solid removes the material without reloading the conversation. Honor the system's accessibility treatment; do not substitute CSS blur for Apple's glass. A saved preference in an older native shell must show that an updated desktop app is needed rather than silently pretending it was applied.
 - Connected harness limits show reported window/model names, used percentages and reset times. Unknown values say unavailable or not reported; zero is shown only when reported. Usage checks never submit agent prompts.

@@ -33,6 +33,7 @@ mod computer_use_setup;
 mod dock_badge;
 mod native_notifications;
 mod quick_chat;
+mod quick_chat_appearance;
 mod quick_chat_preferences;
 mod system_reset;
 mod update_swap;
@@ -61,6 +62,7 @@ struct Shell {
     member_trays: Mutex<std::collections::HashMap<String, TrayIcon<Wry>>>,
     popup_anchor: Mutex<Option<String>>,
     member_portraits: Mutex<std::collections::HashMap<String, u64>>,
+    quick_chat_material: Mutex<Option<quick_chat_appearance::Material>>,
     harness_usage: Mutex<Vec<quick_chat_preferences::HarnessUsage>>,
     usage_refreshing: std::sync::atomic::AtomicBool,
     usage_refresh_requested: std::sync::atomic::AtomicBool,
@@ -107,6 +109,7 @@ fn main() {
                 member_trays: Mutex::new(std::collections::HashMap::new()),
                 popup_anchor: Mutex::new(None),
                 member_portraits: Mutex::new(std::collections::HashMap::new()),
+                quick_chat_material: Mutex::new(None),
                 harness_usage: Mutex::new(Vec::new()),
                 usage_refreshing: std::sync::atomic::AtomicBool::new(false),
                 usage_refresh_requested: std::sync::atomic::AtomicBool::new(false),
@@ -935,7 +938,7 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
         };
         let model = load_desktop_tray_model(&paths, &overrides, usage.as_ref(), error.as_deref());
         #[cfg(target_os = "macos")]
-        let icons = if !quick_chat_preferences::working_ids(&model, &quick_chat_preferences::read())
+        let icons = if !quick_chat_preferences::visible_ids(&model, &quick_chat_preferences::read())
             .is_empty()
         {
             quick_chat::member_icons(&handle, &shell)
