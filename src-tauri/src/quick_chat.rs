@@ -4,8 +4,8 @@ use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 
 pub(crate) const QUICK_CHAT_WINDOW: &str = "quick-chat";
-const POPUP_WIDTH: f64 = 380.0;
-const POPUP_HEIGHT: f64 = 520.0;
+const POPUP_WIDTH: f64 = 420.0;
+const POPUP_HEIGHT: f64 = 600.0;
 
 /// Physical coordinates throughout: the tray and monitor APIs return pixels,
 /// and only the popup's point size and inset need the monitor's scale factor.
@@ -38,7 +38,11 @@ fn popup_position(
 fn show_popup(app: &AppHandle, shell: &Shell, window: &tauri::WebviewWindow) -> Result<(), String> {
     // Clone before querying the OS; never hold our tray mutex while waiting on
     // a main-loop operation. Its current rectangle follows moved menu bars.
-    let tray = lock(&shell.tray).clone();
+    let anchor_id = lock(&shell.popup_anchor).clone();
+    let tray = anchor_id
+        .as_deref()
+        .and_then(|id| app.tray_by_id(id))
+        .or_else(|| lock(&shell.tray).clone());
     let rect = tray.and_then(|tray| tray.rect().ok().flatten());
     let anchor = rect.map(|rect| {
         let position = rect.position.to_physical::<f64>(1.0);
@@ -161,6 +165,11 @@ fn first_chat_member<'a>(
 
 #[cfg(target_os = "macos")]
 pub(crate) fn open_quick_chat_picker(app: &AppHandle, shell: Arc<Shell>) {
+    if !crate::quick_chat_preferences::read().quick_chat_enabled || lock(&shell.reset).blocks_quit()
+    {
+        return;
+    }
+    *lock(&shell.popup_anchor) = None;
     if let Some(window) = app.get_webview_window(QUICK_CHAT_WINDOW) {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
@@ -248,7 +257,14 @@ fn main_route(url: &Url) -> Option<String> {
     let profile = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
     let allowed = matches!(
         path,
-        "/" | "/squad" | "/work" | "/inbox" | "/mission-control" | "/settings" | "/channels"
+        "/settings/quick-chat"
+            | "/"
+            | "/squad"
+            | "/work"
+            | "/inbox"
+            | "/mission-control"
+            | "/settings"
+            | "/channels"
     ) || (path == "/conversations/new"
         && url
             .query_pairs()
@@ -284,6 +300,10 @@ pub(crate) fn open_quick_chat(
     shell: &Arc<Shell>,
     member: &str,
 ) -> Result<(), String> {
+    if !crate::quick_chat_preferences::read().quick_chat_enabled || lock(&shell.reset).blocks_quit()
+    {
+        return Err("Quick Chat is turned off or Squad is resetting.".into());
+    }
     let bridge = lock(&shell.app_url)
         .clone()
         .ok_or("Squad is still starting.")?;
@@ -309,6 +329,7 @@ pub(crate) fn open_quick_chat(
         .disable_drag_drop_handler()
         .inner_size(POPUP_WIDTH, POPUP_HEIGHT)
         .decorations(false)
+        .transparent(true)
         .resizable(false)
         .always_on_top(true)
         .skip_taskbar(true)
@@ -356,6 +377,15 @@ pub(crate) fn open_quick_chat(
         })
         .build()
         .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window_vibrancy::apply_vibrancy(
+            &window,
+            window_vibrancy::NSVisualEffectMaterial::Popover,
+            Some(window_vibrancy::NSVisualEffectState::Active),
+            Some(12.0),
+        );
+    }
     show_popup(app, shell, &window)
 }
 
@@ -432,15 +462,18 @@ pub(crate) fn member_icons(
     };
     let avatar_root = resources.join("runtime/dist/avatars");
     for member in members.iter().take(100) {
-        let (Some(id), Some(avatar)) = (
-            member.get("id").and_then(|value| value.as_str()),
-            member.get("avatar").and_then(|value| value.as_str()),
-        ) else {
+        let Some(id) = member.get("id").and_then(|value| value.as_str()) else {
             continue;
         };
         if !valid_member_id(id) {
             continue;
         }
+        // A removed or unreadable portrait must replace an earlier photo.
+        // Only a failed roster read leaves the entire map empty.
+        icons.insert(id.to_string(), placeholder_icon());
+        let Some(avatar) = member.get("avatar").and_then(|value| value.as_str()) else {
+            continue;
+        };
         let data = if let Some(relative) = avatar.strip_prefix("/avatars/") {
             let path = std::path::Path::new(relative);
             if path
@@ -511,7 +544,7 @@ mod tests {
                 Some((2500.0, 0.0, 44.0, 48.0)),
                 2.0
             ),
-            (2104.0, 64.0)
+            (2024.0, 64.0)
         );
         assert_eq!(
             popup_position(
@@ -523,7 +556,7 @@ mod tests {
         );
         assert_eq!(
             popup_position((0.0, 24.0, 1440.0, 876.0), None, 1.0),
-            (1052.0, 32.0)
+            (1012.0, 32.0)
         );
     }
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-squad-refresh-quick-chat"
+description = "Enables the squad_refresh_quick_chat command without any pre-configured scope."
+commands.allow = ["squad_refresh_quick_chat"]
+
+[[permission]]
+identifier = "deny-squad-refresh-quick-chat"
+description = "Denies the squad_refresh_quick_chat command without any pre-configured scope."
+commands.deny = ["squad_refresh_quick_chat"]

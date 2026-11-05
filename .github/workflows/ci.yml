@@ -115,6 +115,14 @@ jobs:
       - name: Build web app
         run: bun run build
 
+      - name: Check Quick Chat settings, layout and harness limits
+        env:
+          AUTOHAND_CHECK_PRODUCTION: "1"
+        run: |
+          bun run check:harness-usage
+          bun run check:quick-chat-settings
+          bun run check:quick-chat:browser
+
       - name: Check member setup, retained skills and channel permission boundaries
         env:
           AUTOHAND_REQUIRE_BROWSER: "1"
@@ -302,6 +310,9 @@ jobs:
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml artifact_preview -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml compact_chat_links_route_only_known_main_surfaces -- --test-threads=1
+
+      - name: Check native Quick Chat preferences and positioning
+        run: cargo test --manifest-path src-tauri/Cargo.toml quick_chat -- --test-threads=1
 
       - name: Check the desktop shell compiles
         run: bun run desktop:check

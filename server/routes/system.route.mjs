@@ -2,8 +2,8 @@
 //
 //   GET  /api/system/summary   counts of members, channels, threads, messages
 //                              and memory entries plus the data folder path
-//   GET  /api/system/settings  { autoCheckUpdates }
-//   PUT  /api/system/settings  { autoCheckUpdates? } -> stored settings
+//   GET  /api/system/settings  update and Quick Chat preferences
+//   PUT  /api/system/settings  partial preference patch -> stored settings
 //   POST /api/system/reveal    open the data folder in Finder / Explorer
 
 import { join } from "node:path";
@@ -54,7 +54,11 @@ export async function handle(req, res, url, ctx) {
 
   if (url.pathname === "/api/system/settings" && (req.method === "PUT" || req.method === "POST")) {
     const body = await ctx.readBody(req);
-    const invalid = ["autoCheckUpdates", "autoDownloadUpdates"].find(key => key in body && typeof body[key] !== "boolean");
+    if (!body || typeof body !== "object" || Array.isArray(body)) { ctx.json(res, 400, { success: false, error: "Settings must be an object." }); return true; }
+    const invalid = ["autoCheckUpdates", "autoDownloadUpdates", "quickChatEnabled", "quickChatShowUsage"].find(key => key in body && typeof body[key] !== "boolean");
+    if ("quickChatMenuBarMode" in body && !["single", "active-agents"].includes(body.quickChatMenuBarMode)) {
+      ctx.json(res, 400, { success: false, error: "Choose single or active-agents for the menu bar." }); return true;
+    }
     if (invalid) {
       ctx.json(res, 400, { success: false, error: `${invalid} must be true or false.` });
       return true;

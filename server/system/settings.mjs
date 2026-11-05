@@ -9,6 +9,9 @@ import { dirname, join } from "node:path";
 export const SETTINGS_FILE = "settings.json";
 
 export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
+  quickChatEnabled: true,
+  quickChatMenuBarMode: "single",
+  quickChatShowUsage: true,
   autoCheckUpdates: true,
   autoDownloadUpdates: false,
 });
@@ -21,6 +24,9 @@ export function normalizeSystemSettings(input) {
   const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
   return {
     ...source,
+    quickChatEnabled: source.quickChatEnabled !== false,
+    quickChatMenuBarMode: source.quickChatMenuBarMode === "active-agents" ? "active-agents" : "single",
+    quickChatShowUsage: source.quickChatShowUsage !== false,
     autoCheckUpdates: typeof source.autoCheckUpdates === "boolean" ? source.autoCheckUpdates : DEFAULT_SYSTEM_SETTINGS.autoCheckUpdates,
     autoDownloadUpdates: source.autoDownloadUpdates === true,
   };
@@ -29,7 +35,7 @@ export function normalizeSystemSettings(input) {
 /** The public shape: known keys only. */
 export function publicSystemSettings(settings) {
   const normalized = normalizeSystemSettings(settings);
-  return { autoCheckUpdates: normalized.autoCheckUpdates, autoDownloadUpdates: normalized.autoDownloadUpdates };
+  return { quickChatEnabled: normalized.quickChatEnabled, quickChatMenuBarMode: normalized.quickChatMenuBarMode, quickChatShowUsage: normalized.quickChatShowUsage, autoCheckUpdates: normalized.autoCheckUpdates, autoDownloadUpdates: normalized.autoDownloadUpdates };
 }
 
 export async function readSystemSettings(squadStateDir) {
@@ -53,6 +59,8 @@ async function saveSystemSettings(squadStateDir, patch) {
   const current = await readSystemSettings(squadStateDir);
   const next = { ...current };
   if (patch && typeof patch === "object") {
+    for (const key of ["quickChatEnabled", "quickChatShowUsage"]) if (typeof patch[key] === "boolean") next[key] = patch[key];
+    if (["single", "active-agents"].includes(patch.quickChatMenuBarMode)) next.quickChatMenuBarMode = patch.quickChatMenuBarMode;
     if (typeof patch.autoCheckUpdates === "boolean") next.autoCheckUpdates = patch.autoCheckUpdates;
     if (typeof patch.autoDownloadUpdates === "boolean") next.autoDownloadUpdates = patch.autoDownloadUpdates;
   }
