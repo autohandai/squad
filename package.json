@@ -121,7 +121,7 @@
     "desktop:stage": "node scripts/stage-desktop.mjs",
     "desktop:dev": "tauri dev",
     "desktop:build": "bun run build && bun run desktop:stage && node scripts/build-native-shell.mjs",
-    "desktop:check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "desktop:check": "cargo check --locked --manifest-path src-tauri/Cargo.toml",
     "check:reactions": "node scripts/check-reactions.mjs",
     "check:skins": "node scripts/check-skins.mjs",
     "check:skins:browser": "node scripts/check-appearance-skins-browser.mjs && node scripts/check-appearance-skins-browser.mjs --desktop",

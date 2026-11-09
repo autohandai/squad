@@ -23,7 +23,7 @@ Install these before working in the repo:
 
 - Node.js 18.17 or newer and Bun 1.3.13 for the web app, scripts, and local
   bridge.
-- Rust stable with Cargo and `rustfmt` for the standalone runtime.
+- Rust 1.90 or newer with Cargo and `rustfmt` for the standalone runtime.
 - The Autohand CLI on your `PATH` when testing real chat, run, terminal, or
   squad-member execution flows.
 - A GitHub account and a fork of `autohandai/squad` when contributing through a
