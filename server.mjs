@@ -8,6 +8,7 @@ import { ChangeBatches } from "./server/change-batches.mjs";
 import { ENGINE_CLEANUP_MS, withDeadline } from "./server/deadline.mjs";
 import { PersonQuestionError, PersonQuestions } from "./server/questions.mjs";
 import { conversationReplay } from "./server/chats/replay.mjs";
+import { createConversationChanges } from "./server/chats/admission.mjs";
 import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { openSignInUrl } from "./server/harness/open-login.mjs";
@@ -498,6 +499,7 @@ automaticUpdateTimer.unref();
 const runs = new Map();
 const memberAvailability = new MemberAvailability(squadStateDir);
 const activeChats = new Map();
+const conversationChanges = createConversationChanges({ isBusy: memberId => isMemberWorking(memberId) });
 // Finished runs outlive the process (ADR-0113): restored at boot, saved on
 // every finish, bounded to the newest 200.
 const runHistory = createRunHistory({ path: runHistoryPath(appStateDir), runs, log: (message) => logEvent(SEVERITY.INFO, message, { "event.name": "run.history" }) });
@@ -817,6 +819,7 @@ bridgeEvents.on("computer-use.evidence", (evidence) => {
 // the same chat turn the streaming route runs, with events as callbacks.
 const executeBridgeTurn = (payload, { signal, onEvent, onSkillContinuity }) => {
   if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
+  conversationChanges.assertCanStart(String(payload.agentId || payload.agent?.id || ""));
   return executeChatTurn(payload, {
   signal, stream: { send: onEvent }, startedAt: Date.now(), onSkillContinuity,
   });
@@ -825,8 +828,10 @@ const goals = new GoalManager({
   squadStateDir,
   assertCanWork: async (payload) => {
     if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
+    conversationChanges.assertCanStart(String(payload.agentId || payload.agent?.id || ""));
     projectObserver.deferMember(String(payload.agentId || payload.agent?.id || ""), "An explicit goal takes priority.");
     await memberAvailability.assertCanWork(payload);
+    conversationChanges.assertCanStart(String(payload.agentId || payload.agent?.id || ""));
   },
   emit: emitBridgeEvent,
   executeTurn: executeBridgeTurn,
@@ -853,6 +858,10 @@ const goals = new GoalManager({
 // Everything the bridge holds for a member that means "working": the queue
 // dispatcher waits for all of it before starting the next follow-up.
 async function isMemberBusy(memberId) {
+  return conversationChanges.has(String(memberId || "")) || isMemberWorking(memberId);
+}
+
+async function isMemberWorking(memberId) {
   const id = String(memberId || "");
   if (desktopInstallLocked) return true;
   if (!id) return false;
@@ -902,6 +911,7 @@ async function projectObserverRuntimeState(member) {
 
 function registerChat(memberId, controller) {
   if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
+  conversationChanges.assertCanStart(memberId);
   projectObserver.deferMember(memberId, "A conversation takes priority.");
   const controllers = activeChats.get(memberId) || new Set();
   controllers.add(controller); activeChats.set(memberId, controllers);
@@ -7771,6 +7781,7 @@ async function startRun(payload) {
 async function startRunInner(payload) {
   if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   const memberId = String(payload.agentId || payload.agent?.id || "");
+  conversationChanges.assertCanStart(memberId);
   projectObserver.deferMember(memberId, "An assigned run takes priority.");
   observerRunStarts.set(memberId, (observerRunStarts.get(memberId) || 0) + 1);
   try { return await startPreparedRun(payload); }
@@ -8665,6 +8676,7 @@ function routeContext() {
     },
     registerChat,
     isMemberBusy,
+    holdMemberConversation: memberId => conversationChanges.hold(memberId),
     modelContextWindow: ({ provider = "", model = "" } = {}) => {
       const id = String(model || "").trim();
       if (!id) return 0;

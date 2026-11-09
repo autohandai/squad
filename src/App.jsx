@@ -311,7 +311,7 @@ import { conversationFileName, conversationMarkdown, conversationRecord } from "
 import { teamProposalReceipts } from "@/lib/team-proposals";
 import { EffortSlider } from "@/components/chat/EffortSlider";
 import { continuationPrompt, folderNeedsYouRows, foldersNeedingAccess, mentionedPaths, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
-import { archivePayload, conversationHasWork, restoreConversationEvent } from "@/lib/chat-sessions";
+import { archivePayload, conversationHasWork, conversationContextMessages, restoreConversationEvent } from "@/lib/chat-sessions";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
 import { MemberMenu } from "@/components/members/MemberMenu";
 import { HiddenMembersGroup } from "@/components/members/HiddenMembersGroup";
@@ -7447,7 +7447,7 @@ function App() {
     if (launch.queue) {
       const item = await api(`/api/queues/${encodeURIComponent(agentId)}/items`, {
         method: "POST",
-        body: JSON.stringify({ requestId, squadMembers: agents.map(member => channelActionMember(member)), agentId, mode: "prompt", text: prompt, attachments, workspace: selectedWorkspace, policy: launch.policy, model: launch.model, effort: launch.effort || "", access: launch.access || "", profile, agent: channelActionMember(agent, selectedWorkspace), conversationContext: (messagesByAgent[agentId] || []).filter(message => message.status === "complete" && !message.superseded).slice(-12).map(message => ({ role: message.role, body: String(message.body || "").slice(-2400) })) }),
+        body: JSON.stringify({ requestId, squadMembers: agents.map(member => channelActionMember(member)), agentId, mode: "prompt", text: prompt, attachments, workspace: selectedWorkspace, policy: launch.policy, model: launch.model, effort: launch.effort || "", access: launch.access || "", profile, agent: channelActionMember(agent, selectedWorkspace), conversationContext: conversationContextMessages(messagesByAgent[agentId]) }),
       });
       void refreshMemberQueues().catch(() => {});
       return { queued: true, item };
@@ -7509,7 +7509,7 @@ function App() {
       profile,
       agent: channelActionMember(agent, selectedWorkspace),
       collaboration: launch.collaboration || null,
-      conversationContext: (messagesByAgent[agentId] || []).filter(message => message.status === "complete" && !message.superseded).slice(-12).map(message => ({ role: message.role, body: String(message.body || "").slice(-2400) })),
+      conversationContext: conversationContextMessages(messagesByAgent[agentId]),
       ...(launch.interruptQueue ? { interruptQueue: true } : {}),
       ...(canvasAttachment.canvasId ? { canvasId: canvasAttachment.canvasId, canvasDir: canvasAttachment.canvasDir } : {}),
     };

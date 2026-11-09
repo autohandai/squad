@@ -32,6 +32,9 @@ list to the section for that version.
 
 ### Fixed
 
+- Deleting a task wins over edits or completion already in flight. Merged conversations reopen with large saved work details and include your earlier questions in the next reply's context.
+- Pull requests produce the required Dependabot check through GitHub dependency review.
+
 - Stopping or restarting one Squad instance preserves other running instances and their agents.
 - Desktop builds using a shared Cargo directory package the freshly built runtime instead of stale sidecars from a different directory.
 - Waiting for a queued message through MCP reports a timeout when the final queue check exhausts its deadline, preserving the message receipt for another wait.

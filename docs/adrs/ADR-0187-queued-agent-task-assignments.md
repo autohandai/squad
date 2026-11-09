@@ -40,6 +40,14 @@ task identities are rejected before starting an engine. Task refresh is independ
 
 ## Validation
 
+Review found a second resurrection path: PATCH, PUT and Done captured a task
+before awaiting the request body. An owner Delete could finish during that
+await, after which the stale edit inserted the old identity again. The gated
+route regression `check-work-task-delete-race.mjs` first failed with HTTP 200
+after deletion. Edits now read the authoritative task after receiving input,
+and the store rejects tombstoned identities and filters stale disk records on
+load. The regression passes for all three mutations and a store restart.
+
 `check-task-assignments.mjs` first failed on the missing managed tool. It now
 uses the actual MCP dispatcher, disk stores and queue dispatcher with a gated
 executor to verify busy waiting, concurrent retry deduplication, persisted

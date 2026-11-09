@@ -46,6 +46,14 @@ A rendered New member check also exposed a draft-scope transition: once the defa
 
 ## Consequences
 
+The pinned published CLI 0.9.9 was fetched with its checksum and started through
+the installed SDK in the actual private default-folder layout. `getState()`
+completed without a Git repository or ignore file and without a model prompt.
+CI repeats this against the pinned host binary. The application fix therefore
+does not depend on publishing a new CLI release. Removing automatic Git setup
+from normal terminal CLI startup is a separate CLI source change for its next
+release; current RPC startup already routes before that branch.
+
 The default is shared by members without a selected project, as requested;
 members needing separate files should select their own folders. Creation
 consent is tied to a concrete path, not permission to create arbitrary folders.

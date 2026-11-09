@@ -1,5 +1,5 @@
 // Real SDK + CLI startup, in an empty private work folder, without a model
-// prompt. The CLI path can be overridden to reproduce the old startup bug.
+// prompt. The CLI path can be overridden to compare engine releases.
 import assert from 'node:assert/strict';
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

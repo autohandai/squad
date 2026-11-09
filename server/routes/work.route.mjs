@@ -310,10 +310,10 @@ export async function handle(req, res, url, ctx) {
 
   match = path.match(TASK_DONE);
   if (match && req.method === "POST") {
+    const body = await ctx.readBody(req).catch(() => ({}));
     const existing = store.task(decode(match[1]));
     if (!existing) return fail(ctx, res, 404, "task not found");
     try { assertTaskEditable(existing); } catch (error) { return fail(ctx, res, error.status, error.message); }
-    const body = await ctx.readBody(req).catch(() => ({}));
     const task = taskInputFrom({ status: "done", ...(body?.outcome !== undefined ? { outcome: body.outcome } : {}) }, existing, { by: "person" });
     store.replaceTask(task);
     await store.save();
@@ -332,10 +332,12 @@ export async function handle(req, res, url, ctx) {
       return ok(ctx, res, 200, store.task(existing.id));
     }
     if (req.method === "PUT" || req.method === "PATCH") {
-      try { assertTaskEditable(existing); } catch (error) { return fail(ctx, res, error.status, error.message); }
       const body = await ctx.readBody(req);
+      const current = store.task(existing.id);
+      if (!current) return fail(ctx, res, 404, "task not found");
+      try { assertTaskEditable(current); } catch (error) { return fail(ctx, res, error.status, error.message); }
       if (body?.status !== undefined && !["open", "doing", "blocked", "done"].includes(body.status)) return fail(ctx, res, 400, "status must be open, doing, blocked or done");
-      const task = taskInputFrom(body, existing, { by: "person" });
+      const task = taskInputFrom(body, current, { by: "person" });
       const problems = validateTask(task);
       if (problems.length) return fail(ctx, res, 400, `task is incomplete: ${problems.join(", ")}`);
       store.replaceTask(task);

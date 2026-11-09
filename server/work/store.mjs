@@ -133,10 +133,11 @@ export function createWorkStore(path, { now = () => new Date().toISOString() } =
     if (state) return state;
     const saved = await readPersistentJson(path, { version: 1, tasks: [], receipts: [] });
     const stamp = now();
+    const deletedTasks = Array.isArray(saved?.deletedTasks) ? saved.deletedTasks : [];
     state = {
       version: 1,
-      deletedTasks: Array.isArray(saved?.deletedTasks) ? saved.deletedTasks : [],
-      tasks: (Array.isArray(saved?.tasks) ? saved.tasks : []).map((task) => normalizeTask(task, { now: stamp })).filter((task) => task.memberId && task.title),
+      deletedTasks,
+      tasks: (Array.isArray(saved?.tasks) ? saved.tasks : []).map((task) => normalizeTask(task, { now: stamp })).filter((task) => task.memberId && task.title && !deletedTasks.some(deleted => deleted.id === task.id)),
       receipts: (Array.isArray(saved?.receipts) ? saved.receipts : []).filter((receipt) => receipt && receipt.id).slice(-MAX_RECEIPTS),
     };
     return state;
@@ -165,6 +166,7 @@ export function createWorkStore(path, { now = () => new Date().toISOString() } =
       return (state?.tasks || []).find((item) => item.recurring === routineId && (!memberId || item.memberId === memberId)) || null;
     },
     replaceTask(task) {
+      if (state.deletedTasks.some(deleted => deleted.id === task.id)) throw Object.assign(new Error("This task was deleted and cannot be restored by a late update."), { status: 409 });
       const exists = state.tasks.some((item) => item.id === task.id);
       state.tasks = exists ? state.tasks.map((item) => (item.id === task.id ? task : item)) : [task, ...state.tasks];
       const mine = state.tasks.filter((item) => item.memberId === task.memberId);

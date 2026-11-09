@@ -53,6 +53,9 @@ jobs:
         env:
           AUTOHAND_SQUAD_REQUIRE_VENDORED_CLI: "1"
 
+      - name: Check pinned engine starts without implicit Git
+        run: bun run check:optional-git-engine
+
       - name: Check web server syntax
         run: bun run check:server
 

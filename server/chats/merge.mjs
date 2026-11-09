@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { MAX_CHAT_BYTES, MAX_MESSAGES_PER_CHAT, chatDigest, countTurns } from './store.mjs';
+import { conversationRestoreMessages } from '../../src/lib/shared-conversations.js';
 
 export function mergeConversationRecord(memberId, sources, { id, title = '', digest, now = new Date().toISOString() }) {
   const messages = sources.flatMap(source => {
@@ -21,5 +22,6 @@ export function mergeConversationRecord(memberId, sources, { id, title = '', dig
     merge: { digest, sources: sources.map(source => ({ kind: source.kind, id: source.record.id })), originalsRetained: true },
   };
   if (Buffer.byteLength(JSON.stringify(record)) > MAX_CHAT_BYTES) throw Object.assign(new Error('This selection exceeds the merged conversation storage limit. Choose fewer conversations; no messages or work evidence were trimmed.'), { status: 413 });
+  if (!conversationRestoreMessages(messages)) throw Object.assign(new Error('A selected conversation contains work details that cannot be reopened safely. The originals are unchanged; no evidence was trimmed.'), { status: 413 });
   return record;
 }

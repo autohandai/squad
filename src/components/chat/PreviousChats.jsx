@@ -83,7 +83,7 @@ export function PreviousChats({ api, memberId, onOpen, onOpenThread, disabled = 
           <div className="min-w-0 flex-1">
             <button type="button" className="block w-full text-left text-sm hover:underline disabled:opacity-60" disabled={busy || (disabled && item.kind === "chat")} onClick={() => void act(async () => { if (item.kind === "thread") onOpenThread?.(item); else if (await onOpen?.(item) === false) return; setOpen(false); })}>
               <span className="block break-words">{item.title || "Conversation"}</span>
-              <span className="mt-1 block text-xs text-muted-foreground">{item.kind === "thread" ? `Reply thread · ${Math.max(0, item.messageCount - 1)} messages${item.working ? " · working" : ""}` : `Saved chat · ${chatMetaLine(item, { harnessName: harnessLabel, relative: (value, now) => relativeTime(value, { now, locale, copy }), copy })}${item.resumable ? "" : " · new engine session"}`}</span>
+              <span className="mt-1 block text-xs text-muted-foreground">{item.kind === "thread" ? [`Reply thread`, `${Math.max(0, item.messageCount - 1)} messages`, relativeTime(item.endedAt || item.createdAt, { now: Date.now(), locale, copy }), item.working ? "working" : ""].filter(Boolean).join(" · ") : `Saved chat · ${chatMetaLine(item, { harnessName: harnessLabel, relative: (value, now) => relativeTime(value, { now, locale, copy }), copy })}${item.resumable ? "" : " · new engine session"}`}</span>
             </button>
             {item.working ? <Button type="button" variant="ghost" size="sm" className="mt-1 h-7 px-0 text-xs text-muted-foreground" disabled={busy} onClick={() => void act(async () => { await api(`/api/members/${encodeURIComponent(memberId)}/threads/${encodeURIComponent(item.id)}/stop`, { method: "POST", body: "{}" }); await load(); })}>Stop this thread</Button> : null}
           </div>
@@ -94,7 +94,7 @@ export function PreviousChats({ api, memberId, onOpen, onOpenThread, disabled = 
         {choices.length >= 2 ? <><Input aria-label="Merged conversation name" placeholder="Merged conversation name (optional)" value={title} onChange={event => setTitle(event.target.value)} maxLength={120} disabled={busy} /><p className="text-xs text-muted-foreground">Merge keeps the originals and all saved messages and work details. The new conversation uses a fresh engine session.</p></> : null}
         <div className="flex flex-wrap gap-2">
           {choices.length >= 2 ? <Button type="button" variant="outline" size="sm" disabled={busy || working} onClick={() => void act(merge)}>Merge selected</Button> : null}
-          <Button type="button" variant="ghost" size="sm" className={armed ? "text-destructive" : "text-muted-foreground"} disabled={busy || working} onClick={() => { if (armed) void act(remove); else setArmed(true); }}>{busy ? "Working…" : armed ? `Delete ${choices.length} for good?` : "Delete selected"}</Button>
+          <Button type="button" variant="ghost" size="sm" className={armed ? "text-destructive" : "text-muted-foreground"} disabled={busy || working} onBlur={() => setArmed(false)} onPointerLeave={() => setArmed(false)} onClick={() => { if (armed) void act(remove); else setArmed(true); }}>{busy ? "Working…" : armed ? `Delete ${choices.length} for good?` : "Delete selected"}</Button>
           {armed ? <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setArmed(false)}>Cancel</Button> : null}
         </div>
       </div> : null}

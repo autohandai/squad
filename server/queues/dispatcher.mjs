@@ -135,10 +135,12 @@ export class QueueDispatcher {
     if (this.workers.has(memberId)) return;
     const controller = new AbortController();
     const worker = { controller, itemId: item.id, done: null };
+    this.workers.set(memberId, worker);
     worker.done = (async () => {
-      const unregister = this.registerChat?.(memberId, controller) || (() => {});
+      let unregister = () => {};
       const startedAt = this.now();
       try {
+        unregister = this.registerChat?.(memberId, controller) || unregister;
         await this.store.transition(item, { status: "running", startedAt: this.at(), error: "" });
         if (controller.signal.aborted || item.status !== "running") return;
         this.emit("queue.started", { memberId, itemId: item.id, text: item.text.slice(0, 140) });
@@ -164,6 +166,14 @@ export class QueueDispatcher {
           result: { workspace: result?.workspace || item.workspace, transport: result?.transport || "", effectiveModel: result?.effectiveModel || null, routing: result?.routing || null, durationMs: Number(result?.durationMs) || (this.now() - startedAt), command: result?.command || "", startedAt: result?.startedAt || item.startedAt, completedAt: result?.completedAt || this.at(), channelActions: (Array.isArray(result?.channelActions) ? result.channelActions : []).filter((action) => action?.type === "profile").slice(0, 5) },
         });
       } catch (error) {
+        // Eligibility may have preceded a conversation swap or installation.
+        // Registration is synchronous: refuse before changing the item and
+        // let the next tick retry after that reservation has been released.
+        if (item.status === "queued" && (error.code === "MEMBER_CONVERSATION_CHANGE" || error.status === 503)) return;
+        if (item.status === "queued") {
+          await this.store.transition(item, { status: "failed", finishedAt: this.at(), error: error.message || String(error) });
+          await this.store.setPaused(memberId, true, "The queued work could not start. Review its error before continuing.");
+        }
         if (item.status === "running") {
           if (controller.signal.aborted) {
             const onBreak = Boolean((await this.availability?.get(memberId, item.launch?.agent || {}).catch(() => null))?.onBreak);
@@ -182,12 +192,13 @@ export class QueueDispatcher {
       } finally {
         unregister();
         this.workers.delete(memberId);
-        const snapshot = publicItem(item);
-        this.emit("queue.finished", { memberId, itemId: item.id, status: item.status, preview: String(item.reply || item.error || "").slice(0, 140) });
-        this.emit("chat.finished", { memberId, status: item.status === "done" ? "completed" : "failed", channelId: "", preview: String(item.reply || item.error || "").slice(0, 140), queueItemId: item.id, queueItem: snapshot });
+        if (item.status !== "queued") {
+          const snapshot = publicItem(item);
+          this.emit("queue.finished", { memberId, itemId: item.id, status: item.status, preview: String(item.reply || item.error || "").slice(0, 140) });
+          this.emit("chat.finished", { memberId, status: item.status === "done" ? "completed" : "failed", channelId: "", preview: String(item.reply || item.error || "").slice(0, 140), queueItemId: item.id, queueItem: snapshot });
+        }
         this.schedule();
       }
     })();
-    this.workers.set(memberId, worker);
   }
 }
