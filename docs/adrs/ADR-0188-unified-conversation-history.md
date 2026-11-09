@@ -111,10 +111,11 @@ two-step saved-chat/thread deletion and viewport fit. The existing chat and
 independent-thread suites pass with isolated fixture engines. These checks do
 not involve the installed app or live provider accounts.
 
-Hosted Web CI caught an older model-fallback browser check still opening the
-removed Threads button. It now opens that same independent conversation
-through History and retains the existing engine/model fallback assertions.
-Changing the entry point must not discard this separate execution coverage.
+Hosted Web CI caught older model-fallback and attachment-reopen browser checks
+still opening the removed Threads and Previous chats controls. They now open
+the same conversations through History, retaining the existing engine/model
+fallback and original-file/preview assertions. Changing the entry point must
+not discard this separate execution and attachment coverage.
 
 ## Consequences
 
