@@ -31,7 +31,7 @@ entries, a member keeps at most 400 tasks (oldest done ones go first).
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/work?memberId=` | `{ tasks }` for one member (or all). |
+| `GET /api/work?memberId=` | `{ tasks, deletedTaskIds }` for one member (or all). |
 | `POST /api/work` | `{ memberId, title, detail?, due?, status?, source?: person\|handoff }` → `201` task; `400 task is incomplete: title`. |
 | `GET /api/work/plan/:memberId` | `{ text, counts: { tasks, routines, goals, queued } }`: the exact "Your work plan" block the member receives. |
 | `GET / PATCH / PUT / DELETE /api/work/:id` | read / edit (`title`, `detail`, `due`, `status`, `outcome`; a bad status is `400`) / delete; `404` when unknown. |
@@ -176,3 +176,33 @@ routines route, which stores `note` on the routine's current or latest run;
   `AgentResponseMessage` renders `ScheduleOffer`; `decideScheduleOffer`
   clears it and, on Set it up, seeds `AutomationFormDialog`
   (`automationSeed`) with the title, instructions and schedule.
+
+
+## Assigning work to a teammate
+
+The managed `autohand-squad` team MCP exposes `squad_assign_task`:
+
+```json
+{"to":"Eva","title":"Verify the release artifact","detail":"Run the install checks and report the result.","request_id":"release-review-1"}
+```
+
+The active turn supplies the sender identity. The target must be a different
+saved teammate. The receipt contains `taskId`, `queueItemId` and the real queue
+`status` (`queued`, `running`, `done`, `failed` or `cancelled`). A queued receipt
+is not completion. Reusing the request id returns the same assignment; changing
+its work under that id is refused. Deleted assignments cannot be recreated by
+retrying an old request. Delegation depth and ancestor checks still apply.
+
+A task's optional `assignment` records `fromId`, `fromName`, `queueItemId` and
+execution `state`; request digests and ancestry are bridge-owned. The recipient
+keeps its current work and receives the new task through the existing serial
+queue. Queue events update the plan. Failure/restart retains the commitment
+with its actual state and the queue's explicit-resume rule.
+
+`POST /api/work/:id/queue` queues an unlaunched plan task for the owner.
+`DELETE /api/work/:id` cancels that task's exact queue item before deleting it.
+`DELETE /api/work/runtime/:id` accepts `{memberId, runId?, requestIds?}` for a
+launched/handoff row, saves a deletion tombstone and stops only matching runs.
+Deleting a recurring plan task also stops its current occurrence and keeps its future schedule enabled. Neither owner deletion erases existing files or run evidence. The browser's
+work refresh reads independently of automation setup and filters stale local
+rows using the bridge's `deletedTaskIds`.

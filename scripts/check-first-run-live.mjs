@@ -209,7 +209,7 @@ try {
   // 1. First run: the repository, Start with Chief of Staff.
   await browser.navigate(bridge.origin + '/');
   await until(() => browser.evaluate(`location.pathname === '/welcome' && !!document.querySelector('#first-run-repository')`), 'fresh first-run page', 30000);
-  await browser.fill('#first-run-repository', repo); await browser.click('Add repository');
+  await browser.fill('#first-run-repository', repo); await browser.click('Add folder');
   await until(() => browser.evaluate(`[...document.querySelectorAll('button')].find(item=>item.textContent==='Start with Chief of Staff')?.disabled===false`), 'repository profile and runtime readiness', 60000);
   await shot('01-first-run');
   await browser.click('Start with Chief of Staff');

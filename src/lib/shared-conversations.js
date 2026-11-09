@@ -11,11 +11,11 @@ const timestamp = value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2
 const isPlainObject = value => value && typeof value === "object" && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const terminalStatuses = new Set(['complete', 'error', 'stopped']);
 
-function clonePayload(input) {
+function clonePayload(input, maxLength = 512_000) {
   if (!isPlainObject(input)) return null;
   try {
     const encoded = JSON.stringify(input);
-    if (encoded.length > 512_000) return null;
+    if (encoded.length > maxLength) return null;
     const result = JSON.parse(encoded);
     let nodes = 0;
     function valid(value, depth = 0) {
@@ -28,6 +28,20 @@ function clonePayload(input) {
       return value === null || ["string", "number", "boolean"].includes(typeof value);
     }
     return valid(result) ? result : null;
+  } catch { return null; }
+}
+
+// Archived chats have a larger envelope than individual streamed mutations.
+// The bridge uses this exact validator before moving a saved chat or accepting
+// a merge, so a successful Open can always be displayed without losing evidence.
+const MAX_RESTORE_BYTES = 4 * 1024 * 1024;
+export function conversationRestoreMessages(input) {
+  if (!Array.isArray(input) || input.length > 400) return null;
+  try {
+    const encoded = JSON.stringify(input);
+    if (encoded.length > MAX_RESTORE_BYTES || new TextEncoder().encode(encoded).byteLength > MAX_RESTORE_BYTES) return null;
+    const messages = input.map(message => clonePayload(message, MAX_RESTORE_BYTES));
+    return messages.every(message => message && validId(message.id)) ? messages : null;
   } catch { return null; }
 }
 
@@ -76,19 +90,17 @@ export function applySharedConversationEvent(currentMessages, event) {
   if (event.type === "messages.reset") {
     const resetAt = event.cutoff === undefined ? at : timestamp(event.cutoff);
     if (!Number.isFinite(resetAt) || resetAt > at || resetAt <= (state.cutoffs[memberId] || 0) || resetAt < cutoff) return currentMessages;
-    // 400 is the archive cap in server/chats/store.mjs: a previous chat comes back through this same event (ADR-0113).
-    if (event.messages !== undefined && (!Array.isArray(event.messages) || event.messages.length > 400)) return currentMessages;
+    const restored = conversationRestoreMessages(event.messages === undefined ? [] : event.messages);
+    if (!restored) return currentMessages;
     const messages = [];
     const ids = new Set();
-    for (const raw of event.messages || []) {
-      const message = clonePayload(raw);
-      if (!message || !validId(message.id)) return currentMessages;
+    for (const message of restored) {
       // A repeated id keeps its first copy. Rejecting the whole reset lost a
       // reopened chat outright: the bridge had already moved it out of
       // Previous chats, and the window showed an empty conversation.
       if (ids.has(message.id)) continue;
       ids.add(message.id);
-      messages.push({ ...message, updatedAt: event.at, startedAt: event.at });
+      messages.push({ ...message, updatedAt: event.at, startedAt: event.at, restoredAt: event.at, restoredPosition: messages.length });
     }
     // A reset can arrive after another window already appended a genuinely
     // newer request. Clear the old thread, retaining work beyond the cutoff.
@@ -127,7 +139,8 @@ export function applySharedConversationEvent(currentMessages, event) {
     const bTime = timestamp(b?.startedAt);
     if (!Number.isFinite(aTime) || !Number.isFinite(bTime)) return 0;
     const roleOrder = role => role === "user" ? 0 : role === "agent" ? 1 : 2;
-    return aTime - bTime || roleOrder(a.role) - roleOrder(b.role) || String(a.id).localeCompare(String(b.id));
+    const restoredOrder = a.restoredAt && a.restoredAt === b.restoredAt ? a.restoredPosition - b.restoredPosition : 0;
+    return aTime - bTime || restoredOrder || roleOrder(a.role) - roleOrder(b.role) || String(a.id).localeCompare(String(b.id));
   }) : existing.map((item, itemIndex) => itemIndex === index ? message : item);
   return changed(messages, {
     cutoffs: cutoff > 0 ? { ...state.cutoffs, [memberId]: cutoff } : state.cutoffs,

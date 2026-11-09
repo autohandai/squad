@@ -192,7 +192,7 @@ async function startRoutineRun(ctx, routine, { trigger, scheduledFor, now, known
     run.reason = "Waiting for Squad to open.";
     log(ctx, ctx.SEVERITY.INFO, `routine ${routine.title} waits for the app to dispatch it (${trigger})`, runAttributes(routine, run, { "event.name": "routine.run.queued", "autohand.routine.trigger": trigger }));
   }
-  ctx.emit("routine.run", { routineId: routine.id, routineTitle: routine.title, runId: run.id, memberId: routine.memberId, status: run.status, dispatch: run.dispatch, trigger });
+  ctx.emit("routine.run", { routineId: routine.id, routineTitle: routine.title, runId: run.id, memberId: routine.memberId, status: run.status, dispatch: run.dispatch, trigger, queuedAt: run.queuedAt, memberRunId: run.memberRunId });
   return { ...upsertRun(routine, run), lastRunAt: nowIso };
 }
 
@@ -295,6 +295,23 @@ async function onMemberRunFinished(ctx, event) {
  * plan calls it when the member or the person marks the linked task done,
  * so the routine's history shows it. False when the routine has no runs.
  */
+/** Delete a work-plan occurrence without disabling its future schedule. */
+export async function stopRoutineTaskWork(ctx, { routineId, memberId, runId = "", memberRunId = "" }) {
+  await ensureStore(ctx);
+  const routine = store.routine(String(routineId || ""));
+  if (!routine || routine.memberId !== memberId) return false;
+  const selected = (routine.runs || []).filter(run => runId ? run.id === runId : ACTIVE_RUN_STATUSES.includes(run.status));
+  const liveIds = new Set([memberRunId, ...selected.map(run => run.memberRunId)].filter(Boolean));
+  if (!runId) for (const run of ctx.runs.values()) {
+    if (run.routineId === routineId && run.agentId === memberId && ctx.isLiveRun(run)) liveIds.add(run.id);
+  }
+  let next = routine;
+  for (const run of selected.filter(run => ACTIVE_RUN_STATUSES.includes(run.status))) next = settleRun(next, run, { status: "stopped", finishedAt: schedulerNow().toISOString(), reason: "The owner deleted this task. Future routine runs remain scheduled." });
+  if (next !== routine) { store.replaceRoutine(next); await store.save(); changed(ctx); }
+  for (const id of liveIds) await ctx.stopRun(id, "routine task deleted by owner");
+  return true;
+}
+
 export async function noteRoutineRun(ctx, routineId, note) {
   await ensureStore(ctx);
   const routine = store.routine(String(routineId || ""));

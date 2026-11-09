@@ -34,6 +34,9 @@ assert.equal(apply(resetMain, { ...reset, at: time(9), cutoff: time(9) }), reset
 // conversation out of Previous chats.
 const reopened = apply(resetMain, { type: "messages.reset", memberId: "noah", at: time(11), cutoff: time(11), messages: [{ id: "q-u", role: "user", body: "Question" }, { id: "q-a", role: "agent", body: "Answer" }, { id: "q-u", role: "user", body: "Question" }, { id: "q-a", role: "agent", body: "Answer" }] });
 assert.deepEqual(reopened.noah.map(message => message.id), ["q-u", "q-a"]);
+const orderedArchive = apply({}, { type: 'messages.reset', memberId: 'noah', at: time(10), messages: [{ id: 'z-first', role: 'agent', body: 'First saved reply' }, { id: 'a-second', role: 'agent', body: 'Second saved reply' }] });
+const continuedArchive = apply(orderedArchive, append('followup', 12, { role: 'user' }));
+assert.deepEqual(continuedArchive.noah.slice(0, 2).map(message => message.id), ['z-first', 'a-second'], 'a follow-up must preserve the saved transcript order after reset timestamps are equalized');
 assert.equal(apply(resetMain, append("late-old-append", 8)), resetMain);
 assert.equal(apply(resetMain, append("old-thread-late-work", 12, { startedAt: time(1) })), resetMain);
 assert.equal(apply(resetMain, patch("main-answer", 12, { body: "Post-reset old reply" })), resetMain);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createOnboarding } from '../server/onboarding.mjs';
@@ -20,6 +20,8 @@ try {
     mutateChannelsState:async operation=>{if(failChannel){failChannel=false;throw new Error('fixture disk full');}return operation(state);},
   };
   const options={profile:async path=>({path,name:path===first?'web':'mobile',needs:path===first?['frontend']:['mobile'],git:{available:true,tracked:true,root:path}})};
+  const plainSetup = createOnboarding(context, { profile: async path => ({ path, name: 'plain-folder', needs: [], git: { available: false, tracked: false, root: '' } }) });
+  assert.equal((await plainSetup.analyze([first])).repositories[0].path, await realpath(first), 'setup accepts an ordinary folder without Git');
   let setup=createOnboarding(context,options);
   await assert.rejects(setup.complete([]),/Choose between/);
   await assert.rejects(setup.complete([first]),/fixture provision failed/);

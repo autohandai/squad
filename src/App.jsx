@@ -311,7 +311,7 @@ import { conversationFileName, conversationMarkdown, conversationRecord } from "
 import { teamProposalReceipts } from "@/lib/team-proposals";
 import { EffortSlider } from "@/components/chat/EffortSlider";
 import { continuationPrompt, folderNeedsYouRows, foldersNeedingAccess, mentionedPaths, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
-import { archivePayload, conversationHasWork, restoreConversationEvent } from "@/lib/chat-sessions";
+import { archivePayload, conversationHasWork, conversationContextMessages, restoreConversationEvent } from "@/lib/chat-sessions";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
 import { MemberMenu } from "@/components/members/MemberMenu";
 import { HiddenMembersGroup } from "@/components/members/HiddenMembersGroup";
@@ -397,6 +397,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, withoutReflectionPreamble, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns, settleChannelReplies } from "@/lib/chat-recovery";
 import { getAttentionBadgeClient } from "@/lib/attention-badge";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
+import { DefaultWorkspaceConsent } from "@/components/chat/DefaultWorkspaceConsent";
 import { CanvasList } from "@/components/canvases/CanvasList";
 import { CanvasPanel } from "@/components/canvases/CanvasPanel";
 import { canvasMentionItems, expandCanvasMentions, isCanvasMentionQuery } from "@/lib/canvases";
@@ -3619,6 +3620,7 @@ function searchDocForCanvas(canvas) {
   if (!canvas?.id) return null;
   const owner = String(canvas.ownerId || "");
   const isMember = canvas.ownerType === "member";
+  if (isMember) return null;
   const base = isMember ? `${memberChatPath(owner)}&canvas=` : `${channelsPath(owner)}?canvas=`;
   return {
     id: `canvas:${canvas.id}`,
@@ -4442,7 +4444,9 @@ function App() {
     const removed = removedIdSet(readStored(storageKeysFor("removedAgents"), []));
     return (Array.isArray(storedAgents) ? storedAgents : []).filter(member => !removed.has(normalizeSquadMemberId(member?.id))).map(normalizeAgentCopy);
   });
-  const [tasks, setTasks] = useState(() => normalizeTasksCopy(mergeSeedTasks(readStored(storageKeysFor("tasks"), initialTasks))));
+  const [taskRecords, setTasks] = useState(() => normalizeTasksCopy(mergeSeedTasks(readStored(storageKeysFor("tasks"), initialTasks))));
+  const [deletedTaskIds, setDeletedTaskIds] = useState(() => new Set());
+  const tasks = useMemo(() => taskRecords.filter(task => !deletedTaskIds.has(task.id)), [taskRecords, deletedTaskIds]);
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
   const handoffRetriesRef = useRef(new Set());
@@ -4462,8 +4466,6 @@ function App() {
   );
   // Previous chats (ADR-0113): summaries per member from the bridge; the
   // conversations themselves live in <squadStateDir>/chats.
-  const [previousChatsByAgent, setPreviousChatsByAgent] = useState({});
-  const [previousChatsLoading, setPreviousChatsLoading] = useState(false);
   // Folder requests (ADR-0120): a member needs a folder the person named;
   // pending ones sit in Needs you until allowed or declined in the chat.
   const [folderRequests, setFolderRequests] = useState(() => { const stored = readStored(storageKeysFor("folderRequests"), []); return Array.isArray(stored) ? stored : []; });
@@ -7258,7 +7260,6 @@ function App() {
     if (keepFailure) {
       appendMessage(agent.id, { id: `keep-chat-error-${Date.now()}`, role: "agent", authorName: "Squad", body: `The previous chat could not be kept under Previous chats: ${keepFailure}`, status: "error" });
     }
-    void loadPreviousChats(agent.id);
     if (!preserveRoute) navigate(memberChatPath(agent.id));
   }
 
@@ -7305,21 +7306,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAgent?.id, activeAgent?.conversationStartedAt, bridgeReachable, activeTranscriptKey]);
 
-  async function loadPreviousChats(agentId) {
-    if (!agentId) return [];
-    setPreviousChatsLoading(true);
-    try {
-      const data = await api(`/api/members/${encodeURIComponent(agentId)}/chats`);
-      const chats = Array.isArray(data?.chats) ? data.chats : [];
-      setPreviousChatsByAgent((current) => ({ ...current, [agentId]: chats }));
-      return chats;
-    } catch {
-      return previousChatsByAgent[agentId] || [];
-    } finally {
-      setPreviousChatsLoading(false);
-    }
-  }
-
   // Bring a previous chat back as the live conversation. The current one is
   // put away in the same request when it has work in it, and the engine's
   // session ids swap with it, so the next message continues that chat.
@@ -7344,20 +7330,10 @@ function App() {
       sharedConversationChannelRef.current?.postMessage(event);
       setMessagesByAgent((state) => applySharedConversationEvent(state, event));
       updateAgent(agent.id, { lastConversationAt: timestamp, conversationStartedAt: timestamp, updatedAt: timestamp });
-      void loadPreviousChats(agent.id);
-    } catch (error) {
+      } catch (error) {
       appendMessage(agent.id, { id: `open-chat-error-${Date.now()}`, role: "agent", authorName: "Squad", body: `Could not open that chat: ${error.message || "the bridge did not answer"}`, status: "error" });
+      throw error;
     }
-  }
-
-  async function removePreviousChat(agentId, chatId) {
-    if (!agentId || !chatId) return;
-    try {
-      await api(`/api/members/${encodeURIComponent(agentId)}/chats/${encodeURIComponent(chatId)}`, { method: "DELETE" });
-    } catch {
-      // Already gone, or the bridge is away; the refreshed list says which.
-    }
-    void loadPreviousChats(agentId);
   }
 
   // A member's reply can delegate to teammates by @mentioning them; each
@@ -7471,7 +7447,7 @@ function App() {
     if (launch.queue) {
       const item = await api(`/api/queues/${encodeURIComponent(agentId)}/items`, {
         method: "POST",
-        body: JSON.stringify({ requestId, squadMembers: agents.map(member => channelActionMember(member)), agentId, mode: "prompt", text: prompt, attachments, workspace: selectedWorkspace, policy: launch.policy, model: launch.model, effort: launch.effort || "", access: launch.access || "", profile, agent: channelActionMember(agent, selectedWorkspace), conversationContext: (messagesByAgent[agentId] || []).filter(message => message.status === "complete" && !message.superseded).slice(-12).map(message => ({ role: message.role, body: String(message.body || "").slice(-2400) })) }),
+        body: JSON.stringify({ requestId, squadMembers: agents.map(member => channelActionMember(member)), agentId, mode: "prompt", text: prompt, attachments, workspace: selectedWorkspace, policy: launch.policy, model: launch.model, effort: launch.effort || "", access: launch.access || "", profile, agent: channelActionMember(agent, selectedWorkspace), conversationContext: conversationContextMessages(messagesByAgent[agentId]) }),
       });
       void refreshMemberQueues().catch(() => {});
       return { queued: true, item };
@@ -7533,7 +7509,7 @@ function App() {
       profile,
       agent: channelActionMember(agent, selectedWorkspace),
       collaboration: launch.collaboration || null,
-      conversationContext: (messagesByAgent[agentId] || []).filter(message => message.status === "complete" && !message.superseded).slice(-12).map(message => ({ role: message.role, body: String(message.body || "").slice(-2400) })),
+      conversationContext: conversationContextMessages(messagesByAgent[agentId]),
       ...(launch.interruptQueue ? { interruptQueue: true } : {}),
       ...(canvasAttachment.canvasId ? { canvasId: canvasAttachment.canvasId, canvasDir: canvasAttachment.canvasDir } : {}),
     };
@@ -8719,8 +8695,24 @@ function App() {
   // chat proposals; the app reads them, confirms or declines proposals, and
   // dispatches runs for members the bridge cannot run on its own.
   const dispatchedRoutineRunsRef = useRef(new Set());
+  const loadMemberWork = useCallback(async () => {
+    const work = await api("/api/work");
+    setWorkTasks(Array.isArray(work.tasks) ? work.tasks : []);
+    setDeletedTaskIds(current => {
+      const next = new Set([...current, ...(work.deletedTaskIds || [])]);
+      return next.size === current.size ? current : next;
+    });
+  }, []);
+  useEffect(() => {
+    let busy = false;
+    const refresh = async () => { if (busy) return; busy = true; try { await loadMemberWork(); } catch { /* Retain the last confirmed work plan while disconnected. */ } finally { busy = false; } };
+    void refresh();
+    const timer = window.setInterval(refresh, 5000);
+    window.addEventListener("focus", refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, [loadMemberWork]);
   const loadRoutines = useCallback(async () => {
-    let [list, proposals, work] = await Promise.all([api("/api/routines"), api("/api/routines/proposals?status=proposed"), api("/api/work").catch(() => null)]);
+    let [list, proposals] = await Promise.all([api("/api/routines"), api("/api/routines/proposals?status=proposed"), loadMemberWork().catch(() => null)]);
     let imported = false;
     for (const automation of localAutomationsRef.current) {
       if (automation.routineId || automation.triggerType !== "schedule") continue;
@@ -8733,11 +8725,16 @@ function App() {
     if (imported) list = await api("/api/routines");
     setRoutines(Array.isArray(list?.routines) ? list.routines : []);
     setRoutineProposals(Array.isArray(proposals?.proposals) ? proposals.proposals : []);
-    if (work) setWorkTasks(Array.isArray(work.tasks) ? work.tasks : []);
-  }, []);
+  }, [loadMemberWork]);
   // The person's side of a member's plan (ADR-0124): add, edit, done, remove on the bridge.
   const workPlanFor = (memberId) => ({
     tasks: workTasks.filter((task) => task.memberId === memberId),
+    queue: async id => { await api(`/api/work/${encodeURIComponent(id)}/queue`, { method: "POST", body: "{}" }); await loadRoutines(); },
+    removeRuntime: async task => {
+      await api(`/api/work/runtime/${encodeURIComponent(task.id)}`, { method: "DELETE", body: JSON.stringify({ memberId: task.currentOwnerId || task.agentId || memberId, runId: task.runtimeId || "", requestIds: (task.handoffs || []).map(handoff => handoff.requestId || handoff.id).filter(Boolean) }) });
+      setDeletedTaskIds(current => new Set([...current, task.id]));
+      setTasks(current => current.filter(item => item.id !== task.id));
+    },
     create: async (input) => { await api("/api/work", { method: "POST", body: JSON.stringify({ ...input, memberId, source: "person" }) }); await loadRoutines(); },
     update: async (id, patch) => { await api(`/api/work/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }); await loadRoutines(); },
     remove: async (id) => { await api(`/api/work/${encodeURIComponent(id)}`, { method: "DELETE" }); await loadRoutines(); },
@@ -8939,12 +8936,14 @@ function App() {
   // "Chat with a new member" (ADR-0126): a member with no role yet, prepared
   // like New member, opened straight into its chat. It takes its role from
   // what the person says there and sets it with a `profile` action.
-  async function startBlankMember() {
+  async function startBlankMember(chosenFolder = "") {
     if (blankMemberPending) return;
     setBlankMemberPending(true);
     try {
+      const workspace = typeof chosenFolder === "string" && chosenFolder ? chosenFolder : fallbackWorkspace;
+      if (!workspace) { navigate(`${MEMBER_ROUTE_PREFIX}/new?start=chat`); return; }
       const existingNames = [...membersRef.current.map((agent) => agent.name), ...pendingTeamMemberNames];
-      const draft = blankMemberDraft({ existingNames, workspace: fallbackWorkspace, harness: normalizeHarnessAssignmentCopy(null) });
+      const draft = blankMemberDraft({ existingNames, workspace, harness: normalizeHarnessAssignmentCopy(null) });
       await createAgent({ ...draft, avatar: birdAvatarForRole("", "", draft.name) });
     } catch (error) {
       setChannelOperationError(`Could not start a new member: ${error.message}`);
@@ -9090,6 +9089,7 @@ function App() {
         body: JSON.stringify({
           agentId,
           title: launch.title || prompt,
+          ownerTaskId: taskId,
           prompt,
           workspace: selectedWorkspace,
           ...(launch.routineId ? { routineId: launch.routineId } : {}),
@@ -9813,7 +9813,7 @@ function App() {
             locale={localeResolution.locale} copy={localeCopy} onStart={startAutohand} onChat={sendChat}
             onLocalMessage={appendMessage} onUpdateMessage={updateMessage} onNewConversation={(id) => startNewConversation(id, { preserveRoute: true })}
             onFolderRequests={recordFolderRequests} onFolderSettled={settleFolderRequest}
-            previousChats={previousChatsByAgent[member.id] || []} previousChatsLoading={previousChatsLoading} onLoadPreviousChats={loadPreviousChats} onOpenPreviousChat={openPreviousChat} onRemovePreviousChat={removePreviousChat}
+            onOpenPreviousChat={openPreviousChat}
             goals={memberGoals.filter((goal) => goal.agentId === member.id)} goalsError={memberGoalsError} onGoalAction={controlMemberGoal} onMemberBreak={setMemberBreak}
             queue={memberQueues[member.id]} contextGauge={memberContext[member.id]} onQueueAction={controlMemberQueue}
             routineProposals={routineProposals.filter((proposal) => proposal.memberId === member.id)} onRoutineDecision={decideRoutineProposal} onRoutineSync={syncAutomationRoutine} workPlan={workPlanFor(member.id)}
@@ -10228,6 +10228,11 @@ function App() {
                 connectors={connectors}
                 connectorActions={connectorActions}
               />
+            ) : isCreate && new URLSearchParams(route.split("?")[1] || "").get("start") === "chat" ? (
+              <div className="mx-auto w-full max-w-2xl px-6 py-12">
+                <h1 className="mb-6 text-2xl font-semibold">Choose where your new member works</h1>
+                <DefaultWorkspaceConsent api={api} setup={runtime?.defaultWorkspaceSetup} onChoose={folder => startBlankMember(folder)} onBrowse={async () => (await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: "Choose a work folder" }) }))?.path} />
+              </div>
             ) : isCreate ? (
               <CreateAgent
                 key={`${requestedWorkspace || fallbackWorkspace || "member-creation"}:${new URLSearchParams(route.split("?")[1] || "").get("role") || ""}`}
@@ -10238,6 +10243,7 @@ function App() {
                 onCreate={(draft, options) => createAgent(draft, options)}
                 onCancel={() => navigate(onboardingIsIncomplete(onboardingState) ? "/welcome" : "/conversations/new")}
                 defaultWorkspace={requestedWorkspace || fallbackWorkspace}
+                defaultWorkspaceSetup={runtime?.defaultWorkspaceSetup}
                 workspaceRoot={runtime?.workspaceRoot}
                 harnesses={harnesses}
                 harnessesLoading={harnessesLoading}
@@ -10320,11 +10326,7 @@ function App() {
                 onNewConversation={startNewConversation}
                 onFolderRequests={recordFolderRequests}
                 onFolderSettled={settleFolderRequest}
-                previousChats={previousChatsByAgent[activeAgent?.id] || []}
-                previousChatsLoading={previousChatsLoading}
-                onLoadPreviousChats={loadPreviousChats}
                 onOpenPreviousChat={openPreviousChat}
-                onRemovePreviousChat={removePreviousChat}
                 harnesses={harnesses}
                 harnessesLoading={harnessesLoading}
                 onRefreshHarnesses={() => refreshHarnesses(true)}
@@ -11541,7 +11543,7 @@ function isBlockedWorkspace(path, runtime) {
 function getFallbackWorkspace(runtime, workspaces) {
   const runtimeDefault = runtime?.defaultWorkspace;
   if (runtimeDefault && !isBlockedWorkspace(runtimeDefault, runtime)) return runtimeDefault;
-  return workspaces.find((workspace) => workspace.launchable !== false && !isBlockedWorkspace(workspace.path, runtime))?.path || "";
+  return "";
 }
 
 function getAgentWorkspace(agent, runtime, workspaces) {
@@ -13769,11 +13771,7 @@ function Conversation({
   onNewConversation,
   onFolderRequests,
   onFolderSettled,
-  previousChats = [],
-  previousChatsLoading = false,
-  onLoadPreviousChats,
   onOpenPreviousChat,
-  onRemovePreviousChat,
   openTerminal,
   navigate,
   taskPanelOpen,
@@ -13865,22 +13863,10 @@ function Conversation({
     setAutomationSeed({ name: offer.title || "", prompt: offer.instructions || "", description: offer.instructions || "", triggerType: "schedule", workspace: defaultWorkspace, routine: { ...offer.schedule, timeZone: offer.timeZone || browserTimeZone() } });
     setAutomationFormOpen(true);
   }
-  // Canvases (ADR-0023): this member's documents, shown instead of the stream
-  // while the Canvas view is on; the composer stays so `@canvas:` still works.
-  const [view, setView] = useState("messages");
-  const [activeCanvasId, setActiveCanvasId] = useState("");
-  const { canvases, loadCanvases } = useOwnerCanvases("member", agent.id, { refreshKey: canvasRefreshKey, live: view === "canvas" });
+  // Member deliverables live in Library; old Canvas links return to chat.
   useEffect(() => {
-    setView("messages");
-    setActiveCanvasId("");
-  }, [agent.id]);
-  useEffect(() => {
-    if (!initialCanvasId) return;
-    setView("canvas");
-    setActiveCanvasId(initialCanvasId);
-    onInitialCanvasConsumed?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialCanvasId]);
+    if (initialCanvasId) onInitialCanvasConsumed?.();
+  }, [initialCanvasId, onInitialCanvasConsumed]);
   // Goal 09: recipe catalog + launch state for the composer.
   const [recipeCatalogOpen, setRecipeCatalogOpen] = useState(false);
   const [recipeLaunchTarget, setRecipeLaunchTarget] = useState(null);
@@ -14068,15 +14054,11 @@ function Conversation({
       .map((skill) => ({ type: "skill", prefix: "$", value: skill.id, title: skill.name || skill.id, detail: `Registry${skill.category ? ` · ${skill.category}` : ""}` }));
     return [...installed, ...catalog].slice(0, 12);
   }, [catalogSkills, installedSkillNames, mentionKind, mentionQuery]);
-  const canvasItems = useMemo(() => {
-    if (mentionKind !== "mention" || !isCanvasMentionQuery(mentionQuery)) return [];
-    return canvasMentionItems(canvases, mentionQuery).map((item) => ({ type: "canvas", prefix: "@", value: item.token, title: item.label, detail: item.detail }));
-  }, [canvases, mentionKind, mentionQuery]);
   const mentionItems = useMemo(() => {
     if (mentionKind === "command") return commandItems.slice(0, 10);
     if (mentionKind === "skill") return skillItems;
-    return [...canvasItems, ...memberMentionItems, ...fileMentionItems].slice(0, 6);
-  }, [canvasItems, commandItems, fileMentionItems, memberMentionItems, mentionKind, skillItems]);
+    return [...memberMentionItems, ...fileMentionItems].slice(0, 6);
+  }, [commandItems, fileMentionItems, memberMentionItems, mentionKind, skillItems]);
   const mentionOpen = Boolean(mentionState);
   const visibleMessages = useMemo(
     () => messages.filter((message) => !message?.superseded && !(message?.id === "m1" && message?.role === "agent" && message?.time === "Ready")),
@@ -14430,7 +14412,6 @@ function Conversation({
           attachments: sourceLaunch.attachments || [],
           collaboration: sourceLaunch.collaboration,
           interruptQueue: sourceLaunch.interruptQueue === true,
-          canvases: targetAgentId === agent.id ? canvases : [],
           signal: controller.signal,
         })
       );
@@ -14915,11 +14896,12 @@ function Conversation({
     return (
       <div className={cn("flex min-h-0 min-w-0 w-full flex-1 flex-col", attachmentDraft.dragging && "ring-1 ring-inset ring-primary/60")} data-testid="quick-chat-conversation" {...attachmentDraft.bind}>
         {replySheet}
+        {blockedWorkspace ? <DefaultWorkspaceConsent api={api} setup={runtime?.defaultWorkspaceSetup} onChoose={chooseMemberWorkspace} onBrowse={browseMemberWorkspace} /> : null}
         {currentGoal ? <div className="shrink-0 px-3"><MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /></div> : null}
         <ScrollArea className="quick-chat-history min-h-0 min-w-0 flex-1">
           <div className="flex flex-col gap-4 px-3 py-3">
             {hasConversationMessages ? localizedMessages.map((message) => (
-              <SquadMessage key={message.id} compact agent={agent} message={message} thread={replyThreads.find(thread => thread.parentMessageId === message.id)} onReply={setReplyRoot} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} onPermissionDecision={decidePermission} onQuestionAnswer={answerQuestion} onTeamProposal={decideTeamProposal} memberBusy={Boolean(chatSending)} />
+              <SquadMessage key={message.id} compact agent={agent} message={message} thread={replyThreads.find(thread => thread.parentMessageId === message.id)} onReply={message => setReplyRoot({ ...message, creationId: crypto.randomUUID() })} computerEvidence={computerEvidenceByMessage.get(message.id)} copy={copy} chatSettings={chatSettings} onRetry={retryMessage} onFolderAccess={decideFolderAccess} onScheduleOffer={decideScheduleOffer} onPermissionDecision={decidePermission} onQuestionAnswer={answerQuestion} onTeamProposal={decideTeamProposal} memberBusy={Boolean(chatSending)} />
             )) : <p className="py-3 text-sm text-muted-foreground">Send a message to {agent.name}.</p>}
             {/* Under the reply that proposed it, where the person is reading. */}
             <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} className="px-0 sm:px-0" />
@@ -15065,18 +15047,16 @@ function Conversation({
             <span className="hidden sm:inline">New chat</span>
           </Button>
           <PreviousChats
-            chats={previousChats}
-            loading={previousChatsLoading}
+            api={api}
+            memberId={agent.id}
+            onOpenThread={thread => setReplyRoot({ threadId: thread.id })}
             disabled={Boolean(chatSending)}
-            onLoad={() => onLoadPreviousChats?.(agent.id)}
             onOpen={(chat) => onOpenPreviousChat?.(agent.id, chat.id)}
-            onRemove={(chat) => onRemovePreviousChat?.(agent.id, chat.id)}
             copy={copy}
             locale={locale}
           />
           {/* On a phone the header is the member's name and status; every
               control here is an icon so that line keeps its room (ADR-0161). */}
-          <Button variant="ghost" size="sm" className="hidden sm:inline-flex" aria-label="Reply threads" onClick={() => setReplyRoot({})}>Threads{replyThreads.some(thread => thread.working) ? " · working" : ""}</Button>
           {!compact ? <>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -15085,21 +15065,6 @@ function Conversation({
               </Button>
             </TooltipTrigger>
             <TooltipContent>{copy.automation}</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={copy.canvasTab || "Canvas"}
-                aria-pressed={view === "canvas"}
-                className={cn("hidden sm:inline-flex", view === "canvas" && "bg-muted text-foreground")}
-                onClick={() => setView((current) => (current === "canvas" ? "messages" : "canvas"))}
-              >
-                <FileText />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{copy.canvasTab || "Canvas"}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -15128,29 +15093,8 @@ function Conversation({
           <MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} />
         </div>
       ) : null}
+      {blockedWorkspace ? <DefaultWorkspaceConsent api={api} setup={runtime?.defaultWorkspaceSetup} onChoose={chooseMemberWorkspace} onBrowse={browseMemberWorkspace} /> : null}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        {view === "canvas" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto flex w-full max-w-3xl flex-col px-4 py-4 pb-10 sm:px-6">
-              <Tabs value={view} onValueChange={setView} className="pb-4">
-                <TabsList variant="line" className="h-8">
-                  <TabsTrigger value="messages">{copy.messages || "Messages"}</TabsTrigger>
-                  <TabsTrigger value="canvas">{copy.canvasTab || "Canvas"}</TabsTrigger>
-                </TabsList>
-              </Tabs>
-              <CanvasWorkspace
-                ownerType="member"
-                ownerId={agent.id}
-                canvases={canvases}
-                activeCanvasId={activeCanvasId}
-                onSelect={setActiveCanvasId}
-                onRefresh={loadCanvases}
-                members={agents}
-                copy={copy}
-              />
-            </div>
-          </div>
-        ) : (
         <ScrollArea className="min-h-0 flex-1">
           {!compact ? <MemberGoalControls goal={currentGoal} onAction={runGoalAction} busy={goalActionBusy} error={goalActionError || goalsError} onBreak={isOnBreak(agent)} /> : null}
           {!hasConversationMessages ? <RoutineProposalCard proposals={routineProposals} members={agents} onDecision={onRoutineDecision} locale={locale} copy={copy} /> : null}
@@ -15188,7 +15132,7 @@ function Conversation({
                           agent={agent}
                           message={message}
                           thread={replyThreads.find(thread => thread.parentMessageId === message.id)}
-                          onReply={setReplyRoot}
+                          onReply={message => setReplyRoot({ ...message, creationId: crypto.randomUUID() })}
                           computerEvidence={computerEvidenceByMessage.get(message.id)}
                           copy={copy}
                           chatSettings={chatSettings}
@@ -15217,7 +15161,6 @@ function Conversation({
             )}
           </div>
         </ScrollArea>
-        )}
 
         <form className="bg-gradient-to-t from-background via-background to-transparent px-3 pb-4 pt-6 sm:px-5" onSubmit={submit}>
           {!compact && recommendedRecipeMatches.length && !chatSending ? (
@@ -19808,10 +19751,12 @@ function buildCustomRoleInstructions(templateDraft) {
     .join("\n\n");
 }
 
-function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, initialTemplateId = "", existingMemberIds = [], harnesses = [], harnessesLoading = false, onRefreshHarnesses, presets = [], copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
+function CreateAgent({ onCreate, onCancel, defaultWorkspace, defaultWorkspaceSetup, workspaceRoot, initialTemplateId = "", existingMemberIds = [], harnesses = [], harnessesLoading = false, onRefreshHarnesses, presets = [], copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
   const creationStorageKey = `${STORAGE_KEYS.memberCreation}:${defaultWorkspace || ""}${initialTemplateId ? `:${initialTemplateId}` : ""}`;
+  const unassignedCreationKey = `${STORAGE_KEYS.memberCreation}:${initialTemplateId ? `:${initialTemplateId}` : ""}`;
   const [savedCreation] = useState(() => {
-    const saved = readStored(creationStorageKey, null);
+    const unassigned = readStored(unassignedCreationKey, null);
+    const saved = readStored(creationStorageKey, null) || (defaultWorkspace === defaultWorkspaceSetup?.path && unassigned?.draft?.workspace === defaultWorkspace ? unassigned : null);
     return saved?.version === 1 && saved.draft && typeof saved.draft === "object" && !Array.isArray(saved.draft) && ["name", "role", "description", "instructions"].every(field => typeof saved.draft[field] === "string") && !existingMemberIds.includes(saved.memberId) ? saved : null;
   });
   const creationIdRef = useRef(/^asq_[a-z0-9_-]+$/.test(savedCreation?.memberId || "") ? savedCreation.memberId : createSquadMemberId());
@@ -19903,14 +19848,14 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, init
     };
     const saved = savedCreation?.draft;
     if (!saved || !["name", "role", "description", "instructions"].every(field => typeof saved[field] === "string")) return initial;
-    return { ...initial, ...saved, workspace: defaultWorkspace, skills: normalizeSkillList(saved.skills), profileFiles: normalizeProfileFiles(saved.profileFiles), brainCard: normalizeBrainCard(saved.brainCard, saved), harness: normalizeHarnessAssignmentCopy(saved.harness) };
+    return { ...initial, ...saved, workspace: saved.workspace || defaultWorkspace, skills: normalizeSkillList(saved.skills), profileFiles: normalizeProfileFiles(saved.profileFiles), brainCard: normalizeBrainCard(saved.brainCard, saved), harness: normalizeHarnessAssignmentCopy(saved.harness) };
   });
 
-  function persistCreation(preparing = creating) {
+  function persistCreation(preparing = creating, nextDraft = draft) {
     if (creationSettledRef.current) return;
     let serialized;
     try {
-      serialized = JSON.stringify({ version: 1, memberId: creationIdRef.current, templateId, customTemplates, namesByTemplate: namesByTemplateRef.current, roleWish, draft, preparing });
+      serialized = JSON.stringify({ version: 1, memberId: creationIdRef.current, templateId, customTemplates, namesByTemplate: namesByTemplateRef.current, roleWish, draft: nextDraft, preparing });
       window.localStorage.setItem(creationStorageKey, serialized);
       setDraftStorageError("");
     } catch (error) {
@@ -19931,8 +19876,11 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, init
 
   function clearCreation() {
     creationSettledRef.current = true;
-    try { window.localStorage.removeItem(creationStorageKey); }
-    catch (error) { console.warn(`Could not clear the saved member draft: ${error.message}`); }
+    try {
+      for (const key of new Set([creationStorageKey, unassignedCreationKey])) {
+        if (readStored(key, null)?.memberId === creationIdRef.current) window.localStorage.removeItem(key);
+      }
+    } catch (error) { console.warn(`Could not clear the saved member draft: ${error.message}`); }
   }
 
   async function submitCreation(event) {
@@ -20101,7 +20049,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, init
   }, [defaultWorkspace, draft.workspace, runtimeShell]);
 
   const isCustomRole = Boolean(selectedTemplate?.id.startsWith(CUSTOM_ROLE_TEMPLATE.id));
-  const isValid = Boolean(selectedTemplate && draft.name.trim() && draft.description.trim() && draft.instructions.trim() && (!isCustomRole || draft.role.trim()));
+  const isValid = Boolean(draft.workspace && selectedTemplate && draft.name.trim() && draft.description.trim() && draft.instructions.trim() && (!isCustomRole || draft.role.trim()));
 
   const toggleTemplate = useCallback((id) => {
     const picked = templateId !== id;
@@ -20187,6 +20135,8 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, workspaceRoot, init
             Back
           </Button>
         </div>
+
+        {!draft.workspace ? <DefaultWorkspaceConsent api={api} setup={defaultWorkspaceSetup} onChoose={folder => { const next = { ...draft, workspace: folder }; persistCreation(false, next); setDraft(next); }} onBrowse={async () => (await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: "Choose a work folder" }) }))?.path} /> : null}
 
         {/* Describe the job and the whole member is filled in. The shaping
             rules live in src/lib/member-draft.js and the bridge route asks a

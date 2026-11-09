@@ -28,6 +28,7 @@ import { ChatStore, buildChatRecord, validChatId, validMemberId } from "../chats
 import { captureHarnessSessions, restoreHarnessSessions } from "../chats/sessions.mjs";
 import { buildRecall, collectRecallSources } from "../chats/recall.mjs";
 import { transcriptFromRuns } from "../chats/transcript.mjs";
+import { conversationRestoreMessages } from "../../src/lib/shared-conversations.js";
 
 export const name = "chats";
 
@@ -124,12 +125,15 @@ export async function handle(req, res, url, ctx) {
 
   match = url.pathname.match(OPEN);
   if (match && req.method === "POST") {
+    let release;
     try {
       const memberId = memberIdFrom(match);
       const chatId = chatIdFrom(match);
       const body = await context.readBody(req, MAX_BODY_BYTES);
       const chat = await store.get(memberId, chatId);
       if (!chat) throw Object.assign(new Error("that chat is no longer here"), { status: 404 });
+      if (!conversationRestoreMessages(chat.messages)) throw Object.assign(new Error("This saved chat contains work details that cannot be reopened safely. It is still saved; no messages or evidence were changed."), { status: 413 });
+      release = await context.holdMemberConversation(memberId);
       let archived = null;
       if (body?.current && Array.isArray(body.current.messages) && body.current.messages.some((message) => message?.role === "user")) {
         archived = await archive(context, memberId, body.current);
@@ -150,7 +154,7 @@ export async function handle(req, res, url, ctx) {
       context.json(res, 200, { success: true, data: { chat, archived, sessionsRestored: restored } });
     } catch (error) {
       fail(res, context, error);
-    }
+    } finally { release?.(); }
     return true;
   }
 
@@ -185,13 +189,15 @@ export async function handle(req, res, url, ctx) {
     return true;
   }
   if (match && req.method === "POST") {
+    let release;
     try {
       const memberId = memberIdFrom(match);
       const body = await context.readBody(req, MAX_BODY_BYTES);
+      release = await context.holdMemberConversation(memberId);
       context.json(res, 201, { success: true, data: await archive(context, memberId, body) });
     } catch (error) {
       fail(res, context, error);
-    }
+    } finally { release?.(); }
     return true;
   }
   return false;

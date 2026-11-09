@@ -166,9 +166,14 @@ const TOOLS = [
   },
   {
     name: "squad_work_plan",
-    description: "Read your own persisted work plan, including task ids and their current states. Use squad_task to add, update or finish one. A teammate's plan is theirs; ask them with squad_message.",
+    description: "Read your own persisted work plan, including task ids and their current states. Use squad_task to add, update or finish one. Use squad_assign_task to queue work for a teammate.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true },
+  },
+  {
+    name: "squad_assign_task",
+    description: "Assign real work to a saved teammate. Creates a task in their Tasks view and queues it behind their current work. Returns queued/running/completed state, not a promise of completion. Use a stable request_id for retries; the person can delete any assigned task.",
+    inputSchema: { type: "object", properties: { to: { type: "string", minLength: 1, maxLength: 200 }, title: { type: "string", minLength: 1, maxLength: 160 }, detail: { type: "string", maxLength: 2000 }, request_id: { type: "string", minLength: 1, maxLength: 128 } }, required: ["to", "title", "request_id"], additionalProperties: false },
   },
   {
     name: "squad_task",
@@ -364,6 +369,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
     "- squad_channels and squad_channel_messages read your channels; squad_post_channel publishes a message there; squad_create_channel uses your existing creation permission.",
     "- squad_update_memory corrects a saved entry; squad_forget removes one. Project memories stay with this turn's workspace; personal memories stay with you.",
     "- squad_search_memory finds older collected memories across saved profiles and your CLI memory using local text similarity. squad_read_memory inspects a source; squad_memory_graph shows saved links. Private and project access is enforced by Squad, never by tool arguments. Similarity is a suggestion, not evidence. Share, relate and organize what you own with squad_share_memory, squad_relate_memories and squad_organize_memory.",
+    "- squad_assign_task assigns work to another saved member and queues it behind their current work. Use stable request_id values, report the returned state accurately, and do not assign acknowledgements back to your sender.",
     "- squad_work_plan reads your commitments and ids; squad_task adds, updates or completes your own tasks, with the same receipts as the Tasks view.",
     "- After creating a deliverable file (a report, HTML page, document, image or dataset), use squad_publish_artifact with its real path and title. Make HTML self-contained, with inline CSS/scripts and embedded images, so its preview works without external assets. This saves it in your Library, links it in the conversation and makes its description discoverable in memory. Finish writing the file before publishing; never call it saved before the tool succeeds.",
     "- When the person says remember, keep in mind, note that, or from now on, call squad_remember in that turn (scope team unless it is only about you). Do not only say you will remember: a memory exists only once squad_remember has saved it.",
@@ -386,7 +392,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   return sections.join("\n\n");
 }
 
-export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, artifacts, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
+export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, artifacts, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
   const store = createTeamStore({ stateDir });
   const sessions = new Map();
   const byToken = new Map();
@@ -698,6 +704,17 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           const transcript = savedChatTranscript(record);
           if (!transcript) return failure("No saved chat with that id belongs to you; the ids are in the 'Earlier conversations' list.");
           return text(transcript);
+        }
+        case "squad_assign_task": {
+          if (!assignTask) return failure("Task assignment is unavailable in this runtime.");
+          if (session.depth >= TEAM_MAX_DEPTH) return failure("Finish this work yourself instead of assigning further tasks.");
+          const { self, others } = await teammates(session.memberId);
+          const { member: to, reason } = resolveTeammate(args.to, others);
+          if (!to) return failure(`Not assigned: ${reason}.`);
+          if (session.ancestorIds.includes(to.id)) return failure("Return your result to this teammate instead of assigning work back to a waiting sender.");
+          const receipt = await assignTask({ from: self, to, title: args.title, detail: args.detail || "", requestId: args.request_id, depth: session.depth + 1, ancestorIds: [...session.ancestorIds, self.id] });
+          addReceipt(session, { ...receipt, id: `assigned-${receipt.taskId}`, actorId: self.id, type: "task_assignment", message: `Assigned ${args.title} to ${to.name} (${receipt.status}).` });
+          return text(receipt);
         }
         case "squad_work_plan": return getWorkPlan ? text({ tasks: await getWorkPlan(session.memberId) }) : failure("The work plan is unavailable in this runtime.");
         case "squad_task": {

@@ -11,6 +11,27 @@ const ROUTE = /^\/api\/members\/([^/]+)\/threads(?:\/([^/]+)(?:\/(messages|stop)
 const stamp = () => new Date().toISOString();
 const problem = (message, status = 400) => Object.assign(new Error(message), { status });
 let state, file, bridge, queue = Promise.resolve();
+const launches = new Map();
+
+// Hold the thread mutation lock while a selected snapshot is copied/merged,
+// so a new reply cannot begin between the live-work check and the save.
+export async function withMemberThreads(memberId, operation) {
+  await refreshRuns();
+  const next = queue.then(() => operation(structuredClone(state.threads.filter(thread => thread.memberId === memberId))));
+  queue = next.catch(() => {});
+  return next;
+}
+
+export async function removeMemberThread(memberId, id) {
+  return mutate(() => {
+    const thread = state.threads.find(item => item.id === id && item.memberId === memberId);
+    if (!thread) return false;
+    if (launches.has(id) || thread.messages.some(message => message.status === 'loading')) throw problem('Stop this working thread before deleting it. Other work will keep running.', 409);
+    for (const creationId of new Set([thread.creationId || "", ...(thread.creationIds || [])])) state.deleted.push({ id, memberId, rootId: thread.parentMessageId, creationId });
+    state.threads = state.threads.filter(item => item !== thread);
+    return true;
+  });
+}
 
 async function mutate(change) {
   const next = queue.then(async () => {
@@ -60,6 +81,7 @@ export async function init(ctx) {
   bridge = ctx; file = join(ctx.squadStateDir, 'member-threads.json');
   state = await readPersistentJson(file, { version: 1, threads: [] });
   if (state?.version !== 1 || !Array.isArray(state.threads)) throw new Error('Saved reply threads are damaged; the original file has been kept.');
+  state.deleted = Array.isArray(state.deleted) ? state.deleted : [];
   let recovered = false;
   for (const thread of state.threads) for (const message of thread.messages) {
     if (message.status !== 'loading') continue;
@@ -83,6 +105,7 @@ async function launch(memberId, threadId, replyId, input) {
     if (!access?.agent || access.removed) throw problem('This member is no longer available.', 409);
     const thread = structuredClone(threadFor(memberId, threadId));
     const workspace = await bridge.cleanWorkspace(input.workspace || access.agent.workspace);
+    if (threadFor(memberId, threadId).stopRequested) return;
     const run = await bridge.startRun({
       agentId: memberId, agent: access.agent, profile: access.profile || '', workspace,
       prompt: threadPrompt(thread), title: thread.messages.filter(message => message.role === 'user').at(-1)?.body,
@@ -91,6 +114,7 @@ async function launch(memberId, threadId, replyId, input) {
       requestId: replyId,
       attachments: attachmentReferences([...new Map([...(thread.root.attachments || []), ...thread.messages.flatMap(message => message.attachments || [])].map(file => [file.id, file])).values()].slice(-ATTACHMENT_COUNT_LIMIT)),
     });
+    if (threadFor(memberId, threadId).stopRequested) await bridge.stopRun(run.id, 'stopped this reply thread');
     await mutate(() => {
       const current = threadFor(memberId, threadId);
       const message = current.messages.find(item => item.id === replyId);
@@ -102,6 +126,15 @@ async function launch(memberId, threadId, replyId, input) {
       const thread = threadFor(memberId, threadId);
       const message = thread.messages.find(item => item.id === replyId);
       message.status = 'error'; message.body = error.message || 'This reply could not start.'; message.completedAt = stamp();
+    });
+  } finally {
+    await mutate(() => {
+      const thread = state.threads.find(item => item.id === threadId && item.memberId === memberId);
+      if (!thread?.stopRequested) return null;
+      for (const message of thread.messages.filter(message => message.status === 'loading')) {
+        message.status = 'stopped'; message.body = message.body || 'Stopped before this reply finished.'; message.completedAt = stamp();
+      }
+      return null;
     });
   }
 }
@@ -116,19 +149,22 @@ export async function handle(req, res, url, ctx) {
     let data, status = 200;
     if (!id && req.method === 'GET') data = { threads: state.threads.filter(thread => thread.memberId === memberId).map(thread => { const { messages: _messages, ...summary } = publicThread(thread); return { ...summary, root: { ...summary.root, body: summary.root.body.slice(0, 200) } }; }) };
     else if (!id && req.method === 'POST') {
-      const { root } = await ctx.readBody(req);
+      const { root, creationId = '' } = await ctx.readBody(req);
+      if (typeof creationId !== 'string' || creationId.length > 128) throw problem('Invalid thread creation request.');
       if (!root?.id || String(root.id).length > 200 || !['user', 'agent'].includes(root.role) || !String(root.body || '').trim() || String(root.body).length > 16000) throw problem('Choose a message with 1–16000 characters to reply to.');
-      const threadId = `dm-${createHash('sha256').update(JSON.stringify([memberId, root.id])).digest('hex').slice(0, 32)}`;
+      const threadId = `dm-${createHash('sha256').update(JSON.stringify([memberId, root.id, ...(creationId ? [creationId] : [])])).digest('hex').slice(0, 32)}`;
       const attachments = attachmentReferences(await resolveAttachments(ctx.squadStateDir, root.attachments || []));
       data = await mutate(() => {
-        const previous = state.threads.find(thread => thread.id === threadId && thread.memberId === memberId);
-        if (previous) return publicThread(previous);
+        if (state.deleted.some(item => item.memberId === memberId && item.rootId === root.id && (!creationId || item.creationId === creationId))) throw problem('This reply thread was deleted. Use Reply on the message to start another.', 410);
+        const previous = state.threads.find(thread => thread.parentMessageId === root.id && thread.memberId === memberId);
+        if (previous) { previous.creationIds = [...new Set([...(previous.creationIds || []), creationId])]; return publicThread(previous); }
         if (state.threads.filter(thread => thread.memberId === memberId).length >= 200) throw problem('This member has reached the limit of 200 reply threads.', 409);
         const now = stamp();
-        const thread = { id: threadId, memberId, parentMessageId: String(root.id), root: { id: String(root.id), role: root.role, body: String(root.body).trim(), authorName: String(root.authorName || '').slice(0, 120), attachments }, messages: [], createdAt: now, updatedAt: now };
+        const thread = { id: threadId, memberId, creationId, parentMessageId: String(root.id), root: { id: String(root.id), role: root.role, body: String(root.body).trim(), authorName: String(root.authorName || '').slice(0, 120), attachments }, messages: [], createdAt: now, updatedAt: now };
         state.threads.push(thread); return publicThread(thread);
       }); status = 201;
     } else if (id && !action && req.method === 'GET') data = publicThread(threadFor(memberId, id));
+    else if (id && !action && req.method === 'DELETE') data = { removed: await removeMemberThread(memberId, id) };
     else if (id && action === 'messages' && req.method === 'POST') {
       const body = await ctx.readBody(req), text = String(body.text || '').trim();
       if (!text || text.length > 8000) throw problem('A reply must contain 1–8000 characters.');
@@ -147,15 +183,20 @@ export async function handle(req, res, url, ctx) {
         if (thread.messages.some(message => message.status === 'loading')) throw problem('This thread is working. Other threads can work independently.', 409);
         if (thread.messages.length >= 200) throw problem('This thread has reached 200 messages; start another reply thread.', 409);
         const now = stamp();
+        thread.stopRequested = false;
         thread.messages.push({ id: `${replyId}-user`, role: 'user', body: text, attachments, status: 'complete', createdAt: now }, { id: replyId, role: 'agent', body: '', status: 'loading', runId: '', createdAt: now });
         thread.updatedAt = now; start = true; return publicThread(thread);
       });
-      if (start) void launch(memberId, id, replyId, body).catch(error => ctx.logEvent(ctx.SEVERITY.ERROR, `Reply thread failed: ${error.message}`));
+      if (start) {
+        const pending = launch(memberId, id, replyId, body).catch(error => ctx.logEvent(ctx.SEVERITY.ERROR, `Reply thread failed: ${error.message}`)).finally(() => launches.delete(id));
+        launches.set(id, pending);
+      }
       status = 202;
     } else if (id && action === 'stop' && req.method === 'POST') {
       const thread = threadFor(memberId, id);
       const loading = thread.messages.filter(message => message.status === 'loading');
-      if (loading.some(message => !message.runId)) throw problem('This reply is still starting; try Stop again in a moment.', 409);
+      await mutate(() => { threadFor(memberId, id).stopRequested = true; return null; });
+      await launches.get(id);
       await Promise.all(loading.map(message => ctx.stopRun(message.runId, 'stopped this reply thread')));
       await refreshRuns(); data = publicThread(threadFor(memberId, id));
     } else throw problem('This reply thread operation is unavailable.', 405);

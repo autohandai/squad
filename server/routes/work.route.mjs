@@ -14,10 +14,12 @@
 
 import { join } from "node:path";
 
-import { noteRoutineRun } from "./routines.route.mjs";
+import { noteRoutineRun, stopRoutineTaskWork } from "./routines.route.mjs";
 import { STORE_FILE, findByTitle, taskInputFrom, validateTask, workStoreFor } from "../work/store.mjs";
 import { workPlanFor } from "../work/plan.mjs";
 import { dueLabel } from "../../src/lib/work-plans.js";
+import { taskQueue } from "./queues.route.mjs";
+import { createTaskAssignments } from "../work/assignments.mjs";
 
 export const name = "work";
 
@@ -27,6 +29,12 @@ const ACTION_OPS = new Set(["add", "done", "update"]);
 let store = null;
 let bridgeContext = null;
 let listening = false;
+let assignments = null;
+
+export async function assignMemberTask(input) {
+  if (!assignments) throw new Error("Task assignment is not ready.");
+  return assignments.assign(input);
+}
 
 function log(ctx, severity, message, attributes = {}) {
   ctx.logEvent(severity, message, { "event.domain": "autohand.squad", ...attributes });
@@ -44,6 +52,11 @@ async function ensureStore(ctx) {
 
 function changed(ctx, memberId = "") {
   ctx.emit("work.changed", { memberId });
+}
+
+function assertTaskEditable(task) {
+  const item = task.assignment?.queueItemId && taskQueue().queue.items.get(task.assignment.queueItemId);
+  if (["queued", "running"].includes(item?.status)) throw Object.assign(new Error("This task has queued or running work. Delete it to cancel; its state follows the actual execution."), { status: 409 });
 }
 
 function quoted(title) {
@@ -106,6 +119,7 @@ async function taskAction({ id, context, raw, digest, signal, declined }) {
     } else {
       const target = resolveTarget(raw, memberId);
       if (!target) throw new Error(`no task of yours matches ${raw.id ? `id ${raw.id}` : raw.title ? `title ${quoted(raw.title)}` : "that"}; use an id from "Your work plan"`);
+      assertTaskEditable(target);
       const patch = op === "done" ? { status: "done", ...(raw.outcome !== undefined ? { outcome: raw.outcome } : {}) } : Object.fromEntries(["title", "detail", "due", "status", "outcome"].filter((key) => raw[key] !== undefined).map((key) => [key, raw[key]]));
       if (op === "update" && patch.status && !["open", "doing", "blocked", "done"].includes(patch.status)) throw new Error("status must be open, doing, blocked or done");
       if (op === "update" && !Object.keys(patch).length) throw new Error("update needs at least one of title, detail, due, status or outcome");
@@ -137,6 +151,12 @@ async function onRoutineRun(ctx, event) {
   if (!routineId || !memberId) return;
   await ensureStore(ctx);
   const now = new Date().toISOString();
+  // A run can finish preparing after its previous plan row was deleted.
+  // Cancel that occurrence, while letting future scheduled occurrences appear.
+  if (event.queuedAt && store.deletedTasks().some(task => task.recurring === routineId && task.memberId === memberId && task.at >= event.queuedAt)) {
+    await stopRoutineTaskWork(ctx, { routineId, memberId, runId: event.runId, memberRunId: event.memberRunId });
+    return;
+  }
   const running = event.status === "running";
   const note = running ? `run started (${event.trigger || "schedule"})` : event.status === "queued" ? "run waiting for Squad to open" : `run ${event.status}`;
   let task = store.recurringTask(routineId, memberId);
@@ -175,7 +195,22 @@ async function onRoutineFinished(ctx, event) {
 export async function init(ctx) {
   bridgeContext = ctx;
   await ensureStore(ctx);
+  const { queue, dispatcher } = taskQueue();
+  assignments = createTaskAssignments({ work: store, queue, dispatcher, emit: ctx.emit, prepare: ctx.prepareMemberTask });
+  // Queue state is the execution record, including restart interruption.
+  // An intent saved before a crash but never queued remains visibly blocked.
+  for (const task of store.tasks()) {
+    const item = [...queue.items.values()].find(item => item.workTaskId === task.id);
+    if (item) await assignments.sync(item.id);
+    else if (task.assignment?.state === "pending") {
+      const blocked = taskInputFrom({ status: "blocked", outcome: "Squad restarted before this task was queued. Queue it when ready." }, task, { by: "bridge" });
+      blocked.assignment = { ...task.assignment, state: "failed" };
+      store.replaceTask(blocked);
+      await store.save();
+    }
+  }
   if (!listening && ctx.events?.on) {
+    for (const eventName of ["queue.started", "queue.finished"]) ctx.events.on(eventName, event => assignments.sync(event.itemId).catch(error => log(bridgeContext, bridgeContext.SEVERITY.WARN, `work: queue bookkeeping failed: ${error.message}`)));
     ctx.events.on("routine.run", (event) => onRoutineRun(bridgeContext, event).catch((error) => log(bridgeContext, bridgeContext.SEVERITY.WARN, `work: routine run bookkeeping failed: ${error?.message || error}`, { "event.name": "work.routine.failed" })));
     ctx.events.on("routine.finished", (event) => onRoutineFinished(bridgeContext, event).catch((error) => log(bridgeContext, bridgeContext.SEVERITY.WARN, `work: routine finish bookkeeping failed: ${error?.message || error}`, { "event.name": "work.routine.failed" })));
     listening = true;
@@ -220,7 +255,36 @@ export async function handle(req, res, url, ctx) {
 
   if (path === "/api/work" && req.method === "GET") {
     const memberId = String(url.searchParams.get("memberId") || "");
-    return ok(ctx, res, 200, { tasks: store.tasks(memberId) });
+    const { queue } = taskQueue();
+    for (const task of store.tasks(memberId)) {
+      const item = task.assignment?.queueItemId && queue.items.get(task.assignment.queueItemId);
+      if (item && task.assignment.state !== item.status) await assignments.sync(item.id);
+    }
+    return ok(ctx, res, 200, { tasks: store.tasks(memberId), deletedTaskIds: store.deletedTasks().map(task => task.id) });
+  }
+
+  const runtimeMatch = path.match(/^\/api\/work\/runtime\/([^/]+)$/);
+  if (runtimeMatch && req.method === "DELETE") {
+    const body = await ctx.readBody(req);
+    const id = decode(runtimeMatch[1]);
+    const memberId = String(body?.memberId || "");
+    if (!memberId) return fail(ctx, res, 400, "memberId is required");
+    // Persist a tombstone before stopping: a late result in any window must
+    // not make the row reappear. Other tasks and member runs keep working.
+    const requestIds = (Array.isArray(body?.requestIds) ? body.requestIds : []).filter(value => typeof value === "string").map(value => value.slice(0, 200)).slice(0, 100);
+    store.hideRuntimeTask(id, memberId, requestIds);
+    await store.save();
+    for (const run of ctx.runs.values()) {
+      if (run.ownerTaskId === id || requestIds.includes(run.requestId) || (body?.runId === run.id && run.agentId === memberId)) await ctx.stopRun(run.id, "task deleted by owner");
+    }
+    changed(ctx, memberId);
+    return ok(ctx, res, 200, { id });
+  }
+
+  const queueMatch = path.match(/^\/api\/work\/([^/]+)\/queue$/);
+  if (queueMatch && req.method === "POST") {
+    try { return ok(ctx, res, 201, await assignments.enqueue(decode(queueMatch[1]))); }
+    catch (error) { return fail(ctx, res, error.status || 400, error.message); }
   }
 
   if (path === "/api/work" && req.method === "POST") {
@@ -246,9 +310,10 @@ export async function handle(req, res, url, ctx) {
 
   match = path.match(TASK_DONE);
   if (match && req.method === "POST") {
+    const body = await ctx.readBody(req).catch(() => ({}));
     const existing = store.task(decode(match[1]));
     if (!existing) return fail(ctx, res, 404, "task not found");
-    const body = await ctx.readBody(req).catch(() => ({}));
+    try { assertTaskEditable(existing); } catch (error) { return fail(ctx, res, error.status, error.message); }
     const task = taskInputFrom({ status: "done", ...(body?.outcome !== undefined ? { outcome: body.outcome } : {}) }, existing, { by: "person" });
     store.replaceTask(task);
     await store.save();
@@ -261,11 +326,18 @@ export async function handle(req, res, url, ctx) {
   if (match) {
     const existing = store.task(decode(match[1]));
     if (!existing) return fail(ctx, res, 404, "task not found");
-    if (req.method === "GET") return ok(ctx, res, 200, existing);
+    if (req.method === "GET") {
+      const item = existing.assignment?.queueItemId && taskQueue().queue.items.get(existing.assignment.queueItemId);
+      if (item && existing.assignment.state !== item.status) await assignments.sync(item.id);
+      return ok(ctx, res, 200, store.task(existing.id));
+    }
     if (req.method === "PUT" || req.method === "PATCH") {
       const body = await ctx.readBody(req);
+      const current = store.task(existing.id);
+      if (!current) return fail(ctx, res, 404, "task not found");
+      try { assertTaskEditable(current); } catch (error) { return fail(ctx, res, error.status, error.message); }
       if (body?.status !== undefined && !["open", "doing", "blocked", "done"].includes(body.status)) return fail(ctx, res, 400, "status must be open, doing, blocked or done");
-      const task = taskInputFrom(body, existing, { by: "person" });
+      const task = taskInputFrom(body, current, { by: "person" });
       const problems = validateTask(task);
       if (problems.length) return fail(ctx, res, 400, `task is incomplete: ${problems.join(", ")}`);
       store.replaceTask(task);
@@ -274,9 +346,8 @@ export async function handle(req, res, url, ctx) {
       return ok(ctx, res, 200, task);
     }
     if (req.method === "DELETE") {
-      const removed = store.removeTask(existing.id);
-      await store.save();
-      changed(ctx, existing.memberId);
+      if (existing.recurring) await stopRoutineTaskWork(ctx, { routineId: existing.recurring, memberId: existing.memberId });
+      const removed = await assignments.remove(existing.id);
       log(ctx, ctx.SEVERITY.INFO, `work: task ${existing.title} removed`, taskAttributes(existing, { "event.name": "work.task.removed" }));
       return ok(ctx, res, 200, removed);
     }

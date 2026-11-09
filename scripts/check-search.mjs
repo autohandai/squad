@@ -92,8 +92,8 @@ function makeDocs(count) {
       type,
       title: `${type} ${i} ${words[0]} ${words[1]}`,
       body: words.join(" "),
-      memberId: `member-${i % 12}`,
-      channelId: type === "message" && i % 2 ? `channel-${i % 40}` : "",
+      memberId: type === "canvas" ? "" : `member-${i % 12}`,
+      channelId: type === "canvas" || (type === "message" && i % 2) ? `channel-${i % 40}` : "",
       route: routeFor(type, i),
       at: new Date(base + i * 60_000).toISOString(),
     });
