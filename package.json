@@ -57,7 +57,9 @@
     "check:app-info": "node scripts/check-app-info.mjs",
     "check:work-profile:browser": "node scripts/verify-work-profile-browser.mjs",
     "check:audit": "node scripts/check-audit.mjs",
-    "check:canvases": "node scripts/check-canvases.mjs",
+    "check:canvases": "node scripts/check-canvases.mjs && node scripts/check-member-canvas-retirement.mjs",
+    "check:default-workspace": "node scripts/check-default-workspace.mjs",
+    "check:default-workspace:browser": "node scripts/check-default-workspace-browser.mjs",
     "check:search": "node scripts/check-search.mjs",
     "check:remote": "node scripts/check-remote.mjs",
     "check:relay": "node scripts/check-relay.mjs",
@@ -207,7 +209,11 @@
     "check:harness-usage": "node scripts/check-harness-usage.mjs",
     "check:quick-chat-settings": "node scripts/check-quick-chat-settings.mjs",
     "check:quick-chat:browser": "node scripts/check-quick-chat-layout.mjs",
-    "check:stop-isolation": "node scripts/check-stop-isolation.mjs"
+    "check:stop-isolation": "node scripts/check-stop-isolation.mjs",
+    "check:task-assignments": "node scripts/check-task-assignments.mjs && node scripts/check-routine-task-delete-race.mjs",
+    "check:conversation-history": "node scripts/check-conversation-history.mjs && node scripts/check-thread-history-races.mjs",
+    "check:conversation-history:browser": "node scripts/check-conversation-history-browser.mjs",
+    "check:optional-git-engine": "node scripts/check-optional-git-engine.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.296",

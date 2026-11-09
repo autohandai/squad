@@ -117,7 +117,7 @@ export function ExecutionPanel({
                   onCreate={workPlan.create}
                   onUpdate={workPlan.update}
                   onRemove={workPlan.remove}
-                  onAsk={onAskMember}
+                  onQueue={workPlan.queue}
                 />
               ) : null}
               {workPlan && tasks.length ? <GroupLabel>{copy.workLaunched || "Launched and handed off"}</GroupLabel> : null}
@@ -132,6 +132,7 @@ export function ExecutionPanel({
                 onCancelHandoff={onCancelHandoff}
                 onFailHandoff={onFailHandoff}
                 onRetryHandoff={onRetryHandoff}
+                onRemove={workPlan?.removeRuntime}
                 silentEmpty={Boolean(workPlan)}
               />
             </>

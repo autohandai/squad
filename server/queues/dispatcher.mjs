@@ -15,8 +15,9 @@ import { BREAK_PAUSE_REASON, STOP_PAUSE_REASON, publicItem } from "./store.mjs";
 const POLL_MS = 1000;
 
 export class QueueDispatcher {
-  constructor({ store, executeTurn, isMemberBusy, availability, registerChat, emit = () => {}, cleanResult = (result) => result, now = () => Date.now() }) {
+  constructor({ store, executeTurn, isMemberBusy, canRun = async () => true, availability, registerChat, emit = () => {}, cleanResult = (result) => result, now = () => Date.now() }) {
     this.store = store; this.executeTurn = executeTurn; this.isMemberBusy = isMemberBusy; this.availability = availability;
+    this.canRun = canRun;
     this.registerChat = registerChat; this.emit = emit; this.cleanResult = cleanResult; this.now = now;
     this.workers = new Map();
     this.directTurns = new Set();
@@ -90,7 +91,9 @@ export class QueueDispatcher {
         if ((await this.availability?.get(memberId, item.launch?.agent || {}))?.onBreak) continue;
         if (await this.isMemberBusy(memberId)) continue;
         if (this.directTurns.has(memberId) || this.admissions.has(memberId)) continue;
-        this.run(item);
+        if (item.status !== "queued") continue;
+        if (!await this.canRun(item)) { await this.store.cancel(item.id); continue; }
+        if (item.status === "queued") this.run(item);
       }
       if (this.timer) clearTimeout(this.timer);
       this.timer = null;
@@ -110,6 +113,23 @@ export class QueueDispatcher {
     return { cancelled: running ? running.id : null };
   }
 
+  /** Abort only the selected item; a later worker is never affected. */
+  async cancelItem(id, { pause = true } = {}) {
+    const item = await this.store.get(id);
+    const worker = this.workers.get(item.memberId);
+    const selected = worker?.itemId === id ? worker : null;
+    if (selected) selected.keepQueueRunning = !pause;
+    const cancelled = await this.store.cancel(id);
+    if (selected) {
+      if (pause) await this.store.setPaused(item.memberId, true, STOP_PAUSE_REASON);
+      selected.controller.abort();
+    } else if (item.status === "cancelled") {
+      this.emit("queue.finished", { memberId: item.memberId, itemId: item.id, status: item.status, preview: "Cancelled before starting." });
+    }
+    this.schedule();
+    return cancelled;
+  }
+
   run(item) {
     const memberId = item.memberId;
     if (this.workers.has(memberId)) return;
@@ -120,6 +140,7 @@ export class QueueDispatcher {
       const startedAt = this.now();
       try {
         await this.store.transition(item, { status: "running", startedAt: this.at(), error: "" });
+        if (controller.signal.aborted || item.status !== "running") return;
         this.emit("queue.started", { memberId, itemId: item.id, text: item.text.slice(0, 140) });
         const result = this.cleanResult(await this.executeTurn({ ...item.launch, agentId: memberId, requestId: `queue-${item.id}`, mode: "prompt", prompt: item.text, attachments: item.attachments || [], resumeSession: true }, {
           signal: controller.signal,
@@ -155,7 +176,7 @@ export class QueueDispatcher {
             // next follow-up builds on it (ADR-0066's "pause for attention").
             await this.store.setPaused(memberId, true, error?.reason === "break" ? BREAK_PAUSE_REASON : `The previous follow-up failed: ${message.slice(0, 200)}`);
           }
-        } else if (controller.signal.aborted && item.status === "cancelled" && !this.store.memberState(memberId).paused) {
+        } else if (controller.signal.aborted && item.status === "cancelled" && !worker.keepQueueRunning && !this.store.memberState(memberId).paused) {
           await this.store.setPaused(memberId, true, STOP_PAUSE_REASON);
         }
       } finally {

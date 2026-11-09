@@ -54,7 +54,7 @@ try {
   const runtime = (await bridge.api('/api/runtime')).data;
   const folder = process.cwd();
   assert.ok(folder && markerFile.startsWith(folder + '/'), 'The offered default workspace must contain the disposable proof project.');
-  await browser.fill('#first-run-repository', folder); await browser.click('Add repository');
+  await browser.fill('#first-run-repository', folder); await browser.click('Add folder');
   await until(() => browser.evaluate(`[...document.querySelectorAll('button')].find(item=>item.textContent==='Start with Chief of Staff')?.disabled===false`), 'real repository profile', 30000);
   await browser.click('Start with Chief of Staff');
   await until(() => browser.evaluate(`location.pathname === '/channels/channel_general'`), 'real coordinator provision', 60000);

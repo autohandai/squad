@@ -153,7 +153,7 @@ const bridge = spawn(process.execPath, ["server.mjs", "--host", "127.0.0.1", "--
   stdio: ["ignore", "pipe", "pipe"],
 });
 bridge.stdout.on("data", (d) => { logs += d; }); bridge.stderr.on("data", (d) => { logs += d; });
-const chrome = spawn(chromePath, ["--headless=new", "--disable-gpu", "--disable-extensions", "--no-first-run", "--no-default-browser-check", "--hide-scrollbars", `--user-data-dir=${join(directory, "chrome")}`, `--remote-debugging-port=${chromePort}`, "about:blank"], { stdio: "ignore" });
+const chrome = spawn(chromePath, ["--headless=new", "--disable-back-forward-cache", "--disable-gpu", "--disable-extensions", "--no-first-run", "--no-default-browser-check", "--hide-scrollbars", `--user-data-dir=${join(directory, "chrome")}`, `--remote-debugging-port=${chromePort}`, "about:blank"], { stdio: "ignore" });
 let cdp = null;
 try {
   await waitFor(async () => (await fetch(`${origin}/api/work`).catch(() => null))?.ok, "bridge", 30000);
@@ -185,6 +185,8 @@ try {
     await waitFor(async () => (await text()).includes("Execution"), `the Execution panel (${theme})`, 30000);
     const boundary = (await text()).match(/could not render[^\n]{0,200}/i);
     assert.ok(!boundary, `error boundary: ${boundary?.[0]}`);
+    assert.equal(await cdp.evaluate(`document.querySelectorAll('header button[aria-label="Canvas"]').length`), 0,
+      "member chats do not expose the removed Canvas feature");
     // The group label is uppercased by CSS, and innerText reports it that way.
     // The label renders as soon as the panel opens; the rows arrive with the app's first /api/work poll.
     await waitFor(async () => { const sheet = await sheetText(); return /alex's plan/i.test(sheet) && sheet.includes("Send the NZ batch") && sheet.includes("Write icp.md and rules.md"); }, "the member's plan rows", 30000).catch(async (error) => { throw new Error(`${error.message}; sheet: ${JSON.stringify((await sheetText()).slice(0, 1500))}`); });
@@ -201,8 +203,22 @@ try {
     // Hover the first row so its text actions are in the picture.
     const rect = await cdp.evaluate("(() => { const el = document.querySelector('[data-testid=\"work-task\"]'); const r = el.getBoundingClientRect(); return { x: r.x + 40, y: r.y + 12 }; })()");
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x, y: rect.y });
-    await waitFor(async () => (await sheetText()).includes("Ask Alex to work on it"), "the hover actions");
+    await waitFor(async () => (await sheetText()).includes("Queue task"), "the task queue action");
     await shoot(`${theme}-tasks`);
+    assert.equal(await cdp.evaluate(`document.querySelectorAll('[data-testid="work-task"] button').length > 0`), true);
+    if (theme === "dark") {
+      const deleteDone = await cdp.evaluate(`(() => { const row = document.querySelector('[data-testid="work-task"][data-status="done"]'); const button = [...row.querySelectorAll('button')].find(button => button.textContent === 'Delete'); button.click(); return row.innerText; })()`);
+      assert.ok(deleteDone.includes('Write icp.md and rules.md'));
+      await cdp.evaluate(`(() => { const row = document.querySelector('[data-testid="work-task"][data-status="done"]'); [...row.querySelectorAll('button')].find(button => button.textContent === 'Delete task').click(); })()`);
+      await waitFor(async () => !(await sheetText()).includes("Write icp.md and rules.md"), "owner deletes a completed plan task");
+      await cdp.evaluate(`(() => { const row = document.querySelector('[data-testid="execution-tasks"] article'); [...row.querySelectorAll('button')].find(button => button.textContent === 'Delete').click(); })()`);
+      await cdp.evaluate(`(() => { const row = document.querySelector('[data-testid="execution-tasks"] article'); [...row.querySelectorAll('button')].find(button => button.textContent === 'Delete task').click(); })()`);
+      await waitFor(async () => !(await sheetText()).includes("Draft the partner outreach email"), "owner deletes a completed launched task");
+      await cdp.send("Page.navigate", { url: `${origin}/conversations/new?member=${alex.id}&panel=tasks` });
+      await waitFor(async () => /alex's plan/i.test(await sheetText()), "tasks reopen after refresh");
+      await waitFor(async () => !(await sheetText()).includes("Draft the partner outreach email"), "bridge tombstone rejects stale local-storage task after refresh").catch(async error => { throw new Error(`${error.message}; work API: ${JSON.stringify(await (await fetch(`${origin}/api/work`)).json())}; sheet: ${JSON.stringify(await sheetText())}`); });
+    }
+
   }
   const thrown = cdp.events.filter((e) => e.method === "Runtime.exceptionThrown").map((e) => e.params.exceptionDetails?.exception?.description || e.params.exceptionDetails?.text || "exception");
   assert.deepEqual(thrown, [], `uncaught exceptions: ${thrown.join(" | ")}`);

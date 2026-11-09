@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { FolderOpen, Loader2, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DefaultWorkspaceConsent } from "@/components/chat/DefaultWorkspaceConsent";
 
-/** Repository selection is mandatory. Analysis only suggests; Start creates
+/** Work-folder selection is mandatory. Analysis only suggests; Start creates
  * the one coordinator. Specialists have a separate, explicit creation flow. */
 export function FirstRun({ runtime, workspaces = [], onboardingState, updateOnboardingState, api, loginRequestStatus = '', onRequestLogin, onRefreshAccount, onRefreshRuntime, providerReady, onOpenProviders, renderTemplateAvatar, onStart, onContinue, onReviewSuggestion, setupSnapshot, setupError, onRefreshSetup, brand }) {
   const [paths, setPaths] = useState(onboardingState.selectedRepositories || []);
@@ -78,7 +79,7 @@ export function FirstRun({ runtime, workspaces = [], onboardingState, updateOnbo
   async function pick() {
     setPicking(true); setError('');
     try {
-      const result = await api('/api/workspaces/pick', { method: 'POST', body: JSON.stringify({ title: 'Choose a repository for your squad' }) });
+      const result = await api('/api/workspaces/pick', { method: 'POST', body: JSON.stringify({ title: 'Choose a work folder for your squad' }) });
       if (result?.path) add(result.path);
     } catch (cause) { setError(cause.message); }
     finally { setPicking(false); }
@@ -100,8 +101,8 @@ export function FirstRun({ runtime, workspaces = [], onboardingState, updateOnbo
   return <div className="min-h-screen bg-background" data-testid="first-run">
     <div className="mx-auto w-full max-w-2xl px-6 py-12 lg:py-16">
       <header className="flex items-center gap-3">{brand}<div><div className="text-sm font-semibold">Autohand Squad</div><div className="text-xs text-muted-foreground">{complete ? 'Your setup' : 'First run'}</div></div></header>
-      <h1 className="mt-10 text-3xl font-semibold tracking-tight">{complete ? 'A team that fits your projects.' : 'Start with your repositories.'}</h1>
-      <p className="mt-3 text-base text-muted-foreground">{complete ? 'Your saved squad is ready. Review a suggested teammate whenever you need more help.' : 'Choose one or more Git repositories. You’ll start with one Chief of Staff on Autohand Code and one channel, #general.'}</p>
+      <h1 className="mt-10 text-3xl font-semibold tracking-tight">{complete ? 'A team that fits your projects.' : 'Choose where your squad works.'}</h1>
+      <p className="mt-3 text-base text-muted-foreground">{complete ? 'Your saved squad is ready. Review a suggested teammate whenever you need more help.' : 'Choose one or more project folders. Git is optional. You’ll start with one Chief of Staff on Autohand Code and one channel, #general.'}</p>
 
       {!signedIn ? <div className="mt-6 flex flex-wrap items-center gap-3 border-y py-4 text-sm"><span className="flex-1">Sign in with your Autohand account to continue.</span><Button onClick={onRequestLogin}>Sign in</Button><Button variant="ghost" size="sm" onClick={onRefreshAccount}><RefreshCw />Refresh</Button>{loginRequestStatus ? <span className="basis-full text-muted-foreground">{loginRequestStatus}</span> : null}</div> : null}
       {runtime?.available === false ? <div className="mt-6 flex flex-wrap items-center gap-3 border-y py-4 text-sm">
@@ -113,26 +114,27 @@ export function FirstRun({ runtime, workspaces = [], onboardingState, updateOnbo
       {setupError ? <p className="mt-6 text-sm text-destructive" role="alert">{setupError} <Button variant="ghost" size="sm" onClick={onRefreshSetup}>Retry setup</Button></p> : null}
 
       <section className="mt-8" aria-labelledby="repositories-heading">
-        <h2 id="repositories-heading" className="text-sm font-semibold">Repositories{!complete ? ' · required' : ''}</h2>
+        <h2 id="repositories-heading" className="text-sm font-semibold">Work folders{!complete ? ' · required' : ''}</h2>
+        {!complete && !paths.length ? <DefaultWorkspaceConsent api={api} setup={runtime?.defaultWorkspaceSetup} onChoose={folder => add(folder)} onBrowse={async () => (await api('/api/workspaces/pick', { method: 'POST', body: JSON.stringify({ title: 'Choose a work folder for your squad' }) }))?.path} /> : null}
         {!complete ? <>
-          <div className="mt-3 flex flex-wrap gap-3"><Button variant="outline" onClick={pick} disabled={picking || starting}>{picking ? <Loader2 className="animate-spin" /> : <FolderOpen />}Choose a repository…</Button></div>
+          <div className="mt-3 flex flex-wrap gap-3"><Button variant="outline" onClick={pick} disabled={picking || starting}>{picking ? <Loader2 className="animate-spin" /> : <FolderOpen />}Choose a folder…</Button></div>
           <form className="mt-3 flex items-end gap-2" onSubmit={event => { event.preventDefault(); add(path); }}>
-            <div className="min-w-0 flex-1"><label htmlFor="first-run-repository" className="text-xs text-muted-foreground">Or enter a local repository path</label><Input id="first-run-repository" value={path} onChange={event => setPath(event.target.value)} disabled={starting} placeholder="/path/to/repository" autoComplete="off" /></div>
-            <Button type="submit" variant="outline" disabled={!path.trim() || starting}>Add repository</Button>
+            <div className="min-w-0 flex-1"><label htmlFor="first-run-repository" className="text-xs text-muted-foreground">Or enter a local folder path</label><Input id="first-run-repository" value={path} onChange={event => setPath(event.target.value)} disabled={starting} placeholder="/path/to/folder" autoComplete="off" /></div>
+            <Button type="submit" variant="outline" disabled={!path.trim() || starting}>Add folder</Button>
           </form>
         </> : null}
-        <ul className="mt-4 divide-y divide-border/70" aria-label="Selected repositories">{paths.map(folder => {
+        <ul className="mt-4 divide-y divide-border/70" aria-label="Selected work folders">{paths.map(folder => {
           const profile = plan?.repositories.find(item => item.path === folder);
           return <li key={folder} className="flex items-start gap-3 py-3"><div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{profile?.name || folder.split(/[\\/]/).filter(Boolean).pop()}</div><div className="break-all text-xs text-muted-foreground">{folder}</div>{profile ? <p className="mt-1 text-sm text-muted-foreground">{profile.summary}</p> : null}</div>{!complete ? <Button variant="ghost" size="icon-sm" aria-label={`Remove ${folder}`} disabled={starting} onClick={() => select(paths.filter(item => item !== folder))}><X /></Button> : null}</li>;
         })}</ul>
         {!complete && recent.length ? <details className="mt-3 text-sm"><summary className="cursor-pointer text-muted-foreground">Recent folders</summary><ul className="mt-2">{recent.map(item => <li key={item.path}><Button variant="ghost" size="sm" disabled={starting} onClick={() => add(item.path)}>{item.name || item.path}</Button></li>)}</ul></details> : null}
-        {busy ? <p className="mt-3 text-sm text-muted-foreground" role="status">Reading your repositories…</p> : null}
-        {error ? <div className="mt-3 text-sm"><p role="alert" className="text-destructive">{error}</p>{paths.length ? <Button variant="ghost" size="sm" onClick={() => setAttempt(value => value + 1)} disabled={starting}>Retry repositories</Button> : null}</div> : null}
+        {busy ? <p className="mt-3 text-sm text-muted-foreground" role="status">Reading your folders…</p> : null}
+        {error ? <div className="mt-3 text-sm"><p role="alert" className="text-destructive">{error}</p>{paths.length ? <Button variant="ghost" size="sm" onClick={() => setAttempt(value => value + 1)} disabled={starting}>Retry folders</Button> : null}</div> : null}
       </section>
 
       {plan ? <section className="mt-8 border-t border-border/70 pt-6" aria-labelledby="suggestions-heading">
         <h2 id="suggestions-heading" className="text-base font-semibold">Suggested teammates</h2>
-        <p className="mt-2 text-sm text-muted-foreground">Based on the languages, frameworks and project files in your repositories. Suggestions stay suggestions until you choose to create someone.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Based on the languages, frameworks and project files in your folders. Suggestions stay suggestions until you choose to create someone.</p>
         {recommendations.length ? <ul className="mt-3 divide-y divide-border/70">{recommendations.map(({ template, reason, repositories }) => <li key={template.id} className="flex flex-wrap items-center gap-3 py-4">
           {renderTemplateAvatar?.(template, 'size-9 rounded-md')}
           <div className="min-w-0 flex-1"><h3 className="text-sm font-medium">{template.title}</h3><p className="text-sm text-muted-foreground">{reason}</p><p className="mt-1 text-xs text-muted-foreground">{repositories.map(item => item.name).join(', ')}</p></div>
@@ -142,7 +144,7 @@ export function FirstRun({ runtime, workspaces = [], onboardingState, updateOnbo
 
       <footer className="mt-10 border-t border-border/70 pt-6">
         {complete ? <Button onClick={onContinue}>Open your squad</Button> : <>
-          <div className="flex items-center gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-md bg-muted text-sm font-semibold" aria-hidden="true">CS</div><div><div className="text-sm font-medium">Chief of Staff</div><div className="text-xs text-muted-foreground">Autohand Code · coordinates your selected repositories</div></div></div>
+          <div className="flex items-center gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-md bg-muted text-sm font-semibold" aria-hidden="true">CS</div><div><div className="text-sm font-medium">Chief of Staff</div><div className="text-xs text-muted-foreground">Autohand Code · coordinates your selected folders</div></div></div>
           <Button className="mt-5" onClick={start} disabled={!canStart || starting}>{starting ? <Loader2 className="animate-spin" /> : null}{starting ? 'Preparing your squad…' : 'Start with Chief of Staff'}</Button>
           <p className="mt-3 text-xs text-muted-foreground">Creates only your Chief of Staff and #general. Your repository choices are saved so you can return to setup.</p>
         </>}

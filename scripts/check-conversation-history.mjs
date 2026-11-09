@@ -1,0 +1,55 @@
+import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { ChatStore, buildChatRecord } from '../server/chats/store.mjs';
+import { startBridge } from './lib/reliability-browser.mjs';
+
+let chats;
+const original = { id: 'same-id', role: 'user', body: 'Keep the whole question', attachments: [{ id: 'file-1', name: 'evidence.pdf' }], trace: { events: [{ name: 'test', output: 'full evidence' }] }, createdAt: '2026-11-08T01:00:00Z' };
+const root = { id: 'root-1', role: 'agent', body: 'Original thread root', attachments: [] };
+const bridge = await startBridge({ development: false, prepare: async directory => {
+  chats = new ChatStore({ squadStateDir: join(directory, 'squad') });
+  await chats.save(buildChatRecord('eva', { messages: [original], title: 'First chat', workspace: directory }, { id: 'chat-one', sessions: { codex: { [directory]: 'engine-one' } } }));
+  await chats.save(buildChatRecord('eva', { messages: [{ ...original, body: 'A distinct message with the same id' }], title: 'Second chat', workspace: directory }, { id: 'chat-two', sessions: { codex: { [directory]: 'engine-two' } } }));
+  await writeFile(join(directory, 'squad', 'member-threads.json'), JSON.stringify({ version: 1, threads: [{ id: 'dm-test', memberId: 'eva', parentMessageId: root.id, root, createdAt: '2026-11-08T02:00:00Z', updatedAt: '2026-11-08T02:02:00Z', messages: [{ id: 'thread-question', role: 'user', body: 'Look at the artifact', status: 'complete' }, { id: 'thread-answer', role: 'agent', body: 'Reviewed it.', status: 'complete', runId: 'run-evidence' }] }] }));
+  return {};
+} });
+const prefix = '/api/members/eva/history';
+try {
+  const list = await bridge.api(prefix);
+  assert.equal(list.status, 200, 'one history endpoint lists saved chats and independent threads');
+  assert.deepEqual(list.data.items.map(item => item.kind).sort(), ['chat', 'chat', 'thread']);
+  const selection = [{ kind: 'chat', id: 'chat-one' }, { kind: 'chat', id: 'chat-two' }, { kind: 'thread', id: 'dm-test' }];
+  const merged = await bridge.api(prefix + '/merge', 'POST', { selection, requestId: 'merge-1', title: 'Release review' });
+  assert.equal(merged.status, 201, JSON.stringify(merged));
+  const record = (await bridge.api('/api/members/eva/chats/' + merged.data.id)).data;
+  assert.equal(record.messages.length, 5, 'all chat messages, thread root and replies survive');
+  assert.equal(new Set(record.messages.map(message => message.id)).size, 5, 'source id collisions are disambiguated');
+  const question = record.messages.find(message => message.body === original.body);
+  assert.deepEqual(question.trace, original.trace);
+  assert.deepEqual(question.attachments, original.attachments);
+  assert.equal(question.historySource.messageId, original.id);
+  assert.deepEqual(record.sessions, {}, 'provider session identities cannot be stitched together');
+  assert.equal(record.messages.find(message => message.body === 'Reviewed it.').runId, 'run-evidence');
+  assert.equal((await bridge.api(prefix)).data.items.length, 4, 'the originals are retained');
+  const repeated = await bridge.api(prefix + '/merge', 'POST', { selection, requestId: 'merge-1', title: 'Release review' });
+  assert.equal(repeated.data.id, merged.data.id, 'request retry cannot make another merge');
+  const collision = await bridge.api(prefix + '/merge', 'POST', { selection: selection.slice(0, 2), requestId: 'merge-1' });
+  assert.equal(collision.status, 409);
+  const oversized = buildChatRecord('eva', { messages: Array.from({ length: 400 }, (_, i) => ({ id: `m${i}`, role: 'user', body: `Question ${i}` })) }, { id: 'chat-large' });
+  await chats.save(oversized);
+  const tooMany = await bridge.api(prefix + '/merge', 'POST', { selection: [{ kind: 'chat', id: 'chat-large' }, selection[0]], requestId: 'too-large' });
+  assert.equal(tooMany.status, 413, 'merging must never silently trim messages or evidence');
+  const removed = await bridge.api(prefix + '/thread/dm-test', 'DELETE');
+  assert.equal(removed.status, 200);
+  assert.equal((await bridge.api('/api/members/eva/threads/dm-test')).status, 404);
+  const stale = await bridge.api('/api/members/eva/threads', 'POST', { root });
+  assert.equal(stale.status, 410, 'an old open sheet cannot recreate a deleted thread');
+  const deliberate = await bridge.api('/api/members/eva/threads', 'POST', { root, creationId: 'new-explicit-reply' });
+  assert.equal(deliberate.status, 201, 'a new explicit reply can start another thread');
+  await bridge.api(prefix + '/chat/chat-one', 'DELETE');
+  await bridge.restart();
+  assert.equal((await bridge.api(prefix)).data.items.some(item => item.id === 'chat-one'), false, 'deletion survives restart');
+  assert.equal((await bridge.api('/api/members/eva/chats/' + merged.data.id)).data.messages.length, 5);
+  console.log('check-conversation-history: unified listing, selected merge with provenance/evidence, fresh sessions, replay, bounds and persistent deletion passed');
+} finally { await bridge.close(); }

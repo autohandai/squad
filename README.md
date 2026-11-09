@@ -482,7 +482,7 @@ cargo test -j1 -- --test-threads=1
 cargo build --bins -j1
 ```
 
-New installations require one or more repositories at `/welcome`. Start creates
+New installations require one or more work folders at `/welcome`; Git is optional. With no chosen folder, Squad offers `~/Documents/autohand-desktop/` and asks before creating it. Start creates
 only a Chief of Staff on Autohand Code and `#general`, assigned those projects.
 Project files inform specialist suggestions; Review opens the editable member
 form and only Save member creates a specialist. Existing teams are preserved.

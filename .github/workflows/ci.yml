@@ -115,6 +115,18 @@ jobs:
       - name: Build web app
         run: bun run build
 
+      - name: Check agent tasks, history and default-folder consent
+        env:
+          AUTOHAND_REQUIRE_BROWSER: "1"
+        run: |
+          bun run check:canvases
+          bun run check:default-workspace
+          bun run check:default-workspace:browser
+          bun run check:work-plans:browser
+          bun run check:task-assignments
+          bun run check:conversation-history
+          bun run check:conversation-history:browser
+
       - name: Check Quick Chat settings, layout and harness limits
         env:
           AUTOHAND_CHECK_PRODUCTION: "1"
