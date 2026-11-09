@@ -25,7 +25,7 @@ or [`help wanted`](https://github.com/autohandai/squad/issues?q=is%3Aissue%20sta
 
 ## Set up the project
 
-You need Git, Node.js 18.17 or newer, Bun 1.3.13, and a stable Rust toolchain
+You need Git, Node.js 18.17 or newer, Bun 1.3.13, and Rust 1.90 or newer
 with `rustfmt`. The Autohand CLI is also needed for live agent, chat, run, and
 terminal flows.
 

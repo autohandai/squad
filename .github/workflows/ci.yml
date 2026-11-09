@@ -292,8 +292,8 @@ jobs:
 
       - name: Install Rust toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt
-          rustup default stable
+          rustup toolchain install 1.90.0 --profile minimal --component rustfmt
+          rustup default 1.90.0
 
       - name: Cache Cargo packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -303,7 +303,7 @@ jobs:
             ~/.cargo/git
             daemon/target
             src-tauri/target
-          key: cargo-desktop-check-${{ hashFiles('daemon/Cargo.lock', 'src-tauri/Cargo.lock') }}
+          key: cargo-desktop-check-1.90.0-${{ hashFiles('daemon/Cargo.lock', 'src-tauri/Cargo.lock') }}
           restore-keys: |
             cargo-desktop-check-
 
@@ -326,15 +326,15 @@ jobs:
         run: bun run desktop:stage
 
       - name: Check native reset guard
-        run: cargo test --manifest-path src-tauri/Cargo.toml system_reset -- --test-threads=1
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml system_reset -- --test-threads=1
 
       - name: Check native artifact navigation guard
         run: |
-          cargo test --manifest-path src-tauri/Cargo.toml artifact_preview -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml compact_chat_links_route_only_known_main_surfaces -- --test-threads=1
+          cargo test --locked --manifest-path src-tauri/Cargo.toml artifact_preview -- --test-threads=1
+          cargo test --locked --manifest-path src-tauri/Cargo.toml compact_chat_links_route_only_known_main_surfaces -- --test-threads=1
 
       - name: Check native Quick Chat preferences and positioning
-        run: cargo test --manifest-path src-tauri/Cargo.toml quick_chat -- --test-threads=1
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml quick_chat -- --test-threads=1
 
       - name: Check the desktop shell compiles
         run: bun run desktop:check

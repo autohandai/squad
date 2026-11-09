@@ -155,7 +155,7 @@ async function stageSidecars({ buildRust = true } = {}) {
   if (buildRust) {
     const result = spawnSync(
       'cargo',
-      ['build', '--release', '--manifest-path', join(rootDir, 'daemon', 'Cargo.toml'), '--bin', 'autohand-squad-daemon', '--bin', 'autohand-squad-analytics', '--bin', 'squad'],
+      ['build', '--locked', '--release', '--manifest-path', join(rootDir, 'daemon', 'Cargo.toml'), '--bin', 'autohand-squad-daemon', '--bin', 'autohand-squad-analytics', '--bin', 'squad'],
       { stdio: 'inherit', env: { ...process.env, CARGO_INCREMENTAL: '0' } },
     );
     if (result.status !== 0) throw new Error('cargo build of the runtime binaries failed');

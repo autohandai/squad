@@ -26,6 +26,8 @@ list to the section for that version.
 
 ### Changed
 
+- Update native tray support and synchronize the desktop build dependencies. Building the native app now requires Rust 1.90 or newer.
+
 - Task actions are visible on touch and keyboard. Delete any plan or launched/handoff task, including completed work, with a confirmation; deleting a running task leaves unrelated work alone.
 - Removed Canvas from agent chats and search. Deliverables use the member's Library; existing canvas files remain available for recovery.
 - Updated the runtime dependency used to verify downloads and saved memory.
