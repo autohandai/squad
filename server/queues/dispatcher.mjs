@@ -15,8 +15,9 @@ import { BREAK_PAUSE_REASON, STOP_PAUSE_REASON, publicItem } from "./store.mjs";
 const POLL_MS = 1000;
 
 export class QueueDispatcher {
-  constructor({ store, executeTurn, isMemberBusy, availability, registerChat, emit = () => {}, cleanResult = (result) => result, now = () => Date.now() }) {
+  constructor({ store, executeTurn, isMemberBusy, canRun = async () => true, availability, registerChat, emit = () => {}, cleanResult = (result) => result, now = () => Date.now() }) {
     this.store = store; this.executeTurn = executeTurn; this.isMemberBusy = isMemberBusy; this.availability = availability;
+    this.canRun = canRun;
     this.registerChat = registerChat; this.emit = emit; this.cleanResult = cleanResult; this.now = now;
     this.workers = new Map();
     this.directTurns = new Set();
@@ -90,7 +91,9 @@ export class QueueDispatcher {
         if ((await this.availability?.get(memberId, item.launch?.agent || {}))?.onBreak) continue;
         if (await this.isMemberBusy(memberId)) continue;
         if (this.directTurns.has(memberId) || this.admissions.has(memberId)) continue;
-        this.run(item);
+        if (item.status !== "queued") continue;
+        if (!await this.canRun(item)) { await this.store.cancel(item.id); continue; }
+        if (item.status === "queued") this.run(item);
       }
       if (this.timer) clearTimeout(this.timer);
       this.timer = null;
@@ -110,16 +113,36 @@ export class QueueDispatcher {
     return { cancelled: running ? running.id : null };
   }
 
+  /** Abort only the selected item; a later worker is never affected. */
+  async cancelItem(id, { pause = true } = {}) {
+    const item = await this.store.get(id);
+    const worker = this.workers.get(item.memberId);
+    const selected = worker?.itemId === id ? worker : null;
+    if (selected) selected.keepQueueRunning = !pause;
+    const cancelled = await this.store.cancel(id);
+    if (selected) {
+      if (pause) await this.store.setPaused(item.memberId, true, STOP_PAUSE_REASON);
+      selected.controller.abort();
+    } else if (item.status === "cancelled") {
+      this.emit("queue.finished", { memberId: item.memberId, itemId: item.id, status: item.status, preview: "Cancelled before starting." });
+    }
+    this.schedule();
+    return cancelled;
+  }
+
   run(item) {
     const memberId = item.memberId;
     if (this.workers.has(memberId)) return;
     const controller = new AbortController();
     const worker = { controller, itemId: item.id, done: null };
+    this.workers.set(memberId, worker);
     worker.done = (async () => {
-      const unregister = this.registerChat?.(memberId, controller) || (() => {});
+      let unregister = () => {};
       const startedAt = this.now();
       try {
+        unregister = this.registerChat?.(memberId, controller) || unregister;
         await this.store.transition(item, { status: "running", startedAt: this.at(), error: "" });
+        if (controller.signal.aborted || item.status !== "running") return;
         this.emit("queue.started", { memberId, itemId: item.id, text: item.text.slice(0, 140) });
         const result = this.cleanResult(await this.executeTurn({ ...item.launch, agentId: memberId, requestId: `queue-${item.id}`, mode: "prompt", prompt: item.text, attachments: item.attachments || [], resumeSession: true }, {
           signal: controller.signal,
@@ -143,6 +166,14 @@ export class QueueDispatcher {
           result: { workspace: result?.workspace || item.workspace, transport: result?.transport || "", effectiveModel: result?.effectiveModel || null, routing: result?.routing || null, durationMs: Number(result?.durationMs) || (this.now() - startedAt), command: result?.command || "", startedAt: result?.startedAt || item.startedAt, completedAt: result?.completedAt || this.at(), channelActions: (Array.isArray(result?.channelActions) ? result.channelActions : []).filter((action) => action?.type === "profile").slice(0, 5) },
         });
       } catch (error) {
+        // Eligibility may have preceded a conversation swap or installation.
+        // Registration is synchronous: refuse before changing the item and
+        // let the next tick retry after that reservation has been released.
+        if (item.status === "queued" && (error.code === "MEMBER_CONVERSATION_CHANGE" || error.status === 503)) return;
+        if (item.status === "queued") {
+          await this.store.transition(item, { status: "failed", finishedAt: this.at(), error: error.message || String(error) });
+          await this.store.setPaused(memberId, true, "The queued work could not start. Review its error before continuing.");
+        }
         if (item.status === "running") {
           if (controller.signal.aborted) {
             const onBreak = Boolean((await this.availability?.get(memberId, item.launch?.agent || {}).catch(() => null))?.onBreak);
@@ -155,18 +186,19 @@ export class QueueDispatcher {
             // next follow-up builds on it (ADR-0066's "pause for attention").
             await this.store.setPaused(memberId, true, error?.reason === "break" ? BREAK_PAUSE_REASON : `The previous follow-up failed: ${message.slice(0, 200)}`);
           }
-        } else if (controller.signal.aborted && item.status === "cancelled" && !this.store.memberState(memberId).paused) {
+        } else if (controller.signal.aborted && item.status === "cancelled" && !worker.keepQueueRunning && !this.store.memberState(memberId).paused) {
           await this.store.setPaused(memberId, true, STOP_PAUSE_REASON);
         }
       } finally {
         unregister();
         this.workers.delete(memberId);
-        const snapshot = publicItem(item);
-        this.emit("queue.finished", { memberId, itemId: item.id, status: item.status, preview: String(item.reply || item.error || "").slice(0, 140) });
-        this.emit("chat.finished", { memberId, status: item.status === "done" ? "completed" : "failed", channelId: "", preview: String(item.reply || item.error || "").slice(0, 140), queueItemId: item.id, queueItem: snapshot });
+        if (item.status !== "queued") {
+          const snapshot = publicItem(item);
+          this.emit("queue.finished", { memberId, itemId: item.id, status: item.status, preview: String(item.reply || item.error || "").slice(0, 140) });
+          this.emit("chat.finished", { memberId, status: item.status === "done" ? "completed" : "failed", channelId: "", preview: String(item.reply || item.error || "").slice(0, 140), queueItemId: item.id, queueItem: snapshot });
+        }
         this.schedule();
       }
     })();
-    this.workers.set(memberId, worker);
   }
 }

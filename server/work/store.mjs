@@ -69,6 +69,7 @@ export function normalizeTask(input, { now = new Date().toISOString() } = {}) {
     source: TASK_SOURCES.includes(source.source) ? source.source : "member",
     outcome: text(source.outcome, 600),
     lastOutcome: outcome,
+    assignment: source.assignment && typeof source.assignment === "object" ? { ...Object.fromEntries(["fromId", "fromName", "requestKey", "digest", "queueItemId", "state"].map(key => [key, text(source.assignment[key], key === "fromName" ? 160 : 128)])), depth: Math.min(4, Math.max(0, Number(source.assignment.depth) || 0)), ancestorIds: Array.isArray(source.assignment.ancestorIds) ? source.assignment.ancestorIds.filter(id => typeof id === "string").slice(0, 5) : [] } : null,
     createdAt,
     updatedAt: iso(source.updatedAt) || createdAt,
     doneAt: iso(source.doneAt),
@@ -90,7 +91,7 @@ export function taskInputFrom(body, existing = null, { now, memberId = "", sourc
     if (changes.length) next.history = [...existing.history, normalizeHistoryEntry({ at: stamp, by, event: next.status === "done" && existing.status !== "done" ? "done" : existing.status === "done" && next.status !== "done" ? "reopened" : "updated", note: changes.map((key) => key === "status" ? `status ${next.status}` : key === "outcome" ? `outcome: ${next.outcome}` : key).join(", ") })].slice(-MAX_HISTORY);
     return next;
   }
-  const task = normalizeTask({ ...input, id: "", memberId, source, createdAt: stamp, updatedAt: stamp, history: [] }, { now: stamp });
+  const task = normalizeTask({ ...input, assignment: null, id: "", memberId, source, createdAt: stamp, updatedAt: stamp, history: [] }, { now: stamp });
   task.doneAt = task.status === "done" ? stamp : null;
   task.history = [normalizeHistoryEntry({ at: stamp, by, event: "added", note: source === "routine" ? "created by a routine run" : "" })];
   return task;
@@ -132,16 +133,18 @@ export function createWorkStore(path, { now = () => new Date().toISOString() } =
     if (state) return state;
     const saved = await readPersistentJson(path, { version: 1, tasks: [], receipts: [] });
     const stamp = now();
+    const deletedTasks = Array.isArray(saved?.deletedTasks) ? saved.deletedTasks : [];
     state = {
       version: 1,
-      tasks: (Array.isArray(saved?.tasks) ? saved.tasks : []).map((task) => normalizeTask(task, { now: stamp })).filter((task) => task.memberId && task.title),
+      deletedTasks,
+      tasks: (Array.isArray(saved?.tasks) ? saved.tasks : []).map((task) => normalizeTask(task, { now: stamp })).filter((task) => task.memberId && task.title && !deletedTasks.some(deleted => deleted.id === task.id)),
       receipts: (Array.isArray(saved?.receipts) ? saved.receipts : []).filter((receipt) => receipt && receipt.id).slice(-MAX_RECEIPTS),
     };
     return state;
   }
 
   function save() {
-    const snapshot = { version: 1, updatedAt: now(), tasks: structuredClone(state.tasks), receipts: structuredClone(state.receipts) };
+    const snapshot = { version: 1, updatedAt: now(), tasks: structuredClone(state.tasks), deletedTasks: structuredClone(state.deletedTasks), receipts: structuredClone(state.receipts) };
     writing = writing.catch(() => {}).then(() => writePersistentJson(path, snapshot));
     return writing;
   }
@@ -163,6 +166,7 @@ export function createWorkStore(path, { now = () => new Date().toISOString() } =
       return (state?.tasks || []).find((item) => item.recurring === routineId && (!memberId || item.memberId === memberId)) || null;
     },
     replaceTask(task) {
+      if (state.deletedTasks.some(deleted => deleted.id === task.id)) throw Object.assign(new Error("This task was deleted and cannot be restored by a late update."), { status: 409 });
       const exists = state.tasks.some((item) => item.id === task.id);
       state.tasks = exists ? state.tasks.map((item) => (item.id === task.id ? task : item)) : [task, ...state.tasks];
       const mine = state.tasks.filter((item) => item.memberId === task.memberId);
@@ -175,7 +179,12 @@ export function createWorkStore(path, { now = () => new Date().toISOString() } =
     removeTask(id) {
       const found = state.tasks.find((item) => item.id === id) || null;
       state.tasks = state.tasks.filter((item) => item.id !== id);
+      if (found) state.deletedTasks.push({ id, memberId: found.memberId, recurring: found.recurring || "", requestKey: found.assignment?.requestKey || "", at: now() });
       return found;
+    },
+    deletedTasks() { return state?.deletedTasks || []; },
+    hideRuntimeTask(id, memberId, requestIds = []) {
+      if (!state.deletedTasks.some(task => task.id === id)) state.deletedTasks.push({ id, memberId, requestKey: "", at: now(), runtime: true, requestIds });
     },
     receipt(id) {
       return (state?.receipts || []).find((item) => item.id === id) || null;

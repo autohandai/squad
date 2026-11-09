@@ -8,6 +8,7 @@ import { ChangeBatches } from "./server/change-batches.mjs";
 import { ENGINE_CLEANUP_MS, withDeadline } from "./server/deadline.mjs";
 import { PersonQuestionError, PersonQuestions } from "./server/questions.mjs";
 import { conversationReplay } from "./server/chats/replay.mjs";
+import { createConversationChanges } from "./server/chats/admission.mjs";
 import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
 import { openSignInUrl } from "./server/harness/open-login.mjs";
@@ -59,6 +60,7 @@ import { listLocalSkillPackages, localSkillRootDescriptors, ensureSkillWorkspace
 import { canonicalWorkspaceRoot } from "./server/workspace-root.mjs";
 import { SKILL_DISCOVERY_CONTRACT, prepareSkillContext, acknowledgeSkillContext, coalesceSkillReceipts, validateSkillReferences, observeSkillAttachment, nativeSkillAttachmentEvent } from "./server/skills/runtime.mjs";
 import { startTracking } from "./server/workspace-git.mjs";
+import { defaultWorkspaceSetup, createDefaultWorkspace } from "./server/default-workspace.mjs";
 import { channelError, createChannelsStore } from "./server/channels-store.mjs";
 import { createAgentChannelActions } from "./server/agent-channel-actions.mjs";
 import { createResponderPicker } from "./server/responders/pick.mjs";
@@ -71,6 +73,7 @@ import { createModelCatalog } from "./server/harness/model-catalog.mjs";
 import { createFallbackRouter, routingFailure } from "./server/harness/fallback-router.mjs";
 import { normalizeModelRouting } from "./src/lib/model-routing.js";
 import { admitChat } from "./server/routes/queues.route.mjs";
+import { assignMemberTask } from "./server/routes/work.route.mjs";
 import { personMessageArrived } from "./server/routes/agenda.route.mjs";
 import { buildRecall, collectRecallSources } from "./server/chats/recall.mjs";
 import { workPlanFor } from "./server/work/plan.mjs";
@@ -496,6 +499,7 @@ automaticUpdateTimer.unref();
 const runs = new Map();
 const memberAvailability = new MemberAvailability(squadStateDir);
 const activeChats = new Map();
+const conversationChanges = createConversationChanges({ isBusy: memberId => isMemberWorking(memberId) });
 // Finished runs outlive the process (ADR-0113): restored at boot, saved on
 // every finish, bounded to the newest 200.
 const runHistory = createRunHistory({ path: runHistoryPath(appStateDir), runs, log: (message) => logEvent(SEVERITY.INFO, message, { "event.name": "run.history" }) });
@@ -533,6 +537,7 @@ const team = createTeamService({
   isBusy: (memberId) => isMemberBusy(memberId),
   deliver: deliverTeamMessage,
   runAction: runTeamAction,
+  assignTask: assignMemberTask,
   askPerson: ({ runId, memberId, question, options }) => personQuestions.ask({ runId, agentId: memberId, question, options }),
   getModels: async (memberId, input) => {
     const payload = await withSavedMember({ agentId: memberId });
@@ -814,6 +819,7 @@ bridgeEvents.on("computer-use.evidence", (evidence) => {
 // the same chat turn the streaming route runs, with events as callbacks.
 const executeBridgeTurn = (payload, { signal, onEvent, onSkillContinuity }) => {
   if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
+  conversationChanges.assertCanStart(String(payload.agentId || payload.agent?.id || ""));
   return executeChatTurn(payload, {
   signal, stream: { send: onEvent }, startedAt: Date.now(), onSkillContinuity,
   });
@@ -822,8 +828,10 @@ const goals = new GoalManager({
   squadStateDir,
   assertCanWork: async (payload) => {
     if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
+    conversationChanges.assertCanStart(String(payload.agentId || payload.agent?.id || ""));
     projectObserver.deferMember(String(payload.agentId || payload.agent?.id || ""), "An explicit goal takes priority.");
     await memberAvailability.assertCanWork(payload);
+    conversationChanges.assertCanStart(String(payload.agentId || payload.agent?.id || ""));
   },
   emit: emitBridgeEvent,
   executeTurn: executeBridgeTurn,
@@ -850,6 +858,10 @@ const goals = new GoalManager({
 // Everything the bridge holds for a member that means "working": the queue
 // dispatcher waits for all of it before starting the next follow-up.
 async function isMemberBusy(memberId) {
+  return conversationChanges.has(String(memberId || "")) || isMemberWorking(memberId);
+}
+
+async function isMemberWorking(memberId) {
   const id = String(memberId || "");
   if (desktopInstallLocked) return true;
   if (!id) return false;
@@ -899,6 +911,7 @@ async function projectObserverRuntimeState(member) {
 
 function registerChat(memberId, controller) {
   if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
+  conversationChanges.assertCanStart(memberId);
   projectObserver.deferMember(memberId, "A conversation takes priority.");
   const controllers = activeChats.get(memberId) || new Set();
   controllers.add(controller); activeChats.set(memberId, controllers);
@@ -1256,6 +1269,7 @@ function getRuntime() {
     available: Boolean(autohandPath),
     bootstrap: cliBootstrap.status(),
     defaultWorkspace: getDefaultWorkspace(),
+    defaultWorkspaceSetup: defaultWorkspaceSetup(homeDir),
     // Names this machine in the relay workspace switcher and member ownership.
     hostName: hostname(),
     workspaceRoot: homeDir,
@@ -1609,12 +1623,8 @@ async function ensureSquadManagedWorkspace(path) {
 }
 
 function getDefaultWorkspace() {
-  const candidates = [
-    ...(isPackagedRuntime ? [] : [rootDir]),
-    join(homeDir, "Documents", "autohand"),
-    join(homeDir, "Documents"),
-  ];
-  return candidates.find((candidate) => existsSync(candidate) && statSync(candidate).isDirectory() && isRunnableWorkspace(candidate)) || "";
+  const setup = defaultWorkspaceSetup(homeDir);
+  return setup.ready ? setup.path : "";
 }
 
 async function cleanWorkspace(workspace) {
@@ -3529,6 +3539,7 @@ function runtimeMemberInstructions(agentRuntime) {
     memory.trim() ? `Durable memory (MEMORY.md):\n${newestMemoryText(memory, 4000)}` : "",
     ...brainCardFieldDefinitions.map(field => `${field.label}: ${String(brain[field.id] || "").slice(0, 1500)}`),
     `Selected workspace: ${agentRuntime.workspace}`,
+    "Git is optional. Never initialize a repository merely to start a conversation or file work. Initialize Git only when the person explicitly chooses it. If a task needs a new repository and that choice is missing, ask the person with squad_ask (or a follow-up question when they are not watching).",
     "The .autohand/ folder inside a workspace is the engine's own memory and tools, not project code: ignore it when reviewing the project and never report it as something to fix.",
     `Profile map: ${agentRuntime.profileDocs?.agentsPath || ""}`,
     "Read only the relevant profile files when you need additional context or durable memory. Keep this member's sessions and memory isolated. Propose stable project facts for user review; never store secrets or transient logs as durable memory.",
@@ -4583,6 +4594,7 @@ function evaluateRun(run) {
 function runSummary(run) {
   return {
     id: run.id,
+    ownerTaskId: run.ownerTaskId || "",
     agentId: run.agentId,
     title: run.title,
     mode: run.mode,
@@ -6957,6 +6969,8 @@ async function collectSdkPrompt(sdk, prompt, timeoutMs, onEvent, signal, firstEv
 }
 
 async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
+  assertTaskNotDeleted(payload);
+  if (run.abortController?.signal.aborted) throw new Error("Task was stopped before the engine started.");
   let AutohandSDK;
   try {
     ({ AutohandSDK } = await loadAgentSdk());
@@ -7018,6 +7032,8 @@ async function startSdkRun(run, payload, { workspace, prompt, agentRuntime }) {
 }
 
 async function startCliRun(run, args, workspace, agentRuntime, payload) {
+  assertTaskNotDeleted(payload);
+  if (run.abortController?.signal.aborted) throw new Error("Task was stopped before the engine started.");
   run.transport = "cli";
   await handoffRuntimeSkills(agentRuntime, 'autohand', event => appendSdkEventLog(run, event));
   const child = spawn(resolveAutohandBinary() || "autohand", args, {
@@ -7661,8 +7677,10 @@ async function startExternalHarnessRun(payload) {
     : payload;
   const channelContext = channelContextFromPayload(payload);
   const initialArgs = prepared.build(prepared.resumeId);
+  assertTaskNotDeleted(payload);
   const run = {
     id,
+    ownerTaskId: ownerTaskId(payload),
     agentId: payload.agentId || agentRuntime.agentId,
     title: payload.title || prepared.prompt,
     mode,
@@ -7739,6 +7757,16 @@ async function startExternalHarnessRun(payload) {
   return runSummary(run);
 }
 
+function ownerTaskId(payload) {
+  return String(payload.ownerTaskId || payload.collaboration?.task?.id || "").slice(0, 200);
+}
+
+function assertTaskNotDeleted(payload) {
+  const deleted = workStoreFor(join(squadStateDir, WORK_STORE_FILE)).deletedTasks();
+  const id = ownerTaskId(payload);
+  if (deleted.some(task => (id && task.id === id) || (payload.requestId && task.requestIds?.includes(payload.requestId)))) throw Object.assign(new Error("The person deleted this task. Its work will not start again."), { status: 409 });
+}
+
 async function startRun(payload) {
   payload = { ...payload };
   delete payload._routeTarget;
@@ -7753,6 +7781,7 @@ async function startRun(payload) {
 async function startRunInner(payload) {
   if (desktopInstallLocked) throw Object.assign(new Error("Squad is installing an update."), { status: 503 });
   const memberId = String(payload.agentId || payload.agent?.id || "");
+  conversationChanges.assertCanStart(memberId);
   projectObserver.deferMember(memberId, "An assigned run takes priority.");
   observerRunStarts.set(memberId, (observerRunStarts.get(memberId) || 0) + 1);
   try { return await startPreparedRun(payload); }
@@ -7795,8 +7824,10 @@ async function startPreparedRun(payload) {
     : payload;
 
   const channelContext = channelContextFromPayload(payload);
+  assertTaskNotDeleted(payload);
   const run = {
     id,
+    ownerTaskId: ownerTaskId(payload),
     agentId: payload.agentId || agentRuntime.agentId,
     title: payload.title || prompt || "Autohand permissions",
     mode,
@@ -8110,10 +8141,12 @@ function withTeamReceipts(result, receipts = []) {
 }
 
 function beginChatRun(payload, workId, startedAt) {
+  assertTaskNotDeleted(payload);
   const assignment = harnessAssignmentFromAgent(payload.agent);
   const prompt = String(payload.prompt || "").replace(/\s+/g, " ").trim();
   const run = {
     id: workId,
+    ownerTaskId: ownerTaskId(payload),
     agentId: String(payload.agentId || payload.agent?.id || ""),
     title: prompt.length > 140 ? `${prompt.slice(0, 139)}…` : prompt || "Chat",
     prompt,
@@ -8634,8 +8667,16 @@ function routeContext() {
     projectObserver,
     availability: memberAvailability,
     executeTurn: executeBridgeTurn,
+    prepareMemberTask: async memberId => {
+      const access = await agentChannelActions.memberAccess(memberId);
+      if (!access?.agent || access.removed) throw new Error("This member is no longer available.");
+      const payload = await withSavedMember({ agentId: memberId });
+      const workspace = await cleanWorkspace(payload.agent?.workspace || getDefaultWorkspace());
+      return { agentId: memberId, workspace };
+    },
     registerChat,
     isMemberBusy,
+    holdMemberConversation: memberId => conversationChanges.hold(memberId),
     modelContextWindow: ({ provider = "", model = "" } = {}) => {
       const id = String(model || "").trim();
       if (!id) return 0;
@@ -9438,6 +9479,17 @@ async function handleApi(req, res, url) {
       const profile = await profileWorkspace(workspace);
       workspaceProfileCache.set(workspace, { at: Date.now(), profile });
       json(res, 200, { success: true, data: profile });
+    } catch (error) {
+      json(res, error.status || 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/workspaces/default" && req.method === "POST") {
+    try {
+      const payload = await readBody(req);
+      const result = await createDefaultWorkspace(homeDir, payload.consent);
+      json(res, 201, { success: true, data: result });
     } catch (error) {
       json(res, error.status || 400, { success: false, error: error.message });
     }

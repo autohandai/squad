@@ -32,14 +32,12 @@ export function createOnboarding(ctx, { profile = profileWorkspace } = {}) {
     const limit = ctx.getRuntime().limits?.maxProjectsPerMember || 50;
     if (!Array.isArray(paths) || !paths.length || paths.length > limit || paths.some(path => typeof path !== 'string' || !path.trim())) throw problem(`Choose between 1 and ${limit} repositories.`);
     const profiles = new Map();
-    // Canonical git roots collapse subfolders and aliases; metadata is read
-    // here again at completion, never trusted from a browser recommendation.
+    // Existing repositories share their Git root. Ordinary work folders use
+    // their physical folder; neither analysis nor setup initializes Git.
     for (const path of paths) {
       const folder = await ctx.cleanWorkspace(path).catch(error => { throw problem(error.message); });
       const inspected = await profile(folder);
-      if (!inspected.git?.available) throw problem('Git is required to select a repository. Install Git and try again.');
-      if (!inspected.git?.tracked || !inspected.git.root) throw problem(`${inspected.name} is not a Git repository. Choose a repository or start tracking this folder first.`);
-      const root = await realpath(inspected.git.root);
+      const root = await realpath(inspected.git?.tracked && inspected.git.root ? inspected.git.root : folder);
       await ctx.cleanWorkspace(root).catch(error => { throw problem(error.message); });
       if (!profiles.has(root)) profiles.set(root, root === inspected.path ? inspected : await profile(root));
     }

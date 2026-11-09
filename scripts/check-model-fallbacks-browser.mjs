@@ -110,10 +110,10 @@ try{
   await writeFile(join(bridge.directory,'fail-autohand'),'fail');await bridge.api('/api/members/'+member.id+'/model-routing/reset','POST',{});
   const thread=(await bridge.api('/api/members/'+member.id+'/threads','POST',{root:{id:'model-thread-parent',role:'user',body:'Fallback thread verification'}})).data;
   await browser.navigate(bridge.origin+'/conversations/new?member='+member.id);
-  await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Threads')"),'thread control ready');
-  await browser.click('Threads');
-  await until(()=>browser.evaluate("[...document.querySelectorAll('[role=dialog] button')].some(button=>button.textContent.includes('Fallback thread verification'))"),'saved independent thread listed');
-  await browser.evaluate("[...document.querySelectorAll('[role=dialog] button')].find(button=>button.textContent.includes('Fallback thread verification')).click()");
+  await until(()=>browser.evaluate("Boolean(document.querySelector('[data-testid=previous-chats]'))"),'history control ready');
+  await browser.click('History');
+  await until(()=>browser.evaluate("[...document.querySelectorAll('[data-history-kind=thread] button')].some(button=>button.textContent.includes('Fallback thread verification'))"),'saved independent thread listed in History');
+  await browser.evaluate("[...document.querySelectorAll('[data-history-kind=thread] button')].find(button=>button.textContent.includes('Fallback thread verification')).click()");
   await until(()=>browser.evaluate("Boolean(document.querySelector('textarea[aria-label=\"Thread reply\"]'))"),'thread composer ready');
   await browser.fill('textarea[aria-label="Thread reply"]','Please continue within this thread.');
   await until(()=>browser.evaluate("document.querySelector('[role=dialog] form button[type=submit]')?.disabled===false"),'thread reply ready to send');

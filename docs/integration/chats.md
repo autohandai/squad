@@ -48,3 +48,29 @@ A channel thread turn is `ephemeralSession: true` (the member's direct-message r
 Transcript (ADR-0163): on opening a member, and when one of its chat runs starts or finishes, the app fetches `…/transcript?since=<conversationStartedAt>&name=` and merges it with `mergeTranscript` (`src/lib/transcript.js`): ids and request ids already held are skipped, so is a question with the same words within two minutes (turns from before request ids were recorded), and new turns go in time order. The window that sent the turns sees no change.
 
 New chat: if the conversation has a user message, `POST …/chats` with `archivePayload(agent, messages)`, then `/api/chat/reset`, then the usual `messages.reset`. Opening: `POST …/chats/:id/open` with the current conversation (or `current: null`), then `restoreConversationEvent(memberId, chat)` through `applySharedConversationEvent` and the BroadcastChannel so every window follows. The control is disabled while the member is answering.
+
+
+## Unified history and selected merges (ADR-0188)
+
+`GET /api/members/:id/history` returns `{items}` with `kind: chat|thread`, id,
+title, counts, time and working state. History is the single management sheet;
+opening a chat retains the existing session-restore behavior, while opening a
+thread uses its own independent work lane.
+
+`POST .../history/merge` accepts `{selection:[{kind,id},...], requestId, title?}`.
+Choose 2–20 different conversations belonging to this member. The result is a
+new saved-chat summary with `originalsRetained: true`. Its engine sessions are
+empty. Every available source message and thread root is copied with attachments
+and work evidence, with new message ids and `historySource` provenance. Each
+source's internal order is preserved. Source records remain intact. Selections
+over 400 messages or 4 MiB are rejected before saving; a full saved-chat store
+is refused rather than pruned to make space. Stable request ids deduplicate
+retries and reject different merge requests using the same id.
+
+`DELETE .../history/chat/:id` and `DELETE .../history/thread/:id` delete selected
+records after the UI's explicit second decision. Stop a working thread before
+merging or deleting it; current unrelated work is never stopped implicitly.
+Thread Stop also handles a launch whose run id has not arrived yet. Deleted
+creation-request ids are remembered, so an old sheet cannot recreate a deleted
+thread. A new explicit Reply includes a new `creationId` when posting its root.
+Run records and produced files are separate evidence and remain after deletion.

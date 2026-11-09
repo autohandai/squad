@@ -147,7 +147,7 @@ worker never resolves paths or grants from an agent tool. TurboVec 1.1.2 uses
 1536-dimensional normalized lexical token/bigram features and four-bit
 quantization, with no embedding network request.
 
-Run `RUSTUP_TOOLCHAIN=1.93.1 bun run check:memory` locally with Rust >=1.89 and
+Run `RUSTUP_TOOLCHAIN=1.93.1 bun run check:memory` locally with Rust >=1.90 and
 Chrome installed. The command builds the native daemon and verifies library,
 MCP and browser paths. CI runs native library checks after the runtime build
 on each target; Linux also runs the browser check. Release checks use the

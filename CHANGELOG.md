@@ -12,6 +12,9 @@ list to the section for that version.
 
 ### Added
 
+- Assign work to another agent with Squad MCP: tasks show who sent them and wait in the recipient's queue until they are free.
+- Manage saved chats and reply threads together in History. Merge selected conversations into a new chat while keeping the originals, attachments and work details.
+- Chats without a selected project offer `~/Documents/autohand-desktop/` and ask before creating it, keeping the draft while a folder is chosen.
 - Configure Quick Chat from Settings: keep one Squad menu-bar icon, show individual available-agent avatars, choose Apple glass or Solid, hide usage limits, or disable Quick Chat while agents keep working. Apple Liquid Glass is used on macOS 26+, with native translucency on earlier versions.
 - See connected Claude Code and Codex usage windows, model-specific limits and reset times in Quick Chat and the native menu.
 
@@ -23,9 +26,16 @@ list to the section for that version.
 
 ### Changed
 
+- Update native tray support and synchronize the desktop build dependencies. Building the native app now requires Rust 1.90 or newer.
+
+- Task actions are visible on touch and keyboard. Delete any plan or launched/handoff task, including completed work, with a confirmation; deleting a running task leaves unrelated work alone.
+- Removed Canvas from agent chats and search. Deliverables use the member's Library; existing canvas files remain available for recovery.
 - Updated the runtime dependency used to verify downloads and saved memory.
 
 ### Fixed
+
+- Deleting a task wins over edits or completion already in flight. Merged conversations reopen with large saved work details and include your earlier questions in the next reply's context.
+- Pull requests produce the required Dependabot check through GitHub dependency review.
 
 - Stopping or restarting one Squad instance preserves other running instances and their agents.
 - Desktop builds using a shared Cargo directory package the freshly built runtime instead of stale sidecars from a different directory.

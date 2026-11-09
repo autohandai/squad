@@ -46,7 +46,7 @@ export function MemberReplyThread({ api, member, root, onClose, workspace, rende
           const current = await api(`${prefix}/${encodeURIComponent(id)}`);
           if (!cancelled) setThread(current);
         } else if (root.id) {
-          const current = await api(prefix, { method: 'POST', body: JSON.stringify({ root: { id: root.id, role: root.role, body: root.body, authorName: root.authorName, attachments: root.attachments || [] } }) });
+          const current = await api(prefix, { method: 'POST', body: JSON.stringify({ creationId: root.creationId || "", root: { id: root.id, role: root.role, body: root.body, authorName: root.authorName, attachments: root.attachments || [] } }) });
           id = current.id;
           if (!cancelled) setThread(current);
         } else {

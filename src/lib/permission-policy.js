@@ -91,6 +91,7 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
       ["squad_post_channel", "allow"],
       ["squad_work_plan", "allow"],
       ["squad_task", "allow"],
+      ["squad_assign_task", "allow"],
       ["squad_models", "allow"],
       ["squad_set_fallbacks", "allow"],
       ["squad_search_memory", "allow"],

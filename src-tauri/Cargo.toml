@@ -3,7 +3,7 @@ name = "autohand-squad-desktop"
 version = "0.1.21"
 description = "Autohand Squad desktop shell (Tauri 2)"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.90"
 
 [[bin]]
 name = "autohand-squad"

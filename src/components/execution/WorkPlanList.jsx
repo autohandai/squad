@@ -7,6 +7,7 @@ import { dueLabel, isOpenWorkTask, relativeAge, workDotStatus, workStatusWord } 
 import { cn } from "@/lib/utils";
 
 import { EmptyLine, GroupLabel, StatusDot, StatusWord } from "./bits";
+import { DeleteTaskAction } from "./DeleteTaskAction";
 
 /**
  * The member's own plan (ADR-0124) in the Tasks tab: the tasks it added for
@@ -22,12 +23,12 @@ import { EmptyLine, GroupLabel, StatusDot, StatusWord } from "./bits";
  *   onRemove    (id) => Promise
  *   onAsk       (text) => void              sends a chat message
  */
-export function WorkPlanList({ tasks = [], member, copy = {}, now = Date.now(), onCreate, onUpdate, onRemove, onAsk }) {
+export function WorkPlanList({ tasks = [], member, copy = {}, now = Date.now(), onCreate, onUpdate, onRemove, onQueue }) {
   const [editing, setEditing] = useState("");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const open = tasks.filter(isOpenWorkTask).sort(byPlanOrder);
-  const done = tasks.filter((task) => task.status === "done").sort((a, b) => String(b.doneAt || b.updatedAt || "").localeCompare(String(a.doneAt || a.updatedAt || ""))).slice(0, 6);
+  const done = tasks.filter((task) => task.status === "done").sort((a, b) => String(b.doneAt || b.updatedAt || "").localeCompare(String(a.doneAt || a.updatedAt || "")));
   const name = member?.name || copy.member || "the member";
 
   async function run(action) {
@@ -70,7 +71,7 @@ export function WorkPlanList({ tasks = [], member, copy = {}, now = Date.now(), 
                 onSave={(input) => run(async () => { await onUpdate?.(task.id, input); setEditing(""); })}
               />
             ) : (
-              <PlanRow key={task.id} task={task} copy={copy} now={now} name={name} onEdit={() => setEditing(task.id)} onDone={() => run(() => onUpdate?.(task.id, { status: "done" }))} onStatus={(status) => run(() => onUpdate?.(task.id, { status }))} onRemove={() => run(() => onRemove?.(task.id))} onAsk={onAsk} />
+              <PlanRow key={task.id} task={task} copy={copy} now={now} name={name} onEdit={() => setEditing(task.id)} onDone={() => run(() => onUpdate?.(task.id, { status: "done" }))} onStatus={(status) => run(() => onUpdate?.(task.id, { status }))} onRemove={() => onRemove?.(task.id)} onQueue={onQueue ? () => run(() => onQueue(task.id)) : null} />
             )
           ))}
         </div>
@@ -80,7 +81,7 @@ export function WorkPlanList({ tasks = [], member, copy = {}, now = Date.now(), 
           <GroupLabel>{copy.workDoneRecently || "Done"}</GroupLabel>
           <div className="divide-y divide-border/70">
             {done.map((task) => (
-              <PlanRow key={task.id} task={task} copy={copy} now={now} name={name} finished onReopen={() => run(() => onUpdate?.(task.id, { status: "open" }))} onRemove={() => run(() => onRemove?.(task.id))} />
+              <PlanRow key={task.id} task={task} copy={copy} now={now} name={name} finished onReopen={() => run(() => onUpdate?.(task.id, { status: "open" }))} onRemove={() => onRemove?.(task.id)} />
             ))}
           </div>
         </>
@@ -102,17 +103,19 @@ function byPlanOrder(a, b) {
 }
 
 function sourceLabel(task, copy, name) {
+  if (task.assignment?.fromName) return `from ${task.assignment.fromName}`;
   if (task.recurring) return copy.workRecurring || "recurring";
   if (task.source === "person") return copy.workAddedByYou || "you added it";
   if (task.source === "handoff") return copy.workHandedOff || "handed off";
   return (copy.workAddedByMember || "{name} added it").replace("{name}", name);
 }
 
-function PlanRow({ task, copy, now, name, finished = false, onEdit, onDone, onStatus, onRemove, onAsk, onReopen }) {
+function PlanRow({ task, copy, now, name, finished = false, onEdit, onDone, onStatus, onRemove, onQueue, onReopen }) {
+  const executing = ["queued", "running"].includes(task.assignment?.state);
   const due = finished ? "" : dueLabel(task.due, { now, copy });
   const overdue = due.startsWith("overdue");
   const outcome = task.lastOutcome?.status ? `${copy.workLastRun || "last run"} ${task.lastOutcome.status}${task.lastOutcome.preview ? `: ${task.lastOutcome.preview}` : ""}` : task.outcome ? task.outcome : "";
-  const meta = [due, sourceLabel(task, copy, name), outcome, relativeAge(finished ? task.doneAt || task.updatedAt : task.updatedAt, now)].filter(Boolean);
+  const meta = [due, sourceLabel(task, copy, name), task.assignment?.state === "done" ? "completed" : task.assignment?.state || "", outcome, relativeAge(finished ? task.doneAt || task.updatedAt : task.updatedAt, now)].filter(Boolean);
   return (
     <article className="group py-2.5" data-testid="work-task" data-status={task.status}>
       <div className="flex items-center gap-2.5">
@@ -122,19 +125,19 @@ function PlanRow({ task, copy, now, name, finished = false, onEdit, onDone, onSt
       </div>
       <p className={cn("mt-0.5 truncate pl-[1.125rem] text-xs", overdue ? "text-destructive" : "text-muted-foreground")}>{meta.join(" · ")}</p>
       {task.detail ? <p className="mt-1 line-clamp-2 pl-[1.125rem] text-sm leading-6 text-muted-foreground">{task.detail}</p> : null}
-      <div className="mt-1 flex flex-wrap gap-x-3 pl-[1.125rem] text-xs opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 group-focus-within:opacity-100">
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-2 pl-[1.125rem] text-xs">
         {finished ? (
           <TextAction onClick={onReopen}>{copy.workReopen || "Reopen"}</TextAction>
-        ) : (
+        ) : !executing ? (
           <>
             <TextAction onClick={onDone}>{copy.workMarkDone || "Done"}</TextAction>
             {task.status !== "doing" ? <TextAction onClick={() => onStatus?.("doing")}>{copy.workStart || "Start"}</TextAction> : null}
             {task.status !== "blocked" ? <TextAction onClick={() => onStatus?.("blocked")}>{copy.workBlock || "Blocked"}</TextAction> : null}
             <TextAction onClick={onEdit}>{copy.edit || "Edit"}</TextAction>
-            {onAsk ? <TextAction onClick={() => onAsk((copy.workAskPrompt || "Please work on this task from your plan now: {title}").replace("{title}", task.title))}>{(copy.workAsk || "Ask {name} to work on it").replace("{name}", name)}</TextAction> : null}
+            {onQueue && !task.assignment?.queueItemId ? <TextAction onClick={onQueue}>Queue task</TextAction> : null}
           </>
-        )}
-        <TextAction onClick={onRemove} tone="destructive">{copy.remove || "Remove"}</TextAction>
+        ) : null}
+        <DeleteTaskAction onDelete={onRemove} detail={task.recurring ? "The routine stays scheduled. Any current occurrence stops." : ""} />
       </div>
     </article>
   );
