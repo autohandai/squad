@@ -102,6 +102,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
   const ask = prompt.split('</operating_instructions>').pop().split('</turn_context>').pop();
   if (/^\\s*Message from Noah/.test(ask)) return say('Eva here: the build is green on main.');
   const scenario = /team-scenario-([a-z-]+)/.exec(ask)?.[1] || (/Draft an automation:/.test(ask) ? 'schedule' : '');
+  if (ask.includes('owner-delete-hold')) { await new Promise(resolve => setTimeout(resolve, 60000)); return say('Unexpected completed hold.'); }
   if (!command || !scenario) return say('Fixture turn done.');
   const proxy = child.spawn(command, field('autohand-squad', 'args'), { env: { ...process.env, ...field('autohand-squad', 'env') }, stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map();
@@ -112,6 +113,8 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
   try {
     log({ kind: 'initialize', response: await rpc('initialize', { protocolVersion: '2025-06-18' }) });
     log({ kind: 'tools', response: await rpc('tools/list', {}) });
+    if (scenario === 'assign-held') await call('squad_assign_task', { to: 'Eva Green', title: 'Paused queued task', request_id: 'held-assignment' });
+    if (scenario === 'assign') await call('squad_assign_task', { to: 'Eva Green', title: 'Verify the queued release task', detail: 'Inspect the release result.', request_id: 'release-assignment' });
     if (scenario === 'message') {
       await call('squad_team', {});
       await call('squad_message', { to: '@Eva,', message: 'Is the build green?', wait_seconds: 30 });
@@ -163,7 +166,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
 
 try {
   // --- pure pieces --------------------------------------------------------
-  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask", "squad_publish_artifact"]);
+  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_assign_task", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask", "squad_publish_artifact"]);
   assert.deepEqual([...SQUAD_TEAM_TOOLS].sort(), [...TEAM_TOOL_NAMES].sort(), "the permission rows people see are exactly the tools the team server offers (ADR-0161)");
   const roster = [{ id: "a1", name: "Eva Green" }, { id: "a2", name: "Noah" }, { id: "a3", name: "Max Power" }, { id: "a4", name: "Max Steel" }];
   assert.equal(resolveTeammate("@Eva,", roster).member?.id, "a1", "a first name with @ and a comma finds the teammate");
@@ -322,6 +325,42 @@ try {
   assert.deepEqual(taskCalls.filter(entry => entry.name === "squad_task").map(entry => entry.response.result.structuredContent.status), ["added", "updated", "done"]);
   const work = JSON.parse(await readFile(join(state, "work.json"), "utf8"));
   assert.equal(work.tasks.find(task => task.memberId === noah.id).status, "done");
+
+  result = await chat(noah, "team-scenario-assign");
+  assert.equal(result.success, true, result.text);
+  const assigned = await until(async () => (await api(`/api/work?memberId=${eva.id}`)).data?.tasks?.find(task => task.title === "Verify the queued release task" && task.status === "done"));
+  assert.equal(assigned.assignment.fromId, noah.id);
+  assert.equal(assigned.assignment.state, "done");
+  assert.ok(assigned.assignment.queueItemId, "the actual bridge connects the work task to the queue");
+  assert.equal((await api(`/api/work/${assigned.id}`, undefined, "DELETE")).status, 200);
+  assert.equal((await api(`/api/work?memberId=${eva.id}`)).data.tasks.some(task => task.id === assigned.id), false);
+  assert.equal((await api(`/api/work/runtime/finished-handoff`, { memberId: eva.id }, "DELETE")).status, 200);
+  assert.ok((await api('/api/work')).data.deletedTaskIds.includes('finished-handoff'));
+  const forgedPlan = await api('/api/work', { memberId: eva.id, title: 'Owner-created task', assignment: { fromId: noah.id, fromName: noah.name, queueItemId: 'forged' } });
+  assert.equal(forgedPlan.data.assignment, null, 'ordinary task input cannot forge agent assignment metadata');
+  await api(`/api/work/${forgedPlan.data.id}`, undefined, 'DELETE');
+  await api(`/api/queues/${eva.id}/pause`, {});
+  await chat(noah, 'team-scenario-assign-held');
+  const queuedTask = (await api(`/api/work?memberId=${eva.id}`)).data.tasks.find(task => task.title === 'Paused queued task');
+  assert.equal(queuedTask.assignment.state, 'queued');
+  assert.equal((await api(`/api/work/${queuedTask.id}`, { status: 'done' }, 'PATCH')).status, 409, 'manual status cannot leave completed work queued for later execution');
+  assert.equal((await api(`/api/queues/items/${queuedTask.assignment.queueItemId}/update`, { text: 'different work' })).status, 409, 'queue text cannot diverge from the assigned task');
+  await api(`/api/queues/${eva.id}/clear`, {});
+  assert.equal((await api(`/api/work/${queuedTask.id}`)).data.assignment.state, 'cancelled');
+  assert.equal((await api(`/api/work?memberId=${eva.id}`)).data.tasks.find(task => task.id === queuedTask.id).assignment.state, 'cancelled');
+  await api(`/api/work/${queuedTask.id}`, undefined, 'DELETE');
+  await api(`/api/queues/${eva.id}/resume`, {});
+  const forbidden = await api('/api/runs', { agentId: noah.id, agent: noah, workspace: root, ownerTaskId: 'finished-handoff', prompt: 'deleted-task-must-not-start' });
+  assert.equal(forbidden.status, 409, forbidden.text);
+  assert.equal((await entries()).some(entry => entry.kind === 'harness' && entry.ask.includes('deleted-task-must-not-start')), false);
+  const [heldNoah, heldEva] = await Promise.all([noah, eva].map(member => api('/api/runs', { agentId: member.id, agent: member, workspace: root, ownerTaskId: 'held-' + member.id, prompt: 'owner-delete-hold-' + member.id })));
+  assert.equal(heldNoah.success, true, heldNoah.text); assert.equal(heldEva.success, true, heldEva.text);
+  await until(async () => (await entries()).filter(entry => entry.kind === 'harness' && entry.ask.includes('owner-delete-hold')).length >= 2);
+  assert.equal((await api('/api/work/runtime/held-' + noah.id, { memberId: noah.id, runId: heldNoah.data.id }, 'DELETE')).status, 200);
+  await until(async () => (await api('/api/runs/' + heldNoah.data.id)).data?.status === 'stopped');
+  assert.equal((await api('/api/runs/' + heldEva.data.id)).data.status, 'running', 'owner task deletion leaves another member run working');
+  await api('/api/runs/' + heldEva.data.id + '/stop', {});
+
 
   // --- remember: team memory reaches Eva's next prompt --------------------
   result = await chat(noah, "team-scenario-remember");

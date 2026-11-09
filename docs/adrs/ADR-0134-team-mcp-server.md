@@ -49,7 +49,7 @@ Seventeen tools cover the supported internal operations (teaching added by ADR-0
 | Own profile | squad_get_profile, squad_set_profile |
 | Shared, personal and project memory | squad_remember, squad_recall, squad_update_memory, squad_forget |
 | Channels and threads | squad_channels, squad_channel_messages, squad_post_channel, squad_create_channel |
-| Commitments and later work | squad_work_plan, squad_task, squad_schedule |
+| Commitments and later work | squad_work_plan, squad_task, squad_assign_task, squad_schedule |
 
 Profiles include name, role, description, operating instructions, personality
 and selected skills. Profile, channel creation, task and schedule tools use

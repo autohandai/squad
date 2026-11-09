@@ -6,6 +6,7 @@ import { OPEN_TASK_STATUSES } from "@/lib/execution-panel";
 import { cn } from "@/lib/utils";
 
 import { EmptyLine, GroupLabel, StatusDot, StatusWord } from "./bits";
+import { DeleteTaskAction } from "./DeleteTaskAction";
 
 /**
  * "Now": the member's open tasks as a short divider list under the title.
@@ -50,6 +51,7 @@ export function TaskList({
   onCancelHandoff,
   onFailHandoff,
   onRetryHandoff,
+  onRemove,
   silentEmpty = false,
 }) {
   if (!tasks.length) {
@@ -140,6 +142,7 @@ export function TaskList({
             ) : null}
 
             <TaskTimelinePreview task={task} agents={agents} formatDate={formatDate} />
+            {onRemove ? <div className="mt-2 pl-[1.125rem]"><DeleteTaskAction onDelete={() => onRemove(task)} /></div> : null}
           </article>
         );
       })}

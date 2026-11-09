@@ -131,6 +131,15 @@ try {
   assert.equal(await call("GET", "/api/canvases", null, "?ownerType=channel&ownerId=ch-1"), true);
   assert.equal(responses.at(-1).payload.data.canvases.length, 1);
   assert.equal(await call("POST", "/api/canvases", { ownerType: "member", ownerId: "noah", title: "Spec" }), true);
+  assert.equal(responses.at(-1).status, 410, "agents cannot create retired member canvases");
+  const legacy = (await store.list(stateDir, { ownerType: "member", ownerId: "eva" }))[0];
+  await call("GET", `/api/canvases/${legacy.id}`);
+  assert.equal(responses.at(-1).payload.data.canvas.id, legacy.id, "legacy content stays readable for recovery");
+  await call("PUT", `/api/canvases/${legacy.id}`, { body: "replace legacy content" });
+  assert.equal(responses.at(-1).status, 410, "retired member canvases cannot be edited");
+  await call("GET", "/api/canvases", null, "?ownerType=member&ownerId=eva");
+  assert.deepEqual(responses.at(-1).payload.data.canvases, [], "member canvases are absent from active discovery");
+  await call("POST", "/api/canvases", { ownerType: "channel", ownerId: "ch-1", title: "Spec" });
   assert.equal(responses.at(-1).status, 201);
   const specId = responses.at(-1).payload.data.canvas.id;
   assert.equal(await call("PUT", `/api/canvases/${specId}`, { body: "hello", authorId: "user" }), true);

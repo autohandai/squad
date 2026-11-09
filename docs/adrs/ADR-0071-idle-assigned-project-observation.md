@@ -131,6 +131,18 @@ actual done, partial or documentation-only outcome.
 
 ## Validation
 
+Hosted Web CI on 9 November timed out waiting for the fixture's first idle
+review after its busy eligibility checks. The original log did not include
+observer state. A gated reproduction with the real scheduler showed that a
+busy observation is visible before its final save settles; an idle scan
+arriving during that save joins the previous cycle and performs no review.
+A subsequent cycle produces exactly one notice. This establishes a race in
+the verifier's handshake, not proof that every observer timeout has this cause.
+The HTTP verifier now requests subsequent scheduler cycles until the expected
+transition is observed, retaining its original time bound and one-review,
+cooldown, cancellation and no-evidence-to-hosted-provider assertions. A timeout
+also reports the observer state so future failures can be diagnosed directly.
+
 `node scripts/check-project-observer.mjs` passed temporary real-file scans,
 secret/symlink/sensitive-path exclusions, empty-directory bounds, evidence-ID
 validation, eligibility, cooldown versus cheap scans, deduplication, persistent

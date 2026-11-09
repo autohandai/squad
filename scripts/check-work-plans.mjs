@@ -277,6 +277,14 @@ process.exit(0);
   await writeFile(join(directory, 'release-batch'), 'go');
   await until(async () => (await api(`/api/routines/${routine.data.id}`)).data.activeRun === null, 'the held run released');
 
+  const cancelRoutine = await api('/api/routines', { memberId: 'alex', title: 'Delete this occurrence', instructions: 'HOLD:cancelwork do this task', workspace: rootDir, schedule: { kind: 'cron', cron: '0 9 * * 1-5', timeZone: 'UTC' } });
+  await api(`/api/routines/${cancelRoutine.data.id}/run`, {});
+  const cancelTask = await until(async () => (await tasksFor('alex')).find(task => task.recurring === cancelRoutine.data.id), 'a routine task to delete');
+  await api(`/api/work/${cancelTask.id}`, undefined, 'DELETE');
+  await until(async () => !(await api(`/api/routines/${cancelRoutine.data.id}`)).data.activeRun, 'deleting a routine task stops its selected occurrence');
+  check('deleting a routine task leaves its future schedule enabled', (await api(`/api/routines/${cancelRoutine.data.id}`)).data.enabled === true);
+  check('deleted routine task is not recreated by its late finish', !(await tasksFor('alex')).some(task => task.id === cancelTask.id));
+
   // Restart: tasks and receipts survive.
   await stopBridge();
   await startBridge();

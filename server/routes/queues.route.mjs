@@ -17,11 +17,18 @@ import { QueueStore } from "../queues/store.mjs";
 import { QueueDispatcher } from "../queues/dispatcher.mjs";
 import { contextGauge } from "../queues/context-gauge.mjs";
 import { cleanWorkResult } from "../work-progress.mjs";
+import { join } from "node:path";
+import { STORE_FILE, workStoreFor } from "../work/store.mjs";
 
 export const name = "queues";
 
 let store = null;
 let dispatcher = null;
+
+export function taskQueue() {
+  if (!store || !dispatcher) throw Object.assign(new Error('Queues are not ready.'), { status: 503 });
+  return { queue: store, dispatcher };
+}
 
 // Called by both direct chat routes after normal availability/remote checks.
 export async function admitChat(payload) {
@@ -32,10 +39,13 @@ export async function admitChat(payload) {
 export async function init(ctx) {
   store = new QueueStore({ squadStateDir: ctx.squadStateDir });
   await store.ready;
+  const work = workStoreFor(join(ctx.squadStateDir, STORE_FILE));
+  await work.load();
   dispatcher = new QueueDispatcher({
     store,
     executeTurn: ctx.executeTurn,
     isMemberBusy: ctx.isMemberBusy || (async () => false),
+    canRun: async item => !item.workTaskId || work.task(item.workTaskId)?.memberId === item.memberId,
     availability: ctx.availability,
     registerChat: ctx.registerChat,
     emit: ctx.emit,
@@ -115,10 +125,7 @@ export async function handle(req, res, url, ctx) {
         ctx.json(res, 200, { success: true, data: await store.update(id, await ctx.readBody(req)) });
         return true;
       }
-      const cancelled = await store.cancel(id);
-      // Cancelling the item in flight is a stop: the turn is aborted and the
-      // queue waits for a person, exactly like the composer's stop control.
-      if (cancelled.wasRunning) await dispatcher.stop(cancelled.memberId);
+      const cancelled = await dispatcher.cancelItem(id);
       ctx.json(res, 200, { success: true, data: cancelled });
       return true;
     }
@@ -130,7 +137,7 @@ export async function handle(req, res, url, ctx) {
     if (req.method !== "POST") return false;
     if (action === "items") {
       const body = await ctx.readBody(req);
-      const item = await store.enqueue({ ...body, agentId: memberId });
+      const item = await store.enqueue({ ...body, workTaskId: undefined, agentId: memberId });
       ctx.emit?.("queue.enqueued", { memberId, itemId: item.id, text: item.text.slice(0, 140) });
       dispatcher.schedule();
       ctx.json(res, 201, { success: true, data: item });

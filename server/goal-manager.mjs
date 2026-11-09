@@ -210,7 +210,7 @@ export class GoalManager {
       }
       if (goal.status === 'running' && controller.signal.aborted) await this.transition(goal, { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: 'The goal runtime boundary was reached. Resume to continue.' });
     } catch (error) {
-      if (goal.status === 'running') await this.transition(goal, error?.reason === 'continuity' ? { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: error.message }
+      if (goal.status === 'running') await this.transition(goal, ['continuity', 'conversation'].includes(error?.reason) ? { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: error.message }
         : error?.reason === 'break' ? { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: 'Member is on a break.' }
         : controller.signal.aborted ? { status: 'paused', pausedAt: new Date(this.now()).toISOString(), pauseReason: 'The goal runtime boundary was reached. Resume to continue.' }
           : { status: 'failed', error: error?.message || String(error), finishedAt: new Date(this.now()).toISOString() });

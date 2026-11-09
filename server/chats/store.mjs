@@ -212,13 +212,13 @@ export class ChatStore {
     return this.readRecord(this.filePath(memberId, chatId));
   }
 
-  async save(record) {
+  async save(record, { prune = true } = {}) {
     const path = this.filePath(record.memberId, record.id);
     await mkdir(this.memberDir(record.memberId), { recursive: true, mode: 0o700 });
     const temp = `${path}.${process.pid}.tmp`;
     await writeFile(temp, JSON.stringify(record), "utf8");
     await rename(temp, path);
-    await this.prune(record.memberId);
+    if (prune) await this.prune(record.memberId);
     await this.rebuildIndex(record.memberId);
     return chatSummary(record);
   }

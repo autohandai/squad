@@ -146,7 +146,7 @@ try {
   const archived = (await bridge.api(`/api/members/${member.id}/chats`)).data.chats[0];
   const saved = (await bridge.api(`/api/members/${member.id}/chats/${archived.id}`)).data;
   assert(saved.messages.flatMap(message=>message.attachments || []).length >= fixtures.length + 1);
-  await browser.click("Previous chats");
+  await browser.click("History");
   await until(() => browser.evaluate(`Boolean([...document.querySelectorAll('button')].find(button=>button.textContent.trim().startsWith(${JSON.stringify(archived.title)})))`), "archived file conversation is available");
   await browser.evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent.trim().startsWith(${JSON.stringify(archived.title)})).click()`);
   await until(() => browser.evaluate(`document.querySelectorAll('[data-message-id] [data-attachment-id]').length >= ${fixtures.length + 1}`), "reopened chat retains file previews");

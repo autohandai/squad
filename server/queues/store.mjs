@@ -32,7 +32,7 @@ export function privateLaunch(payload) {
     if (!value || typeof value !== "object") return value;
     return Object.fromEntries(Object.entries(value).filter(([key]) => !/(?:api.?key|token|secret|password|authorization|credentials|^env$)/i.test(key)).map(([key, item]) => [key, scrub(item)]));
   };
-  const keys = ["agentId", "agent", "squadMembers", "workspace", "profile", "model", "effort", "access", "policy", "transport", "timeoutMs", "canvasDir", "canvasId", "channelId", "threadId", "channel", "conversationContext"];
+  const keys = ["_teamDepth", "teamMessage", "workTaskId", "agentId", "agent", "squadMembers", "workspace", "profile", "model", "effort", "access", "policy", "transport", "timeoutMs", "canvasDir", "canvasId", "channelId", "threadId", "channel", "conversationContext"];
   return scrub(Object.fromEntries(keys.filter((key) => payload[key] !== undefined).map((key) => [key, payload[key]])));
 }
 
@@ -134,9 +134,14 @@ export class QueueStore {
     const memberId = idOf(payload.agentId || payload.agent?.id || payload.memberId);
     const text = String(payload.text ?? payload.prompt ?? "").trim().slice(0, MAX_TEXT);
     if (!memberId || !text) throw fail("member and follow-up text are required");
+    const workTaskId = idOf(payload.workTaskId);
+    if (workTaskId) {
+      const existing = [...this.items.values()].find(item => item.workTaskId === workTaskId);
+      if (existing) return publicItem(existing);
+    }
     const at = this.at();
     const item = {
-      id: randomUUID(), memberId, workspace: String(payload.workspace || ""), text,
+      id: randomUUID(), memberId, ...(workTaskId ? { workTaskId } : {}), workspace: String(payload.workspace || ""), text,
       attachments: attachmentReferences(payload.attachments), status: "queued",
       createdAt: at, updatedAt: at, startedAt: null, finishedAt: null, reply: "", error: "", progress: null,
       launch: privateLaunch(payload),
@@ -149,6 +154,7 @@ export class QueueStore {
   async update(id, patch) {
     const item = await this.get(id);
     if (item.status !== "queued") throw fail("Only a queued follow-up can be edited.", 409);
+    if (item.workTaskId) throw fail("This follow-up is an assigned task. Delete the task to cancel it; its queued instructions cannot be edited separately.", 409);
     const text = String(patch.text ?? patch.prompt ?? "").trim().slice(0, MAX_TEXT);
     if (!text) throw fail("follow-up text is required");
     Object.assign(item, { text, updatedAt: this.at() });

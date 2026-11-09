@@ -10,6 +10,10 @@ import * as canvases from "../canvases/store.mjs";
 
 export const name = "canvases";
 
+function requireChannelCanvas(canvas) {
+  if (canvas?.ownerType === "member") throw Object.assign(new Error("Member canvases have been removed. Publish deliverables to the member's Library."), { status: 410 });
+}
+
 const COLLECTION = /^\/api\/canvases\/?$/;
 const ITEM = /^\/api\/canvases\/([A-Za-z0-9][A-Za-z0-9_-]{0,80})$/;
 const ACTION = /^\/api\/canvases\/([A-Za-z0-9][A-Za-z0-9_-]{0,80})\/(revert|materialize|absorb)$/;
@@ -36,6 +40,7 @@ export async function init(ctx) {
     const canvasId = String(run?.canvasId || "");
     if (!canvasId) return;
     try {
+      if ((await canvases.get(ctx.squadStateDir, canvasId)).ownerType === "member") return;
       const result = await canvases.absorb(ctx.squadStateDir, canvasId, event.memberId || run.agentId || "member", {
         summary: run.title ? `Run: ${String(run.title).slice(0, 200)}` : "",
       });
@@ -58,7 +63,8 @@ export async function handle(req, res, url, ctx) {
       try {
         const ownerType = url.searchParams.get("ownerType") || "";
         const ownerId = url.searchParams.get("ownerId") || "";
-        ctx.json(res, 200, { success: true, data: { canvases: await canvases.list(stateDir, { ownerType, ownerId }) } });
+        const listed = await canvases.list(stateDir, { ownerType, ownerId });
+        ctx.json(res, 200, { success: true, data: { canvases: listed.filter(canvas => canvas.ownerType !== "member") } });
       } catch (error) {
         fail(ctx, res, error);
       }
@@ -67,6 +73,7 @@ export async function handle(req, res, url, ctx) {
     if (method === "POST") {
       try {
         const body = await ctx.readBody(req);
+        requireChannelCanvas(body);
         const canvas = await canvases.create(stateDir, body || {});
         announce(ctx, canvas, canvas.revisions[0], "created");
         ctx.json(res, 201, { success: true, data: { canvas } });
@@ -87,6 +94,7 @@ export async function handle(req, res, url, ctx) {
         return true;
       }
       if (method === "PUT" || method === "PATCH") {
+        requireChannelCanvas(await canvases.get(stateDir, id));
         const body = (await ctx.readBody(req)) || {};
         const result = await canvases.update(stateDir, id, { title: body.title, body: body.body, authorId: body.authorId || "user", summary: body.summary || "" });
         if (result.changed) announce(ctx, result.canvas, result.revision, "edited");
@@ -110,6 +118,7 @@ export async function handle(req, res, url, ctx) {
   if (action && method === "POST") {
     const [, id, verb] = action;
     try {
+      requireChannelCanvas(await canvases.get(stateDir, id));
       const body = (await ctx.readBody(req)) || {};
       if (verb === "revert") {
         const result = await canvases.revert(stateDir, id, body.revisionId, body.authorId || "user");

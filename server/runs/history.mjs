@@ -53,6 +53,7 @@ export function historyRecord(run) {
   const logs = Array.isArray(run.logs) ? run.logs.slice(-RUN_HISTORY_LOG_LINES) : [];
   return {
     id: String(run.id || ""),
+    ownerTaskId: String(run.ownerTaskId || ""),
     prompt: String(run.prompt || "").slice(0, 20000),
     requestId: String(run.requestId || ""),
     person: run.person === true,

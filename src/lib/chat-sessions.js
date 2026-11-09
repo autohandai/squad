@@ -60,6 +60,11 @@ export function restoreConversationEvent(memberId, chat, at = new Date().toISOSt
   return { type: "messages.reset", memberId, at, cutoff: at, messages };
 }
 
+/** Replay both sides when a saved or merged chat starts a fresh engine session. */
+export function conversationContextMessages(messages) {
+  return (messages || []).filter(message => !message.superseded && (message.role === "user" || (message.role === "agent" && message.status === "complete"))).slice(-12).map(message => ({ role: message.role, body: String(message.body || "").slice(-2400) }));
+}
+
 /** "3 turns · Claude Code · 2h ago" */
 export function chatMetaLine(chat, { now = Date.now(), harnessName = (id) => id, relative = () => "", copy = {} } = {}) {
   const turns = Number(chat?.turns) || 0;

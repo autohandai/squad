@@ -46,6 +46,7 @@ export function normalizeSearchDoc(input) {
   const id = text(input.id, 200);
   const type = text(input.type, 32).toLowerCase();
   if (!id || !typeSet.has(type)) return null;
+  if (type === "canvas" && text(input.memberId, 120) && !text(input.channelId, 120)) return null;
   const title = text(input.title, MAX_TITLE);
   const body = text(input.body, MAX_BODY);
   if (!title && !body) return null;
@@ -196,6 +197,10 @@ export function openSearchIndex(stateDir, { fts = "auto" } = {}) {
   }
   setMeta.run("schema", String(SCHEMA_VERSION));
   setMeta.run("mode", mode);
+
+  // Retire the removed member feature from this rebuildable cache. Original
+  // canvas files stay intact for recovery; shared channel documents remain.
+  db.exec("DELETE FROM docs WHERE type = 'canvas' AND member_id <> '' AND channel_id = ''");
 
   const upsertStmt = db.prepare(`
     INSERT INTO docs (id, type, title, body, member_id, channel_id, run_id, route, at)
