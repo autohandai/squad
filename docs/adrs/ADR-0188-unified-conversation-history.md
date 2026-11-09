@@ -111,6 +111,11 @@ two-step saved-chat/thread deletion and viewport fit. The existing chat and
 independent-thread suites pass with isolated fixture engines. These checks do
 not involve the installed app or live provider accounts.
 
+Hosted Web CI caught an older model-fallback browser check still opening the
+removed Threads button. It now opens that same independent conversation
+through History and retains the existing engine/model fallback assertions.
+Changing the entry point must not discard this separate execution coverage.
+
 ## Consequences
 
 A merge uses extra disk space and does not remove its source records. The
