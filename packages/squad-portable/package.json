@@ -1,0 +1,9 @@
+{
+  "name": "@autohand/squad-portable",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./index.d.mts", "import": "./index.mjs" } },
+  "files": ["index.mjs", "index.d.mts", "squad-backup.schema.json"],
+  "dependencies": { "yaml": "2.9.0", "zod": "4.3.6" }
+}

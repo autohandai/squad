@@ -319,6 +319,7 @@ dependencies = [
  "tokio",
  "tray-icon 0.26.1",
  "turbovec",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

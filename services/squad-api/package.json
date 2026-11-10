@@ -12,6 +12,7 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
+    "@autohand/squad-portable": "file:../../packages/squad-portable",
     "zod": "^4.3.6"
   },
   "devDependencies": {

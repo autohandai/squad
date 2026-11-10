@@ -39,7 +39,7 @@ try {
   assert.equal(provision.data.skillInstall.installed.length, 1, JSON.stringify(provision.data.skillInstall));
   const identity = JSON.parse(await readFile(join(target, ".autohand", "workspace-identity.json"), "utf8"));
   assert.equal(JSON.parse(await readFile(join(alias, ".autohand", "workspace-identity.json"), "utf8")).id, identity.id);
-  const saved = JSON.parse(await readFile(join(bridge.directory, "app", "agents", agent.id, "profile.json"), "utf8"));
+  const saved = JSON.parse(await readFile(join(bridge.appRoot, "agents", agent.id, "profile.json"), "utf8"));
   assert.equal(saved.workspace, alias, "The selected locator and workspace overrides must keep their saved key.");
   assert.equal(saved.projects[0].path, alias);
   assert.equal((await bridge.api("/api/members/" + agent.id + "/channel-access", "PUT", { agent })).success, true);

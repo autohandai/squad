@@ -54,7 +54,7 @@ import { FolderReadStalled, readFolderWithin, sharedScan } from "./server/worksp
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { clientClosedReason, stopMessage } from "./server/harness/stop-reason.mjs";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import process from "node:process";
 import { listLocalSkillPackages, localSkillRootDescriptors, ensureSkillWorkspaceIdentity as ensurePhysicalSkillWorkspaceIdentity, readSkillWorkspaceIdentity as readPhysicalSkillWorkspaceIdentity, readSkillPackage, readSkillFrontmatter, copySkillPackage, writeSkillPackage } from "./server/skills/local.mjs";
 import { canonicalWorkspaceRoot } from "./server/workspace-root.mjs";
@@ -108,6 +108,35 @@ import {
 } from "./server/harness/index.mjs";
 import { COLD_START_RETRY_DELAY_MS, classifyColdStart, engineHome, freeDiskBytes, looksLikeStaleSession } from "./server/harness/cold-start.mjs";
 import { formatDuration } from "./src/lib/duration.js";
+
+// Account isolation precedes every path, store, timer and browser-facing route.
+const { consumeWorkerContext, awaitWorkerStart } = await import('./server/ownership/worker-context.mjs');
+const privateWorker = consumeWorkerContext();
+if (!privateWorker) {
+  const { runOwnershipBroker } = await import('./server/ownership/broker.mjs');
+  await runOwnershipBroker();
+  process.exit(0);
+}
+const privateOwnerContext = privateWorker.context;
+// A detached child must not initialize stores or run work until the broker has
+// durably recorded its process-group identity. Lost IPC before launch is EOF.
+await awaitWorkerStart(privateOwnerContext);
+let ownershipRuntimeReady = false;
+process.once('disconnect', () => { if (!ownershipRuntimeReady) process.exit(1); });
+const privateWorkerToken = privateWorker.token;
+const { stampOwnedProfile } = await import('./server/ownership/profile.mjs');
+if (privateOwnerContext.owner && !privateOwnerContext.canWrite) {
+  const { runPassiveWorker } = await import('./server/ownership/passive-worker.mjs');
+  ownershipRuntimeReady = true;
+  await runPassiveWorker({ context: privateOwnerContext, token: privateWorkerToken,
+    rootDir: dirname(fileURLToPath(import.meta.url)), configPath: process.env.AUTOHAND_USER_CONFIG_PATH });
+  process.exit(0);
+}
+const { readCredential: readOwnerCredential, ownerKey: verifiedOwnerKey,actorKey:verifiedActorKey } = await import('./server/ownership/identity.mjs');
+let ownershipActive = true;
+function assertOwnerExecution() {
+  if (!process.connected || !ownershipActive || !privateOwnerContext.owner || !privateOwnerContext.canWrite || readOwnerCredential(userConfigPath)?.fingerprint !== privateOwnerContext.credentialFingerprint) throw Object.assign(new Error('This Squad is not authorized to execute work. Sign in or select a writable owner.'), { status: 403, code: 'owner_read_only' });
+}
 
 // Keep native human approval out of every agent/helper inherited environment.
 const initialNativeGrantKey = String(process.env.AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN || "");
@@ -421,7 +450,7 @@ function holdSystemReset(requestId) {
 }
 const squadMemberIdPrefix = "asq_";
 const legacySquadMemberIdPrefixes = ["wk_"];
-const squadWorkspaceRoot = join(homeDir, ".autohandsquad");
+const squadWorkspaceRoot = privateOwnerContext.workspaceRoot;
 const legacySquadWorkspaceRoots = [join(homeDir, ".qoderwake"), join(homeDir, ".autohand-squad")];
 const appStateDir = process.env.AUTOHAND_SQUAD_APP_STATE_DIR
   ? resolve(process.env.AUTOHAND_SQUAD_APP_STATE_DIR)
@@ -439,7 +468,7 @@ let desktopInstallLocked = false;
 let desktopDaemonUpdateToken = "";
 async function releaseDesktopDaemonAdmission() {
   const token=desktopDaemonUpdateToken; desktopDaemonUpdateToken="";
-  if(token) await updateDaemonAdmission({stateDir:squadStateDir,token,pause:false}).catch(()=>{});
+  if(token) await updateDaemonAdmission({stateDir:squadServiceDir,token,pause:false}).catch(()=>{});
 }
 const maxRunLogLines = 600;
 const childTerminationGraceMs = 2500;
@@ -456,27 +485,34 @@ const autohandHomeDir = process.env.AUTOHAND_HOME
 const squadStateDir = process.env.AUTOHAND_SQUAD_HOME
   ? resolve(process.env.AUTOHAND_SQUAD_HOME)
   : join(autohandStateRoot, "squad");
-const squadConfigPath = join(squadStateDir, "config.json");
+const squadServiceDir = privateOwnerContext.serviceRoot;
+const defaultWorkspaceOwnership = { stateDir: squadStateDir, ownerKey: privateOwnerContext.owner ? verifiedOwnerKey(privateOwnerContext.owner) : '' };
+const squadConfigPath = join(squadServiceDir, "config.json");
+const { createOwnedDataService } = await import('./server/ownership/data-service.mjs');
+function assertOwnerRead() {
+  if (!process.connected || !ownershipActive || !privateOwnerContext.owner || readOwnerCredential(userConfigPath)?.fingerprint !== privateOwnerContext.credentialFingerprint) throw Object.assign(new Error('The account or selected Squad changed.'), { status: 409, code: 'context_changed' });
+}
+const ownedData = privateOwnerContext.owner ? createOwnedDataService({ context: privateOwnerContext, assertCurrent: assertOwnerRead, readBody, json, events:bridgeEvents, startEventStream }) : null;
 const liveStatusPath = join(squadStateDir, "web-status.json");
 const memoryInboxPath = join(squadStateDir, "memory-inbox.json");
 const channelsStatePath = join(squadStateDir, "channels.json");
-const squadDeviceIdPath = join(squadStateDir, "device-id");
+const squadDeviceIdPath = join(squadServiceDir, "device-id");
 const feedbackBackupDir = join(squadStateDir, "feedback");
 const feedbackApiBaseUrl = (process.env.AUTOHAND_SQUAD_API_BASE_URL || process.env.AUTOHAND_API_URL || "https://api.autohand.ai").replace(/\/+$/, "");
 const announcements = createAnnouncements({ version: packageMetadata.version || "", token: () => {
   const auth = readAutohandAuth(userConfigPath);
-  return autohandAuthUsable(auth) ? auth.token : String(readJsonFileSync(squadConfigPath)?.apiAuthToken || "");
+  return autohandAuthUsable(auth) ? auth.token : '';
 } });
 const desktopUpdates = createUpdateFlow({
-  appStateDir, serviceStateDir: squadStateDir, appVersion: packageMetadata.version || "",
-  checkFresh: () => desktopUpdateStatus({ squadStateDir, appVersion: packageMetadata.version || "", refresh: true }),
+  appStateDir, serviceStateDir: squadServiceDir, appVersion: packageMetadata.version || "",
+  checkFresh: () => desktopUpdateStatus({ squadStateDir: squadServiceDir, appVersion: packageMetadata.version || "", refresh: true }),
   canRestart: async ({ automatic = false } = {}) => {
     if (desktopInstallLocked) return false;
     desktopInstallLocked = true;
     try {
       if (automatic) {
         desktopDaemonUpdateToken=randomUUID();
-        await updateDaemonAdmission({stateDir:squadStateDir,token:desktopDaemonUpdateToken,pause:true});
+        await updateDaemonAdmission({stateDir:squadServiceDir,token:desktopDaemonUpdateToken,pause:true});
       }
       // Installing wins over running work (ADR-0144): stop chats, runs and
       // observations, pause goals so they can resume, and keep queued work.
@@ -488,7 +524,7 @@ const desktopUpdates = createUpdateFlow({
 });
 const automaticUpdates = createAutomaticUpdates({
   settings: () => readSystemSettings(squadStateDir),
-  status: () => desktopUpdateStatus({ squadStateDir, appVersion: packageMetadata.version || "" }),
+  status: () => desktopUpdateStatus({ squadStateDir: squadServiceDir, appVersion: packageMetadata.version || "" }),
   flow: desktopUpdates,
   onError: error => logEvent(SEVERITY.WARN, "Automatic update download failed", { "event.name": "update.automatic.failed", error: error.message }),
 });
@@ -513,7 +549,7 @@ const computerClient = await preferredComputerClient(process.env.AUTOHAND_SQUAD_
   where: process.env.AUTOHAND_SQUAD_COMPUTER_USE === "bundled" ? { env: { ...process.env, PATH: "" }, homeDir: join(squadStateDir, "no-autohand-computer-use") } : {},
   log: (message) => logEvent(SEVERITY.INFO, message, { "event.name": "computer-use.host" }),
 }).catch(() => null);
-const computerUse = createComputerUse({ stateDir: squadStateDir, rootDir, bridgeUrl: `http://127.0.0.1:${port}`, nativeClient: computerClient, emit: emitBridgeEvent });
+const computerUse = createComputerUse({ stateDir: squadStateDir, rootDir, bridgeUrl: privateOwnerContext.publicUrl, nativeClient: computerClient, emit: emitBridgeEvent });
 const computerWorkRuntimes = new Map();
 // Connectors (ADR-0107): MCP servers the person added plus the built-in Web
 // research server, injected through the same managed seam as Computer Use.
@@ -521,7 +557,7 @@ const connectors = createConnectorStore({ stateDir: squadStateDir, rootDir, node
 const firecrawlBaseUrl = String(process.env.FIRECRAWL_API_URL || "").trim();
 // The person's vault (ADR-0104): members reach it only through a managed MCP
 // server injected per piece of work, scoped by a per-member credential.
-const vault = createVaultService({ stateDir: squadStateDir, rootDir, homeDir, bridgeUrl: `http://127.0.0.1:${port}`, emit: emitBridgeEvent });
+const vault = createVaultService({ stateDir: squadStateDir, rootDir, homeDir, bridgeUrl: privateOwnerContext.publicUrl, emit: emitBridgeEvent });
 const vaultWorkRuntimes = new Map();
 bridgeEvents.on("member.stopped", ({ memberId }) => vault.closeMember(memberId));
 // The team (ADR-0134): roster, messages between members and shared memory,
@@ -530,10 +566,11 @@ const artifacts = createArtifactService({ stateDir: squadStateDir, members: team
 const team = createTeamService({
   stateDir: squadStateDir,
   rootDir,
-  bridgeUrl: `http://127.0.0.1:${port}`,
+  bridgeUrl: privateOwnerContext.publicUrl,
   members: teamMembers,
   memoryLibrary: () => memoryLibrary,
   artifacts,
+  ownedData,
   isBusy: (memberId) => isMemberBusy(memberId),
   deliver: deliverTeamMessage,
   runAction: runTeamAction,
@@ -595,7 +632,7 @@ const cloud = createSquadCloud({ stateDir: squadStateDir, store: team.store, rea
   const auth = readAutohandAuth(userConfigPath);
   return autohandAuthUsable(auth) ? auth.token : "";
 } });
-cloud.start();
+if (privateOwnerContext.canWrite) cloud.start();
 const teamWorkRuntimes = new Map();
 bridgeEvents.on("member.stopped", ({ memberId }) => team.closeMember(memberId));
 void team.recover().catch(() => {});
@@ -673,7 +710,7 @@ async function runTeamAction(type, raw, session) {
 async function readNativeComputerGrantKey() {
   let file;
   try {
-    file = await open(join(squadStateDir, "native-grant-token"), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0) | (fsConstants.O_NONBLOCK || 0));
+    file = await open(join(squadServiceDir, "native-grant-token"), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0) | (fsConstants.O_NONBLOCK || 0));
     const info = await file.stat();
     if (!info.isFile() || info.nlink !== 1 || info.size !== 64 || (info.mode & 0o7777) !== 0o600 || (typeof process.getuid === "function" && info.uid !== process.getuid())) return "";
     const value = await file.readFile("utf8");
@@ -694,6 +731,7 @@ async function authorizeComputerUseGrant(req, body) {
 }
 
 async function prepareComputerWork(agentRuntime, input) {
+  assertOwnerExecution();
   if (isUtilityAgent(agentRuntime.agentId) || !input._computerUseWorkId) return agentRuntime;
   const grants = await readOptionalJsonFile(join(squadStateDir, "computer-use-grants.json"));
   const scope = grants?.members?.[agentRuntime.agentId]?.scope;
@@ -731,6 +769,7 @@ function workScopeFileName(input) {
 }
 
 async function prepareVaultWork(agentRuntime, input) {
+  assertOwnerExecution();
   const warming = input._warmSession === true && !input._computerUseWorkId;
   if (isUtilityAgent(agentRuntime.agentId) || (!input._computerUseWorkId && !warming)) return agentRuntime;
   if (!vaultToolsAllowed(normalizeAgentPermissions(agentRuntime.agent))) return agentRuntime;
@@ -761,6 +800,7 @@ async function finishVaultWork(workId) {
 }
 
 async function prepareTeamWork(agentRuntime, input) {
+  assertOwnerExecution();
   const warming = input._warmSession === true && !input._computerUseWorkId;
   if (isUtilityAgent(agentRuntime.agentId) || (!input._computerUseWorkId && !warming)) return agentRuntime;
   const engine = agentRuntime.harness?.id || harnessAssignmentFromAgent(agentRuntime.agent).id;
@@ -1269,7 +1309,7 @@ function getRuntime() {
     available: Boolean(autohandPath),
     bootstrap: cliBootstrap.status(),
     defaultWorkspace: getDefaultWorkspace(),
-    defaultWorkspaceSetup: defaultWorkspaceSetup(homeDir),
+    defaultWorkspaceSetup: defaultWorkspaceSetup(homeDir, defaultWorkspaceOwnership),
     // Names this machine in the relay workspace switcher and member ownership.
     hostName: hostname(),
     workspaceRoot: homeDir,
@@ -1355,6 +1395,11 @@ function authEmail(auth) {
 }
 
 function readRuntimeAccount() {
+  if (privateOwnerContext) {
+    let actor = null;
+    try { if (ownershipActive && readOwnerCredential(userConfigPath)?.fingerprint === privateOwnerContext.credentialFingerprint) actor = privateOwnerContext.actor; } catch { /* Unverified account state stays hidden. */ }
+    return { signedIn: Boolean(actor), email: actor?.email || '', name: actor?.name || '', userId: actor?.id || '', avatar: '', source: actor ? 'verified-ownership' : 'none', owner: privateOwnerContext.owner, generation: privateOwnerContext.generation };
+  }
   const squadConfig = readJsonFileSync(squadConfigPath);
   const userAuth = readAutohandAuth(userConfigPath);
   const squadEmail = String(squadConfig?.accountEmail || "").trim();
@@ -1378,18 +1423,20 @@ function readRuntimeAccount() {
 // `squad logout` is preferred (one code path with the desktop app); without
 // it the bridge clears the same files itself.
 async function signOutAccount() {
+  if (privateOwnerContext.actor && readOwnerCredential(userConfigPath)?.fingerprint !== privateOwnerContext.credentialFingerprint) throw Object.assign(new Error('The account changed before sign-out. Reopen Squad.'), { status: 409 });
   observerAccountTransition = true;
   if (projectObserver.active) projectObserver.deferMember(projectObserver.active.memberId, "The account is signing out.");
   try {
   const before = readRuntimeAccount();
   for (const memberId of new Set((await goals.list()).filter((goal) => goal.status === "running").map((goal) => goal.agentId))) await goals.pauseForMember(memberId, "Account signed out. Resume after signing in.");
   for (const memberId of activeChats.keys()) stopChats(memberId);
+  if (privateOwnerContext.actor && readOwnerCredential(userConfigPath)?.fingerprint !== privateOwnerContext.credentialFingerprint) throw Object.assign(new Error('The account changed before sign-out. Reopen Squad.'), { status: 409 });
   let via = "bridge";
   const squadCli = locateSquadCliBinary();
   if (squadCli) {
     const result = spawnSync(squadCli, ["logout"], {
       encoding: "utf8",
-      env: { ...process.env, AUTOHAND_SQUAD_HOME: squadStateDir },
+      env: { ...process.env, AUTOHAND_SQUAD_HOME: squadServiceDir },
       timeout: 15000,
     });
     if (result.status === 0) via = "squad-cli";
@@ -1398,7 +1445,7 @@ async function signOutAccount() {
   if (via === "bridge") {
     clearAutohandAuthToken(userConfigPath);
     clearSquadSession(squadConfigPath);
-    const daemonRecord = await readOptionalJsonFile(join(squadStateDir, "daemon.json"));
+    const daemonRecord = await readOptionalJsonFile(join(squadServiceDir, "daemon.json"));
     if (daemonRecord?.url) {
       await fetchWithTimeout(`${String(daemonRecord.url).replace(/\/+$/, "")}/auth/logout`, { method: "POST" }, 3000).catch(() => null);
     }
@@ -1623,7 +1670,7 @@ async function ensureSquadManagedWorkspace(path) {
 }
 
 function getDefaultWorkspace() {
-  const setup = defaultWorkspaceSetup(homeDir);
+  const setup = defaultWorkspaceSetup(homeDir, defaultWorkspaceOwnership);
   return setup.ready ? setup.path : "";
 }
 
@@ -1634,6 +1681,9 @@ async function cleanWorkspace(workspace) {
   const value = workspace.trim();
   const requested = resolve(value.replace(/\/+$/, "") || value);
   const resolved = normalizeSquadWorkspacePath(requested);
+  if (isPathInside(resolved, squadServiceDir) && !isPathInside(resolved, squadWorkspaceRoot)) {
+    throw new Error('Private Squad account data cannot be used as a project folder. Choose a work folder for the selected Squad.');
+  }
   await ensureSquadManagedWorkspace(resolved);
   if (!isInsideHome(resolved)) {
     throw new Error("workspace must be a folder inside the user directory");
@@ -2164,7 +2214,7 @@ async function installAgentSkills(agent, agentHome, agentId) {
     if (existsSync(join(retained, "SKILL.md")) && !existsSync(join(skillsDir, folder))) await rename(retained, join(skillsDir, folder));
   }
   const workspaceId = requestedSkills.length && agent.workspace ? await ensureSkillWorkspaceIdentity(agent.workspace) : '';
-  const localRoots = localSkillRootDescriptors({ homeDir, squadStateDir, workspace: String(agent?.workspace || ""), workspaceId, memberId: agentId });
+  const localRoots = localSkillRootDescriptors({ homeDir: '', squadStateDir, workspace: String(agent?.workspace || ""), workspaceId, memberId: agentId });
   const locals = requestedSkills.length ? await listLocalSkillPackages(localRoots) : [];
   const localById = new Map();
   for (const skill of locals) {
@@ -2358,13 +2408,6 @@ async function readProviderSettings({ includeSecrets = false } = {}) {
     } catch {
       settings = normalizeProviderSettings();
     }
-  } else if (existsSync(userConfigPath)) {
-    try {
-      settings = providerSettingsFromAutohandConfig(JSON.parse(await readFile(userConfigPath, "utf8")));
-    } catch {
-      settings = normalizeProviderSettings();
-    }
-    await writeProviderSettings(settings);
   } else {
     settings = normalizeProviderSettings();
     await writeProviderSettings(settings);
@@ -3092,24 +3135,19 @@ async function writeAgentProfileDocs(plan) {
   await writeFile(plan.profileDocs.agentsPath, plan.index, "utf8");
 }
 
-// What a new member inherits from the person's own ~/.autohand/config.json:
-// auth, provider and MCP settings, never their permissions. A fresh Chief of
-// Staff arrived with the person's 13 allowList grants, including writes into
-// unrelated repositories and shell commands from other projects, which an
-// Interactive-mode member runs without asking (ADR-0161). Squad writes the
-// member's own permission block from its saved profile.
-function seedMemberConfig(userConfig) {
-  if (!userConfig || typeof userConfig !== "object" || Array.isArray(userConfig)) return userConfig;
-  const { permissions, ...rest } = userConfig;
-  void permissions;
-  return rest;
+// Global CLI integrations have no account ownership record. A new member
+// starts with defaults and the currently verified identity; its providers,
+// connectors and permissions come only from this owner's saved settings.
+function seedMemberConfig(workspace) {
+  const auth = readAutohandAuth(userConfigPath);
+  return { ...defaultAgentConfig(workspace), ...(autohandAuthUsable(auth) ? { auth } : {}), mcp: { servers: [] }, hooks: { enabled: false } };
 }
 
 async function readAgentRuntimeConfig(configPath, workspace) {
   try {
     const savedConfig = await readPersistentJson(configPath, undefined);
     const config = savedConfig === undefined
-      ? seedMemberConfig(await readPersistentJson(userConfigPath, defaultAgentConfig(workspace)))
+      ? seedMemberConfig(workspace)
       : savedConfig;
     if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("Expected a JSON object.");
     return config;
@@ -3123,6 +3161,7 @@ async function readAgentRuntimeConfig(configPath, workspace) {
 function readAutohandAuth(configPath) {
   try {
     const config = JSON.parse(readFileSync(configPath, "utf8"));
+    if (configPath === userConfigPath && (!ownershipActive || !privateOwnerContext.actor || createHash('sha256').update(String(config?.auth?.token || '').trim()).digest('hex') !== privateOwnerContext.credentialFingerprint)) return null;
     return config && typeof config.auth === "object" && config.auth ? config.auth : null;
   } catch {
     return null;
@@ -3227,6 +3266,7 @@ async function excludeEngineFolders(workspace) {
 }
 
 async function ensureAgentRuntime(input, workspace) {
+  assertOwnerExecution();
   await excludeEngineFolders(workspace);
   const id = sanitizeAgentId(input.agent?.id || input.agentId);
   const pending = (agentRuntimeWrites.get(id) || Promise.resolve()).catch(() => {}).then(() => ensureAgentRuntimeInner(input, workspace));
@@ -3236,6 +3276,7 @@ async function ensureAgentRuntime(input, workspace) {
 }
 
 async function ensureAgentRuntimeInner(input, workspace) {
+  assertOwnerExecution();
   const describesAgent = input._memberDescriptionProvided !== false && Boolean(input.agent && typeof input.agent === "object" && !Array.isArray(input.agent));
   const agentId = sanitizeAgentId(input.agent?.id || input.agentId);
   const agentHome = join(isolatedAgentsDir, agentId);
@@ -3252,7 +3293,7 @@ async function ensureAgentRuntimeInner(input, workspace) {
       catch (error) { if (error.code !== "ENOENT") throw error; }
     }
   }
-  const agent = memberProfileDefaults({ ...saved, ...(savedFiles.length ? { profileFiles: savedFiles } : {}), ...(input.agent && typeof input.agent === "object" && !Array.isArray(input.agent) ? input.agent : {}), id: agentId, workspace });
+  const agent = stampOwnedProfile(memberProfileDefaults({ ...saved, ...(savedFiles.length ? { profileFiles: savedFiles } : {}), ...(input.agent && typeof input.agent === "object" && !Array.isArray(input.agent) ? input.agent : {}), id: agentId, workspace }), privateOwnerContext.owner);
   const configPath = join(agentHome, "config.json");
   const displayConfigPath = `.autohand/agents/${agentId}/config.json`;
   const displayProfileDir = `.autohand/agents/${agentId}/profile`;
@@ -3566,7 +3607,6 @@ async function prepareProjectObserverRuntime({ member }) {
   const cliPath = resolveAutohandBinary();
   if (!cliPath) throw new Error("The selected Autohand CLI is not installed.");
   const selected = await resolveProviderForAgent(member);
-  const original = readJsonFileSync(userConfigPath) || {};
   const auth = readAutohandAuth(userConfigPath);
   const agentId = `squad-observer-${sanitizeAgentId(member.id)}`;
   const agentHome = join(isolatedAgentsDir, "observers", sanitizeAgentId(member.id));
@@ -3574,7 +3614,7 @@ async function prepareProjectObserverRuntime({ member }) {
   await mkdir(agentHome, { recursive: true });
   const config = {
     provider: selected.provider,
-    [selected.provider]: { ...(original[selected.provider] || {}), ...providerConfigForResolved(selected) },
+    [selected.provider]: providerConfigForResolved(selected),
     ...(autohandAuthUsable(auth) ? { auth } : {}),
     workspace: { defaultRoot: agentHome, projects: [] },
     permissions: { mode: "restricted" },
@@ -3677,6 +3717,7 @@ function agentRuntimeEnvVars(agentRuntime) {
   return {
     AUTOHAND_HOME: agentRuntime.agentHome,
     AUTOHAND_CONFIG: agentRuntime.configPath,
+    AUTOHAND_USER_CONFIG_PATH: agentRuntime.configPath,
     AUTOHAND_CLIENT_NAME: autohandClientName(agentRuntime),
     AUTOHAND_SKILL_SNAPSHOT_MANAGED: '1',
     AUTOHAND_NO_IDLE_LOGOUT: "1",
@@ -5585,7 +5626,8 @@ function normalizeChannelsState(input) {
     version: 1,
     revision: Number.isSafeInteger(source.revision) && source.revision >= 0 ? source.revision : 0,
     deletedChannelIds: normalizeChannelMemberIds(source.deletedChannelIds),
-    agentChannelAccess: source.agentChannelAccess && typeof source.agentChannelAccess === "object" && !Array.isArray(source.agentChannelAccess) ? source.agentChannelAccess : {},
+    agentChannelAccess: source.agentChannelAccess && typeof source.agentChannelAccess === "object" && !Array.isArray(source.agentChannelAccess)
+      ? Object.fromEntries(Object.entries(source.agentChannelAccess).map(([id, access]) => [id, access?.agent && privateOwnerContext.owner ? { ...access, agent: stampOwnedProfile(access.agent, privateOwnerContext.owner) } : access])) : {},
     agentChannelActions: Array.isArray(source.agentChannelActions) ? source.agentChannelActions : [],
     storage: "local-squad-state",
     path: channelsStatePath,
@@ -5632,6 +5674,7 @@ function responderRecentLines(channel, state, limit = 6) {
 }
 const mutateChannelsState = operation => channelsStore.mutate(operation);
 const agentChannelActions = createAgentChannelActions({
+  owner: privateOwnerContext.owner,
   store: channelsStore, availability: memberAvailability, sanitizeId: sanitizeAgentId,
   run: payload => chatOnce(payload),
   reportError: error => console.error("Member/channel operation:", error.message),
@@ -8636,8 +8679,10 @@ function routeContext() {
     rootDir,
     squadStateDir,
     appStateDir,
+    ownedBrokerOrigin: privateOwnerContext.publicUrl,
+    ownedHookScope: privateOwnerContext.owner ? `${verifiedActorKey(privateOwnerContext.actor)}.${verifiedOwnerKey(privateOwnerContext.owner)}.${privateOwnerContext.datasetId}` : '',
     squadWorkspaceRoot,
-    memberWorkspaceRoots: [squadWorkspaceRoot, ...legacySquadWorkspaceRoots],
+    memberWorkspaceRoots: [squadWorkspaceRoot],
     maxProjectsPerMember,
     holdSystemReset,
     currentSystemReset: () => systemResetOwner,
@@ -8724,7 +8769,7 @@ function routeContext() {
     validateSkillSelections: async (agent, selected) => {
       if (!selected.length) return;
       const workspaceId = agent.workspace ? await ensureSkillWorkspaceIdentity(agent.workspace) : '';
-      const local = await listLocalSkillPackages(localSkillRootDescriptors({ homeDir, squadStateDir, workspace: agent.workspace || '', workspaceId, memberId: agent.id }));
+      const local = await listLocalSkillPackages(localSkillRootDescriptors({ homeDir: '', squadStateDir, workspace: agent.workspace || '', workspaceId, memberId: agent.id }));
       const available = new Set(local.flatMap(skill => [skill.id, skill.qualifiedId].filter(Boolean)));
       const missing = selected.filter(id => !available.has(id));
       if (missing.length) for (const skill of (await loadSkillCatalog()).skills || []) { available.add(skill.id); available.add(`registry:${skillRepo(skill)}::${skill.directory || skill.id}`); }
@@ -8738,6 +8783,7 @@ function routeContext() {
 }
 
 async function handleApi(req, res, url) {
+  if (ownedData && await ownedData.handle(req, res, url)) return true;
   if (await handlePluginRoute(req, res, url, routeContext())) return true;
 
   // Client-side happenings (handoffs, approvals, mentions) reach the bridge
@@ -9488,7 +9534,8 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/workspaces/default" && req.method === "POST") {
     try {
       const payload = await readBody(req);
-      const result = await createDefaultWorkspace(homeDir, payload.consent);
+      assertOwnerExecution();
+      const result = await createDefaultWorkspace(homeDir, payload.consent, defaultWorkspaceOwnership);
       json(res, 201, { success: true, data: result });
     } catch (error) {
       json(res, error.status || 400, { success: false, error: error.message });
@@ -9564,7 +9611,7 @@ async function handleApi(req, res, url) {
     // unattended checks only; refresh=1 is the person asking and always runs.
     const settings = await readSystemSettings(squadStateDir);
     const data = await desktopUpdateStatus({
-      squadStateDir,
+      squadStateDir: squadServiceDir,
       appVersion: packageMetadata.version || "",
       refresh: url.searchParams.get("refresh") === "1",
       autoCheck: autoCheckUpdatesEnabled(settings),
@@ -9612,7 +9659,7 @@ async function handleApi(req, res, url) {
       // longer empties the list: local skills are the ones that always work.
       const workspace = String(url.searchParams.get('workspace') || '');
       const workspaceId = workspace ? await readSkillWorkspaceIdentity(workspace).catch(() => null) : '';
-      const localRoots = localSkillRootDescriptors({ homeDir, squadStateDir, workspace, workspaceId });
+      const localRoots = localSkillRootDescriptors({ homeDir: '', squadStateDir, workspace, workspaceId });
       const local = (await listLocalSkillPackages(localRoots).catch(() => [])).map((skill) => ({
         id: skill.id,
         name: skill.name,
@@ -9716,6 +9763,8 @@ async function serveStatic(req, res, url) {
 }
 
 async function stopAndExitFromSignal(signal) {
+  if (!ownershipActive) return;
+  ownershipActive = false;
   memoryLibrary.close();
   await cloud.close();
   await stopManagedRuns(`web server received ${signal}`);
@@ -9728,12 +9777,23 @@ process.once("SIGTERM", () => {
 process.once("SIGINT", () => {
   stopAndExitFromSignal("SIGINT").catch(() => process.exit(1));
 });
+ownershipRuntimeReady = true;
+process.once('disconnect', () => { stopAndExitFromSignal('ownership broker disconnected').catch(() => process.exit(1)); });
+process.on('message', message => {
+  if (message?.type === 'ownership-deactivate') stopAndExitFromSignal('ownership context changed').catch(() => process.exit(1));
+});
 
 if (isPackagedRuntime) {
   await mkdir(appStateDir, { recursive: true });
 }
 
 server = createServer(async (req, res) => {
+  const supplied = Buffer.from(String(req.headers['x-squad-worker-token'] || ''));
+  const expected = Buffer.from(privateWorkerToken);
+  if (!ownershipActive || supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+    json(res, 401, { success: false, error: 'This private runtime requires its ownership broker.' });
+    return;
+  }
   let url;
   try {
     url = new URL(req.url || "/", `http://${host}:${port}`);
@@ -9788,7 +9848,7 @@ server = createServer(async (req, res) => {
         "autohand.remote.token.id": auth.token?.id || "",
         "autohand.remote.token.label": auth.token?.label || "",
       });
-    } else if (!requestOriginAllowed(req, url)) {
+    } else if (!privateOwnerContext && !requestOriginAllowed(req, url)) {
       json(res, 403, { success: false, error: "cross-origin requests to the local bridge are not allowed" });
       return;
     }
@@ -9837,9 +9897,10 @@ server = createServer(async (req, res) => {
 await runHistory.restore().catch((error) => console.error(`run history could not be restored: ${error?.message || error}`));
 
 server.listen(port, host, () => {
+  process.send?.({ type: 'ownership-ready', port: server.address().port, generation: privateOwnerContext.generation });
   console.log(`autohandSWE listening on http://${host}:${port}`);
   loadRoutePlugins(routeContext(), { log: console.log }).catch((error) => console.error(`route plug-ins failed: ${error?.message || error}`));
-  projectObserver.start().catch(error => console.error(`project observer could not start: ${error.message}`));
+  if (privateOwnerContext.canWrite) projectObserver.start().catch(error => console.error(`project observer could not start: ${error.message}`));
   logEvent(SEVERITY.INFO, `bridge listening on http://${host}:${port}`, {
     "server.address": host,
     "server.port": port,

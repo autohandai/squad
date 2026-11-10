@@ -20,6 +20,7 @@ import { createServer } from 'node:net';
 import { access as fsAccess, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createOwnedBridgeFixture } from './lib/owned-bridge-fixture.mjs';
 import { agentIdFromHarnessId, harnessIdFor, isAcpHarnessId, launchFor, normalizeAgent, normalizeRegistry, platformTarget } from '../server/acp/registry.mjs';
 import { acpMcpServers, contentText, decidePermission, eventsFromUpdate, forHarnessId, isInsideDirs, newAcpState } from '../server/harness/acp.mjs';
 import { getAdapter, normalizeHarnessAssignment, normalizeHarnessId } from '../server/harness/index.mjs';
@@ -132,7 +133,7 @@ await new Promise((r) => socket.listen(0, '127.0.0.1', r));
 const port = socket.address().port;
 await new Promise((r) => socket.close(r));
 const origin = `http://127.0.0.1:${port}`;
-let bridge;
+let bridge,ownedFixture;
 let logs = '';
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, label, timeout = 10000) {
@@ -141,20 +142,21 @@ async function until(fn, label, timeout = 10000) {
   throw new Error(`${label} timed out; bridge: ${logs.slice(-3000)}`);
 }
 const api = async (path, body, method) => {
-  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: await headers(), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json(); return { status: response.status, ...data };
 };
 const calls = async () => (await readFile(callsFile, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
 const member = (id, harness = {}) => ({ id, name: id, harness: { id: 'acp:fake-agent', executablePath: fake, ...harness }, projects: [{ path: rootDir }] });
 const payload = (id, prompt, extra = {}) => ({ agentId: id, agent: member(id, extra.harness), workspace: rootDir, prompt, profile: 'Use the chosen permission rules.', ...extra });
-const chat = async (id, prompt, extra) => (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload(id, prompt, extra)) })).text();
-const sessionsFile = (id) => join(directory, 'app', 'agents', id, 'harness-sessions.json');
+const headers=async()=>{const context=(await(await fetch(origin+'/api/ownership/context')).json()).data;return {'content-type':'application/json','x-squad-context':context.generation};};
+const chat = async (id, prompt, extra) => (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await headers(), body: JSON.stringify(payload(id, prompt, extra)) })).text();
+const sessionsFile = (id) => join(ownedFixture.paths.appRoot, 'agents', id, 'harness-sessions.json');
 const resumeIdOnDisk = async (id = 'pim') => Object.values(JSON.parse(await readFile(sessionsFile(id), 'utf8').catch(() => '{}'))['acp:fake-agent'] || {})[0]?.resumeId || '';
 const exists = (path) => fsAccess(path).then(() => true, () => false);
 async function startBridge() {
   bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: rootDir,
-    env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider', AUTOHAND_ACP_REGISTRY_URL: 'http://127.0.0.1:9/registry.json' },
+    env: { ...process.env,...ownedFixture.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider', AUTOHAND_ACP_REGISTRY_URL: 'http://127.0.0.1:9/registry.json' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   bridge.stdout.on('data', (d) => { logs += d; }); bridge.stderr.on('data', (d) => { logs += d; });
@@ -230,6 +232,8 @@ emit({type:'result',subtype:'success',result:'Inspected the readme.',session_id:
 process.exit(0);
 `);
   await chmod(fakeClaude, 0o700);
+  await writeFile(join(directory,'config.json'),JSON.stringify({auth:{token:'fixture-only-no-provider',email:'reliability@example.test',expiresAt:'2099-01-01T00:00:00Z'}}));
+  ownedFixture=await createOwnedBridgeFixture({serviceRoot:join(directory,'squad'),appRoot:join(directory,'app')});
   await startBridge();
 
   // 1. Offline: the bundled snapshot answers, named by its source.
@@ -243,7 +247,7 @@ process.exit(0);
   assert.ok(!JSON.stringify(offline.data).includes(process.env.HOME), 'launch commands are shown without the home directory');
 
   // 2. A cached registry (what a successful fetch leaves behind) is served and lists its agents.
-  const cacheDir = join(directory, 'squad', 'acp');
+  const cacheDir = join(ownedFixture.paths.dataRoot, 'acp');
   await mkdir(cacheDir, { recursive: true });
   await writeFile(join(cacheDir, 'registry.json'), JSON.stringify({ fetchedAt: new Date().toISOString(), url: 'fixture', registry: { version: '1.0.0', agents: [
     { id: 'fake-agent', name: 'Fake Agent', version: '1.0.0', description: 'A fake ACP agent used by the checks.', distribution: { npx: { package: 'fake-agent-acp@1.0.0' } }, license_url: 'x' },
@@ -325,7 +329,7 @@ process.exit(0);
 
   // 8. Mixing engines: a Claude Code member's reply is handed to the ACP member as a DM handoff.
   const claudeMember = { id: 'alex', name: 'Alex', harness: { id: 'claude', executablePath: fakeClaude }, projects: [{ path: rootDir }] };
-  const alex = await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'alex', agent: claudeMember, workspace: rootDir, prompt: 'Look at the readme', profile: 'x' }) })).text();
+  const alex = await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await headers(), body: JSON.stringify({ agentId: 'alex', agent: claudeMember, workspace: rootDir, prompt: 'Look at the readme', profile: 'x' }) })).text();
   assert.ok(alex.includes('"reply":"Inspected the readme."'), 'the Claude Code member answered');
   const handoff = await chat('pim', 'Review what Alex did. Alex said: "Inspected the readme."', {
     harness: { access: 'plan' },
@@ -338,5 +342,6 @@ process.exit(0);
   console.log('ACP bridge checks passed: registry offline and cached, plan/write/full access, session kept and reused, reset, stop, handoff from Claude Code.');
 } finally {
   await stopBridge();
+  await ownedFixture?.close();
   await rm(directory, { recursive: true, force: true });
 }

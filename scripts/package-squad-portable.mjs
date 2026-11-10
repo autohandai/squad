@@ -125,12 +125,13 @@ export async function packageSquadPortable(options = {}) {
     await assertFile(join(bundleRoot, 'vendor', 'computer-use', 'BUILD_INFO.json'));
     await assertFile(join(bundleRoot, 'vendor', 'computer-use', executableName('cua-driver', releaseOs)));
 
-    for (const dependency of ['toml', 'yaml']) {
+    for (const dependency of ['toml', 'yaml', 'zod']) {
       await copyRequiredDirectory(
         join(modulesRoot, dependency),
         join(bundleRoot, 'node_modules', dependency),
       );
     }
+    await copyRequiredDirectory(join(rootDir, 'packages', 'squad-portable'), join(bundleRoot, 'node_modules', '@autohand', 'squad-portable'));
   }
 
   async function createArchive() {

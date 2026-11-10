@@ -1,3 +1,4 @@
+import { ownedSessionStorage } from "@/lib/owned-storage";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { updateView, updateInstallAction } from "@/lib/update-status";
@@ -11,7 +12,7 @@ export function UpdateConsentNotice({ updates, operation, onReview, hidden = fal
   const version = ready ? view.operation.version : view.latest;
   const key = `${version}:${ready ? "ready" : "available"}`;
   let snoozed = false;
-  try { snoozed = Number(sessionStorage.getItem(`squad.update.${key}`)) > Date.now(); } catch { /* Storage may be unavailable. */ }
+  try { snoozed = Number(ownedSessionStorage.getItem(`squad.update.${key}`)) > Date.now(); } catch { /* Storage may be unavailable. */ }
   if (hidden || view.busy || (!view.available && !ready) || dismissed === key || snoozed) return null;
   return (
     <div data-testid="update-consent-notice" role="status" className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/65 px-6 py-2 text-sm">
@@ -19,7 +20,7 @@ export function UpdateConsentNotice({ updates, operation, onReview, hidden = fal
       <Button size="sm" variant="outline" onClick={onReview}>Review update</Button>
       <Button size="sm" variant="ghost" onClick={() => {
         setDismissed(key);
-        try { sessionStorage.setItem(`squad.update.${key}`, String(Date.now() + 24 * 60 * 60_000)); } catch { /* The current window still dismisses it. */ }
+        try { ownedSessionStorage.setItem(`squad.update.${key}`, String(Date.now() + 24 * 60 * 60_000)); } catch { /* The current window still dismisses it. */ }
       }}>Later</Button>
     </div>
   );

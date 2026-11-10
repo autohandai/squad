@@ -45,7 +45,9 @@ pub(crate) async fn squad_setup_computer_use(
     app: AppHandle,
     window: WebviewWindow,
     shell: tauri::State<'_, Arc<Shell>>,
+    context_generation: String,
 ) -> Result<serde_json::Value, String> {
+    let owned = crate::require_native_context(&context_generation, false)?;
     crate::computer_use_grant::request_bridge(&window, &shell, None)?;
     #[cfg(target_os = "macos")]
     {
@@ -54,7 +56,7 @@ pub(crate) async fn squad_setup_computer_use(
             .path()
             .resource_dir()
             .map_err(|_| "Squad's bundled resources are unavailable.".to_owned())?;
-        tauri::async_runtime::spawn_blocking(move || open_permission_host(&resources))
+        tauri::async_runtime::spawn_blocking(move || open_permission_host(&resources, &owned))
             .await
             .map_err(|error| error.to_string())?
     }
@@ -66,7 +68,11 @@ pub(crate) async fn squad_setup_computer_use(
 }
 
 #[cfg(target_os = "macos")]
-fn open_permission_host(resources: &std::path::Path) -> Result<serde_json::Value, String> {
+fn open_permission_host(
+    resources: &std::path::Path,
+    owned: &autohand_squad_runtime::ownership::OwnedContext,
+) -> Result<serde_json::Value, String> {
+    crate::require_current_native_context(owned)?;
     use sha2::{Digest, Sha256};
     use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;
@@ -137,6 +143,7 @@ fn open_permission_host(resources: &std::path::Path) -> Result<serde_json::Value
             "The bundled Computer Use permission host failed signature verification.".into(),
         );
     }
+    crate::require_current_native_context(owned)?;
     let opened = helper("/usr/bin/open")
         .args(["-n", "-a"])
         .arg(&host)
@@ -148,6 +155,7 @@ fn open_permission_host(resources: &std::path::Path) -> Result<serde_json::Value
     if !opened.success() {
         return Err("macOS did not open Computer Use permission setup.".into());
     }
+    crate::require_current_native_context(owned)?;
     Ok(serde_json::json!({"opened":true,"bundleId":HOST_ID}))
 }
 
@@ -172,7 +180,8 @@ mod tests {
         // A host built with a source patch (the Squad branding of ADR-0070)
         // is not the upstream host, whatever identity it claims.
         let mut patched = valid.clone();
-        patched["host"]["branding"]["patchSha256"] = serde_json::json!("1beed4288409b5f2a6143453aa9c645aece207f5ec97ceefd32531a0377e784f");
+        patched["host"]["branding"]["patchSha256"] =
+            serde_json::json!("1beed4288409b5f2a6143453aa9c645aece207f5ec97ceefd32531a0377e784f");
         assert!(host_digest(&patched).is_err());
         let mut unmarked = valid;
         unmarked["host"]["branding"] = serde_json::json!({});

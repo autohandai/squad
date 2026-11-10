@@ -183,6 +183,61 @@ JSON body `{ error, code?, status? }`.
 
 ## Safety and data scope
 
+The operator connection binds to the verified actor and selected personal/team
+Squad on its first request. An account or unexpected context change requires
+reconnection; it never falls back to an older bridge or a machine-wide roster.
+`select_squad_owner` explicitly selects another authorized owner for the same
+person and renews this client's lease.
+
+| Ownership and data tool | Result |
+| --- | --- |
+| `get_squad_context` | Verified actor, selected owner and entitlement |
+| `list_squad_owners` | Personal Squad and existing Autohand team accounts |
+| `select_squad_owner` | Explicit same-person scope selection |
+| `get_member_data` | Portable profile, memories, conversations, routines and skills |
+| `get_member_files` | Managed file inventory |
+| `get_member_memories` | Saved memory entries and document inventory |
+| `export_member` | One member's JSON/YAML download receipt |
+| `export_squad` | Selected owner's whole-Squad JSON/YAML download receipt |
+| `prepare_squad_import` | Verify JSON/YAML text up to 8 MiB and return an actor-private preview; use Settings/HTTP for larger files |
+| `restore_squad` | Confirm replacement into the exact selected owner using a reviewed source ID and stable request ID |
+| `reset_squad_data` | Confirm an empty selected dataset, preserving the earlier dataset separately |
+| `get_squad_data_operation` | Read the initiating actor's durable operation receipt |
+| `restart_squad_data` | Acknowledge a committed import/reset revision and admit its private runtime |
+| `list_cloud_backups` | Explicitly list retained snapshots for the selected personal/team owner |
+| `save_cloud_backup` | Upload a local export receipt, handle reviewed cloud conflicts and retain a verified complete snapshot |
+| `get_cloud_backup_operation` | Read this actor’s private cloud progress and conflict revisions |
+| `download_cloud_backup` | Exact JSON/YAML local download receipt, including read-only teams |
+| `prepare_cloud_restore` | Same verified import preview, sourced from a retained cloud snapshot |
+| `remove_cloud_backup` | Confirm removal of a retained plan; live agents, blobs and local backups stay |
+| `reconnect_cloud_backups` | Explicitly replace this actor/owner’s cached cloud session |
+
+Exact backup bytes live in the downloadable document, outside MCP text
+redaction. Download URLs expire with the local context. Exclusions are
+reported: runtime credentials, provider sessions, native/MCP capabilities and
+external checkout contents are not copied. Profile presets remain separate.
+Current read-only team members can browse/export; they cannot execute or edit.
+
+Import/reset require `destination_owner` matching the selected owner and
+`confirm_replace: true`. The MCP schema and handler both enforce confirmation.
+The bridge keeps source checksums internal so generic secret redaction cannot
+corrupt a digest required by the next call. Explicit successful publication
+rebinds this client only to the same actor/owner's new dataset; an unrelated
+account switch still requires reconnecting. A lost response may require
+reconnecting and calling `get_squad_context`/`get_squad_data_operation` before
+`restart_squad_data`. Never retry an import with a different request ID.
+Managed agent tools cannot perform these operator data transactions.
+Restart here acknowledges data recovery; shutdown, upgrade and OS restart
+remain outside MCP. See [the local transaction contract](backups.md).
+
+Cloud save requires the exact `destination_owner`, `confirm_upload: true` and
+a stable request ID/local backup ID. Conflicting cloud records require
+`confirm_replace_cloud: true` and reviewed `{key,remote_revision}` entries. The
+MCP handler fetches hashes internally; it never asks a caller to copy a string
+that may have been redacted. Cloud removal requires the exact destination owner
+and `confirm_remove: true`; this narrowly scoped backup-plan action does not
+expose channel/member deletion or credential values.
+
 - Loopback only: `--bridge` and `AUTOHAND_SQUAD_BRIDGE_URL` must name
   `127.0.0.1`, `localhost` or `::1`; anything else exits with code 2 before
   any request is made. No bearer tokens, no remote mode.
@@ -196,14 +251,16 @@ JSON body `{ error, code?, status? }`.
   channel bodies (capped at 4,000 characters), transcripts and library reads.
 - Bounded reads: 200 messages per `get_messages`, 100 search hits, 60 tail
   lines, 10 minutes per wait.
-- Roster and history: registered member profiles supplement the app's status
-  mirror and live presence. Direct-message turns are available through
-  `get_conversation`; archived chat files are outside this tool's scope.
-  Members cannot be created or re-modelled here.
+- Roster and history: canonical selected-owner profiles determine membership;
+  presence and run history only supplement those rows. Direct-message turns
+  are available through `get_conversation`; `get_member_data` and backups also
+  include saved current/archived conversations. Management tools create and
+  edit members within the selected writable scope.
 
 ## Packaging
 
 `scripts/stage-desktop.mjs` and `scripts/package-squad-portable.mjs` copy
 `server/` whole and now assert `server/control-plane/mcp-server.mjs` is
 present, so the installed app and the portable archive can run `squad mcp`.
-No npm dependency was added.
+Ownership/backup support also packages `@autohand/squad-portable` and its
+pinned YAML/Zod dependencies. See [portable backups](backups.md).

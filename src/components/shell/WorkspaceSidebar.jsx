@@ -1,3 +1,4 @@
+import { ownedLocalStorage } from "@/lib/owned-storage";
 import { useEffect, useMemo, useState } from "react";
 import { Bot, Brain, CheckCheck, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Pencil, Plus, Search } from "lucide-react";
 
@@ -11,7 +12,7 @@ export const DEFAULT_CHANNEL_SECTION = "Channels";
 
 const FOLDS_KEY = "autohandSquad.v1.sidebarFolds";
 function readFolds() {
-  try { return JSON.parse(window.localStorage.getItem(FOLDS_KEY) || "{}") || {}; } catch { return {}; }
+  try { return JSON.parse(ownedLocalStorage.getItem(FOLDS_KEY) || "{}") || {}; } catch { return {}; }
 }
 
 function sectionOf(channel) {
@@ -148,7 +149,7 @@ export function WorkspaceSidebar({
   const [collapsedSections, setCollapsedSections] = useState(() => readFolds().sections || {});
   const [dmsExpanded, setDmsExpanded] = useState(() => readFolds().dms !== false);
   useEffect(() => {
-    try { window.localStorage.setItem(FOLDS_KEY, JSON.stringify({ sections: collapsedSections, dms: dmsExpanded })); } catch { /* storage may be off */ }
+    try { ownedLocalStorage.setItem(FOLDS_KEY, JSON.stringify({ sections: collapsedSections, dms: dmsExpanded })); } catch { /* storage may be off */ }
   }, [collapsedSections, dmsExpanded]);
 
   function toggleSection(name) {

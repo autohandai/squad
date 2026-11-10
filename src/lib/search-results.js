@@ -1,3 +1,4 @@
+import { ownedLocalStorage } from './owned-storage.js';
 // Cross-surface search: pure helpers shared by SearchCommand,
 // SearchResults, and scripts/check-search.mjs. No React, no DOM; the recent
 // searches helpers take a Storage-like object so Node checks can pass a stub.
@@ -152,7 +153,7 @@ export const RECENT_SEARCHES_LIMIT = 8;
 
 function defaultStorage() {
   try {
-    return globalThis.localStorage || null;
+    return ownedLocalStorage || null;
   } catch {
     return null;
   }

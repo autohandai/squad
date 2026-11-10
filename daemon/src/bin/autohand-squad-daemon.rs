@@ -40,6 +40,14 @@ struct DaemonArgs {
 }
 
 fn main() {
+    #[cfg(windows)]
+    if let Some(result) = autohand_squad_runtime::owned_windows::helper_entry() {
+        if let Err(error) = result {
+            eprintln!("owned runtime: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     // The bridge starts a private pipe to this mode. It must not start daemon
     // listeners, telemetry or inspect the person's ordinary daemon config.
     if std::env::args_os().any(|argument| argument == "--memory-index") {

@@ -1,3 +1,4 @@
+import { ownershipFetch } from "@/lib/ownership-client";
 import { useEffect, useState } from "react";
 import { Check, Copy, RefreshCw } from "lucide-react";
 
@@ -12,7 +13,7 @@ const PAGES = {
 
 async function requestAppInfo(api, signal) {
   if (api) return api("/api/app-info", { signal });
-  const response = await fetch("/api/app-info", { signal });
+  const response = await ownershipFetch("/api/app-info", { signal });
   const payload = await response.json();
   if (!response.ok || payload.success === false) throw new Error(payload.error || "App information could not be loaded.");
   return payload.data ?? payload;

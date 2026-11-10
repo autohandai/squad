@@ -11,17 +11,19 @@ import { createServer as createHttpServer } from 'node:http';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import {createOwnedBridgeFixture,ownedFixtureHeaders} from './lib/owned-bridge-fixture.mjs';
 import { createFrameReader, encodeMessage } from '../server/connectors/framing.mjs';
 import { claudeMcpConfig, codexConfigArgs, connectorsPolicy, mergeAutohandMcp } from '../server/connectors/inject.mjs';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
 const directory = await mkdtemp(join(tmpdir(), 'squad-connectors-'));
-const state = join(directory, 'state'), app = join(directory, 'app'), config = join(directory, 'user.json');
+let state = join(directory, 'state'), app = join(directory, 'app');
+const serviceRoot=state,appRoot=app,config = join(directory, 'user.json');
 const fakeMcp = join(directory, 'fake-mcp.cjs'), calls = join(directory, 'calls.jsonl'), harnessCalls = join(directory, 'harness.jsonl');
 const fakeCodex = join(directory, 'codex'), fakeClaude = join(directory, 'claude');
 const SECRETS = { envToken: 'secret-value-1234', header: 'Bearer t0ken-abcd', firecrawl: 'fc-live-key-9f3c' };
 const PLAIN = 'plain-value';
-let bridge, logs = '';
+let bridge,ownership, logs = '';
 
 async function freePort() { const socket = createNetServer(); await new Promise((r) => socket.listen(0, '127.0.0.1', r)); const port = socket.address().port; await new Promise((r) => socket.close(r)); return port; }
 const port = await freePort();
@@ -29,14 +31,14 @@ const origin = `http://127.0.0.1:${port}`;
 
 /** Every bridge response is scanned for the secrets: none may ever reach a client. */
 async function api(path, body, method = body === undefined ? 'GET' : 'POST') {
-  const response = await fetch(origin + path, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(origin + path, { method, headers: await ownedFixtureHeaders(origin), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const text = await response.text();
   for (const [label, secret] of Object.entries(SECRETS)) assert.ok(!text.includes(secret), `${method} ${path} leaked the ${label} secret`);
   return { status: response.status, ...JSON.parse(text) };
 }
 async function until(operation) { const end = Date.now() + 15000; while (Date.now() < end) { const value = await operation().catch(() => null); if (value) return value; await new Promise((r) => setTimeout(r, 40)); } throw Error(`Bridge fixture timed out: ${logs.slice(-1500)}`); }
 function start() {
-  bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], { cwd: root, env: { ...process.env, AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: '', AUTOHAND_SQUAD_HOME: state, AUTOHAND_SQUAD_APP_STATE_DIR: app, AUTOHAND_HOME: join(directory, 'home'), AUTOHAND_USER_CONFIG_PATH: config, FIRECRAWL_API_URL: `http://127.0.0.1:${fixturePort}`, CODEX_HOME: join(directory, 'codex-home'), OPENAI_API_KEY: 'fixture-no-provider', ANTHROPIC_API_KEY: 'fixture-no-provider' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], { cwd: root, env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: '', AUTOHAND_SQUAD_HOME: serviceRoot, AUTOHAND_SQUAD_APP_STATE_DIR: appRoot, AUTOHAND_HOME: join(directory, 'home'), AUTOHAND_USER_CONFIG_PATH: config, FIRECRAWL_API_URL: `http://127.0.0.1:${fixturePort}`, CODEX_HOME: join(directory, 'codex-home'), OPENAI_API_KEY: 'fixture-no-provider', ANTHROPIC_API_KEY: 'fixture-no-provider' }, stdio: ['ignore', 'pipe', 'pipe'] });
   bridge.stdout.on('data', (b) => { logs += b; }); bridge.stderr.on('data', (b) => { logs += b; });
 }
 async function stop() { if (!bridge || bridge.exitCode !== null) return; const closed = new Promise((r) => bridge.once('close', r)); bridge.kill('SIGTERM'); await closed; }
@@ -103,7 +105,7 @@ async function rpcSession(command, args, env, framing, steps) {
 
 try {
   await Promise.all([mkdir(state, { recursive: true }), mkdir(join(directory, 'codex-home'), { recursive: true }), mkdir(join(directory, 'home'), { recursive: true })]);
-  await writeFile(config, JSON.stringify({ provider: 'autohandai', autohandai: { model: 'auto', apiKey: 'fixture-provider-key' }, mcp: { enabled: true, servers: [{ name: 'user-sentinel', transport: 'stdio', command: '/mock/unstarted' }] } }));
+  await writeFile(config, JSON.stringify({ provider: 'autohandai', auth:{token:'fixture-no-provider',email:'connectors@example.test',expiresAt:'2099-01-01T00:00:00Z'}, autohandai: { model: 'auto', apiKey: 'fixture-provider-key' }, mcp: { enabled: true, servers: [{ name: 'user-sentinel', transport: 'stdio', command: '/mock/unstarted' }] } }));
   await writeFile(join(directory, 'codex-home', 'auth.json'), '{}');
   await writeFile(join(state, 'notifications.json'), JSON.stringify({ version: 1, settings: { runFinished: false, runFailed: false, handoffPending: false, approvalPending: false, mention: false }, items: [] }));
   // A tiny MCP server: --framing newline|header, --fail exits early, records its env on tools/list.
@@ -123,6 +125,7 @@ const configs=args.flatMap((v,i)=>v==='--mcp-config'?[args[i+1]]:[]);fs.appendFi
 console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture claude reply',session_id:'fixture-session'}));`);
   await chmod(fakeCodex, 0o700); await chmod(fakeClaude, 0o700);
 
+  ownership=await createOwnedBridgeFixture({serviceRoot,appRoot});state=ownership.paths.dataRoot;app=ownership.paths.appRoot;
   start(); await until(async () => (await api('/api/connectors')).success);
 
   // --- discovery: managed Squad tools, then optional external connectors ---
@@ -233,7 +236,19 @@ console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture clau
   await api(`/api/connectors/${newline.id}/enable`, {}); await api('/api/connectors/web-research/enable', {});
   await api(`/api/connectors/${http.id}/enable`, {});
   const member = (id, mode, extra = {}) => ({ id, name: `Member ${id}`, role: 'Engineer', workspace: root, skills: [], permissions: { permissionMode: 'interactive', modes: { 'mcp.connectors': mode } }, ...extra });
-  const provision = async (agent) => { const r = await api('/api/agents/provision', { agentId: agent.id, agent, workspace: root }); assert.equal(r.success, true, r.error); return JSON.parse(await readFile(join(app, 'agents', agent.id, 'config.json'), 'utf8')); };
+  const provision = async (agent) => {
+    const path=join(app,'agents',agent.id,'config.json');
+    const existed=await stat(path).then(()=>true,error=>{if(error.code==='ENOENT')return false;throw error;});
+    const input={agentId:agent.id,agent,workspace:root};
+    const first=await api('/api/agents/provision',input);assert.equal(first.success,true,first.error);
+    const config=JSON.parse(await readFile(path,'utf8'));
+    if(!existed)assert.equal(config.mcp.servers.some(entry=>entry.name==='user-sentinel'),false,'Unowned global MCP settings cannot be inherited after sign-in.');
+    // Model an explicitly configured entry in this owner-scoped member config.
+    if(!config.mcp.servers.some(entry=>entry.name==='user-sentinel'))config.mcp.servers.unshift({name:'user-sentinel',transport:'stdio',command:'/mock/unstarted'});
+    await writeFile(path,JSON.stringify(config),{mode:0o600});
+    const repeated=await api('/api/agents/provision',input);assert.equal(repeated.success,true,repeated.error);
+    return JSON.parse(await readFile(path,'utf8'));
+  };
   const allowed = await provision(member('allow-member', 'allow'));
   const names = (cfg) => (cfg.mcp?.servers || []).map((entry) => entry.name);
   assert.deepEqual(names(allowed), ['user-sentinel', 'squad-connector-web-research', `squad-connector-${newline.id}`, `squad-connector-${http.id}`], 'the person\'s entry first, then the built-in, then added connectors in order');
@@ -305,7 +320,7 @@ console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture clau
 
   console.log('check-connectors passed: stdio (newline + Content-Length) and URL (Streamable HTTP + SSE) tests, bounded failures, masked secrets in every response, allow/ask/block injection for Autohand, Codex and Claude with existing MCP entries kept, built-in Web research handshake + Firecrawl key check + capped cited web_fetch, restart persistence. Fixtures only; no network.');
 } finally {
-  await stop();
+  await stop();await ownership?.close();
   await new Promise((r) => fixture.close(r));
   for (const client of sseClients.values()) client.end();
   await rm(directory, { recursive: true, force: true });

@@ -247,7 +247,7 @@ await check('interrupted accepted review is blocked after browser closure and br
 await check('review retry preserves a confirmed QA channel effect and its purpose execution','receipt-retry',async(bridge,browser)=>{
   await enter(bridge,browser);
   await until(async()=> (await tasks(browser))[0]?.handoffs.some(handoff=>handoff.toAgentId==='asq_cycle_iris' && handoff.status==='failed'),'review failed after confirmed channel effect',20000);
-  const before=JSON.parse(await readFile(join(bridge.directory,'squad','channels.json'),'utf8'));
+  const before=JSON.parse(await readFile(join(bridge.dataRoot,'channels.json'),'utf8'));
   assert.equal(before.channels.filter(channel=>channel.name==='checkpoint-evidence').length,1);
   const receipts=before.agentChannelActions;assert.equal(receipts.length,1);assert.equal(receipts[0].status,'created');assert.ok(receipts[0].deliveries.every(delivery=>delivery.status==='completed'));
   const qaCalls=(await turns(bridge)).filter(turn=>turn.name==='Tester').length;assert.equal(qaCalls,2,'QA and its real channel-purpose dispatch must both execute.');
@@ -257,7 +257,7 @@ await check('review retry preserves a confirmed QA channel effect and its purpos
   await browser.click('Retry');
   await until(async()=> (await messages(browser)).asq_cycle_noah.some(message=>message.body?.includes('REVIEW_EVIDENCE')),'review returned through confirmed QA result');
   assert.equal((await tasks(browser))[0].status,'completed');
-  const after=JSON.parse(await readFile(join(bridge.directory,'squad','channels.json'),'utf8'));
+  const after=JSON.parse(await readFile(join(bridge.dataRoot,'channels.json'),'utf8'));
   assert.deepEqual(after.agentChannelActions,receipts,'Committed channel-action receipts must not be replayed by review retry.');
   assert.equal(after.channels.filter(channel=>channel.name==='checkpoint-evidence').length,1);assert.equal(after.messages.length,before.messages.length);
   assert.equal((await turns(bridge)).filter(turn=>turn.name==='Tester').length,qaCalls);assert.equal((await turns(bridge)).filter(turn=>turn.name==='Reviewer').length,2);

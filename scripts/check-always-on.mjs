@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {createOwnedBridgeFixture,ownedFixtureHeaders} from './lib/owned-bridge-fixture.mjs';
 // Always-on members (ADR-0125): a real bridge in an isolated state dir with
 // the disposable fake Claude Code harness from check-chats. No vendor,
 // credentials, installed app or provider requests are used.
@@ -90,7 +91,7 @@ const port = socket.address().port;
 await new Promise((r) => socket.close(r));
 const origin = `http://127.0.0.1:${port}`;
 const IDLE_MS = 1500;
-let bridge;
+let bridge,ownership;
 let logs = '';
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, label, timeout = 20000) {
@@ -99,7 +100,7 @@ async function until(fn, label, timeout = 20000) {
   throw new Error(`${label} timed out; bridge: ${logs.slice(-3000)}`);
 }
 const api = async (path, body, method) => {
-  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: await ownedFixtureHeaders(origin), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json(); return { status: response.status, ...data };
 };
 const calls = async () => (await readFile(callsFile, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
@@ -110,7 +111,7 @@ const member = (id) => ({ id, name: id, harness: { id: 'claude', executablePath:
 const payload = (id, prompt, extra = {}) => ({ agentId: id, agent: member(id), workspace: rootDir, prompt, profile: 'Use the chosen permission rules.', requestId: extra.requestId || `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ...extra });
 const reply = (text) => `REPLY<<${text}>>`;
 async function chat(id, prompt, extra) {
-  const raw = await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload(id, prompt, extra)) })).text();
+  const raw = await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify(payload(id, prompt, extra)) })).text();
   const events = raw.split('\n\n').map((chunk) => { const event = chunk.match(/^event: (.+)$/m)?.[1]; const data = chunk.match(/^data: (.+)$/m)?.[1]; return event && data ? { event, data: JSON.parse(data) } : null; }).filter(Boolean);
   return { raw, events, done: events.find((item) => item.event === 'done')?.data || null };
 }
@@ -118,7 +119,7 @@ const agenda = async (id) => (await api(`/api/agenda/${id}`)).data;
 async function startBridge() {
   bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: rootDir,
-    env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider', AUTOHAND_SQUAD_AGENDA_TICK_MS: '250', AUTOHAND_SQUAD_AGENDA_IDLE_MS: String(IDLE_MS), AUTOHAND_SQUAD_DRAFT_TIMEOUT_MS: '20000', AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: 'macos' },
+    env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider', AUTOHAND_SQUAD_AGENDA_TICK_MS: '250', AUTOHAND_SQUAD_AGENDA_IDLE_MS: String(IDLE_MS), AUTOHAND_SQUAD_DRAFT_TIMEOUT_MS: '20000', AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: 'macos' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   bridge.stdout.on('data', (d) => { logs += d; }); bridge.stderr.on('data', (d) => { logs += d; });
@@ -161,6 +162,7 @@ process.exit(0);
   // A goal the last bridge was running: this bridge pauses it as "The bridge restarted", which the agenda may resume.
   const startedAt = new Date().toISOString();
   await writeFile(join(directory, 'squad', 'goals.json'), JSON.stringify({ version: 1, goals: [{ id: 'goal-gina-1', agentId: 'gina', workspace: rootDir, prompt: 'Keep the outreach sheet in sync', harness: 'claude', status: 'running', checklist: [], summary: '', latestReply: '', evidence: [], turnCount: 1, maxTurns: 4, maxRuntimeMs: 600000, startedAt, updatedAt: startedAt, finishedAt: null, pausedAt: null, pauseReason: '', error: null, launch: { agentId: 'gina', agent: member('gina'), workspace: rootDir, profile: 'Use the chosen permission rules.' } }] }));
+  if(!ownership){await writeFile(join(directory,'config.json'),JSON.stringify({auth:{token:'fixture-no-provider',email:'always@example.test',expiresAt:'2099-01-01T00:00:00Z'}}));ownership=await createOwnedBridgeFixture({serviceRoot:join(directory,'squad'),appRoot:join(directory,'app')});}
   await startBridge();
 
   // (i) The instruction reaches a DM turn.
@@ -269,6 +271,7 @@ process.exit(0);
   console.error(`bridge log tail: ${logs.slice(-2500)}`);
   throw error;
 } finally {
+  await ownership?.close();
   await stopBridge();
   await rm(directory, { recursive: true, force: true });
 }

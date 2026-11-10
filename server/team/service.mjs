@@ -277,6 +277,11 @@ TOOLS.push({
   description: "Save a completed file you created inside this turn's workspace as an artifact in your Library and the person's chat. Saves a durable snapshot attributed to you; publishing the same file updates its revision. For interactive HTML, publish one self-contained file with inline CSS/scripts and embedded images; external assets are unavailable in the preview. Markdown, images, PDF and other files can be viewed or downloaded. Return the saved artifact link to the person.",
   inputSchema: { type: "object", properties: { path: { type: "string", minLength: 1, maxLength: 4000, description: "Completed file path inside this turn's workspace." }, title: { type: "string", maxLength: 160 }, description: { type: "string", maxLength: 2000, description: "What this file contains, in plain language. Do not include passwords or keys." } }, required: ["path"], additionalProperties: false },
 });
+TOOLS.push(
+  { name: "squad_member_data", description: "Read your own portable profile, memories, conversations, routines, skills and managed-file inventory. Your authenticated turn selects the member; another member or owner cannot be supplied.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "squad_member_files", description: "List your own managed files and their portable paths and checksums. Runtime credentials and external working-folder contents are excluded.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "squad_export_member", description: "Save your own JSON/YAML portable backup with managed files for the person to download in Squad. Does not export the whole account/team or change ownership. Runtime credentials and external project contents are excluded.", inputSchema: { type: "object", properties: { format: { type: "string", enum: ["json", "yaml"] } }, additionalProperties: false } },
+);
 export const TEAM_TOOL_NAMES = TOOLS.map((tool) => tool.name);
 const CHAT_READ_CHARS = 14_000;
 
@@ -392,7 +397,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   return sections.join("\n\n");
 }
 
-export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, artifacts, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
+export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, artifacts, ownedData, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
   const store = createTeamStore({ stateDir });
   const sessions = new Map();
   const byToken = new Map();
@@ -538,6 +543,19 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
     const operation = { ...session, operationId };
     try {
       switch (name) {
+        case "squad_member_data":
+        case "squad_member_files": {
+          if (!ownedData) throw new TeamError("Owned member data is unavailable in this runtime.");
+          const snapshot = await ownedData.repository.snapshot({ agentIds: [session.memberId] });
+          const member = snapshot.manifest.agents[0];
+          return text(name === "squad_member_files" ? { files: member.files } : member);
+        }
+        case "squad_export_member": {
+          if (!ownedData) throw new TeamError("Owned member backups are unavailable in this runtime.");
+          const saved = await ownedData.createBackup({ format: args.format || "json", memberIds: [session.memberId] });
+          return text({ backupId: saved.id, format: saved.format, bytes: saved.bytes, memberCount: saved.memberCount, omissions: saved.omissions, downloadUrl: saved.downloadUrl,
+            note: "Your backup is ready for the person in Squad. This turn does not receive an operator credential or account-wide backup authority." });
+        }
         case "squad_models": {
           if (!getModels) throw new TeamError("Engine discovery is unavailable in this runtime.");
           return text(await getModels(session.memberId, args));

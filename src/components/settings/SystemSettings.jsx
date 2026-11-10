@@ -30,7 +30,7 @@ function Row({ title, description, children, htmlFor }) {
  *   locale, copy                 locale strings (fallbacks inline)
  * The heading is rendered by the integrator's SettingsSectionHeader.
  */
-export function SystemSettings({ api, locale = "en", copy = {}, className }) {
+export function SystemSettings({ api, locale = "en", copy = {}, className,onBeforeReset }) {
   const [summary, setSummary] = useState(null);
   const [error, setError] = useState("");
   const [reveal, setReveal] = useState({ state: "idle", error: "" });
@@ -52,6 +52,7 @@ export function SystemSettings({ api, locale = "en", copy = {}, className }) {
   async function resetSquad() {
     setReset({ state: "working", error: "" });
     try {
+      await onBeforeReset?.();
       const receipt = await performSystemReset({ api, native: nativeReset, onRecovery: pending => setReset({ state: "recovering", pending, error: "" }) });
       setReset({ state: "complete", receipt, error: "" });
     } catch (error) {
@@ -72,7 +73,7 @@ export function SystemSettings({ api, locale = "en", copy = {}, className }) {
     catch (failure) { setReset(previous => ({ ...previous, state: "complete", error: failure.message })); }
   }
   useEffect(() => {
-    if (reset.state === "idle" || reset.state === "complete" || reset.state === "restarting") return;
+    if (reset.state !== "confirm") return;
     const beforeUnload = event => { event.preventDefault(); event.returnValue = ""; };
     // Native menus have the same guard. Keep app-wide navigation shortcuts
     // from unmounting the dialog while the person is deciding or resetting.
@@ -164,7 +165,7 @@ export function SystemSettings({ api, locale = "en", copy = {}, className }) {
           </p>
         ) : null}
 
-        <Row title={copy.systemReset || "Reset Squad"} description={copy.systemResetDetail || "Start again as a clean install. Your Autohand Code sign-in stays."}>
+        <Row title="Reset selected Squad" description="Start this personal or team Squad again. Your sign-in stays; the earlier dataset is preserved separately.">
           <Button type="button" variant="outline" size="sm" disabled={!api || reset.state !== "idle"} onClick={() => void openReset()}>
             {copy.systemResetAction || "Reset Squad…"}
           </Button>
@@ -181,14 +182,14 @@ export function SystemSettings({ api, locale = "en", copy = {}, className }) {
           <DialogHeader>
             <DialogTitle>{reset.state === "confirm" ? copy.systemResetTitle || "Reset Squad to a clean install?" : reset.state === "complete" || reset.state === "restarting" ? reset.receipt?.phase === "complete" ? "Squad has been reset" : "Reset could not finish" : "Resetting Squad…"}</DialogTitle>
             <DialogDescription>
-              {reset.state === "confirm" ? copy.systemResetBody || "Members, channels, chats, memory, run history and settings are moved aside with today's date, not deleted. Your Autohand Code sign-in, sessions and skills stay. Squad restarts at first run. Keychain items and macOS privacy grants are listed in the setup guide if you want those gone too." : reset.state === "complete" || reset.state === "restarting" ? reset.receipt?.phase === "complete" ? "Your dated backups and Autohand Code sign-in are kept. Restart Squad to start fresh." : reset.receipt?.error || "Your folders are kept. Restart Squad before trying again." : "Moving members, channels and history aside. Don’t quit Squad."}
+              {reset.state === "confirm" ? "This replaces the selected Squad with an empty dataset. Its members, channels, chats, memories and files remain in the earlier dataset for recovery. Other accounts and teams, your Autohand Code sign-in and external project folders are kept. Export a portable backup from Settings → Backups before continuing." : reset.state === "complete" || reset.state === "restarting" ? reset.receipt?.phase === "complete" ? "Your earlier dataset and sign-in are kept. Restart Squad to open the empty dataset." : reset.receipt?.error || "Your earlier data is kept. Reopen Squad to check the result." : "Finishing work and preparing the selected Squad’s new dataset…"}
             </DialogDescription>
           </DialogHeader>
           {["working", "recovering", "restarting"].includes(reset.state) ? <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" />{reset.state === "restarting" ? "Restarting Squad…" : reset.state === "recovering" ? "Checking reset progress…" : "Resetting Squad…"}</p> : null}
           {reset.error ? <p role="alert" className="text-sm text-destructive">{reset.error}</p> : null}
           <DialogFooter>
             {reset.state === "confirm" ? <><Button type="button" variant="ghost" onClick={() => void cancelReset()}>{copy.cancel || "Cancel"}</Button><Button type="button" variant="destructive" onClick={() => void resetSquad()} data-testid="system-reset-confirm">{copy.systemResetConfirm || "Reset Squad"}</Button></> : null}
-            {reset.state === "complete" || reset.state === "restarting" ? <Button type="button" disabled={reset.state === "restarting"} onClick={() => void restartSquad()}>Restart Squad</Button> : null}
+            {reset.state === "complete" || reset.state === "restarting" ? reset.receipt?.phase==='complete'?<Button type="button" disabled={reset.state === "restarting"} onClick={() => void restartSquad()}>Restart Squad</Button>:<Button type="button" onClick={()=>setReset({state:'idle',error:''})}>Close</Button> : null}
             {reset.state === "unknown" ? <Button type="button" variant="outline" onClick={() => void checkReset()}>Check reset status</Button> : null}
           </DialogFooter>
         </DialogContent>

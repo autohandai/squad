@@ -6,13 +6,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline';
+import { cargoProfileDirectory } from './lib/cargo-output.mjs';
 
 const root = process.argv.includes('--packaged') ? resolve('src-tauri/runtime') : process.cwd();
 const directory = await mkdtemp(join(tmpdir(), 'squad-memory-check-'));
 const moduleAt = path => import(pathToFileURL(join(root, path)).href);
 const [{ createMemoryService }, { createMemoryVectorClient }, { collectMemories }, { createTeamService }, { handle: teamRoute }] = await Promise.all([moduleAt('server/memory/service.mjs'), moduleAt('server/memory/vector-client.mjs'), moduleAt('server/memory/collect.mjs'), moduleAt('server/team/service.mjs'), moduleAt('server/routes/team.route.mjs')]);
-if (process.argv.includes('--packaged') && !process.env.AUTOHAND_SQUAD_MEMORY_INDEX_BINARY) process.env.AUTOHAND_SQUAD_MEMORY_INDEX_BINARY = resolve(`daemon/target/debug/autohand-squad-daemon${process.platform === 'win32' ? '.exe' : ''}`);
-if (process.argv.includes('--release')) process.env.AUTOHAND_SQUAD_MEMORY_INDEX_BINARY = resolve(`daemon/target/release/autohand-squad-daemon${process.platform === 'win32' ? '.exe' : ''}`);
+if ((process.argv.includes('--packaged')||process.argv.includes('--release')) && !process.env.AUTOHAND_SQUAD_MEMORY_INDEX_BINARY) process.env.AUTOHAND_SQUAD_MEMORY_INDEX_BINARY = join(cargoProfileDirectory(process.cwd(),process.argv.includes('--release')?'release':'debug'),`autohand-squad-daemon${process.platform === 'win32' ? '.exe' : ''}`);
 const date = '2026-10-29T00:00:00.000Z';
 const people = [{ id: 'iris', name: 'Iris', memory: [{ id: 'legacy-entry', text: 'Iris reviews accessibility and keyboard focus.', at: date }], profileFiles: [{ section: 'memory', fileName: 'MEMORY.md', content: '# Release lessons\n\nTest native replacement before publishing a desktop release.' }] }, { id: 'kai', name: 'Kai', memory: ['Kai keeps deployments reversible.'], profileFiles: [] }];
 let library;

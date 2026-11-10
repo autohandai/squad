@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { AttachmentList } from "@/components/chat/Attachments";
 import { anchorLabel, formatTimestamp, normalizeAnchors, normalizeAttachment } from "@/lib/anchors";
 import { cn } from "@/lib/utils";
+import { ownershipUrl } from '@/lib/ownership-client';
 
 const MIN_BOX = 0.01;
 
@@ -204,7 +205,7 @@ export function MediaAttachment({ attachment, anchors = [], onAnchor, src, maxHe
         {isImage ? (
           <img
             ref={mediaRef}
-            src={source}
+            src={ownershipUrl(source)}
             alt={file.name}
             draggable={false}
             onClick={() => !anchoring && beginAnchoring()}
@@ -214,7 +215,7 @@ export function MediaAttachment({ attachment, anchors = [], onAnchor, src, maxHe
         ) : (
           <video
             ref={mediaRef}
-            src={source}
+            src={ownershipUrl(source)}
             controls={!anchoring}
             preload="metadata"
             playsInline

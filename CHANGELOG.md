@@ -12,6 +12,12 @@ list to the section for that version.
 
 ### Added
 
+- User and Autohand team ownership for Squad data, with account switching isolated from previously saved agents and memories.
+- Portable JSON and YAML backups for agents, memories, conversations, skills, routines and managed files, with checksums and explicit recovery into a selected owner.
+- Settings → Backups previews verified imports into the selected personal or team Squad. Imported agents and routines stay paused; earlier data is preserved separately and interrupted operations recover to a Restart Squad screen.
+- Save retained cloud snapshots for the selected owner, download or preview them for restore, and resolve newer cloud versions explicitly. Read-only teams can download snapshots; account changes cancel in-flight cloud requests.
+- Recover older unowned agents from explicitly chosen local folders or old browser data in Settings → Backups or Squad MCP. Preview first, keep original data, and confirm the destination before importing; different browser and saved conversations are both preserved.
+
 - Assign work to another agent with Squad MCP: tasks show who sent them and wait in the recipient's queue until they are free.
 - Manage saved chats and reply threads together in History. Merge selected conversations into a new chat while keeping the originals, attachments and work details.
 - Chats without a selected project offer `~/Documents/autohand-desktop/` and ask before creating it, keeping the draft while a folder is chosen.
@@ -26,6 +32,9 @@ list to the section for that version.
 
 ### Changed
 
+- Portable Squad archives need Node 22.13 LTS or 24+ for safe local data locking. Desktop installers continue to bundle their runtime.
+- Reset applies to the selected Squad’s data and keeps its earlier dataset. Completion follows a durable operation receipt instead of waiting for a different process ID.
+
 - Update native tray and windowing support and synchronize the desktop build dependencies. Building the native app now requires Rust 1.90 or newer.
 
 - Task actions are visible on touch and keyboard. Delete any plan or launched/handoff task, including completed work, with a confirmation; deleting a running task leaves unrelated work alone.
@@ -33,6 +42,15 @@ list to the section for that version.
 - Updated the runtime dependency used to verify downloads and saved memory.
 
 ### Fixed
+
+- Reset from Settings now reaches the owned-data transaction and waits for its completion before reopening Squad. Earlier data remains available for recovery.
+- Windows account changes and data recovery supervise the whole worker process tree, including detached children, before admitting another Squad.
+
+- Account changes wait for the old agents and native work to finish saving. A surviving background process blocks data recovery instead of being mistaken for an idle Squad.
+- Native work left by a previous service no longer appears as currently running after confirmed cleanup. Unverifiable older runs remain marked unknown, with their original history preserved.
+- Combined live updates leave browser connections available for saving and backing up data when another Squad window is open.
+- Outside-session hooks connect through the owned broker and record only for the account, Squad and dataset where they were enabled. Settings can explicitly update hooks from an earlier setup.
+- Launching an updated Squad explains when an older bridge must be closed first, preserving its running work instead of reusing its unowned data service.
 
 - Deleting a task wins over edits or completion already in flight. Merged conversations reopen with large saved work details and include your earlier questions in the next reply's context.
 - Pull requests produce the required Dependabot check through GitHub dependency review.

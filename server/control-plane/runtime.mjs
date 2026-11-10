@@ -12,6 +12,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { createManagementTools } from './management.mjs';
+import { createOwnershipTools } from './ownership-tools.mjs';
 
 import {
   DEFAULT_WAIT_MS, MAX_MESSAGES, MAX_WAIT_MS, NOT_AVAILABLE_CODE, POLL_INTERVAL_MS, SERVER_NAME, SERVER_VERSION, TOOLS,
@@ -26,33 +27,77 @@ const DEFAULT_AUTHOR = 'Control plane';
 // ---- bridge client --------------------------------------------------------
 
 export function createBridgeClient(origin, { fetchImpl = fetch } = {}) {
-  async function call(path, { method = 'GET', body, timeoutMs = HTTP_TIMEOUT_MS, signal } = {}) {
+  origin = parseBridgeUrl(origin);
+  let binding;
+  const changed = () => Object.assign(new Error('The signed-in account or selected Squad changed. Reconnect this MCP client.'), { status: 409, code: 'context_changed' });
+  async function raw(path, { method = 'GET', body, rawBody, contentType='application/json',timeoutMs = HTTP_TIMEOUT_MS, signal, context } = {}) {
+    const target = new URL(path, origin);
+    if (target.origin !== origin || !target.pathname.startsWith('/api/')) throw new Error('Invalid Squad bridge path.');
     let response;
     try {
-      response = await fetchImpl(`${origin}${path}`, {
-        method,
-        redirect: 'error',
-        headers: body === undefined ? {} : { 'content-type': 'application/json' },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+      response = await fetchImpl(target.href, { method, redirect: 'error',
+        headers: { ...(body === undefined&&rawBody===undefined ? {} : { 'content-type': contentType }), ...(context ? { 'x-squad-context': context.generation } : {}) },
+        body: rawBody===undefined?(body === undefined ? undefined : JSON.stringify(body)):rawBody,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)].filter(Boolean)),
       });
-    } catch (error) {
-      throw new Error(`The Squad bridge at ${origin} did not answer (${error?.message || error}). Start Autohand Squad or pass --bridge.`);
+    } catch(cause) {
+      signal?.throwIfAborted();
+      throw new Error(`The Squad bridge did not answer at ${origin}. Open Squad, then reconnect this MCP client.`, {cause});
     }
-    let envelope = null;
-    try { envelope = await response.json(); } catch { envelope = null; }
-    if (!envelope || envelope.success !== true) {
-      const unavailableManagement = response.status === 404 && path.startsWith('/api/control-plane/') && envelope?.error !== 'Member not found.';
-      const message = unavailableManagement ? 'This Squad bridge does not support member management. Update Autohand Squad, then reconnect.' : envelope?.error || `${method} ${path} returned HTTP ${response.status}`;
-      throw Object.assign(new Error(message), { status: response.status });
-    }
+    let envelope;
+    try { envelope = await response.json(); } catch { throw new Error('The Squad bridge returned an unreadable response.'); }
+    if (path === '/api/ownership/context' && response.status === 404) throw Error('This bridge lacks account isolation. Update Autohand Squad, then reconnect this MCP client.');
+    if (!response.ok || envelope?.success !== true) throw Object.assign(new Error(typeof envelope?.error === 'string' ? envelope.error : envelope?.error?.message || `Squad returned HTTP ${response.status}.`), { status: response.status, code: envelope?.code });
     return envelope.data;
+  }
+  function lease(context) {
+    if (!['ready','awaiting_restart'].includes(context?.state) || !context.actor?.id || !context.owner?.id || !context.generation || !context.storageKey) throw new Error('Sign in and select an authorized Squad, then reconnect this MCP client.');
+    return { context: Object.freeze(context), controller: new AbortController() };
+  }
+  const bound = () => binding ||= raw('/api/ownership/context').then(lease);
+  const sameActor = (left, right) => left?.id === right?.id && left?.issuer === right?.issuer;
+  const sameOwner=(left,right)=>sameActor(left,right)&&left?.kind===right?.kind;
+  async function call(path, options = {}) {
+    const active = await bound();
+    active.controller.signal.throwIfAborted();
+    const signals = [active.controller.signal, options.signal].filter(Boolean);
+    const value = await raw(path, { ...options, context: active.context, signal: AbortSignal.any(signals) });
+    active.controller.signal.throwIfAborted();
+    if (path === '/api/ownership/context' && (value.generation !== active.context.generation || value.state !== active.context.state || !sameActor(value.actor, active.context.actor))) throw changed();
+    return value;
   }
   return {
     get: (path, options) => call(path, options),
     post: (path, body = {}) => call(path, { method: 'POST', body }),
     put: (path, body = {}) => call(path, { method: 'PUT', body }),
     patch: (path, body = {}) => call(path, { method: 'PATCH', body }),
+    delete: (path, body = {}) => call(path, { method: 'DELETE', body }),
+    upload: (path,rawBody,contentType)=>call(path,{method:'POST',rawBody,contentType,timeoutMs:120_000}),
+    dataOperation:async input=>{
+      const active=await bound();await call('/api/ownership/context');
+      const result=await call('/api/ownership/operations',{method:'POST',body:input,timeoutMs:120_000}),next=result.context;
+      if(!sameActor(next.actor,active.context.actor)||!sameOwner(next.owner,active.context.owner)||next.datasetId!==result.operation.afterDatasetId) {active.controller.abort(changed());throw changed();}
+      binding=Promise.resolve(lease(next));active.controller.abort(changed());return result.operation;
+    },
+    restartData:async(id,revision)=>{
+      const active=await bound();await call('/api/ownership/context');
+      const next=await call(`/api/ownership/operations/${encodeURIComponent(id)}/restart`,{method:'POST',body:{revision}});
+      if(!sameActor(next.actor,active.context.actor)||!sameOwner(next.owner,active.context.owner)||next.datasetId!==active.context.datasetId){active.controller.abort(changed());throw changed();}
+      binding=Promise.resolve(lease(next));active.controller.abort(changed());return {state:next.state,owner:next.owner,datasetId:next.datasetId};
+    },
+    downloadUrl: async path => {
+      const active = await bound(); await call('/api/ownership/context');
+      const url = new URL(path, origin);
+      if (url.origin !== origin || !/^\/api\/backups\/[a-f0-9-]{36}\/download$/.test(url.pathname)) throw Error('Invalid owned backup download.');
+      url.searchParams.set('context', active.context.generation); return url.href;
+    },
+    selectOwner: async owner => {
+      const active = await bound(); await call('/api/ownership/context');
+      const context = await call('/api/ownership/select', { method: 'POST', body: { owner, expectedGeneration: active.context.generation } });
+      if (!sameActor(context.actor, active.context.actor)) { active.controller.abort(changed()); throw changed(); }
+      const next = lease(context); active.controller.abort(changed()); binding = Promise.resolve(next);
+      return { owner: context.owner, label: context.ownerLabel, role: context.role, canWrite: context.canWrite, generation: context.generation };
+    },
   };
 }
 
@@ -159,28 +204,13 @@ export function createTools(bridge) {
 
   const tools = {
     async list_members() {
-      const [snapshot, presence, runs, goals, state] = await Promise.all([
-        bridge.get('/api/status/snapshot').catch(() => null),
+      const canonical = await bridge.get('/api/owned/members');
+      const [presence, runs, goals, state] = await Promise.all([
         bridge.get('/api/members/presence').catch(() => ({ presence: {} })),
-        runsFor(),
-        goalsFor(),
-        channelsState(),
+        runsFor().catch(() => []), goalsFor().catch(() => []), channelsState(),
       ]);
       const latest = latestByMember(runs, goals);
-      const rows = new Map();
-      for (const member of Array.isArray(snapshot?.members) ? snapshot.members : []) {
-        if (!member?.id) continue;
-        rows.set(member.id, { id: member.id, name: member.name || member.id, role: member.role || null, status: member.status || 'online', lastActivityAt: member.lastActivityAt || null });
-      }
-      for (const memberId of [...Object.keys(presence?.presence || {}), ...latest.keys()]) {
-        if (!rows.has(memberId)) rows.set(memberId, { id: memberId, name: null, role: null, status: null, lastActivityAt: null });
-      }
-      for (const [memberId, access] of Object.entries(state?.agentChannelAccess || {})) {
-        if (access?.removed) { rows.delete(memberId); continue; }
-        if (!access?.agent) continue;
-        const agent = access.agent;
-        rows.set(memberId, { ...rows.get(memberId), id: memberId, name: agent.name || memberId, role: agent.role || null, status: rows.get(memberId)?.status || 'online' });
-      }
+      const rows = new Map(canonical.members.map(member => [member.id, { ...member, status: 'unknown', lastActivityAt: null }]));
       const members = [...rows.values()].map((row) => {
         const current = presence?.presence?.[row.id] || {};
         const agent = state?.agentChannelAccess?.[row.id]?.agent || {};
@@ -189,9 +219,9 @@ export function createTools(bridge) {
       });
       return {
         members,
-        snapshotAt: snapshot?.generatedAt || snapshot?.at || null,
+        snapshotAt: null,
         source: {
-          roster: 'registered member profiles, supplemented by web-status.json and live presence',
+          roster: 'canonical selected-owner registry; mirrors never create members',
           harness: 'the member\'s latest bridge-owned work, falling back to its registered profile',
         },
       };
@@ -428,7 +458,7 @@ export function createTools(bridge) {
 
     async read_memory({ memory_id } = {}) { return bridge.get(`/api/memory/${encodeURIComponent(memory_id)}`); },
   };
-  return { ...tools, ...createManagementTools(bridge, tools) };
+  return { ...tools, ...createManagementTools(bridge, tools), ...createOwnershipTools(bridge) };
 }
 
 // ---- JSON-RPC -------------------------------------------------------------

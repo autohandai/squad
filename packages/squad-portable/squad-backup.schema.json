@@ -1,0 +1,413 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "shared": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "files": {
+          "maxItems": 20000,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$"
+              },
+              "path": {
+                "type": "string",
+                "maxLength": 1024,
+                "pattern": "^(?!\\/)[^\\\\:<>\"|?*\\x00-\\x1f\\x7f]+$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "profile",
+                  "memory",
+                  "skill",
+                  "artifact",
+                  "attachment",
+                  "conversation",
+                  "other"
+                ]
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 26214400
+              },
+              "mediaType": {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^[a-zA-Z0-9!#$&^_.+-]+\\/[a-zA-Z0-9!#$&^_.+-]+(?:;[\\x20-\\x7e]*)?$"
+              }
+            },
+            "required": [
+              "id",
+              "path",
+              "kind",
+              "sha256",
+              "bytes",
+              "mediaType"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "data",
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "workspaces": {
+      "maxItems": 10000,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "pathHint": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "pathHint"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "omissions": {
+      "maxItems": 100000,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "extensions": {
+      "default": {},
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/__schema0"
+      }
+    },
+    "format": {
+      "type": "string",
+      "const": "autohand-squad"
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    },
+    "owner": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "user",
+            "team"
+          ]
+        },
+        "issuer": {
+          "type": "string",
+          "maxLength": 1024,
+          "format": "uri"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$"
+        }
+      },
+      "required": [
+        "kind",
+        "issuer",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "agents": {
+      "maxItems": 10000,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$"
+          },
+          "profile": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "memories": {
+            "maxItems": 20000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          },
+          "conversations": {
+            "maxItems": 20000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          },
+          "routines": {
+            "maxItems": 10000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          },
+          "skills": {
+            "maxItems": 10000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          },
+          "files": {
+            "maxItems": 20000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$"
+                },
+                "path": {
+                  "type": "string",
+                  "maxLength": 1024,
+                  "pattern": "^(?!\\/)[^\\\\:<>\"|?*\\x00-\\x1f\\x7f]+$"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "profile",
+                    "memory",
+                    "skill",
+                    "artifact",
+                    "attachment",
+                    "conversation",
+                    "other"
+                  ]
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 26214400
+                },
+                "mediaType": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "pattern": "^[a-zA-Z0-9!#$&^_.+-]+\\/[a-zA-Z0-9!#$&^_.+-]+(?:;[\\x20-\\x7e]*)?$"
+                }
+              },
+              "required": [
+                "id",
+                "path",
+                "kind",
+                "sha256",
+                "bytes",
+                "mediaType"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "extensions": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/__schema0"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "profile",
+          "memories",
+          "conversations",
+          "routines",
+          "skills",
+          "files",
+          "extensions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "files": {
+      "maxItems": 100000,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$"
+          },
+          "encoding": {
+            "type": "string",
+            "const": "base64"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 35476824
+          }
+        },
+        "required": [
+          "agentId",
+          "id",
+          "encoding",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "shared",
+    "workspaces",
+    "omissions",
+    "extensions",
+    "format",
+    "schemaVersion",
+    "createdAt",
+    "owner",
+    "agents",
+    "files"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    }
+  },
+  "$id": "https://squad.autohand.ai/schemas/squad-backup-v1.json",
+  "title": "Autohand Squad portable backup v1"
+}

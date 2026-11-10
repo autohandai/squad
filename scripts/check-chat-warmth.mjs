@@ -35,7 +35,7 @@ try{
  const provision=await bridge.api('/api/agents/provision','POST',payload);assert.equal(provision.success,true,JSON.stringify(provision));
  const channelState=(await bridge.api('/api/channels')).data;
  channelState.agentChannelAccess={...channelState.agentChannelAccess,[agent.id]:{agent,workspace,policy:'yes'}};
- await writeFile(join(bridge.directory,'squad','channels.json'),JSON.stringify(channelState));
+ await writeFile(join(bridge.dataRoot,'channels.json'),JSON.stringify(channelState));
  assert.equal((await bridge.api('/api/chat/warm','POST',payload)).success,true);
  await until(async()=>(await records()).some(r=>r.kind==='launch'),'warm SDK launched');
  const warmLaunch=(await records()).find(r=>r.kind==='launch');

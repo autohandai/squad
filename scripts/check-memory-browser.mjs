@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
 import { prepareModelRoutingFixture } from './lib/model-routing-fixtures.mjs';
+import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 
 const packaged = process.argv.includes('--packaged');
 const artifact = resolve('.codex-artifacts/memory-20261029', packaged ? 'packaged' : 'browser');
@@ -22,7 +23,7 @@ try {
   for (let index = 0; index < 12; index++) await api(`/api/memory/${encodeURIComponent(snapshot.records[index].id)}/metadata`, 'PATCH', { groupId: groups[index % groups.length].id, kind: index % 2 ? 'lesson' : 'decision', tags: ['verified'] });
   for (let index = 1; index < 5; index++) await api('/api/memory/links', 'POST', { from: snapshot.records[0].id, to: snapshot.records[index].id, relation: index === 4 ? 'contradicts' : 'supports', evidence: 'Fixture relationship verified by the release review.' });
   browser = await startBrowser();
-  await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `if(!localStorage.getItem('memoryVerify.seeded')){localStorage.setItem('autohandSquad.v1.agents',${JSON.stringify(JSON.stringify(members))});localStorage.setItem('autohandSquad.v1.onboarding','{"version":1,"status":"skipped"}');localStorage.setItem('memoryVerify.seeded','1');}` });
+  await seedOwnedBrowserFixture(bridge,browser);
   await browser.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
   await browser.navigate(bridge.origin + '/memory');
   await until(() => browser.evaluate("document.querySelectorAll('[data-memory-node]').length > 60"), 'real collected graph renders', 30000);
@@ -117,8 +118,11 @@ try {
   await browser.evaluate('window.__rejectMemorySave=false'); await browser.click('Save collection settings');
   await until(async () => (await api('/api/memory/settings')).profiles === false, 'source setting saved');
   await browser.screenshot(join(artifact, 'memory-settings.png'));
-  await bridge.restart(); await browser.evaluate('window.__beforeMemoryReload=true'); await browser.send('Page.reload');
-  await until(() => browser.evaluate("!window.__beforeMemoryReload && !document.getElementById('boot') && document.querySelector('[role=switch][aria-label=\"Collect Profile Markdown\"]')?.getAttribute('aria-checked')==='false'"), 'settings persist bridge and browser restart', 30000);
+  await bridge.restart();
+  // A lost/replaced ownership context deliberately leaves the private route.
+  // Open Settings in a fresh page realm, then verify canonical persistence.
+  await browser.navigate('about:blank');await browser.navigate(bridge.origin+'/settings/memory');
+  await until(() => browser.evaluate("!document.getElementById('boot') && document.querySelector('[role=switch][aria-label=\"Collect Profile Markdown\"]')?.getAttribute('aria-checked')==='false'"), 'settings persist bridge and browser restart', 30000);
   await browser.click('Open collective memory');
   await until(() => browser.evaluate("Boolean(document.querySelector('[data-testid=\"memory-page\"]'))"), 'return to memory');
   assert(!(await api('/api/memory')).records.some(item => item.sourceType === 'profile'));

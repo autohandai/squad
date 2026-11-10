@@ -169,14 +169,29 @@ pub(crate) fn open_quick_chat_picker(app: &AppHandle, shell: Arc<Shell>) {
     {
         return;
     }
+    let Some(context) =
+        autohand_squad_runtime::ownership::read_active_context(&crate::default_paths())
+            .ok()
+            .flatten()
+    else {
+        return;
+    };
     *lock(&shell.popup_anchor) = None;
-    if let Some(window) = app.get_webview_window(QUICK_CHAT_WINDOW) {
+    if let Some(window) = app.get_webview_window(QUICK_CHAT_WINDOW).filter(|window| {
+        window.url().ok().is_some_and(|url| {
+            url.query_pairs()
+                .any(|(key, value)| key == "nativeContext" && value == context.generation)
+        })
+    }) {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else if let Err(error) = show_popup(app, &shell, &window) {
             eprintln!("quick chat failed: {error}");
         }
         return;
+    }
+    if let Some(window) = app.get_webview_window(QUICK_CHAT_WINDOW) {
+        let _ = window.destroy();
     }
     let app = app.clone();
     // Reading the roster must not block the native menu while the bridge is
@@ -195,6 +210,7 @@ pub(crate) fn open_quick_chat_picker(app: &AppHandle, shell: Arc<Shell>) {
         let read = |path: &str| -> Option<serde_json::Value> {
             let response = client
                 .get(format!("{}{path}", bridge.trim_end_matches('/')))
+                .header("x-squad-context", &context.generation)
                 .send()
                 .ok()?;
             let mut bytes = Vec::new();
@@ -221,6 +237,9 @@ pub(crate) fn open_quick_chat_picker(app: &AppHandle, shell: Arc<Shell>) {
         };
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
+            if !crate::native_scope_current(Some(&context)) {
+                return;
+            }
             if let Err(error) = open_quick_chat(&handle, &shell, &member) {
                 eprintln!("quick chat failed: {error}");
             }
@@ -304,10 +323,27 @@ pub(crate) fn open_quick_chat(
     {
         return Err("Quick Chat is turned off or Squad is resetting.".into());
     }
+    let context = autohand_squad_runtime::ownership::read_active_context(&crate::default_paths())
+        .map_err(|error| error.to_string())?
+        .ok_or("Choose a verified Squad first.")?;
     let bridge = lock(&shell.app_url)
         .clone()
         .ok_or("Squad is still starting.")?;
-    let target = quick_chat_url(&bridge, member)?;
+    let mut target = quick_chat_url(&bridge, member)?;
+    target
+        .query_pairs_mut()
+        .append_pair("nativeContext", &context.generation);
+    if let Some(window) = app.get_webview_window(QUICK_CHAT_WINDOW) {
+        if window.url().ok().is_none_or(|url| {
+            !url.query_pairs()
+                .any(|(key, value)| key == "nativeContext" && value == context.generation)
+        }) {
+            window.destroy().map_err(|error| error.to_string())?;
+        }
+    }
+    if !crate::native_scope_current(Some(&context)) {
+        return Err("The selected Squad changed.".into());
+    }
     if let Some(window) = app.get_webview_window(QUICK_CHAT_WINDOW) {
         // Navigate only when selecting another member. Reselecting the current
         // member preserves drafts and the live stream in this compact window.
@@ -410,6 +446,7 @@ pub(crate) fn placeholder_icon() -> tauri::image::Image<'static> {
 pub(crate) fn member_icons(
     app: &AppHandle,
     shell: &Shell,
+    context: &autohand_squad_runtime::ownership::OwnedContext,
 ) -> std::collections::HashMap<String, tauri::image::Image<'static>> {
     use base64::Engine;
     use std::io::{Cursor, Read};
@@ -428,6 +465,7 @@ pub(crate) fn member_icons(
             "{}/api/status/snapshot",
             bridge.trim_end_matches('/')
         ))
+        .header("x-squad-context", &context.generation)
         .send()
     else {
         return icons;
@@ -523,7 +561,11 @@ pub(crate) fn member_icons(
             tauri::image::Image::new_owned(rgba.into_raw(), 22, 22),
         );
     }
-    icons
+    if crate::native_scope_current(Some(context)) {
+        icons
+    } else {
+        std::collections::HashMap::new()
+    }
 }
 
 #[cfg(test)]

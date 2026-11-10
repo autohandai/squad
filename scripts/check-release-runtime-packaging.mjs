@@ -91,9 +91,12 @@ async function assertPackagedServerCreatesState() {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    await waitForServer(child);
-    const info = await stat(appStateDir);
-    assert.equal(info.isDirectory(), true, 'Packaged server must initialize its writable app-state directory');
+    const origin=await waitForServer(child);
+    const info = await stat(join(root,'squad-home'));
+    assert.equal(info.isDirectory(), true, 'The packaged broker initializes machine control state.');
+    await assert.rejects(stat(appStateDir),{code:'ENOENT'},'Signed-out startup cannot initialize or claim legacy app data.');
+    const health=await(await fetch(origin+'/api/health')).json();
+    assert.equal(health.ownership,1,'The staged runtime must expose the owned protocol.');
   } finally {
     await stopChild(child);
     await rm(root, { recursive: true, force: true });
@@ -111,9 +114,10 @@ function waitForServer(child) {
 
     const onStdout = (chunk) => {
       stdout += String(chunk);
-      if (stdout.includes('autohandSWE listening on')) {
+      const origin=stdout.match(/ownership broker listening on (http:\/\/\S+)/)?.[1];
+      if (origin) {
         cleanup();
-        resolve();
+        resolve(origin);
       }
     };
     const onStderr = (chunk) => {

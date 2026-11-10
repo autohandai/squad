@@ -4,6 +4,7 @@
 // without a bridge. The stdio entry point is mcp-server.mjs.
 
 import { MANAGEMENT_TOOLS } from './management.mjs';
+import { OWNERSHIP_TOOLS } from './ownership-tools.mjs';
 
 export const SERVER_NAME = 'autohand-squad-control-plane';
 export const SERVER_VERSION = '1';
@@ -109,7 +110,7 @@ const id = (description) => ({ type: 'string', minLength: 1, maxLength: 200, des
 export const TOOLS = [
   {
     name: 'list_members',
-    description: 'List Squad agents by id, name, role, presence, harness and workspace. Uses registered profiles and live presence, supplemented by the app\'s status mirror. Use member ids to address messages unambiguously.',
+    description: 'List only canonical members belonging to the selected personal/team Squad, supplemented with available live presence and work metadata. Use member ids to address messages unambiguously.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -262,13 +263,14 @@ export const TOOLS = [
   },
 ];
 
-TOOLS.push(...MANAGEMENT_TOOLS);
+TOOLS.push(...MANAGEMENT_TOOLS, ...OWNERSHIP_TOOLS);
 export const TOOL_NAMES = TOOLS.map((tool) => tool.name);
 
 /** Small JSON-schema subset validator: types, enums, bounds, required, unknown fields. */
 export function validateArgs(schema, input, path = 'arguments') {
   const errors = [];
   const check = (node, value, at) => {
+    if(node.enum&&!node.enum.includes(value))errors.push(`${at} must be one of ${node.enum.join(', ')}`);
     if (node.anyOf) {
       if (!node.anyOf.some(branch => validateArgs(branch, value, at).length === 0)) errors.push(`${at} must match one of the allowed types`);
       return;
@@ -296,7 +298,6 @@ export function validateArgs(schema, input, path = 'arguments') {
       if (typeof value !== 'string') { errors.push(`${at} must be a string`); return; }
       if (node.minLength !== undefined && value.trim().length < node.minLength) errors.push(`${at} must not be empty`);
       if (node.maxLength !== undefined && value.length > node.maxLength) errors.push(`${at} is longer than ${node.maxLength} characters`);
-      if (node.enum && !node.enum.includes(value)) errors.push(`${at} must be one of ${node.enum.join(', ')}`);
       return;
     }
     if (node.type === 'integer' || node.type === 'number') {

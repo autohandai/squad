@@ -79,7 +79,7 @@ access-controlled service in the current build.
 | Agent setup | Sixteen role templates with runtime-loaded personality, purpose, memory and collaboration rules, plus configurable skills, tools, models, projects and permission policies. Warm and resumed turns preserve saved customizations and harness identity. Connector pages currently report readiness rather than providing full account setup. |
 | Execution | One-shot and streamed chat, tracked runs, Terminal handoff, task history, run output, and evidence views through the local Autohand bridge. |
 | Repeatable work | Recipes and member Automations use explicit **Run now** controls. Channel workflows already support bridge schedule/webhook triggers and approval gates; app-dispatched member steps require Squad open. |
-| Distribution | Tag-bound DMG installers for macOS Apple Silicon and Intel, an NSIS setup EXE for Windows x64, portable archives for every supported target, SHA-256 checksums, and updater assets. Native installers bundle Node; portable archives require Node 18.17+ on `PATH`. |
+| Distribution | Tag-bound DMG installers for macOS Apple Silicon and Intel, an NSIS setup EXE for Windows x64, portable archives for every supported target, SHA-256 checksums, and updater assets. Native installers bundle Node; portable archives require Node 22.13 LTS or 24+ on `PATH`. |
 
 ## Desktop app (Tauri 2)
 
@@ -175,7 +175,7 @@ section, and the categorised pull-request list in the release notes:
 | macOS Intel | `autohand-squad-<version>-macos-x64.dmg` |
 | Windows x64 | `autohand-squad-<version>-windows-x64-setup.exe` |
 | Linux x64 | `autohand-squad-<version>-linux-x64.deb`, `autohand-squad-<version>-linux-x64.AppImage` |
-| Headless / servers | `autohand-squad-<version>-<os>-<arch>.tar.gz` (portable, needs Node 18.17+) |
+| Headless / servers | `autohand-squad-<version>-<os>-<arch>.tar.gz` (portable, needs Node 22.13 LTS or 24+) |
 
 - **Stable:** the [latest release](https://github.com/autohandai/squad/releases/latest).
 - **Nightly:** pre-releases tagged `v<next>-canary.<timestamp>`, built from
@@ -574,7 +574,7 @@ entitlement and the `squad_daemon` feature flag before starting the stack.
 Release metadata carries SHA-256 checksums for the installer/update path;
 each platform release also carries a portable application archive containing
 the native runtime and web app. Native macOS, Windows, and Linux installers
-bundle Node; portable archives require Node 18.17+ on `PATH`. Installer code
+bundle Node; portable archives require Node 22.13 LTS or 24+ on `PATH`. Installer code
 signing and macOS notarization are not configured yet.
 
 The tray/UI binary is intentionally separate from the daemon. It renders the

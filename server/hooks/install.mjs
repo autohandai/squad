@@ -23,8 +23,9 @@ export function hookConfigPath(engine, env = process.env, home = homedir()) {
 const quote = (value) => `"${String(value).replace(/(["\\$`])/g, "\\$1")}"`;
 
 /** The command a hook runs: the bridge's own node and forwarder, the engine and the port. */
-export function forwarderCommand({ nodePath, rootDir, engine, port }) {
-  return `${quote(nodePath)} ${quote(join(rootDir, FORWARDER_MARK))} ${engine} ${Number(port) || 19821}`;
+export function forwarderCommand({ nodePath, rootDir, engine, port, scope }) {
+  if(!/^[a-f0-9]{64}\.[a-f0-9]{64}\.[a-f0-9-]{36}$/.test(scope||''))throw Error('Choose a verified Squad before installing session hooks.');
+  return `${quote(nodePath)} ${quote(join(rootDir, FORWARDER_MARK))} ${engine} ${Number(port) || 19821} ${quote(scope)}`;
 }
 
 const isOurs = (entry) => String(entry?.command || "").includes(FORWARDER_MARK);
@@ -87,16 +88,18 @@ export async function hookStatus(engine, options = {}) {
   const path = hookConfigPath(engine, options.env, options.home);
   try {
     const { config, existed } = await readConfig(path);
-    return { engine, path, exists: existed, installed: hooksInstalled(config) };
+    const present=hooksInstalled(config),commands=Object.values(config.hooks||{}).flatMap(groups=>Array.isArray(groups)?groups.flatMap(group=>group?.hooks||[]).filter(isOurs).map(entry=>entry.command):[]);
+    const needsReinstall=Boolean(present&&options.scope&&commands.some(command=>!String(command).endsWith(` ${quote(options.scope)}`)));
+    return { engine, path, exists: existed, installed: present&&!needsReinstall,...(needsReinstall?{needsReinstall:true,error:'These hooks need installation for the selected Squad before outside sessions can be recorded.'}:{}) };
   } catch (error) {
     return { engine, path, exists: true, installed: false, error: error.message };
   }
 }
 
-export async function installHooks(engine, { nodePath, rootDir, port, env, home } = {}) {
+export async function installHooks(engine, { nodePath, rootDir, port, scope, env, home } = {}) {
   const path = hookConfigPath(engine, env, home);
   const { config, existed } = await readConfig(path);
-  await writeConfig(path, withSquadHooks(config, forwarderCommand({ nodePath, rootDir, engine, port })), existed);
+  await writeConfig(path, withSquadHooks(config, forwarderCommand({ nodePath, rootDir, engine, port, scope })), existed);
   return { engine, path, exists: true, installed: true };
 }
 

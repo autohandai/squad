@@ -110,12 +110,13 @@ async function stageProductionModules() {
   await stageClaudeSdk(modulesRoot, resourcesDir);
   await stageVendoredAutohandCli(sdkCli, join(resourcesDir, 'vendor', 'autohand-cli'));
 
-  for (const dependency of ['toml', 'yaml']) {
+  for (const dependency of ['toml', 'yaml', 'zod']) {
     await copyRequiredDirectory(
       join(modulesRoot, dependency),
       join(resourcesDir, 'node_modules', dependency),
     );
   }
+  await copyRequiredDirectory(resolve('packages', 'squad-portable'), join(resourcesDir, 'node_modules', '@autohand', 'squad-portable'));
 }
 
 async function stageNodeLicense() {
@@ -514,8 +515,8 @@ async function validateNodeRuntime(executablePath) {
 
   const major = Number(match[1]);
   const minor = Number(match[2]);
-  if (major < 18 || (major === 18 && minor < 17)) {
-    throw new Error(`NODE_RUNTIME_PATH must be Node.js 18.17 or newer; received ${reportedVersion}`);
+  if (!((major === 22 && minor >= 13) || major >= 24)) {
+    throw new Error(`NODE_RUNTIME_PATH must be Node.js 22.13 LTS or 24+; received ${reportedVersion}`);
   }
 }
 

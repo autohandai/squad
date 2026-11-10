@@ -48,7 +48,7 @@ if(has('--input-format')){
 try {
   const agent = { id: 'model-recovery', name: 'Alex', role: 'GTM APAC Leader', harness: { id: 'claude', executablePath: join(bridge.directory, 'claude-fixture'), model: 'fable' }, projects: [{ path: process.cwd() }] };
   const chat = async () => {
-    const response = await fetch(bridge.origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: agent.id, agent, workspace: process.cwd(), prompt: 'Answer once. Do not run tools.' }) });
+    const response = await fetch(bridge.origin + '/api/chat/stream', { method: 'POST', headers: await bridge.headers(), body: JSON.stringify({ agentId: agent.id, agent, workspace: process.cwd(), prompt: 'Answer once. Do not run tools.' }) });
     const raw = await response.text();
     return raw.split('\n\n').flatMap(part => { const event = part.match(/^event: (.+)$/m)?.[1]; const data = part.match(/^data: (.+)$/m)?.[1]; return event && data ? [{ event, data: JSON.parse(data) }] : []; });
   };

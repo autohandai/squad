@@ -6,6 +6,7 @@ import { withoutHereMentions } from '../src/lib/channel-mentions.js';
 import { MEMBER_PROFILE_FIELDS, memberProfileRevision, mergeMemberProfile } from '../src/lib/member-shaping.js';
 import { normalizeModelRouting } from '../src/lib/model-routing.js';
 import { uniqueName } from '../src/lib/teams.js';
+import { stampOwnedProfile } from './ownership/profile.mjs';
 
 const at = () => new Date().toISOString();
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -41,7 +42,8 @@ function parseReply(reply) {
 // The execution wrapper supplies identity and scope. Model output supplies only
 // channel name, named teammates and purpose. Permissions, proposals, channels
 // and purpose receipts share the existing channel mutation queue and document.
-export function createAgentChannelActions({ store, availability, sanitizeId, run, reportError = console.error, onRename = () => {}, onProfileChanged = () => {} }) {
+export function createAgentChannelActions({ store, availability, sanitizeId, run, owner, reportError = console.error, onRename = () => {}, onProfileChanged = () => {} }) {
+  const copyMember = (agent, id) => owner ? { ...memberCopy(stampOwnedProfile(agent, owner), id), ownership: owner } : memberCopy(agent, id);
   let draining = false;
   const schedule = () => setImmediate(() => drain().catch(reportError));
   // Other proposal kinds (ADR-0110: `schedule`) ride the same SQUAD_ACTION
@@ -52,7 +54,7 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
   const register = (state, agent, profile = '') => {
     if (!agent?.id) return;
     const id = sanitizeId(agent.id);
-    if (!state.agentChannelAccess[id]) state.agentChannelAccess[id] = { agent: memberCopy(agent, id), profile: String(profile || agent.squadProfile || '').slice(0, 64000), mode: mode(agent), workspaceModes: workspaceModes(agent), removed: false, updatedAt: at() };
+    if (!state.agentChannelAccess[id]) state.agentChannelAccess[id] = { agent: copyMember(agent, id), profile: String(profile || agent.squadProfile || '').slice(0, 64000), mode: mode(agent), workspaceModes: workspaceModes(agent), removed: false, updatedAt: at() };
   };
   async function begin(payload) {
     const actorId = sanitizeId(payload.agent?.id || payload.agentId);
@@ -90,7 +92,7 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
         // patches on the latest member, including any primary/permission edits
         // made by the person while that discovery was running.
         const incoming = agentRouting || input.expectedProfileRevision !== undefined ? previous.agent : input.agent;
-        const agent = { ...mergeMemberProfile(memberCopy(incoming, id), previous?.agent), ...(input.profilePatch || {}) };
+        const agent = { ...mergeMemberProfile(copyMember(incoming, id), previous?.agent), ...(input.profilePatch || {}) };
         if (agent.modelRouting) agent.modelRouting = normalizeModelRouting(agent.modelRouting, { strict: Boolean(input.profilePatch?.modelRouting) });
         if (input.profilePatch?.name && input.profilePatch.name !== before) {
           agent.name = uniqueName(input.profilePatch.name, Object.entries(state.agentChannelAccess).filter(([otherId, access]) => otherId !== id && !access.removed).map(([, access]) => access.agent?.name));

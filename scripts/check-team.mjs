@@ -16,11 +16,13 @@ import { TEAM_TOOL_NAMES, resolveTeammate, teamInstructions } from "../server/te
 import { cleanMemoryText, looksSecret, memoryKey } from "../server/team/store.mjs";
 import { asksForRole, needsShapingInstruction } from "../src/lib/member-shaping.js";
 import { SQUAD_TEAM_TOOLS } from "../src/lib/permission-policy.js";
+import { createOwnedBridgeFixture } from "./lib/owned-bridge-fixture.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const directory = await mkdtemp(join(tmpdir(), "squad-team-"));
-const state = join(directory, "state");
-const app = join(directory, "app");
+const serviceRoot = join(directory, "state");
+let state=serviceRoot,ownedFixture;
+let app = join(directory, "app");
 const home = join(directory, "home");
 const harness = join(directory, "mock-codex");
 const config = join(directory, "user.json");
@@ -39,7 +41,8 @@ let bridge;
 let logs = "";
 
 async function api(path, body, method = body === undefined ? "GET" : "POST") {
-  const response = await fetch(origin + path, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const context=(await(await fetch(origin+'/api/ownership/context')).json()).data;
+  const response = await fetch(origin + path, { method, headers: { "content-type": "application/json",'x-squad-context':context.generation }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const text = await response.text();
   return { status: response.status, text, ...JSON.parse(text) };
 }
@@ -58,7 +61,8 @@ function start() {
     env: {
       ...process.env,
       AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: "",
-      AUTOHAND_SQUAD_HOME: state,
+      ...ownedFixture.env,
+      AUTOHAND_SQUAD_HOME: serviceRoot,
       AUTOHAND_SQUAD_APP_STATE_DIR: app,
       AUTOHAND_HOME: home,
       AUTOHAND_USER_CONFIG_PATH: config,
@@ -166,7 +170,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
 
 try {
   // --- pure pieces --------------------------------------------------------
-  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_assign_task", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask", "squad_publish_artifact"]);
+  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_assign_task", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask", "squad_publish_artifact", "squad_member_data", "squad_member_files", "squad_export_member"]);
   assert.deepEqual([...SQUAD_TEAM_TOOLS].sort(), [...TEAM_TOOL_NAMES].sort(), "the permission rows people see are exactly the tools the team server offers (ADR-0161)");
   const roster = [{ id: "a1", name: "Eva Green" }, { id: "a2", name: "Noah" }, { id: "a3", name: "Max Power" }, { id: "a4", name: "Max Steel" }];
   assert.equal(resolveTeammate("@Eva,", roster).member?.id, "a1", "a first name with @ and a comma finds the teammate");
@@ -203,12 +207,13 @@ try {
   assert.equal(needsShapingInstruction({ role: "QA" }, "your name is Robert"), true);
 
   await Promise.all([mkdir(state, { recursive: true }), mkdir(home, { recursive: true }), mkdir(join(directory, "codex"), { recursive: true })]);
-  await writeFile(config, JSON.stringify({ provider: "autohandai", autohandai: { model: "auto" } }));
+  await writeFile(config, JSON.stringify({ provider: "autohandai", autohandai: { model: "auto" },auth:{token:'fixture-no-provider',email:'reliability@example.test',expiresAt:'2099-01-01T00:00:00Z'} }));
   await writeFile(join(state, "notifications.json"), JSON.stringify({ version: 1, settings: { runFinished: false, runFailed: false, handoffPending: false, approvalPending: false, mention: false }, items: [] }));
   await writeFile(join(directory, "codex", "auth.json"), "{}");
   await writeFile(harness, fakeCodex);
   await chmod(harness, 0o700);
 
+  ownedFixture=await createOwnedBridgeFixture({serviceRoot,appRoot:app});state=ownedFixture.paths.dataRoot;app=ownedFixture.paths.appRoot;
   start();
   await until(async () => (await api("/api/team")).success);
   await api("/api/status/snapshot", { members: squadMembers, jobs: [] });
@@ -284,7 +289,8 @@ try {
   assert.ok(unwatchedAsk?.response.result.isError && /Finish the reply with the question/.test(JSON.stringify(unwatchedAsk.response.result)), `an unwatched turn is told to ask in its reply: ${JSON.stringify(unwatchedAsk?.response.result).slice(0, 300)}`);
   {
     const seen = [];
-    const response = await fetch(`${origin}/api/chat/stream`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: noah.id, agent: noah, workspace: root, prompt: "team-scenario-ask", resumeSession: false, squadMembers, requestId: "chat-ask-1" }) });
+    const context=(await api('/api/ownership/context')).data;
+    const response = await fetch(`${origin}/api/chat/stream`, { method: "POST", headers: { "content-type": "application/json",'x-squad-context':context.generation }, body: JSON.stringify({ agentId: noah.id, agent: noah, workspace: root, prompt: "team-scenario-ask", resumeSession: false, squadMembers, requestId: "chat-ask-1" }) });
     const decoder = new TextDecoder(); let pending = "";
     for await (const chunk of response.body) {
       pending += decoder.decode(chunk, { stream: true }); let end;
@@ -505,6 +511,7 @@ try {
   await mkdir(join(app, "agents", max.id), { recursive: true });
   await writeFile(join(app, "agents", max.id, "profile.json"), JSON.stringify({ id: max.id, name: "Max" }));
   start();
+  await until(async () => (await api('/api/team')).success);
   const migrated = await until(async () => {
     const copy = JSON.parse(await readFile(join(state, "channels.json"), "utf8")).agentChannelAccess[max.id];
     return copy.profile.includes("Name: Robert") && copy;
@@ -524,5 +531,6 @@ try {
   throw error;
 } finally {
   await stop();
+  await ownedFixture?.close();
   await rm(directory, { recursive: true, force: true });
 }

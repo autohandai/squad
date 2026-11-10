@@ -45,7 +45,7 @@ try {
   state.agentChannelAccess = { ...state.agentChannelAccess, [agent.id]: { agent, workspace, policy: 'yes' } };
   state.channels = [...(state.channels || []), { id: 'room', name: 'room', memberIds: [agent.id], createdAt: new Date().toISOString() }];
   state.messages = [...(state.messages || []), { id: 'root-a', channelId: 'room', threadId: 'thread-a', role: 'user', body: 'Thread A: what is 2+2?', status: 'complete', createdAt: new Date().toISOString() }];
-  await writeFile(join(bridge.directory, 'squad', 'channels.json'), JSON.stringify(state));
+  await writeFile(join(bridge.dataRoot, 'channels.json'), JSON.stringify(state));
   const thread = (threadId, prompt, requestId) => bridge.api('/api/chat', 'POST', { ...base, prompt, requestId, channelId: 'room', threadId, parentMessageId: `root-${threadId.slice(-1)}`, channel: { id: 'room', name: 'room', threadId, parentMessageId: `root-${threadId.slice(-1)}`, memberIds: [agent.id] } }, 20000);
 
   const first = await thread('thread-a', 'Thread A, first turn', 'ta-1');

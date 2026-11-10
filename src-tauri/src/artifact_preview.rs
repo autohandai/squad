@@ -35,7 +35,14 @@ pub async fn squad_open_artifact_in_browser(
     window: WebviewWindow,
     shell: tauri::State<'_, Arc<Shell>>,
     artifact_id: String,
+    context_generation: String,
 ) -> Result<(), String> {
+    let context = autohand_squad_runtime::ownership::read_active_context(&crate::default_paths())
+        .map_err(|error| error.to_string())?
+        .ok_or("Select a verified Squad first.")?;
+    if context.generation != context_generation {
+        return Err("The selected Squad changed. Reopen the artifact.".into());
+    }
     if crate::system_reset::blocked(&app) {
         return Err("Finish the reset first.".into());
     }
@@ -60,6 +67,7 @@ pub async fn squad_open_artifact_in_browser(
         .map_err(|e| e.to_string())?;
     let metadata: serde_json::Value = client
         .get(metadata)
+        .header("x-squad-context", &context.generation)
         .send()
         .await
         .map_err(|_| "The saved artifact is unavailable.")?
@@ -71,9 +79,14 @@ pub async fn squad_open_artifact_in_browser(
     if metadata["success"] != true || metadata["data"]["id"] != artifact_id {
         return Err("The saved artifact is unavailable.".into());
     }
-    let url = base
+    let mut url = base
         .join(&format!("/api/artifacts/{artifact_id}/content"))
         .map_err(|e| e.to_string())?;
+    if !crate::native_scope_current(Some(&context)) {
+        return Err("The selected Squad changed. Reopen the artifact.".into());
+    }
+    url.query_pairs_mut()
+        .append_pair("context", &context.generation);
     tauri_plugin_opener::open_url(url.as_str(), None::<&str>)
         .map_err(|_| "The browser could not be opened.".into())
 }

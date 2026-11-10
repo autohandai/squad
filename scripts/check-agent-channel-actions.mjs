@@ -59,7 +59,7 @@ try {
   assert.equal((await calls()).filter(c => c.message.includes('Inspect the saved workspace together.') && !c.message.includes('REQUEST:')).length, 2);
   const oldPurposeState = await state();
   delete oldPurposeState.messages.find(message => message.channelId === approved.id && message.role === 'user').agentId;
-  await writeFile(join(bridge.directory, 'squad', 'channels.json'), JSON.stringify(oldPurposeState));
+  await writeFile(join(bridge.dataRoot, 'channels.json'), JSON.stringify(oldPurposeState));
   await bridge.restart();
   assert.equal((await state()).messages.find(message => message.channelId === approved.id && message.role === 'user').agentId, ask.id, 'Older purpose roots recover identity from their existing receipt.');
   assert.equal((await calls()).filter(c => c.message.includes('Inspect the saved workspace together.') && !c.message.includes('REQUEST:')).length, 2, 'Attribution recovery may not replay completed purpose work.');
@@ -115,7 +115,7 @@ try {
 
   const streamingMember = member('asq_stream', 'allow');
   const source = (await bridge.api('/api/channels', 'POST', { name: 'source-work', memberIds: [streamingMember.id] })).data;
-  const response = await fetch(bridge.origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(launch(streamingMember, 'stream-request', action('stream-work', { purpose: '' }), { channel: { ...source, threadId: 'source-thread', parentMessageId: 'source-root' } })) });
+  const response = await fetch(bridge.origin + '/api/chat/stream', { method: 'POST', headers: await bridge.headers(), body: JSON.stringify(launch(streamingMember, 'stream-request', action('stream-work', { purpose: '' }), { channel: { ...source, threadId: 'source-thread', parentMessageId: 'source-root' } })) });
   assert.equal(response.status, 200);
   const sse = await response.text();
   const done = JSON.parse(sse.split('\n\n').find(block => block.startsWith('event: done\n')).split('\ndata: ')[1]);

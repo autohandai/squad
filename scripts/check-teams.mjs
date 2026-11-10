@@ -286,7 +286,7 @@ try {
   assert.deepEqual(createdWorkflows[0].runs, []);
   assert.equal(createdWorkflows[0].steps[0].memberId, "asq_iris_2");
   assert.ok(createdWorkflows[0].trigger.token && createdWorkflows[0].trigger.token !== workflow.data.trigger.token, "a new webhook token was minted");
-  const skillPath = join(bridge.directory, "squad", "skills", "review-notes", "SKILL.md");
+  const skillPath = join(bridge.dataRoot, "skills", "review-notes", "SKILL.md");
   assert.ok(existsSync(skillPath), "the skill text landed in the squad skills folder");
   assert.ok(!(await readFile(skillPath, "utf8")).includes(TOKEN));
   assert.deepEqual(imported.data.skills, { added: ["review-notes"], kept: [] });

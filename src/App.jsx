@@ -1,9 +1,15 @@
+import { ownedLocalStorage } from "@/lib/owned-storage";
+import { ownershipFetch } from "@/lib/ownership-client";
+import { OwnershipEventSource,ownershipUrl } from "@/lib/ownership-client";
+import { OwnershipBootstrap } from "@/components/account/OwnershipBootstrap";
+import { currentOwnership, ownedBroadcastName, physicalStorageKey } from "@/lib/owned-storage";
 import { QuickChatPanel } from "@/components/chat/QuickChatPanel";
 import { QuickChatPreferences } from "@/components/settings/QuickChatPreferences";
+import { BackupSettings } from "@/components/settings/BackupSettings";
 import React, { Fragment, Suspense, createContext, lazy, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectObserver } from "@/lib/use-project-observer";
 import { onDesktopMenu } from "@/lib/desktop-menu";
-import { isSystemResetPending, pendingSystemReset } from "@/lib/system-reset";
+import { isSystemResetPending, pendingSystemReset, allowsPendingResetRequest } from "@/lib/system-reset";
 import { artifactIdFromHref } from "@/lib/artifacts";
 import { ArtifactCard, ArtifactPreviewController } from "@/components/artifacts/ArtifactPreview";
 import { MemberLibrary } from "@/components/artifacts/MemberLibrary";
@@ -1358,7 +1364,7 @@ function sidebarActiveTarget(route, activeAgent) {
 // write must never unmount the app; the in-memory state stays authoritative.
 function persistLocal(key, value) {
   try {
-    writeLocalJson(window.localStorage, key, value, STORAGE_KEYS.channelMessages);
+    writeLocalJson(ownedLocalStorage, key, value, STORAGE_KEYS.channelMessages);
   } catch (error) {
     if (!persistLocal.warned) {
       persistLocal.warned = true;
@@ -2464,7 +2470,7 @@ function readLocalStorage(keys) {
   const keyList = Array.isArray(keys) ? keys : [keys];
   try {
     for (const key of keyList) {
-      const value = window.localStorage.getItem(key);
+      const value = ownedLocalStorage.getItem(key);
       if (value) return value;
     }
   } catch {
@@ -2562,7 +2568,7 @@ function normalizeThemePreference(value) {
 
 function readSkinId() {
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEYS.skin);
+    const stored = ownedLocalStorage.getItem(STORAGE_KEYS.skin);
     return isSkinId(stored) ? stored : DEFAULT_SKIN_ID;
   } catch {
     return DEFAULT_SKIN_ID;
@@ -3691,9 +3697,9 @@ function highlightSearchHit(find, { attempts = 40, delay = 350 } = {}) {
 // under "Could not answer". Say what happened instead; an abort stays an abort.
 const BRIDGE_UNREACHABLE_MESSAGE = "Squad's local service did not answer, so this was not sent. Retry once it is back; nothing was lost.";
 async function bridgeFetch(path, init) {
-  if (isSystemResetPending() && !["GET", "HEAD"].includes((init?.method || "GET").toUpperCase()) && String(path).split("?")[0] !== "/api/system/reset") throw new Error("Restart Squad to continue after resetting its data.");
+  if (!allowsPendingResetRequest(path,init)) throw new Error("Restart Squad to continue after resetting its data.");
   try {
-    return await fetch(path, init);
+    return await ownershipFetch(path, init);
   } catch (error) {
     if (error?.name === "AbortError") throw error;
     throw Object.assign(new Error(BRIDGE_UNREACHABLE_MESSAGE), { code: "bridge-unreachable", cause: error });
@@ -3777,7 +3783,7 @@ function collectFeedbackStorageSnapshot() {
   const snapshot = {};
   for (const key of Object.values(STORAGE_KEYS)) {
     try {
-      const value = window.localStorage.getItem(key);
+      const value = ownedLocalStorage.getItem(key);
       if (value) snapshot[key] = value;
     } catch {
       // Keep feedback capture non-blocking when storage is unavailable.
@@ -4419,7 +4425,7 @@ function App() {
   const [chatDraftsByAgent, setChatDraftsByAgent] = useState(() => {
     if (isSettingsDestination(window.location.pathname)) return readSettingsReturn()?.drafts || {};
     try {
-      const stored = JSON.parse(window.localStorage.getItem(CHAT_DRAFTS_KEY) || "{}");
+      const stored = JSON.parse(ownedLocalStorage.getItem(CHAT_DRAFTS_KEY) || "{}");
       return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
     } catch {
       return {};
@@ -4429,7 +4435,7 @@ function App() {
     const timer = window.setTimeout(() => {
       try {
         const kept = Object.fromEntries(Object.entries(chatDraftsByAgent || {}).filter(([, value]) => typeof value === "string" && value.trim()));
-        window.localStorage.setItem(CHAT_DRAFTS_KEY, JSON.stringify(kept));
+        ownedLocalStorage.setItem(CHAT_DRAFTS_KEY, JSON.stringify(kept));
       } catch {
         // Storage can be full or blocked; the draft stays in memory.
       }
@@ -4470,7 +4476,7 @@ function App() {
   // pending ones sit in Needs you until allowed or declined in the chat.
   const [folderRequests, setFolderRequests] = useState(() => { const stored = readStored(storageKeysFor("folderRequests"), []); return Array.isArray(stored) ? stored : []; });
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEYS.folderRequests, JSON.stringify(folderRequests.slice(0, 50))); } catch {}
+    try { ownedLocalStorage.setItem(STORAGE_KEYS.folderRequests, JSON.stringify(folderRequests.slice(0, 50))); } catch {}
   }, [folderRequests]);
   const inboxFolders = useMemo(() => folderNeedsYouRows(folderRequests, agents), [folderRequests, agents]);
   // Member routines (ADR-0110) are declared here, with the other state, because
@@ -4492,7 +4498,7 @@ function App() {
   const [memberGoals, setMemberGoals] = useState([]);
   const [memberGoalsError, setMemberGoalsError] = useState("");
   useEffect(() => {
-    const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel("autohand-squad-conversations-v1") : null;
+    const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel(ownedBroadcastName("autohand-squad-conversations-v1")) : null;
     sharedConversationChannelRef.current = channel;
     if (channel) channel.onmessage = ({ data }) => {
       if (data?.type === "member.patch" && typeof data.memberId === "string" && data.patch && typeof data.patch === "object") {
@@ -4503,7 +4509,9 @@ function App() {
       }
     };
     const onStorage = (event) => {
-      if (event.key !== STORAGE_KEYS.agents || !event.newValue) return;
+      let key;
+      try { key = physicalStorageKey(STORAGE_KEYS.agents); } catch { return; }
+      if (event.key !== key || !event.newValue) return;
       try {
         const incoming = JSON.parse(event.newValue);
         if (Array.isArray(incoming)) setAgents((current) => {
@@ -4645,11 +4653,12 @@ function App() {
   }
   const cancelUpdate = () => updateAction("cancel");
   async function installUpdate(options = {}) {
+    const contextGeneration = currentOwnership()?.generation || '';
     const invoke = window.__TAURI_INTERNALS__?.invoke;
     const native = /^AutohandSquadDesktop\//.test(navigator.userAgent) && typeof invoke === "function";
     const data = await updateAction("install", { mode: options.mode === "installer" ? "installer" : native ? "restart" : "installer" });
     if (data?.phase === "installing" && data.installMode === "restart") {
-      try { await invoke("squad_quit_for_update"); }
+      try { await invoke("squad_quit_for_update", { contextGeneration }); }
       catch (error) { setUpdatesError(typeof error === "string" ? error : error?.message || "Squad could not close. Keep it open and try again when the update stops."); }
     }
   }
@@ -4697,7 +4706,7 @@ function App() {
   const [agentChannelActions, setAgentChannelActions] = useState([]);
   // Pending vault requests (secure forms, payment approvals) are bridge-owned
   // and reconciled like channel proposals (ADR-0104).
-  const vaultRequests = useVaultRequests(api);
+  const vaultRequests = useVaultRequests(api,{subscribe:false});
   // Squad recruiting (ADR-0015): folder profiles by path for this session and
   // the user's decisions on proposals (accepted / dismissed), keyed by
   // channel + member + project signature.
@@ -4840,8 +4849,8 @@ function App() {
     if (themeColor) themeColor.setAttribute("content", tokens.background);
 
     try {
-      window.localStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(themePreference));
-      window.localStorage.setItem(STORAGE_KEYS.skin, activeSkin.id);
+      ownedLocalStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(themePreference));
+      ownedLocalStorage.setItem(STORAGE_KEYS.skin, activeSkin.id);
     } catch {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
@@ -4849,7 +4858,7 @@ function App() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEYS.handoffSettings, JSON.stringify(handoffSettings));
+      ownedLocalStorage.setItem(STORAGE_KEYS.handoffSettings, JSON.stringify(handoffSettings));
     } catch {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
@@ -4857,7 +4866,7 @@ function App() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEYS.chatSettings, JSON.stringify(normalizeChatSettings(chatSettings)));
+      ownedLocalStorage.setItem(STORAGE_KEYS.chatSettings, JSON.stringify(normalizeChatSettings(chatSettings)));
     } catch {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
@@ -4866,14 +4875,14 @@ function App() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEYS.onboarding, JSON.stringify(onboardingState));
+      ownedLocalStorage.setItem(STORAGE_KEYS.onboarding, JSON.stringify(onboardingState));
     } catch {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
   }, [onboardingState]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.sidebarCollapsed, desktopSidebarCollapsed ? "true" : "false");
+    ownedLocalStorage.setItem(STORAGE_KEYS.sidebarCollapsed, desktopSidebarCollapsed ? "true" : "false");
   }, [desktopSidebarCollapsed]);
 
   useEffect(() => {
@@ -4896,7 +4905,7 @@ function App() {
     document.documentElement.dir = getLocaleDirection(localeResolution.locale);
     document.documentElement.dataset.locale = localeResolution.locale;
     try {
-      window.localStorage.setItem(STORAGE_KEYS.locale, JSON.stringify(localePreference));
+      ownedLocalStorage.setItem(STORAGE_KEYS.locale, JSON.stringify(localePreference));
     } catch {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
@@ -4921,6 +4930,25 @@ function App() {
   useEffect(() => {
     persistLocal(STORAGE_KEYS.messages, messagesByAgent);
   }, [messagesByAgent]);
+
+  const browserBackupSync = useRef({ pending: Promise.resolve(), revision: Number(ownedLocalStorage.getItem('autohandSquad.v1.browserRevision') || 0), failed: false,error:null });
+  const browserBackupDraft=useRef(null);
+  browserBackupDraft.current=Object.fromEntries(agents.filter(member=>!member.removed).map(member=>[member.id,messagesByAgent[member.id]||[]]));
+  const flushBrowserBackup=useCallback(()=>{
+    const sync=browserBackupSync.current,messages=browserBackupDraft.current;
+    const operation=sync.pending.then(async()=>{
+      if(sync.failed)throw sync.error||Error('Current conversations could not be saved. Download this window’s draft before reloading the saved version.');
+      const saved=await api('/api/owned/browser-state',{method:'PUT',body:JSON.stringify({baseRevision:sync.revision,messagesByAgent:messages})});
+      sync.revision=saved.revision;ownedLocalStorage.setItem('autohandSquad.v1.browserRevision',String(saved.revision));
+    });
+    sync.pending=operation.catch(error=>{sync.failed=true;sync.error=error;window.dispatchEvent(new CustomEvent('squad:backup-sync-error',{detail:error.message||'Current conversations could not be saved. Your local draft is kept.'}));});
+    return operation;
+  },[]);
+  useEffect(() => {
+    if (!channelsBridgeReady || browserBackupSync.current.failed) return;
+    const timer = setTimeout(() => {void flushBrowserBackup().catch(()=>{});}, 750);
+    return () => clearTimeout(timer);
+  }, [messagesByAgent, agents, channelsBridgeReady,flushBrowserBackup]);
 
   useEffect(() => {
     persistLocal(STORAGE_KEYS.channels, channels);
@@ -5013,7 +5041,7 @@ function App() {
     (async () => {
       let pushedAt = "";
       try {
-        pushedAt = window.localStorage.getItem(SEARCH_PUSHED_KEY) || "";
+        pushedAt = ownedLocalStorage.getItem(SEARCH_PUSHED_KEY) || "";
       } catch {
         // storage unavailable: push every boot
       }
@@ -5039,7 +5067,7 @@ function App() {
       if (pushedAt && !indexWiped) return;
       try {
         await pushSearchDocs(Object.values(scopes).flat());
-        window.localStorage.setItem(SEARCH_PUSHED_KEY, new Date().toISOString());
+        ownedLocalStorage.setItem(SEARCH_PUSHED_KEY, new Date().toISOString());
       } catch {
         // Bridge unavailable: the flag stays unset so the next boot pushes again.
       }
@@ -5086,7 +5114,7 @@ function App() {
     seedSearchScope("channel", searchDocsForChannelMessages(state.messagesByChannel, state.channels));
     seedSearchScope("workflows", searchDocsForWorkflowRuns(state.workflowsByChannel, state.channels));
     try {
-      window.localStorage.setItem(SEARCH_PUSHED_KEY, new Date().toISOString());
+      ownedLocalStorage.setItem(SEARCH_PUSHED_KEY, new Date().toISOString());
     } catch {
       // ignore
     }
@@ -5095,11 +5123,11 @@ function App() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEYS.channelReads, JSON.stringify(channelReads));
-      window.localStorage.setItem(STORAGE_KEYS.agentReads, JSON.stringify(agentReads));
-      window.localStorage.setItem(STORAGE_KEYS.channelReactions, JSON.stringify(channelReactions));
-      window.localStorage.setItem(STORAGE_KEYS.inboxReadAt, JSON.stringify(inboxReadAt));
-      window.localStorage.setItem(STORAGE_KEYS.channelProposals, JSON.stringify(channelProposals));
+      ownedLocalStorage.setItem(STORAGE_KEYS.channelReads, JSON.stringify(channelReads));
+      ownedLocalStorage.setItem(STORAGE_KEYS.agentReads, JSON.stringify(agentReads));
+      ownedLocalStorage.setItem(STORAGE_KEYS.channelReactions, JSON.stringify(channelReactions));
+      ownedLocalStorage.setItem(STORAGE_KEYS.inboxReadAt, JSON.stringify(inboxReadAt));
+      ownedLocalStorage.setItem(STORAGE_KEYS.channelProposals, JSON.stringify(channelProposals));
     } catch {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
@@ -5185,7 +5213,7 @@ function App() {
   }, [channels, channelThreads, messagesByChannel, channelsBridgeReady]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.memoryInbox, JSON.stringify(memoryInbox));
+    ownedLocalStorage.setItem(STORAGE_KEYS.memoryInbox, JSON.stringify(memoryInbox));
     if (!memoryInboxBridgeReady) return;
     api("/api/memory-inbox", {
       method: "PUT",
@@ -5896,11 +5924,6 @@ function App() {
       cancelChannelLoadRef.current = true;
     };
   }, [reloadChannelsFromBridge]);
-  useEffect(() => {
-    const source = new EventSource("/api/channels/events");
-    source.addEventListener("changed", () => { void reloadChannelsFromBridge(); });
-    return () => source.close();
-  }, [reloadChannelsFromBridge]);
 
   useEffect(() => {
     let cancelled = false;
@@ -6030,25 +6053,29 @@ function App() {
       setConnectors((current) => current.map((item) => (item.id === id ? record : item)));
     },
   }), [refreshConnectors]);
-  // A message or channel that arrived from another person is already merged
-  // into channels.json by the bridge; re-reading keeps the stream in step.
+  // One owned stream per window leaves HTTP/1 connection slots for saves and
+  // prompts when another window is open. Notifications carry no secret data;
+  // every reload still checks the captured ownership generation.
   useEffect(() => {
-    if (!relayConfig.enabled) return undefined;
     let source;
     try {
-      source = new EventSource("/api/relay/events");
+      source = new OwnershipEventSource("/api/owned/events");
     } catch {
       return undefined;
     }
     const onChanged = () => {
       void reloadChannelsFromBridge();
     };
-    source.addEventListener("relay.message", onChanged);
-    source.addEventListener("relay.channel", onChanged);
-    source.addEventListener("relay.status", () => void refreshRelayStatus());
-    source.addEventListener("relay.presence", () => void refreshRelayStatus());
+    source.addEventListener("channels.changed",onChanged);
+    source.addEventListener("vault.changed",()=>void vaultRequests.reload());
+    if(relayConfig.enabled) {
+      source.addEventListener("relay.message", onChanged);
+      source.addEventListener("relay.channel", onChanged);
+      source.addEventListener("relay.status", () => void refreshRelayStatus());
+      source.addEventListener("relay.presence", () => void refreshRelayStatus());
+    }
     return () => source.close();
-  }, [relayConfig.enabled, reloadChannelsFromBridge, refreshRelayStatus]);
+  }, [relayConfig.enabled, reloadChannelsFromBridge, refreshRelayStatus,vaultRequests.reload]);
 
   const relayWorkspaces = useMemo(
     () => buildWorkspaceList({ relayConfig, relayStatus, hostName: runtime?.hostName, copy: localeCopy }),
@@ -6229,7 +6256,7 @@ function App() {
   const applyProfileReceiptsRef = useRef(null);
   if (!appliedProfileReceiptsRef.current) {
     let stored = null;
-    try { stored = JSON.parse(localStorage.getItem("autohandSquad.v1.profileReceipts") || "null"); } catch {}
+    try { stored = JSON.parse(ownedLocalStorage.getItem("autohandSquad.v1.profileReceipts") || "null"); } catch {}
     const since = typeof stored?.since === "string" && stored.since ? stored.since : new Date().toISOString();
     appliedProfileReceiptsRef.current = new Set(Array.isArray(stored?.ids) ? stored.ids : []);
     appliedProfileReceiptsRef.current.since = since;
@@ -6237,7 +6264,7 @@ function App() {
     // once a receipt applied, so every load started watching afresh and a
     // rename made while the window was closed (a routine, Telegram, a queued
     // turn) never reached the sidebar.
-    if (!stored?.since) { try { localStorage.setItem("autohandSquad.v1.profileReceipts", JSON.stringify({ since, ids: [] })); } catch {} }
+    if (!stored?.since) { try { ownedLocalStorage.setItem("autohandSquad.v1.profileReceipts", JSON.stringify({ since, ids: [] })); } catch {} }
   }
   const applyReceiptsFromRuns = useCallback((list) => {
     const seen = appliedProfileReceiptsRef.current;
@@ -6250,7 +6277,7 @@ function App() {
     }
     // The latest render's applier: updateAgent closes over current state.
     for (const [agentId, receipts] of byMember) applyProfileReceiptsRef.current?.(agentId, receipts);
-    try { localStorage.setItem("autohandSquad.v1.profileReceipts", JSON.stringify({ since: seen.since, ids: [...seen].slice(-200) })); } catch {}
+    try { ownedLocalStorage.setItem("autohandSquad.v1.profileReceipts", JSON.stringify({ since: seen.since, ids: [...seen].slice(-200) })); } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -6609,7 +6636,7 @@ function App() {
     const workspace = normalizeSquadWorkspacePath(agent.workspace, runtime) || fallbackWorkspace || "";
     const stash = duplicateCreationStash(agent, { memberId: createSquadMemberId() });
     try {
-      window.localStorage.setItem(`${STORAGE_KEYS.memberCreation}:${workspace}`, JSON.stringify({ ...stash, draft: { ...stash.draft, workspace } }));
+      ownedLocalStorage.setItem(`${STORAGE_KEYS.memberCreation}:${workspace}`, JSON.stringify({ ...stash, draft: { ...stash.draft, workspace } }));
     } catch (error) {
       console.warn(`Could not stage the duplicate draft: ${error?.message || error}`);
     }
@@ -6782,7 +6809,7 @@ function App() {
 
   function navigate(path) {
     if (isSystemResetPending()) return;
-    const state = {};
+    const state = { squadOwnership: currentOwnership()?.storageKey };
     if (isSettingsDestination(path)) {
       state.squadSettingsReturn = isSettingsDestination(route)
         ? readSettingsReturn()
@@ -10204,6 +10231,7 @@ function App() {
                 providerSettings={providerSettings}
                 providerSettingsError={providerSettingsError}
                 section={settingsSection}
+                onFlushBackup={flushBrowserBackup}
                 counts={sidebarCounts}
                 onProviderSettingsChange={setProviderSettings}
                 notificationSettings={notificationSettings}
@@ -12073,7 +12101,7 @@ function InlineMarkdown({ text }) {
       if (artifactId) return <ArtifactCard key={index} id={artifactId} title={part.value} href={part.href} />;
       const internal = part.href.startsWith("/");
       return (
-        <a key={index} href={part.href} target={internal ? undefined : "_blank"} rel={internal ? undefined : "noreferrer"} className="text-primary underline underline-offset-4">
+        <a key={index} href={ownershipUrl(part.href)} target={internal ? undefined : "_blank"} rel={internal ? undefined : "noreferrer"} className="text-primary underline underline-offset-4">
           {part.value}
         </a>
       );
@@ -16598,7 +16626,7 @@ function MissionControlPage({
   );
   const setView = (next) => {
     setSavedView(next);
-    window.localStorage.setItem(WORK_VIEW_STORAGE_KEY, JSON.stringify(next));
+    ownedLocalStorage.setItem(WORK_VIEW_STORAGE_KEY, JSON.stringify(next));
     navigate?.(missionControlPath({ view: next }));
   };
   const setEvaluationFilter = (next) => {
@@ -16868,7 +16896,7 @@ function SquadDirectoryPage({
   const [sortBy, setSortBy] = useState(() => readStored("autohandSquad.v1.squadSort", "arranged"));
   function chooseSort(next) {
     setSortBy(next);
-    try { window.localStorage.setItem("autohandSquad.v1.squadSort", JSON.stringify(next)); } catch { /* storage may be off */ }
+    try { ownedLocalStorage.setItem("autohandSquad.v1.squadSort", JSON.stringify(next)); } catch { /* storage may be off */ }
   }
   const searchRef = useRef(null);
   // "/" anywhere on the page puts the cursor in member search; Esc clears it.
@@ -19480,7 +19508,7 @@ function RoleAvatar({ roleId, src, alt, size = "default" }) {
   if (src) {
     return (
       <Avatar className={cn("rounded-full border border-border/70 bg-muted", sizes[size])}>
-        <AvatarImage src={src} alt={alt || "Squad member avatar"} className="object-cover" />
+        <AvatarImage src={ownershipUrl(src)} alt={alt || "Squad member avatar"} className="object-cover" />
         <AvatarFallback className="rounded-full bg-muted">
           <Icon className={iconSizes[size]} />
         </AvatarFallback>
@@ -19752,6 +19780,7 @@ function buildCustomRoleInstructions(templateDraft) {
 }
 
 function CreateAgent({ onCreate, onCancel, defaultWorkspace, defaultWorkspaceSetup, workspaceRoot, initialTemplateId = "", existingMemberIds = [], harnesses = [], harnessesLoading = false, onRefreshHarnesses, presets = [], copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
+  const creationOwner=currentOwnership();
   const creationStorageKey = `${STORAGE_KEYS.memberCreation}:${defaultWorkspace || ""}${initialTemplateId ? `:${initialTemplateId}` : ""}`;
   const unassignedCreationKey = `${STORAGE_KEYS.memberCreation}:${initialTemplateId ? `:${initialTemplateId}` : ""}`;
   const [savedCreation] = useState(() => {
@@ -19856,15 +19885,15 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, defaultWorkspaceSet
     let serialized;
     try {
       serialized = JSON.stringify({ version: 1, memberId: creationIdRef.current, templateId, customTemplates, namesByTemplate: namesByTemplateRef.current, roleWish, draft: nextDraft, preparing });
-      window.localStorage.setItem(creationStorageKey, serialized);
+      ownedLocalStorage.setItem(creationStorageKey, serialized);
       setDraftStorageError("");
     } catch (error) {
       // WebKit may accept an unchanged full cache without checking quota.
       // A new draft still needs space; retain the entire cache in compressed
       // form and retry this exact draft before reporting a storage failure.
       try {
-        if (serialized && isStorageQuotaError(error) && compactChannelMessagesCache(window.localStorage, STORAGE_KEYS.channelMessages)) {
-          window.localStorage.setItem(creationStorageKey, serialized);
+        if (serialized && isStorageQuotaError(error) && compactChannelMessagesCache(ownedLocalStorage, STORAGE_KEYS.channelMessages)) {
+          ownedLocalStorage.setItem(creationStorageKey, serialized);
           setDraftStorageError("");
           return;
         }
@@ -19878,7 +19907,7 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, defaultWorkspaceSet
     creationSettledRef.current = true;
     try {
       for (const key of new Set([creationStorageKey, unassignedCreationKey])) {
-        if (readStored(key, null)?.memberId === creationIdRef.current) window.localStorage.removeItem(key);
+        if (readStored(key, null)?.memberId === creationIdRef.current) ownedLocalStorage.removeItem(key);
       }
     } catch (error) { console.warn(`Could not clear the saved member draft: ${error.message}`); }
   }
@@ -20136,6 +20165,10 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, defaultWorkspaceSet
           </Button>
         </div>
 
+        <div className="mb-7 space-y-1 text-sm">
+          <p className="font-medium">Owned by {creationOwner?.ownerLabel||'the selected Squad'}</p>
+          <p className="text-muted-foreground">{creationOwner?.owner?.kind==='team'?'This member and its saved knowledge belong to the selected team and are available to its authorized members.':'This member and its saved knowledge belong to your personal Autohand account.'} Choose a different personal or team Squad in the selector above before editing. Drafts stay with their original owner.</p>
+        </div>
         {!draft.workspace ? <DefaultWorkspaceConsent api={api} setup={defaultWorkspaceSetup} onChoose={folder => { const next = { ...draft, workspace: folder }; persistCreation(false, next); setDraft(next); }} onBrowse={async () => (await api("/api/workspaces/pick", { method: "POST", body: JSON.stringify({ title: "Choose a work folder" }) }))?.path} /> : null}
 
         {/* Describe the job and the whole member is filled in. The shaping
@@ -24752,6 +24785,7 @@ function SettingsAnalyticsPage({ locale = DEFAULT_LOCALE, copy = getLocaleCopy(D
 
 function SettingsPage({
   agents = [],
+  onFlushBackup,
   onBack,
   onOnboarding,
   updates = null,
@@ -24877,6 +24911,7 @@ function SettingsPage({
     { id: "connectors", label: copy.connectors || "Connectors" },
     { id: "memory", label: "Memory" },
     { id: "cloud", label: "Cloud sync" },
+    { id: "backups", label: "Backups" },
     { id: "updates", label: "Updates" },
     { id: "system", label: copy.system || "System" },
   ];
@@ -25421,6 +25456,7 @@ function SettingsPage({
     ),
     memory: () => (<><SettingsSectionHeader title="Memory" description="Collect and connect what your squad learns." /><Suspense fallback={<p className="text-sm text-muted-foreground">Loading memory settings…</p>}><MemorySettings api={api} onOpenLibrary={() => navigate("/memory")} /></Suspense></>),
     cloud: () => (<><SettingsSectionHeader title="Cloud sync" description="Keep shared team memories together." /><CloudSyncSettings api={api} /></>),
+    backups: () => (<><SettingsSectionHeader title="Backups" description="Portable data for your personal or team Squad."/><BackupSettings api={api} agents={agents} onFlush={onFlushBackup}/></>),
     "quick-chat": () => (<><SettingsSectionHeader title="Quick Chat" description="A conversation from your macOS menu bar." /><QuickChatPreferences api={api} /></>),
     system: () => (
       <>
@@ -25428,7 +25464,7 @@ function SettingsPage({
           title={copy.system || "System"}
           description={copy.systemDescription || "What this squad holds on this computer and where it lives."}
         />
-        <SystemSettings api={api} locale={activeLocale} copy={copy} />
+        <SystemSettings api={api} locale={activeLocale} copy={copy} onBeforeReset={onFlushBackup} />
       </>
     ),
   };
@@ -26905,7 +26941,7 @@ const informationPage = window.location.pathname.match(/^\/app-info\/(about|poli
 
 root.render(
   <RenderErrorBoundary>
-    {informationPage ? <InformationWindow page={informationPage} /> : <App />}
+    {informationPage ? <InformationWindow page={informationPage} /> : <OwnershipBootstrap><App /></OwnershipBootstrap>}
   </RenderErrorBoundary>
 );
 

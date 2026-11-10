@@ -1,5 +1,13 @@
 # Teams — integration note
 
+Managed members also receive `squad_member_data`, `squad_member_files` and
+`squad_export_member`. The authenticated active turn determines the member;
+there is no member-ID or ownership override argument. These reuse the owned
+repository and backup writer. The export result identifies the person's
+download in Squad without issuing an operator context, account switch or
+organization-wide backup permission. Ending the turn revokes these tools with
+its other managed MCP capabilities. See [portable backups](backups.md).
+
 Share team…, Import team, presets and the member menu (ADR-0106); New team
 from an objective, Templates and the non-blocking team build (ADR-0118).
 Module files:

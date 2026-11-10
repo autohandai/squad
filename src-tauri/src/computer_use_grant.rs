@@ -107,6 +107,11 @@ pub(crate) fn clear_bridge_secret_env() {
     std::env::remove_var("AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN");
 }
 
+pub(crate) fn clear_stale_dialog() {
+    #[cfg(target_os = "macos")]
+    macos::clear_stale_dialog();
+}
+
 #[tauri::command]
 pub(crate) async fn squad_confirm_computer_use(
     app: AppHandle,
@@ -114,19 +119,23 @@ pub(crate) async fn squad_confirm_computer_use(
     shell: tauri::State<'_, Arc<Shell>>,
     member_id: String,
     scope: Scope,
+    context_generation: String,
 ) -> Result<serde_json::Value, String> {
+    let owned = crate::require_native_context(&context_generation, true)?;
     let bridge = request_bridge(&window, &shell, Some(&member_id))?;
     #[cfg(target_os = "macos")]
     {
-        let _pending = macos::PendingDialog::acquire()?;
+        let _pending = macos::PendingDialog::acquire(&owned.generation)?;
         let context_bridge = bridge.clone();
         let context_member = member_id.clone();
+        let context_owner = owned.clone();
         let context = tauri::async_runtime::spawn_blocking(move || {
-            macos::load_context(&context_bridge, &context_member)
+            macos::load_context(&context_bridge, &context_member, &context_owner)
         })
         .await
         .map_err(|error| error.to_string())??;
-        if !macos::confirm(&app, &context, &member_id, scope).await? {
+        crate::require_current_native_context(&owned)?;
+        if !macos::confirm(&app, &context, &member_id, scope, &owned).await? {
             return Ok(serde_json::json!({"confirmed":false}));
         }
         // The visible caller must still be this app after the modal returns.
@@ -134,8 +143,9 @@ pub(crate) async fn squad_confirm_computer_use(
         if current_bridge.origin() != bridge.origin() {
             return Err("Squad's local bridge changed. Request permission again.".into());
         }
+        crate::require_current_native_context(&owned)?;
         tauri::async_runtime::spawn_blocking(move || {
-            macos::set_grant(&bridge, &member_id, Some(scope))
+            macos::set_grant(&bridge, &member_id, Some(scope), &owned)
         })
         .await
         .map_err(|error| error.to_string())?
@@ -152,13 +162,17 @@ pub(crate) async fn squad_revoke_computer_use(
     window: WebviewWindow,
     shell: tauri::State<'_, Arc<Shell>>,
     member_id: String,
+    context_generation: String,
 ) -> Result<serde_json::Value, String> {
+    let owned = crate::require_native_context(&context_generation, true)?;
     let bridge = request_bridge(&window, &shell, Some(&member_id))?;
     #[cfg(target_os = "macos")]
     {
-        tauri::async_runtime::spawn_blocking(move || macos::set_grant(&bridge, &member_id, None))
-            .await
-            .map_err(|error| error.to_string())?
+        tauri::async_runtime::spawn_blocking(move || {
+            macos::set_grant(&bridge, &member_id, None, &owned)
+        })
+        .await
+        .map_err(|error| error.to_string())?
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -171,7 +185,7 @@ pub(crate) async fn squad_revoke_computer_use(
 mod macos {
     use super::*;
     use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSAlert, NSAlertSecondButtonReturn};
+    use objc2_app_kit::{NSAlert, NSAlertSecondButtonReturn, NSApplication};
     use objc2_foundation::NSString;
     use reqwest::blocking::Client;
     use std::io::Read;
@@ -179,11 +193,29 @@ mod macos {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, OnceLock};
+    use std::sync::{mpsc, Mutex, OnceLock};
     use std::time::Duration;
 
     pub(super) static TOKEN: OnceLock<String> = OnceLock::new();
     static PENDING: AtomicBool = AtomicBool::new(false);
+    static PENDING_GENERATION: Mutex<Option<String>> = Mutex::new(None);
+    static ACTIVE_MODAL: AtomicBool = AtomicBool::new(false);
+
+    pub(super) fn clear_stale_dialog() {
+        let generation =
+            autohand_squad_runtime::ownership::read_active_context(&crate::default_paths())
+                .ok()
+                .flatten()
+                .map(|context| context.generation);
+        let stale = crate::lock(&PENDING_GENERATION)
+            .as_ref()
+            .is_some_and(|pending| Some(pending) != generation.as_ref());
+        if stale && ACTIVE_MODAL.load(Ordering::Acquire) {
+            if let Some(marker) = MainThreadMarker::new() {
+                NSApplication::sharedApplication(marker).abortModal();
+            }
+        }
+    }
 
     fn read_pairing_token(path: &Path) -> Result<String, std::io::Error> {
         let file = std::fs::OpenOptions::new()
@@ -260,15 +292,19 @@ mod macos {
 
     pub(super) struct PendingDialog;
     impl PendingDialog {
-        pub(super) fn acquire() -> Result<Self, String> {
+        pub(super) fn acquire(generation: &str) -> Result<Self, String> {
             PENDING
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .map(|_| Self)
+                .map(|_| {
+                    *crate::lock(&PENDING_GENERATION) = Some(generation.into());
+                    Self
+                })
                 .map_err(|_| "A Computer Use permission request is already open.".into())
         }
     }
     impl Drop for PendingDialog {
         fn drop(&mut self) {
+            *crate::lock(&PENDING_GENERATION) = None;
             PENDING.store(false, Ordering::Release);
         }
     }
@@ -314,13 +350,19 @@ mod macos {
             .map_err(|_| "Squad returned an invalid Computer Use response.".into())
     }
 
-    pub(super) fn load_context(bridge: &Url, member: &str) -> Result<ConsentContext, String> {
+    pub(super) fn load_context(
+        bridge: &Url,
+        member: &str,
+        owned: &autohand_squad_runtime::ownership::OwnedContext,
+    ) -> Result<ConsentContext, String> {
+        crate::require_current_native_context(owned)?;
         let client = client()?;
         let mut status_url = endpoint(bridge, "/api/computer-use/status");
         status_url.query_pairs_mut().append_pair("memberId", member);
         let status = response_json(
             client
                 .get(status_url)
+                .header("x-squad-context", &owned.generation)
                 .send()
                 .map_err(|_| "Computer Use did not answer.".to_owned())?,
         )?;
@@ -344,9 +386,11 @@ mod macos {
         let roster = response_json(
             client
                 .get(endpoint(bridge, "/api/status/snapshot"))
+                .header("x-squad-context", &owned.generation)
                 .send()
                 .map_err(|_| "Squad's member roster did not answer.".to_owned())?,
         )?;
+        crate::require_current_native_context(owned)?;
         let record = roster
             .pointer("/data/members")
             .and_then(|value| value.as_array())
@@ -395,6 +439,7 @@ mod macos {
         context: &ConsentContext,
         member: &str,
         scope: Scope,
+        owned: &autohand_squad_runtime::ownership::OwnedContext,
     ) -> Result<bool, String> {
         let action = match scope {
             Scope::Observe => "observe",
@@ -413,7 +458,12 @@ mod macos {
         );
         let button = format!("Allow {action}");
         let (sender, receiver) = mpsc::channel();
+        let owned = owned.clone();
         app.run_on_main_thread(move || {
+            if let Err(error) = crate::require_current_native_context(&owned) {
+                let _ = sender.send(Err(error));
+                return;
+            }
             let result = MainThreadMarker::new()
                 .ok_or("Native permission dialog could not run on the main thread.".to_owned())
                 .map(|marker| {
@@ -424,7 +474,10 @@ mod macos {
                     // selecting the separately labelled Allow button.
                     alert.addButtonWithTitle(&NSString::from_str("Cancel"));
                     alert.addButtonWithTitle(&NSString::from_str(&button));
-                    alert.runModal() == NSAlertSecondButtonReturn
+                    ACTIVE_MODAL.store(true, Ordering::Release);
+                    let allowed = alert.runModal() == NSAlertSecondButtonReturn;
+                    ACTIVE_MODAL.store(false, Ordering::Release);
+                    allowed
                 });
             let _ = sender.send(result);
         })
@@ -442,7 +495,9 @@ mod macos {
         bridge: &Url,
         member: &str,
         scope: Option<Scope>,
+        owned: &autohand_squad_runtime::ownership::OwnedContext,
     ) -> Result<serde_json::Value, String> {
+        crate::require_current_native_context(owned)?;
         let client = client()?;
         let url = endpoint(bridge, "/api/computer-use/grant");
         let request = if let Some(scope) = scope {
@@ -461,11 +516,13 @@ mod macos {
         let reply = response_json(
             request
                 .header("x-squad-native-grant", token)
+                .header("x-squad-context", &owned.generation)
                 .send()
                 .map_err(|_| {
                     "The local Computer Use permission request did not complete.".to_owned()
                 })?,
         )?;
+        crate::require_current_native_context(owned)?;
         grant_result(&reply, scope)
     }
 }

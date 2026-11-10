@@ -26,7 +26,7 @@ function fail(ctx, res, error) {
 
 export async function handle(req, res, url, ctx) {
   if (url.pathname === "/api/hooks/status" && req.method === "GET") {
-    const entries = await Promise.all(HOOK_ENGINES.map((engine) => hookStatus(engine)));
+    const entries = await Promise.all(HOOK_ENGINES.map((engine) => hookStatus(engine,{scope:ctx.ownedHookScope})));
     ctx.json(res, 200, { success: true, data: Object.fromEntries(entries.map((entry) => [entry.engine, entry])) });
     return true;
   }
@@ -34,9 +34,9 @@ export async function handle(req, res, url, ctx) {
   if (match && req.method === "POST") {
     try {
       const [, engine, action] = match;
-      const port = req.socket?.localPort || 19821;
+      const port = new URL(ctx.ownedBrokerOrigin).port || 80;
       const status = action === "install"
-        ? await installHooks(engine, { nodePath: process.execPath, rootDir: ctx.rootDir, port })
+        ? await installHooks(engine, { nodePath: process.execPath, rootDir: ctx.rootDir, port,scope:ctx.ownedHookScope })
         : await uninstallHooks(engine);
       ctx.logEvent?.(ctx.SEVERITY?.INFO ?? 9, `${engine} hooks ${action === "install" ? "installed" : "removed"} in ${status.path}`, { "event.name": `hooks.${action}`, "autohand.harness": engine });
       ctx.json(res, 200, { success: true, data: status });

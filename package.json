@@ -13,6 +13,7 @@
   },
   "homepage": "https://github.com/autohandai/squad#readme",
   "type": "module",
+  "engines": { "node": "^22.13.0 || >=24.0.0" },
   "autohand": {
     "cliVersion": "0.9.9",
     "cliRepository": "autohandai/code-cli"
@@ -21,6 +22,17 @@
     "dev": "node server.mjs --dev --host 127.0.0.1 --port 19821",
     "build": "node scripts/check-jsx-imports.mjs && vite build",
     "preview": "node server.mjs --host 127.0.0.1 --port 19821",
+    "check:ownership": "node scripts/check-squad-ownership.mjs",
+    "check:owned-data": "node scripts/check-owned-data.mjs",
+    "check:owned-lifecycle": "node scripts/check-owned-lifecycle.mjs",
+    "check:owned-operations": "node scripts/check-owned-operations.mjs",
+    "check:owned-remote": "node scripts/check-owned-remote.mjs",
+    "check:legacy-recovery": "node scripts/check-legacy-recovery.mjs",
+    "check:import-sources": "node scripts/check-import-sources.mjs",
+    "check:owned-restore": "node scripts/check-owned-restore.mjs",
+    "check:owned-transactions": "node scripts/check-owned-transactions.mjs",
+    "check:owned-backups:browser": "node scripts/check-owned-backups-browser.mjs",
+    "check:portable-backups": "node scripts/check-squad-portable.mjs",
     "cli:fetch": "node scripts/fetch-autohand-cli.mjs",
     "cli:fetch:all": "node scripts/fetch-autohand-cli.mjs --all",
     "check:sdk": "node scripts/check-agent-sdk.mjs",
@@ -217,6 +229,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.296",
+    "@autohand/squad-portable": "./packages/squad-portable",
     "@autohandai/agent-sdk": "1.0.5",
     "@radix-ui/react-avatar": "^1.1.11",
     "@radix-ui/react-dialog": "^1.1.15",
@@ -248,7 +261,8 @@
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.0",
     "tw-animate-css": "^1.4.0",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "@crabnebula/packager": "0.8.1",
