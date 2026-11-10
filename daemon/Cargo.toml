@@ -1,6 +1,6 @@
 [package]
 name = "autohand-squad-runtime"
-version = "0.1.21"
+version = "0.1.22"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"
@@ -27,10 +27,16 @@ path = "src/bin/autohand-squad-analytics.rs"
 [[bin]]
 name = "autohand-squad-tray"
 path = "src/bin/autohand-squad-tray.rs"
+required-features = ["native-tray"]
 
 [[bin]]
 name = "autohand-squad-ui"
 path = "src/bin/autohand-squad-ui.rs"
+required-features = ["native-tray"]
+
+[features]
+default = ["native-tray"]
+native-tray = ["dep:tao", "dep:tray-icon"]
 
 [dependencies]
 anyhow = "1.0"
@@ -42,9 +48,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.11"
 reqwest = { version = "0.13", features = ["json", "blocking"] }
-tao = "0.37"
+tao = { version = "0.37", optional = true }
 tokio = { version = "1.41", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
-tray-icon = "0.26"
+tray-icon = { version = "0.26", optional = true }
 turbovec = "=1.1.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]

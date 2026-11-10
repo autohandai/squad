@@ -608,6 +608,7 @@ jobs:
           spctl --assess --type execute --verbose=2 "$app"
           "$node_bin" --version
           "$squad" --help
+          node scripts/check-installed-mcp.mjs "$squad" "$app/Contents/Resources/runtime"
           # `squad serve` waits for the bridge itself and exits non-zero when it
           # never answers. Under `set -euo pipefail` that aborted the step on
           # this line, so the diagnostic below — the bundled server's own log —
@@ -670,6 +671,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Bundled Node.js did not start.' }
           & (Join-Path $installRoot 'squad.exe') --help
           if ($LASTEXITCODE -ne 0) { throw 'Installed Squad CLI did not start.' }
+          node scripts/check-installed-mcp.mjs (Join-Path $installRoot 'squad.exe') $server.DirectoryName
+          if ($LASTEXITCODE -ne 0) { throw 'Installed Squad MCP is incompatible with Desktop.' }
           $uninstaller = $entry.UninstallString.Trim('"')
           if (Test-Path $uninstaller) { Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait }
 

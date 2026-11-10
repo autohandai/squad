@@ -1383,9 +1383,18 @@ fn web_server_candidates(paths: &StatePaths) -> Vec<PathBuf> {
 }
 
 fn packaged_resource_candidates_from(exe_dir: &Path) -> Vec<PathBuf> {
-    let mut candidates = vec![exe_dir.join("server.mjs")];
+    let mut candidates = vec![
+        exe_dir.join("server.mjs"),
+        exe_dir.join("runtime").join("server.mjs"),
+    ];
     if let Some(contents_dir) = exe_dir.parent() {
         candidates.push(contents_dir.join("Resources").join("server.mjs"));
+        candidates.push(
+            contents_dir
+                .join("Resources")
+                .join("runtime")
+                .join("server.mjs"),
+        );
         candidates.push(
             contents_dir
                 .join("lib")
@@ -2306,6 +2315,16 @@ mod tests {
         .contains(&PathBuf::from(
             "/Applications/Autohand Squad.app/Contents/Resources/server.mjs"
         )));
+        assert!(packaged_resource_candidates_from(Path::new(
+            "/Applications/Autohand Squad.app/Contents/MacOS"
+        ))
+        .contains(&PathBuf::from(
+            "/Applications/Autohand Squad.app/Contents/Resources/runtime/server.mjs"
+        )));
+        assert!(
+            packaged_resource_candidates_from(Path::new("/installed/squad"))
+                .contains(&PathBuf::from("/installed/squad/runtime/server.mjs"))
+        );
         assert!(packaged_resource_candidates_from(Path::new("/usr/bin"))
             .contains(&PathBuf::from("/usr/lib/autohand-squad-ui/server.mjs")));
     }

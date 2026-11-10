@@ -10,6 +10,7 @@ pub mod gui_bootstrap;
 pub mod install;
 pub mod live_status;
 pub mod memory_index;
+#[cfg(feature = "native-tray")]
 pub mod native_tray;
 pub mod otel;
 pub mod preflight;
