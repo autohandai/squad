@@ -93,6 +93,8 @@
 
 ## Ownership and backups
 
+- Backup and owned-file downloads retain the current page and use the system browser in the desktop app. Keep their captured ownership context in the download URL and explain the browser handoff beside the backup receipt.
+
 - The canonical member profile preserves the current conversation's start and last-conversation timestamps. Reopening a window must not refill a new chat with earlier turns from that member's history.
 
 - Native notifications, dialogs and attention counts belong to the selected Squad. On an account change, dismiss its old confirmation and withdraw its old notifications; a stale notification never opens the next account's conversation. Relaunch does not adopt notifications from a previous native process.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +39,15 @@ try {
   assert.equal(await browser.evaluate("document.body.innerText.includes('Eva')"),true);
   await browser.click('Export backup');
   await until(()=>browser.evaluate("document.body.innerText.includes('Download JSON backup')"),'verified download receipt',15_000);
+  const downloads=join(directory,'downloads');await mkdir(downloads);
+  await browser.send('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:downloads});
+  const initialRealm=await browser.evaluate('performance.timeOrigin');
+  await browser.send('Runtime.evaluate',{expression:"[...document.querySelectorAll('a')].find(link=>link.innerText.includes('Download JSON backup')).click()",userGesture:true});
+  const savedName=await until(async()=>(await readdir(downloads)).find(name=>name.endsWith('.json')),'clicked backup download reaches the filesystem');
+  const clickedBackup=JSON.parse(await readFile(join(downloads,savedName),'utf8'));
+  assert.equal(clickedBackup.agents[0].profile.name,'Eva');
+  assert(clickedBackup.files.some(file=>Buffer.from(file.content,'base64').toString()==='Cloud exact file bytes\0'));
+  assert.equal(await browser.evaluate('performance.timeOrigin'),initialRealm,'downloading keeps the current Squad page open');
   assert.equal(await browser.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),true);
   await browser.screenshot('.codex-artifacts/ownership/backups-desktop.png');
   await browser.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});

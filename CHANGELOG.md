@@ -22,6 +22,7 @@ list to the section for that version.
 
 - Portable Squad archives need Node 22.13 LTS or 24+ for safe local data locking. Desktop installers continue to bundle their runtime.
 - Reset applies to the selected Squad’s data and keeps its earlier dataset. Completion follows a durable operation receipt instead of waiting for a different process ID.
+- Desktop backup downloads open in your browser, keeping Squad open while you save the verified file.
 
 ### Fixed
 

@@ -51,7 +51,7 @@ export function CloudBackupSettings({api,createBackup,onPrepared,format='json',a
     </div>:null}
     {notice?<p role="status" className="text-muted-foreground">{notice}</p>:null}
     {error?<div className="space-y-2"><p role="alert" className="text-destructive">{error}</p><Button variant="ghost" size="sm" disabled={Boolean(busy)} onClick={()=>run('reconnect',async()=>{await api('/api/ownership/cloud/reconnect',{method:'POST'});await load();})}>Reconnect cloud access</Button></div>:null}
-    {download?<a className="inline-block underline underline-offset-4" href={ownershipUrl(download.downloadUrl)}>Download verified {download.format.toUpperCase()} cloud snapshot</a>:null}
+    {download?<a className="inline-block underline underline-offset-4" href={ownershipUrl(download.downloadUrl)} target="_blank" rel="noreferrer">Download verified {download.format.toUpperCase()} cloud snapshot</a>:null}
     <div className="divide-y divide-border/65">{backups.map(backup=><div key={backup.id} className="space-y-2 py-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2"><span className="font-medium [overflow-wrap:anywhere]">{backup.label||'Squad backup'}</span><time className="text-xs text-muted-foreground" dateTime={backup.createdAt}>{new Date(backup.createdAt).toLocaleString()}</time></div>
       <p className="text-xs text-muted-foreground">{backup.memberCount} {backup.memberCount===1?'member':'members'}</p>

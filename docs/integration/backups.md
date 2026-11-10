@@ -129,7 +129,9 @@ Its `source_id` is compatible with `restore_squad`. It does not auto-import.
 `GET /api/owned/members` and `/api/owned/members/:id[/memories|/files]` read
 canonical selected-owner data. `POST /api/backups` accepts `{format,memberIds?}`
 and returns a UUID receipt and download URL. Exact bytes are downloaded at
-`/api/backups/:id/download`. Exported profiles, memory/skill documents,
+`/api/backups/:id/download`. Desktop download links use the system browser and
+keep Squad's current page open; the local service must stay available until
+the transfer finishes. Exported profiles, memory/skill documents,
 conversations, artifacts, referenced attachments and ordinary files in assigned
 owned member homes are managed content. The `ai.autohand.squad` extension maps
 managed workspace file prefixes to source path hints for rebasing on import.

@@ -78,6 +78,20 @@ write authority even though ordinary read-only export-plan creation is allowed.
 
 ## Consequences
 
+- Backup and owned-file links open a separate browser target. The desktop shell
+  already routes new HTTP windows through the system browser; a same-window
+  attachment link would otherwise rely on an unverified WebView download path,
+  the same class of failure reported in issue57. The URL retains the selected
+  ownership generation, and the broker rechecks it before serving bytes. This
+  keeps Squad open without introducing general filesystem IPC permissions.
+  Saving is managed by the browser, so this does not offer an in-app save
+  dialog and requires the local service to remain available during transfer.
+  It does not repair the older blob-based conversation/draft export path.
+  The owned-backups browser check clicks the actual receipt link, reads the
+  resulting JSON file from a temporary download folder, verifies the member
+  and exact managed memory bytes, and checks that Squad's page stayed open.
+  This is browser/HTTP proof, not an installed WebView or OS-save-dialog test.
+
 - Restore stages a fresh dataset and requires explicit replacement confirmation,
   rather than merging two independently authored registries. The old dataset is
   retained separately. This avoids guessing conflict winners across member,
