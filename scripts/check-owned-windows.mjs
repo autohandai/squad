@@ -53,12 +53,15 @@ try {
   await assert.rejects(crashed.terminate(),/supervision stopped/);assert.equal(await drained(crashedName),false,'A missing job name after host loss is not a completed drain receipt.');
 
   const holder=join(directory,'holder.mjs'),ledgerRoot=join(directory,'ledger');
-  await writeFile(holder,`import{createWorkerLedger}from ${JSON.stringify(ledgerModule)};import{createWindowsJob}from ${JSON.stringify(jobModule)};import{fork}from'node:child_process';const ledger=await createWorkerLedger(process.env.FIXTURE_LEDGER,'holder');const intent=await ledger.pending();const job=await createWindowsJob(intent.jobName,{receiptPath:intent.receiptPath,bootUptimeMs:intent.bootUptimeMs});const child=fork(${JSON.stringify(fixture)},[],{env:{...process.env,AUTOHAND_SQUAD_WIN_JOB_PIPE:job.pipe},stdio:['ignore','ignore','ignore','ipc']});child.on('message',message=>{if(message.grandchild)process.send({...message,root:child.pid,jobName:intent.jobName,receiptPath:intent.receiptPath,bootUptimeMs:intent.bootUptimeMs});});await job.attached(child.pid);await intent.launched(child.pid);child.send({type:'ownership-start',generation:${JSON.stringify(generation)}});setInterval(()=>{},1000);`);
+  await writeFile(holder,`import{createWorkerLedger}from ${JSON.stringify(ledgerModule)};import{createWindowsJob}from ${JSON.stringify(jobModule)};import{fork}from'node:child_process';const ledger=await createWorkerLedger(process.env.FIXTURE_LEDGER,'holder');const intent=await ledger.pending();const job=await createWindowsJob(intent.jobName,{receiptPath:intent.receiptPath,bootUptimeMs:intent.bootUptimeMs});const child=fork(${JSON.stringify(fixture)},[],{env:{...process.env,AUTOHAND_SQUAD_WIN_JOB_PIPE:job.pipe},stdio:['ignore','ignore','ignore','ipc']});child.on('message',message=>{if(message.grandchild)process.send({...message,root:child.pid,host:job.pid,jobName:intent.jobName,receiptPath:intent.receiptPath,bootUptimeMs:intent.bootUptimeMs});});await job.attached(child.pid);await intent.launched(child.pid);child.send({type:'ownership-start',generation:${JSON.stringify(generation)}});setInterval(()=>{},1000);`);
   const broker=fork(holder,[],{env:{...process.env,FIXTURE_LEDGER:ledgerRoot},stdio:['ignore','ignore','pipe','ipc']});children.add(broker);
   const [held]=await once(broker,'message');
   await assert.rejects(createWorkerLedger(ledgerRoot,'contender'),/previous private Squad process/);
   const holderExited=once(broker,'exit');broker.kill('SIGKILL');await holderExited;
-  await until(async()=>gone(held.root)&&gone(held.grandchild)&&await windowsJobDrained(held.jobName,{receiptPath:held.receiptPath,bootUptimeMs:held.bootUptimeMs}),'broker crash closes job host pipe and owned tree');
+  await until(async()=>gone(held.root)&&gone(held.grandchild)&&await windowsJobDrained(held.jobName,{receiptPath:held.receiptPath,bootUptimeMs:held.bootUptimeMs}),'broker crash closes job host pipe and owned tree').catch(async error=>{
+    const evidence={rootGone:gone(held.root),grandchildGone:gone(held.grandchild),hostGone:gone(held.host),receipt:await readFile(held.receiptPath,'utf8').catch(error=>error.code),jobEmpty:await windowsJobIsEmpty(held.jobName).catch(error=>error.message)};
+    throw Error(`${error.message}; isolated Windows evidence: ${JSON.stringify(evidence)}`);
+  });
   await createWorkerLedger(ledgerRoot,'replacement');
 
   const current=join(directory,'current.json'),temporary=join(directory,'current.tmp');

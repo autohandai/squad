@@ -22,7 +22,7 @@ try {
   const groups = await Promise.all(['Release practice', 'Product decisions', 'Working together'].map((name, index) => api('/api/memory/groups', 'POST', { name, color: ['#d28c46', '#518cce', '#bb7ace'][index] })));
   for (let index = 0; index < 12; index++) await api(`/api/memory/${encodeURIComponent(snapshot.records[index].id)}/metadata`, 'PATCH', { groupId: groups[index % groups.length].id, kind: index % 2 ? 'lesson' : 'decision', tags: ['verified'] });
   for (let index = 1; index < 5; index++) await api('/api/memory/links', 'POST', { from: snapshot.records[0].id, to: snapshot.records[index].id, relation: index === 4 ? 'contradicts' : 'supports', evidence: 'Fixture relationship verified by the release review.' });
-  browser = await startBrowser();
+  browser = await startBrowser({disableBackForwardCache:true});
   await seedOwnedBrowserFixture(bridge,browser);
   await browser.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
   await browser.navigate(bridge.origin + '/memory');
@@ -118,10 +118,13 @@ try {
   await browser.evaluate('window.__rejectMemorySave=false'); await browser.click('Save collection settings');
   await until(async () => (await api('/api/memory/settings')).profiles === false, 'source setting saved');
   await browser.screenshot(join(artifact, 'memory-settings.png'));
+  // Close the old realm before the broker changes generation. A simultaneous
+  // automatic ownership navigation and CDP navigation raced on Linux CI.
+  await browser.close();browser=null;
   await bridge.restart();
-  // A lost/replaced ownership context deliberately leaves the private route.
-  // Open Settings in a fresh page realm, then verify canonical persistence.
-  await browser.navigate('about:blank');await browser.navigate(bridge.origin+'/settings/memory');
+  browser=await startBrowser({disableBackForwardCache:true});
+  await seedOwnedBrowserFixture(bridge,browser);
+  await browser.navigate(bridge.origin+'/settings/memory');
   await until(() => browser.evaluate("!document.getElementById('boot') && document.querySelector('[role=switch][aria-label=\"Collect Profile Markdown\"]')?.getAttribute('aria-checked')==='false'"), 'settings persist bridge and browser restart', 30000);
   await browser.click('Open collective memory');
   await until(() => browser.evaluate("Boolean(document.querySelector('[data-testid=\"memory-page\"]'))"), 'return to memory');
