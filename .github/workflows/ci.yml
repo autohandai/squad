@@ -280,6 +280,10 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/check-owned-windows.mjs
 
+      - name: Check installed MCP from a neutral directory
+        shell: bash
+        run: node scripts/check-installed-mcp.mjs "daemon/target/debug/squad${{ runner.os == 'Windows' && '.exe' || '' }}"
+
       - name: Check stop keeps sibling Squad instances alive
         if: runner.os == 'Linux'
         run: bun run check:stop-isolation

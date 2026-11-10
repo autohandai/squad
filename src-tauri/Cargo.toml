@@ -1,6 +1,6 @@
 [package]
 name = "autohand-squad-desktop"
-version = "0.1.21"
+version = "0.1.22"
 description = "Autohand Squad desktop shell (Tauri 2)"
 edition = "2021"
 rust-version = "1.90"
@@ -13,7 +13,7 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-autohand_squad_runtime = { package = "autohand-squad-runtime", path = "../daemon" }
+autohand_squad_runtime = { package = "autohand-squad-runtime", path = "../daemon", default-features = false }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
