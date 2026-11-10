@@ -1,7 +1,7 @@
 # ADR-0194: One interoperable document for Squad backups
 
 Date: 2026-11-10
-Status: In progress
+Status: Implemented locally; release verification in progress
 
 ## Context
 
@@ -164,15 +164,16 @@ memory, re-exports and checks work files, artifacts, attachments, curation and
 unknown payloads. It also rejects corruption and context revocation without
 publishing. No harness is launched in this check.
 
-The API's real D1/R2 workerd suite currently passes 18 tests, including frozen
+The API's initial real D1/R2 workerd suite passed 18 tests, including frozen
 plans across live deletion, owner isolation, expiry, read-only export, revoked
 membership and the actual Node JSON/YAML exporter. `check-squad-portable.mjs`
 checks binary chunk boundaries, duplicate IDs/paths, unsupported YAML/versions,
 unsafe paths, MIME header injection and checksums. `check-owned-data.mjs` adds
-the real passive worker's managed files and exclusion behavior. UI/MCP wiring,
-restoration and hosted deployment verification remain in progress.
+the real passive worker's managed files and exclusion behavior. UI/MCP wiring
+and restoration are now exercised by the broker and browser checks below;
+hosted deployment verification remains outstanding.
 
-The suite now passes 19 tests after adding retained snapshots: it checks
+The suite expanded to 19 tests after adding retained snapshots: it checks
 idempotent retention and one audit record, real D1 expiry cleanup preserving
 retained pointers, frozen reads after live deletion, owner-private listing,
 read-only retain/remove refusal, explicit removal confirmation and the actual
@@ -195,6 +196,13 @@ confirmation, exact download, restore preview and explicit removal with an
 in-process cloud transport. Opening Backups/local export makes no cloud request.
 That cloud transport is a UI fixture; actual D1/R2 behavior is covered by the
 separate API integration checks. The installed native app remains untouched.
+
+An actual desktop runtime staged by `scripts/stage-desktop.mjs --runtime-only`
+also passes isolated owner admission, canonical member retrieval through its
+packaged MCP modules, and JSON/YAML exports containing exact managed memory
+bytes. The validator is imported from the staged `node_modules` package, not
+the source-tree package. This proves runtime composition and portable output;
+it does not launch an installed GUI or publish a signed desktop release.
 
 An isolated workerd probe observed that a 3,000,124-byte valid object containing
 one million empty profile objects retained 142,568,044 bytes of used heap with

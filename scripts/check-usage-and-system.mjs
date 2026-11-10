@@ -211,7 +211,7 @@ function jsonServer(routes) {
       return;
     }
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(handler()));
+    res.end(JSON.stringify(handler(req)));
   });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port, hits }));
@@ -259,7 +259,9 @@ const bridge = await startBridge({
 let analyticsStub = null;
 let daemonStub = null;
 try {
-  const squadDir = join(bridge.directory, "squad");
+  const squadDir = bridge.dataRoot;
+  const metricsContexts=[];
+  const generation=(await bridge.api("/api/ownership/context")).data.generation;
 
   await check("GET /api/analytics (bridge fallback) carries byMember, byModel, byDay and keeps the old fields", async () => {
     const response = await bridge.api("/api/analytics");
@@ -290,11 +292,12 @@ try {
 
   await check("GET /api/analytics (analytics-daemon path) gets the same breakdowns attached", async () => {
     analyticsStub = await jsonServer({
-      "GET /metrics": () => ({ success: true, generatedAt: "unix-ms:1", source: "analytics-daemon", usage: { totalRecords: 1, totalTokens: 4242, topModels: [] }, work: {}, services: {} }),
+      "GET /metrics": req => (metricsContexts.push(req.headers["x-squad-context"]), { success: true, generatedAt: "unix-ms:1", source: "analytics-daemon", usage: { totalRecords: 1, totalTokens: 4242, topModels: [] }, work: {}, services: {} }),
     });
     await writeFile(join(squadDir, "analytics.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: analyticsStub.port, url: `http://127.0.0.1:${analyticsStub.port}` }));
     const response = await bridge.api("/api/analytics");
     assert.equal(response.data.source, "analytics-daemon");
+    assert.deepEqual(metricsContexts,[generation],"native analytics receives the captured owner generation");
     assert.equal(response.data.usage.totalTokens, 4242, "daemon's own usage fields untouched");
     assert.equal(response.data.usage.byMember.find((row) => row.key === "asq_ava").totalTokens, 800);
     assert.equal(response.data.usage.byDay.length, 3);
@@ -318,12 +321,12 @@ try {
     assert.equal(data.memoryEntries, 3 + 2 + 2, "MEMORY.md bullets plus index entries; observers skipped");
     assert.equal(data.memoryDocuments, 2);
     assert.equal(data.dataFolder, squadDir);
-    assert.equal(data.memberStateFolder, join(bridge.directory, "app"));
+    assert.equal(data.memberStateFolder, bridge.appRoot);
     assert.ok(data.revealLabel, "reveal label present");
   });
 
   await check("memory count reads what is really on disk", async () => {
-    const counted = await countMemoryEntries(join(bridge.directory, "app", "agents"));
+    const counted = await countMemoryEntries(join(bridge.appRoot, "agents"));
     assert.deepEqual(counted, { memoryEntries: 7, memoryDocuments: 2, members: 2 });
   });
 
@@ -332,7 +335,7 @@ try {
       "GET /health": () => ({ ok: true }),
       "POST /updates/check": () => ({ success: true, checkedAt: "unix-ms:1790000000000", updateAvailable: false, latestAllowedVersion: "0.1.6", source: "github:autohandai/squad" }),
     });
-    await writeFile(join(squadDir, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: daemonStub.port, url: `http://127.0.0.1:${daemonStub.port}/` }));
+    await writeFile(join(bridge.directory, "squad", "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: daemonStub.port, url: `http://127.0.0.1:${daemonStub.port}/` }));
 
     const initial = await bridge.api("/api/system/settings");
     assert.equal(initial.data.autoCheckUpdates, true, "default on");
@@ -366,7 +369,7 @@ try {
   });
 
   await check("route plug-in loaded and no bridge errors from this lane", async () => {
-    assert.match(bridge.logs, /route plug-ins:.*system/);
+    assert.equal((await bridge.api("/api/system/summary")).success,true,"system route is admitted through the owned worker");
     assert.doesNotMatch(bridge.logs, /system\.route\.mjs failed to load/);
   });
 } finally {

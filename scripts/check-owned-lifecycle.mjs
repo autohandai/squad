@@ -40,7 +40,13 @@ try {
   const first = createOwnershipBroker(options), contender = createOwnershipBroker(options);
   try {
     const origin = await first.listen();
-    for (let index=0; index<100; index++) { if ((await (await fetch(`${origin}/api/ownership/context`)).json()).data.state === 'signed_out') break; await new Promise(resolve=>setTimeout(resolve,10)); }
+    const readyDeadline=Date.now()+10_000;
+    while(true) {
+      const receipt=await readFile(join(brokerRoot,'ownership-active.json'),'utf8').then(JSON.parse,error=>{if(error.code==='ENOENT')return null;throw error;});
+      if(receipt?.state==='signed_out')break;
+      assert.ok(Date.now()<readyDeadline,'The actual holder must finish publishing its signed-out receipt.');
+      await new Promise(resolve=>setTimeout(resolve,10));
+    }
     const before = await readFile(join(brokerRoot,'ownership-active.json'),'utf8');
     await assert.rejects(contender.listen(), error=>error.code==='dataset_busy');
     await contender.close();

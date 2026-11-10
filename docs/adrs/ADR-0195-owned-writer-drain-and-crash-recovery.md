@@ -1,7 +1,7 @@
 # ADR-0195: Prove writers have stopped before changing owned data
 
 Date: 2026-11-10
-Status: In progress
+Status: Implemented locally; Windows execution verification pending
 
 ## Context and evidence
 
@@ -126,8 +126,10 @@ The socket fixture exercises missing, current and unknown protocol versions.
   against power loss or storage-controller failure. A missing/incompatible
   Windows helper blocks admission/publication rather than falling back to
   root-only process termination or pretending directory fsync succeeded.
-- Restore/reset transaction integration, native GUI verification and the full
-  existing runtime fixture migration remain work in progress.
+- Restore/reset transaction integration is verified through actual broker and
+  browser checks, including interrupted responses and explicit restart. Native
+  installed-window verification and the remaining broad regression checks are
+  separate outstanding evidence; no installed application was replaced.
 
 ## Validation
 

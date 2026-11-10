@@ -1,7 +1,7 @@
 # ADR-0193: Bind every Squad data path to a verified owner
 
 Date: 2026-11-10
-Status: In progress
+Status: Implemented locally; release verification in progress
 
 ## Context and evidence
 
@@ -74,12 +74,31 @@ time; keep saved references free of generations and credentials. The real
 attachment browser check caught a decoded-image failure at this boundary.
 Browser-managed fetches keep their header-based ownership fence.
 
+Reload can occur before a debounced conversation save. A draft in the exact
+actor/owner/dataset browser namespace may be recovered automatically only when
+its recorded verified revision still matches the canonical revision, all member
+IDs remain authorized, and a fresh CAS succeeds. A missing revision, competing
+write or failed save preserves the draft separately and keeps canonical data.
+No other account's browser cache participates. The real attachment test caught
+the pre-debounce reload case and now verifies saved/reopened file references;
+the two-window backup test retains its conflicting-write/draft-recovery checks.
+
 An authenticated served-token client remains a remote transport even when two
 bridges share one computer. Route its bearer credential through the destination
 worker's token validation and restricted member-route allowlist. It must not
 need the other broker's browser generation, bypass token checks through public
 readiness, or acquire local operator authority. Actual attachment forwarding
 and both loopback/nonloopback ownership tests exercise these boundaries.
+
+Team-template validation found that paused routines were missing after import.
+The initial suspicion was unresolved member IDs; the actual failure was the
+worker calling its own rewritten Host address without the private transport
+capability. Member design used the same self-request pattern. Internal calls
+now use the captured broker origin and generation, with an ownership check
+before and after transport; they never discover a newer account mid-operation.
+Notification links and served-bridge addresses also name the public broker,
+not an inaccessible private worker port. The real team-builder check verifies
+both imported paused routines through the normal scheduler API.
 
 Runtime readiness without a context returns machine information only. Review
 found that exempting `/api/runtime` from the generation fence allowed an old
@@ -88,6 +107,10 @@ used to aggregate legacy machine files and materialize a machine snapshot;
 it now performs pure, captured-owner reads and requires a generation for
 private HTTP metrics. Identity-backed usage requests match both the current
 credential fingerprint and its verified issuer before sending the credential.
+The analytics integration check subsequently caught an omitted generation on
+the web worker's native metrics request. Its fixture now asserts that exact
+header; the bridge also checks its captured context after consuming the reply.
+Only a loopback daemon address is admitted, with redirects refused.
 
 ## Consequences
 
@@ -104,7 +127,8 @@ credential fingerprint and its verified issuer before sending the credential.
   departing dataset; failed import does not promise byte-identical pre-drain
   records. A durable operation journal must distinguish a committed pointer
   from a lost response, and readiness uses owner/dataset/generation rather than
-  a changed broker PID. These lifecycle integrations remain in progress.
+  a changed broker PID. Restore/reset use that journal and explicit restart
+  handoff; the earlier dataset remains available for recovery.
 - Read-only teams use a smaller browse/export surface. They do not mount the
   writable app or expose semantic GETs that start credential/provider probes.
 - File permissions protect the local cache within the OS account. This does
@@ -120,8 +144,12 @@ in-flight request, private-port fencing and fresh team revocation pass.
 worker against an isolated identity fixture. Seeded interrupted records remain
 byte-identical, provider/execution routes are denied, no unexpected identity
 service call occurs, and exact managed files export in JSON/YAML. This is local
-runtime evidence; native windows/daemon isolation, full writable runtime,
-restore/reset handoff and installed-app verification are still outstanding.
+runtime evidence. `check-owned-lifecycle.mjs` additionally runs the actual
+writable broker and worker through account changes and process-tree cleanup.
+`check-owned-backups-browser.mjs` exercises canonical hydration, restore and
+explicit restart, manual recovery, and two simultaneous windows with competing
+CAS saves and retained draft recovery at desktop and 390px widths. These checks
+do not launch or replace the installed application.
 
 `node scripts/check-owned-operations.mjs` exercises the durable operation
 journal separately from restore execution: idempotent request IDs, phase and
@@ -129,5 +157,13 @@ revision fences, and actual dataset pointer publication whose final response
 is deliberately omitted. Recovery observes that committed pointer and waits
 for an explicit restart; it does not publish the import again. An interrupted
 operation before publication retains the old pointer, and actor/owner checks
-reject another window's receipt. This metadata foundation is implemented;
-restore execution and its UI handoff still need integration.
+reject another window's receipt. The broker now uses that journal for actual
+restore/reset; browser verification waits for its durable completion and an
+explicit restart into a fresh dataset and JavaScript realm.
+
+The full local native runtime suite passes 105 library tests and two binary
+tests; the desktop-shell suite passes 32 tests. Those are filesystem, protocol
+and process checks on macOS, not installed-window or Windows execution proof.
+The Windows helper cross-check and remaining platform evidence are recorded in
+ADR-0195. The hosted API suite passes 21 local D1/R2 tests and type checking;
+this change has not yet deployed the hosted API or its migration.

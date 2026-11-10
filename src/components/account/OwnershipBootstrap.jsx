@@ -62,10 +62,11 @@ export function OwnershipBootstrap({ children }) {
             .map(([id, access]) => ({ ...access.agent, id, ownership: next.owner }));
           ownedLocalStorage.setItem('autohandSquad.v1.agents', JSON.stringify(members));
           const cachedMessages=ownedLocalStorage.getItem('autohandSquad.v1.messages');
+          const cachedRevision=ownedLocalStorage.getItem('autohandSquad.v1.browserRevision');
           // Reload can beat the current conversation's debounced save. Recover
           // that exact owner/dataset draft only if its last verified revision
           // still matches. A different window's newer state always wins CAS.
-          if(cachedMessages&&cachedMessages!=='{}'&&cachedMessages!==JSON.stringify(browser.messagesByAgent||{})&&Number(ownedLocalStorage.getItem('autohandSquad.v1.browserRevision'))===(browser.revision||0)) {
+          if(cachedMessages&&cachedMessages!=='{}'&&cachedMessages!==JSON.stringify(browser.messagesByAgent||{})&&cachedRevision!==null&&/^\d+$/.test(cachedRevision)&&Number(cachedRevision)===(browser.revision||0)) {
             try {
               const draft=JSON.parse(cachedMessages),known=new Set(members.map(member=>member.id));
               if(draft&&typeof draft==='object'&&!Array.isArray(draft)&&Object.keys(draft).every(id=>known.has(id))) {

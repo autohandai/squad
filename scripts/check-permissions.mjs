@@ -18,37 +18,21 @@
 // See docs/adrs/ADR-0041-permissions-survive-the-bridge.md.
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const port = 19700 + Math.floor(Math.random() * 200);
-const base = `http://127.0.0.1:${port}`;
-const home = await mkdtemp(join(tmpdir(), "squad-perm-"));
-const stateDir = join(home, "state");
-const workspace = root;
-
-const bridge = spawn(process.execPath, ["server.mjs", "--host", "127.0.0.1", "--port", String(port)], {
-  cwd: root,
-  env: { ...process.env, AUTOHAND_SQUAD_HOME: join(home, "squad"), AUTOHAND_SQUAD_APP_STATE_DIR: stateDir },
-  stdio: "ignore",
-});
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const post = (path, body) =>
-  fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
-const configFor = async (id) => JSON.parse(await readFile(join(stateDir, "agents", id, "config.json"), "utf8"));
+import {readFile,writeFile} from 'node:fs/promises';
+import {join,resolve} from 'node:path';
+import {startBridge} from './lib/reliability-browser.mjs';
+const workspace=resolve(new URL('..',import.meta.url).pathname);
+const bridge=await startBridge({prepare:async directory=>{
+  const sdk=join(directory,'permissions-sdk.mjs');
+  await writeFile(sdk,'export class AutohandSDK {async start(){} async close(){} async interrupt(){}}');
+  return {AUTOHAND_AGENT_SDK_ENTRY:sdk,AUTOHAND_AGENT_SDK_DIR:directory};
+}});
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const post=(path,body)=>bridge.api(path,'POST',body);
+const configFor=async id=>JSON.parse(await readFile(join(bridge.appRoot,'agents',id,'config.json'),'utf8'));
 
 try {
-  let up = false;
-  for (let attempt = 0; attempt < 60 && !up; attempt += 1) {
-    await sleep(250);
-    up = await fetch(`${base}/api/runtime`).then((r) => r.ok).catch(() => false);
-  }
-  assert.ok(up, "the bridge started");
+  assert.equal((await bridge.api('/api/runtime')).success,true,'The owned fixture bridge started.');
 
   // --- a member whose owner asked for one tool to prompt -------------------
 
@@ -109,7 +93,4 @@ try {
   // src/lib and Node can import it.
 
   console.log("check-permissions: ok");
-} finally {
-  bridge.kill("SIGKILL");
-  await rm(home, { recursive: true, force: true }).catch(() => {});
-}
+} finally { await bridge.close(); }

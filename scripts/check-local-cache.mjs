@@ -41,7 +41,7 @@ assert.equal(compactChannelMessagesCache(storage, 'channel-history'), false, 'Al
 // unchanged. Exercise App's persistence entry point rather than a parallel one.
 const source = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const persistSource = source.slice(source.indexOf('function persistLocal('), source.indexOf('function activeAgentForReads('));
-const persist = Function('window', 'STORAGE_KEYS', 'writeLocalJson', persistSource + '; return persistLocal;')({ localStorage: storage }, { channelMessages: 'channel-history' }, writeLocalJson);
+const persist = Function('window', 'ownedLocalStorage', 'STORAGE_KEYS', 'writeLocalJson', persistSource + '; return persistLocal;')({ localStorage: storage }, storage, { channelMessages: 'channel-history' }, writeLocalJson);
 values.clear(); values.set('channel-history', JSON.stringify(history)); values.set('other-history', 'x'.repeat(850_000));
 const roster = [{ id: 'alex', name: 'Alex', role: 'GTM APAC Leader', instructions: 'authored '.repeat(25_000) }];
 assert.throws(() => storage.setItem('agents', JSON.stringify(roster)), /quota/);

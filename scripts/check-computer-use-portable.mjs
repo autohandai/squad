@@ -26,6 +26,8 @@ try{
  await cp(new URL('../src/lib/',import.meta.url),join(web,'src/lib'),{recursive:true});
  await file(join(web,'server/routes/workflows.route.mjs'),await readFile(new URL('../server/routes/workflows.route.mjs',import.meta.url),'utf8'));
  for(const name of ['@autohandai/agent-sdk/package.json','@autohandai/agent-sdk/dist/index.js','toml/package.json','yaml/package.json'])await file(join(root,'node_modules',name));
+ for(const name of ['yaml','zod'])await cp(new URL(`../node_modules/${name}/`,import.meta.url),join(root,'node_modules',name),{recursive:true,dereference:true});
+ await cp(new URL('../packages/squad-portable/',import.meta.url),join(root,'packages/squad-portable'),{recursive:true});
  await cp(new URL('../node_modules/@anthropic-ai/claude-agent-sdk/',import.meta.url),join(root,'node_modules/@anthropic-ai/claude-agent-sdk'),{recursive:true});
  const cliName=names[`${os}/${arch}`];assert.ok(cliName,'fixture needs a supported native portable target');const cli='pinned CLI fixture';await file(join(root,'vendor/autohand-cli',cliName),cli);const pkg=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));await file(join(root,'vendor/autohand-cli/BUILD_INFO.json'),JSON.stringify({version:pkg.autohand.cliVersion,sha256:{[cliName]:digest(cli)}}));
  const engine=join(root,'engine-input'),vendor=join(root,'vendor/computer-use');await mkdir(vendor,{recursive:true});
@@ -43,6 +45,8 @@ try{
  const profiles=await import(pathToFileURL(join(bundled,'src/lib/member-profiles.js')));
  assert.deepEqual(profiles.roleTemplates,roleTemplates,'Extracted runtime must preserve every built-in member profile, including Chief of Staff.');
  const claudeSdk=await import(pathToFileURL(join(bundled,'node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs')));
+ const portable=await import(pathToFileURL(join(bundled,'node_modules/@autohand/squad-portable/index.mjs')));
+ assert.equal(typeof portable.validateBackup,'function','The actual portable-backup package and its runtime dependency closure resolve in the archive.');
  assert.equal(typeof claudeSdk.query,'function','Extracted portable runtime must load the actual Claude SDK.');
  assert.equal(digest(await readFile(join(bundled,'node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs'))),digest(await readFile(new URL('../node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs',import.meta.url))));
  assert.equal(await readFile(join(component,'cua-driver'+exe),'utf8'),'engine fixture');assert.ok((await readFile(join(component,'LICENSE-CUA.md'),'utf8')).includes('Fixture component notice'));

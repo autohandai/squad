@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createOwnedBridgeFixture, ownedFixtureHeaders, seedOwnedCanonicalFixture } from "./lib/owned-bridge-fixture.mjs";
 // "Chat with a new member" in a real browser (ADR-0126): a throwaway bridge
 // serving dist/, headless Chrome over the DevTools protocol, one seeded
 // member so the app opens on the Squad page. Then:
@@ -20,7 +21,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -105,7 +106,9 @@ function installFixtures(data) {
     payload.data.defaultWorkspace = data.root;
     return new Response(JSON.stringify(payload), { status: response.status, headers: response.headers });
   };
-  const store = (key, value) => localStorage.setItem(`autohandSquad.v1.${key}`, JSON.stringify(value));
+  if(location.origin==="null")return;
+  const scopedKey=key=>["theme","skin","sidebarCollapsed"].includes(key)?`autohandSquad.v1.${key}`:`autohandSquad.owner.v1.${data.storageKey}.${encodeURIComponent(`autohandSquad.v1.${key}`)}`;
+  const store = (key, value) => localStorage.setItem(scopedKey(key), JSON.stringify(value));
   if (!localStorage.getItem("memberByChatVerify.initialized")) {
     localStorage.clear();
     store("agents", data.agents);
@@ -154,9 +157,12 @@ const port = await freePort();
 const chromePort = await freePort();
 const origin = `http://127.0.0.1:${port}`;
 let logs = "";
+const savedConfig=JSON.parse(await readFile(join(directory,"config.json"),"utf8").catch(()=>"{}"));
+await writeFile(join(directory,"config.json"),JSON.stringify({...savedConfig,auth:{token:"fixture-no-provider",email:"reliability@example.test",expiresAt:"2099-01-01T00:00:00Z"}}));
+const ownership=await createOwnedBridgeFixture({serviceRoot:join(directory,"squad"),appRoot:join(directory,"app")});
 const bridge = spawn(process.execPath, ["server.mjs", "--host", "127.0.0.1", "--port", String(port)], {
   cwd: root,
-  env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, "squad"), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, "app"), AUTOHAND_HOME: join(directory, "autohand"), AUTOHAND_USER_CONFIG_PATH: join(directory, "config.json"), CLAUDE_CONFIG_DIR: join(directory, "claude"), ANTHROPIC_API_KEY: "fixture-only-no-provider" },
+  env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_HOME: join(directory, "squad"), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, "app"), AUTOHAND_HOME: join(directory, "autohand"), AUTOHAND_USER_CONFIG_PATH: join(directory, "config.json"), CLAUDE_CONFIG_DIR: join(directory, "claude"), ANTHROPIC_API_KEY: "fixture-only-no-provider" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 bridge.stdout.on("data", (d) => { logs += d; }); bridge.stderr.on("data", (d) => { logs += d; });
@@ -164,7 +170,8 @@ const chrome = spawn(chromePath, ["--headless=new", "--disable-gpu", "--disable-
 let cdp = null;
 const saved = [];
 try {
-  await waitFor(async () => (await fetch(`${origin}/api/runs`).catch(() => null))?.ok, "bridge", 30000);
+  await waitFor(async () => (await fetch(`${origin}/api/runs`,{headers:await ownedFixtureHeaders(origin)}).catch(() => null))?.ok, "bridge", 30000);
+  fixtures.storageKey=(await seedOwnedCanonicalFixture(origin,fixtures)).storageKey;
   const target = await waitFor(async () => (await fetch(`http://127.0.0.1:${chromePort}/json`).then((r) => r.json()).catch(() => []))?.find((item) => item.type === "page"), "Chrome DevTools", 30000);
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { ws.addEventListener("open", resolve, { once: true }); ws.addEventListener("error", reject, { once: true }); });
@@ -176,7 +183,8 @@ try {
   await cdp.send("Page.navigate", { url: `${origin}/squad` });
   const text = () => cdp.evaluate("document.body.innerText || ''");
   const save = async (name) => { await delay(300); const path = join(artifacts, name); await cdp.screenshot(path); saved.push(path); };
-  const agentsStored = () => cdp.evaluate("JSON.parse(localStorage.getItem('autohandSquad.v1.agents') || '[]')");
+  const membersKey=`autohandSquad.owner.v1.${fixtures.storageKey}.${encodeURIComponent("autohandSquad.v1.agents")}`;
+  const agentsStored = () => cdp.evaluate(`JSON.parse(localStorage.getItem(${JSON.stringify(membersKey)}) || '[]')`);
   const sidebarNames = () => cdp.evaluate("[...document.querySelectorAll('aside button[aria-label]')].map((el) => el.getAttribute('aria-label')).join(' | ')");
 
   // 1. The Squad page: the secondary action beside New member.
@@ -203,7 +211,9 @@ try {
   await save("new-member-greeting.png");
 
   // 4. Point it at the fake engine, ask for a role, and watch it shape itself.
-  await cdp.evaluate(`(() => { const agents = JSON.parse(localStorage.getItem('autohandSquad.v1.agents')); const target = agents.find((agent) => agent.id === ${JSON.stringify(created.id)}); target.harness = { ...target.harness, id: 'claude', executablePath: ${JSON.stringify(fake)} }; localStorage.setItem('autohandSquad.v1.agents', JSON.stringify(agents)); return true; })()`);
+  const configured={...created,harness:{...created.harness,id:'claude',executablePath:fake}};
+  const configuredResponse=await fetch(`${origin}/api/members/${created.id}/channel-access`,{method:'PUT',headers:await ownedFixtureHeaders(origin),body:JSON.stringify({agent:configured,profile:'',profilePatch:{}})});
+  assert.equal(configuredResponse.status,200);
   await cdp.send("Page.navigate", { url: `${origin}/conversations/new?member=${created.id}` });
   await waitFor(async () => cdp.evaluate("Boolean(document.querySelector('textarea'))") && (await text()).includes("Hey! I'm New member."), "the composer after reload", 30000);
   await cdp.evaluate(`(() => { const field = document.querySelector('textarea'); field.focus(); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, "you're going to be my GTM Leader"); field.dispatchEvent(new Event('input', { bubbles: true })); })()`);
@@ -240,5 +250,6 @@ try {
   if (bridge.exitCode === null) bridge.kill("SIGKILL");
   await Promise.race([new Promise((r) => chrome.once("exit", r)), delay(3000)]);
   if (chrome.exitCode === null) chrome.kill("SIGKILL");
+  await ownership.close();
   await rm(directory, { recursive: true, force: true }).catch(() => {});
 }

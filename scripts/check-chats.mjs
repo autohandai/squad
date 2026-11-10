@@ -11,6 +11,7 @@
 // delete routes answer as documented. Plus pure checks for the record bounds,
 // the restore event and the meta line.
 import assert from 'node:assert/strict';
+import { createOwnedBridgeFixture, ownedFixtureHeaders } from './lib/owned-bridge-fixture.mjs';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -125,6 +126,7 @@ const port = socket.address().port;
 await new Promise((r) => socket.close(r));
 const origin = `http://127.0.0.1:${port}`;
 let bridge;
+let ownership;
 let logs = '';
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, label, timeout = 10000) {
@@ -133,24 +135,24 @@ async function until(fn, label, timeout = 10000) {
   throw new Error(`${label} timed out; bridge: ${logs.slice(-3000)}`);
 }
 const api = async (path, body, method) => {
-  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: await ownedFixtureHeaders(origin), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json(); return { status: response.status, ...data };
 };
 const calls = async () => (await readFile(callsFile, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
 const member = (id) => ({ id, name: id, harness: { id: 'claude', executablePath: fake }, projects: [{ path: rootDir }] });
 const payload = (id, prompt) => ({ agentId: id, agent: member(id), workspace: rootDir, prompt, profile: 'Use the chosen permission rules.' });
-const chat = async (id, prompt) => (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload(id, prompt)) })).text();
-const sessionsFile = join(directory, 'app', 'agents', 'alex', 'harness-sessions.json');
-const sessions = async () => JSON.parse(await readFile(sessionsFile, 'utf8').catch(() => '{}'));
+const chat = async (id, prompt) => (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify(payload(id, prompt)) })).text();
+const sessionsFile = () => join(ownership.paths.appRoot, 'agents', 'alex', 'harness-sessions.json');
+const sessions = async () => JSON.parse(await readFile(sessionsFile(), 'utf8').catch(() => '{}'));
 const resumeIdOnDisk = async () => Object.values((await sessions()).claude || {})[0]?.resumeId || '';
 async function startBridge() {
   bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: rootDir,
-    env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider' },
+    env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   bridge.stdout.on('data', (d) => { logs += d; }); bridge.stderr.on('data', (d) => { logs += d; });
-  await until(async () => (await api('/api/members/alex/chats')).success, 'bridge start', 30000);
+  await until(async () => (await api('/api/queues')).success, 'bridge start', 30000);
 }
 async function stopBridge(signal = 'SIGTERM') {
   if (!bridge || bridge.exitCode !== null) return;
@@ -160,6 +162,8 @@ async function stopBridge(signal = 'SIGTERM') {
   if (bridge.exitCode === null && bridge.signalCode === null) { bridge.kill('SIGKILL'); await exited; }
 }
 try {
+  await writeFile(join(directory, 'config.json'), JSON.stringify({ provider: 'autohandai', auth: { token: 'fixture-no-provider', email: 'reliability@example.test', expiresAt: '2099-01-01T00:00:00Z' } }));
+  ownership = await createOwnedBridgeFixture({ serviceRoot: join(directory, 'squad'), appRoot: join(directory, 'app') });
   await mkdir(join(directory, 'claude'), { recursive: true });
   await writeFile(fake, `#!${process.execPath}
 const fs=require('node:fs');
@@ -180,6 +184,10 @@ process.exit(0);
 `);
   await chmod(fake, 0o700);
   await startBridge();
+  for (const id of ['alex', 'bob']) {
+    const registered = await api(`/api/members/${id}/channel-access`, { agent: member(id), profile: '', profilePatch: {} }, 'PUT');
+    assert.equal(registered.success, true, JSON.stringify(registered));
+  }
 
   // 1. A chat turn is a run with its engine, status and reply.
   const first = await chat('alex', 'Look at the readme');
@@ -259,28 +267,28 @@ process.exit(0);
   // 3b. Access and effort from the composer reach the CLI (ADR-0114): a member
   //     whose permission level means plan mode can be given edits for one turn.
   const restrictedMember = { ...member('alex'), permissions: { permissionMode: 'restricted' } };
-  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'Plan this'), agent: restrictedMember }) })).text();
+  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify({ ...payload('alex', 'Plan this'), agent: restrictedMember }) })).text();
   let seen = (await calls()).at(-1).args;
   assert.equal(seen[seen.indexOf('--permission-mode') + 1], 'bypassPermissions', 'full access by default, whatever the permission level (ADR-0120)');
   assert.ok(!seen.includes('--effort'), 'no effort unless chosen');
-  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'Now do it'), agent: restrictedMember, access: 'write', effort: 'high', model: 'opus' }) })).text();
+  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify({ ...payload('alex', 'Now do it'), agent: restrictedMember, access: 'write', effort: 'high', model: 'opus' }) })).text();
   seen = (await calls()).at(-1).args;
   assert.equal(seen[seen.indexOf('--permission-mode') + 1], 'acceptEdits', 'Access: Accept edits switches plan mode off for this turn');
   assert.equal(seen[seen.indexOf('--effort') + 1], 'high', 'the chosen reasoning effort is passed');
   assert.equal(seen[seen.indexOf('--model') + 1], 'opus', 'the chosen model is passed');
-  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'Default again'), agent: { ...restrictedMember, harness: { ...restrictedMember.harness, effort: 'low', access: 'full' } } }) })).text();
+  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify({ ...payload('alex', 'Default again'), agent: { ...restrictedMember, harness: { ...restrictedMember.harness, effort: 'low', access: 'full' } } }) })).text();
   seen = (await calls()).at(-1).args;
   assert.equal(seen[seen.indexOf('--permission-mode') + 1], 'bypassPermissions', 'the member\'s engine settings apply when the turn chooses nothing');
   assert.equal(seen[seen.indexOf('--effort') + 1], 'low');
   // 3c. Personality and durable memory reach the engine inline (ADR-0115).
-  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'What do you remember?'), agent: { ...member('alex'), profileFiles: [{ section: 'persona', fileName: 'PERSONALITY.md', content: 'Dry, direct, no filler.' }, { section: 'memory', fileName: 'MEMORY.md', content: 'The NZ shortlist is built by scripts/nz_shortlist.py.' }] } }) })).text();
+  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify({ ...payload('alex', 'What do you remember?'), agent: { ...member('alex'), profileFiles: [{ section: 'persona', fileName: 'PERSONALITY.md', content: 'Dry, direct, no filler.' }, { section: 'memory', fileName: 'MEMORY.md', content: 'The NZ shortlist is built by scripts/nz_shortlist.py.' }] } }) })).text();
   const profiled = (await calls()).at(-1).args;
   const profileText = profiled[profiled.indexOf('--append-system-prompt') + 1] || '';
   assert.ok(profileText.includes('Personality:\nDry, direct, no filler.'), 'PERSONALITY.md content is inline');
   assert.ok(profileText.includes('Durable memory (MEMORY.md):\nThe NZ shortlist is built by scripts/nz_shortlist.py.'), 'MEMORY.md content is inline');
   assert.ok(profileText.includes('Profile map:'), 'and the profile map still points at the files');
   const longMemory = ['# Memory', ...Array.from({ length: 120 }, (_, i) => `- Autohand Skill Installed: skill-number-${i}`), '- Learnt today: the staging deploy needs the VPN.'].join('\n');
-  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload('alex', 'And now?'), agent: { ...member('alex'), profileFiles: [{ section: 'memory', fileName: 'MEMORY.md', content: longMemory }] } }) })).text();
+  await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify({ ...payload('alex', 'And now?'), agent: { ...member('alex'), profileFiles: [{ section: 'memory', fileName: 'MEMORY.md', content: longMemory }] } }) })).text();
   const longArgs = (await calls()).at(-1).args;
   const longText = longArgs[longArgs.indexOf('--append-system-prompt') + 1] || '';
   assert.ok(longText.includes('- Learnt today: the staging deploy needs the VPN.'), 'a long MEMORY.md keeps its newest entry inline');
@@ -332,5 +340,6 @@ process.exit(0);
   console.log('Chat bridge checks passed: chat runs, put away, open, reset, restart, delete.');
 } finally {
   await stopBridge();
+  await ownership?.close();
   await rm(directory, { recursive: true, force: true });
 }

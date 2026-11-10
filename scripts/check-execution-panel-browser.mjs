@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createOwnedBridgeFixture, ownedFixtureHeaders, seedOwnedCanonicalFixture } from "./lib/owned-bridge-fixture.mjs";
 // The Execution panel, rendered (ADR-0117). A throwaway bridge serves dist/
 // with a seeded run history (finished chat replies and launched runs across
 // three days), headless Chrome opens a member chat through the same
@@ -14,7 +15,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -150,7 +151,9 @@ const fixtures = {
   tasks, automations, now: new Date(NOW).toISOString(),
 };
 function installFixtures(data, theme) {
-  const store = (key, value) => localStorage.setItem(`autohandSquad.v1.${key}`, JSON.stringify(value));
+  if(location.origin==="null")return;
+  const scopedKey=key=>["theme","skin","sidebarCollapsed"].includes(key)?`autohandSquad.v1.${key}`:`autohandSquad.owner.v1.${data.storageKey}.${encodeURIComponent(`autohandSquad.v1.${key}`)}`;
+  const store = (key, value) => localStorage.setItem(scopedKey(key), JSON.stringify(value));
   if (!localStorage.getItem("executionVerify.initialized")) {
     localStorage.clear();
     store("agents", data.agents);
@@ -181,19 +184,23 @@ const port = await freePort();
 const chromePort = await freePort();
 const origin = `http://127.0.0.1:${port}`;
 let logs = "";
+const savedConfig=JSON.parse(await readFile(join(directory,"config.json"),"utf8").catch(()=>"{}"));
+await writeFile(join(directory,"config.json"),JSON.stringify({...savedConfig,auth:{token:"fixture-no-provider",email:"reliability@example.test",expiresAt:"2099-01-01T00:00:00Z"}}));
+const ownership=await createOwnedBridgeFixture({serviceRoot:join(directory,"squad"),appRoot:join(directory,"app")});
 const bridge = spawn(process.execPath, ["server.mjs", "--host", "127.0.0.1", "--port", String(port)], {
   cwd: root,
-  env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, "squad"), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, "app"), AUTOHAND_HOME: join(directory, "autohand"), AUTOHAND_USER_CONFIG_PATH: join(directory, "config.json") },
+  env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_HOME: join(directory, "squad"), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, "app"), AUTOHAND_HOME: join(directory, "autohand"), AUTOHAND_USER_CONFIG_PATH: join(directory, "config.json") },
   stdio: ["ignore", "pipe", "pipe"],
 });
 bridge.stdout.on("data", (d) => { logs += d; }); bridge.stderr.on("data", (d) => { logs += d; });
 const chrome = spawn(chromePath, ["--headless=new", "--disable-gpu", "--disable-extensions", "--no-first-run", "--no-default-browser-check", "--hide-scrollbars", `--user-data-dir=${join(directory, "chrome")}`, `--remote-debugging-port=${chromePort}`, "about:blank"], { stdio: "ignore" });
 let cdp = null;
 try {
-  await waitFor(async () => (await fetch(`${origin}/api/runs`).catch(() => null))?.ok, "bridge", 30000);
-  const listedBody = await (await fetch(`${origin}/api/runs`)).json();
+  await waitFor(async () => (await fetch(`${origin}/api/runs`,{headers:await ownedFixtureHeaders(origin)}).catch(() => null))?.ok, "bridge", 30000);
+  const listedBody = await (await fetch(`${origin}/api/runs`,{headers:await ownedFixtureHeaders(origin)})).json();
   const listed = Array.isArray(listedBody) ? listedBody : listedBody?.data;
   assert.equal(listed?.length, runs.length, "the bridge restored the seeded run history");
+  fixtures.storageKey=(await seedOwnedCanonicalFixture(origin,fixtures)).storageKey;
   const target = await waitFor(async () => (await fetch(`http://127.0.0.1:${chromePort}/json`).then((r) => r.json()).catch(() => []))?.find((item) => item.type === "page"), "Chrome DevTools", 30000);
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { ws.addEventListener("open", resolve, { once: true }); ws.addEventListener("error", reject, { once: true }); });
@@ -292,5 +299,6 @@ try {
   if (bridge.exitCode === null) bridge.kill("SIGKILL");
   await Promise.race([new Promise((r) => chrome.once("exit", r)), delay(3000)]);
   if (chrome.exitCode === null) chrome.kill("SIGKILL");
+  await ownership.close();
   await rm(directory, { recursive: true, force: true }).catch(() => {});
 }

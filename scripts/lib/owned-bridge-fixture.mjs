@@ -11,6 +11,18 @@ export async function ownedFixtureHeaders(origin) {
   return {'content-type':'application/json',...(context?.generation?{'x-squad-context':context.generation}:{})};
 }
 
+export async function seedOwnedCanonicalFixture(origin,{agents=[],messages}={}) {
+  const api=async(path,method='GET',body)=>{
+    const response=await fetch(origin+path,{method,headers:await ownedFixtureHeaders(origin),...(body===undefined?{}:{body:JSON.stringify(body)})});
+    const result=await response.json();
+    if(!response.ok||!result.success)throw Error(`Canonical fixture ${path}: ${result.error||response.status}`);
+    return result.data;
+  };
+  for(const agent of agents)await api(`/api/members/${encodeURIComponent(agent.id)}/channel-access`,'PUT',{agent,profile:'',profilePatch:{}});
+  if(messages){const current=await api('/api/owned/browser-state');await api('/api/owned/browser-state','PUT',{baseRevision:current.revision||0,messagesByAgent:messages});}
+  return api('/api/ownership/context');
+}
+
 // Seed canonical state through the same registry/CAS APIs as a client. Browser
 // fixtures must not rely on unowned localStorage resurrecting private members.
 export async function seedOwnedBrowserFixture(bridge,browser,{members=[],messages,storage={}}={}) {

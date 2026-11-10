@@ -11,6 +11,7 @@ import { createServer } from "node:net";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import {createOwnedBridgeFixture,ownedFixtureHeaders} from './lib/owned-bridge-fixture.mjs';
 
 import { createVaultStore } from "../server/vault/store.mjs";
 import { VAULT_TOOL_NAMES, WORKSTATION_REFUSAL } from "../server/vault/service.mjs";
@@ -20,8 +21,9 @@ import { vaultNeedsYouRows } from "../src/lib/vault.js";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const directory = await mkdtemp(join(tmpdir(), "squad-vault-"));
-const state = join(directory, "state");
-const app = join(directory, "app");
+let state = join(directory, "state");
+let app = join(directory, "app");
+const serviceRoot=state,appRoot=app;
 const home = join(directory, "home");
 const keyFile = join(home, ".autohand", "squad-vault.key");
 const harness = join(directory, "mock-codex");
@@ -42,11 +44,11 @@ await new Promise((r) => socket.listen(0, "127.0.0.1", r));
 const port = socket.address().port;
 await new Promise((r) => socket.close(r));
 const origin = `http://127.0.0.1:${port}`;
-let bridge;
+let bridge,ownership;
 let logs = "";
 
 async function api(path, body, headers = {}, method = body === undefined ? "GET" : "POST") {
-  const response = await fetch(origin + path, { method, headers: { "content-type": "application/json", ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(origin + path, { method, headers: { ...await ownedFixtureHeaders(origin), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const text = await response.text();
   return { status: response.status, text, ...JSON.parse(text) };
 }
@@ -63,10 +65,10 @@ function start() {
   bridge = spawn(process.execPath, ["server.mjs", "--host", "127.0.0.1", "--port", String(port)], {
     cwd: root,
     env: {
-      ...process.env,
+      ...process.env,...ownership.env,
       AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: "",
-      AUTOHAND_SQUAD_HOME: state,
-      AUTOHAND_SQUAD_APP_STATE_DIR: app,
+      AUTOHAND_SQUAD_HOME: serviceRoot,
+      AUTOHAND_SQUAD_APP_STATE_DIR: appRoot,
       AUTOHAND_HOME: home,
       AUTOHAND_USER_CONFIG_PATH: config,
       AUTOHAND_SQUAD_VAULT_KEY_SOURCE: "file",
@@ -128,7 +130,7 @@ async function headerFramedCalls(server, requests) {
 /** Collect `changed` events from the vault SSE stream while `run` happens. */
 async function withEvents(run) {
   const controller = new AbortController();
-  const response = await fetch(`${origin}/api/vault/events`, { signal: controller.signal });
+  const response = await fetch(`${origin}/api/vault/events`, {headers:await ownedFixtureHeaders(origin), signal: controller.signal });
   const reader = response.body.getReader();
   const events = [];
   let text = "";
@@ -199,7 +201,7 @@ const log = (entry) => fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringif
 
 try {
   await Promise.all([mkdir(state, { recursive: true }), mkdir(home, { recursive: true }), mkdir(join(directory, "codex"), { recursive: true })]);
-  await writeFile(config, JSON.stringify({ provider: "autohandai", autohandai: { model: "auto" }, mcp: { enabled: true, servers: [{ name: "user-sentinel", command: "/mock/unstarted" }] } }));
+  await writeFile(config, JSON.stringify({ provider: "autohandai", auth:{token:"fixture-no-provider",email:"vault@example.test",expiresAt:"2099-01-01T00:00:00Z"}, autohandai: { model: "auto" }, mcp: { enabled: true, servers: [{ name: "user-sentinel", command: "/mock/unstarted" }] } }));
   await writeFile(join(state, "notifications.json"), JSON.stringify({ version: 1, settings: { runFinished: false, runFailed: false, handoffPending: false, approvalPending: false, mention: false }, items: [] }));
   await writeFile(join(directory, "codex", "auth.json"), "{}");
   await writeFile(harness, fakeCodex);
@@ -220,6 +222,7 @@ try {
   assert.equal(payment.route, `/conversations/new?member=${member.id}`);
 
   // --- items: add, list hints only, ciphertext on disk -------------------
+  ownership=await createOwnedBridgeFixture({serviceRoot,appRoot});state=ownership.paths.dataRoot;app=ownership.paths.appRoot;
   start();
   await until(async () => (await api("/api/vault")).success);
   let vault = await api("/api/vault");
@@ -294,6 +297,10 @@ try {
   assert.equal((await api("/api/vault")).data.locked, false);
 
   // --- member tools through the real managed MCP server -------------------
+  for(const agent of [member,blocked])await api(`/api/members/${agent.id}/channel-access`,{agent,profile:'',profilePatch:{}},{},'PUT');
+  await api('/api/agents/provision',{agentId:member.id,agent:member,workspace:root});
+  const configuredPath=join(app,'agents',member.id,'config.json'),configured=JSON.parse(await readFile(configuredPath,'utf8'));
+  configured.mcp.servers.unshift({name:'user-sentinel',command:'/mock/unstarted'});await writeFile(configuredPath,JSON.stringify(configured),{mode:0o600});
   await api("/api/status/snapshot", { members: [member, blocked], jobs: [] });
   const requestEvents = await withEvents(async () => {
     const chat = await api("/api/chat", { agentId: member.id, agent: member, workspace: root, prompt: "vault-scenario-request", resumeSession: false });
@@ -423,6 +430,6 @@ try {
 
   console.log("Vault check passed: file-key fallback in an isolated home, hints only in every response, ciphertext on disk, tamper and swap detection, key never recreated while items exist, real managed MCP server over Codex (newline) and direct (Content-Length) with exactly four tools, secret request persisted across restart and completed from the browser with id + hint, payment approve / self / decline with events, next-turn outcomes delivered once, blocked policy gets no server. The keychain path was not exercised (manual step in docs/integration/vault.md).");
 } finally {
-  await stop();
+  await stop();await ownership?.close();
   await rm(directory, { recursive: true, force: true });
 }

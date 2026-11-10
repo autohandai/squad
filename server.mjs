@@ -6195,17 +6195,21 @@ function serviceRecord(record) {
 }
 
 async function fetchAnalyticsDaemonSnapshot() {
+  assertOwnerRead();
   const record = await readOptionalJsonFile(join(squadStateDir, "analytics.json"));
-  if (!record?.host || !record?.port) return null;
+  if (!['127.0.0.1','localhost','[::1]'].includes(record?.host) || !Number.isInteger(record?.port) || record.port<1 || record.port>65535) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 650);
   try {
     const response = await fetch(`http://${record.host}:${record.port}/metrics`, {
       signal: controller.signal,
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", 'x-squad-context': privateOwnerContext.generation },
+      redirect: 'manual',
     });
     if (!response.ok) return null;
-    return await response.json();
+    const snapshot=await response.json();
+    assertOwnerRead();
+    return snapshot;
   } catch {
     return null;
   } finally {
@@ -8673,6 +8677,14 @@ const harnessUsage = createHarnessUsage({ listHarnesses: () => listHarnesses({ c
 const modelCatalog = createModelCatalog({ autohandHomeDir, readProviderSettings, contextFor: harnessContextFor, defaultWorkspace: getDefaultWorkspace });
 const fallbackRouter = createFallbackRouter({ stateDir: squadStateDir });
 
+async function ownedBrokerRequest(path,init={}) {
+  assertOwnerRead();
+  if(typeof path!=='string'||!path.startsWith('/api/'))throw Error('Internal requests must use the owned broker API.');
+  const headers=new Headers(init.headers);headers.set('x-squad-context',privateOwnerContext.generation);
+  const response=await fetch(new URL(path,privateOwnerContext.publicUrl),{...init,headers});
+  assertOwnerRead();return response;
+}
+
 function routeContext() {
   return {
     announcements,
@@ -8680,6 +8692,7 @@ function routeContext() {
     squadStateDir,
     appStateDir,
     ownedBrokerOrigin: privateOwnerContext.publicUrl,
+    ownedBrokerRequest,
     ownedHookScope: privateOwnerContext.owner ? `${verifiedActorKey(privateOwnerContext.actor)}.${verifiedOwnerKey(privateOwnerContext.owner)}.${privateOwnerContext.datasetId}` : '',
     squadWorkspaceRoot,
     memberWorkspaceRoots: [squadWorkspaceRoot],

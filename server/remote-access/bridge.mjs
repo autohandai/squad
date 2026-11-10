@@ -129,7 +129,7 @@ export function createRemoteAccessBridge({
   }
 
   function currentAppUrl() {
-    return (appUrl || selfOrigin || DEFAULT_APP_URL).replace(/\/+$/, "");
+    return (process.env.AUTOHAND_SQUAD_APP_URL || ctx.ownedBrokerOrigin || appUrl || selfOrigin || DEFAULT_APP_URL).replace(/\/+$/, "");
   }
 
   function rememberAppUrl(host) {
@@ -667,7 +667,8 @@ export function createRemoteAccessBridge({
   async function decide(kind, id, approve) {
     const action = approve ? "approve" : "decline";
     const path = kind === "workflow" ? `/api/workflows/${encodeURIComponent(id)}/${action}` : `/api/channel-actions/${encodeURIComponent(id)}/${action}`;
-    const response = await fetchImpl(`${selfOrigin}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ by: "telegram" }), signal: AbortSignal.timeout(15_000) });
+    const init = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ by: "telegram" }), signal: AbortSignal.timeout(15_000) };
+    const response = ctx.ownedBrokerRequest ? await ctx.ownedBrokerRequest(path,init) : await fetchImpl(`${selfOrigin}${path}`,init);
     const json = await response.json().catch(() => null);
     if (!json?.success) throw new Error(json?.error || `The bridge answered ${response.status}.`);
     return json.data;
