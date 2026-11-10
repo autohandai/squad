@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFile, cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, cp, mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,12 +28,15 @@ try {
   for (const path of [bin, resources, home, cwd]) await mkdir(path, { recursive: true });
   const cli = join(bin, process.platform === 'win32' ? 'squad.exe' : 'squad');
   await copyFile(executable, cli);
-  await copyFile(process.execPath, join(bin, process.platform === 'win32' ? 'node.exe' : 'node'));
+  // Runner Node may use sibling shared libraries. Relocating only its binary
+  // creates a broken interpreter unrelated to the Squad resource lookup.
+  const bundledNode = join(dirname(executable), process.platform === 'win32' ? 'node.exe' : 'node');
+  const nodeRuntime = (await stat(bundledNode).catch(() => null))?.isFile() ? bundledNode : process.execPath;
   await copyFile(join(runtime, 'server.mjs'), join(resources, 'server.mjs'));
   await cp(join(runtime, 'server', 'control-plane'), join(resources, 'server', 'control-plane'), { recursive: true });
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith('AUTOHAND_') || ['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS', 'NODE_PATH'].includes(key)) delete env[key];
-  Object.assign(env, { HOME: home, USERPROFILE: home, AUTOHAND_HOME: join(home, '.autohand'), AUTOHAND_SQUAD_HOME: join(home, '.autohand', 'squad') });
+  Object.assign(env, { HOME: home, USERPROFILE: home, AUTOHAND_HOME: join(home, '.autohand'), AUTOHAND_SQUAD_HOME: join(home, '.autohand', 'squad'), AUTOHAND_SQUAD_NODE: nodeRuntime });
   child = spawn(cli, ['mcp', '--bridge', 'http://127.0.0.1:19821'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
   closed = new Promise(resolveClosed => child.once('close', () => { isClosed = true; resolveClosed(); }));
   let stderr = '';

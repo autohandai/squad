@@ -15,6 +15,8 @@ Include the packaged `runtime/server.mjs` location beside Windows executables an
 - Installed Squad 0.1.21's command failed from `/Users/igorcosta` with its normal home and no Squad overrides, while `/api/health` on port 19821 returned the Squad service identity.
 - The same command found development sources beneath `Developer/autohand/`, explaining the earlier false-positive tests.
 - Candidate coverage now includes both actual packaged layouts. Verification must additionally run the packaged command from a directory outside the checkout with a fresh home, perform MCP initialization and verify the required direct-message tools. A roster-only source test is insufficient.
+- Windows CI reached the bundled MCP but Node 22 rejected the verbatim drive path produced by Rust's canonicalization (`EISDIR`, `lstat 'C:'`). Resolve server paths with `dunce` so ordinary drive/UNC paths are passed to Node when possible. The installed-layout check covers this boundary on Windows.
+- The fixture uses the actual bundled Node interpreter when supplied, or the runner's interpreter in place. Copying a runner's dynamically linked Node binary without its sibling libraries caused an unrelated macOS loader failure; interpreter relocation is not part of the runtime-discovery test.
 
 ## Consequences
 

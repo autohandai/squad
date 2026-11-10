@@ -40,6 +40,7 @@ native-tray = ["dep:tao", "dep:tray-icon"]
 
 [dependencies]
 anyhow = "1.0"
+dunce = "1.0"
 base64 = "0.23"
 clap = { version = "4.5", features = ["derive"] }
 libc = "0.2"

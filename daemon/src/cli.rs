@@ -1334,8 +1334,7 @@ pub(crate) fn locate_web_server(
 ) -> Result<PathBuf> {
     if let Some(candidate) = server_path {
         if candidate.exists() {
-            return candidate
-                .canonicalize()
+            return dunce::canonicalize(&candidate)
                 .with_context(|| format!("resolve {}", candidate.display()));
         }
         bail!("web server file was not found at {}", candidate.display());
@@ -1344,18 +1343,18 @@ pub(crate) fn locate_web_server(
     if let Ok(value) = std::env::var("AUTOHAND_SQUAD_WEB_SERVER") {
         let candidate = PathBuf::from(value);
         if candidate.exists() {
-            return candidate
-                .canonicalize()
+            return dunce::canonicalize(&candidate)
                 .with_context(|| format!("resolve {}", candidate.display()));
         }
     }
 
-    web_server_candidates(paths)
+    let candidate = web_server_candidates(paths)
         .into_iter()
         .find(|candidate| candidate.exists())
-        .ok_or_else(|| anyhow!("server.mjs was not found. Run from the autohandSWE prototype directory or set AUTOHAND_SQUAD_WEB_SERVER."))?
-        .canonicalize()
-        .context("resolve server.mjs")
+        .ok_or_else(|| anyhow!("server.mjs was not found. Run from the autohandSWE prototype directory or set AUTOHAND_SQUAD_WEB_SERVER."))?;
+    // Node's Windows module resolver expects ordinary drive/UNC paths, not the
+    // verbatim prefix returned by std::fs::canonicalize for short paths.
+    dunce::canonicalize(candidate).context("resolve server.mjs")
 }
 
 fn web_server_candidates(paths: &StatePaths) -> Vec<PathBuf> {
