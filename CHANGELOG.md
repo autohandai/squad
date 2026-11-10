@@ -25,6 +25,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Reopening an agent keeps the current chat's start point instead of bringing earlier conversations back into it.
 - Reset from Settings now reaches the owned-data transaction and waits for its completion before reopening Squad. Earlier data remains available for recovery.
 - Windows account changes and data recovery supervise the whole worker process tree, including detached children, before admitting another Squad.
 - Account changes wait for the old agents and native work to finish saving. A surviving background process blocks data recovery instead of being mistaken for an idle Squad.

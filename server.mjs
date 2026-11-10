@@ -134,6 +134,8 @@ if (privateOwnerContext.owner && !privateOwnerContext.canWrite) {
 }
 const { readCredential: readOwnerCredential, ownerKey: verifiedOwnerKey,actorKey:verifiedActorKey } = await import('./server/ownership/identity.mjs');
 let ownershipActive = true;
+const {configureOwnedEngines,spawnOwnedEngine,drainOwnedEngines}=await import('./server/ownership/engine-child.mjs');
+configureOwnedEngines({generation:privateOwnerContext.generation,assertCurrent:assertOwnerExecution});
 function assertOwnerExecution() {
   if (!process.connected || !ownershipActive || !privateOwnerContext.owner || !privateOwnerContext.canWrite || readOwnerCredential(userConfigPath)?.fingerprint !== privateOwnerContext.credentialFingerprint) throw Object.assign(new Error('This Squad is not authorized to execute work. Sign in or select a writable owner.'), { status: 403, code: 'owner_read_only' });
 }
@@ -1156,6 +1158,7 @@ function childHasExited(child) {
 }
 
 function signalChildProcess(child, signal) {
+  if(child?.ownedEngine)return child.kill(signal);
   if (childHasExited(child)) return false;
   if (process.platform !== "win32" && child.pid) {
     try {
@@ -4747,7 +4750,7 @@ function shutdownServer() {
   void runHistory.flush();
   void otel.close();
   setTimeout(() => {
-    const exit = () => process.exit(0);
+    const exit = () => {void drainOwnedEngines().then(()=>process.exit(0),()=>process.exit(1));};
     if (server) {
       server.close(exit);
       setTimeout(exit, 750).unref();
@@ -7083,7 +7086,7 @@ async function startCliRun(run, args, workspace, agentRuntime, payload) {
   if (run.abortController?.signal.aborted) throw new Error("Task was stopped before the engine started.");
   run.transport = "cli";
   await handoffRuntimeSkills(agentRuntime, 'autohand', event => appendSdkEventLog(run, event));
-  const child = spawn(resolveAutohandBinary() || "autohand", args, {
+  const child = await spawnOwnedEngine(resolveAutohandBinary() || "autohand", args, {
     cwd: workspace,
     env: {
       ...process.env,
@@ -7970,10 +7973,7 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
     timestamp: new Date().toISOString(),
   });
 
-  const output = await new Promise((resolve, reject) => {
-    let settled = false;
-    let abortHandler = null;
-    const child = spawn(resolveAutohandBinary() || "autohand", args, {
+    const child = await spawnOwnedEngine(resolveAutohandBinary() || "autohand", args, {
       cwd: workspace,
       env: {
         ...process.env,
@@ -7984,6 +7984,10 @@ async function streamChatWithCli({ payload, args, displayArgs, workspace, prompt
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+  const output = await new Promise((resolve, reject) => {
+    let settled = false;
+    let abortHandler = null;
+
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
 
@@ -9781,6 +9785,7 @@ async function stopAndExitFromSignal(signal) {
   memoryLibrary.close();
   await cloud.close();
   await stopManagedRuns(`web server received ${signal}`);
+  await drainOwnedEngines();
   process.exit(0);
 }
 

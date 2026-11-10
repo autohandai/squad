@@ -93,6 +93,8 @@
 
 ## Ownership and backups
 
+- The canonical member profile preserves the current conversation's start and last-conversation timestamps. Reopening a window must not refill a new chat with earlier turns from that member's history.
+
 - Native notifications, dialogs and attention counts belong to the selected Squad. On an account change, dismiss its old confirmation and withdraw its old notifications; a stale notification never opens the next account's conversation. Relaunch does not adopt notifications from a previous native process.
 
 - Verify the signed-in identity and selected personal/team Squad before loading private browser state or displaying member avatars. Account/scope transitions hide the old data and use a fresh context; an unavailable ownership check never displays another account's cached roster.

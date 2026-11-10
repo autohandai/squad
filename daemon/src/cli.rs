@@ -854,6 +854,20 @@ async fn serve_stop(
     config: &SquadConfig,
     web_port: u16,
 ) -> Result<CommandOutput> {
+    if let Ok(health) =
+        post_to::<serde_json::Value>(&config.host, web_port, "GET", "/api/health", None)
+    {
+        if health["ownership"] == 1
+            && health["service"] == "autohand-squad-bridge"
+            && health["stateDir"]
+                .as_str()
+                .is_some_and(|root| Path::new(root) == paths.root)
+        {
+            // Protocol 1 must prove its own drain. Never fall back to killing
+            // a PID after a rejected or uncertain machine-control request.
+            return stop_owned_broker(paths, &config.host, web_port, &health).await;
+        }
+    }
     if !crate::startup_ports::own_web(paths, &config.host, web_port)
         && crate::startup_ports::owned_web(paths, config, web_port).is_none()
     {
@@ -924,6 +938,117 @@ async fn serve_stop(
     Ok(CommandOutput::error(format!(
         "Autohand Squad web server is still responding at http://{}:{} but no managed pid was found\n",
         config.host, web_port
+    )))
+}
+
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct BrokerControl {
+    version: u8,
+    broker_id: String,
+    token: String,
+}
+
+async fn stop_owned_broker(
+    paths: &StatePaths,
+    host: &str,
+    port: u16,
+    health: &serde_json::Value,
+) -> Result<CommandOutput> {
+    if host != "localhost"
+        && !host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+    {
+        bail!("Owned Squad shutdown requires a loopback address");
+    }
+    let control_path = paths.root.join("ownership-control.json");
+    let control: BrokerControl = crate::ownership::read_private_json(&control_path, 4096)?;
+    if control.version != 1
+        || health["brokerId"].as_str() != Some(control.broker_id.as_str())
+        || control.token.len() != 64
+        || !control
+            .token
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        bail!("Squad's local service changed; no process was stopped");
+    }
+    let pid = health["pid"]
+        .as_u64()
+        .filter(|pid| *pid > 0 && *pid <= u32::MAX as u64)
+        .ok_or_else(|| anyhow!("Invalid Squad broker identity"))?;
+    let started_at = health["startedAt"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("Invalid Squad broker start identity"))?;
+    let before = read_web_server_record(paths)?;
+    let address = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.into()
+    };
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(60))
+        .build()?;
+    let response = client
+        .post(format!("http://{address}:{port}/api/shutdown"))
+        .header("x-squad-ownership-control", &control.token)
+        .header("connection", "close")
+        .json(&json!({"version":1,"brokerId":control.broker_id,"pid":pid,"startedAt":started_at}))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        bail!("Squad did not authorize or finish its service drain; no process was force-stopped");
+    }
+    let ack: serde_json::Value = response.json().await?;
+    if ack["success"] != true
+        || ack["drained"] != true
+        || ack["brokerId"].as_str() != Some(control.broker_id.as_str())
+        || ack["pid"].as_u64() != Some(pid)
+        || ack["startedAt"].as_str() != Some(started_at)
+    {
+        bail!("Squad did not prove that this service finished draining");
+    }
+    let mut stopped = false;
+    for _ in 0..60 {
+        if let Ok(Err(error)) = tokio::time::timeout(
+            Duration::from_millis(300),
+            tokio::net::TcpStream::connect((host, port)),
+        )
+        .await
+        {
+            if error.kind() == std::io::ErrorKind::ConnectionRefused {
+                stopped = true;
+                break;
+            }
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    let current: BrokerControl = crate::ownership::read_private_json(&control_path, 4096)?;
+    if !stopped || current != control {
+        bail!(
+            "Squad's listener did not stop, or another service replaced it; records were preserved"
+        );
+    }
+    if let (Some(before), Some(current)) = (before, read_web_server_record(paths)?) {
+        if before.pid == pid as u32
+            && before.host == host
+            && before.port == port
+            && current.pid == before.pid
+            && current.host == before.host
+            && current.port == before.port
+            && current.started_at == before.started_at
+            && current.server_path == before.server_path
+        {
+            remove_web_server_record(paths)?;
+        }
+    }
+    Ok(CommandOutput::ok(format!(
+        "Autohand Squad service drained and stopped at http://{address}:{port}\n"
     )))
 }
 

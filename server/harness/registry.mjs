@@ -1,7 +1,7 @@
 // Harness registry: assignment normalisation, readiness cache, and the
 // generic spawn/parse loop used by every external (non-Autohand) harness.
 
-import { spawn } from "node:child_process";
+import { spawnOwnedEngine } from "../ownership/engine-child.mjs";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import * as autohand from "./autohand.mjs";
@@ -264,6 +264,17 @@ async function runCliHarness({
     args = args.filter((_, index) => index !== promptIndex && index !== promptIndex + 1);
     args.push("-p", "--input-format", "stream-json");
   }
+  const isWindows = process.platform === "win32";
+  const shell = isWindows && /\.(cmd|bat)$/i.test(executable);
+
+  const child = await spawnOwnedEngine(executable, args, {
+    cwd,
+    env: guiSafeEnv({ ...env, FORCE_COLOR: "0", NO_COLOR: "1", CI: process.env.CI || "" }),
+    stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
+    windowsHide: true,
+    shell,
+    detached: !isWindows,
+  });
   return new Promise((resolve) => {
     const events = [];
     const startedAt = Date.now();
@@ -279,17 +290,7 @@ async function runCliHarness({
     let sawEvent = false;
     let abortHandler = null;
     const state = newParseState();
-    const isWindows = process.platform === "win32";
-    const shell = isWindows && /\.(cmd|bat)$/i.test(executable);
 
-    const child = spawn(executable, args, {
-      cwd,
-      env: guiSafeEnv({ ...env, FORCE_COLOR: "0", NO_COLOR: "1", CI: process.env.CI || "" }),
-      stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
-      windowsHide: true,
-      shell,
-      detached: !isWindows,
-    });
     if (stdin) { child.stdin.on("error", () => {}); child.stdin.end(stdin); }
 
     const stopChild = () => {

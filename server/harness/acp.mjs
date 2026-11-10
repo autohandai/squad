@@ -17,7 +17,7 @@
 //   https://agentclientprotocol.com/protocol/file-system
 //   https://agentclientprotocol.com/protocol/v1/schema (UsageUpdate: used, size, cost)
 
-import { spawn } from "node:child_process";
+import { spawnOwnedEngine } from "../ownership/engine-child.mjs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { AcpConnection, JSON_RPC_ERRORS, PROTOCOL_VERSION, rpcError } from "../acp/client.mjs";
@@ -388,7 +388,7 @@ function clampLines(text, line, limit) {
  * in registry.mjs: { events, rawStdout, rawStderr, exitCode, resumeId, error,
  * timedOut, timeoutKind, stopped, stalled }.
  */
-export function runAcpHarness({
+export async function runAcpHarness({
   adapter,
   executable,
   args = [],
@@ -403,6 +403,17 @@ export function runAcpHarness({
   terminate,
   clientVersion = "",
 }) {
+  const isWindows = process.platform === "win32";
+  const shell = isWindows && /\.(cmd|bat)$/i.test(String(executable));
+
+  const child = await spawnOwnedEngine(executable, args, {
+    cwd,
+    env: guiSafeEnv({ ...env, FORCE_COLOR: "0", NO_COLOR: "1" }),
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+    shell,
+    detached: !isWindows,
+  });
   return new Promise((resolvePromise) => {
     const events = [];
     let rawStdout = "";
@@ -422,17 +433,7 @@ export function runAcpHarness({
     const access = ACCESS_MODES.includes(turn.access) ? turn.access : "full";
     const allowedDirs = [turn.workspace || cwd, ...(turn.addDirs || [])].filter(Boolean);
     const label = adapter?.label || "ACP agent";
-    const isWindows = process.platform === "win32";
-    const shell = isWindows && /\.(cmd|bat)$/i.test(String(executable));
 
-    const child = spawn(executable, args, {
-      cwd,
-      env: guiSafeEnv({ ...env, FORCE_COLOR: "0", NO_COLOR: "1" }),
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      shell,
-      detached: !isWindows,
-    });
     child.stdin.on("error", () => {});
 
     const stopChild = () => {

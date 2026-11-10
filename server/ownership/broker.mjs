@@ -1,6 +1,6 @@
 import { createServer, request as httpRequest } from 'node:http';
 import { fork } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { mkdir, open } from 'node:fs/promises';
@@ -13,6 +13,7 @@ import { ensureDataset, ownedDirectory, stageDataset, readDataset, publishDatase
 import { acquireWriterLease } from './writer-lease.mjs';
 import { createNativeDrain } from './native-drain.mjs';
 import { createWorkerLedger } from './worker-ledger.mjs';
+import { createEngineLedger } from './engine-ledger.mjs';
 import { createWindowsJob } from './native-helper.mjs';
 import { createOperationJournal } from './operation-journal.mjs';
 import { createImportSources } from './import-sources.mjs';
@@ -31,8 +32,9 @@ const contextHeader = 'x-squad-context';
 
 function json(res, status, data) {
   if (res.destroyed || res.writableEnded) return;
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' });
-  res.end(JSON.stringify(data));
+  const body=JSON.stringify(data);
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length':Buffer.byteLength(body), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' });
+  res.end(body);
 }
 async function readBody(req, maxBytes = 128 * 1024) {
   const bytes = Buffer.allocUnsafe(maxBytes); let size = 0;
@@ -56,9 +58,11 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
   const startedAt = new Date().toISOString();
   const native = createNativeDrain({ serviceRoot, brokerId, token: controlToken });
   let releaseWriter, workerLedger, nativeHold = null;
+  const engines=createEngineLedger(()=>workerLedger);
   let phase = 'verifying', generation = randomUUID(), verified = null, access = null, dataset = null, error = '', worker = null;
   let pendingOperation=null;
   let observedFingerprint, transition = Promise.resolve(), closing = false, teamCheckedAt = 0, workerStarting, startingChild;
+  let closingDrain, closingListener;
   const connections = new Set(), subscribers = new Set();
   const cloudControllers=new Set(),brokerActivities=new Set();
   const liveChildren = new Set(), childStops = new WeakMap();
@@ -126,7 +130,9 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
   }
   async function stopWorker(reason) {
     worker = null;
-    await Promise.all([...liveChildren].map(child => terminateChild(child, reason)));
+    const results=await Promise.allSettled([...liveChildren].map(child => terminateChild(child, reason)));
+    await engines.releaseAll();
+    const failure=results.find(result=>result.status==='rejected');if(failure)throw failure.reason;
   }
   async function quiesce(reason) {
     const nodeStop = stopWorker(reason);
@@ -360,6 +366,7 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
       const launch = (windowsJob?windowsJob.attached(child.pid):Promise.resolve()).then(()=>intent.launched(child.pid)); childLaunches.set(child, launch);
       void launch.then(() => { launchRecorded = true; sendStart(); }).catch(failure => { void failStartup(failure); });
       child.on('message', message => {
+        if(message?.type==='ownership-engine'){void engines.message(child,message,expected,()=>expected===generation&&!closing&&!failing&&child.connected);return;}
         if (message?.type === 'ownership-awaiting-start' && message.generation === expected) { awaitingStart = true; sendStart(); return; }
         if (message?.type !== 'ownership-ready' || message.generation !== expected || !Number.isInteger(message.port) || message.port <= 0 || message.port > 65535) return;
         clearTimeout(timer);
@@ -412,8 +419,17 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
       try { url = new URL(req.url || '/', serviceOrigin()); }
       catch { throw fail('Invalid request URL.', 400, 'invalid_request_url'); }
       const local = isLoopback(req.socket.remoteAddress);
-      if (url.pathname === '/api/health') { json(res, 200, { success: true, service: 'autohand-squad-bridge', pid: process.pid, startedAt, ...(local?{stateDir:serviceRoot}:{}), ownership: 1 }); return; }
+      if (url.pathname === '/api/health') { json(res, 200, { success: true, service: 'autohand-squad-bridge', pid: process.pid, startedAt, ...(local?{stateDir:serviceRoot,brokerId}:{}), ownership: 1 }); return; }
       if (url.pathname.startsWith('/api/') && !originAllowed(req)) throw fail('This browser origin is not allowed.', 403, 'origin_denied');
+      if(url.pathname==='/api/shutdown'&&req.method==='POST') {
+        const token=String(req.headers['x-squad-ownership-control']||'');
+        if(!local||req.headers.origin||req.headers.authorization||!/^[a-f0-9]{64}$/.test(token)||!timingSafeEqual(Buffer.from(token),Buffer.from(controlToken)))throw fail('Machine shutdown requires the current local service capability.',403,'control_required');
+        const body=await readBody(req,4096);
+        if(body.version!==1||body.brokerId!==brokerId||body.pid!==process.pid||body.startedAt!==startedAt)throw fail('This shutdown belongs to another Squad service.',409,'broker_changed');
+        await drainForClose();
+        res.once('finish',()=>{void close().catch(failure=>console.error('Squad could not close after draining:',failure.message));});
+        json(res,200,{success:true,drained:true,brokerId,pid:process.pid,startedAt});return;
+      }
       if(url.pathname==='/api/system/reset'||url.pathname==='/api/system/reset/status')throw fail('This reset protocol was replaced by owner-scoped data operations. Reopen Settings → System in the updated Squad app.',410,'reset_protocol_replaced');
       if (local && !req.headers.authorization && req.method === 'GET' && url.pathname === '/api/runtime' && !req.headers[contextHeader] && !url.searchParams.has('context')) { json(res, 200, { success:true, data:{service:'autohand-squad-bridge', ownership:{state:phase,generation}} }); return; }
       if (url.pathname.startsWith('/api/ownership/')) {
@@ -600,14 +616,25 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
     checkCredential();
     return serviceOrigin();
   }
-  async function close() {
-    if (closing) return;
-    closing = true; clearInterval(timer); phase = 'closed'; revoke();
-    if (!releaseWriter) return;
-    await transition; await publishReceipt(); await quiesce('Squad service stopped.'); await resumeNative();
-    for (const response of subscribers) response.end(); subscribers.clear();
-    await new Promise(resolveClose => server.close(resolveClose));
-    releaseWriter?.(); releaseWriter = null;
+  function drainForClose() {
+    if(!closingDrain) {
+      closing = true; clearInterval(timer); phase = 'closed'; revoke();
+      closingDrain=(async()=>{
+        if(!releaseWriter)return;
+        await transition; await publishReceipt(); await quiesce('Squad service stopped.'); await resumeNative();
+        for (const response of subscribers) response.end(); subscribers.clear();
+      })();
+    }
+    return closingDrain;
+  }
+  function close() {
+    if(!closingListener)closingListener=(async()=>{
+      await drainForClose();
+      if(!releaseWriter)return;
+      await new Promise((resolveClose,rejectClose)=>server.close(failure=>failure?rejectClose(failure):resolveClose()));
+      releaseWriter?.(); releaseWriter = null;
+    })();
+    return closingListener;
   }
   return { server, listen, close, context: publicContext };
 }
@@ -621,6 +648,7 @@ export async function runOwnershipBroker({ rootDir = process.cwd(), argv = proce
   const broker = createOwnershipBroker({ rootDir, serviceRoot, configPath, host: String(args.get('host') || '127.0.0.1'), port: Number(args.get('port') || 19821), dev: args.get('dev') === true,...(args.has('hmr-port')?{hmrPort:Number(args.get('hmr-port'))}:{}) });
   let done;
   const closed = new Promise(resolveClosed => { done = resolveClosed; });
+  broker.server.once('close',()=>done());
   const stop = () => { void broker.close().then(done, () => process.exit(1)); };
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
   const origin = await broker.listen();

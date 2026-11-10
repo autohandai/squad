@@ -101,10 +101,11 @@ impl NativeWorkIntent {
                     #[cfg(windows)]
                     {
                         use sha2::{Digest, Sha256};
-                        Some(format!(
-                            "Global\\AutohandSquad-{:x}",
-                            Sha256::digest(format!("{instance}:{id}").as_bytes())
-                        ))
+                        let digest: String = Sha256::digest(format!("{instance}:{id}").as_bytes())
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect();
+                        Some(format!("Global\\AutohandSquad-{digest}"))
                     }
                     #[cfg(not(windows))]
                     {

@@ -35,6 +35,29 @@ intent. Uncertain cleanup poisons admission and survives restart through the
 intent. Startup only retires an old intent once its daemon is gone and its
 group is absent; it never sweeps a process name or kills a recycled group ID.
 The native service itself holds an OS file lock for its lifetime.
+
+Real Linux CLI integration exposed a separate transport assumption. The broker
+emitted chunked JSON, but the existing native HTTP reader expects a plain JSON
+body; its health probe failed before any stop request. Broker JSON now carries
+an explicit UTF-8 byte length, as the existing worker responses already do.
+Supplying an owner generation to the old shutdown route was insufficient: it
+would stop a private worker while leaving its broker running.
+
+Machine shutdown therefore terminates at the broker. The CLI reads the existing
+private `ownership-control.json`, captures matching broker health identity and
+sends that capability with the exact broker UUID, PID and start timestamp.
+The route requires loopback, refuses browser Origin and served authorization,
+and compares against its in-memory capability. It remains available while
+signed out or blocked because closing a service does not grant data access.
+One cached drain promise closes admission and completes the existing worker,
+log and native barriers. Only then does the broker acknowledge `drained:true`
+for that incarnation; listener closure follows the response. Sharing the promise
+prevents a concurrent signal or retry from acknowledging an unfinished drain.
+The CLI waits for connection refusal and rechecks its captured control record
+before deleting a matching service record. Authentication, parsing and timeout
+errors do not prove shutdown and cannot trigger a protocol-1 PID-kill fallback.
+The real two-instance stop check retains its sibling/unrelated-process guards
+and additionally launches an owned child tree that ignores graceful signals.
 New native run records carry the immutable serving-daemon incarnation before
 their first queued write. One pure read projection feeds lists, individual
 runs, active counts and metrics. A previous incarnation's queued/running record
@@ -64,6 +87,27 @@ asks the private worker to stop. Ordinary transitions wait for Node group
 disappearance, stdout/stderr closure and pending log writes as well as the
 native drain acknowledgement. Operation journals for restore/reset are
 separate from these lifetime SQLite transactions.
+
+The stronger real CLI-stop fixture exposed a missing boundary: external CLI,
+ACP, direct Autohand and project-review launches intentionally had their own
+process groups, outside the private worker's group. Their old Stop helper
+scheduled a force timer but returned immediately; worker exit discarded that
+timer. A stubborn harness grandchild could therefore survive a purported drain.
+
+On Unix, those five controlled engine launch paths now share a gated anchor.
+The broker durably records its separate group before admitting the executable.
+The anchor remains alive until it has sent the actual engine outcome and then
+signals its own group. Worker IPC loss and Stop take the same anchored cleanup
+path. Only the live anchor signals that numeric PGID; neither a parent nor a
+replacement broker guesses whether a dead anchor's ID has been recycled.
+The worker's child facade reports the engine's actual code after group absence
+and journal cleanup, rather than reporting the anchor's cleanup SIGKILL as an
+engine failure. Worker shutdown awaits those children, and broker drain checks
+all registered engine groups separately. If the anchor dies unexpectedly while
+descendants survive, recovery remains blocked with the durable intent intact.
+Windows retains the private Job Object, which already contains detached engine
+descendants. This is managed-process containment, not a claim to sandbox code
+that has the user's OS permissions or intentionally launches unrelated services.
 
 Development workers receive an explicit loopback HMR port. The first broker
 handoff dropped `--hmr-port`; because a private worker's API port is zero until

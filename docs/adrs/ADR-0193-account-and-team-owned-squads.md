@@ -83,6 +83,13 @@ No other account's browser cache participates. The real attachment test caught
 the pre-debounce reload case and now verifies saved/reopened file references;
 the two-window backup test retains its conflicting-write/draft-recovery checks.
 
+Canonical hydration also exposed an older registry omission: its member field
+allowlist dropped `conversationStartedAt` and `lastConversationAt`, which had
+previously survived only in browser storage. The execution-panel browser check
+then showed yesterday's turns inside a newer conversation. Both timestamps now
+persist in the canonical profile; the original old-turn exclusion assertion is
+retained rather than relaxing it to accept the resurrected history.
+
 An authenticated served-token client remains a remote transport even when two
 bridges share one computer. Route its bearer credential through the destination
 worker's token validation and restricted member-route allowlist. It must not

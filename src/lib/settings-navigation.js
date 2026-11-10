@@ -41,7 +41,6 @@ export const SETTINGS_SECTION_IDS = Object.freeze([
   'language',
   'providers',
   'chat', 'quick-chat',
-  'backups',
   'notifications',
   'voice',
   'vault',
@@ -54,6 +53,7 @@ export const SETTINGS_SECTION_IDS = Object.freeze([
   'connectors',
   'memory',
   'cloud',
+  'backups',
   'updates',
   'system',
 ]);
