@@ -66,6 +66,7 @@ The public release manifest is a flat, versioned JSON document, with ETags.
 | GET / DELETE | `/v1/auth/sessions`, `/v1/auth/sessions/:id` | List / revoke own sessions |
 | DELETE | `/v1/auth/session` | Revoke current session |
 | GET | `/v1/me` | Current Squad identity |
+| GET | `/v1/owners` | Personal owner and, with `X-Autohand-Identity`, currently accessible Autohand team owners |
 | GET / POST | `/v1/tenants` | List memberships / create a team as owner |
 | PATCH | `/v1/tenants/:tenant` | Administrator renames a team |
 | GET | `/v1/tenants/:tenant/members` | Human memberships |
@@ -79,6 +80,22 @@ The public release manifest is a flat, versioned JSON document, with ETags.
 | GET | `/v1/tenants/:tenant/workspaces/:workspace/memory/changes?cursor=0&limit=100` | Ordered immutable changes, including deletions |
 | GET | `/v1/tenants/:tenant/audit` | Administrator reads latest content-free events |
 | GET / PUT | `/v1/releases/:channel/manifest` | Public discovery / separate publisher credential |
+
+## Owned agents and portable backups
+
+Personal agents live under `/v1/users/me`; Autohand team agents live under
+`/v1/teams/:accountId`. Both require a Squad session. Team requests also require
+`X-Autohand-Identity`, matching the session's immutable identity, so current
+Autohand account membership and write permissions can be rechecked. These
+owners are separate from the cloud-sync tenants above.
+
+Each owner exposes agent and shared-state retrieval, revision-checked writes,
+managed-file uploads/downloads, JSON/YAML export, and retained immutable backup
+plans. The public format is versioned as `autohand-squad` v1 and published at
+`/schemas/squad-backup-v1.json`. See the complete
+[owned API and backup contracts](../../docs/integration/backups.md#hosted-api)
+for routes, limits, authentication, pagination and retry behavior. Retrieval
+does not implicitly publish a desktop's local data; cloud uploads are explicit.
 
 Create a memory:
 
@@ -119,8 +136,9 @@ temporary API unavailability during rollout, while malformed metadata and
 permission failures fail closed. Nightly requires its own valid API metadata.
 Existing general-account/inference settings are not repurposed as cloud sessions.
 
-Cloud sync currently covers shared team memories. Hosted execution, profile and
-message sync, member/project mapping, account purge/export, billing, orphan
-collection and retention policies remain future work. See
+Automatic cloud sync currently covers shared team memories. Owned agent and
+conversation backups are explicit snapshots, not continuous profile or message
+sync. Hosted execution, account purge, billing, orphan-blob collection and
+automatic retention policies remain future work. See
 [ADR-0151](../../docs/adrs/ADR-0151-dedicated-multitenant-squad-api.md) and
 [ADR-0152](../../docs/adrs/ADR-0152-explicit-cloud-memory-sync.md).

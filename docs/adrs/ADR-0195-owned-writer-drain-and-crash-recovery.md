@@ -198,6 +198,13 @@ execution proof; a missing job name alone remains insufficient.
 Sources: [Rust pipe read behavior](https://github.com/rust-lang/rust/blob/1.90.0/library/std/src/sys/pal/windows/handle.rs)
 and [libuv child-job assignment](https://github.com/libuv/libuv/blob/v1.x/src/win/process.c).
 
+With the detached watchdog, run `42925421528`, Windows job `130210664796`,
+passed the native tests and the complete owned-process supervision/metadata
+step, including the formerly failing broker-crash receipt and replacement
+ledger recovery. Local `cargo test --locked --manifest-path src-tauri/Cargo.toml`
+also passed all 32 desktop tests after these changes; these do not launch or
+replace the installed application.
+
 The Windows helper module passed `cargo check --target x86_64-pc-windows-gnu`
 in an isolated harness importing the actual source. A full daemon cross-check
 on this Mac stops at the missing MinGW C compiler, so this is not full Windows

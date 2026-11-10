@@ -56,6 +56,7 @@ Squad cloud-sync tenant IDs are a separate domain, not Autohand team accounts.
 | `GET /export?format=json|yaml` | Bounded convenience export; repeat `agent` to select members |
 | `POST /exports` | Freeze a coherent export plan with an idempotency key |
 | `GET /exports?limit=50&cursor=…` | List retained backups, newest first, with an opaque pagination cursor |
+| `GET /exports/:plan` | Read an authorized plan's immutable snapshot metadata |
 | `POST /exports/:plan/retain` | Writable owner explicitly retains a frozen backup with `{label}`; idempotent and does not rename on retry |
 | `DELETE /exports/:plan` | Writable owner removes a backup plan with `{confirm:"remove-cloud-backup"}`; live agent records are kept |
 | `GET /exports/:plan/agents?limit=100&cursor=…` | Page frozen revision pointers |
@@ -215,6 +216,7 @@ available.
 Operator tools and their context lease are documented in
 [control-plane.md](control-plane.md). Managed member tools are self-only as
 described in [teams.md](teams.md). Local restore/reset, cloud services and their
-MCP paths have isolated transaction/round-trip and D1/R2 tests. Manual legacy
-recovery is still being connected. Installed-application, hosted deployment and
-release verification are separate and are not claimed by these local checks.
+MCP paths, including manual legacy recovery, have isolated transaction/round-trip
+and D1/R2 tests. Staged desktop-runtime checks also exercise packaged MCP
+retrieval and JSON/YAML exports with exact managed-file bytes. Installed-app,
+hosted deployment and release verification are separate from these checks.

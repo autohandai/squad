@@ -6,13 +6,25 @@ on:
     paths:
       - services/squad-api/**
       - server/squad-cloud/**
+      - server/ownership/**
+      - server/control-plane/**
       - server/team/store.mjs
+      - packages/squad-portable/**
+      - package.json
+      - bun.lock
+      - scripts/publish-squad-api-release.mjs
       - .github/workflows/squad-api.yml
   pull_request:
     paths:
       - services/squad-api/**
       - server/squad-cloud/**
+      - server/ownership/**
+      - server/control-plane/**
       - server/team/store.mjs
+      - packages/squad-portable/**
+      - package.json
+      - bun.lock
+      - scripts/publish-squad-api-release.mjs
       - .github/workflows/squad-api.yml
   workflow_dispatch:
     inputs:
