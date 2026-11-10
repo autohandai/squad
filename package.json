@@ -24,7 +24,7 @@
     "preview": "node server.mjs --host 127.0.0.1 --port 19821",
     "check:ownership": "node scripts/check-squad-ownership.mjs",
     "check:owned-data": "node scripts/check-owned-data.mjs",
-    "check:owned-lifecycle": "node scripts/check-owned-lifecycle.mjs",
+    "check:owned-lifecycle": "node scripts/check-owned-lifecycle.mjs && node scripts/check-owned-engines.mjs",
     "check:owned-operations": "node scripts/check-owned-operations.mjs",
     "check:owned-remote": "node scripts/check-owned-remote.mjs",
     "check:legacy-recovery": "node scripts/check-legacy-recovery.mjs",

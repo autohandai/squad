@@ -177,6 +177,27 @@ The socket fixture exercises missing, current and unknown protocol versions.
 
 ## Validation
 
+`check-owned-engines.mjs` runs the actual Unix anchor and worker IPC against a
+durable broker ledger. A deliberately stalled journal prevents the target's
+first file write. After admission it verifies exact stdout and the engine's
+successful exit status despite anchor cleanup; a refused context never starts
+the executable, and both paths leave no live intent. The real CLI-stop test
+separately proves stubborn descendant cleanup and sibling preservation.
+
+The first full Windows CI run passed native tests but failed the broker-crash
+drain-receipt check. Run `42924472986`, Windows job `130207395756`, then
+confirmed both workload processes and the watchdog were gone while the receipt
+was absent (`ENOENT`). Checking Rust's standard input implementation ruled out
+the initial broken-pipe/EOF concern: it already maps a closed pipe to EOF.
+libuv's Windows launcher instead assigns non-detached children to its own
+kill-on-parent-exit job. The Node-launched watchdog must be detached from that
+relationship so broker loss closes its control pipe while leaving it alive
+to drain the explicit owned job and flush the receipt. This does not detach
+the workload from its explicit Job Object. The crash check remains the required
+execution proof; a missing job name alone remains insufficient.
+Sources: [Rust pipe read behavior](https://github.com/rust-lang/rust/blob/1.90.0/library/std/src/sys/pal/windows/handle.rs)
+and [libuv child-job assignment](https://github.com/libuv/libuv/blob/v1.x/src/win/process.c).
+
 The Windows helper module passed `cargo check --target x86_64-pc-windows-gnu`
 in an isolated harness importing the actual source. A full daemon cross-check
 on this Mac stops at the missing MinGW C compiler, so this is not full Windows

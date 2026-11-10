@@ -63,7 +63,10 @@ export async function windowsJobDrained(name,options={}) {
 }
 export async function createWindowsJob(name, options) {
   if(!options?.receiptPath)throw Error('Windows work requires its durable drain receipt.');
-  const helper = spawn(await nativeOwnershipHelper(options), ['--ownership-job', validateJobName(name),options.receiptPath], { env: helperEnvironment(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  // libuv kills non-detached Windows children with their Node parent. The
+  // watchdog must survive long enough to drain its job and flush the receipt
+  // after broker loss; its control pipe remains connected until that loss.
+  const helper = spawn(await nativeOwnershipHelper(options), ['--ownership-job', validateJobName(name),options.receiptPath], { env: helperEnvironment(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,detached:true });
   let buffer = '', failure, closing;
   const results = new Map(), pending = new Map();
   const fail = error => { failure ||= error; for (const waiter of pending.values()) {clearTimeout(waiter.timer);waiter.reject(failure);} pending.clear(); };
