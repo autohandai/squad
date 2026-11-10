@@ -142,6 +142,15 @@ write authority even though ordinary read-only export-plan creation is allowed.
 
 ## Sources and validation
 
+Dependency review rejected the initial Zod 4.3.6 pin for constrained-collection
+memory exhaustion (GHSA-mrhx-c7xc-m3w5). Use the patched 4.6.6 floor in both
+runtime and API packages, retain the existing pre-parse byte/node limits, and
+rerun hostile-input and cross-encoding checks. The advisory is at
+[GitHub's reviewed record](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
+API CI also installs the root runtime dependencies because its interoperability
+tests import the actual desktop client/broker; a passing test against a warm
+developer tree had hidden that clean-install requirement.
+
 YAML parsing uses the [library's documented strict parsing and alias limits](https://eemeli.org/yaml/).
 Implementation, cross-encoding round trips, binary checksums, hostile imports,
 role boundaries and actual HTTP/MCP evidence will be recorded before shipping.

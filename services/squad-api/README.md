@@ -12,6 +12,10 @@ inference/API token. Autohand identity is verified only at session exchange.
 
 Use Node 24.22+ and npm in this directory:
 
+Install the repository's root dependencies first with `bun install --frozen-lockfile`.
+The interoperability tests execute the real desktop backup client and broker;
+an API-only dependency installation cannot resolve those runtime modules.
+
 ```sh
 npm ci
 npm run typecheck
