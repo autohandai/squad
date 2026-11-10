@@ -306,6 +306,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "clap",
+ "dunce",
  "libc",
  "objc2",
  "objc2-app-kit",
