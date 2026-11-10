@@ -10,6 +10,8 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-11-10
+
 ### Added
 
 - Assign work to another agent with Squad MCP: tasks show who sent them and wait in the recipient's queue until they are free.
@@ -33,6 +35,9 @@ list to the section for that version.
 - Updated the runtime dependency used to verify downloads and saved memory.
 
 ### Fixed
+
+- Connect to Squad from Autohand Desktop and other MCP clients when launched outside a source checkout. The installed command now locates its bundled `runtime` directory on macOS and Windows.
+- macOS app updates build with one native tray implementation, avoiding the duplicate Objective-C class that blocked newer Squad installers.
 
 - Deleting a task wins over edits or completion already in flight. Merged conversations reopen with large saved work details and include your earlier questions in the next reply's context.
 - Pull requests produce the required Dependabot check through GitHub dependency review.
