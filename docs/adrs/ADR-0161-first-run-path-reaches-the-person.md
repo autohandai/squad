@@ -325,6 +325,16 @@ can land before or after the account-ownership change. A failing owned context
 does not fall back to legacy storage. The same managed-MCP/browser check passed
 in both source combinations with temporary homes and no provider calls.
 
+Combined production-browser validation initially stalled before the first
+Backups render. Page HTML and the owned runtime returned HTTP200; preparing the
+pinned CLI did not change it. DevTools paused the renderer in the inline splash's
+synchronous `localStorage.getItem`. The same full suite passed when its fresh
+Chrome profile used `--use-mock-keychain`. Disposable macOS browser fixtures now
+use that flag, avoiding a dependency on the person's keychain. This does not
+apply to existing browser profiles or the installed Squad app. The
+[Chrome launcher guidance](https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md)
+documents this isolated-test option.
+
 ## Consequences and validation
 
 - `check-permission-policy`, `check-permission-approvals`,
