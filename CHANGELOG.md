@@ -36,6 +36,8 @@ list to the section for that version.
 
 ### Fixed
 
+- Desktop conversation exports now save Markdown and JSON, and channel exports save Markdown, in Downloads. Earlier files are preserved and the app shows the saved filenames or any failure instead of doing nothing.
+
 - Connect to Squad from Autohand Desktop and other MCP clients when launched outside a source checkout. The installed command now locates its bundled `runtime` directory on macOS and Windows.
 - macOS app updates build with one native tray implementation, avoiding the duplicate Objective-C class that blocked newer Squad installers.
 

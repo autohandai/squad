@@ -74,6 +74,7 @@ jobs:
           bun run check:artifacts
           bun run check:updates:playwright
           bun run check:app-info
+          bun run check:text-exports
 
       - name: Check durable goals, progress, telemetry and native notification controls
         run: |
@@ -147,6 +148,7 @@ jobs:
           bun run check:agent-channel-actions
           bun run check:control-plane
           bun run check:member-by-chat:browser
+          bun run check:text-exports:browser
 
       - name: Upload update regression evidence
         if: always()

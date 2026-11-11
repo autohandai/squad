@@ -213,7 +213,9 @@
     "check:task-assignments": "node scripts/check-task-assignments.mjs && node scripts/check-routine-task-delete-race.mjs && node scripts/check-work-task-delete-race.mjs",
     "check:conversation-history": "node scripts/check-conversation-history.mjs && node scripts/check-thread-history-races.mjs && node scripts/check-chat-history-admission.mjs && node scripts/check-conversation-queue-race.mjs && node scripts/check-conversation-goal-race.mjs",
     "check:conversation-history:browser": "node scripts/check-conversation-history-browser.mjs",
-    "check:optional-git-engine": "node scripts/check-optional-git-engine.mjs"
+    "check:optional-git-engine": "node scripts/check-optional-git-engine.mjs",
+    "check:text-exports": "node scripts/check-text-exports.mjs",
+    "check:text-exports:browser": "node scripts/check-text-exports-browser.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.296",

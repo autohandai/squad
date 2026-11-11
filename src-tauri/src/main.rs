@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 mod artifact_preview;
 mod info_windows;
+mod text_exports;
 use info_windows::{info_navigation_handler, open_info_window, InfoPage};
 mod computer_use_grant;
 mod computer_use_setup;
@@ -93,6 +94,7 @@ fn main() {
             system_reset::squad_set_system_reset_stage,
             system_reset::squad_system_reset_status,
             system_reset::squad_restart_after_system_reset,
+            text_exports::squad_save_text_export,
             artifact_preview::squad_open_artifact_in_browser
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
