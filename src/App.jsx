@@ -7763,6 +7763,13 @@ function App() {
     }));
   }
 
+  function decideChannelTeamProposal(channelId, message, decision) {
+    const saved = (messagesByChannel[channelId] || []).find(item => item.id === message.id);
+    if (!saved?.teamProposal?.proposal || saved.teamProposalDecided) return;
+    if (decision === "create") addTeamFromMemberProposal(agents.find(member => member.id === saved.agentId), saved.teamProposal.proposal, { workspace: saved.workspace || "" });
+    updateChannelMessage(channelId, saved.id, { teamProposalDecided: decision === "create" ? "created" : "dismissed", updatedAt: new Date().toISOString() });
+  }
+
   async function createChannel(draft, { navigateTo = true, creatorId = "user" } = {}) {
     const workspace = activeAgent?.workspace || fallbackWorkspace;
     const channel = normalizeChannelCopy(await api("/api/channels", {
@@ -8038,7 +8045,9 @@ function App() {
             if (!data.declined) recordChannelUsage();
             completed = true;
             const completedAt = new Date().toISOString();
-            const replyText = humanReadableReplyText(data.reply || streamedAnswer, data.trace, `${agent.name} returned no chat text.`);
+            const teamProposal = teamProposalReceipts(data.channelActions)[0] || null;
+            const answer = data.reply || streamedAnswer;
+            const replyText = humanReadableReplyText(teamProposal ? replyWithoutReceipts(answer, [teamProposal]) || answer : answer, data.trace, `${agent.name} returned no chat text.`);
             finalReplyText = replyText;
             if (resolveChannelMentionTargets(replyText, channel, agents).hasMentions) {
               raiseBridgeEvent("mention.received", {
@@ -8051,6 +8060,7 @@ function App() {
             }
             updateChannelMessage(channel.id, messageId, {
               body: replyText || `${agent.name} returned no chat text.`,
+              ...(teamProposal ? { teamProposal } : {}),
               status: "complete",
               time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
               trace: data.trace,
@@ -10101,6 +10111,7 @@ function App() {
                 channelProposals={channelProposals}
                 onResolveProposal={resolveChannelProposal}
                 onDispatch={sendChannelPrompt}
+                onTeamProposal={decideChannelTeamProposal}
                 goalSetupRunning={channelGoalRequestsRef.current.has(channelIdFromRoute(route)) || teamBuilds.some(build => build.targetChannelId === channelIdFromRoute(route) && ["preparing", "finishing"].includes(build.status))}
                 onFollowUp={sendThreadFollowUp}
                 canvasRefreshKey={canvasRefreshKey}
@@ -10731,6 +10742,7 @@ function ChannelsPage({
   onDeleteChannel,
   onToggleMember,
   onDispatch,
+  onTeamProposal,
   goalSetupRunning = false,
   onFollowUp,
   reactionsByMessage = {},
@@ -11340,6 +11352,8 @@ function ChannelsPage({
               </div> : null}
               <ChannelStream
                 channel={channel}
+                copy={copy}
+                onTeamProposal={(message, decision) => onTeamProposal?.(channel.id, message, decision)}
                 messages={streamWithGitEvents}
                 renderEvent={(event) => (!isGitEvent(event) ? null : (
                   <GitEventRow

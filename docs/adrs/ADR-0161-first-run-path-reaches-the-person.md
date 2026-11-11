@@ -291,6 +291,34 @@ source confirmed each one.
     the folder boundary, symlink escape, later shell writes and the stopped
     case.
 
+## Channel proposal regression, 2026-11-11
+
+Issue55 reported successful managed `squad_propose_team` calls without a
+Create team control. `node scripts/check-channel-replies.mjs`, given a valid
+finished proposal, reproduced the missing control in the actual channel
+renderer. This did not require a provider, feature flags or guessed reply text.
+The live channel completion handler discarded proposal receipts, and the
+channel renderer had no proposal control. Direct messages already had both.
+Recovery also handled only unfinished replies, leaving older completed replies
+with no way to recover their saved run's roster.
+
+Channel replies and nested threads now use the same divider-list proposal and
+existing team builder as direct messages. Recover the original proposal only
+from a completed run with the exact saved reply request ID, channel and thread. Preserve an existing
+decision and never create members during recovery. The first rendered fix
+exposed a second bug in the integration check: adding recovered metadata with
+an unchanged timestamp did not pass the channel store's newer-write rule.
+Recovery and explicit decisions therefore advance their message's write time.
+
+`check-team-proposals-browser.mjs` uses a controlled engine that calls the
+real managed MCP endpoint. It checks saved-run recovery, live channel replies,
+the threaded view, persisted dismissal across service/browser restart, and
+explicit creation through the ordinary team importer. This is local browser,
+MCP and persistence evidence; it does not replace live-provider or installed-app
+verification. Older proposals can be recovered only while their correlated run
+is retained. The existing one-proposal-per-reply display limit remains; no roster
+is inferred from prose and no unrelated run is attached.
+
 ## Consequences and validation
 
 - `check-permission-policy`, `check-permission-approvals`,

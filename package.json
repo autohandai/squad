@@ -78,6 +78,7 @@
     "check:teams": "node scripts/check-teams.mjs",
     "check:team-builder": "node scripts/check-team-builder.mjs",
     "check:team-builder:browser": "node scripts/check-team-builder-browser.mjs",
+    "check:team-proposals:browser": "node scripts/check-team-proposals-browser.mjs",
     "check:local-skills": "node scripts/check-local-skills.mjs",
     "check:adaptive-skills": "node scripts/check-adaptive-skills.mjs",
     "check:skill-receipt-transport": "node scripts/check-skill-receipt-transport.mjs",
