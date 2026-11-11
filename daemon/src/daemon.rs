@@ -2987,7 +2987,9 @@ mod tests {
         let old_key = fixture.receipt["scopeKey"].as_str().unwrap().to_string();
         use sha2::{Digest, Sha256};
         let key = Sha256::digest(serde_json::to_vec(&[issuer.as_str(), "user", "alice"]).unwrap())
-            .iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         let old_base = fixture.service.root.join("owners").join(&old_key);
         let base = fixture.service.root.join("owners").join(&key);
         fs::rename(old_base, &base).unwrap();
