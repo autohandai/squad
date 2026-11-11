@@ -107,6 +107,27 @@ Supported config fields are `host`, `port`, `fixedPort`, `openUrl`,
 desktop controller at a hosted UI URL, fixed local port, proxy, API gateway,
 launch-at-login policy, and telemetry policy without changing the daemon API.
 
+## Optional remote services
+
+The legacy `/v1/squad/devices/register`, `/v1/squad/feature-flags`,
+`/v1/squad/pings` and `/v1/squad/telemetry` routes are optional. A deployment
+returning HTTP 404, 405 or 501 is recorded as `remoteState: "unsupported"`,
+with its `remoteStatus`, `success: false` and no `remoteError`. The daemon
+shares that result across its scheduled and manual checks, pauses only that
+endpoint for one hour and probes it again afterward. Restarting the daemon
+also clears the pause. No service is reported as delivered or enabled merely
+because it is optional.
+
+Snapshots distinguish `available`, `unsupported`, `disabled`, `idle` (no
+telemetry to send) and `failed`; `unknown` supports older saved snapshots.
+Authentication errors, rate limits, outages, invalid flag responses and
+connection failures remain failures and are retried normally. Remote requests
+have a ten-second deadline. Unsupported routes do not disable local work,
+release discovery, or other remote endpoints. `eventsSent` counts acknowledged
+events only; disabled telemetry makes no request and produces no error log.
+The local telemetry buffer is retained; this does not introduce a hosted
+telemetry service, feature flags or delivery guarantees.
+
 ## Local API
 
 The visible web application opens on `http://127.0.0.1:19821` by default. When
