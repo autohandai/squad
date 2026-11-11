@@ -31,8 +31,12 @@ feature flags caused it.
 
 ## Decision
 
-Keep one cloneable API client per daemon, with endpoint-specific in-memory
-support state shared by scheduled and manual requests. Treat only HTTP 404,
+Share only process-local endpoint support across scheduled and manual requests;
+create an API client from the operation's current captured configuration.
+Namespace support by a length-delimited digest of API destination, credentials,
+account and device. Do not cache credentials, responses or workload data.
+This preserves the owned-account transition contract rather than retaining a
+long-lived authenticated client. Expired support entries are pruned on use. Treat only HTTP 404,
 405 and 501 from these four optional endpoints as unsupported. Preserve the
 status, report `success: false`, and distinguish `remoteState: unsupported`
 from `failed` without populating `remoteError`. Pause that endpoint for one
@@ -64,7 +68,7 @@ storm or masquerades as successful delivery. Operators can still see the
 unsupported status in the saved snapshot and event metadata. A newly deployed
 endpoint may remain unused for up to one hour, or until daemon restart. The
 cache is process-local; restarting also permits another missing-route probe.
-The narrow admission lock serializes optional probes, so a slow request can
+The narrow admission lock serializes optional probes across scopes, so a slow request can
 delay a manual optional check until its bounded deadline.
 
 This does not implement a hosted telemetry collector, remote flags, device

@@ -5,9 +5,10 @@ use crate::VERSION;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::env::consts::{ARCH, OS};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -26,6 +27,14 @@ pub enum RemoteState {
     Idle,
     Failed,
 }
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct EndpointKey {
+    scope: [u8; 32],
+    path: &'static str,
+}
+type UnsupportedEndpoints = Arc<Mutex<HashMap<EndpointKey, (Instant, u16)>>>;
+static OPTIONAL_ENDPOINTS: OnceLock<UnsupportedEndpoints> = OnceLock::new();
 
 enum OptionalResponse {
     Available(reqwest::Response),
@@ -176,19 +185,35 @@ pub struct ApiClient {
     client: reqwest::Client,
     config: SquadConfig,
     device_id: String,
-    unsupported: Arc<Mutex<HashMap<&'static str, (Instant, u16)>>>,
+    unsupported: UnsupportedEndpoints,
+    support_scope: [u8; 32],
 }
 
 impl ApiClient {
     pub fn new(config: SquadConfig, device_id: impl Into<String>) -> Self {
+        let device_id = device_id.into();
+        // Only support state is shared. Credentials/configuration are captured
+        // anew for each operation, including an owned account transition.
+        let mut scope = Sha256::new();
+        for value in [
+            config.api_base_url.as_str(),
+            config.api_auth_token.as_deref().unwrap_or(""),
+            config.company_secret.as_deref().unwrap_or(""),
+            config.account_email.as_deref().unwrap_or(""),
+            device_id.as_str(),
+        ] {
+            scope.update((value.len() as u64).to_le_bytes());
+            scope.update(value.as_bytes());
+        }
         Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
                 .expect("build daemon HTTP client"),
             config,
-            device_id: device_id.into(),
-            unsupported: Arc::new(Mutex::new(HashMap::new())),
+            device_id,
+            support_scope: scope.finalize().into(),
+            unsupported: OPTIONAL_ENDPOINTS.get_or_init(Default::default).clone(),
         }
     }
 
@@ -430,7 +455,9 @@ impl ApiClient {
         // Keep admission and the probe together: clones/manual checks must not
         // race and send the same missing endpoint repeatedly.
         let mut unsupported = self.unsupported.lock().await;
-        if let Some((checked, status)) = unsupported.get(endpoint) {
+        unsupported.retain(|_, (checked, _)| checked.elapsed() < UNSUPPORTED_RETRY_AFTER);
+        let key = self.endpoint_key(endpoint);
+        if let Some((checked, status)) = unsupported.get(&key) {
             if checked.elapsed() < UNSUPPORTED_RETRY_AFTER {
                 return Ok(OptionalResponse::Unsupported(*status));
             }
@@ -442,14 +469,21 @@ impl ApiClient {
             .with_context(|| format!("request {endpoint}"))?;
         let status = response.status();
         if matches!(status.as_u16(), 404 | 405 | 501) {
-            unsupported.insert(endpoint, (Instant::now(), status.as_u16()));
+            unsupported.insert(key, (Instant::now(), status.as_u16()));
             return Ok(OptionalResponse::Unsupported(status.as_u16()));
         }
-        unsupported.remove(endpoint);
+        unsupported.remove(&key);
         if !status.is_success() {
             bail!("request {endpoint} failed with HTTP {}", status.as_u16());
         }
         Ok(OptionalResponse::Available(response))
+    }
+
+    fn endpoint_key(&self, path: &'static str) -> EndpointKey {
+        EndpointKey {
+            scope: self.support_scope,
+            path,
+        }
     }
 
     async fn get_json(&self, path: &str) -> Result<(u16, Value)> {
@@ -637,7 +671,7 @@ mod tests {
             api.unsupported
                 .lock()
                 .await
-                .get_mut("/v1/squad/devices/register")
+                .get_mut(&api.endpoint_key("/v1/squad/devices/register"))
                 .unwrap()
                 .0 = Instant::now() - UNSUPPORTED_RETRY_AFTER;
             api.register_device().await;
@@ -646,12 +680,35 @@ mod tests {
                 3,
                 "an added route must be discovered after the cooldown"
             );
-            // A new client/configuration gets its own probe rather than a
-            // global or persisted unsupported state from another destination.
+            // Another identity gets its own probe; a recreated client in the
+            // same identity must retain the support result across cycles.
+            ApiClient::new(api.config.clone(), "fixture")
+                .register_device()
+                .await;
+            assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 3);
             ApiClient::new(api.config.clone(), "another-device")
                 .register_device()
                 .await;
             assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 4);
+            let mut credentials = api.config.clone();
+            credentials.api_auth_token = Some("fixture-other-session".into());
+            ApiClient::new(credentials.clone(), "fixture")
+                .register_device()
+                .await;
+            assert_eq!(
+                count.load(std::sync::atomic::Ordering::SeqCst),
+                5,
+                "another credential must not inherit an unsupported result"
+            );
+            credentials.account_email = Some("other-owner@example.test".into());
+            ApiClient::new(credentials, "fixture")
+                .register_device()
+                .await;
+            assert_eq!(
+                count.load(std::sync::atomic::Ordering::SeqCst),
+                6,
+                "another account must probe independently"
+            );
             server.abort();
         }
     }
@@ -721,7 +778,11 @@ mod tests {
         let registration = api.register_device().await;
         assert_eq!(registration.remote_state, RemoteState::Failed);
         assert!(registration.remote_error.is_some());
-        assert!(api.unsupported.lock().await.is_empty());
+        assert!(!api
+            .unsupported
+            .lock()
+            .await
+            .contains_key(&api.endpoint_key("/v1/squad/devices/register")));
     }
 
     #[test]

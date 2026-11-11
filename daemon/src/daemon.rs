@@ -239,7 +239,6 @@ pub struct UpdateSnapshot {
 struct AppState {
     paths: StatePaths,
     config: SquadConfig,
-    api: ApiClient,
     account_email: Arc<StdMutex<Option<String>>>,
     accepting_work: Arc<AtomicBool>,
     update_admission: Arc<StdMutex<Option<String>>>,
@@ -287,7 +286,6 @@ pub async fn run_daemon_with_paths(paths: StatePaths, overrides: ConfigOverrides
     let state = Arc::new(AppState {
         paths: paths.clone(),
         account_email: Arc::new(StdMutex::new(config.account_email.clone())),
-        api: ApiClient::new(config.clone(), device_id.clone()),
         config,
         accepting_work: Arc::new(AtomicBool::new(true)),
         update_admission: Arc::new(StdMutex::new(None)),
@@ -965,7 +963,8 @@ async fn sync_now_response(state: &AppState) -> SyncSnapshot {
 }
 
 async fn register_device_response(state: &AppState) -> crate::api::DeviceRegistrationSnapshot {
-    let snapshot = state.api.register_device().await;
+    let api = ApiClient::new(state.config.clone(), state.device_id.clone());
+    let snapshot = api.register_device().await;
     let _ = write_json(&state.paths.device_registration_json, &snapshot);
     record_daemon_event(
         state,
@@ -981,7 +980,8 @@ async fn register_device_response(state: &AppState) -> crate::api::DeviceRegistr
 }
 
 async fn feature_flags_response(state: &AppState) -> crate::api::FeatureFlagSnapshot {
-    let snapshot = state.api.fetch_feature_flags().await;
+    let api = ApiClient::new(state.config.clone(), state.device_id.clone());
+    let snapshot = api.fetch_feature_flags().await;
     let _ = write_json(&state.paths.feature_flags_json, &snapshot);
     record_daemon_event(
         state,
@@ -1002,13 +1002,15 @@ async fn telemetry_flush_response(state: &AppState) -> TelemetryFlushSnapshot {
     } else {
         Vec::new()
     };
-    let snapshot = state.api.send_telemetry_batch(&events).await;
+    let api = ApiClient::new(state.config.clone(), state.device_id.clone());
+    let snapshot = api.send_telemetry_batch(&events).await;
     let _ = write_json(&state.paths.telemetry_flush_json, &snapshot);
     snapshot
 }
 
 async fn send_ping(state: &AppState, metrics: DaemonMetrics) -> crate::api::PingSnapshot {
-    let snapshot = state.api.send_ping(remote_metrics(metrics)).await;
+    let api = ApiClient::new(state.config.clone(), state.device_id.clone());
+    let snapshot = api.send_ping(remote_metrics(metrics)).await;
     let _ = write_json(&state.paths.ping_json, &snapshot);
     snapshot
 }
@@ -2010,7 +2012,6 @@ mod tests {
         config.api_base_url = format!("http://{address}");
         let state = AppState {
             paths: paths.clone(),
-            api: ApiClient::new(config.clone(), "optional-api-fixture"),
             config,
             account_email: Arc::new(StdMutex::new(None)),
             accepting_work: Arc::new(AtomicBool::new(true)),
@@ -2060,7 +2061,6 @@ mod tests {
         let state = AppState {
             paths: paths.clone(),
             config: SquadConfig::defaults(),
-            api: ApiClient::new(SquadConfig::defaults(), "fixture"),
             account_email: Arc::new(StdMutex::new(None)),
             accepting_work: Arc::new(AtomicBool::new(true)),
             update_admission: Arc::new(StdMutex::new(None)),
@@ -2256,7 +2256,6 @@ mod tests {
             paths: paths.clone(),
             account_email: Arc::new(StdMutex::new(None)),
             config: SquadConfig::defaults(),
-            api: ApiClient::new(SquadConfig::defaults(), "fixture"),
             accepting_work: Arc::new(AtomicBool::new(true)),
             update_admission: Arc::new(StdMutex::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
@@ -2287,7 +2286,6 @@ mod tests {
             paths: paths.clone(),
             account_email: Arc::new(StdMutex::new(None)),
             config: SquadConfig::defaults(),
-            api: ApiClient::new(SquadConfig::defaults(), "fixture"),
             accepting_work: Arc::new(AtomicBool::new(true)),
             update_admission: Arc::new(StdMutex::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
@@ -2317,7 +2315,6 @@ mod tests {
             paths: paths.clone(),
             account_email: Arc::new(StdMutex::new(None)),
             config: SquadConfig::defaults(),
-            api: ApiClient::new(SquadConfig::defaults(), "fixture"),
             accepting_work: Arc::new(AtomicBool::new(true)),
             update_admission: Arc::new(StdMutex::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
