@@ -26,6 +26,8 @@ list to the section for that version.
 
 ### Fixed
 
+- Squad stops retrying undeployed device, feature-flag, heartbeat and telemetry endpoints every minute. Local diagnostics distinguish unsupported services from authentication errors or outages; disabled telemetry no longer produces failure logs.
+
 - Reopening an agent keeps the current chat's start point instead of bringing earlier conversations back into it.
 - Reset from Settings now reaches the owned-data transaction and waits for its completion before reopening Squad. Earlier data remains available for recovery.
 - Windows account changes and data recovery supervise the whole worker process tree, including detached children, before admitting another Squad.

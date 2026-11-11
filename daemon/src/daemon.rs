@@ -1358,6 +1358,7 @@ async fn register_device_response(state: &AppState) -> crate::api::DeviceRegistr
         state,
         "device.registered",
         json!({
+            "remoteState": snapshot.remote_state,
             "remoteStatus": snapshot.remote_status,
             "remoteError": snapshot.remote_error,
             "apiBaseUrl": snapshot.api_base_url
@@ -1374,6 +1375,7 @@ async fn feature_flags_response(state: &AppState) -> crate::api::FeatureFlagSnap
         state,
         "feature_flags.checked",
         json!({
+            "remoteState": snapshot.remote_state,
             "remoteStatus": snapshot.remote_status,
             "remoteError": snapshot.remote_error,
             "flags": snapshot.flags.iter().map(|flag| flag.key.clone()).collect::<Vec<_>>()
@@ -1392,7 +1394,7 @@ async fn telemetry_flush_response(
         .and_then(|(owned, _)| owned_api_config(state, owned));
     if !state.config.telemetry_enabled() || config.is_none() {
         return TelemetryFlushSnapshot {
-            success: true,
+            success: false,
             flushed_at: now_string(),
             api_base_url: state.config.api_base_url.clone(),
             client_type: "squad".into(),
@@ -1400,8 +1402,9 @@ async fn telemetry_flush_response(
             version: VERSION.into(),
             device_id: state.device_id.clone(),
             events_sent: 0,
+            remote_state: crate::api::RemoteState::Disabled,
             remote_status: None,
-            remote_error: Some("No verified owner telemetry is eligible to send.".into()),
+            remote_error: None,
         };
     }
     let (owned, _activity) = lease.expect("verified config requires owner");
@@ -1410,6 +1413,7 @@ async fn telemetry_flush_response(
         config.expect("verified owner config"),
         state.device_id.clone(),
     );
+
     let snapshot = api.send_telemetry_batch(&events).await;
     let _ = write_json(&owned.data_paths.telemetry_flush_json, &snapshot);
     snapshot
@@ -1417,7 +1421,7 @@ async fn telemetry_flush_response(
 
 fn skipped_ping(state: &AppState) -> crate::api::PingSnapshot {
     crate::api::PingSnapshot {
-        success: true,
+        success: false,
         pinged_at: now_string(),
         api_base_url: state.config.api_base_url.clone(),
         client_type: "squad".into(),
@@ -1426,8 +1430,9 @@ fn skipped_ping(state: &AppState) -> crate::api::PingSnapshot {
         device_id: state.device_id.clone(),
         metrics: remote_metrics(DaemonMetrics::default()),
         plan_state: "unknown".into(),
+        remote_state: crate::api::RemoteState::Disabled,
         remote_status: None,
-        remote_error: Some("Sign in before sending owned workload metrics.".into()),
+        remote_error: None,
     }
 }
 
@@ -2941,6 +2946,143 @@ mod tests {
         );
         listener_task.abort();
     }
+    #[tokio::test]
+    async fn observability_does_not_repeat_unsupported_remote_requests_or_errors() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(AtomicU64::new(0));
+        let observed = requests.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                loop {
+                    let mut chunk = [0; 4096];
+                    let count = stream.read(&mut chunk).await.unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    bytes.extend_from_slice(&chunk[..count]);
+                    if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..end]);
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap_or(0);
+                        if bytes.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                observed.fetch_add(1, Ordering::SeqCst);
+                stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+            }
+        });
+        let mut fixture = crate::ownership::tests::Fixture::new();
+        let issuer = format!("http://{address}");
+        let old_key = fixture.receipt["scopeKey"].as_str().unwrap().to_string();
+        use sha2::{Digest, Sha256};
+        let key = Sha256::digest(serde_json::to_vec(&[issuer.as_str(), "user", "alice"]).unwrap())
+            .iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let old_base = fixture.service.root.join("owners").join(&old_key);
+        let base = fixture.service.root.join("owners").join(&key);
+        fs::rename(old_base, &base).unwrap();
+        let dataset = fixture.receipt["datasetId"].as_str().unwrap().to_string();
+        let root = base.join("datasets").join(&dataset);
+        fixture.receipt["scopeKey"] = json!(key);
+        fixture.receipt["owner"]["issuer"] = json!(issuer);
+        fixture.receipt["actor"]["issuer"] = json!(issuer);
+        fixture.receipt["dataRoot"] = json!(root.join("state"));
+        fixture.receipt["appRoot"] = json!(root.join("app"));
+        fixture.receipt["workspaceRoot"] = json!(root.join("member-homes"));
+        fs::write(
+            base.join("current.json"),
+            json!({"version":1,"ownerKey":key,"datasetId":dataset}).to_string(),
+        )
+        .unwrap();
+        fixture.save();
+        let _auth = fixture.authenticate();
+        let paths = fixture.service.clone();
+        let owned = read_active_context(&paths).unwrap().unwrap();
+        append_telemetry_event(
+            &owned.data_paths,
+            TelemetryEvent::new("fixture-owned-event"),
+        )
+        .unwrap();
+        paths.ensure().unwrap();
+        fs::write(
+            paths.root.join("settings.json"),
+            r#"{"autoCheckUpdates":false}"#,
+        )
+        .unwrap();
+        let mut config = SquadConfig::defaults();
+        config.api_base_url = format!("http://{address}");
+        let state = AppState {
+            paths: paths.clone(),
+            config,
+            account_email: Arc::new(StdMutex::new(None)),
+            accepting_work: Arc::new(AtomicBool::new(true)),
+            update_admission: Arc::new(StdMutex::new(None)),
+            ownership_activity: Arc::new(OwnershipActivity::default()),
+            instance_id: "fixture-instance".into(),
+            native_recovery_confirmed: true,
+            shutdown_tx: Arc::new(Mutex::new(None)),
+            device_id: "optional-api-fixture".into(),
+            web_restarts: Arc::new(AtomicU64::new(0)),
+        };
+        for _ in 0..3 {
+            run_observability_cycle(&state).await;
+        }
+
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            4,
+            "missing optional endpoints must be probed once, not every observability cycle"
+        );
+        let log = fs::read_to_string(paths.root.join("logs/daemon.otlp.jsonl")).unwrap_or_default();
+        assert!(
+            !log.contains("failed with HTTP 404"),
+            "unsupported optional endpoints must not be logged as recurring errors: {log}"
+        );
+        for path in [
+            &paths.device_registration_json,
+            &paths.feature_flags_json,
+            &owned.data_paths.ping_json,
+            &owned.data_paths.telemetry_flush_json,
+        ] {
+            let snapshot: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+            assert_eq!(snapshot["success"], false);
+            assert_eq!(snapshot["remoteState"], "unsupported");
+            assert_eq!(snapshot["remoteStatus"], 404);
+            assert!(snapshot["remoteError"].is_null());
+        }
+        let telemetry: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&owned.data_paths.telemetry_flush_json).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(telemetry["eventsSent"], 0);
+        fixture.receipt["state"] = json!("locked");
+        fixture.save();
+        for _ in 0..3 {
+            run_observability_cycle(&state).await;
+        }
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            4,
+            "locked contexts must never send private metrics or telemetry"
+        );
+        let skipped = telemetry_flush_response(&state, None).await;
+        assert_eq!(skipped.remote_state, crate::api::RemoteState::Disabled);
+        assert!(skipped.remote_error.is_none());
+        assert!(skipped_ping(&state).remote_error.is_none());
+        server.abort();
+    }
+
     #[tokio::test]
     async fn update_admission_refuses_new_work_and_preserves_queued_work() {
         let fixture = crate::ownership::tests::Fixture::new();
