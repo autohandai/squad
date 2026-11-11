@@ -319,6 +319,12 @@ verification. Older proposals can be recovered only while their correlated run
 is retained. The existing one-proposal-per-reply display limit remains; no roster
 is inferred from prose and no unrelated run is attached.
 
+The regression check uses the ownership-aware fixture when that first-party
+harness is present, and the existing fixture otherwise, so this independent fix
+can land before or after the account-ownership change. A failing owned context
+does not fall back to legacy storage. The same managed-MCP/browser check passed
+in both source combinations with temporary homes and no provider calls.
+
 ## Consequences and validation
 
 - `check-permission-policy`, `check-permission-approvals`,

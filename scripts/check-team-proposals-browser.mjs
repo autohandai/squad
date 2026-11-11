@@ -1,13 +1,18 @@
 // Controlled engine, real managed MCP, durable run recovery and rendered app.
 // All identities, workspaces and writes belong to this temporary fixture.
 import assert from 'node:assert/strict';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
 
+// This independent fix can land before or after the account-ownership change.
+// When its harness is present, use its canonical owner-scoped browser seeding.
+const ownedFixture=new URL('./lib/owned-bridge-fixture.mjs',import.meta.url);
+const hasOwnedFixture=await access(ownedFixture).then(()=>true,error=>{if(error.code==='ENOENT')return false;throw error;});
+const owned=hasOwnedFixture?await import(ownedFixture.href):null;
 const bridge=await startBridge({prepare:async directory=>{
   const entry=join(directory,'team-sdk.mjs');
-  await mkdir(join(directory,'workspace'));
+  await mkdir(join(directory,'home','workspace'),{recursive:true});
   await writeFile(entry,[
     "import{readFileSync,appendFileSync}from'node:fs';",
     "const calls="+JSON.stringify(join(directory,'tools.jsonl'))+";",
@@ -17,12 +22,12 @@ const bridge=await startBridge({prepare:async directory=>{
     "async *streamPrompt(){const response=await fetch(this.team.env.AUTOHAND_SQUAD_TEAM_URL,{method:'POST',headers:{'content-type':'application/json','x-squad-team-token':this.team.env.AUTOHAND_SQUAD_TEAM_TOKEN},body:JSON.stringify({jsonrpc:'2.0',id:7,method:'tools/call',params:{name:'squad_propose_team',arguments:{name:'CST compliance',objective:'Review customer trust evidence',members:[{name:'Ada',role:'CST analyst',purpose:'Check security evidence'}]}}})});const result=await response.json();if(!response.ok||result.result?.isError)throw Error('Managed team proposal failed: '+JSON.stringify(result));appendFileSync(calls,JSON.stringify(result)+'\\n');yield{type:'message_end',content:'Review this proposed team before creating it.'};}",
     "async interrupt(){}async close(){}}",
   ].join('\n'));
-  return {HOME:directory,USERPROFILE:directory,AUTOHAND_AGENT_SDK_ENTRY:entry,AUTOHAND_AGENT_SDK_DIR:directory,CODEX_HOME:join(directory,'codex')};
+  return {HOME:join(directory,'home'),USERPROFILE:join(directory,'home'),AUTOHAND_AGENT_SDK_ENTRY:entry,AUTOHAND_AGENT_SDK_DIR:directory,CODEX_HOME:join(directory,'home','codex')};
 }});
-const workspace=join(bridge.directory,'workspace');
+const workspace=join(bridge.directory,'home','workspace');
 const chief={id:'proposal-chief',name:'Chief of Staff',role:'Coordinator',workspace,projects:[{path:workspace}],status:'online',instructions:'Propose the requested team.',harness:{id:'autohand'},permissions:{permissionMode:'unrestricted'}};
 let browser;
-const seed=()=>browser.send('Page.addScriptToEvaluateOnNewDocument',{source:"localStorage.setItem('autohandSquad.v1.onboarding',JSON.stringify({version:1,status:'skipped'}));localStorage.setItem('autohandSquad.v1.agents',"+JSON.stringify(JSON.stringify([chief]))+");"});
+const seed=()=>owned?owned.seedOwnedBrowserFixture(bridge,browser):browser.send('Page.addScriptToEvaluateOnNewDocument',{source:"localStorage.setItem('autohandSquad.v1.onboarding',JSON.stringify({version:1,status:'skipped'}));localStorage.setItem('autohandSquad.v1.agents',"+JSON.stringify(JSON.stringify([chief]))+");"});
 try{
   const channel=(await bridge.api('/api/channels','POST',{id:'proposal-general',name:'proposal-general',memberIds:[chief.id],projects:[{path:workspace}],replyMode:'channel'})).data;
   const turn=await bridge.api('/api/chat','POST',{agentId:chief.id,agent:chief,workspace,profile:'Fixture coordinator.',requestId:'saved-proposal-reply',prompt:'Propose a compliance team.',channel:{...channel,threadId:'proposal-thread',parentMessageId:'proposal-root'}});
