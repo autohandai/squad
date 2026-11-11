@@ -347,6 +347,9 @@ jobs:
       - name: Check the desktop shell compiles
         run: bun run desktop:check
 
+      - name: Check native text export bytes and filename boundaries
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml text_exports -- --test-threads=1
+
   dry-run-meta:
     name: Dry-run release metadata
     runs-on: ubuntu-latest
