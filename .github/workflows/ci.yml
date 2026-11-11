@@ -139,6 +139,9 @@ jobs:
           bun run check:quick-chat-settings
           bun run check:quick-chat:browser
 
+      - name: Check conversation and channel text exports
+        run: bun run check:text-exports:browser
+
       - name: Check member setup, retained skills and channel permission boundaries
         env:
           AUTOHAND_REQUIRE_BROWSER: "1"
@@ -148,7 +151,6 @@ jobs:
           bun run check:agent-channel-actions
           bun run check:control-plane
           bun run check:member-by-chat:browser
-          bun run check:text-exports:browser
 
       - name: Upload update regression evidence
         if: always()

@@ -1,4 +1,3 @@
-import { saveTextExports } from "./lib/text-exports.js";
 import { QuickChatPanel } from "@/components/chat/QuickChatPanel";
 import { QuickChatPreferences } from "@/components/settings/QuickChatPreferences";
 import React, { Fragment, Suspense, createContext, lazy, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -309,6 +308,7 @@ import { TeamProposalCard } from "@/components/chat/TeamProposalCard";
 import { pendingPermissionRequests } from "@/lib/permission-requests";
 import { pendingQuestionRequests, questionActivityLabel } from "@/lib/question-requests";
 import { conversationFileName, conversationMarkdown, conversationRecord } from "@/lib/conversation-export";
+import { saveTextExports } from "@/lib/text-exports";
 import { teamProposalReceipts } from "@/lib/team-proposals";
 import { EffortSlider } from "@/components/chat/EffortSlider";
 import { continuationPrompt, folderNeedsYouRows, foldersNeedingAccess, mentionedPaths, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
@@ -4686,7 +4686,7 @@ function App() {
   const [channelOperationError, setChannelOperationError] = useState("");
   const [exportNotice, setExportNotice] = useState(null);
   const exportingText = useRef(false);
-  const exportContextKey = `${runtime?.ownership?.generation || ""}:${runtime?.account?.id || runtime?.account?.email || "signed-out"}`;
+  const exportContextKey = `${runtime?.ownership?.generation || runtime?.account?.generation || ""}:${runtime?.account?.userId || runtime?.account?.id || runtime?.account?.email || "signed-out"}`;
   const exportContext = useRef(exportContextKey);
   useEffect(() => { exportContext.current = exportContextKey; setExportNotice(null); }, [exportContextKey]);
   async function exportTextFiles(files) {

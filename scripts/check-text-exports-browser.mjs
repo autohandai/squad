@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
 const ownerFixture=new URL('./lib/owned-bridge-fixture.mjs',import.meta.url);
 const owned=await access(ownerFixture).then(()=>import(ownerFixture.href),error=>{if(error.code==='ENOENT')return null;throw error;});
-const bridge=await startBridge({prepare:async directory=>{
+const bridge=await startBridge({development:process.env.AUTOHAND_CHECK_PRODUCTION!=='1',prepare:async directory=>{
  const sdk=join(directory,'sdk.mjs');
  await writeFile(sdk,"export class AutohandSDK{async start(){}async close(){}async interrupt(){}async*streamPrompt(){throw Error('Export checks must not send a prompt.')}}");
  return {AUTOHAND_AGENT_SDK_ENTRY:sdk,AUTOHAND_AGENT_SDK_DIR:directory};

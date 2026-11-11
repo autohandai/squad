@@ -94,8 +94,8 @@ fn main() {
             system_reset::squad_set_system_reset_stage,
             system_reset::squad_system_reset_status,
             system_reset::squad_restart_after_system_reset,
-            text_exports::squad_save_text_export,
-            artifact_preview::squad_open_artifact_in_browser
+            artifact_preview::squad_open_artifact_in_browser,
+            text_exports::squad_save_text_export
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app);
