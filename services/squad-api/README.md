@@ -118,6 +118,11 @@ The target account must own `autohand.ai`. Create **new Squad-owned resources**:
 Set `SQUAD_API_DATABASE_ID` to that database's real ID, apply `migrations/`, then
 deploy. Never point the binding at the general API database.
 
+Keep `global_fetch_strictly_public` enabled: identity and current team checks
+call a public Cloudflare Worker. Local outbound-service fixtures cannot verify
+that deployed routing. [ADR-0199](../../docs/adrs/ADR-0199-public-worker-identity-routing.md)
+records the isolated hosted failure and flag-only comparison.
+
 `RELEASE_PUBLISHER_TOKEN` is a Worker secret of at least 32 characters. The
 matching CI secret is `SQUAD_RELEASE_PUBLISHER_TOKEN`. Configure it without
 putting values in source, command arguments or logs.

@@ -26,6 +26,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Hosted sign-in and team access checks reach Autohand's identity service when both services run on Cloudflare Workers.
 - Squad stops retrying undeployed device, feature-flag, heartbeat and telemetry endpoints every minute. Local diagnostics distinguish unsupported services from authentication errors or outages; disabled telemetry no longer produces failure logs.
 
 - Reopening an agent keeps the current chat's start point instead of bringing earlier conversations back into it.
