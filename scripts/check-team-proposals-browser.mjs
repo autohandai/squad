@@ -27,7 +27,22 @@ const bridge=await startBridge({prepare:async directory=>{
 const workspace=join(bridge.directory,'home','workspace');
 const chief={id:'proposal-chief',name:'Chief of Staff',role:'Coordinator',workspace,projects:[{path:workspace}],status:'online',instructions:'Propose the requested team.',harness:{id:'autohand'},permissions:{permissionMode:'unrestricted'}};
 let browser;
-const seed=()=>owned?owned.seedOwnedBrowserFixture(bridge,browser):browser.send('Page.addScriptToEvaluateOnNewDocument',{source:"localStorage.setItem('autohandSquad.v1.onboarding',JSON.stringify({version:1,status:'skipped'}));localStorage.setItem('autohandSquad.v1.agents',"+JSON.stringify(JSON.stringify([chief]))+");"});
+const seed=async()=>{
+  await (owned?owned.seedOwnedBrowserFixture(bridge,browser):browser.send('Page.addScriptToEvaluateOnNewDocument',{source:"localStorage.setItem('autohandSquad.v1.onboarding',JSON.stringify({version:1,status:'skipped'}));localStorage.setItem('autohandSquad.v1.agents',"+JSON.stringify(JSON.stringify([chief]))+");"}));
+  await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{
+    const originalFetch=window.fetch;
+    window.proposalPlanRequests=0;window.proposalUnhandled=[];window.proposalRejectPlan=false;
+    window.addEventListener('unhandledrejection',event=>window.proposalUnhandled.push(String(event.reason)));
+    window.fetch=async function(input,options){
+      const url=String(input?.url??input);
+      if(url.includes('/api/teams/import/plan')){
+        window.proposalPlanRequests++;
+        if(window.proposalRejectPlan){window.proposalRejectPlan=false;return Response.json({success:true,data:{plan:{members:null}}});}
+      }
+      return originalFetch.call(this,input,options);
+    };
+  })()`});
+};
 try{
   const channel=(await bridge.api('/api/channels','POST',{id:'proposal-general',name:'proposal-general',memberIds:[chief.id],projects:[{path:workspace}],replyMode:'channel'})).data;
   const turn=await bridge.api('/api/chat','POST',{agentId:chief.id,agent:chief,workspace,profile:'Fixture coordinator.',requestId:'saved-proposal-reply',prompt:'Propose a compliance team.',channel:{...channel,threadId:'proposal-thread',parentMessageId:'proposal-root'}});
@@ -68,10 +83,18 @@ try{
   await until(()=>browser.evaluate("document.querySelectorAll('button[aria-label^=Thread]').length>=2"),'live reply thread');
   await browser.evaluate("[...document.querySelectorAll('button[aria-label^=Thread]')].at(-1).click()");
   await until(()=>browser.evaluate("[...document.querySelectorAll('[data-testid=team-proposal]')].some(row=>row.textContent.includes('Create team'))"),'live channel stream retains its proposed roster');
+  await browser.evaluate('window.proposalRejectPlan=true');
   await browser.evaluate("[...document.querySelectorAll('[data-testid=team-proposal] button')].find(button=>button.textContent.includes('Create team')).click()");
+  await until(()=>browser.evaluate('window.proposalPlanRequests===1'),'the failure fixture reaches the real team importer');
+  await until(()=>browser.evaluate("[...document.querySelectorAll('[data-testid=team-proposal] [role=alert]')].some(row=>row.textContent.includes('Try again'))"),'a rejected importer leaves the proposal retryable');
+  await browser.screenshot('.codex-artifacts/team-proposals/create-failed.png');
+  assert.deepEqual(await browser.evaluate('window.proposalUnhandled'),[],'creation errors are handled by the proposal control');
+  assert.equal((await bridge.api('/api/channels')).data.messages.some(message=>message.teamProposalDecided==='created'),false,'a failed import is not a created decision');
+  await browser.evaluate("(()=>{const button=[...document.querySelectorAll('[data-testid=team-proposal] button')].find(button=>button.textContent.includes('Create team'));button.click();button.click();})()");
   const created=await until(async()=>{const state=(await bridge.api('/api/channels')).data;return Object.values(state.agentChannelAccess).some(access=>access.agent.name==='Ada')&&state.channels.some(channel=>channel.name==='cst-compliance')?state:null;},'Create team provisions the proposed member and channel through the existing importer',30000);
   assert.equal(Object.values(created.agentChannelAccess).filter(access=>access.agent.name==='Ada').length,1,'one click creates one member');
   assert.equal(created.channels.filter(channel=>channel.name==='cst-compliance').length,1,'one click creates one team channel');
+  assert.equal(await browser.evaluate('window.proposalPlanRequests'),2,'retry accepts one importer call despite consecutive clicks');
   await until(async()=>(await bridge.api('/api/channels')).data.messages.some(message=>message.teamProposalDecided==='created'),'creation decision saved with its reply');
   await browser.navigate(bridge.origin+'/conversations/new?member='+chief.id);
   await until(()=>browser.evaluate("Boolean(document.querySelector('textarea'))"),'direct-message composer');

@@ -5624,7 +5624,7 @@ function App() {
   // the chat card, before it writes. At Suggest commands (the level an
   // imported file gets) a Frontend Developer could not read a single file.
   function addTeamFromMemberProposal(member, proposal, { workspace = "" } = {}) {
-    void addTeam(teamDocumentFromProposal(proposal, { roleTemplates, app: "autohand-squad" }), { trusted: true, source: "member", workspace: workspace || member?.workspace || "" });
+    return addTeam(teamDocumentFromProposal(proposal, { roleTemplates, app: "autohand-squad" }), { trusted: true, source: "member", workspace: workspace || member?.workspace || "" });
   }
 
   const notificationBell = (
@@ -7763,10 +7763,10 @@ function App() {
     }));
   }
 
-  function decideChannelTeamProposal(channelId, message, decision) {
+  async function decideChannelTeamProposal(channelId, message, decision) {
     const saved = (messagesByChannel[channelId] || []).find(item => item.id === message.id);
     if (!saved?.teamProposal?.proposal || saved.teamProposalDecided) return;
-    if (decision === "create") addTeamFromMemberProposal(agents.find(member => member.id === saved.agentId), saved.teamProposal.proposal, { workspace: saved.workspace || "" });
+    if (decision === "create") await addTeamFromMemberProposal(agents.find(member => member.id === saved.agentId), saved.teamProposal.proposal, { workspace: saved.workspace || "" });
     updateChannelMessage(channelId, saved.id, { teamProposalDecided: decision === "create" ? "created" : "dismissed", updatedAt: new Date().toISOString() });
   }
 
@@ -14857,10 +14857,10 @@ function Conversation({
 
   // A proposed team (squad_propose_team) is created through the same import
   // as New team; nothing exists until the person chooses Create team.
-  function decideTeamProposal(message, decision) {
+  async function decideTeamProposal(message, decision) {
     const proposal = message.teamProposal?.proposal;
     if (!proposal) return;
-    if (decision === "create") onTeamProposal?.(agent, proposal, { workspace });
+    if (decision === "create") await onTeamProposal?.(agent, proposal, { workspace });
     onUpdateMessage?.(agent.id, message.id, { teamProposalDecided: decision === "create" ? "created" : "dismissed" });
   }
 

@@ -1,4 +1,5 @@
 import { Users } from "lucide-react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -12,6 +13,24 @@ import { Button } from "@/components/ui/button";
  *   decided   "created" | "dismissed" | ""
  */
 export function TeamProposalCard({ proposal, memberName = "The member", decided = "", busy = false, onCreate, onDismiss, copy = {} }) {
+  const submitting = useRef(false);
+  const [creating, setCreating] = useState(false);
+  const [creationError, setCreationError] = useState("");
+  async function createTeam() {
+    if (submitting.current || busy || decided || !onCreate) return;
+    submitting.current = true;
+    setCreating(true);
+    setCreationError("");
+    try {
+      await onCreate(proposal);
+    } catch {
+      setCreationError(copy.teamCreateError || "The team could not be created. Try again.");
+    } finally {
+      submitting.current = false;
+      setCreating(false);
+    }
+  }
+  const disabled = busy || creating;
   const members = Array.isArray(proposal?.members) ? proposal.members : [];
   if (!members.length) return null;
   return (
@@ -40,15 +59,16 @@ export function TeamProposalCard({ proposal, memberName = "The member", decided 
       </ul>
       {!decided ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button type="button" size="sm" variant="outline" className="h-7" disabled={busy} onClick={() => onCreate?.(proposal)}>
-            {busy ? copy.teamCreating || "Creating…" : copy.teamCreate || `Create team · ${members.length} ${members.length === 1 ? "member" : "members"}`}
+          <Button type="button" size="sm" variant="outline" className="h-7" disabled={disabled} onClick={createTeam}>
+            {disabled ? copy.teamCreating || "Creating…" : copy.teamCreate || `Create team · ${members.length} ${members.length === 1 ? "member" : "members"}`}
           </Button>
-          <Button type="button" size="sm" variant="ghost" className="h-7 text-muted-foreground" disabled={busy} onClick={() => onDismiss?.(proposal)}>
+          <Button type="button" size="sm" variant="ghost" className="h-7 text-muted-foreground" disabled={disabled} onClick={() => onDismiss?.(proposal)}>
             {copy.folderAccessDismiss || "Not now"}
           </Button>
           <span className="text-xs text-muted-foreground">{copy.teamProposalNote || "Each member starts at the Edit files level and asks here before writing; adjust their Permissions afterwards."}</span>
         </div>
       ) : null}
+      {!decided && creationError ? <p role="alert" className="mt-2 text-xs text-destructive">{creationError}</p> : null}
     </section>
   );
 }

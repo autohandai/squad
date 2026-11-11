@@ -377,3 +377,26 @@ documents this isolated-test option.
   `~/Library` and privacy grants stay a hand step after Reset Squad.
 - Blocking the CLI's in-process teams removes a capability some members used
   under "ask". Squad's team is the replacement; `delegate_task` remains.
+
+### PR review follow-up, 12 November 2026
+
+Two regressions were found while reviewing channel proposal recovery. A loading
+reply recovered a roster with a new timestamp, then replaced that timestamp
+with the older run completion time. The channel store accepts only newer
+writes, so the recovery could disappear after reopening. Recovery now retains
+its original completion time separately and advances the saved update time
+past both the prior reply and the run.
+
+Creation callbacks also discarded the importer's promise. A failed import
+could leave a proposal marked created and hide its retry action. Both channel
+and direct-message callbacks now await the existing importer; the shared
+proposal control owns its pending guard and inline retry error. Consecutive
+clicks while submission is pending cannot start another importer.
+
+The loading-reply regression runs in `check-channel-replies.mjs`. The actual
+managed-MCP browser workflow injects one malformed plan response to exercise
+an importer rejection, checks that no created decision was saved, and retries
+through the real importer. It also checks consecutive clicks and unhandled
+rejections. This proves accepted-import handling, not eventual success of
+every member's later preparation work; those outcomes remain in team-build
+progress.

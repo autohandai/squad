@@ -74,6 +74,12 @@ const restored=settleChannelReplies({general:[reply("old-complete")]},{runs:[sav
 assert.equal(restored.general[0].teamProposal.id,"team-test","completed replies made by an older client recover their original proposal");
 assert(restored.general[0].updatedAt>reply("old-complete").createdAt,"recovering metadata must be a newer channel write");
 assert.equal(settleChannelReplies(restored,{runs:[savedRun]}),restored,"recovery is not a repeated write");
+const finishedAt="2026-11-12T00:00:03.000Z";
+const savedLoading=reply("old-complete",{status:"loading",updatedAt:"2026-11-12T00:00:04.000Z"});
+const settledLoading=settleChannelReplies({general:[savedLoading]},{runs:[{...savedRun,reply:"Recovered team proposal",finishedAt}],now:Date.parse(finishedAt)+500});
+assert.equal(settledLoading.general[0].status,"complete");
+assert.equal(settledLoading.general[0].completedAt,finishedAt);
+assert(settledLoading.general[0].updatedAt>savedLoading.updatedAt,"a loading reply's recovered proposal must survive the channel store's newer-write check");
 for(const channel of [{channelId:"private-channel",threadId:"thread-a"},{channelId:"general",threadId:"other-thread"}]){
   const original={general:[reply("old-complete")]};
   assert.equal(settleChannelReplies(original,{runs:[{...savedRun,channel}]}),original,"a reused request ID cannot attach another channel or thread's proposal");
