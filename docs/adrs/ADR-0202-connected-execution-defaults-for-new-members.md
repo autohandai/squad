@@ -57,6 +57,28 @@ are controlled at the browser boundary; no member engine executes in this test.
 saved chain appears in the normal Model editor and survives service/browser
 restart alongside profile edits and memories.
 
+## App creation retry correction
+
+The post-merge review found that the app's stable creation ID survived a lost
+canonical-save acknowledgement, but its automatic draft recalculated execution
+from discovery on Retry. A production-browser regression let the real owned
+registry commit, replaced its acknowledgement with a controlled error, changed
+the ready engine catalog and retried. Before the fix, saved Codex/default/high
+was overwritten with Autohand/changed-model.
+
+Read the selected owner's canonical channel registry before discovery. If that
+ID is already saved, publish and open the saved member without provisioning or
+writing it again. Preserve all saved settings, including an explicitly emptied
+fallback chain. A failed read remains a retryable error; a removed member is
+not resurrected. Only an ID not yet saved may refresh discovery.
+
+The same browser regression now checks both a populated chain and a chain
+cleared through the real registry between attempts. It asserts one preparation
+request and unchanged saved execution. This adds one registry snapshot read to
+creation; it avoids a new endpoint and reuses the existing ownership boundary.
+It does not make simultaneous first creations transactional or roll back
+preparation that failed before saving; those retain their existing behavior.
+
 ## Consequences
 
 New agents are resilient without a separate setup step and users retain one
