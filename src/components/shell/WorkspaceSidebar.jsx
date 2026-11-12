@@ -8,6 +8,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CreateMenu } from "@/components/teams/CreateMenu";
 import { cn } from "@/lib/utils";
 import { isGroupChat } from "@/lib/group-chats";
+import { channelNotificationPreference } from "@/lib/channel-notifications";
+import { ChannelActions } from "@/components/channels/ChannelActions";
 
 export const DEFAULT_CHANNEL_SECTION = "Channels";
 
@@ -121,6 +123,10 @@ export function WorkspaceSidebar({
   copy = {},
   agents = [],
   channels = [],
+  notificationSettings = {},
+  onUpdateChannel,
+  onDeleteChannel,
+  onChannelNotificationChange,
   active = { kind: "", id: "" },
   unreadChannelIds = new Set(),
   unreadCountByAgent = new Map(),
@@ -140,14 +146,15 @@ export function WorkspaceSidebar({
   const sections = useMemo(() => {
     const groups = new Map();
     for (const channel of channels) {
-      if (isGroupChat(channel)) continue;
+      if (isGroupChat(channel) || channelNotificationPreference(notificationSettings, channel.id).hidden) continue;
       const name = sectionOf(channel);
       if (!groups.has(name)) groups.set(name, []);
       groups.get(name).push(channel);
     }
     return Array.from(groups.entries());
-  }, [channels]);
-  const groupChats = channels.filter(isGroupChat);
+  }, [channels, notificationSettings]);
+  const groupChats = channels.filter(channel => isGroupChat(channel) && !channelNotificationPreference(notificationSettings, channel.id).hidden);
+  const hiddenChannels = channels.filter(channel => channelNotificationPreference(notificationSettings, channel.id).hidden);
   // Which sections are folded is remembered: it reset on every reload.
   const [collapsedSections, setCollapsedSections] = useState(() => readFolds().sections || {});
   const [dmsExpanded, setDmsExpanded] = useState(() => readFolds().dms !== false);
@@ -157,6 +164,20 @@ export function WorkspaceSidebar({
 
   function toggleSection(name) {
     setCollapsedSections((current) => ({ ...current, [name]: !current[name] }));
+  }
+
+  function conversationRow(channel) {
+    const group = isGroupChat(channel);
+    const isActive = active.kind === "channel" && active.id === channel.id;
+    const unread = unreadChannelIds.has(channel.id);
+    const members = group ? visibleAgents.filter(agent => channel.memberIds.includes(agent.id)).slice(0, 2) : [];
+    const row = (menu, mutedIcon) => <NavRow label={channel.name} ariaLabel={group ? `Group chat: ${channel.name}` : undefined} active={isActive} unread={unread}
+      icon={group ? members.length && renderAvatar ? null : Users : channel.visibility === "private" ? Lock : Hash}
+      avatar={members.length && renderAvatar ? <span className="flex -space-x-2">{members.map(agent => <span key={agent.id}>{renderAvatar(agent, "size-4 rounded-sm ring-1 ring-card")}</span>)}</span> : null}
+      onClick={() => onNavigate.channel?.(channel.id)} menu={menu} trailing={<>{mutedIcon}<UnreadDot active={unread && !isActive} /></>} />;
+    return onUpdateChannel && onDeleteChannel && onChannelNotificationChange
+      ? <ChannelActions key={channel.id} channel={channel} settings={notificationSettings} onRename={onUpdateChannel} onDelete={onDeleteChannel} onPreference={onChannelNotificationChange} renderRow={row} />
+      : <div key={channel.id}>{row(null, null)}</div>;
   }
 
   return (
@@ -229,7 +250,7 @@ export function WorkspaceSidebar({
                 </Button>
               }
             />
-            <p className="px-2 py-1 text-xs text-muted-foreground">{copy.channelNoChannels || "No channels yet."}</p>
+            <p className="px-2 py-1 text-xs text-muted-foreground">{hiddenChannels.length ? "Channels are hidden. Open Hidden channels below to show them." : copy.channelNoChannels || "No channels yet."}</p>
           </div>
         ) : (
           sections.map(([name, sectionChannels], index) => {
@@ -259,27 +280,18 @@ export function WorkspaceSidebar({
                 />
                 {expanded ? (
                   <div className="mt-0.5 flex flex-col gap-0.5">
-                    {sectionChannels.map((channel) => {
-                      const isActive = active.kind === "channel" && active.id === channel.id;
-                      const unread = unreadChannelIds.has(channel.id);
-                      return (
-                        <NavRow
-                          key={channel.id}
-                          icon={channel.visibility === "private" ? Lock : Hash}
-                          label={channel.name}
-                          active={isActive}
-                          unread={unread}
-                          onClick={() => onNavigate.channel?.(channel.id)}
-                          trailing={<UnreadDot active={unread && !isActive} />}
-                        />
-                      );
-                    })}
+                    {sectionChannels.map(conversationRow)}
                   </div>
                 ) : null}
               </div>
             );
           })
         )}
+
+        {hiddenChannels.length ? <section aria-label="Hidden channels">
+          <SectionHeader label={`Hidden channels · ${hiddenChannels.length}`} expanded={collapsedSections.__hiddenChannels === false} onToggle={() => setCollapsedSections(current => ({ ...current, __hiddenChannels: current.__hiddenChannels === false }))} />
+          {collapsedSections.__hiddenChannels === false ? <div className="mt-0.5 flex flex-col gap-0.5">{hiddenChannels.map(conversationRow)}</div> : null}
+        </section> : null}
 
         <SectionHeader
           label={copy.directMessages || "Direct messages"}
@@ -311,12 +323,7 @@ export function WorkspaceSidebar({
         />
         {dmsExpanded ? (
           <div className="mt-0.5 flex flex-col gap-0.5">
-            {groupChats.map(group => {
-              const activeGroup = active.kind === "channel" && active.id === group.id;
-              const unread = unreadChannelIds.has(group.id);
-              const members = visibleAgents.filter(agent => group.memberIds.includes(agent.id)).slice(0, 2);
-              return <NavRow key={group.id} label={group.name} ariaLabel={`Group chat: ${group.name}`} active={activeGroup} unread={unread} onClick={() => onNavigate.channel?.(group.id)} icon={members.length && renderAvatar ? null : Users} avatar={members.length && renderAvatar ? <span className="flex -space-x-2">{members.map(agent => <span key={agent.id}>{renderAvatar(agent, "size-4 rounded-sm ring-1 ring-card")}</span>)}</span> : null} trailing={<UnreadDot active={unread && !activeGroup} />} />;
-            })}
+            {groupChats.map(conversationRow)}
             {visibleAgents.length === 0 ? (
               <p className="px-2 py-1 text-xs text-muted-foreground">{copy.noMembersYet || "No members yet."}</p>
             ) : (

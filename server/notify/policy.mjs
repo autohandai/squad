@@ -4,35 +4,19 @@
 // route, scripts/check-notifications.mjs exercises every branch. See ADR-0019.
 
 import { basename } from "node:path";
+import { DEFAULT_NOTIFICATION_SETTINGS, NOTIFICATION_KINDS, normalizeNotificationSettings } from '../../src/lib/notifications.js';
+import { channelNotificationPreference } from '../../src/lib/channel-notifications.js';
+export { DEFAULT_NOTIFICATION_SETTINGS, normalizeNotificationSettings };
 
 /** Event names the bridge emits that can become a notification. */
 export const NOTIFICATION_EVENTS = ["run.finished", "chat.finished", "handoff.pending", "approval.pending", "mention.received", "vault.request.pending", "folder.request.pending", "team.built"];
 
-/** Settings shape; every kind is on by default. */
-export const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
-  runFinished: true,
-  runFailed: true,
-  handoffPending: true,
-  approvalPending: true,
-  mention: true,
-});
-
-export const NOTIFICATION_SETTING_KEYS = Object.keys(DEFAULT_NOTIFICATION_SETTINGS);
+export const NOTIFICATION_SETTING_KEYS = NOTIFICATION_KINDS.map(kind => kind.key);
 
 export const MEMBER_CHAT_ROUTE = "/conversations/new";
 export const CHANNELS_ROUTE = "/channels";
 export const INBOX_ROUTE = "/inbox";
 export const MISSION_CONTROL_ROUTE = "/mission-control";
-
-/** Coerce anything into a complete settings object; unknown keys are dropped. */
-export function normalizeNotificationSettings(input) {
-  const source = input && typeof input === "object" ? input : {};
-  const settings = {};
-  for (const key of NOTIFICATION_SETTING_KEYS) {
-    settings[key] = key in source ? Boolean(source[key]) : DEFAULT_NOTIFICATION_SETTINGS[key];
-  }
-  return settings;
-}
 
 /**
  * Which setting governs an event, or null when the event never notifies
@@ -42,6 +26,7 @@ export function settingKeyFor(event) {
   const name = String(event?.name || "");
   const status = String(event?.status || "").toLowerCase();
   switch (name) {
+    case 'channel.posted': return event.channelId ? 'channelPosts' : null;
     case "run.finished":
       // An always-on agenda run or an automation draft (ADR-0125) stays quiet.
       if (event?.quiet) return null;
@@ -100,6 +85,7 @@ export function routeForEvent(event) {
  * conversation, so a notification would be noise there.
  */
 export function relevantRoutesFor(event) {
+  if (event?.name === 'channel.posted') return [channelRoute(event.channelId)].filter(Boolean);
   const routes = new Set([routeForEvent(event)]);
   const name = String(event?.name || "");
   const channel = channelRoute(event?.channelId);
@@ -140,7 +126,11 @@ export function shouldNotify(event, settings, { focusedRoute = "" } = {}) {
   const key = settingKeyFor(event);
   if (!key) return { notify: false, reason: "ignored", key: null };
   const normalized = normalizeNotificationSettings(settings);
-  if (!normalized[key]) return { notify: false, reason: "disabled", key };
+  const channelMode = event.channelId ? channelNotificationPreference(normalized, event.channelId).mode : null;
+  if (channelMode === 'muted') return { notify: false, reason: 'disabled', key };
+  if (key === 'channelPosts') {
+    if (channelMode !== 'all' && !(channelMode === 'mentions' && event.mentionsYou && normalized.mention)) return { notify: false, reason: 'disabled', key };
+  } else if (!normalized[key]) return { notify: false, reason: "disabled", key };
   if (relevantRoutesFor(event).some((route) => routeMatches(route, focusedRoute))) {
     return { notify: false, reason: "focused", key };
   }
@@ -180,6 +170,12 @@ export function notificationFor(event, { appUrl = "http://127.0.0.1:19821", memb
   let body = "";
 
   switch (name) {
+    case 'channel.posted': {
+      const author = clip(event.authorName, 60) || member;
+      title = event.mentionsYou ? `${author} mentioned you in ${channel}` : `${author} in ${channel}`;
+      body = clip(event.preview, 140) || 'Open the channel to read the message.';
+      break;
+    }
     case "run.finished": {
       const task = clip(event?.title, 60);
       const workspace = event?.workspace ? basename(String(event.workspace)) : "";

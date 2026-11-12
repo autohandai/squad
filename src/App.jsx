@@ -5299,11 +5299,11 @@ function App() {
     };
   }, [loadNotifications]);
 
-  useEffect(() => {
-    api("/api/notifications/settings")
-      .then((data) => setNotificationSettings(normalizeNotificationSettings(data?.settings)))
-      .catch(() => {});
+  const loadNotificationSettings = useCallback(async () => {
+    const data = await api("/api/notifications/settings");
+    setNotificationSettings(normalizeNotificationSettings(data?.settings));
   }, []);
+  useEffect(() => { void loadNotificationSettings().catch(() => {}); }, [loadNotificationSettings]);
 
   function openNotification(item) {
     navigate(routeForNotification(item));
@@ -5323,12 +5323,17 @@ function App() {
       .catch(() => {});
   }
 
-  function updateNotificationSettings(next) {
-    const normalized = normalizeNotificationSettings(next);
-    setNotificationSettings(normalized);
-    api("/api/notifications/settings", { method: "PUT", body: JSON.stringify(normalized) })
-      .then((data) => setNotificationSettings(normalizeNotificationSettings(data?.settings || normalized)))
-      .catch(() => {});
+  async function updateNotificationSettings(next) {
+    const { channelOverrides: _overrides, ...global } = normalizeNotificationSettings(next);
+    const data = await api("/api/notifications/settings", { method: "PUT", body: JSON.stringify(global) });
+    setNotificationSettings(normalizeNotificationSettings(data.settings));
+    return data.settings;
+  }
+
+  async function updateChannelNotificationPreference(channelId, patch) {
+    const data = await api(`/api/notifications/channels/${encodeURIComponent(channelId)}`, { method: "PATCH", body: JSON.stringify(patch) });
+    setNotificationSettings(normalizeNotificationSettings(data.settings));
+    return data.settings;
   }
 
   function sendTestNotification() {
@@ -6077,6 +6082,7 @@ function App() {
       void reloadChannelsFromBridge();
     };
     source.addEventListener("channels.changed",onChanged);
+    source.addEventListener("notifications.settings.changed", () => void loadNotificationSettings().catch(() => {}));
     source.addEventListener("vault.changed",()=>void vaultRequests.reload());
     if(relayConfig.enabled) {
       source.addEventListener("relay.message", onChanged);
@@ -6085,7 +6091,7 @@ function App() {
       source.addEventListener("relay.presence", () => void refreshRelayStatus());
     }
     return () => source.close();
-  }, [relayConfig.enabled, reloadChannelsFromBridge, refreshRelayStatus,vaultRequests.reload]);
+  }, [relayConfig.enabled, reloadChannelsFromBridge, refreshRelayStatus,vaultRequests.reload, loadNotificationSettings]);
 
   const relayWorkspaces = useMemo(
     () => buildWorkspaceList({ relayConfig, relayStatus, hostName: runtime?.hostName, copy: localeCopy }),
@@ -7867,7 +7873,7 @@ function App() {
   async function deleteChannel(channelId) {
     const base = isGroupChat(channels.find(item => item.id === channelId)) ? "/api/group-chats" : "/api/channels";
     try { await api(`${base}/${encodeURIComponent(channelId)}`, { method: "DELETE" }); }
-    catch (error) { setChannelOperationError(`Channel could not be deleted: ${clause(error.message)}. Try again.`); return; }
+    catch (error) { setChannelOperationError(`Channel could not be deleted: ${clause(error.message)}. Try again.`); return false; }
     setChannelOperationError("");
     removeSearchDocs([`channel:${channelId}`]).catch(() => {});
     setChannels((current) => current.filter((channel) => channel.id !== channelId));
@@ -7884,6 +7890,7 @@ function App() {
     if (channelIdFromRoute(route) === channelId) {
       navigate(channelsPath());
     }
+    return true;
   }
 
   async function buildMessageMediaContext(channelId, attachments = [], anchors = []) {
@@ -8112,15 +8119,6 @@ function App() {
             const answer = data.reply || streamedAnswer;
             const replyText = humanReadableReplyText(teamProposal ? replyWithoutReceipts(answer, [teamProposal]) || answer : answer, data.trace, `${agent.name} returned no chat text.`);
             finalReplyText = replyText;
-            if (resolveChannelMentionTargets(replyText, channel, agents).hasMentions) {
-              raiseBridgeEvent("mention.received", {
-                channelId: channel.id,
-                memberId: agent.id,
-                messageId,
-                preview: String(replyText || "").slice(0, 240),
-                at: completedAt,
-              });
-            }
             updateChannelMessage(channel.id, messageId, {
               body: replyText || `${agent.name} returned no chat text.`,
               ...(teamProposal ? { teamProposal } : {}),
@@ -10042,6 +10040,10 @@ function App() {
             messagesByAgent={messagesByAgent}
             messagesByChannel={messagesByChannel}
             channels={channels}
+            notificationSettings={notificationSettings}
+            onUpdateChannel={updateChannel}
+            onDeleteChannel={deleteChannel}
+            onChannelNotificationChange={updateChannelNotificationPreference}
             channelThreads={channelThreads}
             channelCount={channels.length}
             sidebarCounts={sidebarCounts}
@@ -10299,6 +10301,8 @@ function App() {
                 counts={sidebarCounts}
                 onProviderSettingsChange={setProviderSettings}
                 notificationSettings={notificationSettings}
+                notificationChannels={channels}
+                onChannelNotificationChange={updateChannelNotificationPreference}
                 onNotificationSettingsChange={updateNotificationSettings}
                 onTestNotification={sendTestNotification}
                 onRebuildSearchIndex={rebuildSearchIndex}
@@ -10511,6 +10515,10 @@ function App() {
               messagesByAgent={messagesByAgent}
               messagesByChannel={messagesByChannel}
               channels={channels}
+              notificationSettings={notificationSettings}
+              onUpdateChannel={updateChannel}
+              onDeleteChannel={deleteChannel}
+              onChannelNotificationChange={updateChannelNotificationPreference}
               channelThreads={channelThreads}
               sidebarCounts={sidebarCounts}
               theme={theme}
@@ -13143,6 +13151,10 @@ function SidebarContent({
   messagesByAgent = {},
   messagesByChannel = {},
   channels = [],
+  notificationSettings,
+  onUpdateChannel,
+  onDeleteChannel,
+  onChannelNotificationChange,
   channelThreads = {},
   locale = DEFAULT_LOCALE,
   copy = getLocaleCopy(DEFAULT_LOCALE),
@@ -13224,6 +13236,10 @@ function SidebarContent({
       copy={copy}
       agents={orderMembers(visibleAgents)}
       channels={channels}
+      notificationSettings={notificationSettings}
+      onUpdateChannel={onUpdateChannel}
+      onDeleteChannel={onDeleteChannel}
+      onChannelNotificationChange={onChannelNotificationChange}
       active={sidebarActiveTarget(route, activeAgent)}
       draftAgentIds={draftAgentIds}
       unreadChannelIds={unreadChannelIds}
@@ -24860,6 +24876,8 @@ function SettingsPage({
   counts = EMPTY_MISSION_COUNTS,
   onProviderSettingsChange,
   notificationSettings = DEFAULT_NOTIFICATION_SETTINGS,
+  notificationChannels = [],
+  onChannelNotificationChange,
   onNotificationSettingsChange,
   onTestNotification,
   onRebuildSearchIndex,
@@ -25217,6 +25235,8 @@ function SettingsPage({
         />
         <NotificationSettings
           settings={normalizedNotificationSettings}
+          channels={notificationChannels}
+          onChannelChange={onChannelNotificationChange}
           copy={copy}
           onChange={onNotificationSettingsChange}
           onTest={onTestNotification}
