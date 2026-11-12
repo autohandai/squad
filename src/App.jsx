@@ -21965,6 +21965,7 @@ function EngineModelPage({ agent, providerSettings, navigate, updateAgent }) {
           applies only if {agent.name} is switched back to Autohand Code.
         </p>
         <MemberFallbacks agent={agent} api={api} providerSettings={providerSettings} updateAgent={updateAgent} />
+        <ComputerUsePermissions member={agent} api={api} compact onOpenPermissions={() => navigate(memberProfilePath(agent.id, "permissions"))} />
       </div>
     </div>
   );
@@ -22141,6 +22142,7 @@ function AutohandModelPage({ agent, providerSettings, navigate, updateAgent }) {
           </div>
         </section>
         <MemberFallbacks agent={agent} api={api} providerSettings={providerSettings} updateAgent={updateAgent} />
+        <ComputerUsePermissions member={agent} api={api} compact onOpenPermissions={() => navigate(memberProfilePath(agent.id, "permissions"))} />
       </div>
     </div>
   );

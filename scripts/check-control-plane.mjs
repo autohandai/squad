@@ -20,7 +20,7 @@ const rootDir = resolve(new URL('..', import.meta.url).pathname);
 const mcpEntry = join(rootDir, 'server', 'control-plane', 'mcp-server.mjs');
 const SECRET_A = 'sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const SECRET_B = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123';
-const MANAGEMENT_TOOLS = ['create_member', 'get_member_profile', 'update_member_profile', 'set_member_memories', 'set_member_abilities', 'add_member_directory', 'remove_member_directory', 'list_skills', 'set_member_skills', 'get_channel', 'update_channel', 'delete_channel', 'get_notification_preferences', 'set_channel_notifications', 'set_notification_defaults', 'set_channel_members', 'list_channel_threads', 'list_group_chats', 'get_group_chat', 'create_group_chat', 'convert_group_chat', 'delete_group_chat', 'send_channel_message', 'list_routines', 'get_routine', 'preview_routine', 'create_routine', 'update_routine', 'run_routine'];
+const MANAGEMENT_TOOLS = ['create_member', 'get_member_profile', 'get_member_computer_use', 'revoke_member_computer_use', 'update_member_profile', 'set_member_memories', 'set_member_abilities', 'add_member_directory', 'remove_member_directory', 'list_skills', 'set_member_skills', 'get_channel', 'update_channel', 'delete_channel', 'get_notification_preferences', 'set_channel_notifications', 'set_notification_defaults', 'set_channel_members', 'list_channel_threads', 'list_group_chats', 'get_group_chat', 'create_group_chat', 'convert_group_chat', 'delete_group_chat', 'send_channel_message', 'list_routines', 'get_routine', 'preview_routine', 'create_routine', 'update_routine', 'run_routine'];
 const OWNERSHIP_TOOLS = ['get_squad_context', 'list_squad_owners', 'select_squad_owner', 'get_member_data', 'get_member_files', 'get_member_memories', 'export_squad', 'export_member', 'prepare_squad_import','prepare_legacy_recovery','restore_squad','reset_squad_data','get_squad_data_operation','restart_squad_data','list_cloud_backups','save_cloud_backup','get_cloud_backup_operation','download_cloud_backup','prepare_cloud_restore','remove_cloud_backup','reconnect_cloud_backups'];
 const EXPECTED_TOOLS = ['list_members', 'list_channels', 'get_messages', 'search', 'create_channel', 'send_message', 'wait_for_reply', 'interrupt', 'set_model', 'message_member', 'get_conversation', 'get_member_queue', 'wait_for_message', 'list_artifacts', 'get_artifact', 'list_memories', 'read_memory', ...MANAGEMENT_TOOLS, ...OWNERSHIP_TOOLS];
 
@@ -122,9 +122,9 @@ async function until(fn, label, timeout = 10000) {
   while (Date.now() < end) { const value = await fn().catch(() => null); if (value) return value; await delay(25); }
   throw new Error(`${label} timed out; bridge: ${logs.slice(-3000)}`);
 }
-const api = async (path, body, method) => {
+const api = async (path, body, method, extraHeaders = {}) => {
   const context=(await(await fetch(origin+'/api/ownership/context')).json()).data;
-  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json','x-squad-context':context.generation }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json','x-squad-context':context.generation, ...extraHeaders }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json(); return { status: response.status, ...data };
 };
 const calls = async () => (await readFile(callsFile, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
@@ -286,7 +286,7 @@ if(prompt.includes('DELAY GROUP fixture'))setTimeout(finish,600);else finish();
   const client = mcpClient('newline');
   const init = await client.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'check', version: '1' } });
   eq(init.result?.protocolVersion, '2024-11-05', 'initialize echoes a supported protocol version');
-  eq(init.result?.serverInfo.version, '2.2.0', 'operator MCP reports the group lifecycle contract');
+  eq(init.result?.serverInfo.version, '2.3.0', 'operator MCP reports the group lifecycle contract');
   eq(init.result?.serverInfo?.name, 'autohand-squad-control-plane', 'server name');
   ok(client.framingMatches(), 'newline request gets a newline reply');
   client.notify('notifications/initialized', {});
@@ -489,6 +489,16 @@ if(prompt.includes('DELAY GROUP fixture'))setTimeout(finish,600);else finish();
   assert.deepEqual(ping.result, {}); passed += 1;
 
   const beforeProfile = await afterRestart.call('get_member_profile', { member_id: 'kai' });
+  const nativeFixtureKey = 'c'.repeat(64);
+  await writeFile(join(serviceRoot, 'native-grant-token'), nativeFixtureKey, { mode: 0o600 });
+  eq((await api('/api/computer-use/grant', { memberId: 'kai', scope: 'observe' }, 'POST', { 'x-squad-native-grant': nativeFixtureKey })).status, 200, 'fixture explicitly authorizes member observe access');
+  const computerUse = await afterRestart.call('get_member_computer_use', { member_id: 'kai' });
+  eq(computerUse.isError, false, 'wire client reads saved member Computer Use');
+  eq(computerUse.data.grant.scope, 'observe', 'wire client reads the native-confirmed observe grant');
+  eq((await afterRestart.call('revoke_member_computer_use', { member_id: 'kai' })).data.enabled, false, 'wire client can revoke computer access');
+  eq((await afterRestart.call('get_member_computer_use', { member_id: 'kai' })).data.grant.scope, 'none', 'wire revocation persists into a fresh read');
+  eq((await afterRestart.call('revoke_member_computer_use', { member_id: 'kai', enabled: true })).rpcError?.code, -32602, 'MCP revocation cannot be repurposed to self-grant');
+  eq((await afterRestart.call('get_member_computer_use', { member_id: 'missing-member' })).isError, true, 'Computer Use reads require a real saved member');
   eq(beforeProfile.isError, false, 'read canonical member profile');
   const changedProfile = await afterRestart.call('update_member_profile', { member_id: 'kai', expected_revision: beforeProfile.data.revision, name: 'Morgan', personality: 'Calm and precise.', instructions: 'Verify each result.' });
   eq(changedProfile.isError, false, `profile changed: ${changedProfile.data?.error || ''}`);

@@ -7,7 +7,7 @@ import { MANAGEMENT_TOOLS } from './management.mjs';
 import { OWNERSHIP_TOOLS } from './ownership-tools.mjs';
 
 export const SERVER_NAME = 'autohand-squad-control-plane';
-export const SERVER_VERSION = '2.2.0';
+export const SERVER_VERSION = '2.3.0';
 export const PROTOCOL_VERSIONS = ['2024-11-05', '2025-03-26', '2025-06-18'];
 export const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:19821';
 export const NOT_AVAILABLE_CODE = 'not_available_from_bridge';

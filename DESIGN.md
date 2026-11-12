@@ -331,6 +331,7 @@
 - Idle project observation delivers concrete, evidence-backed suggestions in the member’s ordinary DM. Keep its on/off control in Self-improvement; report paused, unsupported, and failed checks honestly. A suggestion is not completed work.
 - The macOS Dock badge uses the same unresolved attention count as Needs you and clears at zero or sign-out. Compact chats cannot overwrite that count.
 - Computer Use is a member capability in Permissions, with separate observe/control access and explicit native confirmation. Screenshots and action annotations belong with the work as ordinary evidence attachments.
+- Model settings and Permissions share one “Use the computer” switch backed by the member's native grant. Off removes Computer Use instructions and managed tools from later work and revokes existing tool access; enabling opens explicit native confirmation. Show saved state only after acknowledgement, retain it on cancellation/failure, and keep each signed-in person's team grants separate. Advanced Observe/Control and OS setup remain in Permissions.
 
 - Computer Use setup is an explicit action; macOS Accessibility and Screen Recording permission do not grant a member access. Recover evidence by its exact work session and keep another member’s screenshots out of the conversation.
 

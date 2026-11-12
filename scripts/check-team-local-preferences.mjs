@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOwnershipBroker } from '../server/ownership/broker.mjs';
@@ -22,17 +22,24 @@ await new Promise(ready => provider.listen(0, '127.0.0.1', ready));
 const issuer = `http://127.0.0.1:${provider.address().port}`, owner = { issuer, kind: 'team', id: 'shared-team' };
 let broker;
 process.env.AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS = 'macos'; // Fixture must never send OS banners.
+process.env.AUTOHAND_SQUAD_COMPUTER_USE = 'bundled';
+process.env.AUTOHAND_SQUAD_COMPUTER_USE_RUNTIME_DIR = directory; // No native engine or OS probes.
 try {
   const paths = await ensureDataset(serviceRoot, ownerKey(owner));
   const oldPath = join(paths.dataRoot, 'notifications.json');
   await writePersistentJson(oldPath, { version: 1, settings: { channelDefault: 'muted' }, items: [{ id: 'old-team-feed', at: new Date().toISOString(), title: 'Earlier team notification' }] });
   const oldBytes = await readFile(oldPath, 'utf8');
+  const oldGrantsPath = join(paths.dataRoot, 'computer-use-grants.json');
+  await writePersistentJson(oldGrantsPath, {version:1,members:{eva:{scope:'control'}}});
+  const oldGrantBytes = await readFile(oldGrantsPath, 'utf8');
+  const nativeFixtureKey = 'd'.repeat(64);
+  await writeFile(join(serviceRoot, 'native-grant-token'), nativeFixtureKey, {mode:0o600});
   await writePersistentJson(configPath, { auth: { token: 'fixture-alice' } });
   broker = createOwnershipBroker({ rootDir: process.cwd(), serviceRoot, configPath, identity: createIdentityService({ serviceRoot, configPath, origin: issuer }), port: 0 });
   const origin = await broker.listen();
   let context;
-  const request = async (path, method = 'GET', body) => {
-    const response = await fetch(origin + path, { method, headers: { 'content-type': 'application/json', 'x-squad-context': context?.generation || '' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const request = async (path, method = 'GET', body, extraHeaders = {}) => {
+    const response = await fetch(origin + path, { method, headers: { 'content-type': 'application/json', 'x-squad-context': context?.generation || '', ...extraHeaders }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const result = await response.json(); assert(response.ok && result.success, `${method} ${path}: ${JSON.stringify(result)}`); return result.data;
   };
   async function selectAs(person) {
@@ -48,6 +55,9 @@ try {
   await request(`/api/notifications/channels/${channel.id}`, 'PATCH', { mode: 'muted', hidden: true });
   await request('/api/notifications/settings', 'PUT', { channelDefault: 'all' });
   await request('/api/members/eva/channel-access', 'PUT', { agent: { id: 'eva', name: 'Eva', role: 'Reviewer' }, profile: '', profilePatch: {} });
+  assert.equal((await request('/api/computer-use/status?memberId=eva')).grant.scope, 'none', 'an unattributed old team Computer Use grant is not inherited');
+  await request('/api/status/snapshot', 'POST', {members:[{id:'eva',name:'Eva',role:'Reviewer'}],jobs:[]});
+  await request('/api/computer-use/grant', 'POST', {memberId:'eva',scope:'observe'}, {'x-squad-native-grant':nativeFixtureKey});
   await request(`/api/channels/${channel.id}/members`, 'POST', { add: ['eva'] });
   const at = new Date().toISOString();
   await request('/api/channels/sync', 'PUT', { messages: { [channel.id]: [{ id: 'alice-post', role: 'agent', agentId: 'eva', body: 'The team review is ready.', status: 'complete', createdAt: at, updatedAt: at }] } });
@@ -60,6 +70,8 @@ try {
   assert.equal(bob.channelDefault, 'mentions', 'a second human has their own defaults in the same team dataset');
   assert.equal(bob.channelOverrides[channel.id], undefined, 'a teammate cannot hide or mute this human\'s conversation');
   assert.equal((await request('/api/notifications')).items.length, 0, 'a second actor never inherits the first actor\'s feed');
+  assert.equal((await request('/api/computer-use/status?memberId=eva')).grant.scope, 'none', 'a second actor never inherits the first actor\'s Computer Use grant');
+  await request('/api/computer-use/grant', 'POST', {memberId:'eva',scope:'control'}, {'x-squad-native-grant':nativeFixtureKey});
   assert((await request('/api/channels')).channels.some(item => item.id === channel.id), 'the saved team conversation is still shared');
   await request('/api/notifications/settings', 'PUT', { channelDefault: 'muted' });
   await selectAs('alice');
@@ -67,6 +79,8 @@ try {
   assert.equal(alice.channelDefault, 'all', 'returning to the first verified actor restores only their preference');
   assert.deepEqual(alice.channelOverrides[channel.id], { mode: 'muted', hidden: true });
   assert((await request('/api/notifications')).items.length > 0, 'the first actor\'s feed is retained for their return');
+  assert.equal((await request('/api/computer-use/status?memberId=eva')).grant.scope, 'observe', 'returning to the first actor restores only their confirmed observe scope');
+  assert.equal(await readFile(oldGrantsPath, 'utf8'), oldGrantBytes, 'the unattributed old team grant file remains untouched');
   assert.equal(await readFile(oldPath, 'utf8'), oldBytes, 'the original team file remains untouched for explicit recovery');
-  console.log('PASS: actual broker workers isolate same-team notification preferences/feed by verified actor, preserve shared channels and retain unattributed old files.');
+  console.log('PASS: actual broker workers isolate same-team notification preferences/feed and Computer Use grants by verified actor, preserve shared channels and retain unattributed old files.');
 } finally { await broker?.close(); await new Promise(done => provider.close(done)); await rm(directory, { recursive: true, force: true }); }

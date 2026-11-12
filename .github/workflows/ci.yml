@@ -149,6 +149,7 @@ jobs:
           bun run check:channel-lifecycle:browser
           bun run check:channel-actions:browser
           bun run check:channel-notifications
+          bun run check:team-local-preferences
 
       - name: Check agent tasks, history and default-folder consent
         env:
@@ -169,6 +170,7 @@ jobs:
           bun run check:harness-usage
           bun run check:quick-chat-settings
           bun run check:quick-chat:browser
+          bun run check:member-computer-use:browser
 
       - name: Check conversation and channel text exports
         run: bun run check:text-exports:browser

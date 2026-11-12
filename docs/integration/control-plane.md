@@ -110,6 +110,8 @@ operator connection.
 | `read_memory` | `memory_id` | Read one knowledge-library entry; no editing/sharing/deletion. |
 
 | `get_member_profile` | `member_id` | Read saved profile, revision, projects, skills, permissions and supported ability IDs. |
+| `get_member_computer_use` | `member_id` | Read an existing member's saved grant and OS readiness. Returns `enabled` and `requires_native_confirmation`; never grants access or requests OS permission. |
+| `revoke_member_computer_use` | `member_id` | Revoke the saved grant, stop its verification recording and deny later connected tool calls. Other members and running non-computer work remain unchanged. Enabling is available only through explicit native confirmation in Squad. |
 | `set_member_memories` | `member_id`, `memories`, `expected_revision?` | Replace only profile memory texts (empty clears); preserve other memory scopes and files. |
 | `update_member_profile` | `member_id`, `expected_revision?`, `name?`, `role?`, `description?`, `instructions?`, `personality?` | Patch the canonical profile; stale revisions return 409. |
 | `set_member_abilities` | `member_id`, `expected_revision?`, `capabilities?`, `tool_policies?`, `workspace?` | Patch specific `{id, mode}` policies (`allow`, `ask`, `block`), optionally in a workspace override. Other policies and safety guards are preserved. |
@@ -278,7 +280,7 @@ pinned YAML/Zod dependencies. See [portable backups](backups.md).
 
 ## Member management contract v2
 
-Both MCP initialize responses report server version `2.2.0`. This versions the
+Both MCP initialize responses report server version `2.3.0`. This versions the
 tool contract independently of the app release and portable backup schema.
 Clients receive this value as `serverInfo.version` on every new connection;
 `protocolVersion` separately identifies the negotiated MCP wire protocol.

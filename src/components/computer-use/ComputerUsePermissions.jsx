@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { getComputerUseConsentClient } from "./model";
 
-export function ComputerUsePermissions({ member, api }) {
+export function ComputerUsePermissions({ member, api, compact = false, onOpenPermissions }) {
   const native = useMemo(() => getComputerUseConsentClient(), []);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState("");
@@ -21,13 +23,16 @@ export function ComputerUsePermissions({ member, api }) {
   }, [refresh]);
   const current = status?.memberId === member.id ? status : null;
   const scope = current?.grant?.scope || "none";
+  const enabled = scope === "observe" || scope === "control";
   const ready = current?.available === true && current.accessibility === true && current.screenRecording === true;
   async function change(next) {
-    if (!native || busy) return;
+    if (busy || (next !== "none" && !native)) return;
     setBusy(true); setError("");
     try {
-      const result = next === "none" ? await native.revoke(member.id) : await native.confirm(member.id, next);
-      if (result?.confirmed === true || result?.revoked === true) await refresh();
+      const result = next === "none"
+        ? native ? await native.revoke(member.id) : await api("/api/computer-use/grant", { method: "DELETE", body: JSON.stringify({ memberId: member.id }) })
+        : await native.confirm(member.id, next);
+      if (result?.confirmed === true || result?.revoked === true || result?.scope === "none") await refresh();
     } catch (reason) { setError(reason.message || "Could not update Computer Use permission."); }
     finally { setBusy(false); }
   }
@@ -60,6 +65,22 @@ export function ComputerUsePermissions({ member, api }) {
     } catch (reason) { setError(reason.message || "Autohand Computer Use could not be installed."); }
     finally { setInstalling(false); }
   }
+  const toggle = <Field orientation="horizontal" className="items-center justify-between gap-5 py-4">
+    <FieldContent>
+      <FieldLabel htmlFor={`computer-use-${member.id}`}>Use the computer</FieldLabel>
+      <FieldDescription>{enabled
+        ? scope === "observe" ? `${member.name} may inspect apps and screenshots. Control actions remain blocked.` : `${member.name} may inspect and operate apps with your confirmed access.`
+        : "Off. New work receives no Computer Use instructions or tools. Enabling requires confirmation in the desktop app."}</FieldDescription>
+    </FieldContent>
+    <Switch id={`computer-use-${member.id}`} aria-label="Use the computer" checked={enabled} disabled={busy || !current || (!enabled && (!native || !ready))} onCheckedChange={checked => void change(checked ? "control" : "none")} />
+  </Field>;
+  if (compact) return <section data-testid="member-computer-use" className="border-t border-border/70">
+    {toggle}
+    {!current ? <p role="status" className="text-sm text-muted-foreground">Checking Computer Use readiness…</p> : null}
+    {current && (!native || !ready) ? <p className="text-sm text-muted-foreground">{!native ? "Enable Computer Use from the Squad desktop app." : current.readinessError || "Computer Use needs macOS permission setup."}</p> : null}
+    {onOpenPermissions ? <Button type="button" size="sm" variant="ghost" onClick={onOpenPermissions}>Computer Use permissions</Button> : null}
+    {error ? <p role="alert" className="mt-2 text-sm text-destructive">{error}</p> : null}
+  </section>;
   return (
     <section className="border-b border-border pb-5" aria-labelledby="computer-use-heading" data-testid="computer-use-permissions">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -69,6 +90,7 @@ export function ComputerUsePermissions({ member, api }) {
         </div>
         <span className="text-sm text-muted-foreground">{scope === "control" ? "Control allowed" : scope === "observe" ? "Observe allowed" : "Not allowed"}</span>
       </div>
+      {toggle}
       {/* Outside the desktop app the System Settings sentence asked for a
           step the browser cannot take, right above "open the desktop app".
           One instruction: the one that can be followed from here. */}
@@ -90,7 +112,7 @@ export function ComputerUsePermissions({ member, api }) {
         {current && (!usingAutohand || !ready) ? <Button size="sm" variant="outline" disabled={busy || installing} onClick={installAutohand}>{installing ? "Installing…" : usingAutohand ? "Repair Autohand Computer Use" : "Install Autohand Computer Use"}</Button> : null}
         <Button size="sm" variant="outline" disabled={!native || !ready || busy || scope === "observe"} onClick={() => change("observe")}>Allow observe</Button>
         <Button size="sm" variant="outline" disabled={!native || !ready || busy || scope === "control"} onClick={() => change("control")}>Allow control</Button>
-        {scope !== "none" ? <Button size="sm" variant="ghost" disabled={!native || busy} onClick={() => change("none")}>Revoke access</Button> : null}
+        {scope !== "none" ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => change("none")}>Revoke access</Button> : null}
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => refresh().catch((reason) => setError(reason.message))}>Check again</Button>
       </div>
       {error ? <p className="mt-2 text-sm text-destructive" role="alert">{error}</p> : null}
