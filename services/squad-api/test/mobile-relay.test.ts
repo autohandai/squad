@@ -114,7 +114,7 @@ test("the desktop relay setting dispatches phone work to the canonical queue", a
 });
 
 test("native iPhone UI pairs, chats and revokes through the outbound relay", { skip: !process.env.SQUAD_MOBILE_NATIVE_DEVICE || !process.env.SQUAD_MOBILE_PROJECT }, async () => {
-  const child = spawn(process.execPath, [join(process.env.SQUAD_MOBILE_PROJECT!, 'scripts/native-smoke.mjs'), fileURLToPath(new URL('../../../', import.meta.url)), process.env.SQUAD_MOBILE_NATIVE_DEVICE!], {
+  const child = spawn(process.execPath, [join(process.env.SQUAD_MOBILE_PROJECT!, 'Scripts/native-smoke.mjs'), fileURLToPath(new URL('../../../', import.meta.url)), process.env.SQUAD_MOBILE_NATIVE_DEVICE!], {
     stdio: 'inherit', env: { ...process.env, SQUAD_MOBILE_RELAY_API_URL: (await runtime.ready).origin },
   });
   const timeout = setTimeout(() => child.kill('SIGTERM'), 10 * 60_000);

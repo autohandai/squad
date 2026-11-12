@@ -108,7 +108,7 @@ provisioning are not delivered by this integration.
 
 Run `bun run check:mobile`, `bun run check:mobile:browser`, and (on a Mac with
 Swift) `node scripts/check-mobile-interop.mjs <mobile-project-directory>`. Native
-acceptance uses `node scripts/native-smoke.mjs <squad-checkout> [simulator-UDID]`
+acceptance uses `node Scripts/native-smoke.mjs <squad-checkout> [simulator-UDID]`
 from the iOS project. These create isolated homes/owners and use an offline engine.
 They do not change the installed app, grant OS permissions, or call a live model.
 
