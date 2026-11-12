@@ -13,6 +13,12 @@ const date = '2026-10-29T00:00:00.000Z';
 const topics = ['Design for keyboard navigation', 'Keep data migrations reversible', 'Verify source provenance', 'Check release artifacts', 'Use clear accessible names', 'Keep error recovery actionable', 'Preserve user drafts on failure', 'Record architectural decisions', 'Test the actual installed runtime', 'Keep private work scoped'];
 const members = [['iris', 'Iris', 'Code reviewer', '#bb7ace'], ['eva', 'Eva', 'QA engineer', '#d28c46'], ['kai', 'Kai', 'DevOps engineer', '#4a9f88'], ['noah', 'Noah', 'Frontend developer', '#518cce'], ['nova', 'Nova', 'Product designer', '#ca7086']].map(([id, name, role, color]) => ({ id, name, role, color, workspace: process.cwd(), projects: [{ path: process.cwd() }], harness: { id: 'autohand' }, permissions: {}, memory: topics.map((text, index) => ({ id: `${id}-memory-${index}`, text: `${text}. ${name} applies this to ${index % 2 ? 'desktop releases' : 'Squad interfaces'}.`, at: date })), profileFiles: [{ section: 'memory', fileName: 'MEMORY.md', content: `# ${name}'s lessons\n\n${name} keeps findings grounded in observed runtime behavior.\n\nCheck assumptions before a handoff to another specialist.` }] }));
 async function api(path, method, body) { const result = await bridge.api(path, method, body); assert(result.success, result.error || `${method} ${path}`); return result.data; }
+async function settleGraphCamera() {
+  // Allow the new camera transform to reach layout before observing the
+  // finite CSS transition, then wait on its completion instead of a delay.
+  await browser.evaluate("(async()=>{await new Promise(requestAnimationFrame);await Promise.all(document.querySelector('.memory-camera').getAnimations().map(animation=>animation.finished.catch(()=>{})));await new Promise(requestAnimationFrame);})()");
+  await until(() => browser.evaluate("(()=>{const camera=document.querySelector('.memory-camera');return Boolean(camera&&!camera.getAnimations().some(animation=>animation.playState==='running'));})()"), 'graph camera is stationary before pointer input');
+}
 try {
   for (const member of members) await api(`/api/members/${member.id}/channel-access`, 'PUT', { agent: member, profile: '' });
   await api('/api/memory/settings', 'PATCH', { colors: Object.fromEntries(members.map(member => [member.id, member.color])) });
@@ -31,24 +37,28 @@ try {
   await browser.screenshot(join(artifact, 'memory-graph-dark.png'));
   const originalZoom = await browser.evaluate("document.querySelector('[aria-label=\"Graph zoom\"]').textContent");
   await browser.click('Zoom in'); assert.notEqual(await browser.evaluate("document.querySelector('[aria-label=\"Graph zoom\"]').textContent"), originalZoom);
-  await browser.click('Fit all memories');
+  await browser.click('Fit all memories'); await settleGraphCamera();
   const graphBounds = await browser.evaluate("(()=>{const rect=document.querySelector('[data-testid=\"memory-graph\"] svg').getBoundingClientRect();return{x:rect.x,y:rect.y,width:rect.width,height:rect.height};})()");
   const wheelZoom = await browser.evaluate("document.querySelector('[aria-label=\"Graph zoom\"]').textContent");
   await browser.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: graphBounds.x + graphBounds.width / 2, y: graphBounds.y + graphBounds.height / 2, deltaX: 0, deltaY: -200 });
   await until(() => browser.evaluate(`document.querySelector('[aria-label="Graph zoom"]').textContent!==${JSON.stringify(wheelZoom)}`), 'wheel zoom is anchored on the graph');
+  await settleGraphCamera();
   const beforePan = await browser.evaluate("document.querySelector('.memory-camera').getAttribute('transform')");
   await browser.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: graphBounds.x + 25, y: graphBounds.y + 25, button: 'left', clickCount: 1 });
   await browser.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: graphBounds.x + 80, y: graphBounds.y + 55, button: 'left', buttons: 1 });
+  await until(() => browser.evaluate(`document.querySelector('.memory-camera').getAttribute('transform')!==${JSON.stringify(beforePan)}`), 'pointer pan renders before release');
   await browser.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: graphBounds.x + 80, y: graphBounds.y + 55, button: 'left', clickCount: 1 });
   assert.notEqual(await browser.evaluate("document.querySelector('.memory-camera').getAttribute('transform')"), beforePan, 'Pointer dragging pans the canvas');
-  await browser.click('Fit all memories');
+  await browser.click('Fit all memories'); await settleGraphCamera();
   const target = snapshot.records.find(item => item.sourceType === 'team');
-  const beforeDrag = await browser.evaluate(`(()=>{const node=document.querySelector('[data-memory-node=${JSON.stringify(target.id)}]');const rect=node.getBoundingClientRect();return{transform:node.getAttribute('transform'),x:rect.x+rect.width/2,y:rect.y+rect.height/2};})()`);
+  const beforeDrag = await browser.evaluate(`(()=>{const node=document.querySelector('[data-memory-node=${JSON.stringify(target.id)}]');const point=new DOMPoint(0,0).matrixTransform(node.getScreenCTM());const hit=document.elementFromPoint(point.x,point.y)?.closest('[data-memory-node]')?.dataset.memoryNode;return{transform:node.getAttribute('transform'),x:point.x,y:point.y,hit};})()`);
+  assert.equal(beforeDrag.hit, target.id, 'The pointer must reach the intended memory, not a label or the moving background');
   await browser.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: beforeDrag.x, y: beforeDrag.y, button: 'left', clickCount: 1 });
   await browser.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: beforeDrag.x + 35, y: beforeDrag.y + 20, button: 'left', buttons: 1 });
+  await until(() => browser.evaluate(`document.querySelector('[data-memory-node=${JSON.stringify(target.id)}]').getAttribute('transform')!==${JSON.stringify(beforeDrag.transform)}`), 'node movement renders before release');
   await browser.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: beforeDrag.x + 35, y: beforeDrag.y + 20, button: 'left', clickCount: 1 });
   assert.notEqual(await browser.evaluate(`document.querySelector('[data-memory-node=${JSON.stringify(target.id)}]').getAttribute('transform')`), beforeDrag.transform, 'Memory nodes can be repositioned');
-  await browser.click('Fit all memories');
+  await browser.click('Fit all memories'); await settleGraphCamera();
   await browser.evaluate(`document.querySelector('[data-memory-node=${JSON.stringify(target.id)}]').focus()`);
   await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
   await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });

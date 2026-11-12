@@ -308,6 +308,7 @@ import { TeamProposalCard } from "@/components/chat/TeamProposalCard";
 import { pendingPermissionRequests } from "@/lib/permission-requests";
 import { pendingQuestionRequests, questionActivityLabel } from "@/lib/question-requests";
 import { conversationFileName, conversationMarkdown, conversationRecord } from "@/lib/conversation-export";
+import { saveTextExports } from "@/lib/text-exports";
 import { teamProposalReceipts } from "@/lib/team-proposals";
 import { EffortSlider } from "@/components/chat/EffortSlider";
 import { continuationPrompt, folderNeedsYouRows, foldersNeedingAccess, mentionedPaths, pendingFolderRequests, projectsWithFolder } from "@/lib/folder-access";
@@ -3374,17 +3375,6 @@ function buildChannelMarkdownLog({ channel, threads = [], messages = [], agents 
   return lines.join("\n");
 }
 
-function downloadMarkdownLog(filename, markdown) {
-  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
 
 function missionControlPath(params = {}) {
   const search = new URLSearchParams();
@@ -4694,6 +4684,23 @@ function App() {
   const [inboxReadAt, setInboxReadAt] = useState(() => readStored(storageKeysFor("inboxReadAt"), ""));
   const [createChannelRequest, setCreateChannelRequest] = useState(0);
   const [channelOperationError, setChannelOperationError] = useState("");
+  const [exportNotice, setExportNotice] = useState(null);
+  const exportingText = useRef(false);
+  const exportContextKey = `${runtime?.ownership?.generation || runtime?.account?.generation || ""}:${runtime?.account?.userId || runtime?.account?.id || runtime?.account?.email || "signed-out"}`;
+  const exportContext = useRef(exportContextKey);
+  useEffect(() => { exportContext.current = exportContextKey; setExportNotice(null); }, [exportContextKey]);
+  async function exportTextFiles(files) {
+    if (exportingText.current) return;
+    exportingText.current = true;
+    const context = exportContext.current;
+    setExportNotice({ message: "Preparing export…", error: false });
+    try {
+      const result = await saveTextExports(files);
+      if (exportContext.current === context) setExportNotice({ message: result.message, error: result.failed.length > 0 });
+    } catch (error) {
+      if (exportContext.current === context) setExportNotice({ message: error?.message || "The export could not finish. Try again.", error: true });
+    } finally { exportingText.current = false; }
+  }
   const [agentChannelActions, setAgentChannelActions] = useState([]);
   // Pending vault requests (secure forms, payment approvals) are bridge-owned
   // and reconciled like channel proposals (ADR-0104).
@@ -6619,8 +6626,10 @@ function App() {
   // and JSON, with each reply's tools, permission decisions and written files.
   function exportConversation(agent) {
     const record = conversationRecord(agent, messagesByAgent[agent.id] || [], { workspace: agent.workspace || "" });
-    downloadMarkdownLog(conversationFileName(record, "md"), conversationMarkdown(record));
-    downloadMarkdownLog(conversationFileName(record, "json"), JSON.stringify(record, null, 2));
+    void exportTextFiles([
+      { filename: conversationFileName(record, "md"), content: conversationMarkdown(record) },
+      { filename: conversationFileName(record, "json"), content: JSON.stringify(record, null, 2) },
+    ]);
     recordFeatureUsed("conversation", "export");
   }
   const renderMemberMenu = useCallback(
@@ -9998,6 +10007,10 @@ function App() {
             <SquadAnnouncements key={runtime?.account?.email || "signed-out"} api={api} enabled={!isOnboarding && runtime?.account?.signedIn === true} busy={agents.some(agent => entryFor(agent).state === "working")} showErrors={routePath === "/settings/updates"} />
             <UpdateConsentNotice updates={updates} operation={updatesUpgradeResult} onReview={() => openSettings("updates")} hidden={isOnboarding || routePath === "/settings/updates"} />
             {bridgeLine ? <div role="status" aria-live="polite" data-testid="bridge-status" className="px-6 py-2 text-xs text-muted-foreground">{bridgeLine}</div> : null}
+            {exportNotice ? <div role={exportNotice.error ? "alert" : "status"} className={`flex items-start gap-3 px-6 py-2 text-sm ${exportNotice.error ? "text-destructive" : "text-muted-foreground"}`} data-testid="text-export-status">
+              <span className="min-w-0 flex-1">{exportNotice.message}</span>
+              <Button type="button" variant="ghost" size="icon-sm" className="size-6 shrink-0" aria-label="Dismiss export status" onClick={() => setExportNotice(null)}><X className="size-3.5" /></Button>
+            </div> : null}
             {channelOperationError ? (
               <div role="alert" className="flex items-start gap-3 px-6 py-3 text-sm text-destructive">
                 <span className="min-w-0 flex-1">{channelOperationError}</span>
@@ -10090,6 +10103,7 @@ function App() {
               />
             ) : isChannels ? (
               <ChannelsPage
+                onExportLog={(filename, content) => void exportTextFiles([{ filename, content }])}
                 relayStatus={relayStatus}
                 channels={channels}
                 channelThreads={channelThreads}
@@ -10727,6 +10741,7 @@ function ReactionFlowDialog({ draft, onDraftChange, members = [], copy = getLoca
 }
 
 function ChannelsPage({
+  onExportLog,
   channels = [],
   channelThreads = {},
   messagesByChannel = {},
@@ -11063,7 +11078,7 @@ function ChannelsPage({
       userName: accountProfile.name,
       locale,
     });
-    downloadMarkdownLog(`${sanitizeMarkdownFilename(channel.name)}-chat-log.md`, markdown);
+    onExportLog(`${sanitizeMarkdownFilename(channel.name)}-chat-log.md`, markdown);
   }
 
   function submitDraft(text) {

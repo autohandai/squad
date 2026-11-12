@@ -41,6 +41,9 @@ list to the section for that version.
 
 ### Fixed
 
+- Repeated text exports with long or multilingual names keep valid filenames and show a successful save instead of reporting a false failure.
+
+- Desktop conversation exports now save Markdown and JSON, and channel exports save Markdown, in Downloads. Earlier files are preserved and the app shows the saved filenames or any failure instead of doing nothing.
 - Squad stops retrying undeployed device, feature-flag, heartbeat and telemetry endpoints every minute. Local diagnostics distinguish unsupported services from authentication errors or outages; disabled telemetry no longer produces failure logs.
 
 - Connect to Squad from Autohand Desktop and other MCP clients when launched outside a source checkout. The installed command now locates its bundled `runtime` directory on macOS and Windows.
