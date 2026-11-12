@@ -2,6 +2,29 @@ import assert from 'node:assert/strict';
 import { mkdir, rename, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startBridge, until } from './lib/reliability-browser.mjs';
+import { createChannelPostObserver } from '../server/notify/channel-posts.mjs';
+
+// A second write may arrive after the drain loop finishes but before promise
+// cleanup runs. It must be observed without needing a third channels event.
+async function checkScanCompletionHandoff() {
+  const state={channels:[{id:'handoff',memberIds:['eva']}],agentChannelAccess:{eva:{agent:{name:'Eva'}}},messages:[]};
+  const posts=[];
+  let lateScan;
+  const message=id=>({id,channelId:'handoff',agentId:'eva',role:'agent',status:'complete',body:'Saved '+id,createdAt:'2026-11-12T00:00:00Z'});
+  const observer=await createChannelPostObserver({read:async()=>state,profile:()=>({name:'Alice'}),now:()=>0,onPost:async event=>{
+    posts.push(event.messageId);
+    if(event.messageId==='first')queueMicrotask(()=>queueMicrotask(()=>queueMicrotask(()=>{
+      state.messages.push(message('second'));lateScan=observer.changed();
+    })));
+  }});
+  try {
+    state.messages.push(message('first'));
+    await observer.changed();await lateScan;
+    assert.deepEqual(posts,['first','second'],'a saved post at scan completion must start its own scan');
+    await observer.changed();assert.deepEqual(posts,['first','second'],'a handoff does not replay completed posts');
+  } finally { observer.dispose(); }
+}
+await checkScanCompletionHandoff();
 
 const bridge = await startBridge({ development: false });
 try {
