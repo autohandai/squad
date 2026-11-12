@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { activateOwnership, invalidateOwnership } from "@/lib/ownership-client";
 import { ownedLocalStorage } from "@/lib/owned-storage";
+import { withCachedMemberViews } from "@/lib/member-menus";
 import { OwnedSquadView, SquadOwnerPicker } from "./OwnedSquadView";
 
 async function request(path, context, init = {}) {
@@ -58,8 +59,10 @@ export function OwnershipBootstrap({ children }) {
         // can publish any browser state back into the runtime.
         Promise.all([request('/api/channels', next), request('/api/owned/browser-state', next)]).then(async ([snapshot, browser]) => {
           if (disposed || reloading || leaving || current.current?.generation !== next.generation) return;
-          const members = Object.entries(snapshot.agentChannelAccess || {}).filter(([id, access]) => id !== 'squad-designer' && access?.agent && !access.removed)
-            .map(([id, access]) => ({ ...access.agent, id, ownership: next.owner }));
+          let cachedMemberViews = [];
+          try { cachedMemberViews = JSON.parse(ownedLocalStorage.getItem('autohandSquad.v1.agents') || '[]'); } catch { /* Malformed view choices do not block the verified roster. */ }
+          const members = withCachedMemberViews(Object.entries(snapshot.agentChannelAccess || {}).filter(([id, access]) => id !== 'squad-designer' && access?.agent && !access.removed)
+            .map(([id, access]) => ({ ...access.agent, id, ownership: next.owner })), cachedMemberViews);
           ownedLocalStorage.setItem('autohandSquad.v1.agents', JSON.stringify(members));
           const cachedMessages=ownedLocalStorage.getItem('autohandSquad.v1.messages');
           const cachedRevision=ownedLocalStorage.getItem('autohandSquad.v1.browserRevision');

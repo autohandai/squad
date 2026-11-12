@@ -1,6 +1,6 @@
 import { ownedLocalStorage } from "@/lib/owned-storage";
-import { useEffect, useMemo, useState } from "react";
-import { Bot, Brain, CheckCheck, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Pencil, Plus, Search, Users } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Bot, Brain, CheckCheck, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Pencil, Pin, Plus, Search, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { isGroupChat } from "@/lib/group-chats";
 import { channelNotificationPreference } from "@/lib/channel-notifications";
 import { ChannelActions } from "@/components/channels/ChannelActions";
+import { conversationPreview } from "@/lib/conversation-preview";
 
 export const DEFAULT_CHANNEL_SECTION = "Channels";
 
@@ -53,7 +54,7 @@ function memberTooltip(agent, presence) {
 
 // `menu` renders beside the row rather than inside it: a row is a button, and
 // a button cannot contain another button.
-function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, bold = false, ariaLabel, menu, tooltip }) {
+function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, bold = false, ariaLabel, menu, tooltip, preview, pinned = false }) {
   const button = (
     <button
       type="button"
@@ -61,15 +62,19 @@ function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, 
       aria-label={ariaLabel}
       className={cn(
         "flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm transition-colors",
+        preview && "grid h-auto min-h-16 grid-cols-[2.5rem_minmax(0,1fr)_auto] gap-3 rounded-lg py-3",
         active ? "bg-muted/80 text-foreground" : "text-foreground/85 hover:bg-muted/55 hover:text-foreground",
         (unread || bold) && !active && "font-semibold text-foreground"
       )}
       onClick={onClick}
     >
-      {avatar ? <span className="relative flex size-5 shrink-0 items-center justify-center">{avatar}</span> : null}
-      {Icon ? <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {trailing}
+      {avatar ? <span className={cn("relative flex shrink-0 items-center justify-center", preview ? "size-10" : "size-5")}>{avatar}</span> : null}
+      {Icon ? <span className={cn("shrink-0 text-muted-foreground", preview && "grid size-10 place-items-center rounded-full bg-muted")}><Icon className={preview ? "size-5" : "size-4"} aria-hidden="true" /></span> : null}
+      <span className="min-w-0 flex-1">
+        <span className="flex w-full min-w-0 items-baseline gap-2"><span className="flex min-w-0 flex-1 items-center gap-1"><span className="truncate">{label}</span>{pinned ? <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" /> : null}</span>{preview?.time ? <time dateTime={preview.dateTime} className={cn("shrink-0 text-[11px] font-normal text-muted-foreground", menu && "group-hover/navrow:opacity-0 group-focus-within/navrow:opacity-0")}>{preview.time}</time> : null}</span>
+        {preview ? <span className="mt-1 block truncate text-xs font-normal text-muted-foreground">{preview.text}</span> : null}
+      </span>
+      {preview ? <span className={cn("flex items-center gap-1 empty:hidden", menu && "group-hover/navrow:opacity-0 group-focus-within/navrow:opacity-0")}>{trailing}</span> : trailing}
     </button>
   );
   // The tooltip belongs to the row's button only: on the whole row it stayed
@@ -141,8 +146,19 @@ export function WorkspaceSidebar({
   workspaceSwitcher = null,
   renderMemberMenu = null,
   draftAgentIds = new Set(),
+  conversationLayout = false,
+  messagesByAgent = {},
+  messagesByChannel = {},
+  locale = 'en',
+  inDrawer = false,
 }) {
-  const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
+  const visibleAgents = useMemo(() => agents.filter((agent) => agent?.id && agent?.name), [agents]);
+  // Compute each retained preview once per source change, shared by ordering
+  // and rendering rather than rescanning history for both.
+  const memberPreviews = useMemo(() => conversationLayout ? new Map(visibleAgents.map(agent => [agent.id,
+    conversationPreview(messagesByAgent[agent.id], { fallback: agent.role || 'No messages yet', locale, you: copy.you })])) : new Map(), [conversationLayout, visibleAgents, messagesByAgent, locale, copy.you]);
+  const channelPreviews = useMemo(() => conversationLayout ? new Map(channels.map(channel => [channel.id,
+    conversationPreview(messagesByChannel[channel.id], { fallback: channel.purpose || (isGroupChat(channel) ? 'Group chat' : 'Channel'), locale, you: copy.you })])) : new Map(), [conversationLayout, channels, messagesByChannel, locale, copy.you]);
   const sections = useMemo(() => {
     const groups = new Map();
     for (const channel of channels) {
@@ -171,24 +187,48 @@ export function WorkspaceSidebar({
     const isActive = active.kind === "channel" && active.id === channel.id;
     const unread = unreadChannelIds.has(channel.id);
     const members = group ? visibleAgents.filter(agent => channel.memberIds.includes(agent.id)).slice(0, 2) : [];
+    const preview = channelPreviews.get(channel.id);
     const row = (menu, mutedIcon) => <NavRow label={channel.name} ariaLabel={group ? `Group chat: ${channel.name}` : undefined} active={isActive} unread={unread}
       icon={group ? members.length && renderAvatar ? null : Users : channel.visibility === "private" ? Lock : Hash}
-      avatar={members.length && renderAvatar ? <span className="flex -space-x-2">{members.map(agent => <span key={agent.id}>{renderAvatar(agent, "size-4 rounded-sm ring-1 ring-card")}</span>)}</span> : null}
+      avatar={members.length && renderAvatar ? <span className="flex -space-x-2">{members.map(agent => <span key={agent.id}>{renderAvatar(agent, conversationLayout ? "size-6 rounded-full ring-2 ring-card" : "size-4 rounded-sm ring-1 ring-card")}</span>)}</span> : null}
+      preview={preview}
       onClick={() => onNavigate.channel?.(channel.id)} menu={menu} trailing={<>{mutedIcon}<UnreadDot active={unread && !isActive} /></>} />;
     return onUpdateChannel && onDeleteChannel && onChannelNotificationChange
       ? <ChannelActions key={channel.id} channel={channel} settings={notificationSettings} onRename={onUpdateChannel} onDelete={onDeleteChannel} onPreference={onChannelNotificationChange} renderRow={row} />
       : <div key={channel.id}>{row(null, null)}</div>;
   }
 
+  function memberRow(agent) {
+    const isActive = active.kind === 'member' && active.id === agent.id;
+    const unread = unreadCountByAgent.get(agent.id) || 0, presence = presenceFor?.(agent);
+    const retainedPreview = memberPreviews.get(agent.id);
+    const preview = retainedPreview && presence?.working ? { ...retainedPreview, text: 'Working…' } : retainedPreview;
+    return <NavRow key={agent.id} label={agent.name} pinned={agent.pinned === true} active={isActive} unread={unread > 0}
+      ariaLabel={presence ? `${agent.name}, ${presence.label}` : agent.name} onClick={() => onNavigate.member?.(agent.id)} preview={preview}
+      avatar={<>{renderAvatar?.(agent, conversationLayout ? 'size-10 rounded-full' : 'size-5 rounded-md')}{presence ? <span className={cn('absolute -bottom-0.5 -right-0.5 rounded-full ring-2 ring-card', conversationLayout ? 'size-2.5' : 'size-2', presence.className)} aria-hidden="true" /> : null}</>}
+      trailing={!isActive && !unread && draftAgentIds.has(agent.id) ? <Pencil className="size-3 text-muted-foreground" aria-label="Unsent draft" /> : <UnreadCount count={isActive ? 0 : unread} />}
+      menu={renderMemberMenu?.(agent)} tooltip={memberTooltip(agent, presence)} />;
+  }
+  const rows = useMemo(() => conversationLayout ? [
+    ...visibleAgents.map(agent => ({ id: agent.id, kind: 'member', value: agent, pinned: agent.pinned === true, at: memberPreviews.get(agent.id).at })),
+    ...channels.filter(channel => !channelNotificationPreference(notificationSettings, channel.id).hidden).map(channel => ({ id: channel.id, kind: 'channel', value: channel, at: channelPreviews.get(channel.id).at })),
+  ].sort((a, b) => Boolean(b.pinned) - Boolean(a.pinned) || (a.pinned && b.pinned ? 0 : b.at - a.at)) : [], [conversationLayout, visibleAgents, channels, notificationSettings, memberPreviews, channelPreviews]);
+
+  const hiddenSection = hiddenChannels.length ? <section aria-label="Hidden channels">
+          <SectionHeader label={`Hidden channels · ${hiddenChannels.length}`} expanded={collapsedSections.__hiddenChannels === false} onToggle={() => setCollapsedSections(current => ({ ...current, __hiddenChannels: current.__hiddenChannels === false }))} />
+          {collapsedSections.__hiddenChannels === false ? <div className="mt-0.5 flex flex-col gap-0.5">{hiddenChannels.map(conversationRow)}</div> : null}
+        </section> : null;
+
   return (
-    <div className="app-sidebar flex h-full min-h-screen flex-col bg-card/70">
+    <div className="app-sidebar flex h-full min-h-screen flex-col bg-card/70" data-sidebar-layout={conversationLayout ? 'conversations' : 'workspace'}>
       {/* "deep" drags from anywhere in this row, not only a direct hit on the
         row itself, which is why the bare attribute used to work on the
         padding slivers alone. Buttons inside still block the drag and behave
         normally (tauri drag.js: a clickable element without the attribute
         returns false before the walk reaches this one). */}
-    <div className="flex h-14 items-center gap-2 px-3" data-tauri-drag-region="deep">
+    <div className={cn("flex h-14 items-center gap-2 px-3", inDrawer && "pr-12")} data-tauri-drag-region="deep">
         <div className="flex min-w-0 flex-1 items-center gap-2">{brand}</div>
+        {conversationLayout && onNavigate.newMessage ? <Button variant="ghost" size="icon-sm" aria-label="New message" onClick={onNavigate.newMessage}><Plus /></Button> : null}
         {onCollapse ? (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -220,6 +260,16 @@ export function WorkspaceSidebar({
           the list short of the divider and left a band of nothing above the
           account row. Without it a clipped row reads as "there is more below". */}
       <ScrollArea className="min-h-0 flex-1 px-3 pt-3">
+        {conversationLayout ? <>
+          <nav className="mb-3 flex items-center gap-1" aria-label="Workspace">
+            {[[Inbox, copy.needsYou || 'Needs you', onNavigate.inbox], [Bot, copy.squad || 'Squad', onNavigate.agents], [Brain, 'Memory', onNavigate.memory], [Hash, copy.createChannel || 'Create channel', onNavigate.createChannel]].map(([Icon, label, onClick]) => <Tooltip key={label}><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClick}><Icon />{Icon === Inbox && inboxCount ? <span className="size-1.5 rounded-full bg-foreground" aria-label={`${inboxCount} unread`} /> : null}</Button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>)}
+          </nav>
+          <nav className="flex flex-col gap-1" aria-label="Conversations">
+            {rows.map(row => <Fragment key={`${row.kind}:${row.id}`}>{row.kind === 'member' ? memberRow(row.value) : conversationRow(row.value)}</Fragment>)}
+            {!rows.length ? <p className="px-2 py-4 text-sm text-muted-foreground">No conversations yet. Choose New message to begin.</p> : null}
+          </nav>
+          {hiddenSection}
+        </> : <>
         <nav className="flex flex-col gap-0.5" aria-label="Workspace">
           <NavRow
             icon={Inbox}
@@ -288,10 +338,7 @@ export function WorkspaceSidebar({
           })
         )}
 
-        {hiddenChannels.length ? <section aria-label="Hidden channels">
-          <SectionHeader label={`Hidden channels · ${hiddenChannels.length}`} expanded={collapsedSections.__hiddenChannels === false} onToggle={() => setCollapsedSections(current => ({ ...current, __hiddenChannels: current.__hiddenChannels === false }))} />
-          {collapsedSections.__hiddenChannels === false ? <div className="mt-0.5 flex flex-col gap-0.5">{hiddenChannels.map(conversationRow)}</div> : null}
-        </section> : null}
+        {hiddenSection}
 
         <SectionHeader
           label={copy.directMessages || "Direct messages"}
@@ -327,45 +374,11 @@ export function WorkspaceSidebar({
             {visibleAgents.length === 0 ? (
               <p className="px-2 py-1 text-xs text-muted-foreground">{copy.noMembersYet || "No members yet."}</p>
             ) : (
-              visibleAgents.map((agent) => {
-                const isActive = active.kind === "member" && active.id === agent.id;
-                const unread = unreadCountByAgent.get(agent.id) || 0;
-                const presence = presenceFor?.(agent);
-                return (
-                  <NavRow
-                    key={agent.id}
-                    label={agent.name}
-                    active={isActive}
-                    unread={unread > 0}
-                    ariaLabel={presence ? `${agent.name}, ${presence.label}` : agent.name}
-                    onClick={() => onNavigate.member?.(agent.id)}
-                    avatar={
-                      <>
-                        {renderAvatar ? renderAvatar(agent, "size-5 rounded-md") : null}
-                        {presence ? (
-                          <span
-                            className={cn("absolute -bottom-0.5 -right-0.5 size-2 rounded-full ring-2 ring-card", presence.className)}
-                            aria-hidden="true"
-                          />
-                        ) : null}
-                      </>
-                    }
-                    trailing={
-                      !isActive && !unread && draftAgentIds.has(agent.id) ? (
-                        // An unsent message is waiting in this chat.
-                        <Pencil className="size-3 text-muted-foreground" aria-label="Unsent draft" />
-                      ) : (
-                        <UnreadCount count={isActive ? 0 : unread} />
-                      )
-                    }
-                    menu={renderMemberMenu ? renderMemberMenu(agent) : null}
-                    tooltip={memberTooltip(agent, presence)}
-                  />
-                );
-              })
+              visibleAgents.map(memberRow)
             )}
           </div>
         ) : null}
+        </>}
       </ScrollArea>
 
       {footer}

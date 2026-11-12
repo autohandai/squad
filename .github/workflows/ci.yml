@@ -23,7 +23,7 @@ jobs:
   web:
     name: Web checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -153,6 +153,7 @@ jobs:
           bun run check:shell-settings:browser
           bun run check:titlebar:browser
           bun run check:setup-guide:browser
+          bun run check:grut:browser
 
       - name: Check MCP member management in the app
         run: |

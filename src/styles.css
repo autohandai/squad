@@ -522,6 +522,56 @@ html[data-skin="grut"] .app-sidebar,
 html[data-skin="grut"] .app-main {
   box-shadow: none;
 }
+/* Grut changes the conversation composition as well as its palette. Work
+   details and approval controls keep their own surface beneath the answer. */
+html[data-skin="grut"] .app-main [data-message-role="assistant"][data-message-compact="false"] {
+  display: block;
+}
+html[data-skin="grut"] .app-main [data-message-role="assistant"] > .chat-reply-avatar {
+  display: none;
+}
+html[data-skin="grut"] .app-main .chat-channel-compact-time {
+  display: block;
+}
+html[data-skin="grut"] .app-main [data-channel-message-id][data-message-role="user"] {
+  display: block;
+  width: fit-content;
+  max-width: 88%;
+  margin-left: auto;
+}
+html[data-skin="grut"] .app-main [data-channel-message-id][data-message-role="user"] > .chat-reply-avatar {
+  display: none;
+}
+html[data-skin="grut"] .app-main [data-channel-message-id] .chat-user-bubble {
+  border-radius: 14px;
+  padding: 12px 16px;
+}
+html[data-skin="grut"] .app-main .chat-agent-answer {
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 14px;
+  padding: 12px 16px;
+  background: var(--muted);
+}
+html[data-skin="grut"] {
+  --grut-bubble-surface: var(--foreground);
+  --grut-bubble-ink: var(--background);
+}
+html[data-skin="grut"] .app-main .chat-user-bubble {
+  --foreground: var(--grut-bubble-ink);
+  --background: var(--grut-bubble-surface);
+  --muted-foreground: var(--grut-bubble-ink);
+  --primary: var(--grut-bubble-ink);
+  --primary-foreground: var(--grut-bubble-surface);
+  --muted: color-mix(in srgb, var(--grut-bubble-ink) 10%, var(--grut-bubble-surface));
+  --border: color-mix(in srgb, var(--grut-bubble-ink) 15%, var(--grut-bubble-surface));
+  background: var(--grut-bubble-surface);
+  color: var(--grut-bubble-ink);
+}
+html[data-skin="grut"] .app-main .chat-user-bubble a {
+  color: inherit;
+  text-decoration: underline;
+}
 /* Custom skins own the sidebar colour, rather than compositing bg-card/70
    over the page or native window material. Autohand retains its vibrancy. */
 html[data-skin]:not([data-skin="default"]) .app-sidebar {

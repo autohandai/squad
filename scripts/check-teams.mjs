@@ -20,7 +20,7 @@ import { join } from "node:path";
 
 import { SECRET_MARKER, containsSecret, redactSecrets, redactDeep, scanSecrets } from "../src/lib/secret-scan.js";
 import { TEAM_FORMAT, TEAM_LIMITS, TEAM_VERSION, buildTeamFile, memberExportRecord, planImport, presetFromMember, presetTemplate, presetsFromDocument, teamFileName, uniqueName, validateTeamFile } from "../src/lib/teams.js";
-import { createMemberId, duplicateCreationStash, hiddenMembers, hidePatch, markUnreadReadAt, orderMembers, pinPatch, unreadCount } from "../src/lib/member-menus.js";
+import { createMemberId, duplicateCreationStash, hiddenMembers, hidePatch, markUnreadReadAt, orderMembers, pinPatch, unreadCount, withCachedMemberViews } from "../src/lib/member-menus.js";
 import { startBridge } from "./lib/reliability-browser.mjs";
 
 const TOKEN = "sk-live-4f8a9b2c1d0e3f6a7b8c9d0e1f2a3b4c";
@@ -169,6 +169,17 @@ const built = buildTeamFile({
   assert.deepEqual(orderMembers(agents).map((agent) => agent.id), ["d", "b", "a"], "pinned first in pin order, hidden left out");
   assert.deepEqual(hiddenMembers(agents).map((agent) => agent.id), ["c"]);
   assert.equal(hidePatch({ pinned: true }, true).pinned, false, "hiding unpins");
+  const canonical = [{ id: 'a', name: 'Current name', permissions: { mode: 'ask' }, workspace: '/verified' }, { id: 'b', name: 'Other' }];
+  const restoredViews = withCachedMemberViews(canonical, [
+    { id: 'a', ...pinPatch(null, true, '2026-10-13T10:00:02Z'), name: 'Stale name', permissions: { mode: 'allow' }, workspace: '/stale', profileRevision: 999 },
+    { id: 'b', ...hidePatch(null, true, '2026-10-13T10:00:03Z') },
+    { id: 'deleted', name: 'Must not return', pinned: true },
+  ]);
+  assert.deepEqual(restoredViews.map(member => member.id), ['a', 'b'], 'view recovery cannot restore an absent canonical member');
+  assert.deepEqual(restoredViews[0], { ...canonical[0], pinned: true, pinnedAt: '2026-10-13T10:00:02Z' }, 'only view fields survive; canonical identity and access remain authoritative');
+  assert.deepEqual(orderMembers(restoredViews).map(member => member.id), ['a']);
+  assert.deepEqual(hiddenMembers(restoredViews).map(member => member.id), ['b']);
+  assert.deepEqual(withCachedMemberViews(canonical, { broken: true }), canonical, 'malformed cached view data is ignored');
   assert.equal(orderMembers([{ ...agents[1], ...pinPatch(null, false) }, agents[0]]).map((agent) => agent.id).join(","), "b,a", "unpinning keeps list order");
   const messages = [
     { id: "u1", role: "user", body: "hi", createdAt: "2026-10-13T10:00:00Z" },

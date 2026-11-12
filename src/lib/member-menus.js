@@ -47,6 +47,25 @@ export function hiddenMembers(agents = []) {
   return Array.isArray(agents) ? agents.filter((agent) => agent && isHidden(agent)) : [];
 }
 
+/** Restore device view choices only for members in the verified owned roster.
+ * Cached identity, profile, permissions and extra rows never become authority.
+ */
+export function withCachedMemberViews(members = [], cached = []) {
+  const views = new Map((Array.isArray(cached) ? cached : []).filter(member => member && typeof member.id === "string").map(member => [member.id, member]));
+  return members.map(member => {
+    const view = views.get(member.id);
+    if (!view) return member;
+    const patch = {};
+    for (const key of ["pinned", "hidden"]) {
+      if (typeof view[key] !== "boolean") continue;
+      patch[key] = view[key];
+      const at = view[`${key}At`];
+      patch[`${key}At`] = view[key] && typeof at === "string" && Number.isFinite(Date.parse(at)) ? at : "";
+    }
+    return { ...member, ...patch };
+  });
+}
+
 function timestampOf(message) {
   const value = message?.completedAt || message?.createdAt || message?.updatedAt || message?.startedAt || "";
   const parsed = Date.parse(value);
