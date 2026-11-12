@@ -1,6 +1,6 @@
 import { ownedLocalStorage } from "@/lib/owned-storage";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Bot, Brain, CheckCheck, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Pencil, Plus, Search, Users } from "lucide-react";
+import { Bot, Brain, CheckCheck, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Pencil, Pin, Plus, Search, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -54,7 +54,7 @@ function memberTooltip(agent, presence) {
 
 // `menu` renders beside the row rather than inside it: a row is a button, and
 // a button cannot contain another button.
-function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, bold = false, ariaLabel, menu, tooltip, preview }) {
+function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, bold = false, ariaLabel, menu, tooltip, preview, pinned = false }) {
   const button = (
     <button
       type="button"
@@ -71,7 +71,7 @@ function NavRow({ active, unread, icon: Icon, label, onClick, trailing, avatar, 
       {avatar ? <span className={cn("relative flex shrink-0 items-center justify-center", preview ? "size-10" : "size-5")}>{avatar}</span> : null}
       {Icon ? <span className={cn("shrink-0 text-muted-foreground", preview && "grid size-10 place-items-center rounded-full bg-muted")}><Icon className={preview ? "size-5" : "size-4"} aria-hidden="true" /></span> : null}
       <span className="min-w-0 flex-1">
-        <span className="flex w-full min-w-0 items-baseline gap-2"><span className="min-w-0 flex-1 truncate">{label}</span>{preview?.time ? <time dateTime={preview.dateTime} className={cn("shrink-0 text-[11px] font-normal text-muted-foreground", menu && "group-hover/navrow:opacity-0 group-focus-within/navrow:opacity-0")}>{preview.time}</time> : null}</span>
+        <span className="flex w-full min-w-0 items-baseline gap-2"><span className="flex min-w-0 flex-1 items-center gap-1"><span className="truncate">{label}</span>{pinned ? <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" /> : null}</span>{preview?.time ? <time dateTime={preview.dateTime} className={cn("shrink-0 text-[11px] font-normal text-muted-foreground", menu && "group-hover/navrow:opacity-0 group-focus-within/navrow:opacity-0")}>{preview.time}</time> : null}</span>
         {preview ? <span className="mt-1 block truncate text-xs font-normal text-muted-foreground">{preview.text}</span> : null}
       </span>
       {preview ? <span className={cn("flex items-center gap-1 empty:hidden", menu && "group-hover/navrow:opacity-0 group-focus-within/navrow:opacity-0")}>{trailing}</span> : trailing}
@@ -152,7 +152,13 @@ export function WorkspaceSidebar({
   locale = 'en',
   inDrawer = false,
 }) {
-  const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
+  const visibleAgents = useMemo(() => agents.filter((agent) => agent?.id && agent?.name), [agents]);
+  // Compute each retained preview once per source change, shared by ordering
+  // and rendering rather than rescanning history for both.
+  const memberPreviews = useMemo(() => conversationLayout ? new Map(visibleAgents.map(agent => [agent.id,
+    conversationPreview(messagesByAgent[agent.id], { fallback: agent.role || 'No messages yet', locale, you: copy.you })])) : new Map(), [conversationLayout, visibleAgents, messagesByAgent, locale, copy.you]);
+  const channelPreviews = useMemo(() => conversationLayout ? new Map(channels.map(channel => [channel.id,
+    conversationPreview(messagesByChannel[channel.id], { fallback: channel.purpose || (isGroupChat(channel) ? 'Group chat' : 'Channel'), locale, you: copy.you })])) : new Map(), [conversationLayout, channels, messagesByChannel, locale, copy.you]);
   const sections = useMemo(() => {
     const groups = new Map();
     for (const channel of channels) {
@@ -181,7 +187,7 @@ export function WorkspaceSidebar({
     const isActive = active.kind === "channel" && active.id === channel.id;
     const unread = unreadChannelIds.has(channel.id);
     const members = group ? visibleAgents.filter(agent => channel.memberIds.includes(agent.id)).slice(0, 2) : [];
-    const preview = conversationLayout ? conversationPreview(messagesByChannel[channel.id], { fallback: channel.purpose || (group ? 'Group chat' : 'Channel'), locale, you: copy.you }) : null;
+    const preview = channelPreviews.get(channel.id);
     const row = (menu, mutedIcon) => <NavRow label={channel.name} ariaLabel={group ? `Group chat: ${channel.name}` : undefined} active={isActive} unread={unread}
       icon={group ? members.length && renderAvatar ? null : Users : channel.visibility === "private" ? Lock : Hash}
       avatar={members.length && renderAvatar ? <span className="flex -space-x-2">{members.map(agent => <span key={agent.id}>{renderAvatar(agent, conversationLayout ? "size-6 rounded-full ring-2 ring-card" : "size-4 rounded-sm ring-1 ring-card")}</span>)}</span> : null}
@@ -195,18 +201,18 @@ export function WorkspaceSidebar({
   function memberRow(agent) {
     const isActive = active.kind === 'member' && active.id === agent.id;
     const unread = unreadCountByAgent.get(agent.id) || 0, presence = presenceFor?.(agent);
-    const preview = conversationLayout ? conversationPreview(messagesByAgent[agent.id], { fallback: agent.role || 'No messages yet', locale, you: copy.you }) : null;
-    if (preview && presence?.working) preview.text = 'Working…';
-    return <NavRow key={agent.id} label={agent.name} active={isActive} unread={unread > 0}
+    const retainedPreview = memberPreviews.get(agent.id);
+    const preview = retainedPreview && presence?.working ? { ...retainedPreview, text: 'Working…' } : retainedPreview;
+    return <NavRow key={agent.id} label={agent.name} pinned={agent.pinned === true} active={isActive} unread={unread > 0}
       ariaLabel={presence ? `${agent.name}, ${presence.label}` : agent.name} onClick={() => onNavigate.member?.(agent.id)} preview={preview}
       avatar={<>{renderAvatar?.(agent, conversationLayout ? 'size-10 rounded-full' : 'size-5 rounded-md')}{presence ? <span className={cn('absolute -bottom-0.5 -right-0.5 rounded-full ring-2 ring-card', conversationLayout ? 'size-2.5' : 'size-2', presence.className)} aria-hidden="true" /> : null}</>}
       trailing={!isActive && !unread && draftAgentIds.has(agent.id) ? <Pencil className="size-3 text-muted-foreground" aria-label="Unsent draft" /> : <UnreadCount count={isActive ? 0 : unread} />}
       menu={renderMemberMenu?.(agent)} tooltip={memberTooltip(agent, presence)} />;
   }
-  const rows = conversationLayout ? [
-    ...visibleAgents.map(agent => ({ id: agent.id, kind: 'member', value: agent, at: conversationPreview(messagesByAgent[agent.id]).at })),
-    ...channels.filter(channel => !channelNotificationPreference(notificationSettings, channel.id).hidden).map(channel => ({ id: channel.id, kind: 'channel', value: channel, at: conversationPreview(messagesByChannel[channel.id]).at })),
-  ].sort((a, b) => b.at - a.at) : [];
+  const rows = useMemo(() => conversationLayout ? [
+    ...visibleAgents.map(agent => ({ id: agent.id, kind: 'member', value: agent, pinned: agent.pinned === true, at: memberPreviews.get(agent.id).at })),
+    ...channels.filter(channel => !channelNotificationPreference(notificationSettings, channel.id).hidden).map(channel => ({ id: channel.id, kind: 'channel', value: channel, at: channelPreviews.get(channel.id).at })),
+  ].sort((a, b) => Boolean(b.pinned) - Boolean(a.pinned) || (a.pinned && b.pinned ? 0 : b.at - a.at)) : [], [conversationLayout, visibleAgents, channels, notificationSettings, memberPreviews, channelPreviews]);
 
   const hiddenSection = hiddenChannels.length ? <section aria-label="Hidden channels">
           <SectionHeader label={`Hidden channels · ${hiddenChannels.length}`} expanded={collapsedSections.__hiddenChannels === false} onToggle={() => setCollapsedSections(current => ({ ...current, __hiddenChannels: current.__hiddenChannels === false }))} />

@@ -11466,7 +11466,9 @@ function ChannelsPage({
                       {message.workflowRunId ? (
                         <WorkflowTag workflow={found?.workflow || { name: message.workflowName || "" }} run={found?.run} stepId={message.stepId} showName={message.role !== "system"} copy={copy} className="mb-1" />
                       ) : null}
-                      <MarkdownBlocks text={message.role === "user" ? message.body || "" : withoutRecoveryNotices(message.body || "")} />
+                      <div className={message.role === "user" ? "chat-user-bubble" : message.status !== "error" && (message.role === "agent" || message.agentId) ? "chat-agent-answer" : undefined}>
+                        <MarkdownBlocks text={message.role === "user" ? message.body || "" : withoutRecoveryNotices(message.body || "")} />
+                      </div>
                       {(message.attachments || []).map((attachment) => (
                         <MediaAttachment key={attachment.id} attachment={attachment} anchors={channelAnchors} onAnchor={addAnchorToDraft} copy={copy} />
                       ))}
@@ -13182,7 +13184,8 @@ function SidebarContent({
   draftAgentIds = new Set(),
 }) {
   const skin = useContext(SkinContext);
-  const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
+  const visibleAgents = useMemo(() => agents.filter((agent) => agent?.id && agent?.name), [agents]);
+  const sidebarAgents = useMemo(() => orderMembers(visibleAgents), [visibleAgents]);
   const { entryFor: entryForPresence } = usePresence();
   const memberId = activeAgent?.id || visibleAgents[0]?.id;
   const chatPath = memberChatPath(memberId);
@@ -13239,7 +13242,7 @@ function SidebarContent({
         </Button>
       }
       copy={copy}
-      agents={orderMembers(visibleAgents)}
+      agents={sidebarAgents}
       conversationLayout={skin.layout === "conversations"}
       inDrawer={inDrawer}
       messagesByAgent={messagesByAgent}

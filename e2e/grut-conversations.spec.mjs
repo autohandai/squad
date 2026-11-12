@@ -16,9 +16,16 @@ test.beforeAll(async () => {
     [member.id]: [
       { id: 'grut-user', role: 'user', body: 'Review the release plan and [checklist](https://example.test).', status: 'complete', startedAt: new Date(now - 60000).toISOString(), time: clock(now - 60000) },
       { id: 'grut-answer', role: 'agent', body: 'The checklist is ready.\n\n- Setup keeps the saved team.\n- The next release includes the updated MCP tools.', status: 'complete', startedAt: new Date(now).toISOString(), time: clock(now) },
+      { id: 'grut-backfill', role: 'agent', body: 'Recovered older history.', status: 'complete', startedAt: new Date(now - 3600000).toISOString(), time: clock(now - 3600000) },
     ],
     [other.id]: [{ id: 'grut-noah', role: 'agent', body: 'The design review is ready.', status: 'complete', startedAt: new Date(now - 120000).toISOString(), time: clock(now - 120000) }],
   } }); expect(saved.success, saved.error).toBe(true);
+  const channelState = (await bridge.api('/api/channels')).data;
+  const threadId = 'grut-group-thread';
+  const channelSaved = await bridge.api('/api/channels', 'PUT', { ...channelState, messages: [
+    { id: 'grut-group-answer', channelId: group.id, threadId, parentMessageId: 'grut-group-user', role: 'agent', agentId: member.id, body: 'The group review is ready.', status: 'complete', createdAt: new Date(now - 30000).toISOString() },
+    { id: 'grut-group-user', channelId: group.id, threadId, role: 'user', body: 'Review this together.', status: 'complete', createdAt: new Date(now - 150000).toISOString() },
+  ] }); expect(channelSaved.success, channelSaved.error).toBe(true);
 });
 test.afterAll(async () => { await fixture?.bridge.close(); });
 
@@ -41,9 +48,15 @@ test('Grut selects a persistent conversation layout with real previews and exist
   await expect(eva).toContainText('The checklist is ready.');
   expect(await eva.locator('time').getAttribute('dateTime')).toBeTruthy();
   await expect(eva.locator('time')).toBeInViewport();
-  await expect(conversations.getByRole('button', { name: /^Noah,/ })).toContainText('The design review is ready.');
-  await expect(conversations.getByRole('button', { name: 'Group chat: Release reviewers', exact: true })).toBeVisible();
-  expect((await conversations.getByRole('button').allTextContents())[0]).toContain('Eva');
+  const noah = conversations.getByRole('button', { name: /^Noah,/ });
+  await expect(noah).toContainText('The design review is ready.');
+  await sidebar.getByRole('button', { name: 'Actions for Noah', exact: true }).click();
+  await page.getByRole('button', { name: 'Pin', exact: true }).click();
+  await expect(noah.getByLabel('Pinned', { exact: true })).toBeVisible();
+  await expect(conversations.getByRole('button', { name: 'Group chat: Release reviewers', exact: true })).toContainText('The group review is ready.');
+  const rowNames = await conversations.getByRole('button').allTextContents();
+  expect(rowNames[0]).toContain('Noah');
+  expect(rowNames[1]).toContain('Eva');
   await page.screenshot({ path: info.outputPath('conversation-list.png'), fullPage: true, animations: 'disabled' });
   // Both the existing overflow and right-click action definitions remain live.
   await conversations.getByRole('button', { name: `Group chat: ${group.name}`, exact: true }).click({ button: compact ? 'left' : 'right' });
@@ -63,6 +76,16 @@ test('Grut selects a persistent conversation layout with real previews and exist
   await expect(conversations.getByRole('button', { name: `Group chat: ${group.name}`, exact: true })).toBeVisible();
   await sidebar.getByRole('button', { name: 'New message', exact: true }).click();
   await expect(page.getByTestId('conversation-composer')).toBeVisible();
+  await page.goto(bridge.origin + `/channels/${group.id}`);
+  const groupUser = page.locator('main [data-channel-message-id="grut-group-user"]');
+  await expect(groupUser.locator('.chat-user-bubble')).toContainText('Review this together.');
+  const groupPosition = await groupUser.evaluate(element => ({ left: element.getBoundingClientRect().left, parent: element.parentElement.getBoundingClientRect().left }));
+  expect(groupPosition.left).toBeGreaterThan(groupPosition.parent);
+  await groupUser.getByRole('button', { name: /^Thread:/ }).click();
+  const groupAnswer = page.locator('main [data-channel-message-id="grut-group-answer"]');
+  await expect(groupAnswer.locator('.chat-agent-answer')).toContainText('The group review is ready.');
+  expect(await groupAnswer.locator('.chat-reply-avatar').evaluate(element => getComputedStyle(element).display)).toBe('none');
+  await page.screenshot({ path: info.outputPath('group-thread.png'), fullPage: true, animations: 'disabled' });
   await page.goto(bridge.origin + `/conversations/new?member=${member.id}`);
   await expect(page.locator('main')).toContainText('The checklist is ready.');
   const answer = page.locator('main .chat-agent-answer').filter({ hasText: 'The checklist is ready.' });

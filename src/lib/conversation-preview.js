@@ -1,7 +1,16 @@
 /** A bounded preview of retained conversation data, never a generated status. */
 export function conversationPreview(messages, { fallback = '', locale = 'en', you = 'You' } = {}) {
-  const message = Array.isArray(messages) ? messages.findLast(item => item && item.status !== 'deleted' && (item.body || item.attachments?.length)) : null;
-  const at = Date.parse(message?.startedAt || message?.createdAt || message?.completedAt || '');
+  // Recovered history can append older records after newer streamed replies.
+  // Prefer the newest recorded date, retaining array order only for ties or
+  // wholly undated legacy history. An invalid field must not mask a valid one.
+  let message = null, at = NaN;
+  for (const item of Array.isArray(messages) ? messages : []) {
+    if (!item || item.status === 'deleted' || !(item.body || item.attachments?.length)) continue;
+    const recordedAt = [item.startedAt, item.createdAt, item.completedAt].map(value => Date.parse(value || '')).find(Number.isFinite);
+    if (!message || !Number.isFinite(at) || (Number.isFinite(recordedAt) && recordedAt >= at)) {
+      message = item; at = recordedAt;
+    }
+  }
   const body = String(message?.body || '').slice(0, 512)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
   const text = body || (message?.attachments?.length ? 'Attachment' : fallback);

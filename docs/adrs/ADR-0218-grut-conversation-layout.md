@@ -15,14 +15,16 @@ the skin registry; other skins keep workspace navigation. Share the same data,
 member/group/channel routes, row actions, unread/draft states and owner-scoped
 preferences. Do not introduce a second conversation store or duplicate dispatch.
 Members, private groups and visible channels share one list ordered by retained
-message timestamps. Larger current avatars identify members; groups use their
+message timestamps after pinned members, which preserve their existing pin
+order and indicator. Larger current avatars identify members; groups use their
 members' faces. Previews are bounded plain text from retained messages, or an
 explicit role/purpose/attachment fallback. Missing dates remain unknown rather
 than being inferred from a profile edit. Keep hidden conversations recoverable.
 Inbox, Squad, Memory, channel creation and new-message navigation stay reachable.
 
-Grut answers use a quiet bubble, with work details, failures and approval controls
-outside it. The inverse user bubble supplies local text/code surface tokens;
+Grut answers in direct, group and channel conversations, including expanded
+thread replies, use a quiet bubble, with work details, failures and approval
+controls outside it. The inverse user bubble supplies local text/code surface tokens;
 shared Markdown typography still works in both modes. Keep the regular composer,
 shared profile pages and native Quick Chat contracts. The phone drawer reserves
 space for its close control, so New message has its own hit target.
@@ -46,6 +48,15 @@ correctly. Its modal behavior stays unchanged; explicit drawer-header space
 fixes the real overlap. Captures finish CSS transitions before taking a frame,
 and touch controls are exercised with taps.
 
+Review found that sorting every row by recency discarded the existing pin
+priority, and selecting the last array item could show recovered older history
+instead of a newer reply. Previews now select the newest valid recorded date
+independently of insertion order and are computed once per source change for
+both ordering and rendering. A focused chronology assertion failed on the old
+selection. The browser fixture now includes an older pinned member and older
+records appended after newer replies, as well as a populated group thread;
+the earlier empty group check had not exercised its answer composition.
+
 ## Consequences and proof limits
 
 Grut's layout is coupled to its existing skin choice. Mixing this layout with
@@ -56,8 +67,9 @@ with sample content. Profile, work and Settings pages keep their shared layouts;
 this change concentrates on conversation navigation and replies.
 
 Production-bundle browser checks cover the Appearance control, reload
-persistence, actual owned conversation previews, recency order, timestamp
-visibility, group actions, hide/show recovery, inline New message navigation,
+persistence, actual owned conversation previews, recovered chronology, pin and
+recency order, timestamp visibility, group actions and expanded thread bubbles,
+hide/show recovery, inline New message navigation,
 switching back to workspace navigation, readable bubbles and
 viewport containment. Desktop light/dark screenshots and a phone drawer/chat
 capture are reviewed separately from native, installed-app and release proof.

@@ -362,12 +362,14 @@ export function ChannelStream({
             {isNew ? <Divider label={newLabel} emphasis /> : null}
             <article
               data-channel-message-id={message.id}
+              data-message-role={message.role === "user" ? "user" : message.role === "agent" || message.agentId ? "assistant" : undefined}
+              data-message-compact={String(compact)}
               className={cn(
                 "group relative flex gap-3 rounded-md px-2 transition-colors hover:bg-muted/30",
                 compact ? "py-0.5" : "mt-2 py-1.5"
               )}
             >
-              <div className="w-8 shrink-0">
+              <div className="chat-reply-avatar w-8 shrink-0">
                 {compact ? (
                   <span className="hidden text-[10px] text-muted-foreground group-hover:block" title={fullTime(message)}>{timeLabel(message, locale)}</span>
                 ) : renderAvatar ? (
