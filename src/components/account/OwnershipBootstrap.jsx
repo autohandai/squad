@@ -57,7 +57,7 @@ export function OwnershipBootstrap({ children }) {
         // Resolve the canonical owned registry before App's mirroring effects
         // can publish any browser state back into the runtime.
         Promise.all([request('/api/channels', next), request('/api/owned/browser-state', next)]).then(async ([snapshot, browser]) => {
-          if (disposed || reloading || current.current?.generation !== next.generation) return;
+          if (disposed || reloading || leaving || current.current?.generation !== next.generation) return;
           const members = Object.entries(snapshot.agentChannelAccess || {}).filter(([id, access]) => id !== 'squad-designer' && access?.agent && !access.removed)
             .map(([id, access]) => ({ ...access.agent, id, ownership: next.owner }));
           ownedLocalStorage.setItem('autohandSquad.v1.agents', JSON.stringify(members));
@@ -82,9 +82,11 @@ export function OwnershipBootstrap({ children }) {
           ownedLocalStorage.setItem('autohandSquad.v1.browserRevision', String(browser.revision || 0));
           if (Array.isArray(snapshot.channels)) ownedLocalStorage.setItem('autohandSquad.v1.channels', JSON.stringify(snapshot.channels));
           hydrated = true; hydrating = false; setError(''); setContext(next);
-        }, failure => {
-          if (disposed || reloading) return;
-          hydrating = false; setError(failure.message || 'Your saved Squad could not be loaded.'); setContext({ ...next, state: 'load_error' });
+        }).catch(failure => {
+          if (disposed || reloading || leaving || current.current?.generation !== next.generation) return;
+          hydrating = false;
+          setError(failure.name === 'QuotaExceededError' ? 'Your device’s local storage is full. Free some space, then retry. Your saved Squad is unchanged.' : failure.message || 'Your saved Squad could not be loaded.');
+          setContext({ ...next, state: 'load_error' });
         });
         return;
       }

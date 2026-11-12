@@ -174,3 +174,9 @@ and process checks on macOS, not installed-window or Windows execution proof.
 The Windows helper cross-check and remaining platform evidence are recorded in
 ADR-0195. The hosted API suite passes 21 local D1/R2 tests and type checking;
 this change has not yet deployed the hosted API or its migration.
+
+## Review follow-up: local-cache write failures
+
+The real owned Backups browser check reproduced an indefinite Loading screen when a quota error was raised inside the async hydration callback. A second argument to `.then` handled request rejection but missed errors thrown by that callback. The fulfillment chain now ends in `.catch`, fences stale ownership generations, clears the hydration latch and presents a local-storage error with Retry. Canonical data stays in the owner dataset; no cache is silently discarded.
+
+The browser regression injects a quota failure at the actual owned messages write, verifies that Retry is offered without an unhandled rejection or a canonical conversation change, then removes the fault and retries through a new broker realm. Existing backup export/restore and two-window conflict checks run after recovery. This favors an explicit recoverable error over mounting private state after incomplete hydration.

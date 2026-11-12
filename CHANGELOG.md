@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- A full local cache now shows an actionable startup error and Retry instead of leaving Squad on Loading. Saved conversations remain unchanged.
+
 ### Added
 
 - User and Autohand team ownership for Squad data, with account switching isolated from previously saved agents and memories.

@@ -34,6 +34,25 @@ try {
   const origin=await broker.listen();
   await until(()=>broker.context().state==='ready','owned browser fixture ready');
   browser=await startBrowser({disableBackForwardCache:true});
+  // Fail the actual cache write during first hydration. A quota failure must
+  // present Retry rather than reject the async success callback indefinitely.
+  await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`
+    if(location.origin===${JSON.stringify(origin)}) {
+      window.failOwnedCache=!sessionStorage.getItem('__fixtureCacheRecovered');
+      const write=Storage.prototype.setItem;
+      Storage.prototype.setItem=function(key,value) {
+        if(window.failOwnedCache && String(key).startsWith('autohandSquad.owner.v1.') && String(key).endsWith('.autohandSquad.v1.messages')) throw new DOMException('Local cache is full. Free some space and retry.','QuotaExceededError');
+        return write.call(this,key,value);
+      };
+    }
+  `});
+  await browser.navigate(`${origin}/settings/backups`);
+  await until(()=>browser.evaluate("document.body.innerText.includes('local storage is full') && [...document.querySelectorAll('button')].some(button=>button.innerText==='Retry')"),'cache failure exits Loading with an actionable Retry',8_000);
+  assert.deepEqual(browser.errors,[],'cache failure is handled without an unhandled rejection');
+  assert.equal(JSON.parse(await readFile(join(paths.dataRoot,'browser-state.json'),'utf8')).messagesByAgent.eva[0].body,'Preserve the current conversation.','failed hydration cannot alter canonical conversations');
+  await browser.evaluate("window.failOwnedCache=false; sessionStorage.setItem('__fixtureCacheRecovered','1')");
+  await browser.click('Retry');
+  await until(()=>browser.evaluate("document.body.innerText.includes('Free for a new task')"),'Retry restores the canonical roster',30_000);
   await browser.navigate(`${origin}/settings/backups`);
   await until(()=>browser.evaluate("document.body.innerText.includes('Members to include')"),'Backups settings render',30_000);
   assert.equal(await browser.evaluate("document.body.innerText.includes('Eva')"),true);
