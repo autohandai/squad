@@ -28,7 +28,7 @@ const harness = join(directory, "mock-codex");
 const config = join(directory, "user.json");
 const calls = join(directory, "calls.jsonl");
 
-const noah = { id: "team-noah", name: "Noah", role: "Frontend", status: "online", workspace: root, projects: [{ path: root }], harness: { id: "codex", executablePath: harness }, permissions: { permissionMode: "restricted", builtInPolicies: Object.fromEntries(['squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_memories', 'squad_set_member_skills', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine'].map(name => [name, "allow"])) } };
+const noah = { id: "team-noah", name: "Noah", role: "Frontend", status: "online", workspace: root, projects: [{ path: root }], harness: { id: "codex", executablePath: harness }, permissions: { permissionMode: "restricted", builtInPolicies: Object.fromEntries(['squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_memories', 'squad_list_skills', 'squad_set_member_skills', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine'].map(name => [name, "allow"])) } };
 const eva = { id: "team-eva", name: "Eva Green", role: "QA", status: "online", workspace: root, projects: [{ path: root }], harness: { id: "codex", executablePath: harness }, permissions: { permissionMode: "restricted" } };
 const squadMembers = [noah, eva];
 
@@ -124,6 +124,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
       await call('squad_create_member', { request_id: 'specialist-once', name: 'Tatiana', role: 'Software engineer', responsibilities: 'Own the code-cli architecture.', personality: 'Precise and thoughtful.', instructions: 'Verify boundaries before editing.', memories: ['Keep CLI and API boundaries explicit.'] });
       if (!created.id) throw new Error('Member was not persisted.');
       await call('squad_update_member_profile', { member_id: created.id, responsibilities: 'Own CLI interoperability.' });
+      await call('squad_list_skills', { member_id: created.id });
       await call('squad_set_member_skills', { member_id: created.id, skill_ids: [] });
       await call('squad_set_member_memories', { member_id: created.id, memories: ['Use the actual saved tool contracts.'] });
       await call('squad_get_member_profile', { member_id: created.id });
@@ -183,7 +184,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
 
 try {
   // --- pure pieces --------------------------------------------------------
-  assert.deepEqual(TEAM_TOOL_NAMES, ['squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_memories', 'squad_set_member_skills', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine', "squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_assign_task", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask", "squad_publish_artifact", "squad_member_data", "squad_member_files", "squad_export_member"]);
+  assert.deepEqual(TEAM_TOOL_NAMES, ['squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_memories', 'squad_list_skills', 'squad_set_member_skills', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine', "squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_assign_task", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask", "squad_publish_artifact", "squad_member_data", "squad_member_files", "squad_export_member"]);
   assert.deepEqual([...SQUAD_TEAM_TOOLS].sort(), [...TEAM_TOOL_NAMES].sort(), "the permission rows people see are exactly the tools the team server offers (ADR-0161)");
   const roster = [{ id: "a1", name: "Eva Green" }, { id: "a2", name: "Noah" }, { id: "a3", name: "Max Power" }, { id: "a4", name: "Max Steel" }];
   assert.equal(resolveTeammate("@Eva,", roster).member?.id, "a1", "a first name with @ and a comma finds the teammate");
@@ -539,7 +540,7 @@ try {
   result = await chat(noah, "team-scenario-manage");
   assert.equal(result.success, true, result.text);
   const management = (await entries()).filter(entry => entry.kind === 'tool' && entry.scenario === 'manage');
-  assert.equal(management.length, 9);
+  assert.equal(management.length, 10);
   for (const entry of management) assert.notEqual(entry.response.result?.isError, true, JSON.stringify(entry));
   const made = management[0].response.result.structuredContent;
   assert.equal(management[1].response.result.structuredContent.id, made.id);

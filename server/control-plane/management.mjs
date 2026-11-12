@@ -147,5 +147,5 @@ export function createManagementTools(bridge, legacy) {
   };
 }
 
-export const MEMBER_MANAGEMENT_NAMES = Object.freeze(['create_member', 'get_member_profile', 'update_member_profile', 'set_member_skills', 'set_member_memories', 'list_routines', 'create_routine', 'update_routine']);
+export const MEMBER_MANAGEMENT_NAMES = Object.freeze(['create_member', 'get_member_profile', 'update_member_profile', 'list_skills', 'set_member_skills', 'set_member_memories', 'list_routines', 'create_routine', 'update_routine']);
 export const MANAGED_MEMBER_TOOLS = MANAGEMENT_TOOLS.filter(tool => MEMBER_MANAGEMENT_NAMES.includes(tool.name)).map(tool => ({ ...tool, name: `squad_${tool.name}`, description: `${tool.description} Uses this member's saved management permission; ask mode needs the person's bounded confirmation in Squad.` }));

@@ -18,8 +18,8 @@ agent records or a Claude/Codex process being mistaken for a saved Squad member.
 
 The actual operator stdio check passes 237 assertions after replacing the
 creation-placeholder expectation with persisted creation and retry checks.
-The real managed stdio test performs nine member-management calls: creation,
-the same creation again, profile/skill/memory editing, profile retrieval,
+The real managed stdio test performs ten member-management calls: creation,
+the same creation again, profile/skill/memory editing, skill discovery, profile retrieval,
 routine creation/update and listing. The retry returns the same ID without
 creating another member. Separate acceptance checks cover saved Block, Ask and
 Allow rules, workspace overrides, ended turns, revocation before writes and

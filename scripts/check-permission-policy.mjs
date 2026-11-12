@@ -124,7 +124,7 @@ const MODES = new Set(["allow", "ask", "block"]);
   for (const rank of RANKS) {
     const policies = builtInPoliciesForRank(rank);
     for (const tool of SQUAD_TEAM_TOOLS) {
-      assert.equal(policies[tool], ['squad_create_channel', 'squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_skills', 'squad_set_member_memories', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine'].includes(tool) ? 'ask' : 'allow', `rank ${rank} lets a member reach ${tool}`);
+      assert.equal(policies[tool], ['squad_create_channel', 'squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_list_skills', 'squad_set_member_skills', 'squad_set_member_memories', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine'].includes(tool) ? 'ask' : 'allow', `rank ${rank} lets a member reach ${tool}`);
     }
     for (const tool of SQUAD_UNREACHABLE_TOOLS) {
       assert.equal(policies[tool], "block", `rank ${rank} blocks ${tool}, which can never reach a Squad window`);
