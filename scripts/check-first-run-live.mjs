@@ -147,14 +147,10 @@ async function sendAnswering(prompt, label, choice = 'Allow for this reply', tim
   const ticker = setInterval(() => log(`waiting: ${label}`), 30000);
   const answered = [];
   try {
-    return await until(async () => {
+    const completed = await until(async () => {
       const turn = (await turns())[before];
-      if (turn?.error || turn?.captureError) throw new Error(JSON.stringify(turn.error || turn.captureError));
-      if (turn?.result) {
-        const failure = replyFailure([], turn.result.reply);
-        if (failure) throw new Error(`Provider did not answer: ${failure.message.split('\n')[0]}`);
-        return { ...turn, answered };
-      }
+      if (turn?.error || turn?.captureError) return { walkthroughError: JSON.stringify(turn.error || turn.captureError) };
+      if (turn?.result) return { ...turn, answered };
       if (turn?.queued?.item?.id) {
         clearInterval(ticker);
         log(`${label}: the message was queued behind the member's current turn; waiting for the queue`);
@@ -178,6 +174,10 @@ async function sendAnswering(prompt, label, choice = 'Allow for this reply', tim
       }
       return false;
     }, label, timeout);
+    if (completed.walkthroughError) throw new Error(completed.walkthroughError);
+    const failure = replyFailure([], completed.result?.reply);
+    if (failure) throw new Error(`Provider did not answer: ${failure.message.split('\n')[0]}`);
+    return completed;
   } finally { clearInterval(ticker); }
 }
 async function openChat(memberId) {

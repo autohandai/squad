@@ -44,6 +44,10 @@ as answers. Ordinary fixtures keep their isolated identity service. Future live
 runs copy only Codex authentication and model/reasoning defaults into a private
 temporary home, so rehearsals do not install plugins or write sessions in the
 person's Codex home. The source credential and configuration are never modified.
+The cleanup boundary includes preparation and identity initialization, so an
+exception after copying authentication removes the private directory even before
+a bridge is returned. Terminal quota detection runs outside retry polling; an
+error thrown inside that polling would otherwise be swallowed until its deadline.
 Correct the release runbook's stale optional-macOS-signing and Node guidance to
 match ADR-0173 and the current runtime/ruleset contracts.
 
@@ -55,6 +59,9 @@ match ADR-0173 and the current runtime/ruleset contracts.
   records quota as the reason, and returns an error without a fallback. Existing
   bidirectional routing, context/images, access, queues, assigned runs and goals
   checks pass separately. Fixtures do not establish provider availability.
+- A preparation-failure check first reproduced a retained fixture-authentication
+  file, then passed after cleanup enclosed preparation. It runs in the release
+  checks and uses only a fake credential.
 - Onboarding state checks pass connected coordinator defaults and their existing
   failed/interrupted provisioning, identity, authored settings and replay cases.
 - In the subsequent real-account browser rehearsal, the primary quota failure
