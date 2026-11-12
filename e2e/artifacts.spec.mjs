@@ -33,6 +33,11 @@ try{await rpc('initialize',{protocolVersion:'2025-06-18'});const r=await rpc('to
 test.afterAll(async () => { await bridge?.close(); });
 
 test('Squad MCP is visible and generated artifacts open from chat, Library and knowledge', async ({ page }, info) => {
+  if (process.env.ARTIFACT_CPU_THROTTLE) {
+    test.setTimeout(120000);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.ARTIFACT_CPU_THROTTLE) });
+  }
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(member => {
     if (window !== window.top) return;
@@ -42,6 +47,7 @@ test('Squad MCP is visible and generated artifacts open from chat, Library and k
   }, member);
   await page.goto(bridge.origin + '/settings/connectors');
   const managed = page.getByTestId('squad-managed-connector');
+  await expect(managed).toBeVisible({ timeout: 30000 });
   await expect(managed).toContainText('Autohand Squad');
   await expect(managed).toContainText('Managed by Squad');
   await expect(managed.getByRole('switch')).toHaveCount(0);
@@ -66,7 +72,19 @@ test('Squad MCP is visible and generated artifacts open from chat, Library and k
   const preview = page.getByTestId('artifact-preview');
   await expect(preview.getByRole('heading')).toHaveText(title);
   const frame = preview.frameLocator('iframe');
-  await frame.getByRole('button', { name: 'Review findings' }).click();
+  const review = frame.getByRole('button', { name: 'Review findings' });
+  if (info.project.use.hasTouch) {
+    await review.tap();
+  } else {
+    // Chromium can initially route input to the opaque frame's owner rather
+    // than its document. Wait for a real pointer acknowledgement before the
+    // first click; never retry the click itself or dispatch a synthetic one.
+    await expect.poll(async () => {
+      await review.hover();
+      return review.evaluate(button => button.matches(':hover'));
+    }).toBe(true);
+    await review.click();
+  }
   await expect(frame.locator('article')).toHaveText('Reviewed and ready');
   const proof = await frame.locator('body').evaluate(() => window.proof);
   expect(proof).toEqual({ parent: false, storage: false, ipc: false, bridge: false });

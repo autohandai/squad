@@ -2,6 +2,8 @@
 
 ## UI Component Style
 
+- Interactive HTML artifacts must support deliberate pointer and touch input while retaining their opaque sandbox. Verification must check the resulting interaction, not only that an automation command returned successfully.
+
 - Product UI should feel simple, functional, and Notion-like: calm document surfaces, clear hierarchy, whitespace, and concise controls.
 - Avoid bento-style layouts, boxed dashboards, and card walls. Do not turn each designated area into a bordered or tinted rectangle.
 - Use borders, background fills, and framed panels only when they materially improve scanning, form containment, or interaction affordance.
