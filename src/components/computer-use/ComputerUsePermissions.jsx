@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
@@ -10,9 +10,15 @@ export function ComputerUsePermissions({ member, api, compact = false, onOpenPer
   const [error, setError] = useState("");
   const [setupOpened, setSetupOpened] = useState(false);
   const [busy, setBusy] = useState(false);
+  const statusSequence = useRef(0);
   const refresh = useCallback(async (signal) => {
-    const current = await api(`/api/computer-use/status?memberId=${encodeURIComponent(member.id)}`, { signal });
-    if (!signal?.aborted) { setStatus({ ...current, memberId: member.id }); setError(""); }
+    const sequence = ++statusSequence.current;
+    try {
+      const current = await api(`/api/computer-use/status?memberId=${encodeURIComponent(member.id)}`, { signal });
+      if (!signal?.aborted && sequence === statusSequence.current) { setStatus({ ...current, memberId: member.id }); setError(""); }
+    } catch (failure) {
+      if (!signal?.aborted && sequence === statusSequence.current) throw failure;
+    }
   }, [api, member.id]);
   useEffect(() => {
     const controller = new AbortController();
@@ -27,6 +33,7 @@ export function ComputerUsePermissions({ member, api, compact = false, onOpenPer
   const ready = current?.available === true && current.accessibility === true && current.screenRecording === true;
   async function change(next) {
     if (busy || (next !== "none" && !native)) return;
+    statusSequence.current += 1;
     setBusy(true); setError("");
     try {
       const result = next === "none"

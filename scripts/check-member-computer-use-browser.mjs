@@ -33,12 +33,21 @@ try {
       if (url.pathname !== '/api/computer-use/status' || !response.ok) return response;
       const payload = await response.json();
       payload.data = { ...payload.data, available:true, accessibility:true, screenRecording:true, readinessError:null };
+      if (window.__computerToggle.holdNextStatus) {
+        window.__computerToggle.holdNextStatus = false; window.__computerToggle.heldStatus = true;
+        await new Promise(resolve => { window.__computerToggle.releaseStatus = resolve; });
+        window.__computerToggle.delayedDelivered = true;
+      }
       return new Response(JSON.stringify(payload), {status:200, headers:{'content-type':'application/json'}});
     };
     window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
       window.__computerToggle.calls.push({command, memberId:args.memberId});
       if (window.__computerToggle.failNext) { window.__computerToggle.failNext = false; throw Error('Fixture native grant unavailable'); }
       if (command === 'squad_confirm_computer_use' && window.__computerToggle.cancel) return {confirmed:false};
+      if (command === 'squad_confirm_computer_use' && window.__computerToggle.holdNextConfirmation) {
+        window.__computerToggle.holdNextConfirmation = false; window.__computerToggle.heldConfirmation = true;
+        await new Promise(resolve => { window.__computerToggle.releaseConfirmation = resolve; });
+      }
       if (!['squad_confirm_computer_use','squad_revoke_computer_use'].includes(command)) throw Error('Fixture native command unavailable');
       const revoke = command === 'squad_revoke_computer_use';
       const response = await original('/api/computer-use/grant', {method:revoke?'DELETE':'POST', headers:{'content-type':'application/json','x-squad-context':args.contextGeneration,'x-squad-native-grant':${JSON.stringify(fixtureKey)}}, body:JSON.stringify({memberId:args.memberId,...(revoke?{}:{scope:args.scope})})});
@@ -66,12 +75,32 @@ try {
   await until(() => browser.evaluate("document.querySelector('[role=switch][aria-label=\"Use the computer\"]').getAttribute('aria-checked') === 'true'"), 'confirmed switch state');
   await navigate('/squad-members/' + member.id + '/permissions');
   await until(() => browser.evaluate("document.querySelector('[data-testid=computer-use-permissions] [role=switch]')?.getAttribute('aria-checked') === 'true'"), 'Permissions uses the same saved grant');
+  await browser.evaluate('window.__computerToggle.holdNextStatus = true');
+  await browser.click('Check again');
+  await until(() => browser.evaluate('window.__computerToggle.heldStatus === true'), 'pre-revoke status held in flight');
   await toggle();
   await until(async () => (await bridge.api('/api/computer-use/status?memberId=' + member.id)).data.grant.scope === 'none', 'turning off revokes access');
+  await until(() => browser.evaluate("document.querySelector('[data-testid=computer-use-permissions] [role=switch]')?.getAttribute('aria-checked') === 'false'"), 'acknowledged revoke displayed');
+  await browser.evaluate('window.__computerToggle.releaseStatus()');
+  await until(() => browser.evaluate('window.__computerToggle.delayedDelivered === true'), 'earlier status response delivered');
+  await browser.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  assert.equal(await browser.evaluate("document.querySelector('[data-testid=computer-use-permissions] [role=switch]').getAttribute('aria-checked')"), 'false', 'a delayed pre-revoke read cannot undo acknowledged Off');
   assert.equal((await bridge.api('/api/computer-use/status?memberId=' + other.id)).data.grant.scope, 'observe', 'another member retains their separate observe grant');
   await navigate('/squad-members/' + member.id + '/model');
   await until(() => browser.evaluate("document.querySelector('[data-testid=member-computer-use] [role=switch]')?.getAttribute('aria-checked') === 'false'"), 'reopening Model settings preserves off');
   await until(() => browser.evaluate("!document.querySelector('[data-testid=member-computer-use] [role=switch]').disabled"), 'reopened Model readiness resolved');
+  await browser.evaluate('window.__computerToggle.holdNextConfirmation = true');
+  await toggle();
+  await until(() => browser.evaluate('window.__computerToggle.heldConfirmation === true'), 'Eva confirmation held pending');
+  await navigate('/squad-members/' + other.id + '/model');
+  await until(() => browser.evaluate("document.querySelector('[data-testid=member-computer-use]')?.textContent.includes('Iris may inspect')"), 'Iris own observe scope loaded');
+  await browser.evaluate('window.__computerToggle.releaseConfirmation()');
+  await until(async () => (await bridge.api('/api/computer-use/status?memberId=' + member.id)).data.grant.scope === 'control', 'late confirmation still targets Eva');
+  await browser.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  assert.equal(await browser.evaluate("document.querySelector('[data-testid=member-computer-use]').textContent.includes('Iris may inspect') && !document.querySelector('[data-testid=member-computer-use] [role=switch]').disabled"), true, 'late Eva confirmation cannot replace Iris state or errors');
+  await bridge.api('/api/computer-use/grant', 'DELETE', {memberId:member.id});
+  await navigate('/squad-members/' + member.id + '/model');
+  await until(() => browser.evaluate("document.querySelector('[data-testid=member-computer-use] [role=switch]')?.getAttribute('aria-checked') === 'false' && !document.querySelector('[data-testid=member-computer-use] [role=switch]').disabled"), 'Eva off restored after member transition');
   await browser.send('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
   await browser.evaluate("document.querySelector('[data-testid=member-computer-use]').scrollIntoView({block:'center'})");
   assert.equal(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), true, 'Computer Use controls fit on a phone');

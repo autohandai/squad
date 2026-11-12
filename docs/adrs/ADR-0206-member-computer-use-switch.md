@@ -57,3 +57,10 @@ Evidence lives at public owned HTTP/MCP/browser seams: native dialog and OS
 readiness are simulated, the grant persistence and broker workers are real.
 The controlled harness observes actual launch configuration and instructions.
 Native UI, live provider and signed release acceptance remain separate.
+
+Review found a same-member status race: a pre-revoke read could arrive after
+the successful revoke and reset the displayed switch. A rendered regression
+holds that earlier response until Off is acknowledged, then releases it.
+Refresh requests now carry a sequence; starting a change retires older reads
+and stale failures as well as stale success responses. Each member's control
+also has its own React identity when changing the selected member.
