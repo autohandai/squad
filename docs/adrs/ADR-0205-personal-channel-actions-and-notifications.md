@@ -31,6 +31,11 @@ actors. Keeping its single `notifications.json` would share personal hiding
 and feed state. A real broker/worker regression first reproduced adoption of
 the old team's muted default, then verifies Alice/Bob/Alice isolation on the
 same team and shared conversation.
+The native runtime check then caught an outdated installed-MCP fixture: the
+new shared preference import was absent from its minimal copied payload.
+The same neutral-directory launch reproduced `ERR_MODULE_NOT_FOUND` locally;
+using the existing release-source stager for `src/lib` corrects the fixture.
+Release packaging already includes this tree; ADR-0191 records that boundary.
 
 ## Decision
 

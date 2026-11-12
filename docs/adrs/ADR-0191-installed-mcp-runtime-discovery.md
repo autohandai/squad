@@ -17,6 +17,7 @@ Include the packaged `runtime/server.mjs` location beside Windows executables an
 - Candidate coverage now includes both actual packaged layouts. Verification must additionally run the packaged command from a directory outside the checkout with a fresh home, perform MCP initialization and verify the required direct-message tools. A roster-only source test is insufficient.
 - Windows CI reached the bundled MCP but Node 22 rejected the verbatim drive path produced by Rust's canonicalization (`EISDIR`, `lstat 'C:'`). Resolve server paths with `dunce` so ordinary drive/UNC paths are passed to Node when possible. The installed-layout check covers this boundary on Windows.
 - The fixture uses the actual bundled Node interpreter when supplied, or the runner's interpreter in place. Copying a runner's dynamically linked Node binary without its sibling libraries caused an unrelated macOS loader failure; interpreter relocation is not part of the runtime-discovery test.
+- MCP 2.2.0's shared notification helper exposed another fixture gap: it copied only `server/control-plane`, while release staging includes `src/lib`. macOS ARM CI and the same neutral-directory command locally both failed with `ERR_MODULE_NOT_FOUND` for `src/lib/channel-notifications.js`. Stage the shared library through the existing runtime-source helper before launching the fixture. This corrects the modeled payload; it does not substitute source files into the installed app or establish signing/notarization proof.
 
 ## Consequences
 

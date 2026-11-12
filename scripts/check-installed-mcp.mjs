@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import { stageRuntimeSources } from './lib/stage-runtime-sources.mjs';
 
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 assert.ok(process.argv[2], 'Pass the compiled squad executable to check');
@@ -34,6 +35,9 @@ try {
   const nodeRuntime = (await stat(bundledNode).catch(() => null))?.isFile() ? bundledNode : process.execPath;
   await copyFile(join(runtime, 'server.mjs'), join(resources, 'server.mjs'));
   await cp(join(runtime, 'server', 'control-plane'), join(resources, 'server', 'control-plane'), { recursive: true });
+  // Releases stage shared JS beside server modules. Omitting this tree made
+  // the neutral-directory fixture fail on the first MCP shared-helper import.
+  await stageRuntimeSources(join(runtime, 'src', 'lib'), join(resources, 'src', 'lib'), 'lib');
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith('AUTOHAND_') || ['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS', 'NODE_PATH'].includes(key)) delete env[key];
   Object.assign(env, { HOME: home, USERPROFILE: home, AUTOHAND_HOME: join(home, '.autohand'), AUTOHAND_SQUAD_HOME: join(home, '.autohand', 'squad'), AUTOHAND_SQUAD_NODE: nodeRuntime });
