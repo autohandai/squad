@@ -250,6 +250,11 @@ ID with the target-member tools. A managed creation inherits an assigned work
 folder when available, otherwise it saves without one; it never turns an
 unassigned runtime folder into a grant. An explicit folder must already be
 assigned to the acting member.
+Its execution settings use the same connected-engine defaults as operator
+creation: a ready primary plus up to four eligible fallback engines, each with
+its own default model and reasoning. An explicit `engine` is preserved; the
+acting member's engine is not silently copied. Saved choices are returned by
+`squad_get_member_profile` and remain editable in the app's Model settings.
 It does not copy broad execution permissions, launch an engine, create Git
 or enable a routine. Use `squad_propose_team` when the person should review
 a roster together before creating it.

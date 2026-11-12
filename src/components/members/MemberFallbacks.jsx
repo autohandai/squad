@@ -6,7 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { EffortSlider } from "@/components/chat/EffortSlider";
 import { HarnessModelSelect } from "./HarnessModelSelect";
 import { effortLevelsFor, fetchHarnesses } from "@/lib/harness";
-import { MAX_FALLBACKS, normalizeModelRouting } from "@/lib/model-routing";
+import { connectedHarnesses, MAX_FALLBACKS, normalizeModelRouting } from "@/lib/model-routing";
 
 export function MemberFallbacks({ agent, api, providerSettings, updateAgent }) {
   const saved=normalizeModelRouting(agent.modelRouting);
@@ -19,7 +19,7 @@ export function MemberFallbacks({ agent, api, providerSettings, updateAgent }) {
   const savedKey=JSON.stringify(saved);
   useEffect(()=>{setDraft(JSON.parse(savedKey));setError('');},[agent.id,savedKey]);
   useEffect(()=>{let active=true;setLoaded(false);Promise.all([fetchHarnesses(api),api(`/api/members/${encodeURIComponent(agent.id)}/model-routing`)]).then(([engines,state])=>{if(active){setHarnesses(engines);setHealth(state.health||{});}}).catch(problem=>{if(active)setError(problem.message);}).finally(()=>{if(active)setLoaded(true);});return()=>{active=false;};},[api,agent.id]);
-  const connected=harnesses.filter(item=>item.status==='ready'&&(!item.fetchOnUse||item.installed));
+  const connected=connectedHarnesses(harnesses);
   const providers=Object.values(providerSettings?.providers||{}).filter(item=>item.enabled&&(item.apiKeyConfigured||item.accountReady||!item.requiresApiKey));
   const dirty=JSON.stringify(draft)!==savedKey;
   const patch=(index,update)=>setDraft(current=>({...current,fallbacks:current.fallbacks.map((row,i)=>i===index?{...row,...update}:row)}));
@@ -30,7 +30,7 @@ export function MemberFallbacks({ agent, api, providerSettings, updateAgent }) {
   return <section className="grid gap-5 border-t border-border/70 pt-7 lg:grid-cols-[220px_minmax(0,1fr)]" aria-label="Fallbacks">
     <div><h2 className="text-sm font-medium">Fallbacks</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Try these in order when the primary engine cannot answer. Chat, memory, files and workspace carry over.</p></div>
     <div className="grid gap-4">
-      <p className="text-xs leading-5 text-muted-foreground">Startup, sign-in and usage failures can switch immediately. An engine that does not respond gets one retry. Squad tries the primary again after five minutes. Your permission choices stay in force; API-key models use their provider’s billing.</p>
+      <p className="text-xs leading-5 text-muted-foreground">Startup, sign-in, usage and overload failures can switch immediately. An engine that fails before doing work gets up to ten attempts. Squad tries the primary again after five minutes. Your permission choices stay in force; API-key models use their provider’s billing.</p>
       {!draft.fallbacks.length?<p className="text-sm text-muted-foreground">No fallbacks yet.</p>:<ol className="divide-y divide-border/60">{draft.fallbacks.map((row,index)=>{
         const readiness=harnesses.find(item=>item.id===row.harness.id);
         const levels=effortLevelsFor(row.harness.id,readiness,row.harness.model);

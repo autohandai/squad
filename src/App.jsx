@@ -369,7 +369,7 @@ import { PromptTextarea } from "@/components/chat/PromptTextarea";
 import { AttachmentButton, AttachmentList, useAttachments } from "@/components/chat/Attachments";
 import { HarnessModelSelect } from "@/components/members/HarnessModelSelect";
 import { MemberFallbacks } from "@/components/members/MemberFallbacks";
-import { fallbackLabel, normalizeModelRouting } from "@/lib/model-routing";
+import { fallbackLabel, initialMemberExecution, normalizeModelRouting } from "@/lib/model-routing";
 import { ATTACHMENT_COUNT_LIMIT, attachmentOnlyPrompt, attachmentReferences } from "@/lib/attachments";
 import { ReadAloudButton } from "@/components/chat/ReadAloudButton";
 import { ReadAloudSetting } from "@/components/chat/ReadAloudSetting";
@@ -5550,7 +5550,7 @@ function App() {
         applyMember(member.key, { status: "preparing", error: "" });
         try {
           await saveChannelTeamBuild({ ...build, members });
-          const agent = await createAgent(member.draft, { id: member.id, navigate: false, ladderLevel: build.trusted ? undefined : "suggest-commands" });
+          const agent = await createAgent(member.draft, { id: member.id, navigate: false, automaticHarness: build.trusted === true, ladderLevel: build.trusted ? undefined : "suggest-commands" });
           if (!agent) throw new Error("The bridge did not confirm the member.");
           memberIds[member.key] = agent.id || member.id;
           applyMember(member.key, { status: "ready", id: agent.id || member.id });
@@ -8868,6 +8868,9 @@ function App() {
 
   async function createAgent(draft, options = {}) {
     if (onboardingIsIncomplete(onboardingState) && setupSnapshot?.status !== "existing") throw new Error("Choose your repositories and finish setup before adding teammates.");
+    const catalog = await api('/api/harnesses');
+    const automaticHarness = options.automaticHarness === true || draft.harnessSelection === 'auto';
+    const execution = initialMemberExecution(catalog.harnesses, { harness: automaticHarness ? undefined : draft.harness, modelRouting: draft.modelRouting });
     const id = options.id || createSquadMemberId();
     const timestamp = new Date().toISOString();
     const skills = normalizeSkillList(draft.skills);
@@ -8875,7 +8878,7 @@ function App() {
     const projects = normalizeAgentProjects([{ path: workspace, addedAt: timestamp }], "", workspaces, configuredProjectLimit(runtime));
     const baseAgent = {
       id,
-      harness: normalizeHarnessAssignmentCopy(draft.harness),
+      ...execution,
       staffId: `member-${String(agents.length + 1).padStart(3, "0")}`,
       // The same limit a member shaped in chat has (PROFILE_LIMITS.name), and
       // the same rule: a name already in the squad becomes "Eva 2", because
@@ -8990,7 +8993,7 @@ function App() {
       if (!workspace) { navigate(`${MEMBER_ROUTE_PREFIX}/new?start=chat`); return; }
       const existingNames = [...membersRef.current.map((agent) => agent.name), ...pendingTeamMemberNames];
       const draft = blankMemberDraft({ existingNames, workspace, harness: normalizeHarnessAssignmentCopy(null) });
-      await createAgent({ ...draft, avatar: birdAvatarForRole("", "", draft.name) });
+      await createAgent({ ...draft, harnessSelection: 'auto', avatar: birdAvatarForRole("", "", draft.name) });
     } catch (error) {
       setChannelOperationError(`Could not start a new member: ${error.message}`);
     } finally {
@@ -19903,10 +19906,11 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, defaultWorkspaceSet
     profileFiles: normalizeProfileFiles(template.profileFiles),
     brainCard: normalizeBrainCard(template.brainCard, template),
     harness: normalizeHarnessAssignmentCopy(null),
+    harnessSelection: 'auto',
     };
     const saved = savedCreation?.draft;
     if (!saved || !["name", "role", "description", "instructions"].every(field => typeof saved[field] === "string")) return initial;
-    return { ...initial, ...saved, workspace: saved.workspace || defaultWorkspace, skills: normalizeSkillList(saved.skills), profileFiles: normalizeProfileFiles(saved.profileFiles), brainCard: normalizeBrainCard(saved.brainCard, saved), harness: normalizeHarnessAssignmentCopy(saved.harness) };
+    return { ...initial, ...saved, workspace: saved.workspace || defaultWorkspace, skills: normalizeSkillList(saved.skills), profileFiles: normalizeProfileFiles(saved.profileFiles), brainCard: normalizeBrainCard(saved.brainCard, saved), harness: normalizeHarnessAssignmentCopy(saved.harness), harnessSelection: saved.harnessSelection || (saved.harness ? 'explicit' : 'auto') };
   });
 
   function persistCreation(preparing = creating, nextDraft = draft) {
@@ -20391,12 +20395,13 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, defaultWorkspaceSet
             <Field>
               <HarnessSelect
                 api={api}
-                value={draft.harness}
-                onChange={(harness) => setDraft((current) => ({ ...current, harness }))}
+                value={draft.harnessSelection === 'auto' ? initialMemberExecution(harnesses).harness : draft.harness}
+                onChange={(harness) => setDraft((current) => ({ ...current, harness, harnessSelection: 'explicit' }))}
                 harnesses={harnesses}
                 loading={harnessesLoading}
                 onRefresh={onRefreshHarnesses}
               />
+              <p className="text-xs leading-5 text-muted-foreground">Other connected engines are saved as fallbacks when you create this member. Review or change them in the member’s Model settings.</p>
             </Field>
 
             <Field>

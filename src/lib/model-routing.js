@@ -6,6 +6,31 @@ export function fallbackLabel(routing, { model = true } = {}) {
 }
 
 export const MAX_FALLBACKS = 4;
+
+export function connectedHarnesses(catalog) {
+  return (Array.isArray(catalog) ? catalog : []).filter(engine => engine.status === 'ready' && (!engine.fetchOnUse || engine.installed));
+}
+
+/** Creation only. Saved/editable routing is never recomputed on later turns. */
+export function initialMemberExecution(catalog, { harness, modelRouting } = {}) {
+  const engines = Array.isArray(catalog) ? catalog : [];
+  const ready = connectedHarnesses(engines);
+  const requested = typeof harness === 'string' ? { id: harness } : harness;
+  const primaryId = requested?.id || ready.find(engine => engine.isDefault)?.id || ready[0]?.id || 'autohand';
+  const primary = engines.find(engine => engine.id === primaryId);
+  const assignment = engine => normalizeHarnessAssignment({ id: engine.id, model: engine.defaults?.model, effort: engine.defaults?.effort });
+  return {
+    harness: normalizeHarnessAssignment({ ...assignment(primary || { id: primaryId }), ...requested,
+      model: requested?.model || primary?.defaults?.model || '',
+      effort: requested?.effort || primary?.defaults?.effort || '',
+    }),
+    // An explicit empty list is a user choice, including imported presets.
+    modelRouting: modelRouting === undefined
+      ? normalizeModelRouting({ fallbacks: ready.filter(engine => engine.id !== primaryId).slice(0, MAX_FALLBACKS).map(engine => ({ harness: assignment(engine) })), allowAgentChanges: false })
+      : normalizeModelRouting(modelRouting, { strict: true }),
+  };
+}
+
 export function routeKey(route) { return JSON.stringify([route.harness.id, route.harness.executablePath || '', route.provider || '', route.harness.model || '']); }
 export function normalizeModelRouting(value, { strict = false } = {}) {
   const source = value && typeof value === 'object' ? value : {};

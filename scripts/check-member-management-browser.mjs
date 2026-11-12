@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
 import { createBridgeClient, createTools } from '../server/control-plane/runtime.mjs';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
 import { prepareModelRoutingFixture } from './lib/model-routing-fixtures.mjs';
 const bridge = await startBridge({ development: false, prepare: prepareModelRoutingFixture });
+await mkdir('.codex-artifacts/release-audit', { recursive: true });
 let browser;
 try {
   const tools = createTools(createBridgeClient(bridge.origin));
@@ -10,6 +12,11 @@ try {
   browser = await startBrowser();
   await browser.navigate(bridge.origin + '/settings/backups');
   await until(() => browser.evaluate("document.body.innerText.includes('Members to include') && document.body.innerText.includes('Tatiana')"), 'MCP-created member appears in the actual owned app', 30000);
+  await browser.navigate(bridge.origin + '/squad-members/' + member.id + '/model');
+  await until(() => browser.evaluate("document.querySelectorAll('[data-fallback-row]').length >= 2"), 'automatically saved failovers appear in the ordinary Model editor', 30000);
+  await until(() => browser.evaluate("document.querySelector('[aria-label=\"Fallback engine 1\"]')?.textContent.includes('Codex')"), 'saved fallback names resolve when the engine catalog loads', 15000);
+  await browser.screenshot('.codex-artifacts/release-audit/automatic-fallbacks.png');
+  await browser.navigate(bridge.origin + '/settings/backups');
   const updated = await tools.update_member_profile({ member_id: member.id, name: 'Tatiana Smith' });
   assert.equal(updated.name, 'Tatiana Smith');
   await until(() => browser.evaluate("document.body.innerText.includes('Tatiana Smith')"), 'saved MCP rename reaches the open app', 15000);
