@@ -21,7 +21,7 @@ list to the section for that version.
 
 ### Fixed
 
-- Double-clicking the empty desktop titlebar once again enlarges and restores the window.
+- Double-clicking the empty desktop titlebar once again enlarges and restores the window. On macOS it follows your Fill, Zoom, Minimize or No Action choice; controls in the titlebar keep their normal actions.
 - Group-chat browser checks wait for the saved name to appear and the save acknowledgement to finish, avoiding a false failure on slower connections.
 - macOS release checks now verify the bundled CLI directly from a fresh home, so a signed-out computer's private runtime response no longer causes a false failure. Windows release tests build their required process helper first.
 - Windows cleanup recognizes a valid receipt written while the operating-system status check was running, while still refusing replacement without matching proof.

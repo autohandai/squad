@@ -28,6 +28,7 @@ use std::time::Duration;
 mod artifact_preview;
 mod info_windows;
 mod text_exports;
+mod titlebar;
 use info_windows::{info_navigation_handler, open_info_window, InfoPage};
 mod computer_use_grant;
 mod computer_use_setup;
@@ -97,7 +98,8 @@ fn main() {
             quick_chat_preferences::squad_refresh_quick_chat,
             system_reset::squad_set_system_reset_stage,
             artifact_preview::squad_open_artifact_in_browser,
-            text_exports::squad_save_text_export
+            text_exports::squad_save_text_export,
+            titlebar::squad_titlebar_double_click
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app);
@@ -166,6 +168,7 @@ fn main() {
                 // title bar, so the vibrancy layer (not the window behind the
                 // app) shows through the transparent sidebar strip.
                 builder = builder
+                    .initialization_script(include_str!("titlebar.js"))
                     .title_bar_style(tauri::TitleBarStyle::Overlay)
                     .hidden_title(true)
                     .transparent(true);
