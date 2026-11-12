@@ -216,7 +216,7 @@
     "check:update-flow": "node scripts/check-update-flow.mjs",
     "check:automatic-updates": "node scripts/check-automatic-updates.mjs",
     "check:announcements": "node scripts/check-announcements.mjs",
-    "check:mobile": "node scripts/check-mobile.mjs && node scripts/check-mobile-host.mjs",
+    "check:mobile": "node scripts/check-mobile.mjs && node scripts/check-mobile-host.mjs && node scripts/check-mobile-relay.mjs",
     "check:mobile:browser": "playwright test --config playwright.mobile-companion.config.mjs",
     "check:updates:playwright": "playwright test --config playwright.updates.config.mjs",
     "check:updates:browser": "AUTOHAND_VERIFY_UPDATES_ONLY=1 node scripts/verify-work-profile-browser.mjs",

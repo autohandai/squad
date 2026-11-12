@@ -27,6 +27,22 @@ revocation passed. These use a fixture identity service and an offline engine,
 not a live model or deployed relay. Native simulator and deployment results
 must remain distinct evidence.
 
+Read-only spec review reproduced a late-renewal race: socket A's delayed HTTP
+failure closed the already connected replacement B through a mutable socket
+reference. Renewal and revocation completions now capture their originating
+socket and cannot change a newer one. `scripts/check-mobile-relay.mjs` holds
+the old HTTP result across an actual reconnect and checks delayed failure,
+expired success and refused renewal. The earlier assumption that lease
+requests necessarily completed on their original connection was wrong.
+
+The full local relay/native command also passed all five checks after an
+initial combined-run response-consumption failure in the test harness.
+The test now reads/decrypts each HTTP response before sending its retry,
+matching the native client's request lifecycle. The original native XCTest
+result itself passed: two UI tests, three explicitly environment-gated
+walkthrough tests skipped. The repeated combined run passed with the same
+full UI target. No failed native result was relabelled as a product pass.
+
 ## Decision
 
 Add an explicit relay mode to Computers settings, preserving local and

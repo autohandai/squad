@@ -182,9 +182,10 @@ test("the relay forwards ciphertext only after approval, and revocation closes t
     assert.equal((await call(`${control}/offers/${offer.pairingID}/approve`, "POST", { deviceID })).status, 200);
     const message = packet("message", { text: "Encrypted phone work" });
     assert.equal((await forward({ ...message, sealed: "A".repeat(100) })).status, 401, "an invalid ciphertext cannot close the computer connection");
-    const first = await forward(message), retry = await forward(message);
-    assert.equal(first.status, 200); assert.equal(retry.status, 200);
-    assert.deepEqual(openPacket(await first.json(), key, "response"), openPacket(await retry.json(), key, "response"));
+    const first = await forward(message); assert.equal(first.status, 200);
+    const original = openPacket(await first.json(), key, "response");
+    const retry = await forward(message); assert.equal(retry.status, 200);
+    assert.deepEqual(openPacket(await retry.json(), key, "response"), original);
     assert.equal(executions, 1, "transport retries retain the computer's durable receipt");
     assert.equal((await call(`${control}/devices/${deviceID}`, "DELETE")).status, 200);
     assert.equal((await forward(message)).status, 403, "revoked routing capability cannot reach the host");

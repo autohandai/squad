@@ -101,11 +101,13 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
         } catch { socket.close(); }
       }, 20_000); heartbeat.unref?.();
       renewal = setInterval(() => {
-        if (!socket) return;
+        const renewing = socket;
+        if (!renewing) return;
         void control('/lease').then(value => {
+          if (stopped || socket !== renewing) return;
           const lease = z.object({ renewed: z.boolean(), leaseUntil: z.number().finite() }).parse(value);
-          if (!lease.renewed) socket?.close(); else leaseUntil = lease.leaseUntil;
-        }).catch(() => { socket?.close(); });
+          if (!lease.renewed) renewing.close(); else leaseUntil = lease.leaseUntil;
+        }).catch(() => { if (!stopped && socket === renewing) renewing.close(); });
       }, 5 * 60_000); renewal.unref?.();
     },
     status: () => ({ connected: Boolean(socket?.open && leaseUntil > Date.now() && Date.now() - lastPong <= 45_000), endpoint: roomID ? `${origin}/mobile/${roomID}` : '', error }),
@@ -117,7 +119,8 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
     async revoke(deviceID) {
       // Local credential removal is authoritative even while cloud is offline.
       // Reconnect synchronizes the retained device IDs before accepting packets.
-      try { await control(`/devices/${deviceID}`, 'DELETE'); } catch { socket?.close(); }
+      const revoking = socket;
+      try { await control(`/devices/${deviceID}`, 'DELETE'); } catch { if (socket === revoking) revoking?.close(); }
     },
     close() {
       stopped = true; abort.abort(); clearTimeout(retry); clearInterval(heartbeat); clearInterval(renewal);
