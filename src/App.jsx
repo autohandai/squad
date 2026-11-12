@@ -5624,7 +5624,7 @@ function App() {
   // the chat card, before it writes. At Suggest commands (the level an
   // imported file gets) a Frontend Developer could not read a single file.
   function addTeamFromMemberProposal(member, proposal, { workspace = "" } = {}) {
-    void addTeam(teamDocumentFromProposal(proposal, { roleTemplates, app: "autohand-squad" }), { trusted: true, source: "member", workspace: workspace || member?.workspace || "" });
+    return addTeam(teamDocumentFromProposal(proposal, { roleTemplates, app: "autohand-squad" }), { trusted: true, source: "member", workspace: workspace || member?.workspace || "" });
   }
 
   const notificationBell = (
@@ -7763,6 +7763,13 @@ function App() {
     }));
   }
 
+  async function decideChannelTeamProposal(channelId, message, decision) {
+    const saved = (messagesByChannel[channelId] || []).find(item => item.id === message.id);
+    if (!saved?.teamProposal?.proposal || saved.teamProposalDecided) return;
+    if (decision === "create") await addTeamFromMemberProposal(agents.find(member => member.id === saved.agentId), saved.teamProposal.proposal, { workspace: saved.workspace || "" });
+    updateChannelMessage(channelId, saved.id, { teamProposalDecided: decision === "create" ? "created" : "dismissed", updatedAt: new Date().toISOString() });
+  }
+
   async function createChannel(draft, { navigateTo = true, creatorId = "user" } = {}) {
     const workspace = activeAgent?.workspace || fallbackWorkspace;
     const channel = normalizeChannelCopy(await api("/api/channels", {
@@ -8038,7 +8045,9 @@ function App() {
             if (!data.declined) recordChannelUsage();
             completed = true;
             const completedAt = new Date().toISOString();
-            const replyText = humanReadableReplyText(data.reply || streamedAnswer, data.trace, `${agent.name} returned no chat text.`);
+            const teamProposal = teamProposalReceipts(data.channelActions)[0] || null;
+            const answer = data.reply || streamedAnswer;
+            const replyText = humanReadableReplyText(teamProposal ? replyWithoutReceipts(answer, [teamProposal]) || answer : answer, data.trace, `${agent.name} returned no chat text.`);
             finalReplyText = replyText;
             if (resolveChannelMentionTargets(replyText, channel, agents).hasMentions) {
               raiseBridgeEvent("mention.received", {
@@ -8051,6 +8060,7 @@ function App() {
             }
             updateChannelMessage(channel.id, messageId, {
               body: replyText || `${agent.name} returned no chat text.`,
+              ...(teamProposal ? { teamProposal } : {}),
               status: "complete",
               time: new Date().toLocaleTimeString(localeResolution.locale, { hour: "2-digit", minute: "2-digit" }),
               trace: data.trace,
@@ -10101,6 +10111,7 @@ function App() {
                 channelProposals={channelProposals}
                 onResolveProposal={resolveChannelProposal}
                 onDispatch={sendChannelPrompt}
+                onTeamProposal={decideChannelTeamProposal}
                 goalSetupRunning={channelGoalRequestsRef.current.has(channelIdFromRoute(route)) || teamBuilds.some(build => build.targetChannelId === channelIdFromRoute(route) && ["preparing", "finishing"].includes(build.status))}
                 onFollowUp={sendThreadFollowUp}
                 canvasRefreshKey={canvasRefreshKey}
@@ -10731,6 +10742,7 @@ function ChannelsPage({
   onDeleteChannel,
   onToggleMember,
   onDispatch,
+  onTeamProposal,
   goalSetupRunning = false,
   onFollowUp,
   reactionsByMessage = {},
@@ -11340,6 +11352,8 @@ function ChannelsPage({
               </div> : null}
               <ChannelStream
                 channel={channel}
+                copy={copy}
+                onTeamProposal={(message, decision) => onTeamProposal?.(channel.id, message, decision)}
                 messages={streamWithGitEvents}
                 renderEvent={(event) => (!isGitEvent(event) ? null : (
                   <GitEventRow
@@ -14843,10 +14857,10 @@ function Conversation({
 
   // A proposed team (squad_propose_team) is created through the same import
   // as New team; nothing exists until the person chooses Create team.
-  function decideTeamProposal(message, decision) {
+  async function decideTeamProposal(message, decision) {
     const proposal = message.teamProposal?.proposal;
     if (!proposal) return;
-    if (decision === "create") onTeamProposal?.(agent, proposal, { workspace });
+    if (decision === "create") await onTeamProposal?.(agent, proposal, { workspace });
     onUpdateMessage?.(agent.id, message.id, { teamProposalDecided: decision === "create" ? "created" : "dismissed" });
   }
 

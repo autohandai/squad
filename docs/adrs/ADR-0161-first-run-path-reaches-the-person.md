@@ -291,6 +291,50 @@ source confirmed each one.
     the folder boundary, symlink escape, later shell writes and the stopped
     case.
 
+## Channel proposal regression, 2026-11-11
+
+Issue55 reported successful managed `squad_propose_team` calls without a
+Create team control. `node scripts/check-channel-replies.mjs`, given a valid
+finished proposal, reproduced the missing control in the actual channel
+renderer. This did not require a provider, feature flags or guessed reply text.
+The live channel completion handler discarded proposal receipts, and the
+channel renderer had no proposal control. Direct messages already had both.
+Recovery also handled only unfinished replies, leaving older completed replies
+with no way to recover their saved run's roster.
+
+Channel replies and nested threads now use the same divider-list proposal and
+existing team builder as direct messages. Recover the original proposal only
+from a completed run with the exact saved reply request ID, channel and thread. Preserve an existing
+decision and never create members during recovery. The first rendered fix
+exposed a second bug in the integration check: adding recovered metadata with
+an unchanged timestamp did not pass the channel store's newer-write rule.
+Recovery and explicit decisions therefore advance their message's write time.
+
+`check-team-proposals-browser.mjs` uses a controlled engine that calls the
+real managed MCP endpoint. It checks saved-run recovery, live channel replies,
+the threaded view, persisted dismissal across service/browser restart, and
+explicit creation through the ordinary team importer. This is local browser,
+MCP and persistence evidence; it does not replace live-provider or installed-app
+verification. Older proposals can be recovered only while their correlated run
+is retained. The existing one-proposal-per-reply display limit remains; no roster
+is inferred from prose and no unrelated run is attached.
+
+The regression check uses the ownership-aware fixture when that first-party
+harness is present, and the existing fixture otherwise, so this independent fix
+can land before or after the account-ownership change. A failing owned context
+does not fall back to legacy storage. The same managed-MCP/browser check passed
+in both source combinations with temporary homes and no provider calls.
+
+Combined production-browser validation initially stalled before the first
+Backups render. Page HTML and the owned runtime returned HTTP200; preparing the
+pinned CLI did not change it. DevTools paused the renderer in the inline splash's
+synchronous `localStorage.getItem`. The same full suite passed when its fresh
+Chrome profile used `--use-mock-keychain`. Disposable macOS browser fixtures now
+use that flag, avoiding a dependency on the person's keychain. This does not
+apply to existing browser profiles or the installed Squad app. The
+[Chrome launcher guidance](https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md)
+documents this isolated-test option.
+
 ## Consequences and validation
 
 - `check-permission-policy`, `check-permission-approvals`,
@@ -333,3 +377,26 @@ source confirmed each one.
   `~/Library` and privacy grants stay a hand step after Reset Squad.
 - Blocking the CLI's in-process teams removes a capability some members used
   under "ask". Squad's team is the replacement; `delegate_task` remains.
+
+### PR review follow-up, 12 November 2026
+
+Two regressions were found while reviewing channel proposal recovery. A loading
+reply recovered a roster with a new timestamp, then replaced that timestamp
+with the older run completion time. The channel store accepts only newer
+writes, so the recovery could disappear after reopening. Recovery now retains
+its original completion time separately and advances the saved update time
+past both the prior reply and the run.
+
+Creation callbacks also discarded the importer's promise. A failed import
+could leave a proposal marked created and hide its retry action. Both channel
+and direct-message callbacks now await the existing importer; the shared
+proposal control owns its pending guard and inline retry error. Consecutive
+clicks while submission is pending cannot start another importer.
+
+The loading-reply regression runs in `check-channel-replies.mjs`. The actual
+managed-MCP browser workflow injects one malformed plan response to exercise
+an importer rejection, checks that no created decision was saved, and retries
+through the real importer. It also checks consecutive clicks and unhandled
+rejections. This proves accepted-import handling, not eventual success of
+every member's later preparation work; those outcomes remain in team-build
+progress.

@@ -14,6 +14,7 @@ import { targetChipMemberIds } from "@/lib/channel-mentions";
 import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { cn } from "@/lib/utils";
 import { fallbackLabel } from "@/lib/model-routing";
+import { TeamProposalCard } from "@/components/chat/TeamProposalCard";
 
 export { QUICK_REACTIONS };
 
@@ -276,6 +277,8 @@ export function ChannelStream({
   authorName,
   onReact,
   onReply,
+  onTeamProposal,
+  copy = {},
   emptyLabel = "No messages yet. Send the first one.",
   newLabel = "New",
   typingLabel = "is typing…",
@@ -396,6 +399,9 @@ export function ChannelStream({
                     <span className="whitespace-pre-wrap break-words">{message.role === "user" ? message.body : withoutRecoveryNotices(message.body)}</span>
                   )}
                 </div>
+                {!loading && onTeamProposal && message.teamProposal?.proposal ? (
+                  <TeamProposalCard proposal={message.teamProposal.proposal} memberName={name} decided={message.teamProposalDecided || ""} copy={copy} onCreate={() => onTeamProposal(message, "create")} onDismiss={() => onTeamProposal(message, "dismiss")} />
+                ) : null}
                 <ReactionRow
                   reactions={reactionsByMessage[message.id] || []}
                   onReact={onReact}
@@ -419,7 +425,7 @@ export function ChannelStream({
                         channel={channel} messages={group.messages} agents={agents} userName={userName} locale={locale}
                         lastReadAt={lastReadAt} reactionsByMessage={reactionsByMessage} renderBody={renderBody}
                         renderEvent={renderEvent} renderAvatar={renderAvatar} renderMemberAvatar={renderMemberAvatar}
-                        authorName={authorName} onReact={onReact} onReply={onReply} newLabel={newLabel}
+                        authorName={authorName} onReact={onReact} onReply={onReply} onTeamProposal={onTeamProposal} copy={copy} newLabel={newLabel}
                         typingLabel={typingLabel} onSetUpReactionFlow={onSetUpReactionFlow} setUpFlowLabel={setUpFlowLabel}
                         renderActions={renderActions} noTextLabel={noTextLabel} threadView
                       />

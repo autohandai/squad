@@ -6,6 +6,8 @@ import { build } from "esbuild";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { channelReplyIndex, channelReplyState, channelThreadSummary, normalizeChannelReplyMode } from "../src/lib/channel-replies.js";
+import { memberTeamProposal } from "../src/lib/team-proposals.js";
+import { settleChannelReplies } from "../src/lib/chat-recovery.js";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const { outputFiles } = await build({ entryPoints: [resolve(root, "src/components/channels/ChannelStream.jsx")], bundle: true, write: false, platform: "node", format: "cjs", jsx: "automatic", packages: "external", alias: { "@": resolve(root, "src") } });
@@ -62,4 +64,24 @@ assert.equal(channelReplyIndex([rootMessage, crossChannel]).roots.get("cross"), 
 assert.equal(normalizeChannelReplyMode(undefined), "thread");
 assert.equal(normalizeChannelReplyMode("channel"), "channel");
 assert.equal(normalizeChannelReplyMode("invalid"), "thread");
+const proposal = memberTeamProposal({name:"CST compliance",objective:"Review customer trust questionnaires",members:[{name:"Ada",role:"CST analyst",purpose:"Check security evidence"}]});
+const proposedReply = reply("team-proposal",{teamProposal:{id:"team-test",type:"team",status:"proposed",proposal}});
+html = renderToStaticMarkup(React.createElement(ChannelStream,{channel:{id:"general",name:"general",replyMode:"channel"},messages:[rootMessage,proposedReply],agents:[agent],onTeamProposal:()=>{}}));
+assert.match(html,/Create team/,"a valid finished team proposal must have its confirmation under the channel reply");
+assert.match(html,/CST analyst/);
+const savedRun={id:"saved-run",requestId:"old-complete",status:"completed",channel:{channelId:"general",threadId:"thread-a"},channelActions:[proposedReply.teamProposal]};
+const restored=settleChannelReplies({general:[reply("old-complete")]},{runs:[savedRun]});
+assert.equal(restored.general[0].teamProposal.id,"team-test","completed replies made by an older client recover their original proposal");
+assert(restored.general[0].updatedAt>reply("old-complete").createdAt,"recovering metadata must be a newer channel write");
+assert.equal(settleChannelReplies(restored,{runs:[savedRun]}),restored,"recovery is not a repeated write");
+const finishedAt="2026-11-12T00:00:03.000Z";
+const savedLoading=reply("old-complete",{status:"loading",updatedAt:"2026-11-12T00:00:04.000Z"});
+const settledLoading=settleChannelReplies({general:[savedLoading]},{runs:[{...savedRun,reply:"Recovered team proposal",finishedAt}],now:Date.parse(finishedAt)+500});
+assert.equal(settledLoading.general[0].status,"complete");
+assert.equal(settledLoading.general[0].completedAt,finishedAt);
+assert(settledLoading.general[0].updatedAt>savedLoading.updatedAt,"a loading reply's recovered proposal must survive the channel store's newer-write check");
+for(const channel of [{channelId:"private-channel",threadId:"thread-a"},{channelId:"general",threadId:"other-thread"}]){
+  const original={general:[reply("old-complete")]};
+  assert.equal(settleChannelReplies(original,{runs:[{...savedRun,channel}]}),original,"a reused request ID cannot attach another channel or thread's proposal");
+}
 console.log("Channel reply checks passed: presence, completion, failures, explicit correlation, threads, direct mode, persistence and rendered markup.");

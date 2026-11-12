@@ -10,6 +10,11 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Team proposals show Create team in channel replies and their threads. Saved decisions survive reopening, and older completed replies recover their roster from the original saved run.
+- Failed team creation keeps the proposal available to retry. Consecutive clicks submit one creation, and recovered replies retain a newer save timestamp even when their run finished earlier.
+
 ## [0.1.22] - 2026-11-10
 
 ### Added

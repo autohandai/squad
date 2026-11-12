@@ -1,3 +1,6 @@
+import { teamProposalReceipts } from "./team-proposals.js";
+import { replyWithoutReceipts } from "./member-shaping.js";
+
 /** A transient wait is not an answer and must not survive a terminal state. */
 export function withoutThinkingPlaceholder(body) {
   return String(body || "").replace(/^[^\n]{1,120} is thinking(?:\.{3}|…)(?:\s*\n|\s*(?=This request was interrupted)|\s*$)/, "").trim();
@@ -142,17 +145,27 @@ export function settleChannelReplies(byChannel, { runs = [], streaming = new Set
     if (!Array.isArray(messages)) continue;
     let changed = false;
     const settled = messages.map((message) => {
-      if (message?.status !== "loading" || message.role === "user" || streaming.has(message.id)) return message;
+      if (!message || message.role === "user" || streaming.has(message.id)) return message;
       const run = byRequest.get(message.id);
+      const sameThread = run?.channel?.channelId === channelId && String(run.channel.threadId || "") === String(message.threadId || "");
+      const proposal = run?.status === "completed" && sameThread ? teamProposalReceipts(run.channelActions)[0] : null;
+      const recoverProposal = proposal && !message.teamProposal;
+      if (!recoverProposal && message.status !== "loading") return message;
+      const updatedAt = new Date(Math.max(now, Date.parse(message.updatedAt || message.createdAt || "") || 0, Date.parse(run?.finishedAt || "") || 0) + 1).toISOString();
+      if (recoverProposal) {
+        changed = true;
+        message = { ...message, body: replyWithoutReceipts(message.body, [proposal]) || message.body, teamProposal: proposal, updatedAt };
+      }
+      if (message.status !== "loading") return message;
       if (run && LIVE_RUN_STATUSES.has(run.status)) return message;
       const beganAt = Date.parse(message.startedAt || message.createdAt || "");
       if (!run && Number.isFinite(beganAt) && now - beganAt < graceMs) return message;
       changed = true;
       const completedAt = run?.finishedAt || new Date(now).toISOString();
-      const answer = run?.status === "completed" ? withoutRecoveryNotices(replyText(run)) : "";
-      if (answer) return { ...message, status: "complete", body: answer, activityLabel: "", completedAt, updatedAt: completedAt, recoveredFromRun: run.id };
+      const answer = run?.status === "completed" ? withoutRecoveryNotices(proposal ? replyWithoutReceipts(replyText(run), [proposal]) || replyText(run) : replyText(run)) : "";
+      if (answer) return { ...message, status: "complete", body: answer, activityLabel: "", completedAt, updatedAt, recoveredFromRun: run.id };
       const reason = run?.status === "failed" ? "It failed before it finished. Ask again in the thread." : run?.status === "interrupted" ? "Squad restarted before it finished. Ask again in the thread." : CHANNEL_ORPHANED_REPLY_NOTE;
-      return { ...message, status: "error", interrupted: true, activityLabel: "", completedAt, updatedAt: completedAt,
+      return { ...message, status: "error", interrupted: true, activityLabel: "", completedAt, updatedAt,
         body: `${withoutThinkingPlaceholder(String(message.body || "").replace(/^[^\n]{1,120} is typing(?:\.{3}|…)\s*$/, ""))}\n\n${reason}`.trim() };
     });
     if (changed) { if (next === byChannel) next = { ...byChannel }; next[channelId] = settled; }
