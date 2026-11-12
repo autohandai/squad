@@ -29,6 +29,10 @@ try {
   assert.equal(query.searchParams.get("appVersion"), "0.1.16");
   assert.equal(query.searchParams.get("platform"), "macos");
   assert(!JSON.stringify(result).includes(credential));
+  await service.list({ platform: "ios", version: "0.2.0" });
+  const mobileQuery = new URL(calls.at(-1).url, origin);
+  assert.equal(mobileQuery.searchParams.get("platform"), "ios");
+  assert.equal(mobileQuery.searchParams.get("appVersion"), "0.2.0");
   await service.act("squad-news", "seen", 2);
   assert.deepEqual(calls.at(-1).body, { lastStep: 2 });
   await assert.rejects(service.act("../escape", "dismiss"), /Invalid/);

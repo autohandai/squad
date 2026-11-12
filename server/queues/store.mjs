@@ -134,6 +134,17 @@ export class QueueStore {
     const memberId = idOf(payload.agentId || payload.agent?.id || payload.memberId);
     const text = String(payload.text ?? payload.prompt ?? "").trim().slice(0, MAX_TEXT);
     if (!memberId || !text) throw fail("member and follow-up text are required");
+    const clientRequestId = String(payload.clientRequestId || '');
+    if (clientRequestId && !/^[A-Za-z0-9_-]{1,160}$/.test(clientRequestId)) throw fail('Invalid message receipt key.');
+    if (clientRequestId) {
+      const existing = [...this.items.values()].find(item => item.memberId === memberId && item.clientRequestId === clientRequestId);
+      if (existing) {
+        if (existing.text !== text || existing.workspace !== String(payload.workspace || '') || JSON.stringify(existing.attachments) !== JSON.stringify(attachmentReferences(payload.attachments))) throw fail('This receipt belongs to a different message.', 409);
+        await this.writing;
+        if (!this.items.has(existing.id)) throw fail('The message could not be saved. Retry with the same receipt.', 503);
+        return publicItem(existing);
+      }
+    }
     const workTaskId = idOf(payload.workTaskId);
     if (workTaskId) {
       const existing = [...this.items.values()].find(item => item.workTaskId === workTaskId);
@@ -141,7 +152,7 @@ export class QueueStore {
     }
     const at = this.at();
     const item = {
-      id: randomUUID(), memberId, ...(workTaskId ? { workTaskId } : {}), workspace: String(payload.workspace || ""), text,
+      id: randomUUID(), memberId, ...(workTaskId ? { workTaskId } : {}), ...(clientRequestId ? { clientRequestId } : {}), workspace: String(payload.workspace || ""), text,
       attachments: attachmentReferences(payload.attachments), status: "queued",
       createdAt: at, updatedAt: at, startedAt: null, finishedAt: null, reply: "", error: "", progress: null,
       launch: privateLaunch(payload),

@@ -31,6 +31,9 @@ project context, tasks, and execution history together.
 
 ## Features
 
+- **Phone companion (in development).** Pair the native iPhone/iPad app in
+  Settings → Computers, approve a matching code, and chat with existing agents.
+  See [pairing, task delegation and current delivery limits](docs/integration/mobile-companion.md).
 - **One shared workspace.** Keep direct conversations, shared agent channels,
   projects, tasks, work records, and agent activity together.
 - **Agents tailored to your workflows.** Create specialized agents for

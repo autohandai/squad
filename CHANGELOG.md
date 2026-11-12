@@ -17,6 +17,8 @@ list to the section for that version.
 
 ### Added
 
+- Settings → Computers pairs the native iPhone/iPad companion using a private QR code and matching-code approval. Phones can chat with saved agents, follow canonical task progress and delegate through the same task operation as Squad MCP. Local networking and an explicitly configured secure tunnel are supported; automatic relay setup, push delivery and VM provisioning remain in progress.
+- Paired phones discover supported commands and the computer's version. Messages and tasks retain retry receipts across restarts, and each phone can be revoked individually.
 - A per-member “Use the computer” switch in Model settings and Permissions. Turning it on asks for native confirmation; turning it off revokes access and removes Computer Use instructions and tools from later work. Operator MCP clients can read the saved scope and revoke it.
 - Right-click and ellipsis actions to rename or delete channels and groups, choose all posts or mentions, or mute and hide a conversation. Hidden channels can be shown again; Settings provides defaults and individual overrides.
 - Squad operator MCP tools can read and change notification preferences, explicitly delete a channel, and read or revoke a member's Computer Use. The tool contract is now 2.3.0; reconnect clients to load the new tools.
