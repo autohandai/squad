@@ -970,6 +970,7 @@ async fn register_device_response(state: &AppState) -> crate::api::DeviceRegistr
         state,
         "device.registered",
         json!({
+            "remoteState": snapshot.remote_state,
             "remoteStatus": snapshot.remote_status,
             "remoteError": snapshot.remote_error,
             "apiBaseUrl": snapshot.api_base_url
@@ -986,6 +987,7 @@ async fn feature_flags_response(state: &AppState) -> crate::api::FeatureFlagSnap
         state,
         "feature_flags.checked",
         json!({
+            "remoteState": snapshot.remote_state,
             "remoteStatus": snapshot.remote_status,
             "remoteError": snapshot.remote_error,
             "flags": snapshot.flags.iter().map(|flag| flag.key.clone()).collect::<Vec<_>>()
@@ -995,24 +997,11 @@ async fn feature_flags_response(state: &AppState) -> crate::api::FeatureFlagSnap
 }
 
 async fn telemetry_flush_response(state: &AppState) -> TelemetryFlushSnapshot {
-    if !state.config.telemetry_enabled() {
-        let snapshot = TelemetryFlushSnapshot {
-            success: true,
-            flushed_at: now_string(),
-            api_base_url: state.config.api_base_url.clone(),
-            client_type: "squad".to_string(),
-            surface: "squad-daemon".to_string(),
-            version: VERSION.to_string(),
-            device_id: state.device_id.clone(),
-            events_sent: 0,
-            remote_status: None,
-            remote_error: Some("telemetry policy disabled".to_string()),
-        };
-        let _ = write_json(&state.paths.telemetry_flush_json, &snapshot);
-        return snapshot;
-    }
-
-    let events = read_telemetry_events(&state.paths, 250);
+    let events = if state.config.telemetry_enabled() {
+        read_telemetry_events(&state.paths, 250)
+    } else {
+        Vec::new()
+    };
     let api = ApiClient::new(state.config.clone(), state.device_id.clone());
     let snapshot = api.send_telemetry_batch(&events).await;
     let _ = write_json(&state.paths.telemetry_flush_json, &snapshot);
@@ -1976,6 +1965,95 @@ fn read_timestamp_field(path: &PathBuf, field: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn observability_does_not_repeat_unsupported_remote_requests_or_errors() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(AtomicU64::new(0));
+        let observed = requests.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                loop {
+                    let mut chunk = [0; 4096];
+                    let count = stream.read(&mut chunk).await.unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    bytes.extend_from_slice(&chunk[..count]);
+                    if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..end]);
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap_or(0);
+                        if bytes.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                observed.fetch_add(1, Ordering::SeqCst);
+                stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+            }
+        });
+        let paths = temp_state_paths();
+        paths.ensure().unwrap();
+        fs::write(
+            paths.root.join("settings.json"),
+            r#"{"autoCheckUpdates":false}"#,
+        )
+        .unwrap();
+        let mut config = SquadConfig::defaults();
+        config.api_base_url = format!("http://{address}");
+        let state = AppState {
+            paths: paths.clone(),
+            config,
+            account_email: Arc::new(StdMutex::new(None)),
+            accepting_work: Arc::new(AtomicBool::new(true)),
+            update_admission: Arc::new(StdMutex::new(None)),
+            shutdown_tx: Arc::new(Mutex::new(None)),
+            device_id: "optional-api-fixture".into(),
+            web_restarts: Arc::new(AtomicU64::new(0)),
+        };
+        for _ in 0..3 {
+            run_observability_cycle(&state).await;
+        }
+        server.abort();
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            4,
+            "missing optional endpoints must be probed once, not every observability cycle"
+        );
+        let log = fs::read_to_string(paths.root.join("logs/daemon.otlp.jsonl")).unwrap_or_default();
+        assert!(
+            !log.contains("failed with HTTP 404"),
+            "unsupported optional endpoints must not be logged as recurring errors: {log}"
+        );
+        for path in [
+            &paths.device_registration_json,
+            &paths.feature_flags_json,
+            &paths.ping_json,
+            &paths.telemetry_flush_json,
+        ] {
+            let snapshot: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+            assert_eq!(snapshot["success"], false);
+            assert_eq!(snapshot["remoteState"], "unsupported");
+            assert_eq!(snapshot["remoteStatus"], 404);
+            assert!(snapshot["remoteError"].is_null());
+        }
+        let telemetry: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&paths.telemetry_flush_json).unwrap())
+                .unwrap();
+        assert_eq!(telemetry["eventsSent"], 0);
+        let _ = fs::remove_dir_all(paths.root);
+    }
+
     #[tokio::test]
     async fn update_admission_refuses_new_work_and_preserves_queued_work() {
         let paths = temp_state_paths();
