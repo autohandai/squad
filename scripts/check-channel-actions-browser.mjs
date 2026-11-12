@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
 import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 
-const bridge = await startBridge();
+const bridge = await startBridge({ development: false });
 let browser;
 try {
   browser = await startBrowser();
@@ -11,8 +11,20 @@ try {
   await browser.navigate(bridge.origin + '/channels/' + room.id);
   await until(() => browser.evaluate("!!document.querySelector('button[aria-label=\"Channel actions: Release reviews\"]')"), 'channel overflow actions');
   const pointer = async (selector, button = 'left', text) => {
-    const point = await until(() => browser.evaluate(`(() => { const candidates = [...document.querySelectorAll(${JSON.stringify(selector)})]; const element = ${text === undefined ? 'candidates[0]' : `candidates.find(element => element.textContent.trim() === ${JSON.stringify(text)})`}; if (!element || element.disabled || element.hasAttribute('data-disabled')) return null; element.scrollIntoView({block:'nearest'}); const rect = element.getBoundingClientRect(); return rect.width && rect.height ? { x:rect.x+rect.width/2, y:rect.y+rect.height/2 } : null; })()`), 'enabled pointer target');
-    await browser.send('Input.dispatchMouseEvent', { type:'mouseMoved', ...point });
+    const pointFor = hitTest => browser.evaluate(`(() => {
+      const candidates = [...document.querySelectorAll(${JSON.stringify(selector)})];
+      const element = ${text === undefined ? 'candidates[0]' : `candidates.find(element => element.textContent.trim() === ${JSON.stringify(text)})`};
+      if (!element || element.disabled || element.hasAttribute('data-disabled')) return null;
+      element.scrollIntoView({block:'nearest'});
+      const rect = element.getBoundingClientRect();
+      const point = {x:rect.x+rect.width/2, y:rect.y+rect.height/2};
+      if (!rect.width || !rect.height) return null;
+      if (${hitTest} && !element.contains(document.elementFromPoint(point.x,point.y))) return null;
+      return point;
+    })()`);
+    const hover = await until(() => pointFor(false), 'enabled pointer target');
+    await browser.send('Input.dispatchMouseEvent', { type:'mouseMoved', ...hover });
+    const point = await until(() => pointFor(true), 'uncovered pointer target');
     await browser.send('Input.dispatchMouseEvent', { type:'mousePressed', button, clickCount:1, ...point });
     await browser.send('Input.dispatchMouseEvent', { type:'mouseReleased', button, clickCount:1, ...point });
   };
@@ -88,6 +100,6 @@ try {
   await until(async () => (await bridge.api('/api/channels')).data.deletedChannelIds.includes(room.id), 'confirmed context-menu deletion');
   await until(() => browser.evaluate("!!document.querySelector('#channel-name')"), 'deleting the active channel returns to inline creation');
   assert.deepEqual(browser.errors, []);
-  console.log('PASS: real pointer/right-click channel menus, rename/error/retry, mute/hide/show, Settings defaults/overrides, live preference updates and confirmed deletion.');
+  console.log('PASS (production server): real pointer/right-click channel menus, rename/error/retry, mute/hide/show, Settings defaults/overrides, live preference updates and confirmed deletion.');
 } catch (error) { await browser?.screenshot('.codex-artifacts/group-chats/channel-actions-failed.png').catch(() => {}); throw error; }
 finally { await browser?.close(); await bridge.close(); }

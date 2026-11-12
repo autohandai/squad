@@ -86,3 +86,9 @@ advertise unsupported `tools.listChanged` notifications.
 
 Browser/HTTP/stdio evidence is separate from installed-app, visible native
 notification and published-release proof. No installed app is replaced here.
+
+## Verification correction
+
+Early browser logs were labelled production, but this check inherited a development-server default; the environment flag used for those runs was not read. The check now explicitly starts the production server after building, and reruns against the generated bundle. The earlier pointer/API observations remain valid development evidence, not production-bundle proof.
+
+The explicit production run exposed a pointer race after rename. A probe captured `bodyPointer: none`, a closed dialog and its overlay at the button coordinates. The fixture now hovers, then waits for a real hit-test against the intended target before pressing; it does not add a fixed sleep or change product dialog timing. Other hypotheses (row replacement or menu-state failure) were not supported by the captured hit-test. Debug probes were removed before commit.
