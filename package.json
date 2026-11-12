@@ -57,6 +57,8 @@
     "check:first-run:packaged": "node scripts/check-first-run-live.mjs --demo \"--runtime=/Applications/Autohand Squad.app/Contents/Resources/runtime\"",
     "check:cli-pin": "node scripts/check-cli-pin.mjs",
     "check:notifications": "node scripts/check-notifications.mjs",
+    "check:channel-notifications": "node scripts/check-channel-notifications.mjs",
+    "check:channel-actions:browser": "node scripts/check-channel-actions-browser.mjs",
     "check:voice": "node scripts/check-voice.mjs",
     "check:jsx": "node scripts/check-jsx-imports.mjs",
     "check:control-plane": "node scripts/check-control-plane.mjs",

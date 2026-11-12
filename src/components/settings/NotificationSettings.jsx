@@ -4,7 +4,11 @@ import { BellRing } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldContent, FieldDescription, FieldTitle } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { NOTIFICATION_KINDS, normalizeNotificationSettings } from "@/lib/notifications";
+import { channelNotificationPreference } from "@/lib/channel-notifications";
+import { isGroupChat } from "@/lib/group-chats";
 import { getNativeNotificationClient, notificationTestMessage } from "@/lib/native-notifications";
 
 /**
@@ -13,13 +17,25 @@ import { getNativeNotificationClient, notificationTestMessage } from "@/lib/nati
  * `onTest()` may return a promise resolving to `{ posted, method }` or
  * throwing with a message, which is shown under the button.
  */
-export function NotificationSettings({ settings, onChange, onTest, copy = {}, nativeClient: suppliedNativeClient }) {
+export function NotificationSettings({ settings, channels = [], onChannelChange, onChange, onTest, copy = {}, nativeClient: suppliedNativeClient }) {
   const current = normalizeNotificationSettings(settings);
   const [testState, setTestState] = useState({ busy: false, message: "", failed: false });
   const nativeClient = useMemo(() => suppliedNativeClient === undefined ? getNativeNotificationClient() : suppliedNativeClient, [suppliedNativeClient]);
   const [permissionState, setPermissionState] = useState({ value: "unknown", busy: Boolean(nativeClient), error: "" });
   const permissionBusy = useRef(false);
   const mounted = useRef(false);
+  const savingRef = useRef(false);
+  const retry = useRef(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  async function save(operation) {
+    if (savingRef.current) return;
+    savingRef.current = true; setSaving(true); setSaveError(""); retry.current = operation;
+    try { await operation(); retry.current = null; }
+    catch (failure) { setSaveError(failure.message || "Could not save notification preferences. Try again."); }
+    finally { savingRef.current = false; setSaving(false); }
+  }
 
   const refreshPermission = useCallback(async (request = false) => {
     if (!nativeClient || permissionBusy.current) return;
@@ -59,7 +75,7 @@ export function NotificationSettings({ settings, onChange, onTest, copy = {}, na
   }
 
   function toggle(key, checked) {
-    onChange?.({ ...current, [key]: Boolean(checked) });
+    void save(() => onChange?.({ ...current, [key]: Boolean(checked) }));
   }
 
   async function runTest() {
@@ -100,7 +116,7 @@ export function NotificationSettings({ settings, onChange, onTest, copy = {}, na
                 <FieldTitle>{label}</FieldTitle>
                 <FieldDescription>{copy[`notify_${kind.key}Detail`] || kind.detail}</FieldDescription>
               </FieldContent>
-              <Switch checked={current[kind.key]} onCheckedChange={(checked) => toggle(kind.key, checked)} aria-label={label} />
+              <Switch disabled={saving} checked={current[kind.key]} onCheckedChange={(checked) => toggle(kind.key, checked)} aria-label={label} />
             </Field>
           );
         })}
@@ -116,6 +132,30 @@ export function NotificationSettings({ settings, onChange, onTest, copy = {}, na
           </span>
         ) : null}
       </div>
+      <Separator className="my-6" />
+      <h3 className="text-base font-medium">Channel messages</h3>
+      <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+        <FieldContent><FieldTitle>Default notifications</FieldTitle><FieldDescription>Applies to channels and groups without an override. Muting alerts keeps their work running.</FieldDescription></FieldContent>
+        <Select value={current.channelDefault} disabled={saving} onValueChange={value => void save(() => onChange?.({ ...current, channelDefault: value }))}>
+          <SelectTrigger aria-label="Default channel notifications" className="w-44"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectGroup><SelectItem value="all">All new posts</SelectItem><SelectItem value="mentions">Just mentions</SelectItem><SelectItem value="muted">Muted</SelectItem></SelectGroup></SelectContent>
+        </Select>
+      </Field>
+      {channels.length && onChannelChange ? <div className="divide-y divide-border/60 border-t border-border/60">
+        {[...channels].sort((a, b) => a.name.localeCompare(b.name)).map(channel => {
+          const preference = channelNotificationPreference(current, channel.id);
+          return <div key={channel.id} className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 py-4">
+            <span className="min-w-0 flex-1 text-sm font-medium">{isGroupChat(channel) ? channel.name : `#${channel.name}`}</span>
+            <Select value={preference.inherited ? 'default' : preference.mode} disabled={saving} onValueChange={mode => void save(() => onChannelChange(channel.id, { mode }))}>
+              <SelectTrigger aria-label={`Notifications for ${channel.name}`} className="w-44"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectGroup><SelectItem value="default">Use Settings default</SelectItem><SelectItem value="all">All new posts</SelectItem><SelectItem value="mentions">Just mentions</SelectItem><SelectItem value="muted">Muted</SelectItem></SelectGroup></SelectContent>
+            </Select>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch disabled={saving} checked={preference.hidden} aria-label={`Hide ${channel.name} in sidebar`} onCheckedChange={hidden => void save(() => onChannelChange(channel.id, { hidden }))} />Hide in sidebar</label>
+          </div>;
+        })}
+        <p className="pt-3 text-xs text-muted-foreground">Hidden channels remain available under Hidden channels in the sidebar.</p>
+      </div> : null}
+      {saveError ? <div className="mt-3 flex items-center gap-2"><p role="alert" className="text-xs text-destructive">{saveError}</p><Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => { if (retry.current) void save(retry.current); }}>Retry save</Button></div> : null}
     </div>
   );
 }

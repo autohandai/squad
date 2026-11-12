@@ -31,7 +31,7 @@ export function createOwnedDataService({ context, assertCurrent, readBody, json,
     if(url.pathname==='/api/owned/events'&&req.method==='GET') {
       if(!context.canWrite||!events||!startEventStream)throw Object.assign(Error('Live execution updates are unavailable in this data view.'),{status:403});
       const stream=startEventStream(res),listeners=[];
-      const subscriptions={ 'channels.changed':'channels.changed','vault.request.pending':'vault.changed','vault.request.resolved':'vault.changed',
+      const subscriptions={ 'channels.changed':'channels.changed','notifications.settings.changed':'notifications.settings.changed','vault.request.pending':'vault.changed','vault.request.resolved':'vault.changed',
         'relay.message':'relay.message','relay.channel':'relay.channel','relay.presence':'relay.presence','relay.status':'relay.status' };
       for(const [source,target]of Object.entries(subscriptions)) {
         const listener=()=>{try{assertCurrent();stream.send(target);}catch{stream.end();}};

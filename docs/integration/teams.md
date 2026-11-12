@@ -216,7 +216,7 @@ that is not ready, or from the bridge step when every member is.
 ## Direct member management through managed MCP
 
 The agent-facing server and operator server advertise contract version
-`2.1.0`. Existing self-profile, shared/private/project memory and scheduling
+`2.2.0`. Existing self-profile, shared/private/project memory and scheduling
 tools remain available. Agents can additionally call:
 
 | Tool | Purpose |

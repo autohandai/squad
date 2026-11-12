@@ -576,7 +576,7 @@ try {
   result = await chat(noah, 'team-scenario-groups');
   assert.equal(result.success, true, result.text);
   const groupCalls = (await entries()).filter(entry => entry.kind === 'tool' && entry.scenario === 'groups');
-  assert.equal((await entries()).filter(entry => entry.kind === 'initialize').at(-1).response.result.serverInfo.version, '2.1.0');
+  assert.equal((await entries()).filter(entry => entry.kind === 'initialize').at(-1).response.result.serverInfo.version, '2.2.0');
   assert.equal(groupCalls.length, 10);
   for (const [index, entry] of groupCalls.entries()) assert.equal(entry.response.result?.isError === true, index === 7, JSON.stringify(entry));
   const group = groupCalls[0].response.result.structuredContent.channel;

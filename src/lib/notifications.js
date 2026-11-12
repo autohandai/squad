@@ -3,6 +3,8 @@
 // no DOM, so scripts/check-notifications.mjs can import this from Node.
 // See docs/integration/notifications.md and ADR-0019.
 
+import { DEFAULT_CHANNEL_NOTIFICATIONS, normalizeChannelNotifications } from './channel-notifications.js';
+
 export const NOTIFICATION_POLL_MS = 10_000;
 export const NOTIFICATION_FEED_LIMIT = 100;
 
@@ -21,14 +23,14 @@ export const NOTIFICATION_KINDS = [
 ];
 
 export const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze(
-  Object.fromEntries(NOTIFICATION_KINDS.map(({ key }) => [key, true]))
+  { ...Object.fromEntries(NOTIFICATION_KINDS.map(({ key }) => [key, true])), ...DEFAULT_CHANNEL_NOTIFICATIONS }
 );
 
 export function normalizeNotificationSettings(input) {
   const source = input && typeof input === "object" ? input : {};
   const settings = {};
   for (const { key } of NOTIFICATION_KINDS) settings[key] = key in source ? Boolean(source[key]) : true;
-  return settings;
+  return { ...settings, ...normalizeChannelNotifications(source) };
 }
 
 /** Number of items not yet read. */

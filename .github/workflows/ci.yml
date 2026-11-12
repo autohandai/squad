@@ -147,6 +147,8 @@ jobs:
           node scripts/check-member-default-routing-browser.mjs
           bun run check:group-chats:browser
           bun run check:channel-lifecycle:browser
+          bun run check:channel-actions:browser
+          bun run check:channel-notifications
 
       - name: Check agent tasks, history and default-folder consent
         env:

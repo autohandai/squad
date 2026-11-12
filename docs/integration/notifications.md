@@ -20,15 +20,62 @@ natively unless the relevant conversation is focused. Member names come from
 | --- | --- |
 | `GET /api/notifications/settings` | → `{ settings }` |
 | `PUT /api/notifications/settings` | `{ runFinished?, runFailed?, handoffPending?, approvalPending?, mention? }` → `{ settings }` |
+| `PATCH /api/notifications/channels/:id` | `{ mode?: "all"/"mentions"/"muted"/"default", hidden?: boolean }` → `{ settings }` |
 | `POST /api/notifications/focus` | `{ route }` → `{ focusedRoute }` |
 | `GET /api/notifications?since=<ISO>` | → `{ items, unread, lastReadAt, focusedRoute }` (newest first) |
 | `POST /api/notifications/read` | `{ ids? }` (omit for all) → `{ unread, lastReadAt }` |
 | `POST /api/notifications/test` | → `{ posted, method }`; `success: false` with a reason when the OS refused |
 
-Item shape: `{ id, kind, at, title, body, route, url, memberId, channelId, status, read, native }`.
+Item shape: `{ id, kind, at, title, body, route, url, memberId, channelId, messageId, status, read, native }`.
 The click URL is `http://<host of the last focus/test request>` + `route`
 (override with `AUTOHAND_SQUAD_APP_URL`). The three client-side events still
 need the web app to raise them through `POST /api/events` (CONTRACT.md).
+
+## Channel and group preferences (MCP contract 2.2.0)
+
+`settings` now also contains `channelDefault` (`mentions` initially) and
+`channelOverrides`, keyed by conversation ID with optional `mode` and `hidden`.
+The global PUT accepts `channelDefault`; it preserves overrides, including
+when an older client sends its settings snapshot. The channel PATCH validates
+an existing conversation and changes only supplied fields. `mode: "default"`
+removes the explicit mode. Saving waits for the selected owner's file write;
+a failed write returns 500 and leaves earlier settings intact. Successful
+saves emit `notifications.settings.changed` on the existing owned live stream.
+
+Channel and group sidebar rows share right-click and ellipsis actions. Mute
+and hide sets `mode: "muted", hidden: true`; Show in sidebar clears only
+`hidden`, retaining the quiet mode. The Hidden channels section and Settings
+provide recovery. Preferences never remove membership, messages or work.
+
+The bridge observes `channels.changed` and scans canonical saved messages.
+A newly completed member post produces at most one `channel.posted` receipt
+per process. Baseline history, older cache backfill, incomplete streamed text,
+user messages and replayed IDs stay quiet. All new posts alerts for each new
+member post; Just mentions requires the current verified person's name/email
+or `@you` and the global mention setting. Mentions of another agent are not
+personal alerts. The earlier browser emitter treated any agent mention as a
+personal mention; canonical saved-message detection replaces that behavior.
+
+Muted conversations suppress channel-scoped alerts. Hide alone does not mute.
+Existing independent run, approval and handoff switches remain available;
+run completion and a saved channel publication are separate events. Viewing
+the originating channel suppresses its post alert; viewing that member's
+direct chat does not. A canonical human-mention event is still emitted for
+audit/search/history without creating a second notification.
+
+The selected owner's existing `notifications.json` stores the feed and
+preferences. There is no new notification worker or durable delivery queue:
+OS denial/Focus can prevent a visible banner, and a service failure during
+publication is not retried as a guaranteed delivery. Restart never replays
+old posts. Operator MCP provides `get_notification_preferences`,
+`set_notification_defaults` and `set_channel_notifications`; managed members
+cannot edit the person's preferences. See ADR-0205 and the control-plane
+documentation for the separate MCP contract version and reconnect behavior.
+
+Checks: `bun run check:channel-notifications` covers real owned HTTP saves,
+saved publications, focus, history/replay, restart and write failure/recovery.
+`bun run check:channel-actions:browser` covers real pointer/right-click menus,
+rename error/retry, visibility recovery, Settings and live preference updates.
 
 ## App.jsx wiring
 

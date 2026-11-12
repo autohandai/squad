@@ -16,6 +16,8 @@
 import { join } from "node:path";
 
 import { postNativeNotification } from "../notify/native.mjs";
+import { CHANNEL_NOTIFICATION_MODES } from '../../src/lib/channel-notifications.js';
+import { createChannelPostObserver } from '../notify/channel-posts.mjs';
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
   NOTIFICATION_EVENTS,
@@ -51,6 +53,7 @@ function publicItem(item) {
     url: item.url,
     memberId: item.memberId || "",
     channelId: item.channelId || "",
+    messageId: item.messageId || '',
     status: item.status || "",
     read: Boolean(item.read),
     native: item.native || null,
@@ -75,6 +78,7 @@ export function createNotificationsPlugin({ postNative = postNativeNotification,
   let writeChain = Promise.resolve();
   let nameCache = { at: 0, memberNames: {}, channelNames: {} };
   const listeners = [];
+  let channelPosts = null;
   const focusedWindows = new Map();
   function currentFocusedRoutes() {
     const time = now();
@@ -94,17 +98,18 @@ export function createNotificationsPlugin({ postNative = postNativeNotification,
     }
   }
 
-  function persist() {
+  function persist(updateSettings) {
     if (!statePath || !ctx?.writeJsonFile) return writeChain;
-    const snapshot = {
-      version: STATE_VERSION,
-      settings: state.settings,
-      lastReadAt: state.lastReadAt,
-      items: state.items.slice(0, FEED_LIMIT),
-    };
     writeChain = writeChain
-      .then(() => ctx.writeJsonFile(statePath, snapshot))
-      .catch((error) => log(ctx?.SEVERITY?.WARN ?? 13, `notifications: could not persist ${statePath}: ${error?.message || error}`));
+      .catch(() => {})
+      .then(async () => {
+        const settings = updateSettings ? updateSettings(state.settings) : state.settings;
+        await ctx.writeJsonFile(statePath, {
+          version: STATE_VERSION, settings, lastReadAt: state.lastReadAt, items: state.items.slice(0, FEED_LIMIT),
+        });
+        if (updateSettings) state.settings = settings;
+      })
+      .catch((error) => { log(ctx?.SEVERITY?.WARN ?? 13, `notifications: could not persist ${statePath}: ${error?.message || error}`); throw error; });
     return writeChain;
   }
 
@@ -138,6 +143,7 @@ export function createNotificationsPlugin({ postNative = postNativeNotification,
 
   async function onEvent(event) {
     try {
+      if (channelPosts && event.name === 'mention.received' && event.channelId && event.messageId) return null;
       const routes = currentFocusedRoutes();
       let decision = shouldNotify(event, state.settings, { focusedRoute: "" });
       if (decision.notify) {
@@ -157,6 +163,7 @@ export function createNotificationsPlugin({ postNative = postNativeNotification,
         url: copy.url,
         memberId: String(event.memberId || event.toMemberId || ""),
         channelId: String(event.channelId || ""),
+        messageId: String(event.messageId || ''),
         status: String(event.status || ""),
         // Seen already when the conversation was on screen: history, not unread.
         read: decision.reason === "focused",
@@ -195,6 +202,18 @@ export function createNotificationsPlugin({ postNative = postNativeNotification,
       log(ctx?.SEVERITY?.WARN ?? 13, `notifications: could not read ${statePath}: ${error?.message || error}`);
     }
     dispose();
+    if (typeof ctx.notificationProfile === 'function' && typeof ctx.readChannelsState === 'function') {
+      channelPosts = await createChannelPostObserver({ read: ctx.readChannelsState, profile: ctx.notificationProfile, onPost: async event => {
+        await onEvent(event);
+        if (event.mentionsYou) {
+          const { name: _name, mentionsYou: _mentions, ...mention } = event;
+          ctx.emit?.('mention.received', mention);
+        }
+      } });
+      const changed = () => { void channelPosts?.changed().catch(error => log(ctx?.SEVERITY?.WARN ?? 13, `notifications: channel scan failed: ${error.message}`)); };
+      ctx.events?.on?.('channels.changed', changed);
+      listeners.push(['channels.changed', changed]);
+    }
     for (const eventName of NOTIFICATION_EVENTS) {
       const listener = (event) => {
         onEvent(event);
@@ -205,6 +224,7 @@ export function createNotificationsPlugin({ postNative = postNativeNotification,
   }
 
   function dispose() {
+    channelPosts?.dispose(); channelPosts = null;
     for (const [eventName, listener] of listeners) ctx?.events?.off?.(eventName, listener);
     listeners.length = 0;
   }
@@ -221,6 +241,33 @@ export function createNotificationsPlugin({ postNative = postNativeNotification,
     const method = req.method;
     const path = url.pathname;
 
+    async function saveSettings(update) {
+      try { await persist(update); }
+      catch {
+        json(res, 500, { success: false, error: 'Could not save notification preferences. Your earlier settings are kept; try again.' });
+        return;
+      }
+      context.emit?.('notifications.settings.changed', {});
+      json(res, 200, { success: true, data: { settings: state.settings } });
+    }
+
+    const channelMatch = /^\/api\/notifications\/channels\/([^/]+)$/.exec(path);
+    if (channelMatch && method === 'PATCH') {
+      const channelId = decodeURIComponent(channelMatch[1]);
+      const body = await context.readBody(req);
+      if (!body || typeof body !== 'object' || Array.isArray(body) || !Object.keys(body).length || Object.keys(body).some(key => !['mode', 'hidden'].includes(key)) || (body.mode !== undefined && ![...CHANNEL_NOTIFICATION_MODES, 'default'].includes(body.mode)) || (body.hidden !== undefined && typeof body.hidden !== 'boolean')) {
+        json(res, 400, { success: false, error: 'Choose a channel notification mode and optional hidden state.' }); return true;
+      }
+      const channels = await context.readChannelsState();
+      if (!channels.channels.some(channel => channel.id === channelId)) { json(res, 404, { success: false, error: 'Channel not found.' }); return true; }
+      await saveSettings(current => {
+        const override = { ...(current.channelOverrides[channelId] || {}), ...body };
+        if (override.mode === 'default') delete override.mode;
+        return normalizeNotificationSettings({ ...current, channelOverrides: { ...current.channelOverrides, [channelId]: override } });
+      });
+      return true;
+    }
+
     if (path === "/api/notifications/settings" && method === "GET") {
       json(res, 200, { success: true, data: { settings: state.settings } });
       return true;
@@ -228,9 +275,8 @@ export function createNotificationsPlugin({ postNative = postNativeNotification,
     if (path === "/api/notifications/settings" && method === "PUT") {
       const body = await context.readBody(req);
       const source = body && typeof body === "object" ? body.settings || body : {};
-      state.settings = normalizeNotificationSettings({ ...state.settings, ...source });
-      await persist();
-      json(res, 200, { success: true, data: { settings: state.settings } });
+      if (source.channelDefault !== undefined && !CHANNEL_NOTIFICATION_MODES.includes(source.channelDefault)) { json(res, 400, { success: false, error: 'Choose all posts, mentions or muted as the channel default.' }); return true; }
+      await saveSettings(current => normalizeNotificationSettings({ ...current, ...source, channelOverrides: current.channelOverrides }));
       return true;
     }
     if (path === "/api/notifications/focus" && method === "POST") {

@@ -117,6 +117,10 @@ operator connection.
 | `list_skills` | `member_id`, `query?`, `offset?` | Discover local and registry packages for the saved workspace, including qualified IDs. |
 | `set_member_skills` | `member_id`, `skill_ids`, `expected_revision?` | Replace selections; empty clears. Existing engine preparation installs/pins them on the next turn. |
 | `get_channel` / `update_channel` | `channel_id`, plus update `name?`, `purpose?`, `section?` | Read or patch channel settings without replacing history or membership. |
+| `delete_channel` | `channel_id`, `confirm_delete: true` | Delete a channel and its saved messages/threads after the person's explicit instruction; refuses a genuine group. Members and their direct chats remain. |
+| `get_notification_preferences` | none | Read the selected owner's personal notification defaults and overrides. |
+| `set_notification_defaults` | `mode` (`all`/`mentions`/`muted`) | Change the inherited channel/group default; keep explicit overrides. |
+| `set_channel_notifications` | `channel_id`, `mode?` (`all`/`mentions`/`muted`/`default`), `hidden?` | Save an existing conversation's personal override or sidebar visibility. At least one field is required; never changes membership or dispatches work. |
 | `set_channel_members` | `channel_id`, `add?`, `remove?` | Atomically add/remove existing member IDs; dispatches no work. |
 | `list_channel_threads` | `channel_id`, `limit?` (≤100) | Read newest saved threads. |
 | `list_group_chats` | none | List genuine private groups, distinct from channels. |
@@ -135,6 +139,8 @@ Member management requires the updated Squad bridge. An older running app
 returns an upgrade instruction; MCP never installs, restarts or upgrades it.
 The operator can change policy settings, but cannot grant macOS permissions,
 change engine login, bypass proposal approval or disable safety guards.
+Personal notification tools are operator-only: the managed agent connection
+cannot mute the person's alerts or hide their conversations.
 
 Read `get_member_profile` before editing. An explicit `expected_revision`
 protects a decision based on that read. When omitted, MCP reads the current
@@ -272,9 +278,19 @@ pinned YAML/Zod dependencies. See [portable backups](backups.md).
 
 ## Member management contract v2
 
-Both MCP initialize responses report server version `2.1.0`. This versions the
+Both MCP initialize responses report server version `2.2.0`. This versions the
 tool contract independently of the app release and portable backup schema.
-Refresh tools after reconnecting; `create_member` is now a real operation
+Clients receive this value as `serverInfo.version` on every new connection;
+`protocolVersion` separately identifies the negotiated MCP wire protocol.
+Neither is an automatic update notification. The current stdio processes keep
+a fixed tool catalog, do not advertise `tools.listChanged`, and do not emit
+`notifications/tools/list_changed`. Restart/reconnect the MCP process after
+upgrading Squad and reload `tools/list` before using newly added tools.
+A client must compare saved/current versions itself to display an upgrade notice.
+See the MCP [connection lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle)
+and [tool-change notifications](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#list-changed-notification).
+
+`create_member` is now a real operation
 rather than a placeholder, and requires `request_id`, `name` and `role`.
 
 Created members belong to the connection’s currently selected owner. They

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { CHANNEL_NOTIFICATION_MODES } from '../../src/lib/channel-notifications.js';
+import { isGroupChat } from '../../src/lib/group-chats.js';
 
 const text = (maxLength = 2000) => ({ type: 'string', minLength: 1, maxLength });
 const id = () => text(200);
@@ -37,6 +39,10 @@ export const MANAGEMENT_TOOLS = [
   tool('set_member_skills', 'Replace a member\'s selected skill-package IDs (empty clears selections). Validates references against the catalog. Packages are installed/pinned by the existing engine preparation on the next turn; this receipt is assignment, not installation.', { ...member, skill_ids: { type: 'array', maxItems: 32, items: text(500) } }, ['member_id', 'skill_ids']),
   tool('get_channel', 'Read one channel\'s saved settings, member IDs and projects.', { channel_id: id() }, ['channel_id'], true),
   tool('update_channel', 'Change a channel name, purpose or section without replacing its members or history.', { channel_id: id(), name: text(80), purpose: { type: 'string', maxLength: 20000 }, section: { type: 'string', maxLength: 80 } }, ['channel_id']),
+  tool('delete_channel', 'Delete a saved channel and its messages/threads from the selected Squad. Requires explicit confirm_delete:true. Members and their direct chats remain. Use delete_group_chat for a genuine group.', { channel_id: id(), confirm_delete: { type: 'boolean', enum: [true] } }, ['channel_id', 'confirm_delete']),
+  tool('get_notification_preferences', 'Read the selected Squad operator\'s saved notification defaults, channel overrides and hidden states. Hiding is a presentation preference, not an access rule.', {}, [], true),
+  tool('set_channel_notifications', 'Set the operator\'s local notification mode for one channel/group: all, mentions, muted, or default to inherit Settings. Optional hidden hides/shows its sidebar row. Does not stop work or change history/membership. Operator only.', { channel_id: id(), mode: { type: 'string', enum: [...CHANNEL_NOTIFICATION_MODES, 'default'] }, hidden: { type: 'boolean' } }, ['channel_id']),
+  tool('set_notification_defaults', 'Choose the selected Squad operator\'s default channel/group notification mode. Preserves explicit channel choices and other alert settings. Operator only; never grants or revokes agent access.', { mode: { type: 'string', enum: CHANNEL_NOTIFICATION_MODES } }, ['mode']),
   tool('set_channel_members', 'Add/remove existing members atomically from a channel roster. Does not dispatch work or delete messages.', { channel_id: id(), add: ids(), remove: ids() }, ['channel_id']),
   tool('list_channel_threads', 'List a channel\'s newest conversation threads. Use get_messages with thread_id to read replies.', { channel_id: id(), limit: { type: 'integer', minimum: 1, maximum: 100 } }, ['channel_id'], true),
   tool('list_group_chats', 'List saved private group chats, distinct from public/private channels. A managed member only sees groups it belongs to.', {}, [], true),
@@ -95,6 +101,18 @@ export function createManagementTools(bridge, legacy) {
       if (!Object.keys(patch).length) throw new Error('Provide at least one channel setting to change.');
       return bridge.patch(`/api/channels/${encodeURIComponent(channel_id)}`, patch);
     },
+    async delete_channel({ channel_id, confirm_delete }) {
+      if (confirm_delete !== true) throw new Error('Confirm channel deletion with confirm_delete:true. This removes its saved messages and threads.');
+      if (isGroupChat((await channelFor(channel_id)).channel)) throw new Error('This conversation is a group chat. Use delete_group_chat.');
+      await bridge.delete(`/api/channels/${encodeURIComponent(channel_id)}`);
+      return { id: channel_id, deleted: true };
+    },
+    get_notification_preferences: () => bridge.get('/api/notifications/settings'),
+    async set_channel_notifications({ channel_id, ...patch }) {
+      if (!Object.keys(patch).length) throw new Error('Choose a notification mode or hidden state.');
+      return bridge.patch(`/api/notifications/channels/${encodeURIComponent(channel_id)}`, patch);
+    },
+    set_notification_defaults: ({ mode }) => bridge.put('/api/notifications/settings', { channelDefault: mode }),
     async set_channel_members({ channel_id, add = [], remove = [] }) {
       await channelFor(channel_id);
       if (!add.length && !remove.length) throw new Error('Choose members to add or remove.');
