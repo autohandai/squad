@@ -5,7 +5,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { activateOwnership, invalidateOwnership } from "@/lib/ownership-client";
 import { ownedLocalStorage } from "@/lib/owned-storage";
 import { withCachedMemberViews } from "@/lib/member-menus";
-import { OwnedSquadView, SquadOwnerPicker } from "./OwnedSquadView";
+import { OwnedSquadView } from "./OwnedSquadView";
+import { SquadOwnerSwitcher, SquadOwnershipContext } from "./SquadOwnerSwitcher";
 
 async function request(path, context, init = {}) {
   const response = await fetch(path, { ...init, headers: { 'content-type': 'application/json', ...(context ? { 'x-squad-context': context.generation } : {}), ...init.headers }, cache: 'no-store' });
@@ -126,8 +127,9 @@ export function OwnershipBootstrap({ children }) {
     try { if (current.current) await request('/api/ownership/retry', current.current, { method: 'POST' }); await refresh.current?.(); }
     catch (failure) { setError(failure.message); }
   }
-  if(context?.state==='awaiting_restart')return <div className="flex min-h-[100svh] flex-col bg-background text-foreground"><SquadOwnerPicker context={context}/><main className="flex flex-1 items-center justify-center px-6 py-12">
+  if(context?.state==='awaiting_restart')return <div className="flex min-h-[100svh] flex-col bg-background text-foreground"><main className="flex flex-1 items-center justify-center px-6 py-12">
     <div className="w-full max-w-lg space-y-4">
+      <SquadOwnerSwitcher context={context} alwaysShow className="-ml-1.5" />
       <h1 className="text-xl font-semibold">{context.pendingOperation?.kind==='reset'?'Squad has been reset':'Your backup has been restored'}</h1>
       <p className="text-sm text-muted-foreground">{context.ownerLabel} is ready to open. Your earlier dataset is preserved separately. Imported agents and routines stay paused until you review them.</p>
       {context.pendingOperation?.result?.warningCount?<div className="space-y-2 text-sm text-muted-foreground" role="status"><p>{context.pendingOperation.result.warningCount} source notes were recorded during restoration.</p><ul className="space-y-1">{context.pendingOperation.result.warningSamples.map((note,index)=><li key={index}>{note}</li>)}</ul></div>:null}
@@ -139,7 +141,9 @@ export function OwnershipBootstrap({ children }) {
       <Button variant="ghost" onClick={async()=>{try{await request('/api/account/logout',context,{method:'POST'});await refresh.current?.();}catch(failure){setError(failure.message);}}}>Sign out</Button></div>
     </div>
   </main></div>;
-  if (context?.state === 'ready') return <>{window.location.pathname !== '/quick-chat' ? <SquadOwnerPicker context={context} /> : null}{context.canWrite ? children : <OwnedSquadView context={context} />}</>;
+  // Ownership is shown inside the app (sidebar header, read-only page), never
+  // as a window-wide strip: that strip sat under the macOS traffic lights.
+  if (context?.state === 'ready') return <SquadOwnershipContext.Provider value={context}>{context.canWrite ? children : <OwnedSquadView context={context} />}</SquadOwnershipContext.Provider>;
   if (context?.state === 'expired_native') return <main className="flex min-h-[100svh] items-center justify-center bg-background p-6 text-sm text-muted-foreground">The selected Squad changed. Reopen Quick Chat from the menu bar.</main>;
   if (context?.state === 'signed_out') return <SignInGate account={{ signedIn: false }}
     startLogin={() => request('/api/harnesses/login', current.current, { method: 'POST', body: JSON.stringify({ id: 'autohand' }) })}

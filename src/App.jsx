@@ -337,6 +337,7 @@ import { duplicateCreationStash, hiddenMembers, hidePatch, markUnreadReadAt, ord
 import { planImport, presetTemplate, uniqueName, validateTeamFile } from "@/lib/teams";
 import { BootChecks } from "@/components/shell/BootChecks";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
+import { SquadOwnerSwitcher, useSquadOwnership } from "@/components/account/SquadOwnerSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
 import { ComputersSettings } from "@/components/settings/ComputersSettings";
 import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
@@ -6098,14 +6099,18 @@ function App() {
     () => buildWorkspaceList({ relayConfig, relayStatus, hostName: runtime?.hostName, copy: localeCopy }),
     [relayConfig, relayStatus, runtime?.hostName, localeCopy]
   );
+  const squadOwnership = useSquadOwnership();
   const workspaceSwitcher = (
-    <WorkspaceSwitcher
-      workspaces={relayWorkspaces}
-      selectedId={workspaceSelection.selectedId}
-      onSelect={(id) => setWorkspaceSelection((current) => selectWorkspace(current, relayWorkspaces, id))}
-      onConnectRelay={() => navigate(`/settings?section=relay`)}
-      copy={localeCopy}
-    />
+    <div className="flex min-w-0 flex-wrap items-center gap-x-1">
+      <SquadOwnerSwitcher context={squadOwnership} />
+      <WorkspaceSwitcher
+        workspaces={relayWorkspaces}
+        selectedId={workspaceSelection.selectedId}
+        onSelect={(id) => setWorkspaceSelection((current) => selectWorkspace(current, relayWorkspaces, id))}
+        onConnectRelay={() => navigate(`/settings?section=relay`)}
+        copy={localeCopy}
+      />
+    </div>
   );
 
   const loadPresence = useCallback(async () => {

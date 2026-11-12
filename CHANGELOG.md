@@ -29,6 +29,7 @@ list to the section for that version.
 - Intel Mac release dry runs now allow up to sixty minutes, matching the release workflow instead of cancelling after thirty-five minutes.
 - Windows release tests find their built process helper when Cargo uses a deeper test-output directory, avoiding a false release failure.
 - Quick Chat loads its members, portraits and harness limits when Squad opens directly on a Settings or conversation page.
+- The personal/team Squad switcher no longer runs across the top of the window under the window controls. It sits quietly in the sidebar beside the workspace switcher, and only appears when you belong to a team as well.
 - Updated the native app and runtime’s TLS dependencies to patched releases, including the runtime’s QUIC transport.
 - Pinned and hidden members keep your choices after reopening Squad, while removed members stay removed.
 - The first Chief of Staff now receives connected fallback engines, and a CLI monthly-quota notice triggers failover instead of appearing as a completed answer.
