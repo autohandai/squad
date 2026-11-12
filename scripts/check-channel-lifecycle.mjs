@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
+import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 
 const bridge = await startBridge();
 const failures = [];
@@ -138,19 +139,29 @@ try {
     await writeFile(path, saved);
     await bridge.restart();
   });
-  if (!process.argv.includes('--api-only')) await check('normal sidebar can create a channel, reopen the dialog and show failed saves', async () => {
+  if (!process.argv.includes('--api-only')) await check('normal sidebar opens inline channel creation, retains failed saves and returns there after deletion', async () => {
     browser = await startBrowser();
-    await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (!localStorage.getItem('reliability.seeded')) { localStorage.setItem('autohandSquad.v1.onboarding', JSON.stringify({version:1,status:'skipped'})); localStorage.setItem('reliability.seeded','true'); }` });
+    await seedOwnedBrowserFixture(bridge, browser, { members: [{ id: 'eva', name: 'Eva', role: 'Reviewer', status: 'online', workspace: process.cwd(), projects: [{ name: 'Squad', path: process.cwd() }], avatar: '/avatars/birds/kiwi.webp' }] });
     await browser.navigate(bridge.origin + '/squad');
     await until(() => browser.evaluate(`!!document.querySelector('button[aria-label="Create channel"]')`), 'sidebar channel creation');
     await browser.click('Create channel');
-    await until(() => browser.evaluate(`!!document.querySelector('#channel-name')`), 'first create dialog');
+    await until(() => browser.evaluate(`!!document.querySelector('#channel-name')`), 'inline channel creation');
+    assert.equal(await browser.evaluate(`!!document.querySelector('[role="dialog"]')`), false, 'channel creation is a page, not a popup');
+    assert.equal(await browser.evaluate(`!!document.querySelector('[aria-label="Include Eva"] img') || !!document.querySelector('[aria-label="Include Eva"] svg')`), true, 'creation shows the current member avatar');
+    await browser.screenshot('.codex-artifacts/reliability/channel-creation-inline.png');
     await browser.fill('#channel-name', 'browser-lifecycle');
+    await browser.click('Include Eva');
+    await browser.click('Private');
+    await browser.evaluate(`document.getElementById('channel-auto-mode').click()`);
     await browser.evaluate(`document.querySelector('#channel-name').form.requestSubmit()`);
     await until(() => browser.evaluate(`location.pathname.startsWith('/channels/') && !document.querySelector('#channel-name')`), 'created channel navigation');
     await until(async () => (await bridge.api('/api/channels')).data.channels.some(channel => channel.name === 'browser-lifecycle'), 'real persisted browser channel');
+    const firstChannel = (await bridge.api('/api/channels')).data.channels.find(channel => channel.name === 'browser-lifecycle');
+    assert.deepEqual(firstChannel.memberIds, ['eva']);
+    assert.equal(firstChannel.visibility, 'private');
+    assert.equal(firstChannel.autoModeDefault, true);
     await browser.click('Create channel');
-    await until(() => browser.evaluate(`!!document.querySelector('#channel-name')`), 'reopened create dialog', 2500);
+    await until(() => browser.evaluate(`!!document.querySelector('#channel-name')`), 'reopened inline creation');
     await browser.fill('#channel-name', 'browser-lifecycle');
     await browser.evaluate(`document.querySelector('#channel-name').form.requestSubmit()`);
     await until(() => browser.evaluate(`!!document.querySelector('[role="alert"]') && !!document.querySelector('#channel-name')`), 'duplicate error with preserved draft');
@@ -169,14 +180,14 @@ try {
     const channel = (await bridge.api('/api/channels')).data.channels.find(item => item.name === 'browser-renamed');
     assert.equal(channel.section, 'Engineering');
     assert.equal(channel.visibility, 'private');
+    const existingProjects = channel.projects.map(project => project.path);
     await browser.evaluate(`[...document.querySelectorAll('button[role="combobox"]')].find(button => button.textContent.includes('Add a known folder')).click()`);
     await until(() => browser.evaluate(`!!document.querySelector('[role="option"]')`), 'known project folders');
     await browser.evaluate(`document.querySelector('[role="option"]').click()`);
-    const configured = await until(async () => (await bridge.api('/api/channels')).data.channels.find(item => item.id === channel.id)?.projects?.length === 1 && (await bridge.api('/api/channels')).data.channels.find(item => item.id === channel.id), 'confirmed project from normal UI');
-    const project = configured.projects[0];
+    const project = await until(async () => (await bridge.api('/api/channels')).data.channels.find(item => item.id === channel.id)?.projects?.find(item => !existingProjects.includes(item.path)), 'confirmed new project from normal UI');
     assert.ok((await bridge.api('/api/workspaces')).data.some(workspace => workspace.path === project.path) || (await bridge.api('/api/runtime')).data.defaultWorkspace === project.path, 'UI project must be a real offered folder');
     await browser.click('Remove ' + project.name);
-    await until(async () => !(await bridge.api('/api/channels')).data.channels.find(item => item.id === channel.id).projects.length, 'confirmed project removal');
+    await until(async () => !(await bridge.api('/api/channels')).data.channels.find(item => item.id === channel.id).projects.some(item => item.path === project.path), 'confirmed project removal');
     await browser.evaluate(`[...document.querySelectorAll('button[role="combobox"]')].find(button => button.textContent.includes('Add a known folder')).click()`);
     await until(() => browser.evaluate(`!!document.querySelector('[role="option"]')`), 'project restoration options');
     await browser.evaluate(`document.querySelector('[role="option"]').click()`);
@@ -184,7 +195,7 @@ try {
     await browser.evaluate(`document.querySelector('main h1').click()`);
     await browser.click('Manage members');
     await until(() => browser.evaluate(`!!document.querySelector('main button[role="checkbox"]')`), 'membership controls');
-    const selectedMember = await browser.evaluate(`(() => { const members = JSON.parse(localStorage.getItem('autohandSquad.v1.agents')); const button = document.querySelector('main button[role="checkbox"]'); return members.find(member => button.textContent.includes(member.name)); })()`);
+    const selectedMember = { id: 'eva', name: 'Eva' };
     assert.ok(selectedMember);
     const toggleMember = () => browser.evaluate(`[...document.querySelectorAll('main button[role="checkbox"]')].find(button => button.textContent.includes(${JSON.stringify(selectedMember.name)})).click()`);
     await toggleMember();
@@ -207,6 +218,10 @@ try {
     await until(() => browser.evaluate(`!!document.querySelector('#channel-details-name')`), 'reopened deletion settings');
     await browser.click('Delete channel'); await browser.click('Delete channel?');
     await until(async () => !(await bridge.api('/api/channels')).data.channels.some(item => item.id === channel.id), 'confirmed normal UI deletion');
+    await until(() => browser.evaluate(`!!document.querySelector('#channel-name') && !document.querySelector('[role="dialog"]')`), 'deleting returns directly to inline channel creation');
+    await browser.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    assert.equal(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth'), true, 'inline creation fits a phone');
+    await browser.screenshot('.codex-artifacts/reliability/channel-creation-mobile.png');
     assert.deepEqual(browser.errors, []);
   });
 } finally { await browser?.close(); await bridge.close(); }
