@@ -10,6 +10,7 @@ import { collectMemories, teamMemoryRecord } from '../memory/collect.mjs';
 import { artifactMemoryRecord } from '../artifacts/service.mjs';
 import { attachmentReferences, ATTACHMENT_COUNT_LIMIT } from '../../src/lib/attachments.js';
 import { normalizeResponder } from '../../src/lib/channel-responders.js';
+import { conversationLifecycle, isGroupChat } from '../../src/lib/group-chats.js';
 import { MAX_INSTRUCTIONS, MAX_TITLE, MAX_RUNS_KEPT, normalizeRun } from '../routines/store.mjs';
 import { strictScheduleInput, validateSchedule } from '../routines/schedule.mjs';
 import { TEAM_MEMORY_LIMIT } from '../team/store.mjs';
@@ -30,6 +31,21 @@ function curation(value) {
   for(const key of ['tags','sharedWith'])if(result[key]!==undefined&&(!Array.isArray(result[key])||result[key].some(item=>typeof item!=='string')))throw fail('A memory tag or sharing list has an incompatible type.');
   if(result.pinned!==undefined&&typeof result.pinned!=='boolean')throw fail('A memory pin has an incompatible type.');
   return result;
+}
+
+// Fresh dataset IDs retire source request replay. Retain the conversation type
+// and local history fences, without importing source receipts as authority.
+function restoredConversationLifecycle(channel) {
+  if (channel.kind !== undefined && !['group','channel'].includes(channel.kind)) throw fail('A conversation has an unsupported kind. Its original backup is unchanged.');
+  const lifecycle = conversationLifecycle({ kind: channel.kind });
+  for (const field of ['groupCreation','groupConversion']) {
+    const receipt = channel[field];
+    if (receipt === undefined) continue;
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) || typeof receipt.requestHash !== 'string' || !/^[a-f0-9]{64}$/.test(receipt.requestHash)) throw fail('A conversation has an incompatible lifecycle receipt.');
+    if (field === 'groupConversion' && (isGroupChat(channel) || typeof receipt.convertedAt !== 'string' || receipt.convertedAt.length > 64 || !Number.isFinite(Date.parse(receipt.convertedAt)))) throw fail('A conversation has an incompatible conversion receipt.');
+    lifecycle[field] = { requestHash: sha(randomUUID()), ...(field === 'groupConversion' ? { convertedAt: receipt.convertedAt } : {}) };
+  }
+  return lifecycle;
 }
 
 function identities(records, prefix) {
@@ -230,7 +246,7 @@ export function planRestore(input, { owner, staged }) {
       file(source.id,ref.id,join(home,'portable-files',sha(ref.id)));portable.agents[id].files.push(ref);
     }
   }
-  const restoredChannels=channels.map(channel=>({...pick(channel,['name','visibility','section','purpose','createdAt','updatedAt','replyMode']),id:channelIds.get(channel.id),memberIds:list(channel.memberIds).map(id=>mapped(memberIds,id)).filter(Boolean),creatorId:mapped(memberIds,channel.creatorId),projects:[],goalSetup:null,autoModeDefault:false,responder:{...normalizeResponder(channel.responder),leadMemberId:mapped(memberIds,channel.responder?.leadMemberId)}}));
+  const restoredChannels=channels.map(channel=>({...pick(channel,['name','visibility','section','purpose','createdAt','updatedAt','replyMode']),...restoredConversationLifecycle(channel),...(isGroupChat(channel)?{visibility:'private'}:{}),id:channelIds.get(channel.id),memberIds:list(channel.memberIds).map(id=>mapped(memberIds,id)).filter(Boolean),creatorId:mapped(memberIds,channel.creatorId),projects:[],goalSetup:null,autoModeDefault:false,responder:{...normalizeResponder(channel.responder),leadMemberId:mapped(memberIds,channel.responder?.leadMemberId)}}));
   const restoredThreads=threads.map(thread=>{
     if(!channelIds.has(thread.channelId))throw fail('A channel thread has no parent channel.');
     return {...pick(thread,['title','createdAt','updatedAt','replyCount']),id:threadIds.get(thread.id),channelId:channelIds.get(thread.channelId),parentMessageId:mapped(channelMessageIds,thread.parentMessageId),creatorId:mapped(memberIds,thread.creatorId),memberIds:list(thread.memberIds).map(id=>mapped(memberIds,id)).filter(Boolean),autoMode:false,selfJudge:false};
