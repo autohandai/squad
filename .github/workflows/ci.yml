@@ -152,6 +152,7 @@ jobs:
         run: |
           bun run check:shell-settings:browser
           bun run check:titlebar:browser
+          bun run check:setup-guide:browser
 
       - name: Check MCP member management in the app
         run: |

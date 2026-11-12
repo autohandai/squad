@@ -35,6 +35,7 @@ export const MANAGEMENT_TOOLS = [
   tool('update_member_profile', 'Change a saved member name, role, responsibilities, personality or operating instructions. Preserves other fields and current work. expected_revision rejects stale edits; changes apply to later turns.', { ...member, ...profileFields }, ['member_id']),
   tool('set_member_memories', 'Replace a member\'s profile memory texts with a revision-checked write (empty clears those texts). Preserves shared/project memory, conversation history and collected files.', { ...member, memories: memoryTexts }, ['member_id', 'memories']),
   tool('set_member_abilities', 'Set specific capability/tool policies to allow, ask or block. Get supported IDs from get_member_profile. Preserves unmentioned policies and workspace overrides. Optional workspace edits that folder\'s override. Does not grant OS permissions or disable safety guards.', { ...member, capabilities: policies, tool_policies: policies, workspace: text(1000) }, ['member_id']),
+  tool('set_member_workspace', 'Replace a saved member primary workspace and complete additional-folder list for future turns. directories must be explicit (empty clears extras). Validates every existing folder before one revision-checked save. Does not create folders, initialize Git, delete files or restart current work. Managed members may only choose folders already assigned to both acting and target members.', { ...member, workspace: text(1000), directories: { type: 'array', maxItems: 49, items: text(1000) } }, ['member_id', 'workspace', 'directories']),
   tool('add_member_directory', 'Grant an existing project folder to a member, equivalent to --add-dir on later turns. Persists the folder on the member, validates its real path, and preserves other folders. Does not restart current work.', { ...member, path: text(1000) }, ['member_id', 'path']),
   tool('remove_member_directory', 'Remove an extra folder grant for later turns. Does not delete files or interrupt current work. The current primary workspace cannot be removed here.', { ...member, path: text(1000) }, ['member_id', 'path']),
   tool('list_skills', 'Discover local and registry skill packages available for a member\'s workspace. Choose package IDs for set_member_skills; offset supports catalog pagination.', { member_id: id(), query: { type: 'string', maxLength: 500 }, offset: { type: 'integer', minimum: 0, maximum: 100000 } }, ['member_id'], true),
@@ -94,6 +95,10 @@ export function createManagementTools(bridge, legacy) {
     },
     update_member_profile: ({ member_id, expected_revision, ...patch }) => patchMember(member_id, patch, expected_revision),
     set_member_abilities: ({ member_id, expected_revision, ...abilities }) => patchMember(member_id, { abilities }, expected_revision),
+    async set_member_workspace({ member_id, workspace, directories, expected_revision }) {
+      const current = await profile(member_id);
+      return bridge.patch(`/api/control-plane/members/${encodeURIComponent(member_id)}/workspace`, { workspace, directories, expectedRevision: expected_revision ?? current.revision });
+    },
     async add_member_directory({ member_id, path, expected_revision }) {
       const current = await profile(member_id);
       return bridge.post(`/api/control-plane/members/${encodeURIComponent(member_id)}/directories`, { operation: 'add', path, expectedRevision: expected_revision ?? current.revision });
@@ -184,7 +189,7 @@ export function createManagementTools(bridge, legacy) {
   };
 }
 
-export const MEMBER_MANAGEMENT_NAMES = Object.freeze(['create_member', 'get_member_profile', 'update_member_profile', 'list_skills', 'set_member_skills', 'set_member_memories', 'list_routines', 'create_routine', 'update_routine']);
+export const MEMBER_MANAGEMENT_NAMES = Object.freeze(['create_member', 'get_member_profile', 'update_member_profile', 'set_member_workspace', 'list_skills', 'set_member_skills', 'set_member_memories', 'list_routines', 'create_routine', 'update_routine']);
 export const GROUP_MANAGEMENT_NAMES = Object.freeze(['list_group_chats', 'get_group_chat', 'create_group_chat', 'convert_group_chat', 'delete_group_chat']);
 export const MANAGED_MANAGEMENT_NAMES = Object.freeze([...MEMBER_MANAGEMENT_NAMES, ...GROUP_MANAGEMENT_NAMES]);
 export const MANAGED_MANAGEMENT_TOOLS = MANAGEMENT_TOOLS.filter(tool => MANAGED_MANAGEMENT_NAMES.includes(tool.name)).map(tool => ({ ...tool, name: `squad_${tool.name}`, description: `${tool.description} Uses this member's saved management permission; ask mode needs the person's bounded confirmation in Squad.` }));

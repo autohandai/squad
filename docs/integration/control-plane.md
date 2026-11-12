@@ -121,6 +121,7 @@ operator connection.
 | `set_member_memories` | `member_id`, `memories`, `expected_revision?` | Replace only profile memory texts (empty clears); preserve other memory scopes and files. |
 | `update_member_profile` | `member_id`, `expected_revision?`, `name?`, `role?`, `description?`, `instructions?`, `personality?` | Patch the canonical profile; stale revisions return 409. |
 | `set_member_abilities` | `member_id`, `expected_revision?`, `capabilities?`, `tool_policies?`, `workspace?` | Patch specific `{id, mode}` policies (`allow`, `ask`, `block`), optionally in a workspace override. Other policies and safety guards are preserved. |
+| `set_member_workspace` | `member_id`, `workspace`, `directories`, `expected_revision?` | Replace the saved primary and complete additional-folder list together. Explicit `[]` clears extras; every folder must already exist. Revision-checked, no folder creation, Git initialization or file deletion. Use the member’s execution computer. |
 | `add_member_directory` / `remove_member_directory` | `member_id`, `path`, `expected_revision?` | Grant/revoke an extra project folder for later turns. Existing folders inside the physical home only; no deleting files or removing the primary workspace. |
 | `list_skills` | `member_id`, `query?`, `offset?` | Discover local and registry packages for the saved workspace, including qualified IDs. |
 | `set_member_skills` | `member_id`, `skill_ids`, `expected_revision?` | Replace selections; empty clears. Existing engine preparation installs/pins them on the next turn. |
@@ -286,7 +287,7 @@ pinned YAML/Zod dependencies. See [portable backups](backups.md).
 
 ## Member management contract v2
 
-Both MCP initialize responses report server version `2.3.0`. This versions the
+Both MCP initialize responses report server version `2.4.0`. This versions the
 tool contract independently of the app release and portable backup schema.
 Clients receive this value as `serverInfo.version` on every new connection;
 `protocolVersion` separately identifies the negotiated MCP wire protocol.
@@ -364,3 +365,30 @@ automatic fallback is available; creation never installs or signs into one.
 `get_member_profile` and creation receipts expose `harness` and `modelRouting`.
 Users can edit/remove the saved choices in the app's Model settings. Replay
 returns the saved routing and never recomputes it after discovery changes.
+
+## Work-folder replacement (contract 2.4)
+
+`set_member_workspace` and managed `squad_set_member_workspace` share
+`PATCH /api/control-plane/members/:id/workspace` with
+`{ workspace, directories, expectedRevision }`. `directories` is required and
+is the complete additional-folder list, not a delta. Use add/remove directory
+for a single operator grant change. The app's setup guide uses this same edit.
+
+The primary comes from the saved member, not its most recent ad-hoc run. All
+paths are validated before one profile revision changes. Existing files and
+other profile fields remain intact; active work keeps its captured context and
+later work uses the saved folders. A missing folder is refused before any
+creation helper runs. The existing default-folder endpoint separately requires
+explicit person-owned consent.
+
+Choose the member's execution computer: a remotely assigned member is refused
+here rather than given a path on the wrong machine. Registry errors do not
+silently turn it into local execution. Managed members also require their
+saved Ask/Allow/Block policy, and every requested folder must already be assigned
+to both the acting and target members, even after Allow once or in Allow mode. Broader folder
+grants belong to the person's operator connection or app.
+
+A stale `expected_revision` returns 409. After a lost acknowledgement, read the
+profile and compare it before proposing another write; do not silently replace
+the expected revision and overwrite an intervening edit. Older window snapshots
+cannot restore an earlier primary folder or revoke the saved folder list.

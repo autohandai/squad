@@ -49,9 +49,19 @@ export function createSquadManagement({ actions, request, askPerson, timeoutMs =
           target = (await actions().memberAccess(routine.memberId))?.agent;
         }
         const folders = [...(target?.projects || []).map(project => project.path), target?.workspace].filter(Boolean);
-        const requested = await realpath(value.workspace);
+        const requestedFolders = path.endsWith('/workspace') && Array.isArray(value.directories)
+          ? [value.workspace, ...value.directories] : [value.workspace];
         const permitted = await Promise.all(folders.map(folder => realpath(folder).catch(() => '')));
-        if (!permitted.includes(requested)) throw refused('Choose a folder already assigned to the member; management does not grant a new folder.');
+        const requested = await Promise.all(requestedFolders.map(folder => realpath(folder)));
+        if (requested.some(folder => !permitted.includes(folder))) throw refused('Choose folders already assigned to the acting member; management does not grant a new folder.');
+        if (path.endsWith('/workspace')) {
+          const targetId = decodeURIComponent(path.split('/')[4]);
+          const targetAccess = await actions().memberAccess(targetId);
+          if (!targetAccess?.agent || targetAccess.removed) throw refused('The target member is no longer available.');
+          const targetFolders = [...(targetAccess.agent.projects || []).map(project => project.path), targetAccess.agent.workspace].filter(Boolean);
+          const granted = await Promise.all(targetFolders.map(folder => realpath(folder).catch(() => '')));
+          if (requested.some(folder => !granted.includes(folder))) throw refused('Choose folders already assigned to the target member. Broader folder grants require the person’s operator connection or app.');
+        }
       }
       const latest = await actor();
       if (latest.policy !== 'allow' && !approved) throw refused('Permissions changed; ask the person before retrying.');

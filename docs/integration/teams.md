@@ -216,7 +216,7 @@ that is not ready, or from the bridge step when every member is.
 ## Direct member management through managed MCP
 
 The agent-facing server and operator server advertise contract version
-`2.3.0`. Existing self-profile, shared/private/project memory and scheduling
+`2.4.0`. Existing self-profile, shared/private/project memory and scheduling
 tools remain available. Agents can additionally call:
 
 | Tool | Purpose |
@@ -224,6 +224,7 @@ tools remain available. Agents can additionally call:
 | `squad_create_member` | Save an owned member with a stable creation request ID, profile, selected skill packages and initial profile memories. |
 | `squad_get_member_profile` | Read a target member’s saved fields and revision. |
 | `squad_update_member_profile` | Patch name, role, description/responsibilities, instructions and personality. |
+| `squad_set_member_workspace` | Replace a saved member’s primary and explicit additional-folder list for future work. Every folder must already be assigned to both actor and target; needs saved management consent. |
 | `squad_list_skills` | Discover catalog skill package IDs for the target’s workspace before assignment. |
 | `squad_set_member_skills` | Assign validated catalog package IDs. |
 | `squad_set_member_memories` | Replace profile memory texts, preserving other memory scopes and files. |
