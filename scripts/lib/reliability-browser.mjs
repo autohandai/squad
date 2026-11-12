@@ -47,6 +47,11 @@ export async function stop(child) {
 export async function startBridge({ signedIn = true, prepare, cwd = process.cwd(), development = true, liveIdentity = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'squad-reliability-'));
   let child, ownership, logs = '';
+  const cleanup = async () => {
+    try { await stop(child); } finally {
+      try { await ownership?.close(); } finally { await rm(directory, { recursive: true, force: true }); }
+    }
+  };
   try {
     const port = await freePort();
     let hmrPort = await freePort();
@@ -82,11 +87,9 @@ export async function startBridge({ signedIn = true, prepare, cwd = process.cwd(
       if((await api('/api/ownership/context')).data.state==='ready')await until(async () => (await api('/api/runtime')).success, 'isolated bridge start', 60000);
     };
     await start();
-    return { directory, origin, api, headers, get dataRoot(){return ownership.paths.dataRoot;},get appRoot(){return ownership.paths.appRoot;},get workspaceRoot(){return ownership.paths.workspaceRoot;}, get logs() { return logs; }, restart: async () => { await stop(child); await start(); }, close: async () => { await stop(child); await ownership.close();await rm(directory, { recursive: true, force: true }); } };
+    return { directory, origin, api, headers, get dataRoot(){return ownership.paths.dataRoot;},get appRoot(){return ownership.paths.appRoot;},get workspaceRoot(){return ownership.paths.workspaceRoot;}, get logs() { return logs; }, restart: async () => { await stop(child); await start(); }, close: cleanup };
   } catch (error) {
-    try { await stop(child); } finally {
-      try { await ownership?.close(); } finally { await rm(directory, { recursive: true, force: true }); }
-    }
+    await cleanup();
     throw new Error(`${error.message}\n${logs}`, { cause: error });
   }
 }

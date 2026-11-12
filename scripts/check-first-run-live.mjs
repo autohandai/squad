@@ -496,4 +496,4 @@ try {
     await writeFile(join(evidenceDir, 'failure-bridge.json'), JSON.stringify({ at: new Date().toISOString(), runs: details, queues, sessions }, null, 2));
   } catch (dumpError) { log(`could not save the bridge state: ${dumpError.message}`); }
   throw error;
-} finally { await browser?.close(); await bridge.close(); }
+} finally { try { await browser?.close(); } finally { await bridge.close(); } }
