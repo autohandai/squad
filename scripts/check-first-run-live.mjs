@@ -20,6 +20,8 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
+import { replyFailure } from '../server/sdk-events.mjs';
+import { parseCodexConfig } from '../server/harness/codex.mjs';
 
 const source = process.env.SQUAD_LIVE_CONFIG || process.env.AUTOHAND_USER_CONFIG_PATH || join(process.env.AUTOHAND_HOME || join(homedir(), '.autohand'), 'config.json');
 const original = JSON.parse(await readFile(source, 'utf8'));
@@ -43,12 +45,18 @@ const log = message => console.log(`${new Date().toISOString().slice(11, 19)} ${
 
 // The bridge sees only the account/provider part of the person's config, plus
 // a permissions block that must NOT reach the member (ADR-0161 §1.1).
-const bridge = await startBridge({ ...(runtimeDir ? { cwd: resolve(runtimeDir), development: false } : {}), prepare: async directory => {
+const bridge = await startBridge({ liveIdentity: true, ...(runtimeDir ? { cwd: resolve(runtimeDir), development: false } : {}), prepare: async directory => {
   const config = Object.fromEntries(['provider', 'auth', 'autohandai', 'openrouter', 'openai', 'ollama', 'llmgateway', 'bedrock', 'deepseek', 'zai', 'nvidia', 'cerebras'].filter(key => original[key] !== undefined).map(key => [key, original[key]]));
   config.mcp = { servers: [] }; config.hooks = {};
   config.permissions = { allowList: ['write_file:/tmp/*', 'run_command:rm -rf /tmp/anything'], denyList: [] };
   await writeFile(join(directory, 'config.json'), JSON.stringify(config), { mode: 0o600 });
-  return { AUTOHAND_AGENT_SDK_ENTRY: '', AUTOHAND_AGENT_SDK_DIR: '' };
+  const codexHome = join(directory, 'codex'); await mkdir(codexHome, { mode: 0o700 });
+  const originalCodex = process.env.CODEX_HOME || join(homedir(), '.codex');
+  const auth = await readFile(join(originalCodex, 'auth.json')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (auth) await writeFile(join(codexHome, 'auth.json'), auth, { mode: 0o600 });
+  const defaults = parseCodexConfig(await readFile(join(originalCodex, 'config.toml'), 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; }));
+  await writeFile(join(codexHome, 'config.toml'), `${defaults.model ? `model = ${JSON.stringify(defaults.model)}\n` : ''}${defaults.effort ? `model_reasoning_effort = ${JSON.stringify(defaults.effort)}\n` : ''}`, { mode: 0o600 });
+  return { AUTOHAND_AGENT_SDK_ENTRY: '', AUTOHAND_AGENT_SDK_DIR: '', CODEX_HOME: codexHome };
 } });
 let browser;
 const phoneRun = process.argv.includes('--phone');
@@ -139,9 +147,9 @@ async function sendAnswering(prompt, label, choice = 'Allow for this reply', tim
   const ticker = setInterval(() => log(`waiting: ${label}`), 30000);
   const answered = [];
   try {
-    return await until(async () => {
+    const completed = await until(async () => {
       const turn = (await turns())[before];
-      if (turn?.error || turn?.captureError) throw new Error(JSON.stringify(turn.error || turn.captureError));
+      if (turn?.error || turn?.captureError) return { walkthroughError: JSON.stringify(turn.error || turn.captureError) };
       if (turn?.result) return { ...turn, answered };
       if (turn?.queued?.item?.id) {
         clearInterval(ticker);
@@ -166,6 +174,10 @@ async function sendAnswering(prompt, label, choice = 'Allow for this reply', tim
       }
       return false;
     }, label, timeout);
+    if (completed.walkthroughError) throw new Error(completed.walkthroughError);
+    const failure = replyFailure([], completed.result?.reply);
+    if (failure) throw new Error(`Provider did not answer: ${failure.message.split('\n')[0]}`);
+    return completed;
   } finally { clearInterval(ticker); }
 }
 async function openChat(memberId) {
@@ -214,11 +226,13 @@ try {
   await shot('01-first-run');
   await browser.click('Start with Chief of Staff');
   await until(() => browser.evaluate(`location.pathname === '/channels/channel_general'`), 'coordinator provisioned', 120000);
-  const onboarding = await browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.onboarding'))`);
+  const onboarding = (await bridge.api('/api/setup')).data;
   const id = onboarding.memberId;
   const roster = await members();
   assert.equal(roster.length, 1, 'one Chief of Staff and nothing else');
-  const memberConfig = JSON.parse(await readFile(join(bridge.directory, 'app', 'agents', id, 'config.json'), 'utf8'));
+  const configReceipt = await bridge.api(`/api/members/${encodeURIComponent(id)}/runtime-permissions`);
+  assert.equal(configReceipt.success, true, 'the selected owner has a saved member config');
+  const memberConfig = configReceipt.data;
   // §1.1 a new member does not inherit the person's approvals.
   assert.deepEqual(memberConfig.permissions.allowList || [], [], 'the member config carries none of the person\'s allowList grants');
   // §1.2 the team tools are reachable with Built-in tool rules on.
@@ -237,7 +251,7 @@ try {
   await until(() => browser.evaluate(`!!document.querySelector('main textarea')`), 'coordinator conversation', 30000);
   const review = await send('As a Chief of Staff, what would you take ownership of in pie-shop? Start with what worries you most.', 'first review');
   assert.ok(review.result.reply.length > 200, 'a real review came back');
-  observations.push({ step: 'review', durationMs: review.result.durationMs, model: review.result.effectiveModel, replyPreview: review.result.reply.slice(0, 600), ...toolSummary(review) });
+  observations.push({ step: 'review', durationMs: review.result.durationMs, model: review.result.effectiveModel, routing: review.result.routing, replyPreview: review.result.reply.slice(0, 600), ...toolSummary(review) });
   await shot('02-review');
   await save({ status: 'in progress' });
   log('PASS the first review answered');
@@ -275,12 +289,17 @@ try {
   // 4. A file write approved from the chat card (Interactive mode, write_file asks).
   await browser.navigate(bridge.origin + '/conversations/new?member=' + encodeURIComponent(id));
   await until(() => browser.evaluate(`!!document.querySelector('main textarea')`), 'coordinator conversation again', 30000);
+  await awaitIdle(id, 'write approval rehearsal');
   const before = await submit('Create the file docs/plan.md in this repository with a short build plan for the pie shop website: sections Pages, Stack and First tasks, about 20 lines. Write the file now with your file tool; do not ask me where to put it.', 'write request');
-  await until(async () => {
+  const approval = await until(async () => {
     const turn = (await turns())[before];
-    if (turn?.result || turn?.error) throw new Error(`the turn ended before any permission card: ${JSON.stringify(turn.error || toolSummary(turn))} ${String(turn.result?.reply || '').slice(0, 300)}`);
-    return browser.evaluate(`!!document.querySelector('[data-testid="permission-request"]')`);
+    if (turn?.result || turn?.error || turn?.captureError) return { ended: turn };
+    return await browser.evaluate(`!!document.querySelector('[data-testid="permission-request"]')`) ? { requested: true } : false;
   }, 'permission card for the write', 300000);
+  if (approval.ended) {
+    const turn = approval.ended;
+    throw new Error(`No Autohand permission card was exercised; the turn ended via ${turn.result?.harness || 'unknown engine'}: ${JSON.stringify(turn.error || turn.captureError || toolSummary(turn))}`);
+  }
   const asked = await browser.evaluate(`document.querySelector('[data-testid="permission-request"]')?.textContent`);
   await shot('04-permission-card');
   await browser.click('Allow once');
@@ -477,4 +496,4 @@ try {
     await writeFile(join(evidenceDir, 'failure-bridge.json'), JSON.stringify({ at: new Date().toISOString(), runs: details, queues, sessions }, null, 2));
   } catch (dumpError) { log(`could not save the bridge state: ${dumpError.message}`); }
   throw error;
-} finally { await browser?.close(); await bridge.close(); }
+} finally { try { await browser?.close(); } finally { await bridge.close(); } }

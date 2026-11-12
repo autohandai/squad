@@ -25,6 +25,17 @@ assert.deepEqual(initialMemberExecution([]).modelRouting.fallbacks, [], 'no conn
 // defaults and authentication without a vendor request or real credentials.
 const bridge = await startBridge({ development: false, prepare: prepareModelRoutingFixture });
 try {
+  const firstInstall = await bridge.api('/api/setup/complete', 'POST', { paths: [process.cwd()] });
+  assert.equal(firstInstall.success, true, firstInstall.error);
+  const coordinator = firstInstall.data.member;
+  assert.equal(coordinator.harness.id, 'autohand', 'first install retains its advertised primary');
+  assert(coordinator.modelRouting.fallbacks.some(route => route.harness.id === 'codex'), 'first install saves connected failovers through the owned HTTP boundary');
+  const coordinatorAccess = (await bridge.api('/api/channels')).data.agentChannelAccess[coordinator.id].agent;
+  const noCoordinatorFallbacks = { version: 1, fallbacks: [], allowAgentChanges: false };
+  const editedCoordinator = await bridge.api(`/api/members/${coordinator.id}/channel-access`, 'PUT', { agent: coordinatorAccess, profilePatch: { modelRouting: noCoordinatorFallbacks }, expectedProfileRevision: coordinatorAccess.profileRevision });
+  assert.equal(editedCoordinator.success, true, editedCoordinator.error);
+  const setupReplay = await bridge.api('/api/setup/complete', 'POST', { paths: [] });
+  assert.deepEqual(setupReplay.data.member.modelRouting, noCoordinatorFallbacks, 'setup replay preserves the person’s cleared fallback chain');
   const tools = () => createTools(createBridgeClient(bridge.origin));
   const created = await tools().create_member({ request_id: 'automatic-routing', name: 'Tatiana', role: 'Engineer', engine: 'codex' });
   let profile = await tools().get_member_profile({ member_id: created.id });

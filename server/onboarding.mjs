@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { readPersistentJson, writePersistentJson } from './persistent-json.mjs';
 import { profileWorkspace } from './workspace-profile.mjs';
 import { chiefOfStaffMember, GENERAL_CHANNEL_ID, recommendTeammates } from '../src/lib/first-run.js';
+import { initialMemberExecution } from '../src/lib/model-routing.js';
 
 const problem = (message, status = 400) => Object.assign(new Error(message), { status });
 
@@ -61,7 +62,12 @@ export function createOnboarding(ctx, { profile = profileWorkspace } = {}) {
     const projectPaths = plan.repositories.map(item => item.path);
     const projectsChanged = member && JSON.stringify((member.projects || []).map(item => item.path)) !== JSON.stringify(projectPaths);
     if (!member || projectsChanged) {
-      member = member ? { ...member, workspace: projectPaths[0], projects: plan.repositories.map(profile => ({ path: profile.path, name: profile.name, profile })) } : chiefOfStaffMember(receipt.memberId, plan.repositories);
+      if (member) member = { ...member, workspace: projectPaths[0], projects: plan.repositories.map(profile => ({ path: profile.path, name: profile.name, profile })) };
+      else {
+        member = chiefOfStaffMember(receipt.memberId, plan.repositories);
+        const execution = initialMemberExecution(await ctx.memberHarnesses(), { harness: member.harness });
+        member = { ...member, ...execution };
+      }
       const profile = `Name: ${member.name}\nRole: ${member.role}\n${member.instructions}`;
       const prepared = await ctx.provisionAgent({ agentId: member.id, agent: member, profile }, member.workspace);
       member = { ...member, profileDocs: prepared.profileDocs, skillInstall: prepared.skillInstall };

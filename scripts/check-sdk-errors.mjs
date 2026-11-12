@@ -13,6 +13,12 @@ import assert from "node:assert/strict";
 
 import { firstSdkError, replyFailure, SDK_ERROR_EVENT_TYPES } from "../server/sdk-events.mjs";
 
+const quotaNotice = "⚠️ Autohand AI monthly request quota reached.\nYou've used all your requests for this month.\nResets Dec 9, 2026 at 9:00 AM (Pacific/Auckland) · in 26d 5h 9m.\nUpgrade your Autohand Code plan for more usage: https://console.autohand.ai/upgrade/?from=cli&tier=lite";
+assert.equal(replyFailure([{ type: 'message_end', content: quotaNotice }], quotaNotice)?.code, 429, 'the actual CLI quota notice is a provider failure, not an answer');
+for (const answer of ['The monthly request quota reached its limit in this example.', `Here is the error we are discussing:\n${quotaNotice}`, `\`\`\`\n${quotaNotice}\n\`\`\``]) {
+  assert.equal(replyFailure([], answer), null, 'ordinary answers quoting quota errors remain answers');
+}
+
 // The three shapes the SDK actually declares, from its own type definitions.
 const providerError = { type: "error", code: 400, message: "This message was blocked by Autohand's safety check. Rephrase it and try again.", recoverable: false, timestamp: "t" };
 const sessionError = { type: "hook_session_error", error: "Request payload too large (16.44MB).", code: "PAYLOAD", timestamp: "t" };

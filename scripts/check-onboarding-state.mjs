@@ -13,6 +13,7 @@ try {
     squadStateDir: directory,
     cleanWorkspace: async path=>path,
     getRuntime: ()=>({available:true,account:{signedIn:true},limits:{maxProjectsPerMember:3}}),
+    memberHarnesses: async()=>[{id:'autohand',status:'ready',isDefault:true},{id:'codex',status:'ready',defaults:{model:'connected-default',effort:'high'}}],
     readChannelsState: async()=>structuredClone(state),
     readOptionalJsonFile: async()=>null,
     provisionAgent: async ({agent})=>{calls++;if(failProvision){failProvision=false;throw new Error('fixture provision failed');}return {profileDocs:{files:[]},skillInstall:{installed:[],failed:[]}};},
@@ -42,6 +43,8 @@ try {
   assert.equal(state.agentChannelAccess[id].agent.name,'My coordinator');
   assert.deepEqual(state.agentChannelAccess[id].agent.memory,['An authored preference']);
   assert.equal(state.agentChannelAccess[id].agent.projects.length,2,'changed selection during retry is applied');
+  assert.equal(state.agentChannelAccess[id].agent.harness.id,'autohand','first install keeps its advertised primary');
+  assert.equal(state.agentChannelAccess[id].agent.modelRouting.fallbacks[0].harness.id,'codex','the first coordinator also receives connected failovers');
   assert.equal(calls,3,'one failed provision, one prepared member, one explicit project change');
   state.agentChannelAccess[id].removed=true;state.channels=[];state.deletedChannelIds=['channel_general'];
   assert.equal((await setup.complete([])).member,null);

@@ -15,7 +15,7 @@
   "type": "module",
   "engines": { "node": "^22.13.0 || >=24.0.0" },
   "autohand": {
-    "cliVersion": "0.9.9",
+    "cliVersion": "0.9.11",
     "cliRepository": "autohandai/code-cli"
   },
   "scripts": {
@@ -124,7 +124,7 @@
     "check:execution-panel:browser": "node scripts/check-execution-panel-browser.mjs",
     "check:inbox:browser": "node scripts/check-inbox-browser.mjs",
     "check:runtime": "cd daemon && cargo fmt -- --check && cargo test -j1 -- --test-threads=1 && cargo build --bins -j1",
-    "check:release": "node scripts/check-release-workflows.mjs",
+    "check:release": "node scripts/check-release-workflows.mjs && node scripts/check-reliability-fixture.mjs",
     "check:usage-and-system": "node scripts/check-usage-and-system.mjs",
     "check:setup-guide:browser": "playwright test --config playwright.setup-guide.config.mjs",
     "check:titlebar:browser": "playwright test --config playwright.titlebar.config.mjs",

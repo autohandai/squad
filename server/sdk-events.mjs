@@ -50,12 +50,20 @@ function contextOverflow(events) {
  * Given a finished turn's events and the text extracted from it, the failure
  * to raise instead of falling back to "no chat text" — or null.
  *
- * Text present always wins. A member that answered has answered, and replacing
+ * Answer text wins, except for a recognized CLI-generated provider notice.
+ * A member that answered has answered, and replacing
  * its words with an error because something recoverable happened on the way
  * would lose the only thing the user asked for.
  */
 export function replyFailure(events, reply) {
-  if (String(reply || "").trim()) return null;
+  const text = String(reply || '').trim().replace(/\r\n/g, '\n');
+  // CLI 0.9.11 emits this entire quota notice as message_end, with exit 0 and
+  // no typed error. Match its complete wrapper, never arbitrary quota words
+  // in an answer, a quoted log or a completed piece of work.
+  if (/^(?:⚠\uFE0F?\s*)?Autohand AI monthly request quota reached\.\nYou've used all your requests for this month\.\nResets [^\n]+\nUpgrade your Autohand Code plan for more usage: https:\/\/console\.autohand\.ai\/upgrade\/\?from=cli&tier=[a-z0-9_-]+$/i.test(text)) {
+    return { type: 'provider_quota_notice', message: text, code: 429, recoverable: true };
+  }
+  if (text) return null;
 
   const failure = firstSdkError(events);
   if (failure) return failure;
