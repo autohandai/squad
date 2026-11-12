@@ -80,3 +80,9 @@ hide/show recovery, inline New message navigation,
 switching back to workspace navigation, readable bubbles and
 viewport containment. Desktop light/dark screenshots and a phone drawer/chat
 capture are reviewed separately from native, installed-app and release proof.
+
+The previous Web job (CI run 43244347414) took 14m7s against its 15-minute
+limit. In run 43252848889, the account/Settings step with the added Grut cases
+took 2m3s, versus 55s previously. That additional coverage consumes the old
+margin before later checks run. Give Web checks 20 minutes while retaining all
+steps; do not weaken the acceptance checks to fit the earlier time budget.
