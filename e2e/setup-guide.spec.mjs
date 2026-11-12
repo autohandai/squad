@@ -160,7 +160,7 @@ test('an earlier save receipt cannot replace a newer streamed workspace', async 
     });
     expect(changed.success, changed.error).toBe(true);
     // This proves the newer revision has reached React before the old reply.
-    await expect(page.getByRole('combobox')).toContainText('Eva updated elsewhere', { timeout: 20000 });
+    await expect(page.getByTestId('first-run').getByRole('combobox')).toContainText('Eva updated elsewhere', { timeout: 20000 });
   } finally { releaseSave(); }
   await expect(page).toHaveURL(bridge.origin + '/squad');
   await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
