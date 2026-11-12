@@ -1,12 +1,13 @@
 import { ownedLocalStorage } from "@/lib/owned-storage";
 import { useEffect, useMemo, useState } from "react";
-import { Bot, Brain, CheckCheck, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Pencil, Plus, Search } from "lucide-react";
+import { Bot, Brain, CheckCheck, ChevronDown, ChevronRight, Hash, Inbox, Lock, PanelLeft, Pencil, Plus, Search, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CreateMenu } from "@/components/teams/CreateMenu";
 import { cn } from "@/lib/utils";
+import { isGroupChat } from "@/lib/group-chats";
 
 export const DEFAULT_CHANNEL_SECTION = "Channels";
 
@@ -139,12 +140,14 @@ export function WorkspaceSidebar({
   const sections = useMemo(() => {
     const groups = new Map();
     for (const channel of channels) {
+      if (isGroupChat(channel)) continue;
       const name = sectionOf(channel);
       if (!groups.has(name)) groups.set(name, []);
       groups.get(name).push(channel);
     }
     return Array.from(groups.entries());
   }, [channels]);
+  const groupChats = channels.filter(isGroupChat);
   // Which sections are folded is remembered: it reset on every reload.
   const [collapsedSections, setCollapsedSections] = useState(() => readFolds().sections || {});
   const [dmsExpanded, setDmsExpanded] = useState(() => readFolds().dms !== false);
@@ -284,7 +287,7 @@ export function WorkspaceSidebar({
           onToggle={() => setDmsExpanded((open) => !open)}
           hiddenUnread={visibleAgents.filter((agent) => (unreadCountByAgent.get(agent.id) || 0) > 0).length}
           action={
-            onNavigate.createTeam || onNavigate.templates ? (
+            onNavigate.newMessage ? <Button variant="ghost" size="icon-sm" className="size-6" aria-label="New message" onClick={onNavigate.newMessage}><Plus className="size-3.5" /></Button> : onNavigate.createTeam || onNavigate.templates ? (
               // The same plus, now a short menu: Chat with a new member (ADR-0126),
               // New member, New team…, Templates… (ADR-0118).
               <CreateMenu
@@ -308,6 +311,12 @@ export function WorkspaceSidebar({
         />
         {dmsExpanded ? (
           <div className="mt-0.5 flex flex-col gap-0.5">
+            {groupChats.map(group => {
+              const activeGroup = active.kind === "channel" && active.id === group.id;
+              const unread = unreadChannelIds.has(group.id);
+              const members = visibleAgents.filter(agent => group.memberIds.includes(agent.id)).slice(0, 2);
+              return <NavRow key={group.id} label={group.name} ariaLabel={`Group chat: ${group.name}`} active={activeGroup} unread={unread} onClick={() => onNavigate.channel?.(group.id)} icon={members.length && renderAvatar ? null : Users} avatar={members.length && renderAvatar ? <span className="flex -space-x-2">{members.map(agent => <span key={agent.id}>{renderAvatar(agent, "size-4 rounded-sm ring-1 ring-card")}</span>)}</span> : null} trailing={<UnreadDot active={unread && !activeGroup} />} />;
+            })}
             {visibleAgents.length === 0 ? (
               <p className="px-2 py-1 text-xs text-muted-foreground">{copy.noMembersYet || "No members yet."}</p>
             ) : (

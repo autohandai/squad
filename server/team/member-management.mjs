@@ -1,16 +1,16 @@
 import { realpath } from 'node:fs/promises';
-import { createManagementTools, MEMBER_MANAGEMENT_NAMES } from '../control-plane/management.mjs';
+import { createManagementTools, MANAGED_MANAGEMENT_NAMES } from '../control-plane/management.mjs';
 import { DEFAULT_BUILT_IN_TOOL_POLICIES } from '../../src/lib/permission-policy.js';
 
 const refused = message => Object.assign(new Error(message), { status: 403 });
 
 // Both MCP surfaces use the same operator routes. This adapter adds the
 // executing member's current policy and bounded, operation-specific consent.
-export function createMemberManagement({ actions, request, askPerson, timeoutMs = 24_000 }) {
+export function createSquadManagement({ actions, request, askPerson, timeoutMs = 24_000 }) {
   return async (toolName, input, session, assertCurrent) => {
     const signal = AbortSignal.timeout(timeoutMs);
     const name = toolName.replace(/^squad_/, '');
-    if (!MEMBER_MANAGEMENT_NAMES.includes(name)) throw refused('Unsupported member-management tool.');
+    if (!MANAGED_MANAGEMENT_NAMES.includes(name)) throw refused('Unsupported Squad-management tool.');
     const args = structuredClone(input);
     let approved = false;
     async function actor() {
@@ -34,6 +34,11 @@ export function createMemberManagement({ actions, request, askPerson, timeoutMs 
       approved = true;
     }
     async function checked(path, method = 'GET', value) {
+      if (path.startsWith('/api/group-chats')) {
+        const scoped = new URL(path, 'http://localhost');
+        scoped.searchParams.set('actor_id', session.memberId);
+        path = scoped.pathname + scoped.search;
+      }
       const current = await actor();
       if (current.policy !== 'allow' && !approved) throw refused('Permissions changed; ask the person before retrying.');
       if (method !== 'GET' && value?.workspace) {
@@ -61,7 +66,8 @@ export function createMemberManagement({ actions, request, askPerson, timeoutMs 
       const folders = [initial.agent.workspace, ...(initial.agent.projects || []).map(project => project.path)].filter(Boolean);
       args.workspace ??= folders.includes(session.workspace) ? session.workspace : folders[0] || '';
     }
-    const tools = createManagementTools({ get: path => checked(path), post: (path, value) => checked(path, 'POST', value), patch: (path, value) => checked(path, 'PATCH', value) });
+    if (name === 'create_group_chat' && args.request_id) args.request_id = `${session.memberId}:${args.request_id}`;
+    const tools = createManagementTools({ get: path => checked(path), post: (path, value) => checked(path, 'POST', value), patch: (path, value) => checked(path, 'PATCH', value), delete: path => checked(path, 'DELETE') });
     return tools[name](args);
   };
 }

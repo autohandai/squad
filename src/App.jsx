@@ -15,6 +15,9 @@ import { ArtifactCard, ArtifactPreviewController } from "@/components/artifacts/
 import { MemberLibrary } from "@/components/artifacts/MemberLibrary";
 import { FirstRun } from "@/components/onboarding/FirstRun";
 import { ChannelDetailsSettings } from "@/components/channels/ChannelDetailsSettings";
+import { GroupConversionSettings } from "@/components/channels/GroupConversionSettings";
+import { ConversationComposer } from "@/components/chat/ConversationComposer";
+import { conversationLifecycle, isGroupChat } from "@/lib/group-chats";
 import { AnsweredByTag } from "@/components/channels/ResponderSettings";
 import { mentionTokens, needsResponderPick, normalizeResponder, resolveResponderRecipients, responderTargetHint } from "@/lib/channel-responders";
 import { normalizeChannelReplyMode } from "@/lib/channel-replies";
@@ -3179,6 +3182,7 @@ function normalizeChannelCopy(channel) {
   return {
     id,
     name: name.slice(0, 80),
+    ...conversationLifecycle(channel),
     visibility: channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? CHANNEL_VISIBILITY_PRIVATE : CHANNEL_VISIBILITY_PUBLIC,
     memberIds,
     projects: normalizeChannelProjects(channel.projects),
@@ -7827,6 +7831,30 @@ function App() {
     } catch (error) { setChannelOperationError(`Channel changes could not be saved: ${clause(error.message)}. Try the action again.`); return null; }
   }
 
+  async function startConversation({ memberIds, newMember, name, requestId }) {
+    if (newMember) {
+      const saved = await api("/api/control-plane/members", { method: "POST", body: JSON.stringify({ ...newMember, request_id: requestId }) });
+      const state = await api("/api/channels");
+      const agent = state.agentChannelAccess?.[saved.id]?.agent;
+      if (!agent) throw new Error("Your member was saved. Reopen Squad to load their profile.");
+      setAgents(current => current.some(item => item.id === agent.id) ? current.map(item => item.id === agent.id ? agent : item) : [...current, agent]);
+      navigate(memberChatPath(agent.id));
+    } else if (memberIds.length === 1) {
+      navigate(memberChatPath(memberIds[0]));
+    } else {
+      const group = normalizeChannelCopy(await api("/api/group-chats", { method: "POST", body: JSON.stringify({ name, memberIds, requestId }) }));
+      setChannels(current => [...current.filter(item => item.id !== group.id), group]);
+      navigate(channelsPath(group.id));
+    }
+  }
+
+  async function convertGroupChat(groupId, input) {
+    const channel = normalizeChannelCopy(await api(`/api/group-chats/${encodeURIComponent(groupId)}/convert`, { method: "POST", body: JSON.stringify(input) }));
+    setChannels(current => current.map(item => item.id === groupId ? channel : item));
+    setChannelOperationError("");
+    return channel;
+  }
+
   async function toggleChannelMember(channelId, memberId) {
     const channel = channels.find((item) => item.id === channelId);
     if (!channel) return;
@@ -7839,7 +7867,8 @@ function App() {
   }
 
   async function deleteChannel(channelId) {
-    try { await api(`/api/channels/${encodeURIComponent(channelId)}`, { method: "DELETE" }); }
+    const base = isGroupChat(channels.find(item => item.id === channelId)) ? "/api/group-chats" : "/api/channels";
+    try { await api(`${base}/${encodeURIComponent(channelId)}`, { method: "DELETE" }); }
     catch (error) { setChannelOperationError(`Channel could not be deleted: ${clause(error.message)}. Try again.`); return; }
     setChannelOperationError("");
     removeSearchDocs([`channel:${channelId}`]).catch(() => {});
@@ -10104,6 +10133,8 @@ function App() {
                   </>
                 }
               />
+            ) : routePath === "/messages/new" ? (
+              <ConversationComposer agents={agents} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} onStart={startConversation} onCancel={() => navigate(squadDirectoryPath())} />
             ) : isAnalytics ? (
               <SettingsAnalyticsPage locale={localeResolution.locale} copy={localeCopy} />
             ) : routePath === "/memory" ? (
@@ -10155,6 +10186,7 @@ function App() {
                 navigate={navigate}
                 onCreateChannel={createChannel}
                 onUpdateChannel={updateChannel}
+                onConvertGroup={convertGroupChat}
                 onDeleteChannel={deleteChannel}
                 onToggleMember={toggleChannelMember}
                 chatSettings={chatSettings}
@@ -10793,6 +10825,7 @@ function ChannelsPage({
   navigate,
   onCreateChannel,
   onUpdateChannel,
+  onConvertGroup,
   onDeleteChannel,
   onToggleMember,
   onDispatch,
@@ -11163,7 +11196,7 @@ function ChannelsPage({
         <>
           <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border/70 px-4 lg:px-6">
             <h1 className="flex min-w-0 items-center gap-1.5 text-base font-semibold">
-              {channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? (
+              {isGroupChat(channel) ? <Users className="size-4 text-muted-foreground" aria-hidden="true" /> : channel.visibility === CHANNEL_VISIBILITY_PRIVATE ? (
                 <Lock className="size-4 text-muted-foreground" aria-hidden="true" />
               ) : (
                 <Hash className="size-4 text-muted-foreground" aria-hidden="true" />
@@ -11208,11 +11241,12 @@ function ChannelsPage({
                   channel below a scroll nobody could see. */}
               <SheetContent closeLabel={copy.close} className="w-full gap-0 overflow-y-auto border-border/80 p-0 sm:max-w-md">
                 <SheetHeader className="border-b border-border/60 px-5 py-4">
-                  <SheetTitle>#{channel.name}</SheetTitle>
-                  <SheetDescription>{copy.settings || "Channel settings"}</SheetDescription>
+                  <SheetTitle>{isGroupChat(channel) ? channel.name : `#${channel.name}`}</SheetTitle>
+                  <SheetDescription>{isGroupChat(channel) ? "Private group chat" : copy.settings || "Channel settings"}</SheetDescription>
                 </SheetHeader>
                 <div className="flex flex-col gap-3 px-5 py-4">
                   <ChannelDetailsSettings key={channel.id} channel={channel} members={agents} loadAutoAvailability={loadResponderAvailability} onSave={patch => onUpdateChannel?.(channel.id, patch)} />
+                  {isGroupChat(channel) ? <GroupConversionSettings key={channel.id} group={channel} onConvert={onConvertGroup} /> : null}
                   <Separator />
                   <label className="flex items-center justify-between gap-3 text-sm" htmlFor={`auto-mode-${channel.id}`}>
                     <span>
@@ -11313,7 +11347,7 @@ function ChannelsPage({
                     }}
                     onBlur={() => setDeleteArmed(false)}
                   >
-                    {deleteArmed ? `${copy.deleteChannel}?` : copy.deleteChannel}
+                    {isGroupChat(channel) ? deleteArmed ? "Delete group chat?" : "Delete group chat" : deleteArmed ? `${copy.deleteChannel}?` : copy.deleteChannel}
                   </Button>
                 </div>
               </SheetContent>
@@ -13243,6 +13277,7 @@ function SidebarContent({
         createMember: () => navigate(`${MEMBER_ROUTE_PREFIX}/new`),
         createTeam: onCreateTeam,
         chatNewMember: onChatNewMember,
+        newMessage: () => navigate("/messages/new"),
         templates: onTemplates,
         missionControl: onMissionControl,
       }}

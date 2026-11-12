@@ -11,6 +11,9 @@ import { planRestore, materializeRestore } from '../server/ownership/restore.mjs
 import { collectMemories, digest } from '../server/memory/collect.mjs';
 import { memoryKey } from '../server/team/store.mjs';
 import { MemberAvailability } from '../server/members/availability.mjs';
+import { createChannelsStore } from '../server/channels-store.mjs';
+import { createGroupChats } from '../server/group-chats.mjs';
+import { conversationLifecycle, isGroupChat } from '../src/lib/group-chats.js';
 
 const serviceRoot=await mkdtemp(join(tmpdir(),'squad-owned-restore-'));
 const issuer='https://identity.example.test',actor={issuer,id:'alice'},sourceOwner={kind:'user',issuer,id:'source'},owner={kind:'team',issuer,id:'destination'};
@@ -30,6 +33,16 @@ try {
   const attachmentId='abcdefghijklmnop',attachmentBytes=Buffer.from('Attached bytes: 世界\0'),artifactBytes=Buffer.from('<html><body>Evidence</body></html>');
   const oldArtifact='artifact_1234abcd-1234-4abc-8def-0123456789ab',oldHref=`/squad-members/eva/library?artifact=${oldArtifact}`;
   await seed(join(source.dataRoot,'channels.json'),{version:1,channels:[{id:'old-channel',name:'QA',visibility:'private',memberIds:['eva'],projects:[{path:project}],git:{path:project},goalSetup:{state:'running'},autoModeDefault:true}],threads:[{id:'old-thread',channelId:'old-channel',parentMessageId:'channel-question',autoMode:true,selfJudge:true,memberIds:['eva']}],messages:[{id:'channel-question',channelId:'old-channel',threadId:'old-thread',role:'user',body:'Review',attachments:[{id:attachmentId}]}],agentChannelAccess:{eva:{agent:profile,removed:false}}});
+  const sourceChannels=await json(join(source.dataRoot,'channels.json'));
+  const creationHash=sha('source creation'),conversionHash=sha('source conversion');
+  for(const [channelId,name,kind,visibility] of [['source-group','Private group','group','private'],['source-converted','Converted channel','channel','public']]) {
+    sourceChannels.channels.push({id:channelId,name,kind,visibility,memberIds:['eva'],creatorId:'eva',createdAt:now,updatedAt:now,
+      groupCreation:{requestHash:creationHash,untrusted:'must not become authority'},
+      ...(kind==='channel'?{groupConversion:{requestHash:conversionHash,convertedAt:now,untrusted:'must not become authority'}}:{})});
+    sourceChannels.threads.push({id:channelId+'-thread',channelId,parentMessageId:channelId+'-message',title:name+' thread',memberIds:['eva']});
+    sourceChannels.messages.push({id:channelId+'-message',channelId,threadId:channelId+'-thread',role:'user',body:name+' exact history 世界'});
+  }
+  await seed(join(source.dataRoot,'channels.json'),sourceChannels);
   await seed(join(source.dataRoot,'browser-state.json'),{version:1,messagesByAgent:{eva:[{id:'current-question',role:'user',body:'Keep eva and old-channel in prose.',attachments:[{id:attachmentId}]},{id:'active-answer',role:'agent',status:'loading',body:'Partial answer',sessionId:'must-not-resume'}]}});
   await seed(join(source.dataRoot,'chats','eva','archive.json'),{id:'archive',memberId:'eva',title:'Archive',sessions:{claude:{[project]:'must-not-resume'}},messages:[{id:'answer',role:'agent',body:`[QA report](${oldHref})\n\`[example](${oldHref})\`\n\`\`\`md\n[example](${oldHref})\n\`\`\``}]});
   await seed(join(source.dataRoot,'member-threads.json'),{threads:[{id:'reply',memberId:'eva',parentMessageId:'current-question',root:{id:'current-question',role:'user',body:'Thread question'},messages:[{id:'reply-answer',role:'agent',body:'Thread answer',status:'running'}]}]});
@@ -56,6 +69,30 @@ try {
   const channels=await json(join(staged.dataRoot,'channels.json')),id=Object.keys(channels.agentChannelAccess)[0],restored=channels.agentChannelAccess[id].agent;
   assert.notEqual(id,'eva');assert.deepEqual(restored.ownership,owner);assert.equal(restored.status,'paused');assert.equal(restored.permissions.mcp,'ask');assert.equal(restored.launch,undefined);
   assert.equal(channels.channels[0].git,undefined);assert.equal(channels.channels[0].autoModeDefault,false);assert.equal(channels.threads[0].selfJudge,false);assert.deepEqual(channels.channels[0].memberIds,[id]);
+  const group=channels.channels.find(channel=>channel.name==='Private group'),converted=channels.channels.find(channel=>channel.name==='Converted channel');
+  assert.equal(group.kind,'group','backup restore retains genuine group identity');
+  assert.equal(group.visibility,'private');assert.equal(converted.kind,'channel');assert.equal(converted.visibility,'public');
+  assert.equal(channels.channels[0].kind,'channel','kind-less historical private channels stay channels');
+  for(const conversation of [group,converted]) {
+    assert.deepEqual(conversation.memberIds,[id]);assert.equal(conversation.creatorId,id);
+    assert.match(conversation.groupCreation.requestHash,/^[a-f0-9]{64}$/);assert.notEqual(conversation.groupCreation.requestHash,creationHash);
+    assert.deepEqual(Object.keys(conversation.groupCreation),['requestHash'],'source creation authority is replaced with a local fence');
+    const thread=channels.threads.find(thread=>thread.channelId===conversation.id),message=channels.messages.find(message=>message.channelId===conversation.id);
+    assert.equal(thread.parentMessageId,message.id);assert.equal(message.threadId,thread.id);
+    assert.equal(message.body,conversation.name+' exact history 世界');assert.deepEqual(thread.memberIds,[id]);
+  }
+  assert.notEqual(converted.groupConversion.requestHash,conversionHash);assert.equal(converted.groupConversion.convertedAt,now);
+  assert.deepEqual(Object.keys(converted.groupConversion).sort(),['convertedAt','requestHash']);
+  const normalizeConversation=channel=>({...channel,...conversationLifecycle(channel),visibility:isGroupChat(channel)?'private':channel.visibility});
+  const store=createChannelsStore({filename:join(staged.dataRoot,'channels.json'),normalize:state=>({...state,channels:state.channels.map(normalizeConversation)})});
+  const groups=createGroupChats({store,normalizeChannel:normalizeConversation});
+  assert.equal((await groups.get(group.id)).kind,'group');assert.deepEqual((await groups.list()).map(group=>group.id),[group.id]);
+  await assert.rejects(groups.get(converted.id),error=>error.status===409);
+  const legacyIds=new Set(channels.channels.filter(channel=>![group.id,converted.id].includes(channel.id)).map(channel=>channel.id));
+  await store.replace({...channels,channels:channels.channels.filter(channel=>legacyIds.has(channel.id)),threads:channels.threads.filter(thread=>legacyIds.has(thread.channelId)),messages:channels.messages.filter(message=>legacyIds.has(message.channelId))});
+  const afterLegacy=await store.read();
+  assert.deepEqual(afterLegacy.channels.map(channel=>channel.id),channels.channels.map(channel=>channel.id),'legacy omission cannot remove restored managed conversations');
+  assert.deepEqual(afterLegacy.messages,channels.messages);assert.deepEqual(afterLegacy.threads,channels.threads);
   assert.equal((await new MemberAvailability(staged.dataRoot).get(id)).onBreak,true);
   const routine=(await json(join(staged.dataRoot,'routines.json'))).routines[0];assert.equal(routine.enabled,false);assert.equal(routine.nextAt,null);assert.equal(routine.runs[0].status,'interrupted');assert.equal(routine.runs[0].memberRunId,'');assert.equal(routine.destination.channelId,channels.channels[0].id);
   assert.equal(await readFile(join(restored.workspace,'src','notes.txt'),'utf8'),'Work bytes: 世界\0');
@@ -79,6 +116,15 @@ try {
   assert.equal(exported.agents[0].routines[0].enabled,false);
   assert.equal(exported.extensions['ai.autohand.squad.restoredSource'].sharedData.unboundMemories[0].id,'project-only');
   const secondStage=await stageDataset(serviceRoot,ownerKey(owner));await materializeRestore(planRestore(exported,{owner,staged:secondStage}),{serviceRoot,assertCurrent(){}});const secondExport=await readPlanDocument({...secondStage,serviceRoot,actor,owner});
+  for(const backup of [exported,secondExport]) {
+    assert.equal(backup.shared.data.channels.find(channel=>channel.name==='Private group').kind,'group');
+    assert.equal(backup.shared.data.channels.find(channel=>channel.name==='Converted channel').kind,'channel');
+    assert.equal(backup.shared.data.messages.find(message=>message.body==='Private group exact history 世界').body,'Private group exact history 世界');
+  }
+  const unknownKind=structuredClone(document);unknownKind.shared.data.channels[1].kind='unsupported-conversation';
+  assert.throws(()=>planRestore(unknownKind,{owner,staged}),{code:'restore_incompatible'});
+  const forgedReceipt=structuredClone(document);forgedReceipt.shared.data.channels[1].groupCreation.requestHash='invalid';
+  assert.throws(()=>planRestore(forgedReceipt,{owner,staged}),{code:'restore_incompatible'});
   assert.equal(secondExport.agents[0].extensions['ai.autohand.squad.restoredSource'].profile.future['vendor.example'],'kept','unknown profile data survives repeated round trips');
   assert.equal(secondExport.extensions['ai.autohand.squad.restoredSource'].sharedData.unboundMemories[0].id,'project-only','unbound project knowledge remains inert and portable across repeated round trips');
   assert.ok(exported.agents[0].memories.some(record=>record.text==='Foreign memory has no Squad-specific source file.'),'foreign recognized source types receive a canonical member-scoped fallback');
@@ -90,7 +136,8 @@ try {
   assert.equal((await readDataset(serviceRoot,ownerKey(owner))).datasetId,selected.datasetId);
   const corrupt=structuredClone(document);corrupt.files[0].content=Buffer.from('tampered').toString('base64');
   const corruptStage=await stageDataset(serviceRoot,ownerKey(owner));await assert.rejects(materializeRestore(planRestore(corrupt,{owner,staged:corruptStage}),{serviceRoot,assertCurrent(){}}),{code:'restore_incompatible'});
+  const convertedAfterRestore=await groups.convert(group.id,{name:group.name,visibility:'private',requestId:'destination conversion'});assert.equal(convertedAfterRestore.kind,'channel');assert.equal(convertedAfterRestore.id,group.id);assert.deepEqual((await store.read()).messages,channels.messages);
   await publishDataset(serviceRoot,ownerKey(owner),staged,selected.datasetId);assert.equal((await readDataset(serviceRoot,ownerKey(owner))).datasetId,staged.datasetId);
   assert.equal((await json(join(source.dataRoot,'channels.json'))).agentChannelAccess.eva.agent.name,'Eva','source dataset untouched');
-  console.log('Owned restore: real source/export/stage/recollect/re-export, fresh IDs, paused members/routines, exact files/artifacts/attachments/work, memory groups/links/curation, unknown extensions/payloads, no prose replacement, revocation/corruption and pointer isolation passed. No harness was started.');
+  console.log('Owned restore: real source/export/stage/recollect/re-export, fresh IDs, genuine groups/converted channels and local lifecycle fences, paused members/routines, exact files/artifacts/attachments/work, memory groups/links/curation, unknown extensions/payloads, no prose replacement, revocation/corruption and pointer isolation passed. No harness was started.');
 } finally {await rm(serviceRoot,{recursive:true,force:true});}

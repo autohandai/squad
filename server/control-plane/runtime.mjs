@@ -232,6 +232,7 @@ export function createTools(bridge) {
       const channels = (state?.channels || []).map((channel) => ({
         id: channel.id,
         name: channel.name,
+        kind: channel.kind || 'channel',
         visibility: channel.visibility,
         memberIds: channel.memberIds || [],
         projects: (channel.projects || []).map((project) => project.name || project.path),

@@ -119,7 +119,11 @@ operator connection.
 | `get_channel` / `update_channel` | `channel_id`, plus update `name?`, `purpose?`, `section?` | Read or patch channel settings without replacing history or membership. |
 | `set_channel_members` | `channel_id`, `add?`, `remove?` | Atomically add/remove existing member IDs; dispatches no work. |
 | `list_channel_threads` | `channel_id`, `limit?` (≤100) | Read newest saved threads. |
-| `create_group_chat` | `name`, `member_ids` (≥2 distinct) | Create a persistent private channel; dispatches no work. |
+| `list_group_chats` | none | List genuine private groups, distinct from channels. |
+| `get_group_chat` | `group_id` | Read a private group and its saved members. |
+| `create_group_chat` | `name`, `member_ids` (2–20 distinct), `request_id?` | Create a persistent private group; dispatches no work. |
+| `convert_group_chat` | `group_id`, `visibility` (`public`/`private`), `name?`, `request_id?` | Convert to a channel, retaining ID, members, messages and threads. |
+| `delete_group_chat` | `group_id` | Delete the group and history; refuses if it is already a channel. |
 | `send_channel_message` | `channel_id`, `text`, `thread_id?`, `member_ids?` | Save a threaded message; dispatch only explicitly selected channel members. Omitted recipients means post only. Returns per-member run receipts/errors. |
 | `list_routines` / `get_routine` | `member_id?` / `routine_id` | Read saved schedules and run history. |
 | `preview_routine` | `schedule` | Validate and preview up to three occurrences without saving. |
@@ -268,7 +272,7 @@ pinned YAML/Zod dependencies. See [portable backups](backups.md).
 
 ## Member management contract v2
 
-Both MCP initialize responses report server version `2.0.0`. This versions the
+Both MCP initialize responses report server version `2.1.0`. This versions the
 tool contract independently of the app release and portable backup schema.
 Refresh tools after reconnecting; `create_member` is now a real operation
 rather than a placeholder, and requires `request_id`, `name` and `role`.
@@ -288,6 +292,43 @@ Use profile revisions to reject stale edits. Creation request IDs persist in
 the owned registry: a retry cannot overwrite later profile changes, revive a
 deleted member or recreate work. No Git repository or engine is initialized
 by member creation.
+
+## Private groups (contract v2.1, ADR-0203)
+
+`kind: "group"` distinguishes a genuine group from `kind: "channel"`.
+Groups are always private. Existing private channels remain channels; this
+upgrade does not reinterpret or migrate earlier conversations. Use the group
+ID as `channel_id` with the existing message and thread tools. Creation does
+not post a message or dispatch an engine.
+
+Supply a stable `request_id` when retrying creation or conversion. Replays
+return the existing record without overwriting later edits; conflicting
+payloads and deleted records are rejected. Conversion requires an explicit
+visibility choice and preserves the same ID, exact history and roster.
+Publishing a public channel intentionally exposes its earlier group history
+to other members of the selected Squad. Group-delete refuses a converted
+channel; delete that through the ordinary channel action instead.
+
+The app uses `GET/POST /api/group-chats`, `GET/DELETE /api/group-chats/:id`
+and `POST /api/group-chats/:id/convert` with camelCase `memberIds` and
+`requestId`. The existing owner context fence applies to every request.
+Managed MCP additionally derives the actor from its work credential: only
+groups the member belongs to can be listed, read, converted or deleted;
+creation must include that member. Missing and inaccessible group IDs share
+one refusal. Mutations reuse current Ask/Allow/Block management permissions.
+Never copy an operator credential into an agent's MCP configuration.
+
+Groups use the existing serialized channel store and tombstones. Legacy
+snapshot clients may update compatible fields but cannot erase omitted
+groups, strip their kind, revive deletions or reverse a conversion from a
+stale cached copy. A lifecycle-aware client retains the server's conversion
+metadata when mirroring records. Explicit REST actions, rather than snapshot
+omission, own group deletion and conversion.
+
+Run `bun run check:group-chats`, `bun run check:group-chats:browser`,
+`bun run check:control-plane` and `bun run check:team` for owned HTTP,
+rendered app and both real stdio transport checks. Controlled engine fixtures
+prove dispatch/contract behavior; they do not prove live vendor availability.
 
 With no `engine`, creation prefers the ready default engine, otherwise the
 first connected ready engine. It saves up to four other connected engines as

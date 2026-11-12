@@ -1,8 +1,18 @@
 import { copyFile, readFile } from 'node:fs/promises';
 import { readPersistentJson, writePersistentJson } from './persistent-json.mjs';
+import { conversationLifecycle, isGroupChat } from '../src/lib/group-chats.js';
 
 export function channelError(message, status = 400) {
   return Object.assign(new Error(message), { status });
+}
+
+// Lifecycle changes are explicit operations, not legacy cache reconciliation.
+function preserveConversationLifecycle(incoming, current) {
+  const { kind, groupCreation: _creation, groupConversion: incomingConversion, ...content } = incoming;
+  const changedKind = current && (kind || 'channel') !== (current.kind || 'channel');
+  const staleConversion = current?.groupConversion && incomingConversion?.requestHash !== current.groupConversion.requestHash;
+  return { ...content, ...conversationLifecycle(current),
+    ...(changedKind || staleConversion ? { name: current.name, visibility: current.visibility } : {}) };
 }
 
 // Index just past the first complete JSON value, honouring strings and escapes;
@@ -88,7 +98,25 @@ export function createChannelsStore({ filename, normalize, changed }) {
     if (input?.revision !== undefined && input.revision !== current.revision) {
       throw channelError('Channels changed in another window. Reload before saving this snapshot.', 409);
     }
-    const next = normalize(input);
+    const source = Array.isArray(input) ? { channels: input } : input;
+    let next = normalize({ ...source, deletedChannelIds: current.deletedChannelIds || [] });
+    if (Array.isArray(next.channels)) {
+      const deleted = new Set(current.deletedChannelIds || []);
+      const incomingIds = new Set(next.channels.map(channel => channel.id));
+      const managed = (current.channels || []).filter(channel => isGroupChat(channel) || channel.groupCreation || channel.groupConversion);
+      const omitted = managed.filter(channel => !incomingIds.has(channel.id));
+      const managedIds = new Set(managed.map(channel => channel.id));
+      next.channels.push(...omitted);
+      // A client which cannot represent a group cannot delete its history by
+      // omitting it. Only the explicit group/channel delete owns that action.
+      for (const key of ['threads', 'messages']) if (Array.isArray(next[key])) {
+        const incomingRecords = new Set(next[key].map(record => record.id));
+        next[key].push(...(current[key] || []).filter(record => managedIds.has(record.channelId) && !incomingRecords.has(record.id)));
+      }
+      next.channels = next.channels.filter(channel => !deleted.has(channel.id))
+        .map(channel => preserveConversationLifecycle(channel, current.channels?.find(item => item.id === channel.id)));
+      next = normalize(next);
+    }
     // Legacy browser snapshots are not authority for permission grants,
     // proposals or execution receipts, even if they include these fields.
     next.agentChannelAccess = current.agentChannelAccess;
@@ -107,7 +135,7 @@ export function createChannelsStore({ filename, normalize, changed }) {
       for (const record of incoming[key]) {
         if (deleted.has(key === 'channels' ? record.id : record.channelId)) continue;
         const existing = records.get(record.id);
-        if (!existing || String(record.updatedAt) > String(existing.updatedAt)) records.set(record.id, record);
+        if (!existing || String(record.updatedAt) > String(existing.updatedAt)) records.set(record.id, key === 'channels' ? preserveConversationLifecycle(record, existing) : record);
       }
       state[key] = [...records.values()];
     }

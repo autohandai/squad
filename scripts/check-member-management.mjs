@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createMemberManagement } from '../server/team/member-management.mjs';
+import { createSquadManagement } from '../server/team/member-management.mjs';
 import { PersonQuestions } from '../server/questions.mjs';
 import { patchedProfileText } from '../server/routes/member-shaping.route.mjs';
 
@@ -13,7 +13,7 @@ let permissions = { [policy]: 'block' }, active = true, approved = false, afterR
 const mutations = [];
 const agent = { id: 'manager', name: 'Manager', permissions: { builtInPolicies: permissions } };
 const actions = { memberAccess: async () => ({ agent }) };
-const manage = createMemberManagement({ actions: () => actions,
+const manage = createSquadManagement({ actions: () => actions,
   askPerson: async () => { if (afterRead) afterRead(); return { status: 'answered', answer: approved ? 'Allow once' : 'Deny' }; },
   request: async (path, method, value) => {
     if (method === 'GET') { if (afterRead) afterRead(); return { id: 'child', revision: 1 }; }
@@ -40,7 +40,7 @@ await assert.rejects(update, /blocked/);assert.equal(mutations.length, 1);
 delete agent.permissions.workspaceOverrides;
 await update();assert.equal(mutations.length, 2);
 
-const timed = createMemberManagement({ actions: () => actions, timeoutMs: 5,
+const timed = createSquadManagement({ actions: () => actions, timeoutMs: 5,
   request: async (_path, _method, _value, { signal }) => new Promise((resolve, reject) => {
     const timer = setTimeout(() => resolve({ id: 'child', revision: 1 }), 100);
     signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason); }, { once: true });

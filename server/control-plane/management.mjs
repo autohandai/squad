@@ -39,7 +39,11 @@ export const MANAGEMENT_TOOLS = [
   tool('update_channel', 'Change a channel name, purpose or section without replacing its members or history.', { channel_id: id(), name: text(80), purpose: { type: 'string', maxLength: 20000 }, section: { type: 'string', maxLength: 80 } }, ['channel_id']),
   tool('set_channel_members', 'Add/remove existing members atomically from a channel roster. Does not dispatch work or delete messages.', { channel_id: id(), add: ids(), remove: ids() }, ['channel_id']),
   tool('list_channel_threads', 'List a channel\'s newest conversation threads. Use get_messages with thread_id to read replies.', { channel_id: id(), limit: { type: 'integer', minimum: 1, maximum: 100 } }, ['channel_id'], true),
-  tool('create_group_chat', 'Create a persistent private channel for two or more existing agents. Does not send a message or start work until explicitly requested.', { name: text(80), member_ids: ids(2) }, ['name', 'member_ids']),
+  tool('list_group_chats', 'List saved private group chats, distinct from public/private channels. A managed member only sees groups it belongs to.', {}, [], true),
+  tool('get_group_chat', 'Read one group chat and its member IDs. Use its ID as channel_id with the existing message/thread tools. A managed member must belong to it.', { group_id: id() }, ['group_id'], true),
+  tool('create_group_chat', 'Create a persistent private group chat for two or more existing agents, distinct from a channel. Optional request_id makes creation retries safe. Does not send a message or start work.', { request_id: text(128), name: text(80), member_ids: ids(2) }, ['name', 'member_ids']),
+  tool('convert_group_chat', 'Convert a group into an explicitly public or private channel. Retains its ID, members, messages and threads. Optional name renames it; request_id makes conversion replay safe without overwriting later edits.', { group_id: id(), visibility: { type: 'string', enum: ['public', 'private'] }, name: text(80), request_id: text(128) }, ['group_id', 'visibility']),
+  tool('delete_group_chat', 'Delete a group chat and its messages/threads from this Squad. Refuses if it has already been converted to a channel. Existing member profiles and their direct conversations are preserved.', { group_id: id() }, ['group_id']),
   tool('send_channel_message', 'Post into a channel/group thread and optionally dispatch the explicitly named channel members. Omit member_ids to publish only. Replies persist in the thread even if this MCP client disconnects. Returns per-member run receipts/errors for wait_for_reply.', { channel_id: id(), thread_id: id(), text: text(20000), member_ids: ids() }, ['channel_id', 'text']),
   tool('list_routines', 'Read scheduled routines, pause/enabled state, next occurrences and recent runs; optionally filter by member.', { member_id: id() }, [], true),
   tool('get_routine', 'Read one routine and its run history.', { routine_id: id() }, ['routine_id'], true),
@@ -103,12 +107,15 @@ export function createManagementTools(bridge, legacy) {
       const threads = await bridge.get(`/api/channels/${encodeURIComponent(channel_id)}/threads`);
       return { threads: [...threads].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))).slice(0, limit) };
     },
-    async create_group_chat({ name, member_ids }) {
-      const members = [...new Set(member_ids)];
-      if (members.length < 2) throw new Error('Choose at least two different members.');
-      await known(members);
-      return { channel: await bridge.post('/api/channels', { name, visibility: 'private', memberIds: members }) };
+    async create_group_chat({ name, member_ids, request_id }) {
+      return { channel: await bridge.post('/api/group-chats', { name, memberIds: member_ids, ...(request_id ? { requestId: request_id } : {}) }) };
     },
+    list_group_chats: () => bridge.get('/api/group-chats'),
+    get_group_chat: ({ group_id }) => bridge.get(`/api/group-chats/${encodeURIComponent(group_id)}`),
+    async convert_group_chat({ group_id, visibility, name, request_id }) {
+      return { channel: await bridge.post(`/api/group-chats/${encodeURIComponent(group_id)}/convert`, { visibility, ...(name !== undefined ? { name } : {}), ...(request_id ? { requestId: request_id } : {}) }) };
+    },
+    delete_group_chat: ({ group_id }) => bridge.delete(`/api/group-chats/${encodeURIComponent(group_id)}`),
     async send_channel_message({ channel_id, thread_id, text, member_ids = [] }) {
       const { channel, state } = await channelFor(channel_id);
       const recipients = [...new Set(member_ids)];
@@ -148,4 +155,6 @@ export function createManagementTools(bridge, legacy) {
 }
 
 export const MEMBER_MANAGEMENT_NAMES = Object.freeze(['create_member', 'get_member_profile', 'update_member_profile', 'list_skills', 'set_member_skills', 'set_member_memories', 'list_routines', 'create_routine', 'update_routine']);
-export const MANAGED_MEMBER_TOOLS = MANAGEMENT_TOOLS.filter(tool => MEMBER_MANAGEMENT_NAMES.includes(tool.name)).map(tool => ({ ...tool, name: `squad_${tool.name}`, description: `${tool.description} Uses this member's saved management permission; ask mode needs the person's bounded confirmation in Squad.` }));
+export const GROUP_MANAGEMENT_NAMES = Object.freeze(['list_group_chats', 'get_group_chat', 'create_group_chat', 'convert_group_chat', 'delete_group_chat']);
+export const MANAGED_MANAGEMENT_NAMES = Object.freeze([...MEMBER_MANAGEMENT_NAMES, ...GROUP_MANAGEMENT_NAMES]);
+export const MANAGED_MANAGEMENT_TOOLS = MANAGEMENT_TOOLS.filter(tool => MANAGED_MANAGEMENT_NAMES.includes(tool.name)).map(tool => ({ ...tool, name: `squad_${tool.name}`, description: `${tool.description} Uses this member's saved management permission; ask mode needs the person's bounded confirmation in Squad.` }));
