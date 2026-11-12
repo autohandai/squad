@@ -49,3 +49,8 @@ Do nothing). The native preview proves that gesture in this environment, not a
 new notarized release or full installed runtime readiness. The browser's license
 navigation is same-tab; the existing desktop interceptor owns separate native
 document windows. Memory's knowledge browser remains in the main navigation.
+
+## Follow-up
+
+ADR-0215 extends the zoom-only correction with native preference handling. It
+retains this record of the missing-permission cause and the initial proof limit.

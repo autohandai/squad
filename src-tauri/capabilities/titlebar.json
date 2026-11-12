@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "titlebar",
+  "description": "Native titlebar preference on the main window. Rust verifies the exact active local bridge origin; no renderer-supplied preference or window is accepted.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"] },
+  "permissions": ["allow-squad-titlebar-double-click"]
+}

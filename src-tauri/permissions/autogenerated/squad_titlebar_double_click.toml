@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-squad-titlebar-double-click"
+description = "Enables the squad_titlebar_double_click command without any pre-configured scope."
+commands.allow = ["squad_titlebar_double_click"]
+
+[[permission]]
+identifier = "deny-squad-titlebar-double-click"
+description = "Denies the squad_titlebar_double_click command without any pre-configured scope."
+commands.deny = ["squad_titlebar_double_click"]
