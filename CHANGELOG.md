@@ -18,6 +18,7 @@ list to the section for that version.
 ### Changed
 
 - The bundled Autohand Code CLI is updated to 0.9.11.
+- Grut now changes the conversation layout: agents, groups and channels share one list with larger avatars, saved previews and times, plus quiet message bubbles in light and dark. Choose it in Appearance.
 
 - The account menu now starts with Inbox, Settings, About, and Licenses and agreements. Analytics lives beside Memory in Settings, with Back returning to your conversation and unsent draft.
 - Phone connections keep their computer identity and delivery receipts after a restart. Disconnecting a phone locally also removes its relay access when the computer reconnects.

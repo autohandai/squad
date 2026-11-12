@@ -17,8 +17,8 @@ export const SKIN_VAR_DEFAULTS = {
   'skin-font-stretch': '100%',
 };
 
-function skin({ id, vars = {}, ...design }) {
-  return { id, ...design, tokens: SKIN_PALETTES[id] || null, vars: { ...SKIN_VAR_DEFAULTS, ...vars } };
+function skin({ id, vars = {}, layout = 'workspace', ...design }) {
+  return { id, layout, ...design, tokens: SKIN_PALETTES[id] || null, vars: { ...SKIN_VAR_DEFAULTS, ...vars } };
 }
 
 export const SKINS = [
@@ -33,7 +33,8 @@ export const SKINS = [
       'skin-elevation-strong': '0 2px 4px rgba(29, 35, 48, 0.05), 0 18px 48px rgba(29, 35, 48, 0.10)' },
     avatars: 'portrait', swatches: ['#eceef4', '#ef7a5c', '#252b3a', '#1d2330'] }),
   skin({ id: 'grut', label: 'Grut',
-    description: 'Flat and quiet, in light or dark. Every member is a blob with a face.',
+    description: 'A conversation list, quiet message bubbles and a blob face for every member.',
+    layout: 'conversations',
     vars: { radius: '0.75rem', 'skin-density': '0.95', 'skin-avatar-radius': '9999px' },
     avatars: 'blob', swatches: ['#f7f7f8', '#0d0d0f', '#4d8df0', '#5bc4a4'] }),
   skin({ id: 'paper', label: 'Paper',

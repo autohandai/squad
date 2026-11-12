@@ -10509,6 +10509,7 @@ function App() {
               <SheetDescription>Autohand Squad navigation</SheetDescription>
             </SheetHeader>
             <SidebarContent
+              inDrawer
               updateAvailable={updates?.snapshot?.updateAvailable === true}
               agents={agents}
               activeAgent={activeAgent}
@@ -13144,6 +13145,7 @@ function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLoc
 
 function SidebarContent({
   updateAvailable = false,
+  inDrawer = false,
   agents,
   activeAgent,
   navigate,
@@ -13179,6 +13181,7 @@ function SidebarContent({
   onMarkChannelsRead,
   draftAgentIds = new Set(),
 }) {
+  const skin = useContext(SkinContext);
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const { entryFor: entryForPresence } = usePresence();
   const memberId = activeAgent?.id || visibleAgents[0]?.id;
@@ -13237,6 +13240,11 @@ function SidebarContent({
       }
       copy={copy}
       agents={orderMembers(visibleAgents)}
+      conversationLayout={skin.layout === "conversations"}
+      inDrawer={inDrawer}
+      messagesByAgent={messagesByAgent}
+      messagesByChannel={messagesByChannel}
+      locale={locale}
       channels={channels}
       notificationSettings={notificationSettings}
       onUpdateChannel={onUpdateChannel}
@@ -13249,7 +13257,7 @@ function SidebarContent({
       inboxCount={inboxCount}
       presenceFor={(agent) => {
         const meta = presenceMeta(entryForPresence(agent).state, copy);
-        return { ...meta, className: meta.dotClassName };
+        return { ...meta, className: meta.dotClassName, working: entryForPresence(agent).state === "working" };
       }}
       renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />}
       onNavigate={{
@@ -15769,9 +15777,9 @@ const SquadMessage = memo(function SquadMessage({ agent, message, thread, onRepl
   if (!isUser) return <AgentResponseMessage replyAction={replyAction} compact={compact} agent={agent} message={message} computerEvidence={computerEvidence} chatSettings={chatSettings} copy={copy} onRetry={onRetry} onEditResend={onEditResend} onFolderAccess={onFolderAccess} onScheduleOffer={onScheduleOffer} onPermissionDecision={onPermissionDecision} onQuestionAnswer={onQuestionAnswer} onTeamProposal={onTeamProposal} memberBusy={memberBusy} />;
 
   return (
-    <article data-message-id={message.id} className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
+    <article data-message-id={message.id} data-message-role="user" className="group flex flex-col items-end gap-1 transition-colors" aria-label={`${copy.you}, ${message.time}`}>
       <AttachmentList files={message.attachments || []} className="max-w-[min(40rem,88%)] justify-end" />
-      <div className={cn("max-w-[min(40rem,88%)] bg-muted text-foreground", compact ? "rounded-md px-2.5 py-1.5 text-sm leading-5" : "rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] leading-6")}>
+      <div className={cn("chat-user-bubble max-w-[min(40rem,88%)] bg-muted text-foreground", compact ? "rounded-md px-2.5 py-1.5 text-sm leading-5" : "rounded-2xl rounded-br-md px-4 py-2.5 text-[15px] leading-6")}>
         <MarkdownBlocks text={message.body} />
       </div>
       <time className="pr-1 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" title={messageFullTime(message)} dateTime={messageIsoTime(message)}>{message.time}</time>
@@ -15809,8 +15817,8 @@ function AgentResponseMessage({ agent, message, replyAction, computerEvidence = 
   const needsSignIn = isError && /sign-in|autohand login|not signed in|rejected the account token/i.test(errorText);
 
   return (
-    <article data-message-id={message.id} className={cn("group transition-colors", !compact && "grid grid-cols-[auto_minmax(0,1fr)] gap-3")} aria-live={isLoading ? "polite" : undefined}>
-      {!compact ? <AgentAvatar agent={agent} className="mt-0.5" /> : null}
+    <article data-message-id={message.id} data-message-role="assistant" data-message-compact={String(compact)} className={cn("group transition-colors", !compact && "grid grid-cols-[auto_minmax(0,1fr)] gap-3")} aria-live={isLoading ? "polite" : undefined}>
+      {!compact ? <AgentAvatar agent={agent} className="chat-reply-avatar mt-0.5" /> : null}
       <div className="min-w-0">
         <div className="mb-1 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
           <span className="text-sm font-semibold text-foreground">{message.authorName || agent.name}</span>
@@ -15852,7 +15860,7 @@ function AgentResponseMessage({ agent, message, replyAction, computerEvidence = 
         {hasVisibleAnswer && !isError && isNoTextReply(view.answer) ? (
           <p className="text-sm text-muted-foreground">No reply text. Work details shows what ran.</p>
         ) : hasVisibleAnswer && !isError ? (
-          <div className={cn("max-w-none text-foreground/95", compact ? "text-sm leading-6" : "text-[15px] leading-7")} >
+          <div className={cn("chat-agent-answer max-w-none text-foreground/95", compact ? "text-sm leading-6" : "text-[15px] leading-7")} >
             <MarkdownBlocks text={view.answer} />
           </div>
         ) : null}
@@ -25086,7 +25094,7 @@ function SettingsPage({
             <div className="min-w-0">
               <h4 id="skin-title" className="text-sm font-medium">{copy.skin || "Skin"}</h4>
               <p className="mt-1 text-sm text-muted-foreground">
-                {copy.skinDescription || "The whole look: type, shape, spacing and member portraits. Every skin follows your mode."}
+                {copy.skinDescription || "The whole look: layout, type, shape, spacing and member portraits. Every skin follows your mode."}
               </p>
             </div>
             <ToggleGroup type="single" orientation="vertical" role="radiogroup" aria-labelledby="skin-title" value={activeSkin.id} onValueChange={(value) => value && onSkinChange?.(value)} className="flex w-full flex-col items-stretch rounded-none border-t border-border/60">
