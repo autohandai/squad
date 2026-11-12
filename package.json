@@ -25,6 +25,8 @@
     "check:ownership": "node scripts/check-squad-ownership.mjs",
     "check:owned-data": "node scripts/check-owned-data.mjs",
     "check:owned-lifecycle": "node scripts/check-owned-lifecycle.mjs && node scripts/check-owned-engines.mjs",
+    "check:owned-windows-proof": "node scripts/check-owned-windows-proof.mjs",
+    "check:installed-runtime-proof": "node scripts/check-installed-runtime-proof.mjs",
     "check:owned-operations": "node scripts/check-owned-operations.mjs",
     "check:owned-remote": "node scripts/check-owned-remote.mjs",
     "check:legacy-recovery": "node scripts/check-legacy-recovery.mjs",
