@@ -40,6 +40,13 @@ from the saved group; only an explicitly edited name becomes a local draft.
 The regression also checks that a deliberate conversion name survives later
 group-name updates.
 
+The first CI run passed the new group/browser checks but failed an older
+member-by-chat browser check that still required the retired Direct Messages
+popover. Update that public regression to verify the inline chooser creates
+nothing, then exercise conversational shaping through its separate Squad-page
+entry. Preserve the old profile-persistence coverage rather than dropping it
+or restoring the obsolete popup to satisfy the test.
+
 ## Decision
 
 Use additive `kind: group | channel` in the existing serialized channel

@@ -4,8 +4,8 @@ import { createOwnedBridgeFixture, ownedFixtureHeaders, seedOwnedCanonicalFixtur
 // serving dist/, headless Chrome over the DevTools protocol, one seeded
 // member so the app opens on the Squad page. Then:
 //   1. the Squad page shows the secondary action beside New member;
-//   2. the sidebar's Direct messages "+" lists "Chat with a new member" first;
-//   3. clicking it creates "New member", opens its chat, and the first
+//   2. Direct messages "+" opens the inline recipient chooser without creating;
+//   3. the separate Squad-page action creates "New member", opens its chat, and the first
 //      message is the greeting;
 //   4. the new member is pointed at the disposable fake Claude Code harness
 //      (the same fixture as check-chats), the person writes "you're going to
@@ -193,16 +193,19 @@ try {
   assert.ok(await cdp.evaluate(`Boolean(document.querySelector('[data-testid="chat-new-member"]'))`), "Chat with a new member sits beside New member on the Squad page");
   await save("squad-page-actions.png");
 
-  // 2. The sidebar's Direct messages "+": Chat with a new member, first.
-  const opened = await cdp.evaluate(`(() => { const header = [...document.querySelectorAll('aside *')].find((el) => el.children.length === 0 && /^Direct messages$/i.test((el.textContent || '').trim())); let node = header; while (node && !node.querySelector('button[aria-label="Add a member or team"]')) node = node.parentElement; const plus = node && node.querySelector('button[aria-label="Add a member or team"]'); if (!plus) return false; plus.click(); return true; })()`);
+  // 2. Direct Messages + now chooses recipients; entry never creates a member.
+  const beforeSelection = await agentsStored();
+  const opened = await cdp.evaluate(`(() => { const plus = document.querySelector('aside button[aria-label="New message"]'); if (!plus) return false; plus.click(); return true; })()`);
   assert.ok(opened, "the Direct messages + opens");
-  await waitFor(async () => cdp.evaluate(`Boolean(document.querySelector('[data-testid="chat-new-member-menu"]'))`), "the create menu");
-  const order = await cdp.evaluate(`[...document.querySelector('[data-testid="chat-new-member-menu"]').parentElement.querySelectorAll('button')].map((el) => el.textContent.trim())`);
-  assert.deepEqual(order, ["Chat with a new member", "New member", "New team…", "Templates…"], `menu order: ${order.join(", ")}`);
-  await save("sidebar-create-menu.png");
+  await waitFor(async () => cdp.evaluate(`Boolean(document.querySelector('[data-testid="conversation-composer"]'))`), "the inline recipient chooser");
+  assert.equal(await cdp.evaluate(`Boolean(document.querySelector('[role="dialog"]'))`), false, "recipient selection has no popup");
+  assert.deepEqual((await agentsStored()).map(agent => agent.id), beforeSelection.map(agent => agent.id), "opening the chooser creates no member");
+  await save("sidebar-message-chooser.png");
+  await cdp.evaluate(`[...document.querySelector('[data-testid="conversation-composer"]').querySelectorAll('button')].find(button => button.textContent.trim() === 'Cancel').click()`);
+  await waitFor(async () => cdp.evaluate(`Boolean(document.querySelector('[data-testid="chat-new-member"]'))`), "return to Squad's conversational creation action");
 
-  // 3. Click it: a blank member, its chat, the greeting.
-  assert.ok(await cdp.evaluate(`(() => { document.querySelector('[data-testid="chat-new-member-menu"]').click(); return true; })()`));
+  // 3. The separate Squad-page action retains the conversational creation flow.
+  assert.ok(await cdp.evaluate(`(() => { document.querySelector('[data-testid="chat-new-member"]').click(); return true; })()`));
   const created = await waitFor(async () => (await agentsStored()).find((agent) => agent.name === "New member"), "the new member to be saved", 30000);
   assert.equal(created.role, "", "the new member has no role");
   await waitFor(async () => (await text()).includes("Hey! I'm New member. What can I help you with?"), "the greeting in the new member's chat", 30000);
@@ -237,7 +240,7 @@ try {
 
   const thrown = cdp.events.filter((e) => e.method === "Runtime.exceptionThrown").map((e) => e.params.exceptionDetails?.exception?.description || e.params.exceptionDetails?.text || "exception");
   assert.deepEqual(thrown, [], `uncaught exceptions: ${thrown.join(" | ")}`);
-  console.log(`Member-by-chat browser check passed: the Squad page action, the sidebar menu with Chat with a new member first, a blank New member opened on its greeting, and after a real bridge turn with a profile action the sidebar row renamed to Alex with "Alex is now your GTM Leader" under the reply. Screenshots: ${saved.join(", ")}`);
+  console.log(`Member-by-chat browser check passed: the inline Direct Messages chooser creates nothing, the separate Squad-page action opens a conversational member, and a real bridge profile action renames that member to Alex with "Alex is now your GTM Leader" under the reply. Screenshots: ${saved.join(", ")}`);
 } catch (error) {
   try { if (cdp) await cdp.screenshot(join(artifacts, "failure.png")); } catch {}
   console.error(`bridge log tail: ${logs.slice(-2500)}`);

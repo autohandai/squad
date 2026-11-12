@@ -8895,11 +8895,19 @@ function App() {
 
   async function createAgent(draft, options = {}) {
     if (onboardingIsIncomplete(onboardingState) && setupSnapshot?.status !== "existing") throw new Error("Choose your repositories and finish setup before adding teammates.");
+    const id = options.id || createSquadMemberId();
+    const timestamp = new Date().toISOString();
+    // A save may commit before its acknowledgement reaches this window. The
+    // owned registry, rather than discovery or this unfinished draft, wins on retry.
+    const savedAccess = (await api('/api/channels')).agentChannelAccess?.[id];
+    if (savedAccess?.removed) throw new Error("This teammate was removed. Start a new member instead of retrying this creation.");
+    if (savedAccess?.agent) {
+      publishAgent(savedAccess.agent);
+      return savedAccess.agent;
+    }
     const catalog = await api('/api/harnesses');
     const automaticHarness = options.automaticHarness === true || draft.harnessSelection === 'auto';
     const execution = initialMemberExecution(catalog.harnesses, { harness: automaticHarness ? undefined : draft.harness, modelRouting: draft.modelRouting });
-    const id = options.id || createSquadMemberId();
-    const timestamp = new Date().toISOString();
     const skills = normalizeSkillList(draft.skills);
     const workspace = normalizeSquadWorkspacePath(draft.workspace || fallbackWorkspace, runtime);
     const projects = normalizeAgentProjects([{ path: workspace, addedAt: timestamp }], "", workspaces, configuredProjectLimit(runtime));
@@ -8966,7 +8974,7 @@ function App() {
           },
         ],
       }));
-      if (options.completeOnboarding) updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete", selectedWorkspace: workspace, selectedRoleId: agent.employeeType, memberName: agent.name, memberId: id, memberReady: true });
+      if (options.completeOnboarding) updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete", selectedWorkspace: created.workspace, selectedRoleId: created.employeeType, memberName: created.name, memberId: id, memberReady: true });
       if (options.navigate !== false) navigate(routeWithParams(memberChatPath(id), { prompt: options.prompt || null }));
     }
 

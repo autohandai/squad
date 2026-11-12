@@ -34,6 +34,8 @@ list to the section for that version.
 ### Fixed
 
 - Older app snapshots cannot silently remove a new group or reverse its conversion into a channel. Deleted groups remain deleted after refresh and restart.
+- Retrying member creation after a lost save response keeps the saved model and fallback choices, including removed fallbacks, without preparing the teammate again.
+
 - MCP teammate messages retain a delivery reference after a fast reply or delivery error, so callers can inspect the saved result.
 
 - A full local cache now shows an actionable startup error and Retry instead of leaving Squad on Loading. Saved conversations remain unchanged.
