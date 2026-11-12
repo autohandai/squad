@@ -402,7 +402,7 @@ import { getNativeNotificationClient } from "@/lib/native-notifications";
 import { applySharedConversationEvent, conversationEventForSharing } from "@/lib/shared-conversations";
 import { formatDuration } from "@/lib/duration";
 import { CHAT_STREAM_CEILING_MS } from "@/lib/chat-timing";
-import { isSettingsDestination, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn, settingsPath, settingsSectionFromRoute, DEFAULT_SETTINGS_SECTION } from "@/lib/settings-navigation";
+import { isSettingsDestination, legacySettingsRedirect, settingsReturnSnapshot, readSettingsReturn, rememberSettingsReturn, settingsPath, settingsSectionFromRoute, DEFAULT_SETTINGS_SECTION } from "@/lib/settings-navigation";
 import { SettingsShell, SettingsSectionHeader } from "@/components/settings/SettingsShell";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { isNoTextReply, isRecoveryNotice, withoutRecoveryNotices, withoutReflectionPreamble, recoverCompletedHandoffParents, recoverInterruptedChats, recoverInterruptedHandoffs, recoverOrphanedChats, restoreRepliesFromRuns, settleChannelReplies } from "@/lib/chat-recovery";
@@ -6819,7 +6819,7 @@ function App() {
   useEffect(() => onDesktopMenu((action) => desktopMenuRef.current?.(action)), []);
 
   useEffect(() => {
-    const target = memberChatRedirect(route);
+    const target = legacySettingsRedirect(route) || memberChatRedirect(route);
     if (!target) return;
     window.history.replaceState(window.history.state, "", target);
     setRoute(target);
@@ -6875,10 +6875,6 @@ function App() {
     // An explicit link check is consumed once, including on browser fallback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route]);
-
-  function openAnalytics() {
-    navigate("/usage");
-  }
 
   function openOnboarding() {
     navigate(ONBOARDING_ROUTE);
@@ -9828,8 +9824,7 @@ function App() {
   const isSquadDirectory = routePath === SQUAD_DIRECTORY_ROUTE || routePath === AGENTS_ROUTE;
   const isChannels = routePath === CHANNELS_ROUTE || routePath.startsWith(`${CHANNELS_ROUTE}/`);
   const isOnboarding = routePath === ONBOARDING_ROUTE;
-  const isAnalytics = routePath === "/usage" || routePath.startsWith("/settings/analytics");
-  const isSettings = routePath === "/settings" || routePath.startsWith("/settings/");
+  const isSettings = isSettingsDestination(routePath);
   const feedbackKind = feedbackKindFromRoute(route);
 
   // Account gate: the squad runs on the user's Autohand account, so the
@@ -10054,7 +10049,6 @@ function App() {
             onSettings={(section) => openSettings(section)}
             onMissionControl={() => navigate(missionControlPath())}
             onOnboarding={openOnboarding}
-            onAnalytics={openAnalytics}
             unreadChannelIds={unreadChannelIds}
             onMarkChannelsRead={markChannelsRead}
             draftAgentIds={draftAgentIds}
@@ -10096,8 +10090,7 @@ function App() {
               onSettings={(section) => openSettings(section)}
               onMissionControl={() => navigate(missionControlPath())}
               onOnboarding={openOnboarding}
-              onAnalytics={openAnalytics}
-            />}
+              />}
             {isOnboarding ? (
               <FirstRun
                 runtime={runtime}
@@ -10134,8 +10127,6 @@ function App() {
               />
             ) : routePath === "/messages/new" ? (
               <ConversationComposer agents={agents} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} onStart={startConversation} onCancel={() => navigate(squadDirectoryPath())} />
-            ) : isAnalytics ? (
-              <SettingsAnalyticsPage locale={localeResolution.locale} copy={localeCopy} />
             ) : routePath === "/memory" ? (
               <Suspense fallback={<p className="px-8 py-8 text-sm text-muted-foreground">Opening memory…</p>}><MemoryPage api={api} navigate={navigate} onSettings={() => openSettings("memory")} /></Suspense>
             ) : isSquadDirectory ? (
@@ -10531,8 +10522,7 @@ function App() {
                 navigate(missionControlPath());
               }}
               onOnboarding={openOnboarding}
-              onAnalytics={openAnalytics}
-              unreadChannelIds={unreadChannelIds}
+                unreadChannelIds={unreadChannelIds}
               onMarkChannelsRead={markChannelsRead}
               draftAgentIds={draftAgentIds}
               unreadCountByAgent={unreadCountByAgent}
@@ -12821,7 +12811,6 @@ function CollapsedSidebarRail({
   onSettings,
   onMissionControl,
   onOnboarding,
-  onAnalytics,
   onExpand,
 }) {
   const { entryFor: entryForPresence } = usePresence();
@@ -12845,7 +12834,7 @@ function CollapsedSidebarRail({
         onSettings={onSettings}
         onMissionControl={onMissionControl}
         onOnboarding={onOnboarding}
-        onAnalytics={onAnalytics}
+
         onExpand={onExpand}
       />
     );
@@ -13023,7 +13012,7 @@ function CollapsedSidebarRail({
           onSettings={onSettings}
           onMissionControl={onMissionControl}
           onOnboarding={onOnboarding}
-          onAnalytics={onAnalytics}
+
           placement="right-start"
           triggerClassName="size-7 rounded-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4"
         />
@@ -13032,7 +13021,7 @@ function CollapsedSidebarRail({
   );
 }
 
-function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onExpand }) {
+function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onExpand }) {
   return (
     <div className="app-sidebar flex h-full min-h-screen w-[72px] flex-col items-center bg-card/95 px-2 py-3.5 text-card-foreground dark:bg-card">
       <Tooltip>
@@ -13131,7 +13120,7 @@ function CollapsedMemberProfileRail({ agent, activeSection, theme, copy = getLoc
           onSettings={onSettings}
           onMissionControl={onMissionControl}
           onOnboarding={onOnboarding}
-          onAnalytics={onAnalytics}
+
           placement="right-start"
           triggerClassName="size-7 rounded-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground [&_svg:not([class*='size-'])]:size-4"
         />
@@ -13163,7 +13152,6 @@ function SidebarContent({
   onSettings,
   onMissionControl,
   onOnboarding,
-  onAnalytics,
   onCollapse,
   unreadChannelIds = new Set(),
   unreadCountByAgent = new Map(),
@@ -13215,7 +13203,7 @@ function SidebarContent({
         onSettings={onSettings}
         onMissionControl={onMissionControl}
         onOnboarding={onOnboarding}
-        onAnalytics={onAnalytics}
+
         onCollapse={onCollapse}
       />
     );
@@ -13271,7 +13259,7 @@ function SidebarContent({
         missionControl: onMissionControl,
       }}
       footer={
-        <SidebarAccountFooter updateAvailable={updateAvailable} copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
+        <SidebarAccountFooter updateAvailable={updateAvailable} copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} />
       }
       onCollapse={onCollapse}
       searchShortcutLabel={SEARCH_SHORTCUT_LABEL}
@@ -13282,7 +13270,7 @@ function SidebarContent({
   );
 }
 
-function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onAnalytics, onCollapse, updateAvailable = false }) {
+function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCopy(DEFAULT_LOCALE), navigate, sidebarCounts = EMPTY_MISSION_COUNTS, onSettings, onMissionControl, onOnboarding, onCollapse, updateAvailable = false }) {
   return (
     <div className="app-sidebar flex h-full min-h-screen flex-col bg-card/70">
       <div className="flex h-14 shrink-0 items-center gap-2 px-3" data-tauri-drag-region="deep">
@@ -13351,12 +13339,12 @@ function MemberProfileSidebar({ agent, activeSection, theme, copy = getLocaleCop
         </nav>
       </div>
 
-      <SidebarAccountFooter updateAvailable={updateAvailable} copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
+      <SidebarAccountFooter updateAvailable={updateAvailable} copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} />
     </div>
   );
 }
 
-function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onMissionControl, onOnboarding, onAnalytics, updateAvailable = false }) {
+function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings, onMissionControl, onOnboarding, updateAvailable = false }) {
   const { profile, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult, upgradeApp, installUpdate, openReleasePage } = useContext(AccountContext);
   return (
     <div className="border-t p-4">
@@ -13370,7 +13358,7 @@ function SidebarAccountFooter({ copy = getLocaleCopy(DEFAULT_LOCALE), onSettings
           <span className="block truncate text-sm font-semibold">{profile.name}</span>
           <span className="block truncate text-xs text-muted-foreground">{profile.email || copy.loggedIn}</span>
         </span>
-        <AccountMenuButton copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
+        <AccountMenuButton copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} />
       </div>
     </div>
   );
@@ -13381,7 +13369,6 @@ function AccountMenuButton({
   onSettings,
   onMissionControl,
   onOnboarding,
-  onAnalytics,
   placement = "top-end",
   triggerClassName,
 }) {
@@ -13434,11 +13421,12 @@ function AccountMenuButton({
           </div>
           <DropdownMenuSeparator />
           {/* Plain links: a › here promised a submenu that never opened. */}
-          <AccountMenuItem icon={Inbox} label={copy.needsYou || "Needs you"} onClick={() => choose(onMissionControl)} />
+          <AccountMenuItem icon={Inbox} label={copy.inbox || "Inbox"} onClick={() => choose(onMissionControl)} />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} />
-          <AccountMenuItem icon={Gauge} label={copy.analytics} onClick={() => choose(onAnalytics)} />
+          {openAppInfo ? <AccountMenuItem icon={BookOpen} label={copy.about || "About"} onClick={() => choose(() => openAppInfo("about"))} /> : null}
+          {openAppInfo ? <AccountMenuItem icon={FileText} label={copy.licensesAndAgreements || "Licenses and agreements"} onClick={() => choose(() => openAppInfo("licenses"))} /> : null}
+          <DropdownMenuSeparator />
           <AccountMenuItem icon={Keyboard} label="Keyboard shortcuts" onClick={() => choose(openKeyboardShortcuts)} />
-          {openAppInfo ? <AccountMenuItem icon={BookOpen} label={copy.aboutSquad || "About Autohand Squad"} onClick={() => choose(() => openAppInfo("about"))} /> : null}
           {openFeedback ? (
             <>
               <DropdownMenuSeparator />
@@ -13511,7 +13499,7 @@ function MobileTopbar({ activeAgent, showsMember = false, theme, copy = getLocal
         {subtitle ? <div className="truncate text-center text-xs text-muted-foreground">{subtitle}</div> : null}
       </div>
       <CompactUpdateButton onSettings={onSettings} />
-      <AccountMenuButton copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} placement="bottom-end" />
+      <AccountMenuButton copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} placement="bottom-end" />
     </div>
   );
 }
@@ -24831,17 +24819,6 @@ function FeedbackAttachmentPreview({
   );
 }
 
-function SettingsAnalyticsPage({ locale = DEFAULT_LOCALE, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
-  return (
-    <div className="min-h-screen bg-background">
-      <PageTitle title={copy?.analytics || "Analytics"} />
-      <div className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 lg:px-8">
-        <AnalyticsPanel active locale={locale} />
-      </div>
-    </div>
-  );
-}
-
 function SettingsPage({
   agents = [],
   onFlushBackup,
@@ -24972,6 +24949,7 @@ function SettingsPage({
     { id: "remote-access", label: copy.remoteAccess || "Remote access" },
     { id: "connectors", label: copy.connectors || "Connectors" },
     { id: "memory", label: "Memory" },
+    { id: "analytics", label: copy.analytics || "Analytics" },
     { id: "cloud", label: "Cloud sync" },
     { id: "backups", label: "Backups" },
     { id: "updates", label: "Updates" },
@@ -25038,6 +25016,12 @@ function SettingsPage({
   // Only the selected section renders. Each body is the same markup the
   // stacked page had; the shell owns the list, the motion and the keyboard.
   const sectionBodies = {
+    analytics: () => (
+      <>
+        <SettingsSectionHeader title={copy.analytics || "Analytics"} description={copy.analyticsDetail || "Runs, usage and the services behind them."} />
+        <AnalyticsPanel active locale={activeLocale} />
+      </>
+    ),
     // Onboarding, not an account action. It used to sit in the account menu
     // beside Sign out, where a first-run checklist has no business being, and
     // there was no way back to it.
@@ -25413,9 +25397,9 @@ function SettingsPage({
               <ChevronRight className="hidden size-4 text-muted-foreground sm:block" />
             </a>
             <a
-              href="/usage"
+              href="/settings/analytics"
               className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-              onClick={(event) => handleLocalNavigation(event, "/usage")}
+              onClick={(event) => handleLocalNavigation(event, "/settings/analytics")}
             >
               <span className="min-w-0">
                 <span className="block font-medium">{copy.analytics}</span>

@@ -3,7 +3,11 @@ import { currentOwnership } from './owned-storage.js';
 /** Settings keeps the originating app screen, rather than guessing a member. */
 export function isSettingsDestination(route) {
   const path = String(route || '').split(/[?#]/)[0];
-  return path === '/settings' || path.startsWith('/settings/');
+  return path === '/settings' || path.startsWith('/settings/') || path === '/usage';
+}
+
+export function legacySettingsRedirect(route) {
+  return String(route || '').split(/[?#]/)[0] === '/usage' ? '/settings/analytics' : '';
 }
 
 /** Only same-app paths and text drafts may be restored from browser history. */
@@ -53,6 +57,7 @@ export const SETTINGS_SECTION_IDS = Object.freeze([
   'remote-access',
   'connectors',
   'memory',
+  'analytics',
   'cloud',
   'backups',
   'updates',
@@ -81,6 +86,7 @@ export function settingsPath(section = '') {
 export function settingsSectionFromRoute(route, hash = '') {
   const [pathAndQuery = ''] = String(route || '').split('#');
   const [path, query = ''] = pathAndQuery.split('?');
+  if (path === '/usage') return 'analytics';
   if (!isSettingsDestination(path)) return '';
   const params = new URLSearchParams(query);
   const fromPath = path.match(/^\/settings\/([^/]+)$/)?.[1] || '';
@@ -112,6 +118,7 @@ export const SETTINGS_KEYWORDS = Object.freeze({
   'remote-access': 'remote access phone telegram tunnel pairing',
   connectors: 'connectors mcp servers web research tools',
   memory: 'memory memories collective graph knowledge collection agents groups turbovec search markdown',
+  analytics: 'analytics usage metrics models tokens cost services telemetry',
   cloud: 'cloud sync team workspace memory memories devices account',
   updates: 'updates version upgrade release download install',
   system: 'system data folder storage counts reveal automatic checks',
