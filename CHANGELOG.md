@@ -12,6 +12,8 @@ list to the section for that version.
 
 ### Fixed
 
+- macOS release checks now verify the bundled CLI directly from a fresh home, so a signed-out computer's private runtime response no longer causes a false failure. Windows release tests build their required process helper first.
+- Windows cleanup recognizes a valid receipt written while the operating-system status check was running, while still refusing replacement without matching proof.
 - Artifact release checks verify that the preview receives pointer input before clicking, and use real taps on touch layouts. Slow browser runs no longer mistake a delivered automation command for an interactive preview.
 - Windows process-cleanup checks wait for the durable cleanup receipt before starting a replacement, avoiding a timing-dependent false failure.
 

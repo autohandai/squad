@@ -41,12 +41,11 @@ export async function windowsBootUptime() {
   if(!Number.isSafeInteger(value)||value<0)throw Error('Windows startup identity could not be checked.');
   return value;
 }
-export async function windowsJobDrained(name,options={}) {
-  validateJobName(name);
-  if(options.receiptPath) {
+async function readWindowsDrainReceipt(name,receiptPath) {
+  if(receiptPath) {
     let file;
     try {
-      file=await open(options.receiptPath,constants.O_RDONLY|(constants.O_NOFOLLOW||0));
+      file=await open(receiptPath,constants.O_RDONLY|(constants.O_NOFOLLOW||0));
       const info=await file.stat();
       if(!info.isFile()||info.nlink!==1||info.size>4096)throw Error('Invalid Windows drain receipt.');
       const value=JSON.parse(await file.readFile('utf8'));
@@ -54,8 +53,15 @@ export async function windowsJobDrained(name,options={}) {
       return true;
     }catch(error){if(error.code!=='ENOENT')throw error;}finally{await file?.close();}
   }
-  const {stdout}=await runOwnershipHelper(['--ownership-job-status',name],options);
-  const value=JSON.parse(stdout);
+  return false;
+}
+export async function windowsJobDrained(name,options={}) {
+  validateJobName(name);
+  if(await readWindowsDrainReceipt(name,options.receiptPath))return true;
+  const value=options.queryStatus ? await options.queryStatus(name) : JSON.parse((await runOwnershipHelper(['--ownership-job-status',name],options)).stdout);
+  // The watchdog writes the receipt before exiting. It can do both while our
+  // status helper starts, so a missing job must trigger a fresh receipt read.
+  if(await readWindowsDrainReceipt(name,options.receiptPath))return true;
   if(value.empty===true)return true;
   // Absence of an object name alone is not a completed-I/O barrier. A strictly
   // lower OS uptime proves a reset; equal/higher uptime proves nothing.
