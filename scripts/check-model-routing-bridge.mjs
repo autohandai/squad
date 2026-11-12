@@ -25,6 +25,18 @@ try{
   const windowCopy={...agent,permissions:{...agent.permissions,builtInPolicies:{ask_followup_question:'block',todo_write:'block'}}};
   const filledIn=await bridge.api('/api/chat','POST',{...payload,agent:windowCopy,prompt:'A turn from a window whose copy carries default tool rules.'},25000);
   assert.equal(filledIn.success,true,JSON.stringify(filledIn).slice(0,600));assert.equal(filledIn.data.harness,'autohand');assert.equal(filledIn.data.routing?.fallback||false,false,'the primary answered, not a fallback');
+  const quotaFlag=join(bridge.directory,'quota-notice-autohand');
+  await writeFile(quotaFlag,'recorded CLI 0.9.11 notice');
+  const quotaAgent={...agent,id:'routing-text-quota'};
+  const quotaBefore=(await calls()).filter(row=>row.engine==='autohand'&&row.kind==='turn').length;
+  const quota=await bridge.api('/api/chat','POST',{...payload,agentId:quotaAgent.id,agent:quotaAgent,prompt:'Continue when the CLI reports its monthly quota as normal text.'},25000);
+  assert.equal(quota.success,true,JSON.stringify(quota));assert.equal(quota.data.routing.used.harness,'codex');
+  assert.equal(quota.data.routing.attempts[0].reason,'quota');
+  assert.equal((await calls()).filter(row=>row.engine==='autohand'&&row.kind==='turn').length,quotaBefore+1,'a text-only quota notice switches immediately');
+  const noFallback={...agent,id:'quota-without-fallback',modelRouting:{fallbacks:[],allowAgentChanges:false}};
+  const refusedQuota=await bridge.api('/api/chat','POST',{...payload,agentId:noFallback.id,agent:noFallback,prompt:'No other engine is configured.'},25000);
+  assert.equal(refusedQuota.success,false,'without a fallback the quota notice remains an error');assert.match(refusedQuota.error,/monthly request quota/);
+  await rm(quotaFlag);await bridge.api('/api/members/'+agent.id+'/model-routing/reset','POST',{});
   await writeFile(join(bridge.directory,'fail-autohand'),'fail');
   const upload=await fetch(bridge.origin+'/api/attachments',{method:'POST',headers:{...await bridge.headers(),'x-file-name':'fallback.png','content-type':'image/png'},body:fixturePng});const image=(await upload.json()).data;assert(image?.id);
   const answer=await bridge.api('/api/chat','POST',{...payload,prompt:'Continue the same task.',attachments:[image],conversationContext:[{role:'user',body:'Our release code is NZ-42.'}]},25000);

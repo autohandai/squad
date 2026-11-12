@@ -48,3 +48,5 @@ reads current member projects rather than treating its old repository list as
 an immutable form. Metadata-only folder repair can be saved without a ready
 model provider/runtime; preparing a missing runtime during review is an explicit
 action. Refresh members reloads revisions while retaining the folder draft.
+
+The first Chief of Staff keeps Autohand Code as its advertised primary and saves connected, ready fallback engines with their configured model and reasoning defaults. This happens only on creation; retrying setup or changing folders preserves the saved routing, including an explicitly cleared fallback list.

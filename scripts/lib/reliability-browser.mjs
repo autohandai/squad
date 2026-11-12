@@ -44,7 +44,7 @@ export async function stop(child) {
   if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
 }
 
-export async function startBridge({ signedIn = true, prepare, cwd = process.cwd(), development = true } = {}) {
+export async function startBridge({ signedIn = true, prepare, cwd = process.cwd(), development = true, liveIdentity = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'squad-reliability-'));
   const port = await freePort();
   let hmrPort = await freePort();
@@ -53,7 +53,11 @@ export async function startBridge({ signedIn = true, prepare, cwd = process.cwd(
   const config = join(directory, 'config.json');
   await writeFile(config, JSON.stringify(signedIn ? { provider: 'autohandai', auth: { token: 'fixture-only-no-provider', email: 'reliability@example.test', expiresAt: '2099-01-01T00:00:00Z' } } : {}));
   const prepared = prepare ? await prepare(directory) : {};
-  const ownership=await createOwnedBridgeFixture({serviceRoot:join(directory,'squad'),appRoot:join(directory,'app')});
+  // Live release rehearsals verify the real account; ordinary checks retain
+  // their isolated identity server and deliberately seeded fixture dataset.
+  const ownership = liveIdentity
+    ? { paths: {}, env: { AUTOHAND_SQUAD_IDENTITY_ORIGIN: process.env.AUTOHAND_SQUAD_IDENTITY_ORIGIN || 'https://api.autohand.ai' }, close: async () => {} }
+    : await createOwnedBridgeFixture({serviceRoot:join(directory,'squad'),appRoot:join(directory,'app')});
   // Bridges started for checks never post to the person's desktop (lane 72e49cb).
   const env = { AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: 'macos', ...process.env, ...prepared, ...ownership.env, AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_USER_CONFIG_PATH: config };
   let child;

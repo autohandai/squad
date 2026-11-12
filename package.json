@@ -15,7 +15,7 @@
   "type": "module",
   "engines": { "node": "^22.13.0 || >=24.0.0" },
   "autohand": {
-    "cliVersion": "0.9.9",
+    "cliVersion": "0.9.11",
     "cliRepository": "autohandai/code-cli"
   },
   "scripts": {

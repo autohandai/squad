@@ -42,6 +42,7 @@ export async function prepareModelRoutingFixture(directory){
     async start(){this.config=JSON.parse(readFileSync(this.options.envVars.AUTOHAND_CONFIG,'utf8'));}
     async*streamPrompt(p){appendFileSync(${JSON.stringify(calls)},JSON.stringify({engine:'autohand',kind:'turn',model:this.options.model,configModel:this.config[this.config.provider]?.model,provider:this.config.provider,args:this.options.extraArgs,message:p.message,images:p.images?.length||0,files:p.context?.files||[]})+'\\n');
       if(existsSync(${JSON.stringify(join(directory,'fail-autohand'))}))throw Object.assign(new Error('Rate limit exceeded'),{status:429});
+      if(existsSync(${JSON.stringify(join(directory,'quota-notice-autohand'))})){yield{type:'message_end',content:"⚠️ Autohand AI monthly request quota reached.\\nYou've used all your requests for this month.\\nResets Dec 9, 2026 at 9:00 AM (Pacific/Auckland) · in 26d 5h 9m.\\nUpgrade your Autohand Code plan for more usage: https://console.autohand.ai/upgrade/?from=cli&tier=lite"};return;}
       if(existsSync(${JSON.stringify(join(directory,'partial-autohand'))})){yield{type:'message_update',delta:'Partial answer that must be replaced.'};throw Object.assign(new Error('Rate limit exceeded'),{status:429});}
       if(p.message.includes('MCP_ROUTING_')){
         const team=this.config.mcp.servers.find(s=>s.name==='autohand-squad');

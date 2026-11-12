@@ -11,7 +11,7 @@ This repo ships four release surfaces together:
 
 Every pull request should pass:
 
-- Autohand SDK 1.0.4 import and bundled CLI startup: `bun run check:sdk`
+- Pinned Autohand SDK import and bundled CLI startup: `bun run check:sdk`
 - web server syntax check: `bun run check:server`
 - release metadata check: `bun run check:release`
 - native portable packaging check on every target, including the host `tar`
@@ -105,7 +105,7 @@ tags included.
 ## Asset Names
 
 Portable archives: `autohand-squad-<version>-<os>-<arch>.tar.gz`; after
-extraction run `bin/squad` (`bin/squad.exe` on Windows) with Node 18.17+ on
+extraction run `bin/squad` (`bin/squad.exe` on Windows) with Node 22.13 LTS or 24+ on
 `PATH`. Desktop installers: `autohand-squad-<version>-macos-<arch>.dmg`,
 `autohand-squad-<version>-windows-x64-setup.exe`,
 `autohand-squad-<version>-linux-x64.deb`, and
@@ -169,28 +169,21 @@ it at 390px.
 
 ## Code Signing And Notarization
 
-Signing is optional and driven entirely by repository secrets. Without them
-the release still builds; the release summary and installer trust records
-(`trust-<os>-<arch>.json`) say so honestly.
+Public macOS releases require a Developer ID signature and Apple notarization. Missing or invalid credentials block publication, including nightly builds (ADR-0173). Local previews may use explicit ad-hoc signing; their success is not distribution proof. Windows signing remains optional, and installer trust records (`trust-<os>-<arch>.json`) record its actual state.
 
 | Secret | Purpose |
 | --- | --- |
 | `APPLE_CERTIFICATE` | Base64 `.p12` containing a Developer ID Application certificate |
 | `APPLE_CERTIFICATE_PASSWORD` | Password of that `.p12` |
-| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | App-specific password and team for `notarytool`; all three enable notarization |
+| `APPLE_TEAM_ID` | Expected Developer ID certificate team |
+| `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | Approved raw private notarization key and its key/issuer IDs |
+| `APPLE_ID`, `APPLE_PASSWORD` | Alternative complete Apple ID notarization credential pair |
 | `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD` | Base64 `.pfx` Authenticode certificate imported into the runner store |
 | `WINDOWS_TIMESTAMP_URL` | Optional RFC 3161 timestamp server (default DigiCert) |
 
-The macOS job imports the certificate into a temporary keychain and exports
-`APPLE_SIGNING_IDENTITY`; the packager signs every binary and the bundle with
-the hardened runtime and the entitlements the bundled Node runtime needs, then
-notarizes when the Apple account secrets are present. Without an identity the
-bundle is ad-hoc signed (`-`) so it stays internally consistent; users must
-clear the quarantine flag once. The Windows job imports the PFX and exports
-`WINDOWS_CERTIFICATE_THUMBPRINT`; `WINDOWS_SIGN_COMMAND` can replace it for
-Azure Trusted Signing or another external signer. The macOS smoke test runs
-`codesign --verify --deep --strict` on every DMG and `spctl --assess` when an
-identity was used.
+The macOS preflight imports the certificate into a temporary keychain and authenticates to Apple before release builds. Each Mac build repeats that preparation, signs nested resource executables before the outer app, uses secure timestamps and the hardened runtime, and submits the actual bundle for notarization. The mounted-DMG smoke must pass strict signature verification, stapler validation and Gatekeeper assessment. Preparation alone does not establish Apple's acceptance. Temporary keychains and private key files are removed after use; credentials never enter logs.
+
+The Windows job imports the PFX and exports `WINDOWS_CERTIFICATE_THUMBPRINT`; `WINDOWS_SIGN_COMMAND` can select an external signer. These optional Windows credentials do not relax the macOS publication gate.
 
 ## Release Channels
 
@@ -234,8 +227,7 @@ Recommended required checks:
 - `Release dry run (windows-x64)`
 - `Validate release manifest`
 
-Require at least one owner review for changes under `.github/`, `daemon/`,
-`server.mjs`, `scripts/`, and release documentation.
+The current `main` ruleset requires two approving reviews and successful Dependabot, Web checks and Dry-run release metadata checks. Owner-authorized bypass is an explicit merge action, never evidence of two approvals. This work also waits for API verification, all four runtime checks and Desktop shell check on the exact head. Keep the stronger release dry-run and manifest checks above before publication.
 
 Add a repository ruleset for `refs/tags/v*` that blocks tag updates and
 deletions. The workflow checks the remote tag again immediately before release
@@ -266,9 +258,7 @@ publishing.
 
 Release integrity is checked with SHA-256 checksum files, exact target coverage
 in the installer manifest, immutable commit pins for third-party GitHub
-Actions, and the tag-to-commit verification described above. The workflow does
-not claim artifact signing, code signing, notarization, or GitHub artifact
-attestation.
+Actions, and the tag-to-commit verification described above. These integrity checks do not substitute for native signing. Public macOS builds additionally require the signature, notarization and mounted-artifact checks above; Windows trust is recorded separately. The workflow does not claim GitHub artifact attestation.
 
 ## Local Preflight
 

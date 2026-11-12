@@ -17,10 +17,14 @@ list to the section for that version.
 
 ### Changed
 
+- The bundled Autohand Code CLI is updated to 0.9.11.
+
 - The account menu now starts with Inbox, Settings, About, and Licenses and agreements. Analytics lives beside Memory in Settings, with Back returning to your conversation and unsent draft.
 - Phone connections keep their computer identity and delivery receipts after a restart. Disconnecting a phone locally also removes its relay access when the computer reconnects.
 
 ### Fixed
+
+- The first Chief of Staff now receives connected fallback engines, and a CLI monthly-quota notice triggers failover instead of appearing as a completed answer.
 
 - Run the setup guide now lets you review an existing member and replace missing work folders. It reuses your saved squad and keeps explicit consent before creating the default Documents folder.
 - An older window can no longer restore a previous primary work folder after another client changes it.
