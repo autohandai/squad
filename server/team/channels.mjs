@@ -18,7 +18,7 @@ export function createTeamChannels({ read, mutate }) {
       const state = await read();
       if (!state.agentChannelAccess?.[memberId]?.agent || state.agentChannelAccess[memberId].removed) throw problem("This member is no longer available.", 403);
       return state.channels.filter(channel => channel.memberIds.includes(memberId)).map(channel => ({
-        id: channel.id, name: channel.name, visibility: channel.visibility,
+        id: channel.id, name: channel.name, kind: channel.kind || 'channel', visibility: channel.visibility,
         purpose: channel.purpose || "", memberIds: channel.memberIds,
         projects: channel.projects || [], replyMode: channel.replyMode || "thread",
       }));

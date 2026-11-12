@@ -8,13 +8,15 @@ import { ResponderSettings } from "@/components/channels/ResponderSettings";
 import { normalizeResponder } from "@/lib/channel-responders";
 import { channelSlug } from "@/lib/channel-name";
 import { normalizeChannelReplyMode } from "@/lib/channel-replies";
+import { isGroupChat } from "@/lib/group-chats";
 
 export function ChannelDetailsSettings({ channel, members = [], onSave, loadAutoAvailability }) {
   const [draft, setDraft] = useState(channel);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const submitting = useRef(false);
-  useEffect(() => { setDraft(channel); setError(''); }, [channel.id]);
+  useEffect(() => { setDraft(channel); setError(''); }, [channel.id, channel.kind]);
+  const group = isGroupChat(channel);
   const responderChanged = JSON.stringify(normalizeResponder(draft.responder)) !== JSON.stringify(normalizeResponder(channel.responder));
   const changed = responderChanged || normalizeChannelReplyMode(draft.replyMode) !== normalizeChannelReplyMode(channel.replyMode) || ['name', 'section', 'visibility'].some(key => String(draft[key] || '') !== String(channel[key] || ''));
   const responder = normalizeResponder(draft.responder);
@@ -32,15 +34,16 @@ export function ChannelDetailsSettings({ channel, members = [], onSave, loadAuto
   }
   return (
     <form onSubmit={save} className="flex flex-col gap-2">
-      <Label htmlFor="channel-details-name">Channel name</Label>
-      <Input id="channel-details-name" value={draft.name} disabled={saving} onChange={event => setDraft(current => ({ ...current, name: channelSlug(event.target.value) }))} />
+      <Label htmlFor="channel-details-name">{group ? 'Group name' : 'Channel name'}</Label>
+      <Input id="channel-details-name" value={draft.name} maxLength={80} disabled={saving} onChange={event => setDraft(current => ({ ...current, name: group ? event.target.value : channelSlug(event.target.value) }))} />
       <Label htmlFor="channel-details-section">Sidebar section</Label>
       <Input id="channel-details-section" value={draft.section || ''} placeholder="Channels" disabled={saving} onChange={event => setDraft(current => ({ ...current, section: event.target.value }))} />
       <Label htmlFor="channel-details-visibility">Visibility</Label>
-      <Select value={draft.visibility} disabled={saving} onValueChange={visibility => setDraft(current => ({ ...current, visibility }))}>
+      <Select value={draft.visibility} disabled={saving || group} onValueChange={visibility => setDraft(current => ({ ...current, visibility }))}>
         <SelectTrigger id="channel-details-visibility"><SelectValue /></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="public">Public</SelectItem><SelectItem value="private">Private</SelectItem></SelectGroup></SelectContent>
       </Select>
+      {group ? <p className="text-xs text-muted-foreground">Group chats stay private. Convert this group to a channel to change its visibility.</p> : null}
       <Field className="my-2">
         <FieldLabel htmlFor="channel-details-replies">Show replies</FieldLabel>
         <Select value={normalizeChannelReplyMode(draft.replyMode)} disabled={saving} onValueChange={replyMode => setDraft(current => ({ ...current, replyMode }))}>
@@ -51,7 +54,7 @@ export function ChannelDetailsSettings({ channel, members = [], onSave, loadAuto
       </Field>
       <ResponderSettings channel={channel} draft={draft.responder} members={members} disabled={saving} loadAutoAvailability={loadAutoAvailability} onChange={next => setDraft(current => ({ ...current, responder: next }))} />
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-      <Button type="submit" size="sm" variant="outline" disabled={saving || !changed || !draft.name.trim() || leadRequired}>{saving ? 'Saving…' : 'Save channel'}</Button>
+      <Button type="submit" size="sm" variant="outline" disabled={saving || !changed || !draft.name.trim() || leadRequired}>{saving ? 'Saving…' : group ? 'Save group' : 'Save channel'}</Button>
     </form>
   );
 }

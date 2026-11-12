@@ -216,7 +216,7 @@ that is not ready, or from the bridge step when every member is.
 ## Direct member management through managed MCP
 
 The agent-facing server and operator server advertise contract version
-`2.0.0`. Existing self-profile, shared/private/project memory and scheduling
+`2.1.0`. Existing self-profile, shared/private/project memory and scheduling
 tools remain available. Agents can additionally call:
 
 | Tool | Purpose |
@@ -230,9 +230,18 @@ tools remain available. Agents can additionally call:
 | `squad_list_routines` | Inspect saved schedules and their states, optionally by member. |
 | `squad_create_routine` | Create a target member’s routine; disabled unless explicitly enabled. |
 | `squad_update_routine` | Edit or pause/resume a saved routine without changing its owner. |
+| `squad_list_group_chats` | List private groups the acting member belongs to. |
+| `squad_get_group_chat` | Read one of that member's private groups; use its ID with channel message/thread tools. |
+| `squad_create_group_chat` | Create a genuine private group of 2–20 existing members, including the actor; optional `request_id` supports safe replay. |
+| `squad_convert_group_chat` | Convert an assigned group into an explicitly public/private channel, preserving history, ID and members. |
+| `squad_delete_group_chat` | Delete an assigned group and its history; refuses a converted channel. |
 
 These reuse operator routes and canonical storage, within the executing
 member’s current Squad. Their Built-in tool rules default to Ask first.
+Group list/read default to Allow with membership filtering; group mutations
+default to Ask first. The actor is derived from the work credential, never
+from tool arguments. Operator connections can manage all groups in the
+selected owner. See [the group contract](control-plane.md#private-groups-contract-v21-adr-0203).
 Squad shows the exact operation in the existing question card; Allow once
 applies only that operation. Confirmation expires after 15 seconds without
 a mutation, keeping below the smallest supported harness transport budget.

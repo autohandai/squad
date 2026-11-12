@@ -12,6 +12,8 @@ list to the section for that version.
 
 ### Added
 
+- Private group chats with their own Direct Messages rows. Create one from the inline recipient chooser, delete it, or convert it into a public/private channel while keeping its members and messages. The app and both Squad MCP connections share these operations.
+- Direct Messages → + now lets you search existing members, choose multiple recipients, or explicitly name and describe a new member before opening their chat. Opening the chooser creates nothing; new members receive connected harness defaults and fallbacks without an artificial greeting.
 - New members automatically receive connected fallback engines with their default models and reasoning settings. MCP creation chooses a ready primary when none is specified; Model settings lets you change or remove the saved fallback chain.
 - Agents and connected MCP clients can create saved Squad members and configure their profiles, responsibilities, skill packages, profile memories and routines. Managed tools use the member’s saved permissions and the selected owner.
 
@@ -30,6 +32,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Older app snapshots cannot silently remove a new group or reverse its conversion into a channel. Deleted groups remain deleted after refresh and restart.
 - MCP teammate messages retain a delivery reference after a fast reply or delivery error, so callers can inspect the saved result.
 
 - A full local cache now shows an actionable startup error and Retry instead of leaving Squad on Loading. Saved conversations remain unchanged.

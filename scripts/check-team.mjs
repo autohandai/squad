@@ -28,7 +28,7 @@ const harness = join(directory, "mock-codex");
 const config = join(directory, "user.json");
 const calls = join(directory, "calls.jsonl");
 
-const noah = { id: "team-noah", name: "Noah", role: "Frontend", status: "online", workspace: root, projects: [{ path: root }], harness: { id: "codex", executablePath: harness }, permissions: { permissionMode: "restricted", builtInPolicies: Object.fromEntries(['squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_memories', 'squad_list_skills', 'squad_set_member_skills', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine'].map(name => [name, "allow"])) } };
+const noah = { id: "team-noah", name: "Noah", role: "Frontend", status: "online", workspace: root, projects: [{ path: root }], harness: { id: "codex", executablePath: harness }, permissions: { permissionMode: "restricted", builtInPolicies: Object.fromEntries(['squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_memories', 'squad_list_skills', 'squad_set_member_skills', 'squad_list_group_chats', 'squad_get_group_chat', 'squad_create_group_chat', 'squad_convert_group_chat', 'squad_delete_group_chat', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine'].map(name => [name, "allow"])) } };
 const eva = { id: "team-eva", name: "Eva Green", role: "QA", status: "online", workspace: root, projects: [{ path: root }], harness: { id: "codex", executablePath: harness }, permissions: { permissionMode: "restricted" } };
 const squadMembers = [noah, eva];
 
@@ -119,6 +119,20 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
     log({ kind: 'tools', response: await rpc('tools/list', {}) });
     if (scenario === 'assign-held') await call('squad_assign_task', { to: 'Eva Green', title: 'Paused queued task', request_id: 'held-assignment' });
     if (scenario === 'assign') await call('squad_assign_task', { to: 'Eva Green', title: 'Verify the queued release task', detail: 'Inspect the release result.', request_id: 'release-assignment' });
+    if (scenario === 'groups') {
+      const input = { name: 'Agent release discussion', member_ids: ['team-noah', 'team-eva'], request_id: 'managed-release' };
+      const group = (await call('squad_create_group_chat', input)).result.structuredContent.channel;
+      if (!group?.id) throw new Error('Managed group was not saved.');
+      await call('squad_create_group_chat', input);
+      await call('squad_list_group_chats', {});
+      await call('squad_get_group_chat', { group_id: group.id });
+      await call('squad_post_channel', { channel_id: group.id, text: 'Saved through the managed group connection.', request_id: 'managed-group-post' });
+      await call('squad_channel_messages', { channel_id: group.id });
+      await call('squad_convert_group_chat', { group_id: group.id, visibility: 'private', request_id: 'managed-release-conversion' });
+      await call('squad_delete_group_chat', { group_id: group.id });
+      const disposable = (await call('squad_create_group_chat', { ...input, name: 'Agent temporary group', request_id: 'managed-deletable' })).result.structuredContent.channel;
+      await call('squad_delete_group_chat', { group_id: disposable.id });
+    }
     if (scenario === 'manage') {
       const created = (await call('squad_create_member', { request_id: 'specialist-once', name: 'Tatiana', role: 'Software engineer', responsibilities: 'Own the code-cli architecture.', personality: 'Precise and thoughtful.', instructions: 'Verify boundaries before editing.', memories: ['Keep CLI and API boundaries explicit.'] })).result.structuredContent;
       await call('squad_create_member', { request_id: 'specialist-once', name: 'Tatiana', role: 'Software engineer', responsibilities: 'Own the code-cli architecture.', personality: 'Precise and thoughtful.', instructions: 'Verify boundaries before editing.', memories: ['Keep CLI and API boundaries explicit.'] });
@@ -184,7 +198,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
 
 try {
   // --- pure pieces --------------------------------------------------------
-  assert.deepEqual(TEAM_TOOL_NAMES, ['squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_memories', 'squad_list_skills', 'squad_set_member_skills', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine', "squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_assign_task", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask", "squad_publish_artifact", "squad_member_data", "squad_member_files", "squad_export_member"]);
+  assert.deepEqual(TEAM_TOOL_NAMES, ['squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_memories', 'squad_list_skills', 'squad_set_member_skills', 'squad_list_group_chats', 'squad_get_group_chat', 'squad_create_group_chat', 'squad_convert_group_chat', 'squad_delete_group_chat', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine', "squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_assign_task", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask", "squad_publish_artifact", "squad_member_data", "squad_member_files", "squad_export_member"]);
   assert.deepEqual([...SQUAD_TEAM_TOOLS].sort(), [...TEAM_TOOL_NAMES].sort(), "the permission rows people see are exactly the tools the team server offers (ADR-0161)");
   const roster = [{ id: "a1", name: "Eva Green" }, { id: "a2", name: "Noah" }, { id: "a3", name: "Max Power" }, { id: "a4", name: "Max Steel" }];
   assert.equal(resolveTeammate("@Eva,", roster).member?.id, "a1", "a first name with @ and a comma finds the teammate");
@@ -558,11 +572,29 @@ try {
   assert.equal(childRoutines[0].instructions, 'Review CLI and MCP contracts.');
   assert.equal((await entries()).filter(entry => entry.kind === 'harness').length, harnessesBeforeManagement + 1, 'only the acting member runs; creation and disabled routines launch no child engine');
 
+  const beforeGroupWork = (await entries()).filter(entry => entry.kind === 'harness').length;
+  result = await chat(noah, 'team-scenario-groups');
+  assert.equal(result.success, true, result.text);
+  const groupCalls = (await entries()).filter(entry => entry.kind === 'tool' && entry.scenario === 'groups');
+  assert.equal((await entries()).filter(entry => entry.kind === 'initialize').at(-1).response.result.serverInfo.version, '2.1.0');
+  assert.equal(groupCalls.length, 10);
+  for (const [index, entry] of groupCalls.entries()) assert.equal(entry.response.result?.isError === true, index === 7, JSON.stringify(entry));
+  const group = groupCalls[0].response.result.structuredContent.channel;
+  assert.equal(group.kind, 'group');
+  assert.equal(groupCalls[1].response.result.structuredContent.channel.id, group.id);
+  assert(groupCalls[2].response.result.structuredContent.groups.some(item => item.id === group.id));
+  assert(groupCalls[5].response.result.structuredContent.messages.some(message => message.text === 'Saved through the managed group connection.'));
+  const groupState = (await api('/api/channels')).data;
+  assert.equal(groupState.channels.find(item => item.id === group.id).kind, 'channel');
+  assert(groupState.messages.some(message => message.channelId === group.id && message.body === 'Saved through the managed group connection.'));
+  assert(groupState.deletedChannelIds.includes(groupCalls[8].response.result.structuredContent.channel.id));
+  assert.equal((await entries()).filter(entry => entry.kind === 'harness').length, beforeGroupWork + 1, 'group management and publication do not dispatch another member');
+
   // --- a stale token is refused -------------------------------------------
   const stale = await fetch(`${origin}/api/team/mcp`, { method: "POST", headers: { "content-type": "application/json", "x-squad-team-token": "nope" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
   assert.equal(stale.status, 401);
 
-  console.log("Team check passed: messages between members, shared memory, rename and schedule through the managed MCP server.");
+  console.log("Team check passed: managed member creation/profile/memory/routines plus ten actual group lifecycle calls, discovery/version, history retention and non-dispatching publication through stdio MCP.");
 } catch (error) {
   console.error(logs.slice(-3000));
   throw error;

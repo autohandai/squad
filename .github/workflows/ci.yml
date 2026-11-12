@@ -145,6 +145,7 @@ jobs:
         run: |
           node scripts/check-member-management-browser.mjs
           node scripts/check-member-default-routing-browser.mjs
+          bun run check:group-chats:browser
 
       - name: Check agent tasks, history and default-folder consent
         env:
@@ -177,6 +178,7 @@ jobs:
           bun run check:workspace-aliases
           bun run check:agent-channel-actions
           bun run check:control-plane
+          bun run check:group-chats
           bun run check:member-by-chat:browser
           bun run check:channel-replies
           bun run check:team-proposals:browser

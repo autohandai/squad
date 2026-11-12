@@ -27,7 +27,7 @@ import { createConnectorStore } from "./server/connectors/store.mjs";
 import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
 import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
 import { AUTOHAND_TEAM_WAIT_SECONDS, TEAM_MCP_SERVER_NAME, createTeamService, teamMessagePrompt } from "./server/team/service.mjs";
-import { createMemberManagement } from './server/team/member-management.mjs';
+import { createSquadManagement } from './server/team/member-management.mjs';
 import { createMemoryService } from "./server/memory/service.mjs";
 import { createArtifactService } from "./server/artifacts/service.mjs";
 import { createSquadCloud } from "./server/squad-cloud/service.mjs";
@@ -64,6 +64,8 @@ import { startTracking } from "./server/workspace-git.mjs";
 import { defaultWorkspaceSetup, createDefaultWorkspace } from "./server/default-workspace.mjs";
 import { channelError, createChannelsStore } from "./server/channels-store.mjs";
 import { createAgentChannelActions } from "./server/agent-channel-actions.mjs";
+import { createGroupChats } from './server/group-chats.mjs';
+import { conversationLifecycle } from './src/lib/group-chats.js';
 import { createResponderPicker } from "./server/responders/pick.mjs";
 import { createRunHistory, runHistoryPath } from "./server/runs/history.mjs";
 import { clearHarnessSessions } from "./server/chats/sessions.mjs";
@@ -574,7 +576,7 @@ const team = createTeamService({
   memoryLibrary: () => memoryLibrary,
   artifacts,
   ownedData,
-  manageMembers: createMemberManagement({
+  manageMembers: createSquadManagement({
     actions: () => agentChannelActions,
     askPerson: ({ memberId, ...input }) => personQuestions.ask({ ...input, agentId: memberId }),
     request: async (path, method, value, { signal } = {}) => {
@@ -5527,7 +5529,8 @@ function normalizeChannel(item) {
   return {
     id: String(item.id || `channel-${randomUUID()}`),
     name: name.slice(0, 80),
-    visibility: normalizeChannelVisibility(item.visibility),
+    ...conversationLifecycle(item),
+    visibility: item.kind === 'group' ? 'private' : normalizeChannelVisibility(item.visibility),
     memberIds: normalizeChannelMemberIds(item.memberIds),
     projects: Array.isArray(item.projects) ? item.projects.filter(project => project && String(project.path || "").trim()).map(project => ({ ...project, name: String(project.name || basename(project.path)), path: String(project.path).trim() })) : [],
     section: String(item.section || "").trim(),
@@ -5654,6 +5657,7 @@ function normalizeChannelsState(input) {
 }
 
 const channelsStore = createChannelsStore({ filename: channelsStatePath, normalize: normalizeChannelsState, changed: () => emitBridgeEvent("channels.changed", { source: "bridge" }) });
+const groupChats = createGroupChats({ store: channelsStore, normalizeChannel });
 const readChannelsState = () => channelsStore.read();
 const writeChannelsState = input => channelsStore.replace(input);
 // Auto responder picks use the workspace default provider (no member
@@ -5738,6 +5742,8 @@ void readChannelsState().then(async (state) => {
 }).catch(() => {});
 
 async function createChannel(payload) {
+  if (payload?.kind && payload.kind !== 'channel') throw channelError('Create group chats through /api/group-chats.');
+  if (payload?.groupCreation !== undefined || payload?.groupConversion !== undefined) throw channelError('Conversation lifecycle metadata is saved by Squad.');
   const channel = normalizeChannel({
     ...payload,
     id: payload?.id || `channel-${randomUUID()}`,
@@ -5762,6 +5768,9 @@ async function updateChannel(channelId, patch) {
   const existing = state.channels.find((item) => item.id === channelId);
   if (!existing) throw new Error("channel not found");
   const source = patch && typeof patch === "object" ? patch : {};
+  if (source.kind !== undefined && source.kind !== existing.kind) throw channelError('Use the explicit group conversion operation to change conversation type.');
+  if (source.groupCreation !== undefined || source.groupConversion !== undefined) throw channelError('Conversation lifecycle metadata is saved by Squad.');
+  if (existing.kind === 'group' && source.visibility !== undefined && source.visibility !== 'private') throw channelError('Convert this group into a channel to change its visibility.');
   const next = normalizeChannel({
     ...existing,
     ...(typeof source.name === "string" && source.name.trim() ? { name: source.name } : {}),
@@ -8723,6 +8732,7 @@ function routeContext() {
     modelCatalog,
     fallbackRouter,
     memberModelRouting: async id => normalizeModelRouting((await withSavedMember({ agentId: id })).agent?.modelRouting),
+    groupChats,
     json,
     readBody,
     startEventStream,

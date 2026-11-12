@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { cleanMemoryText, createTeamStore } from "./store.mjs";
 import { validateArgs } from "../control-plane/control-plane.mjs";
 import { PROFILE_LIMITS } from "../../src/lib/member-shaping.js";
-import { MANAGED_MEMBER_TOOLS } from '../control-plane/management.mjs';
+import { MANAGED_MANAGEMENT_TOOLS } from '../control-plane/management.mjs';
 import { SERVER_VERSION } from '../control-plane/control-plane.mjs';
 
 export const TEAM_MCP_SERVER_NAME = "autohand-squad";
@@ -36,7 +36,7 @@ const BUSY_POLL_MS = 2000;
 const REPLY_CHARS = 6000;
 
 const TOOLS = [
-  ...MANAGED_MEMBER_TOOLS,
+  ...MANAGED_MANAGEMENT_TOOLS,
   {
     name: "squad_team",
     description: "List your Squad teammates: name, role, the engine each runs on and whether they are working right now. Use it before messaging someone whose exact name you do not know.",
@@ -547,7 +547,7 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
     if (errors.length) return failure(errors.join("; "));
     const operation = { ...session, operationId };
     try {
-      if (MANAGED_MEMBER_TOOLS.some(tool => tool.name === name)) {
+      if (MANAGED_MANAGEMENT_TOOLS.some(tool => tool.name === name)) {
         if (!manageMembers) throw new TeamError('Member management is unavailable in this runtime.');
         const assertCurrent = () => {
           const current = byToken.get(session.token);
