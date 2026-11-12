@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createSquadManagement } from '../server/team/member-management.mjs';
 import { PersonQuestions } from '../server/questions.mjs';
 import { patchedProfileText } from '../server/routes/member-shaping.route.mjs';
+import { memberWithWorkspaces } from '../server/member-workspaces.mjs';
 
 const profileText = 'Name: Eva\nResponsibilities: Old remit\nOperating instructions: Old instruction\nBrain card fields for this run:\n';
 const corrected = patchedProfileText(profileText, { description: 'New remit', instructions: '' });
@@ -62,3 +66,33 @@ const beforeEscape = mutations.length;
 await assert.rejects(() => manage('squad_create_member', { request_id: 'escape', name: 'Eva', role: 'QA', workspace: process.cwd() }, session, assertCurrent), /already assigned/);
 assert.equal(mutations.length, beforeEscape);
 console.log('PASS: block/ask/allow, workspace overrides, stopped turns, permission revocation, before-write fencing and bounded consent.');
+
+const workspaceRoot = await mkdtemp(join(tmpdir(), 'squad-managed-workspaces-'));
+try {
+  const first = join(workspaceRoot, 'first'), second = join(workspaceRoot, 'second'), outside = join(workspaceRoot, 'unassigned');
+  for (const path of [first, second, outside]) await mkdir(path);
+  agent.workspace = first; agent.projects = [{ path: first }, { path: second }];
+  const target = { id: 'child', workspace: first, projects: [{ path: first }, { path: second }] };
+  actions.memberAccess = async id => ({ agent: id === session.memberId ? agent : target });
+  permissions.squad_set_member_workspace = 'ask'; approved = false;
+  const before = mutations.length;
+  const changeFolders = directories => manage('squad_set_member_workspace', { member_id: 'child', workspace: first, directories }, session, assertCurrent);
+  await assert.rejects(() => changeFolders([second]), /did not approve/);
+  approved = true;
+  await changeFolders([second]);
+  assert.equal(mutations.length, before + 1);
+  assert.deepEqual(mutations.at(-1).value.directories, [second]);
+  assert.equal(mutations.at(-1).value.workspace, first);
+  permissions.squad_set_member_workspace = 'allow';
+  await assert.rejects(() => changeFolders([outside]), /already assigned/);
+  assert.equal(mutations.length, before + 1, 'an additional folder cannot escape the acting member grant even in allow mode');
+  target.projects = [{ path: first }];
+  await assert.rejects(() => changeFolders([second]), /already assigned to the target/);
+  assert.equal(mutations.length, before + 1, 'a read-only actor cannot grant a new folder to a more powerful recipient');
+  const alias = join(workspaceRoot, 'first-alias'); await symlink(first, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const primaryOnly = { workspace: first, projects: [], permissions: { workspaceOverrides: { [first]: { permissionMode: 'restricted' } } } };
+  const equivalent = await memberWithWorkspaces({ homeDir: workspaceRoot, getRuntime: () => ({}), cleanWorkspace: async path => path }, primaryOnly, { workspace: alias, directories: [] });
+  assert.equal(equivalent.workspace, first, 'a primary-only assignment preserves its restrictive permission locator');
+  assert.deepEqual(equivalent.permissions, primaryOnly.permissions);
+  console.log('PASS: workspace replacement needs saved consent and checks every additional folder against both member scopes.');
+} finally { await rm(workspaceRoot, { recursive: true, force: true }); }

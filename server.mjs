@@ -1689,7 +1689,7 @@ function getDefaultWorkspace() {
   return setup.ready ? setup.path : "";
 }
 
-async function cleanWorkspace(workspace) {
+async function cleanWorkspace(workspace, { createManagedWorkspace = true } = {}) {
   if (typeof workspace !== "string" || !workspace.trim()) {
     throw new Error("workspace is required; choose a local project folder or git repo");
   }
@@ -1699,7 +1699,7 @@ async function cleanWorkspace(workspace) {
   if (isPathInside(resolved, squadServiceDir) && !isPathInside(resolved, squadWorkspaceRoot)) {
     throw new Error('Private Squad account data cannot be used as a project folder. Choose a work folder for the selected Squad.');
   }
-  await ensureSquadManagedWorkspace(resolved);
+  if (createManagedWorkspace) await ensureSquadManagedWorkspace(resolved);
   if (!isInsideHome(resolved)) {
     throw new Error("workspace must be a folder inside the user directory");
   }

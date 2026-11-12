@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- Squad MCP 2.4 adds workspace replacement through both connections, so the app, CLI and other clients can change an existing member’s primary and additional work folders together.
 - Reach your Squad agents from an approved iPhone away from home through an encrypted relay. Enable “Reach from anywhere” in Computers settings, scan the code and approve the matching six digits. Your computer keeps message keys and needs to stay awake with Squad running.
 
 ### Changed
@@ -21,6 +22,8 @@ list to the section for that version.
 
 ### Fixed
 
+- Run the setup guide now lets you review an existing member and replace missing work folders. It reuses your saved squad and keeps explicit consent before creating the default Documents folder.
+- An older window can no longer restore a previous primary work folder after another client changes it.
 - Double-clicking the empty desktop titlebar once again enlarges and restores the window. On macOS it follows your Fill, Zoom, Minimize or No Action choice; controls in the titlebar keep their normal actions.
 - Group-chat browser checks wait for the saved name to appear and the save acknowledgement to finish, avoiding a false failure on slower connections.
 - macOS release checks now verify the bundled CLI directly from a fresh home, so a signed-out computer's private runtime response no longer causes a false failure. Windows release tests build their required process helper first.

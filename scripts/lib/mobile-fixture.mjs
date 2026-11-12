@@ -1,4 +1,4 @@
-import { mkdir, chmod, writeFile } from 'node:fs/promises';
+import { mkdir, chmod, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startBridge } from './reliability-browser.mjs';
@@ -18,7 +18,10 @@ export async function startMobileFixture({ announcements = [], relayApiUrl } = {
   let bridge;
   try {
   bridge = await startBridge({ cwd: fileURLToPath(new URL('../../', import.meta.url)), development: false, prepare: async directory => {
-    const home = join(directory, 'home'), workspace = join(home, 'project');
+    await mkdir(join(directory, 'home'), { recursive: true });
+    // macOS exposes its temporary directory through /var -> /private/var.
+    // The fake home and repository analysis must share one physical spelling.
+    const home = await realpath(join(directory, 'home')), workspace = join(home, 'project');
     await mkdir(workspace, { recursive: true });
     const preload = join(directory, 'home.mjs');
     await writeFile(preload, `import os from 'node:os';import{syncBuiltinESMExports}from'node:module';os.homedir=()=>${JSON.stringify(home)};syncBuiltinESMExports();`);

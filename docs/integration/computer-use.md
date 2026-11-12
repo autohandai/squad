@@ -24,7 +24,7 @@ or migration UI is added. Account transitions retire live runtime credentials.
 Operator MCP provides `get_member_computer_use` and
 `revoke_member_computer_use`; both require a real saved member. Neither can
 enable access, and managed agents cannot use them to self-grant. Reconnect
-clients to discover the 2.3.0 tool contract.
+clients to discover the current 2.4.0 tool contract.
 
 Verification: `check:member-computer-use:browser` exercises rendered Model
 and Permissions state, simulated native cancellation/failure/retry and real

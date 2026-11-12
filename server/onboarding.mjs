@@ -28,18 +28,18 @@ export function createOnboarding(ctx, { profile = profileWorkspace } = {}) {
     const existing = channels.channels.length || Object.keys(channels.agentChannelAccess).some(id => id !== 'squad-designer') || snapshot?.members?.some(member => member.id !== 'squad-designer');
     return { version: 1, status: existing ? 'existing' : 'new', repositories: [] };
   }
-  async function analyze(paths) {
+  async function analyze(paths, { preserveFolders = false } = {}) {
     const limit = ctx.getRuntime().limits?.maxProjectsPerMember || 50;
     if (!Array.isArray(paths) || !paths.length || paths.length > limit || paths.some(path => typeof path !== 'string' || !path.trim())) throw problem(`Choose between 1 and ${limit} repositories.`);
     const profiles = new Map();
     // Existing repositories share their Git root. Ordinary work folders use
     // their physical folder; neither analysis nor setup initializes Git.
     for (const path of paths) {
-      const folder = await ctx.cleanWorkspace(path).catch(error => { throw problem(error.message); });
+      const folder = await ctx.cleanWorkspace(path, { createManagedWorkspace: false }).catch(error => { throw problem(error.message); });
       const inspected = await profile(folder);
-      const root = await realpath(inspected.git?.tracked && inspected.git.root ? inspected.git.root : folder);
-      await ctx.cleanWorkspace(root).catch(error => { throw problem(error.message); });
-      if (!profiles.has(root)) profiles.set(root, root === inspected.path ? inspected : await profile(root));
+      const root = await realpath(!preserveFolders && inspected.git?.tracked && inspected.git.root ? inspected.git.root : folder);
+      await ctx.cleanWorkspace(root, { createManagedWorkspace: false }).catch(error => { throw problem(error.message); });
+      if (!profiles.has(root)) profiles.set(root, preserveFolders ? { ...inspected, path: folder } : root === inspected.path ? inspected : await profile(root));
     }
     const repositories = [...profiles.values()];
     return { repositories, recommendations: recommendTeammates(repositories) };

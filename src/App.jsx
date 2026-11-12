@@ -6939,6 +6939,15 @@ function App() {
     navigate(channelsPath("channel_general"));
   }
 
+  async function saveSetupWorkspaces({ memberId, workspace, directories, expectedRevision }) {
+    const saved = await api(`/api/control-plane/members/${encodeURIComponent(memberId)}/workspace`, {
+      method: "PATCH", body: JSON.stringify({ workspace, directories, expectedRevision }),
+    });
+    setAgents(current => current.map(member => member.id === memberId ? mergeMemberProfile(member, { workspace: saved.workspace, projects: saved.projects, profileRevision: saved.revision }) : member));
+    updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete" });
+    navigate(squadDirectoryPath());
+  }
+
   function finishOnboarding() {
     navigate(channels.some(channel => channel.id === "channel_general") ? channelsPath("channel_general") : squadDirectoryPath());
   }
@@ -10094,6 +10103,8 @@ function App() {
             {isOnboarding ? (
               <FirstRun
                 runtime={runtime}
+                agents={agents}
+                remoteByMember={remoteByMember}
                 workspaces={workspaces}
                 roleTemplates={roleTemplates}
                 fallbackWorkspace={fallbackWorkspace}
@@ -10113,6 +10124,8 @@ function App() {
                   <AgentAvatar agent={{ name: template.title, role: template.title, employeeType: template.id, avatar: birdAvatarForRole(template.id, template.title, template.id) }} className={className} />
                 )}
                 onStart={startFirstConversation}
+                onSaveWorkspaces={saveSetupWorkspaces}
+                onRefreshMembers={async () => { await Promise.all([reloadChannelsFromBridge(), refreshRemoteMembers()]); }}
                 onContinue={finishOnboarding}
                 onReviewSuggestion={(template, folder) => navigate(routeWithParams(`${MEMBER_ROUTE_PREFIX}/new`, { workspace: folder, role: template.id }))}
                 setupSnapshot={setupSnapshot}

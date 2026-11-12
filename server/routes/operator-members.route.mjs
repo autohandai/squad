@@ -1,6 +1,8 @@
 import { realpath, stat } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { isAbsolute, resolve, sep } from 'node:path';
+import { registryFor } from './remote.route.mjs';
+import { memberWithWorkspaces } from '../member-workspaces.mjs';
 import { MEMBER_PROFILE_FIELDS, memberProfileRevision, validateProfileAction } from '../../src/lib/member-shaping.js';
 import { BUILT_IN_TOOL_POLICY_GROUPS, builtInPoliciesForRank } from '../../src/lib/permission-policy.js';
 import { cleanMemoryText } from '../team/store.mjs';
@@ -9,7 +11,7 @@ import { initialMemberExecution, normalizeModelRouting } from '../../src/lib/mod
 import { patchedMemberCopy, patchedProfileText } from './member-shaping.route.mjs';
 
 export const name = 'operator-members';
-const MEMBER = /^\/api\/control-plane\/members\/([a-z0-9][a-z0-9_-]{0,79})(?:\/(directories))?$/;
+const MEMBER = /^\/api\/control-plane\/members\/([a-z0-9][a-z0-9_-]{0,79})(?:\/(directories|workspace))?$/;
 const CAPABILITIES = ['shell.read', 'shell.dev', 'shell.package', 'shell.git_write', 'shell.destructive', 'file.read', 'search.text', 'patch.apply', 'workspace.outside', 'browser.local', 'web.fetch', 'github.remote', 'mcp.connectors'];
 const TOOLS = [...new Set(BUILT_IN_TOOL_POLICY_GROUPS.flatMap(group => group.tools.map(([id]) => id)))];
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
@@ -28,7 +30,7 @@ async function accessFor(ctx, memberId) {
 
 function workspaceFor(ctx, memberId, agent) {
   const latest = [...ctx.runs.values()].filter(run => run.agentId === memberId && run.workspace).sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')))[0];
-  return latest?.workspace || agent.workspace || agent.projects?.[0]?.path || '';
+  return agent.workspace || agent.projects?.[0]?.path || latest?.workspace || '';
 }
 
 function publicProfile(ctx, memberId, agent) {
@@ -144,7 +146,11 @@ export async function handle(req, res, url, ctx) {
     const body = await ctx.readBody(req);
     let next;
     let profile = access.profile;
-    if (action === 'directories' && req.method === 'POST') {
+    if (action === 'workspace' && req.method === 'PATCH') {
+      keys(body, ['workspace', 'directories', 'expectedRevision']);
+      if (await registryFor(ctx).get(memberId)) throw fail('Choose work folders on this member’s execution computer. Connect to that computer’s Squad first.', 409);
+      next = await memberWithWorkspaces(ctx, access.agent, body);
+    } else if (action === 'directories' && req.method === 'POST') {
       keys(body, ['operation', 'path', 'expectedRevision']);
       if (!['add', 'remove'].includes(body.operation) || typeof body.path !== 'string' || !body.path.trim()) throw fail('Choose add/remove and an existing folder path.');
       const expanded = body.path.startsWith('~/') ? resolve(ctx.homeDir, body.path.slice(2)) : body.path;
