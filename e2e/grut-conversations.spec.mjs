@@ -23,7 +23,9 @@ test.beforeAll(async () => {
   const channelState = (await bridge.api('/api/channels')).data;
   const threadId = 'grut-group-thread';
   const channelSaved = await bridge.api('/api/channels', 'PUT', { ...channelState, messages: [
+    { id: 'grut-group-answer-2', channelId: group.id, threadId, parentMessageId: 'grut-group-user', role: 'agent', agentId: member.id, body: 'The group review includes the final notes.', status: 'complete', createdAt: new Date(now - 20000).toISOString() },
     { id: 'grut-group-answer', channelId: group.id, threadId, parentMessageId: 'grut-group-user', role: 'agent', agentId: member.id, body: 'The group review is ready.', status: 'complete', createdAt: new Date(now - 30000).toISOString() },
+    { id: 'grut-group-followup', channelId: group.id, threadId: 'grut-group-followup-thread', role: 'user', body: 'Keep the notes here.', status: 'complete', createdAt: new Date(now - 140000).toISOString() },
     { id: 'grut-group-user', channelId: group.id, threadId, role: 'user', body: 'Review this together.', status: 'complete', createdAt: new Date(now - 150000).toISOString() },
   ] }); expect(channelSaved.success, channelSaved.error).toBe(true);
 });
@@ -53,8 +55,8 @@ test('Grut selects a persistent conversation layout with real previews and exist
   await sidebar.getByRole('button', { name: 'Actions for Noah', exact: true }).click();
   await page.getByRole('button', { name: 'Pin', exact: true }).click();
   await expect(noah.getByLabel('Pinned', { exact: true })).toBeVisible();
-  await expect(conversations.getByRole('button', { name: 'Group chat: Release reviewers', exact: true })).toContainText('The group review is ready.');
-  const rowNames = await conversations.getByRole('button').allTextContents();
+  await expect(conversations.getByRole('button', { name: 'Group chat: Release reviewers', exact: true })).toContainText('The group review includes the final notes.');
+  const rowNames = await conversations.getByRole('button').filter({ has: page.locator('time') }).allTextContents();
   expect(rowNames[0]).toContain('Noah');
   expect(rowNames[1]).toContain('Eva');
   await page.screenshot({ path: info.outputPath('conversation-list.png'), fullPage: true, animations: 'disabled' });
@@ -85,6 +87,14 @@ test('Grut selects a persistent conversation layout with real previews and exist
   const groupAnswer = page.locator('main [data-channel-message-id="grut-group-answer"]');
   await expect(groupAnswer.locator('.chat-agent-answer')).toContainText('The group review is ready.');
   expect(await groupAnswer.locator('.chat-reply-avatar').evaluate(element => getComputedStyle(element).display)).toBe('none');
+  for (const id of ['grut-group-answer-2', 'grut-group-followup']) {
+    const consecutive = page.locator(`main [data-channel-message-id="${id}"]`);
+    await expect(consecutive).toHaveAttribute('data-message-compact', 'true');
+    const clock = consecutive.locator('.chat-channel-compact-time');
+    await clock.scrollIntoViewIfNeeded();
+    await expect(clock).toBeInViewport();
+    expect(await clock.getAttribute('dateTime')).toBeTruthy();
+  }
   await page.screenshot({ path: info.outputPath('group-thread.png'), fullPage: true, animations: 'disabled' });
   await page.goto(bridge.origin + `/conversations/new?member=${member.id}`);
   await expect(page.locator('main')).toContainText('The checklist is ready.');

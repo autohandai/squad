@@ -56,6 +56,10 @@ both ordering and rendering. A focused chronology assertion failed on the old
 selection. The browser fixture now includes an older pinned member and older
 records appended after newer replies, as well as a populated group thread;
 the earlier empty group check had not exercised its answer composition.
+The next review caught that the shared compact-message avatar column also held
+its only clock. Hiding that column hid consecutive-message timestamps as well.
+Grut keeps those clocks in the message column, visible on touch layouts too;
+the fixture checks consecutive human roots and agent thread replies.
 
 ## Consequences and proof limits
 

@@ -530,6 +530,9 @@ html[data-skin="grut"] .app-main [data-message-role="assistant"][data-message-co
 html[data-skin="grut"] .app-main [data-message-role="assistant"] > .chat-reply-avatar {
   display: none;
 }
+html[data-skin="grut"] .app-main .chat-channel-compact-time {
+  display: block;
+}
 html[data-skin="grut"] .app-main [data-channel-message-id][data-message-role="user"] {
   display: block;
   width: fit-content;

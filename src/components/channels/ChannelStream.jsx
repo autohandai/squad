@@ -387,6 +387,7 @@ export function ChannelStream({
                     {loading ? <Spinner className="size-3" /> : null}
                   </div>
                 ) : null}
+                {compact ? <time className="chat-channel-compact-time hidden text-[10px] text-muted-foreground" title={fullTime(message)} dateTime={ms ? new Date(ms).toISOString() : undefined}>{timeLabel(message, locale)}</time> : null}
                 <div className={cn("text-sm leading-6", failed ? "text-destructive" : "text-foreground/90", compact && loading && "text-muted-foreground")}>
                   <MentionChips message={message} agents={agents} userName={userName} channelMemberIds={channel?.memberIds || []} />
                   {loading && !message.body?.trim() ? (
