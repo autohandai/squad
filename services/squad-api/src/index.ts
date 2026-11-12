@@ -9,13 +9,17 @@ import { idSchema, nameSchema } from "./schema.js";
 import { agentRoutes } from "./agents.js";
 import { availableOwners } from "./owners.js";
 import { backupJsonSchema } from "@autohand/squad-portable";
+import { mobileRelayRoutes, publicMobileRelay } from "./mobile-relay.js";
+export { MobileRelay } from "./mobile-relay.js";
 
-async function route(request: Request, env: Env, url: URL): Promise<Response> {
+async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   if (url.pathname === "/health" && request.method === "GET") return ok({ service: "squad-api", apiVersion: 1 });
   if (url.pathname === "/schemas/squad-backup-v1.json" && request.method === "GET") return Response.json(backupJsonSchema(), { headers: { "cache-control": "public, max-age=86400" } });
   const release = await releaseRoutes(request, env, url); if (release) return release;
   if (url.pathname === "/v1/auth/exchange" && request.method === "POST") return exchangeIdentity(request, env);
+  const phone = await publicMobileRelay(request, env, url, ctx); if (phone) return phone;
   const user = await authenticate(request, env);
+  const relay = await mobileRelayRoutes(request, env, user, url, ctx); if (relay) return relay;
   if (url.pathname === "/v1/owners" && request.method === "GET") return ok({ owners: await availableOwners(request, env, user) });
   const agents = await agentRoutes(request, env, user, url); if (agents) return agents;
   if (url.pathname === "/v1/me" && request.method === "GET") return ok({ id: user.id, issuer:user.issuer,subject:user.subject,email: user.email, displayName: user.displayName });
@@ -49,7 +53,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
 }
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const requestId = crypto.randomUUID(); const url = new URL(request.url);
     const origin = request.headers.get("origin");
     const publicRelease = request.method === "GET" && (/^\/v1\/releases\/(stable|nightly)\/manifest$/.test(url.pathname) || url.pathname === "/schemas/squad-backup-v1.json");
@@ -58,13 +62,14 @@ export default {
       requireValue(!origin || origin === env.WEB_ORIGIN || publicRelease, 403, "origin_denied", "This browser origin is not allowed.");
       response = request.method === "OPTIONS"
         ? new Response(null, { status: 204 })
-        : await route(request, env, url);
+        : await route(request, env, url, ctx);
     } catch (error) {
       const known = error instanceof ApiError;
       const status = known ? error.status : 500;
       if (status >= 500) console.error(JSON.stringify({ event: "request.failed", requestId, status }));
       response = Response.json({ success: false, error: { code: known ? error.code : "internal_error", message: known ? error.message : "Squad could not complete this request.", ...(known && error.details ? { details: error.details } : {}) }, requestId }, { status });
     }
+    if (response.status === 101) return response;
     response.headers.set("x-request-id", requestId);
     response.headers.set("x-content-type-options", "nosniff");
     response.headers.set("referrer-policy", "no-referrer");

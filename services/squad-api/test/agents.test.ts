@@ -44,7 +44,7 @@ async function upload(prefix = personal, session = alice, identity?: string) {
 const write = (prefix: string, id: string, revision: number, record: Agent | null, session = alice, identity?: string, key = crypto.randomUUID()) => call(`${prefix}/agents/${id}`, "PUT", { baseRevision: revision, content: record }, session, identity, key);
 
 before(async () => {
-  const bundle = await build({ entryPoints: ["src/index.ts"], bundle: true, write: false, format: "esm", platform: "browser", target: "es2024" });
+  const bundle = await build({ entryPoints: ["src/index.ts"], bundle: true, write: false, format: "esm", platform: "browser", target: "es2024", external: ["cloudflare:workers"] });
   runtime = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: apiName, modules: true, script: bundle.outputFiles[0].text, compatibilityDate: "2026-10-27",
     d1Databases: ["DB"], r2Buckets: ["MEMORY", "RELEASES"],
     bindings: { IDENTITY_ORIGIN: "https://api.autohand.ai", WEB_ORIGIN: "https://owned.example.test", RELEASE_PUBLISHER_TOKEN: "not-used-for-agent-authority" },

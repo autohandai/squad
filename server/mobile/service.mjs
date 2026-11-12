@@ -10,10 +10,12 @@ const digest = value => createHash('sha256').update(JSON.stringify(stable(value)
 const deny = () => Object.assign(Error('This device is not connected. Pair it again in Squad.'), { status: 401 });
 
 /** Owner-scoped device credentials. No native OS grants or general API proxy. */
-export async function createMobileService({ directory, computerName, assertCurrent, execute, now = Date.now }) {
+export async function createMobileService({ directory, computerName, assertCurrent, execute, beforeApprove = async () => {}, afterRevoke = async () => {}, now = Date.now }) {
   const file = join(directory, 'mobile-devices.json');
-  let state = await readPersistentJson(file, { version: 1, computerID: randomUUID(), devices: {}, receipts: {} });
+  const initial = { version: 1, computerID: randomUUID(), devices: {}, receipts: {} };
+  let state = await readPersistentJson(file, initial);
   if (state.version !== 1 || !state.computerID || !state.devices || !state.receipts) throw Error('The paired-device store is unreadable. Existing data was preserved.');
+  if (state === initial) await writePersistentJson(file, state);
   let offer = null, claim = null, approved = false, rejected = false, chain = Promise.resolve(), waiting = 0;
   const freshOffer = () => offer && offer.expiresAt > now() / 1000;
   const serial = fn => { const result = chain.then(fn); chain = result.catch(() => {}); return result; };
@@ -46,6 +48,7 @@ export async function createMobileService({ directory, computerName, assertCurre
       }
       if (command.command === 'device.disconnect') {
         const next = structuredClone(state); delete next.devices[packet.peerID]; await save(next);
+        await afterRevoke(packet.peerID);
         return respond({ ok: true, data: { removed: true } });
       }
       if (!['snapshot', 'conversation', 'message', 'delegate', 'tasks', 'announcements', 'announcement.act'].includes(command.command)) throw Error('This action is unavailable from a phone.');
@@ -76,7 +79,10 @@ export async function createMobileService({ directory, computerName, assertCurre
     createOffer: endpoint => serial(async () => {
       await assertCurrent();
       if (Object.keys(state.devices).length >= 20) throw Error('Disconnect a phone before pairing another one.');
-      offer = { version: 1, computerID: state.computerID, computerName, endpoint: validateEndpoint(endpoint), pairingID: randomUUID(), secret: randomBytes(32).toString('base64'), expiresAt: now() / 1000 + 600 };
+      const metadata = { computerID: state.computerID, pairingID: randomUUID(), expiresAt: now() / 1000 + 600 };
+      const transport = typeof endpoint === 'function' ? await endpoint(metadata) : { endpoint };
+      const relayToken = transport.relayToken === undefined ? undefined : z.string().regex(/^[a-f0-9]{64}$/).parse(transport.relayToken);
+      offer = { version: 1, ...metadata, computerName, endpoint: validateEndpoint(transport.endpoint), secret: randomBytes(32).toString('base64'), ...(relayToken ? { relayToken } : {}) };
       claim = null; approved = false; rejected = false;
       return { ...offer };
     }),
@@ -85,6 +91,7 @@ export async function createMobileService({ directory, computerName, assertCurre
       if (!freshOffer() || offer.pairingID !== pairingID || !claim || rejected || approved) throw Error('Generate a new pairing code.');
       const expected = Buffer.from(confirmationCode(offer, claim.deviceID, claim.deviceKey)), supplied = Buffer.from(String(code));
       if (supplied.length !== expected.length || !timingSafeEqual(expected, supplied)) throw Error('The confirmation code does not match.');
+      await beforeApprove({ pairingID, deviceID: claim.deviceID, relay: Boolean(offer.relayToken) });
       const next = structuredClone(state);
       next.devices[claim.deviceID] = { name: claim.deviceName, key: claim.deviceKey, pairedAt: new Date(now()).toISOString() };
       await save(next); approved = true;
@@ -94,6 +101,7 @@ export async function createMobileService({ directory, computerName, assertCurre
     revoke: deviceID => serial(async () => {
       await assertCurrent();
       const next = structuredClone(state); delete next.devices[deviceID]; await save(next);
+      await afterRevoke(deviceID);
       if (claim?.deviceID === deviceID) { offer = null; claim = null; }
       return { removed: true };
     }),

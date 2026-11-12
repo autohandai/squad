@@ -1,12 +1,14 @@
-import { bindings, defineConfig, triggers } from "cf/config";
+import { bindings, defineConfig, triggers, exports as workerExports } from "cf/config";
 import { env } from "node:process";
+import * as entrypoint from "./src/index.ts" with { type: "cf-worker" };
 
 // This service owns its resources. It has no general Autohand API database or
-// R2 bindings; the identity origin is used only when exchanging a sign-in.
+// R2 bindings; the identity origin verifies sign-in and current owner access.
 export default defineConfig({
   worker: {
     name: "squad-api",
-    entrypoint: "./src/index.ts",
+    entrypoint,
+    exports: { MobileRelay: workerExports.durableObject({ storage: "sqlite" }) },
     compatibilityDate: "2026-10-27",
     // Identity and current team membership are served by another public Worker.
     compatibilityFlags: ["global_fetch_strictly_public"],

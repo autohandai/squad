@@ -6,6 +6,10 @@ on:
     paths:
       - services/squad-api/**
       - server/squad-cloud/**
+      - server/mobile/**
+      - server/routes/mobile.route.mjs
+      - relay/ws.mjs
+      - scripts/lib/mobile-fixture.mjs
       - server/ownership/**
       - server/control-plane/**
       - server/team/store.mjs
@@ -18,6 +22,10 @@ on:
     paths:
       - services/squad-api/**
       - server/squad-cloud/**
+      - server/mobile/**
+      - server/routes/mobile.route.mjs
+      - relay/ws.mjs
+      - scripts/lib/mobile-fixture.mjs
       - server/ownership/**
       - server/control-plane/**
       - server/team/store.mjs

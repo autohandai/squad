@@ -32,7 +32,8 @@ export function validateEndpoint(input) {
   const url = new URL(input), host = url.hostname;
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(host) || host.endsWith('.local')
     || (isIP(host) === 4 && (host.startsWith('10.') || host.startsWith('192.168.') || (host.startsWith('172.') && Number(host.split('.')[1]) >= 16 && Number(host.split('.')[1]) <= 31)));
-  if (url.username || url.password || url.search || url.hash || url.pathname !== '/' || !(url.protocol === 'https:' || (url.protocol === 'http:' && local))) throw Error('Choose HTTPS or a local network address without a path, password or query.');
-  return url.origin;
+  const relayPath = /^\/mobile\/[a-f0-9]{64}$/.test(url.pathname);
+  if (url.username || url.password || url.search || url.hash || (url.pathname !== '/' && !relayPath) || !(url.protocol === 'https:' || (url.protocol === 'http:' && local))) throw Error('Choose HTTPS or a local network address without a password or query.');
+  return url.origin + (relayPath ? url.pathname : '');
 }
 export const pairingURL = offer => `autohand-squad://pair?data=${Buffer.from(JSON.stringify(offer)).toString('base64url')}`;

@@ -6,10 +6,11 @@ import { readPersistentJson, writePersistentJson } from '../persistent-json.mjs'
 import { createMobileService } from './service.mjs';
 import { createMobileHTTP } from './http.mjs';
 import { createMobileAdapter } from './adapter.mjs';
+import { createMobileRelay } from './relay.mjs';
 import { pairingURL, validateEndpoint } from './protocol.mjs';
 import { assignMemberTask } from '../routes/work.route.mjs';
 
-const configuration = z.object({ enabled: z.boolean(), mode: z.enum(['local', 'tunnel']), endpoint: z.string().max(1000).default(''), port: z.number().int().min(0).max(65535).default(29323) }).strict();
+const configuration = z.object({ enabled: z.boolean(), mode: z.enum(['local', 'tunnel', 'relay']), endpoint: z.string().max(1000).default(''), port: z.number().int().min(0).max(65535).default(29323) }).strict();
 const localAddress = () => Object.values(networkInterfaces()).flat().find(row => row && row.family === 'IPv4' && !row.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(row.address))?.address || '';
 
 export async function createMobileController(ctx) {
@@ -17,16 +18,26 @@ export async function createMobileController(ctx) {
   const scope = createHash('sha256').update(ctx.ownedHookScope).digest('hex');
   const directory = join(ctx.squadStateDir, 'mobile', scope), file = join(directory, 'config.json');
   let config = configuration.parse(await readPersistentJson(file, { enabled: false, mode: 'local', endpoint: '', port: 29323 }));
-  let server = null, error = '', transition = Promise.resolve(), adapter;
-  const service = await createMobileService({ directory, computerName: hostname(), assertCurrent: () => adapter.assertCurrent(), execute: (...args) => adapter.execute(...args) });
+  let server = null, relay = null, error = '', transition = Promise.resolve(), adapter;
+  const service = await createMobileService({ directory, computerName: hostname(), assertCurrent: () => adapter.assertCurrent(), execute: (...args) => adapter.execute(...args),
+    beforeApprove: input => { if (input.relay) { if (!relay) throw Error('Reconnect the relay before approving this phone.'); return relay.approve(input); } },
+    afterRevoke: id => relay?.revoke(id),
+  });
   adapter = createMobileAdapter({ origin: ctx.ownedBrokerOrigin, computerID: service.computerID, version: ctx.packageMetadata.version, assignTask: assignMemberTask, announcements: ctx.announcements });
-  const endpoint = () => config.mode === 'tunnel' ? config.endpoint : localAddress() && `http://${localAddress()}:${server?.address()?.port || config.port}`;
+  const endpoint = () => config.mode === 'relay' ? relay?.status().endpoint || '' : config.mode === 'tunnel' ? config.endpoint : localAddress() && `http://${localAddress()}:${server?.address()?.port || config.port}`;
+  const listening = () => config.mode === 'relay' ? Boolean(relay?.status().connected) : Boolean(server?.listening);
   async function close() {
+    relay?.close(); relay = null;
     const previous = server; server = null;
     if (previous) await new Promise(resolve => { previous.close(resolve); previous.closeAllConnections(); });
   }
   async function start(value) {
     if (!value.enabled) return;
+    if (value.mode === 'relay') {
+      if (!ctx.mobileRelayIdentity) throw Error('Update Squad to connect this computer through the relay.');
+      relay = createMobileRelay({ service, identity: ctx.mobileRelayIdentity, ownerScope: scope });
+      await relay.start(); return;
+    }
     if (value.mode === 'tunnel') validateEndpoint(value.endpoint);
     const next = createMobileHTTP(service);
     await new Promise((resolve, reject) => {
@@ -37,13 +48,16 @@ export async function createMobileController(ctx) {
     server = next;
   }
   try { await start(config); } catch (failure) { error = failure.message; }
-  const status = () => ({ ...service.status(), config, listening: Boolean(server?.listening), endpoint: endpoint() || '', error });
+  const status = () => ({ ...service.status(), config, listening: listening(), endpoint: endpoint() || '', error: error || relay?.status().error || '' });
   return {
     status,
     configure: input => {
       const action = transition.then(async () => {
         const next = configuration.parse(input);
-        if (next.mode === 'tunnel') next.endpoint = validateEndpoint(next.endpoint);
+        if (next.mode === 'tunnel') {
+          next.endpoint = validateEndpoint(next.endpoint);
+          if (new URL(next.endpoint).pathname !== '/') throw Error('Use your tunnel’s HTTPS origin without a path.');
+        }
         const previous = config;
         await close();
         try {
@@ -60,8 +74,8 @@ export async function createMobileController(ctx) {
     },
     offer: async () => {
       await transition;
-      if (!server?.listening || !endpoint()) throw Error('Enable a connection and choose a reachable address first.');
-      const offer = await service.createOffer(endpoint()), link = pairingURL(offer);
+      if (!listening() || !endpoint()) throw Error('Enable a connection and wait for it to connect first.');
+      const offer = await service.createOffer(config.mode === 'relay' ? metadata => relay.offer(metadata) : endpoint()), link = pairingURL(offer);
       return { link, expiresAt: offer.expiresAt, computerName: offer.computerName };
     },
     approve: async input => { const value = z.object({ pairingID: z.uuid(), code: z.string().regex(/^\d{6}$/) }).strict().parse(input); await service.approve(value.pairingID, value.code); return status(); },

@@ -10,6 +10,14 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- Reach your Squad agents from an approved iPhone away from home through an encrypted relay. Enable “Reach from anywhere” in Computers settings, scan the code and approve the matching six digits. Your computer keeps message keys and needs to stay awake with Squad running.
+
+### Changed
+
+- Phone connections keep their computer identity and delivery receipts after a restart. Disconnecting a phone locally also removes its relay access when the computer reconnects.
+
 ### Fixed
 
 - macOS release checks now verify the bundled CLI directly from a fresh home, so a signed-out computer's private runtime response no longer causes a false failure. Windows release tests build their required process helper first.
