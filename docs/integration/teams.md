@@ -236,7 +236,10 @@ applies only that operation. Confirmation expires after 15 seconds without
 a mutation, keeping below the smallest supported harness transport budget.
 Unattended work cannot approve itself. A saved Allow rule permits direct
 management; Block refuses it. Current policy and active turn are rechecked
-before transport, including workspace-specific overrides.
+before transport, including workspace-specific overrides. The entire operation,
+including consent and preflight reads, has a 24-second deadline; a timed-out
+read cannot continue to a later write. Inspect saved state after a lost write
+acknowledgement before retrying.
 
 For example, `squad_create_member({request_id:"qa-specialist-1",name:"Eva",
 role:"QA engineer",responsibilities:"Own release acceptance.",

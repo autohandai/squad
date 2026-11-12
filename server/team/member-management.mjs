@@ -6,13 +6,15 @@ const refused = message => Object.assign(new Error(message), { status: 403 });
 
 // Both MCP surfaces use the same operator routes. This adapter adds the
 // executing member's current policy and bounded, operation-specific consent.
-export function createMemberManagement({ actions, request, askPerson }) {
+export function createMemberManagement({ actions, request, askPerson, timeoutMs = 24_000 }) {
   return async (toolName, input, session, assertCurrent) => {
+    const signal = AbortSignal.timeout(timeoutMs);
     const name = toolName.replace(/^squad_/, '');
     if (!MEMBER_MANAGEMENT_NAMES.includes(name)) throw refused('Unsupported member-management tool.');
     const args = structuredClone(input);
     let approved = false;
     async function actor() {
+      signal.throwIfAborted();
       assertCurrent();
       const saved = await actions().memberAccess(session.memberId);
       if (!saved?.agent || saved.removed) throw refused('The acting member is no longer available.');
@@ -38,7 +40,7 @@ export function createMemberManagement({ actions, request, askPerson }) {
         let target = current.agent;
         if (path === '/api/routines') target = (await actions().memberAccess(value.memberId))?.agent;
         if (path.startsWith('/api/routines/')) {
-          const routine = await request(path, 'GET');
+          const routine = await request(path, 'GET', undefined, { signal });
           target = (await actions().memberAccess(routine.memberId))?.agent;
         }
         const folders = [...(target?.projects || []).map(project => project.path), target?.workspace].filter(Boolean);
@@ -49,7 +51,8 @@ export function createMemberManagement({ actions, request, askPerson }) {
       const latest = await actor();
       if (latest.policy !== 'allow' && !approved) throw refused('Permissions changed; ask the person before retrying.');
       assertCurrent();
-      const result = await request(path, method, value);
+      const result = await request(path, method, value, { signal });
+      signal.throwIfAborted();
       assertCurrent();
       return result;
     }

@@ -40,6 +40,14 @@ await assert.rejects(update, /blocked/);assert.equal(mutations.length, 1);
 delete agent.permissions.workspaceOverrides;
 await update();assert.equal(mutations.length, 2);
 
+const timed = createMemberManagement({ actions: () => actions, timeoutMs: 5,
+  request: async (_path, _method, _value, { signal }) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve({ id: 'child', revision: 1 }), 100);
+    signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+  }) });
+await assert.rejects(() => timed(policy, { member_id: 'child', name: 'Late' }, session, assertCurrent), /timeout/i);
+assert.equal(mutations.length, 2, 'a timed-out read cannot reach a later write');
+
 const questions = new PersonQuestions({ waitMs: 1000 });
 let requestId;
 const detach = questions.attach('bounded', event => { if (event.type === 'question_request') requestId = event.requestId; });

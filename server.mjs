@@ -577,8 +577,8 @@ const team = createTeamService({
   manageMembers: createMemberManagement({
     actions: () => agentChannelActions,
     askPerson: ({ memberId, ...input }) => personQuestions.ask({ ...input, agentId: memberId }),
-    request: async (path, method, value) => {
-      const response = await ownedBrokerRequest(path, { method, signal: AbortSignal.timeout(8000),
+    request: async (path, method, value, { signal } = {}) => {
+      const response = await ownedBrokerRequest(path, { method, signal: AbortSignal.any([signal, AbortSignal.timeout(8000)].filter(Boolean)),
         headers: { 'content-type': 'application/json' }, ...(value === undefined ? {} : { body: JSON.stringify(value) }) });
       const envelope = await response.json();
       if (!response.ok || !envelope.success) throw Object.assign(new Error(envelope.error || 'Member operation failed.'), { status: response.status });

@@ -44,6 +44,13 @@ expiry; Block refuses; Allow permits it. The engine lets these gated requests
 reach Squad so permission is not asked twice. A stopped turn or a changed
 policy cannot reuse an earlier unchecked operation.
 
+Bound the complete management operation to 24 seconds, including consent and
+all profile/routine reads before a write. Per-request eight-second limits alone
+could add up beyond Autohand's 30-second MCP deadline after a 15-second consent
+wait. Propagate the shared deadline into transport and check it before later
+writes; a timed-out read must not proceed to mutation. A lost write acknowledgement
+still requires inspecting the saved record rather than claiming a rollback.
+
 Creation saves restrictive execution permissions and starts no work. Managed
 creation inherits the current work folder or an explicitly named folder already
 assigned to the actor. Routine folder changes must use a folder assigned to
