@@ -13,6 +13,7 @@ export async function memberWithWorkspaces(ctx, agent, { workspace, directories 
   if (directories.length + 1 > limit) throw fail(`Choose at most ${limit} work folders.`);
   const previousProjects = agent.projects || [];
   const previousRoots = await Promise.all(previousProjects.map(project => realpath(project.path).catch(() => '')));
+  const primaryRoot = agent.workspace ? await realpath(agent.workspace).catch(() => '') : '';
   const projects = [], roots = new Set();
   for (const raw of [workspace, ...directories]) {
     const value = raw.trim();
@@ -27,7 +28,10 @@ export async function memberWithWorkspaces(ctx, agent, { workspace, directories 
     if (roots.has(root)) continue;
     roots.add(root);
     const previous = previousProjects[previousRoots.indexOf(root)];
-    projects.push(previous ? { ...previous, path: clean } : { path: clean });
+    // Permissions are keyed by the saved locator. A physically equivalent
+    // alias must not replace that locator and drop a restrictive override.
+    const locator = root === primaryRoot ? agent.workspace : previous?.path || clean;
+    projects.push(previous ? { ...previous, path: locator } : { path: locator });
   }
   return { ...agent, workspace: projects[0].path, projects };
 }

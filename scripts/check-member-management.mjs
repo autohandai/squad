@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSquadManagement } from '../server/team/member-management.mjs';
 import { PersonQuestions } from '../server/questions.mjs';
 import { patchedProfileText } from '../server/routes/member-shaping.route.mjs';
+import { memberWithWorkspaces } from '../server/member-workspaces.mjs';
 
 const profileText = 'Name: Eva\nResponsibilities: Old remit\nOperating instructions: Old instruction\nBrain card fields for this run:\n';
 const corrected = patchedProfileText(profileText, { description: 'New remit', instructions: '' });
@@ -88,5 +89,10 @@ try {
   target.projects = [{ path: first }];
   await assert.rejects(() => changeFolders([second]), /already assigned to the target/);
   assert.equal(mutations.length, before + 1, 'a read-only actor cannot grant a new folder to a more powerful recipient');
+  const alias = join(workspaceRoot, 'first-alias'); await symlink(first, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const primaryOnly = { workspace: first, projects: [], permissions: { workspaceOverrides: { [first]: { permissionMode: 'restricted' } } } };
+  const equivalent = await memberWithWorkspaces({ homeDir: workspaceRoot, getRuntime: () => ({}), cleanWorkspace: async path => path }, primaryOnly, { workspace: alias, directories: [] });
+  assert.equal(equivalent.workspace, first, 'a primary-only assignment preserves its restrictive permission locator');
+  assert.deepEqual(equivalent.permissions, primaryOnly.permissions);
   console.log('PASS: workspace replacement needs saved consent and checks every additional folder against both member scopes.');
 } finally { await rm(workspaceRoot, { recursive: true, force: true }); }

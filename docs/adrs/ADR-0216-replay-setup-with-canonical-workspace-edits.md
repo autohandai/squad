@@ -21,13 +21,18 @@ coordinator or the sole local member; otherwise require selection. Missing folde
 stay removable. Empty selection uses the existing consent flow before creating
 `~/Documents/autohand-desktop/`. Initial creation still requires account, runtime
 and provider readiness. Metadata-only repair does not require a ready model;
-runtime preparation during review is an explicit action.
+runtime preparation during review is an explicit action, including while setup
+discovery is still pending.
 
 Save one member's primary and explicit complete additional-folder list through
 `PATCH /api/control-plane/members/:id/workspace`. Validate all existing directories,
 physical containment and limits before one revision-checked profile mutation.
 Physical duplicates coalesce and existing project metadata follows the physical
-folder. Workspace validation disables the existing managed-worker auto-creation
+folder. Existing locators remain unchanged for matching physical folders, so
+workspace-specific permission keys remain effective. Review analysis preserves
+selected subfolders and aliases rather than promoting them to an enclosing Git
+root; first-install repository deduplication keeps its existing behavior.
+Workspace validation and analysis disable the existing managed-worker auto-creation
 option: an existing legacy locator may normalize to a missing owned-worker path,
 so checking the input path alone would not establish the no-creation contract.
 The browser check also verifies that such a mapped path stays absent. No missing
@@ -58,9 +63,17 @@ fail closed for this operation.
   isolated macOS home used `/var`, while physical repository analysis returned
   `/private/var`. Canonicalizing the fixture's fake home fixed the mismatch;
   production home/private-data security checks were not weakened.
-- `check:control-plane` passes 278 checks through actual stdio MCP, including the
+- `check:control-plane` passes 282 checks through actual stdio MCP, including the
   new operation, saved-primary reporting, stale revision refusal, missing and
   escaping-folder refusal without a revision change, and stale-window protection.
+- Review found three gaps in the first implementation: Git-root analysis could
+  widen a saved subfolder; rewriting an equivalent alias could lose a locator-keyed
+  permission override; and the analysis request could still auto-create a mapped
+  worker folder before reaching the safe PATCH. Preserve review selections and
+  existing locators, and disable creation in analysis as well as save. A delayed
+  save receipt now uses the existing revision-aware merge and does not rewrite a
+  cached folder inventory. Setup discovery must finish before automatic first-run
+  runtime preparation can begin.
 - The real managed stdio scenario also updates its saved child through the shared
   workspace route without launching a child engine. The management check verifies
   bounded consent and every additional folder's

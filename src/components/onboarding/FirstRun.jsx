@@ -14,7 +14,7 @@ export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces
   const [memberId, setMemberId] = useState('');
   const reviewInitialized = useRef(false);
   const selectedMember = agents.find(member => member.id === memberId && !remoteByMember[member.id]);
-  const canEditFolders = !existing || !!selectedMember;
+  const canEditFolders = !!setupSnapshot && (!existing || !!selectedMember);
   const [paths, setPaths] = useState(onboardingState.selectedRepositories || []);
   const [path, setPath] = useState('');
   const [plan, setPlan] = useState(null);
@@ -44,7 +44,7 @@ export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces
 
   // Keep the existing pinned-CLI first-install recovery and its bounded retry.
   useEffect(() => {
-    if (runtime?.available !== false || runtime?.bridgeUnavailable || (existing && !runtimeAttempt)) return undefined;
+    if (!setupSnapshot || runtime?.available !== false || runtime?.bridgeUnavailable || (existing && !runtimeAttempt)) return undefined;
     if (!runtimeAttempt && runtime?.bootstrap?.phase === 'error') { setRuntimeSetup(runtime.bootstrap); return undefined; }
     let cancelled = false, timer;
     const controller = new AbortController();
@@ -67,21 +67,21 @@ export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces
     }
     void prepare();
     return () => { cancelled = true; window.clearTimeout(timer); window.clearTimeout(deadline); controller.abort(); };
-  }, [api, runtime?.available, runtime?.bridgeUnavailable, runtimeAttempt, existing]);
+  }, [api, runtime?.available, runtime?.bridgeUnavailable, runtimeAttempt, existing, setupSnapshot?.status]);
 
   useEffect(() => {
     setPlan(null); setError('');
-    if (!paths.length || (existing && !selectedMember)) { setBusy(false); return undefined; }
+    if (!setupSnapshot || !paths.length || (existing && !selectedMember)) { setBusy(false); return undefined; }
     let cancelled = false;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
     setBusy(true);
-    api('/api/setup/repositories', { method: 'POST', signal: controller.signal, body: JSON.stringify({ paths }) })
+    api('/api/setup/repositories', { method: 'POST', signal: controller.signal, body: JSON.stringify({ paths, preserveFolders: existing }) })
       .then(result => { if (!cancelled) setPlan(result); })
       .catch(cause => { if (!cancelled) setError(controller.signal.aborted ? 'Reading the repositories timed out. Retry to continue.' : cause.message); })
       .finally(() => { clearTimeout(timer); if (!cancelled) setBusy(false); });
     return () => { cancelled = true; clearTimeout(timer); controller.abort(); };
-  }, [api, paths, attempt, existing, selectedMember?.id]);
+  }, [api, paths, attempt, existing, selectedMember?.id, setupSnapshot?.status]);
 
   function select(next) {
     setPaths(next); setPlan(null); setError('');
@@ -104,7 +104,7 @@ export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces
     if (startingRef.current || !(existing ? canSave : canStart)) return;
     startingRef.current = true; setStarting(true); setError('');
     try {
-      const folders = plan.repositories.map(item => item.path);
+      const folders = existing ? paths : plan.repositories.map(item => item.path);
       if (existing) await onSaveWorkspaces({ memberId, workspace: folders[0], directories: folders.slice(1), expectedRevision: selectedMember.profileRevision || 0 });
       else await onStart(folders);
     }

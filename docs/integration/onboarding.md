@@ -6,7 +6,7 @@ Squad state directory; browser onboarding storage is a recoverable input cache.
 | Endpoint | Contract |
 | --- | --- |
 | `GET /api/setup` | `new`, `preparing`, `completed` or `existing`; selected repository profiles and canonical coordinator when available. Does not create data. |
-| `POST /api/setup/repositories` | `{ paths: string[] }` validates ordinary work folders and deduplicates canonical Git roots, returns profiles and deterministic role recommendations. No model or state mutation. |
+| `POST /api/setup/repositories` | `{ paths: string[], preserveFolders?: boolean }` validates existing work folders and returns profiles and deterministic role recommendations. First install deduplicates Git roots; review sets `preserveFolders: true` to retain subfolder scope and alias locators. No model, directory creation or state mutation. |
 | `POST /api/setup/complete` | `{ paths: string[] }` revalidates and provisions one Chief of Staff on Autohand, saves #general, then saves a completion receipt. Concurrent/repeated calls return the same identity. A completed receipt does not recreate deleted data. |
 
 `routeContext().provisionAgent(payload, workspace)` delegates to the existing

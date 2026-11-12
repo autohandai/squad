@@ -377,7 +377,9 @@ for a single operator grant change. The app's setup guide uses this same edit.
 The primary comes from the saved member, not its most recent ad-hoc run. All
 paths are validated before one profile revision changes. Existing files and
 other profile fields remain intact; active work keeps its captured context and
-later work uses the saved folders. A missing folder is refused before any
+later work uses the saved folders. A physically equivalent alias keeps the
+existing saved locator so workspace-specific permission keys stay effective.
+Reviewing a Git subfolder does not widen it to the repository root. A missing folder is refused before any
 creation helper runs. The existing default-folder endpoint separately requires
 explicit person-owned consent.
 

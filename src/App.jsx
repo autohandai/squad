@@ -6943,8 +6943,8 @@ function App() {
     const saved = await api(`/api/control-plane/members/${encodeURIComponent(memberId)}/workspace`, {
       method: "PATCH", body: JSON.stringify({ workspace, directories, expectedRevision }),
     });
-    setAgents(current => current.map(member => member.id === memberId ? { ...member, workspace: saved.workspace, projects: saved.projects, profileRevision: saved.revision } : member));
-    updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, selectedRepositories: saved.projects.map(project => project.path), selectedWorkspace: saved.workspace, lastStep: "complete" });
+    setAgents(current => current.map(member => member.id === memberId ? mergeMemberProfile(member, { workspace: saved.workspace, projects: saved.projects, profileRevision: saved.revision }) : member));
+    updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete" });
     navigate(squadDirectoryPath());
   }
 

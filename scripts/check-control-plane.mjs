@@ -531,14 +531,22 @@ if(prompt.includes('DELAY GROUP fixture'))setTimeout(finish,600);else finish();
   const restoredWorkspace = await afterRestart.call('set_member_workspace', { member_id: 'kai', workspace: workspaceDir, directories: [extraDirectory, extraDirectory] });
   eq(restoredWorkspace.isError, false, 'MCP can restore primary and explicit extras');
   eq(restoredWorkspace.data.projects.length, 2, 'folder replacement deduplicates physical folders');
+  const primaryAlias = join(directory, 'primary-folder-alias'), extraAlias = join(directory, 'extra-folder-alias');
+  await symlink(workspaceDir, primaryAlias); await symlink(extraDirectory, extraAlias);
+  const aliasReplacement = await afterRestart.call('set_member_workspace', { member_id: 'kai', workspace: primaryAlias, directories: [extraAlias] });
+  eq(aliasReplacement.isError, false, 'an equivalent alias remains usable');
+  eq(aliasReplacement.data.workspace, workspaceDir, 'equivalent alias preserves the saved primary permission locator');
+  assert.deepEqual(aliasReplacement.data.projects.map(project => project.path), [workspaceDir, extraDirectory]); passed++;
+  assert.deepEqual(aliasReplacement.data.permissions, restoredWorkspace.data.permissions); passed++;
+  const stableRevision = aliasReplacement.data.revision;
   const escaped = join(directory, 'outside-link');
   await symlink('/etc', escaped);
   for (const path of [process.env.HOME, escaped, join(directory, 'missing')]) {
     const refused = await afterRestart.call('add_member_directory', { member_id: 'kai', path });
     eq(refused.isError, true, 'home, escaped symlink and missing folder grants are refused');
-    const invalidReplacement = await afterRestart.call('set_member_workspace', { member_id: 'kai', workspace: workspaceDir, directories: [path], expected_revision: restoredWorkspace.data.revision });
+    const invalidReplacement = await afterRestart.call('set_member_workspace', { member_id: 'kai', workspace: workspaceDir, directories: [path], expected_revision: stableRevision });
     eq(invalidReplacement.isError, true, 'invalid extra folder refuses the whole workspace replacement');
-    eq((await afterRestart.call('get_member_profile', { member_id: 'kai' })).data.revision, restoredWorkspace.data.revision, 'validation failure preserves the saved member revision');
+    eq((await afterRestart.call('get_member_profile', { member_id: 'kai' })).data.revision, stableRevision, 'validation failure preserves the saved member revision');
   }
   const staleSnapshot = await api('/api/members/kai/channel-access', { agent: { id: 'kai', name: 'Kai', workspace: extraDirectory, projects: [{ path: workspaceDir }], permissions: {}, profileRevision: beforeProfile.data.revision } }, 'PUT');
   ok(staleSnapshot.success, 'old tab snapshot is accepted without restoring old fields');
