@@ -56,6 +56,8 @@ jobs:
           bun run check:portable-backups
           bun run check:ownership
           bun run check:owned-lifecycle
+          bun run check:owned-windows-proof
+          bun run check:installed-runtime-proof
           bun run check:owned-remote
           bun run check:owned-operations
           bun run check:owned-data

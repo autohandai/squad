@@ -325,6 +325,11 @@ jobs:
           restore-keys: |
             cargo-release-${{ matrix.id }}-
 
+      - name: Build Windows ownership test helper
+        if: matrix.os == 'win32'
+        run: cargo build --bin autohand-squad-daemon -j1
+        working-directory: daemon
+
       - name: Run runtime tests
         run: cargo test -j1 -- --test-threads=1
         working-directory: daemon
@@ -633,14 +638,7 @@ jobs:
             lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | head -20 || true
             exit 1
           fi
-          curl -fsS "http://127.0.0.1:${web_port}/api/runtime" | "$node_bin" -e '
-            let raw = ""; process.stdin.on("data", (c) => raw += c).on("end", () => {
-              const runtime = JSON.parse(raw).data || {};
-              if (!runtime.available) throw new Error("Bundled Autohand CLI is unavailable");
-              if (!String(runtime.autohandPath || "").includes("/Contents/Resources/runtime/vendor/autohand-cli/")) throw new Error(`Unexpected Autohand CLI path: ${runtime.autohandPath}`);
-              if (String(runtime.defaultWorkspace || "").includes("/Contents/Resources")) throw new Error(`Packaged resources became the default workspace: ${runtime.defaultWorkspace}`);
-              console.log(`bridge ok: CLI ${runtime.version} at ${runtime.autohandPath}`);
-            });'
+          "$node_bin" scripts/check-installed-runtime.mjs "http://127.0.0.1:${web_port}" "$app/Contents/Resources/runtime"
 
       - name: Install and smoke test the Windows app
         if: matrix.os == 'win32'
