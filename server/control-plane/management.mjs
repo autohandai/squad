@@ -30,6 +30,8 @@ const memoryTexts = { type: 'array', maxItems: 100, items: text(500), descriptio
 export const MANAGEMENT_TOOLS = [
   tool('create_member', 'Create a real saved Squad member in the selected owner. Selects a ready default engine and saves up to four connected engine fallbacks with their default models and reasoning; an explicit engine is preserved. A stable request_id makes retries idempotent. Saves profile, catalog skill selections and initial profile memories without launching work, granting broad permissions or enabling routines. Workspace is optional; no folder is created implicitly.', { request_id: text(128), ...profileFields, skills: skillIds, memories: memoryTexts, workspace: text(1000), engine: text(200) }, ['request_id', 'name', 'role']),
   tool('get_member_profile', 'Read a member\'s saved name, personality, operating instructions, skills, folders and abilities, with its revision and available ability IDs. Operator access.', { member_id: id() }, ['member_id'], true),
+  tool('get_member_computer_use', 'Read an existing member\'s saved Computer Use scope and OS readiness. Read-only; does not grant access or show OS prompts. Enabling requires explicit native confirmation in Squad.', { member_id: id() }, ['member_id'], true),
+  tool('revoke_member_computer_use', 'Turn off Computer Use for an existing member. Revokes its current grant and stops verification recording; later work receives no Computer Use instructions or managed tools. Existing connected tools recheck the grant. Cannot enable access; leaves other members unchanged.', { member_id: id() }, ['member_id']),
   tool('update_member_profile', 'Change a saved member name, role, responsibilities, personality or operating instructions. Preserves other fields and current work. expected_revision rejects stale edits; changes apply to later turns.', { ...member, ...profileFields }, ['member_id']),
   tool('set_member_memories', 'Replace a member\'s profile memory texts with a revision-checked write (empty clears those texts). Preserves shared/project memory, conversation history and collected files.', { ...member, memories: memoryTexts }, ['member_id', 'memories']),
   tool('set_member_abilities', 'Set specific capability/tool policies to allow, ask or block. Get supported IDs from get_member_profile. Preserves unmentioned policies and workspace overrides. Optional workspace edits that folder\'s override. Does not grant OS permissions or disable safety guards.', { ...member, capabilities: policies, tool_policies: policies, workspace: text(1000) }, ['member_id']),
@@ -80,6 +82,16 @@ export function createManagementTools(bridge, legacy) {
   return {
     create_member: args => bridge.post('/api/control-plane/members', args),
     get_member_profile: ({ member_id }) => profile(member_id),
+    async get_member_computer_use({ member_id }) {
+      await profile(member_id);
+      const result = await bridge.get(`/api/computer-use/status?${new URLSearchParams({ memberId: member_id })}`);
+      return { ...result, member_id, enabled: ['observe', 'control'].includes(result.grant?.scope), requires_native_confirmation: true };
+    },
+    async revoke_member_computer_use({ member_id }) {
+      await profile(member_id);
+      const grant = await bridge.delete('/api/computer-use/grant', { memberId: member_id });
+      return { member_id, enabled: false, grant, requires_native_confirmation: true };
+    },
     update_member_profile: ({ member_id, expected_revision, ...patch }) => patchMember(member_id, patch, expected_revision),
     set_member_abilities: ({ member_id, expected_revision, ...abilities }) => patchMember(member_id, { abilities }, expected_revision),
     async add_member_directory({ member_id, path, expected_revision }) {

@@ -1,5 +1,40 @@
 # Built-in Computer Use
 
+## Per-member on/off control (MCP contract 2.3.0)
+
+Model settings and Permissions expose the same “Use the computer” switch.
+It derives its state from the saved `none`/`observe`/`control` grant; there is
+no second enabled flag. Turning on asks the main desktop shell to confirm
+Control for that exact member. Cancelled or failed confirmation keeps Off.
+Permissions retains the separate Observe/Control choices and OS setup.
+
+Turning off revokes the grant and stops that member's recording. Existing
+connected tools still recheck scope before each action; later work receives
+neither the managed Computer Use server nor its operating instructions.
+Other work, chat, memory, folders and fallback choices continue unchanged.
+A browser may revoke an existing grant but cannot grant one. macOS consent
+remains separate and is never granted by this switch or an MCP tool.
+
+Team datasets keep grants in `computer-use-grants-<actorKey>.json`, using
+the verified issuer/immutable-subject digest. Personal datasets retain the
+existing `computer-use-grants.json`. Earlier unattributed team files remain
+untouched, inactive and require new native confirmation; no automatic import
+or migration UI is added. Account transitions retire live runtime credentials.
+
+Operator MCP provides `get_member_computer_use` and
+`revoke_member_computer_use`; both require a real saved member. Neither can
+enable access, and managed agents cannot use them to self-grant. Reconnect
+clients to discover the 2.3.0 tool contract.
+
+Verification: `check:member-computer-use:browser` exercises rendered Model
+and Permissions state, simulated native cancellation/failure/retry and real
+saved grant APIs at 390px. `check:computer-use-bridge` checks actual per-work
+MCP configuration and prompt delivery with controlled OS/provider adapters.
+`check:team-local-preferences` verifies Alice/Bob/Alice team isolation and
+preserves old files through actual broker workers. These checks do not grant
+real OS permission, replace the installed app or prove live-provider behavior.
+See ADR-0206.
+
 The engine is a bundled component, not a skill. `server/computer-use.mjs` owns
 the Squad MCP proxy, member grants and evidence. No platform fallback or download
 occurs during an agent turn.

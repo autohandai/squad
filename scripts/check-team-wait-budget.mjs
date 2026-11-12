@@ -13,7 +13,7 @@ try {
   const work = await team.openWork({ memberId: 'a', runId: 'wait-regression', maxWaitSeconds: 25 });
   const token = work.mcpServer.env.AUTOHAND_SQUAD_TEAM_TOKEN;
   const initialized = await team.dispatch(token, { jsonrpc: '2.0', id: 0, method: 'initialize', params: {} });
-  assert.equal(initialized.serverInfo.version, '2.2.0');
+  assert.equal(initialized.serverInfo.version, '2.3.0');
   let sequence = 0;
   const call = args => team.dispatch(token, { jsonrpc: '2.0', id: ++sequence, method: 'tools/call', params: { name: 'squad_message', arguments: args } });
   const response = await call({ to: 'James Hill', message: 'What architectural boundaries should I respect?', wait_seconds: 60 });

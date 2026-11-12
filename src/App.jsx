@@ -21965,6 +21965,7 @@ function EngineModelPage({ agent, providerSettings, navigate, updateAgent }) {
           applies only if {agent.name} is switched back to Autohand Code.
         </p>
         <MemberFallbacks agent={agent} api={api} providerSettings={providerSettings} updateAgent={updateAgent} />
+        <ComputerUsePermissions key={agent.id} member={agent} api={api} compact onOpenPermissions={() => navigate(memberProfilePath(agent.id, "permissions"))} />
       </div>
     </div>
   );
@@ -22141,6 +22142,7 @@ function AutohandModelPage({ agent, providerSettings, navigate, updateAgent }) {
           </div>
         </section>
         <MemberFallbacks agent={agent} api={api} providerSettings={providerSettings} updateAgent={updateAgent} />
+        <ComputerUsePermissions key={agent.id} member={agent} api={api} compact onOpenPermissions={() => navigate(memberProfilePath(agent.id, "permissions"))} />
       </div>
     </div>
   );
@@ -23063,7 +23065,7 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
     <div className="min-h-screen bg-background">
       <PageTitle title={localizedSectionLabel("permissions", copy)} />
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-        <ComputerUsePermissions member={agent} api={api} />
+        <ComputerUsePermissions key={agent.id} member={agent} api={api} />
         {/* Flat, as the other member pages. This was a bordered card holding
             an icon tile, a 2xl "Agent permissions" title, three boxed count
             tiles, a nested "Autonomy profile" box with a progress bar and two

@@ -12,8 +12,9 @@ list to the section for that version.
 
 ### Added
 
+- A per-member “Use the computer” switch in Model settings and Permissions. Turning it on asks for native confirmation; turning it off revokes access and removes Computer Use instructions and tools from later work. Operator MCP clients can read the saved scope and revoke it.
 - Right-click and ellipsis actions to rename or delete channels and groups, choose all posts or mentions, or mute and hide a conversation. Hidden channels can be shown again; Settings provides defaults and individual overrides.
-- Squad operator MCP tools can read and change notification preferences and explicitly delete a channel. The tool contract is now 2.2.0; reconnect clients to load the new tools.
+- Squad operator MCP tools can read and change notification preferences, explicitly delete a channel, and read or revoke a member's Computer Use. The tool contract is now 2.3.0; reconnect clients to load the new tools.
 - Channel creation now opens directly in the main view with a name field, current-member avatar selection, visibility and auto mode. Deleting a channel returns to that same creation screen.
 - Private group chats with their own Direct Messages rows. Create one from the inline recipient chooser, delete it, or convert it into a public/private channel while keeping its members and messages. The app and both Squad MCP connections share these operations.
 - Direct Messages → + now lets you search existing members, choose multiple recipients, or explicitly name and describe a new member before opening their chat. Opening the chooser creates nothing; new members receive connected harness defaults and fallbacks without an artificial greeting.
@@ -35,6 +36,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Computer Use grants in a team Squad stay with the signed-in person who confirmed them. Earlier team grants without a recorded person remain off until confirmed again; the old files are preserved.
 - Channel mentions notify the person only when a saved reply actually addresses them; mentioning another agent no longer creates a personal mention alert. Failed preference saves retain the earlier settings and can be retried.
 - Portable backup restore keeps private groups and converted channels in the right place, with their conversation history and membership intact.
 

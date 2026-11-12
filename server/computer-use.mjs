@@ -181,14 +181,17 @@ export class NativeComputerClient {
   close() { this.child?.kill(); this.fail(error('Computer Use stopped.', 503)); }
 }
 
-export function createComputerUse({ stateDir, rootDir, bridgeUrl, nativeClient, emit = () => {}, now = () => Date.now() }) {
-  const grantsFile = join(stateDir, 'computer-use-grants.json');
+export function createComputerUse({ stateDir, rootDir, bridgeUrl, nativeClient, grantActorKey = '', emit = () => {}, now = () => Date.now() }) {
+  if (grantActorKey && !/^[a-f0-9]{64}$/.test(grantActorKey)) throw error('Computer Use requires a verified account identity.');
+  const grantsFile = join(stateDir, grantActorKey ? `computer-use-grants-${grantActorKey}.json` : 'computer-use-grants.json');
   const evidenceRoot = join(stateDir, 'computer-use-evidence');
   const sessions = new Map();
   const byToken = new Map();
   let queue = Promise.resolve();
   const serial = (operation) => { const pending = queue.then(operation); queue = pending.catch(() => {}); return pending; };
   async function grants() { const value = await readPersistentJson(grantsFile, { version: 1, members: {} }); if (!record(value.members)) throw error('Computer Use grant store is invalid.', 503); return value; }
+  const memberGrant = (stored, memberId) => stored.members[id(memberId)] || { scope: 'none' };
+  async function getGrant(memberId) { return memberGrant(await grants(), memberId); }
   async function permission() {
     if (!nativeClient) return { accessibility: false, screenRecording: false, available: false };
     const response = await nativeClient.request('tools/call', { name: 'check_permissions', arguments: { prompt: false, probe_direct_capture: false } });
@@ -200,7 +203,7 @@ export function createComputerUse({ stateDir, rootDir, bridgeUrl, nativeClient, 
     const stored = await grants();
     let os; let readinessError = null;
     try { os = await serial(permission); } catch (failure) { os = { available: false, accessibility: false, screenRecording: false }; readinessError = String(failure.message || 'Could not confirm Computer Use readiness.').slice(0, 240); }
-    return { ...os, bundled: Boolean(nativeClient), host: nativeClient?.identity ? { product: nativeClient.identity.product, bundleId: nativeClient.identity.bundleId, source: nativeClient.identity.source, ...(nativeClient.identity.fallbackReason ? { fallbackReason: nativeClient.identity.fallbackReason } : {}) } : null, readinessError, memberId: memberId || null, grant: memberId ? stored.members[id(memberId)] || { scope: 'none' } : null, sessions: [...sessions.values()].filter((session) => !memberId || session.memberId === memberId).map(publicSession) };
+    return { ...os, bundled: Boolean(nativeClient), host: nativeClient?.identity ? { product: nativeClient.identity.product, bundleId: nativeClient.identity.bundleId, source: nativeClient.identity.source, ...(nativeClient.identity.fallbackReason ? { fallbackReason: nativeClient.identity.fallbackReason } : {}) } : null, readinessError, memberId: memberId || null, grant: memberId ? memberGrant(stored, memberId) : null, sessions: [...sessions.values()].filter((session) => !memberId || session.memberId === memberId).map(publicSession) };
   }
   async function setGrant(memberId, scope) {
     memberId = id(memberId);
@@ -332,7 +335,7 @@ export function createComputerUse({ stateDir, rootDir, bridgeUrl, nativeClient, 
     if (files.length) emit('computer-use.evidence', { memberId: session.memberId, runId: session.runId, sessionId: session.id, files });
     // Keep evidence readable after work finishes; only the live credential expires.
   }
-  return { status, setGrant, createSession, dispatch, evidence, listEvidence, readEvidence, closeSession, close: () => { byToken.clear(); nativeClient?.close(); } };
+  return { status, getGrant, setGrant, createSession, dispatch, evidence, listEvidence, readEvidence, closeSession, close: () => { byToken.clear(); nativeClient?.close(); } };
 }
 
 /** SDK-facing stdio proxy. Accept both conventional MCP framing formats. */

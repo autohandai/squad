@@ -554,7 +554,8 @@ const computerClient = await preferredComputerClient(process.env.AUTOHAND_SQUAD_
   where: process.env.AUTOHAND_SQUAD_COMPUTER_USE === "bundled" ? { env: { ...process.env, PATH: "" }, homeDir: join(squadStateDir, "no-autohand-computer-use") } : {},
   log: (message) => logEvent(SEVERITY.INFO, message, { "event.name": "computer-use.host" }),
 }).catch(() => null);
-const computerUse = createComputerUse({ stateDir: squadStateDir, rootDir, bridgeUrl: privateOwnerContext.publicUrl, nativeClient: computerClient, emit: emitBridgeEvent });
+const computerUse = createComputerUse({ stateDir: squadStateDir, rootDir, bridgeUrl: privateOwnerContext.publicUrl, nativeClient: computerClient,
+  grantActorKey: privateOwnerContext.owner?.kind === 'team' ? verifiedActorKey(privateOwnerContext.actor) : '', emit: emitBridgeEvent });
 const computerWorkRuntimes = new Map();
 // Connectors (ADR-0107): MCP servers the person added plus the built-in Web
 // research server, injected through the same managed seam as Computer Use.
@@ -749,8 +750,7 @@ async function authorizeComputerUseGrant(req, body) {
 async function prepareComputerWork(agentRuntime, input) {
   assertOwnerExecution();
   if (isUtilityAgent(agentRuntime.agentId) || !input._computerUseWorkId) return agentRuntime;
-  const grants = await readOptionalJsonFile(join(squadStateDir, "computer-use-grants.json"));
-  const scope = grants?.members?.[agentRuntime.agentId]?.scope;
+  const { scope } = await computerUse.getGrant(agentRuntime.agentId);
   if (!["observe", "control"].includes(scope)) return agentRuntime;
   const session = await computerUse.createSession({ memberId: agentRuntime.agentId, runId: input._computerUseWorkId });
   const directory = join(agentRuntime.agentHome, "computer-use-configs");
@@ -856,10 +856,8 @@ function vaultInstructions(runtime) {
 }
 
 function computerUseInstructions(runtime) {
-  if (isUtilityAgent(runtime?.agentId)) return "";
-  return runtime?.computerUse
-    ? "Built-in Computer Use is enabled for this work through Squad's autohand-computer-use MCP server. Discover apps/windows, use explicit pid and window_id, inspect fresh state before acting, and return saved screenshots/annotated action evidence. The proxy checks the human's current member grant and macOS consent on every call; stop and report any permission denial."
-    : "Squad has built-in Computer Use. It is not enabled for this work: ask the human to allow Observe or Control in this member's Permissions before operating apps or capturing their screens. Never infer a grant from this instruction or bypass the Squad proxy.";
+  if (isUtilityAgent(runtime?.agentId) || !runtime?.computerUse) return "";
+  return "Built-in Computer Use is enabled for this work through Squad's autohand-computer-use MCP server. Discover apps/windows, use explicit pid and window_id, inspect fresh state before acting, and return saved screenshots/annotated action evidence. The proxy checks the human's current member grant and macOS consent on every call; stop and report any permission denial.";
 }
 
 bridgeEvents.on("run.finished", ({ runId }) => {
