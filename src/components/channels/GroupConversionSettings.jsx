@@ -5,7 +5,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export function GroupConversionSettings({ group, onConvert }) {
-  const [name, setName] = useState(group.name);
+  const [nameDraft, setNameDraft] = useState(null);
+  const name = nameDraft ?? group.name;
   const [visibility, setVisibility] = useState("private");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -25,7 +26,7 @@ export function GroupConversionSettings({ group, onConvert }) {
   return <form onSubmit={convert} className="flex flex-col gap-2 border-t border-border/60 pt-4" data-testid="group-conversion">
     <h2 className="text-sm font-medium">Convert to a channel</h2>
     <p className="text-xs text-muted-foreground">Keep this conversation, its messages and its members. The channel appears under Channels.</p>
-    <Label htmlFor="group-channel-name">Channel name</Label><Input id="group-channel-name" maxLength={80} value={name} disabled={pending} onChange={event => setName(event.target.value)} />
+    <Label htmlFor="group-channel-name">Channel name</Label><Input id="group-channel-name" maxLength={80} value={name} disabled={pending} onChange={event => setNameDraft(event.target.value)} />
     <Label htmlFor="group-channel-visibility">Channel visibility</Label>
     <Select value={visibility} disabled={pending} onValueChange={setVisibility}><SelectTrigger id="group-channel-visibility"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="private">Private</SelectItem><SelectItem value="public">Public</SelectItem></SelectContent></Select>
     <p className="text-xs text-muted-foreground">{visibility === "public" ? "Everyone in this Squad can read the channel, including its existing messages." : "Only assigned members can access this private channel."}</p>

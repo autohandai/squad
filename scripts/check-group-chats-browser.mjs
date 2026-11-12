@@ -3,7 +3,7 @@ import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs'
 import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 import { prepareModelRoutingFixture } from './lib/model-routing-fixtures.mjs';
 
-const bridge = await startBridge({ prepare: prepareModelRoutingFixture });
+const bridge = await startBridge({ development: false, prepare: prepareModelRoutingFixture });
 let browser;
 try {
   browser = await startBrowser();
@@ -27,14 +27,28 @@ try {
   assert.equal(group.visibility, 'private');
   assert.deepEqual(group.memberIds, members.map(member => member.id));
   assert.equal(await browser.evaluate("!!document.querySelector('button[aria-label=\"Group chat: Release reviewers\"]')"), true, 'group is a direct-message row');
-  const at = new Date().toISOString();
-  await bridge.api('/api/channels/sync', 'PUT', { threads: [{ id: 'browser-group-thread', channelId: id, parentMessageId: 'browser-group-message', title: 'Retain our review.', memberIds: group.memberIds, createdAt: at, updatedAt: at }], messages: { [id]: [{ id: 'browser-group-message', threadId: 'browser-group-thread', role: 'user', body: 'Retain our review.', createdAt: at, updatedAt: at }] } });
+  await until(() => browser.evaluate("!!document.querySelector('textarea:not(:disabled)')"), 'group message composer');
+  await browser.fill('textarea', 'Retain our review.');
+  await browser.click('Send');
+  await until(async () => {
+    const saved = (await bridge.api('/api/channels')).data;
+    return saved.messages.filter(message => message.channelId === id && message.role === 'agent' && message.status === 'complete').length === 2;
+  }, 'both selected members answer the group message', 60000);
   const beforeConversion = (await bridge.api('/api/channels')).data;
   await browser.navigate(bridge.origin + '/channels/' + id);
   await until(() => browser.evaluate("document.body.textContent.includes('Retain our review.')"), 'saved group history renders');
   await browser.click('Settings');
   await until(() => browser.evaluate("!!document.querySelector('[data-testid=group-conversion]')"), 'explicit group conversion controls');
+  await browser.fill('#channel-details-name', 'Release review group');
+  await browser.click('Save group');
+  await until(async () => (await bridge.api('/api/group-chats/' + id)).data.name === 'Release review group', 'saved group rename');
+  await until(() => browser.evaluate("document.getElementById('group-channel-name').value === 'Release review group'"), 'untouched conversion name follows the saved group rename');
   await browser.fill('#group-channel-name', 'release-reviews');
+  await browser.fill('#channel-details-name', 'Launch reviewers');
+  await browser.click('Save group');
+  await until(async () => (await bridge.api('/api/group-chats/' + id)).data.name === 'Launch reviewers', 'second saved group rename');
+  assert.equal(await browser.evaluate("document.getElementById('group-channel-name').value"), 'release-reviews', 'an intentional conversion name is retained across source updates');
+  assert.equal(await browser.evaluate("!!document.querySelector('button[aria-label=\"Group chat: Launch reviewers\"]')"), true, 'saved group rename updates its direct-message row');
   await browser.evaluate("document.getElementById('group-channel-visibility').click()");
   await until(() => browser.evaluate("!!document.querySelector('[role=option]')"), 'channel visibility options');
   await browser.evaluate("[...document.querySelectorAll('[role=option]')].find(option => option.textContent.trim() === 'Public').click()");
@@ -45,7 +59,7 @@ try {
   assert.equal(afterConversion.channels.find(item => item.id === id).visibility, 'public');
   assert.deepEqual(afterConversion.messages, beforeConversion.messages, 'app conversion preserves exact messages');
   assert.deepEqual(afterConversion.threads, beforeConversion.threads, 'app conversion preserves exact threads');
-  await until(() => browser.evaluate("!document.querySelector('button[aria-label=\"Group chat: Release reviewers\"]')"), 'converted group leaves direct-message section');
+  await until(() => browser.evaluate("!document.querySelector('button[aria-label=\"Group chat: Launch reviewers\"]')"), 'converted group leaves direct-message section');
   await browser.navigate(bridge.origin + '/squad');
   await until(() => browser.evaluate("!!document.querySelector('button[aria-label=\"New message\"]')"), 'message action after conversion');
   await browser.click('New message');

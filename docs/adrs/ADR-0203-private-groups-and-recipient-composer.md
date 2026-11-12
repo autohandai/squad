@@ -32,6 +32,14 @@ recipient search, multi-selection, group creation/conversion, selecting an
 existing chat and explicit named-member creation with automatic execution
 defaults. Public tests use isolated owned fixtures, never the person's data.
 
+The spec review then found that a conversion form initialized its name once:
+renaming the group in the adjacent form left the old conversion default and
+could silently rename it back. A production-browser regression failed at
+rename → conversion in the same sheet. Derive the untouched conversion name
+from the saved group; only an explicitly edited name becomes a local draft.
+The regression also checks that a deliberate conversion name survives later
+group-name updates.
+
 ## Decision
 
 Use additive `kind: group | channel` in the existing serialized channel
