@@ -338,6 +338,7 @@ import { planImport, presetTemplate, uniqueName, validateTeamFile } from "@/lib/
 import { BootChecks } from "@/components/shell/BootChecks";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
 import { RelaySettings } from "@/components/settings/RelaySettings";
+import { ComputersSettings } from "@/components/settings/ComputersSettings";
 import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
 import { SystemSettings } from "@/components/settings/SystemSettings";
 import { CloudSyncSettings } from "@/components/settings/CloudSyncSettings";
@@ -24966,6 +24967,7 @@ function SettingsPage({
     { id: "handoff", label: copy.handoffRetryPolicy },
     { id: "mission-control", label: copy.needsYou || "Needs you" },
     { id: "runtime", label: copy.runtimeBridge },
+    { id: "computers", label: "Computers" },
     { id: "relay", label: copy.relay || "Relay" },
     { id: "remote-access", label: copy.remoteAccess || "Remote access" },
     { id: "connectors", label: copy.connectors || "Connectors" },
@@ -25472,6 +25474,7 @@ function SettingsPage({
         />
       </>
     ),
+    computers: () => <><SettingsSectionHeader title="Computers" description="Connect your iPhone or iPad to the squad working on this computer." /><ComputersSettings api={api} /></>,
     "remote-access": () => (
       <>
         <SettingsSectionHeader

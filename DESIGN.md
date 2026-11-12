@@ -2,6 +2,7 @@
 
 ## UI Component Style
 
+- Computers settings owns phone pairing, explicit matching-code approval and individual revocation. A QR offer grants no access before approval. Name the computer receiving work; a workspace is not a separate computer or VM. Show saved tunnel configuration separately from verified reachability, and preserve uncertain delivery receipts instead of silently sending a second copy.
 - Interactive HTML artifacts must support deliberate pointer and touch input while retaining their opaque sandbox. Verification must check the resulting interaction, not only that an automation command returned successfully.
 
 - Product UI should feel simple, functional, and Notion-like: calm document surfaces, clear hierarchy, whitespace, and concise controls.

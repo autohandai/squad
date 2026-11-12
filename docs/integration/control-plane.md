@@ -6,6 +6,12 @@ independent runs/goals, member profiles, folder grants, skills and routines. The
 person's operator connection; the [managed member MCP](teams.md) has a separate
 identity and permissions and is supplied to each Squad agent automatically.
 
+The [native phone companion](mobile-companion.md) uses the same canonical member,
+conversation, task and queue records. Its `delegate` command calls the same
+assignment operation as managed MCP's `squad_assign_task`, with a stable phone
+receipt and the person's identity. Phone protocol/capability discovery is
+separate from MCP server/tool version discovery; pairing does not grant OS access.
+
 Module files:
 
 - `server/control-plane/mcp-server.mjs` — stdio entry point (JSON-RPC 2.0,

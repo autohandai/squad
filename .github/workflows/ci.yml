@@ -140,6 +140,11 @@ jobs:
       - name: Build web app
         run: bun run build
 
+      - name: Check phone pairing and canonical task dispatch
+        run: |
+          bun run check:mobile
+          bun run check:mobile:browser
+
       - name: Check owned backup settings and restore in a browser
         run: bun run check:owned-backups:browser
 

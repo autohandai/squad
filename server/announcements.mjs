@@ -42,9 +42,9 @@ export function createAnnouncements({ token, version, platform = process.platfor
     return result;
   }
   return {
-    async list() {
+    async list({ platform: targetPlatform = platform, version: targetVersion = version } = {}) {
       if (!token()) return { announcements: [] };
-      const query = new URLSearchParams({ clientType: "squad", appVersion: version, platform: ({ darwin: "macos", win32: "windows" })[platform] || platform });
+      const query = new URLSearchParams({ clientType: "squad", appVersion: targetVersion, platform: ({ darwin: "macos", win32: "windows" })[targetPlatform] || targetPlatform });
       const result = await request(`?${query}`);
       return { announcements: (Array.isArray(result.announcements) ? result.announcements : []).slice(0, 50).map(announcement).filter(Boolean) };
     },
