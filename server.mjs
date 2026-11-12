@@ -27,6 +27,7 @@ import { createConnectorStore } from "./server/connectors/store.mjs";
 import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
 import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
 import { AUTOHAND_TEAM_WAIT_SECONDS, TEAM_MCP_SERVER_NAME, createTeamService, teamMessagePrompt } from "./server/team/service.mjs";
+import { createMemberManagement } from './server/team/member-management.mjs';
 import { createMemoryService } from "./server/memory/service.mjs";
 import { createArtifactService } from "./server/artifacts/service.mjs";
 import { createSquadCloud } from "./server/squad-cloud/service.mjs";
@@ -573,6 +574,17 @@ const team = createTeamService({
   memoryLibrary: () => memoryLibrary,
   artifacts,
   ownedData,
+  manageMembers: createMemberManagement({
+    actions: () => agentChannelActions,
+    askPerson: ({ memberId, ...input }) => personQuestions.ask({ ...input, agentId: memberId }),
+    request: async (path, method, value, { signal } = {}) => {
+      const response = await ownedBrokerRequest(path, { method, signal: AbortSignal.any([signal, AbortSignal.timeout(8000)].filter(Boolean)),
+        headers: { 'content-type': 'application/json' }, ...(value === undefined ? {} : { body: JSON.stringify(value) }) });
+      const envelope = await response.json();
+      if (!response.ok || !envelope.success) throw Object.assign(new Error(envelope.error || 'Member operation failed.'), { status: response.status });
+      return envelope.data;
+    },
+  }),
   isBusy: (memberId) => isMemberBusy(memberId),
   deliver: deliverTeamMessage,
   runAction: runTeamAction,
@@ -8780,6 +8792,7 @@ function routeContext() {
     events: bridgeEvents,
     emit: emitBridgeEvent,
     getRuntime,
+    memberHarnesses: () => listHarnesses({ contextFor: harnessContextFor }),
     harnessUsage,
     cleanWorkspace,
     provisionAgent: ensureAgentRuntime,

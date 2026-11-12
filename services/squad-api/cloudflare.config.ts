@@ -8,6 +8,8 @@ export default defineConfig({
     name: "squad-api",
     entrypoint: "./src/index.ts",
     compatibilityDate: "2026-10-27",
+    // Identity and current team membership are served by another public Worker.
+    compatibilityFlags: ["global_fetch_strictly_public"],
     domains: ["squad.autohand.ai"],
     triggers: [triggers.scheduled({ schedule: "17 * * * *" })],
     observability: { enabled: true, traces: { enabled: true, headSamplingRate: 0.1 } },

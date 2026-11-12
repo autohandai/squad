@@ -94,7 +94,7 @@ operator connection.
 | `list_channels` | — | `GET /api/channels`: id, name, visibility, members, projects, thread and message counts. |
 | `get_messages` | `channel_id`, `thread_id?`, `limit?`, `before?` or `member_id`, `limit?`, `before?` | Channel: threads and messages from channel state, oldest first, newest `limit` (max 200). Member: run/goal summaries; use `get_conversation` for the transcript. |
 | `search` | `query`, `types?`, `limit?` | `GET /api/search`. |
-| `create_member` | `name?`, `role?` | Always the error `not_available_from_bridge`: members are created in the app. |
+| `create_member` | `request_id`, `name`, `role`, profile fields, `responsibilities?`, `skills?`, `memories?`, `workspace?`, `engine?` | Save an owned member without starting work. Retries reuse one member; conflicting reuse returns 409. Responsibilities aliases description. |
 | `create_channel` | `name`, `visibility?`, `member_ids?`, `section?` | `POST /api/channels`; the app reloads channel state on the bridge's `changed` event. |
 | `send_message` | `text`, `channel_id?`, `thread_id?`, `member_id?`, `workspace?`, `mode?`, `author?` | Channel: appends a user message (and a thread when `thread_id` is absent) through `PUT /api/channels/sync`; with `member_id` also starts `POST /api/runs` with the channel context. Member only: `POST /api/runs` (`mode: "run"`) or `POST /api/chat` with `mode: "goal"`. Returns `run_id` or `goal_id`. |
 | `wait_for_reply` | `run_id` or `goal_id`, `timeout_ms?` (≤ 600000), `tail_lines?` (≤ 60) | Polls `GET /api/runs/:id` or `GET /api/goals/:id` every 400 ms. Outcomes: `settled`, `needs-you`, `failed`, `timed-out`. A settled or failed channel run posts its reply into the thread. |
@@ -110,6 +110,7 @@ operator connection.
 | `read_memory` | `memory_id` | Read one knowledge-library entry; no editing/sharing/deletion. |
 
 | `get_member_profile` | `member_id` | Read saved profile, revision, projects, skills, permissions and supported ability IDs. |
+| `set_member_memories` | `member_id`, `memories`, `expected_revision?` | Replace only profile memory texts (empty clears); preserve other memory scopes and files. |
 | `update_member_profile` | `member_id`, `expected_revision?`, `name?`, `role?`, `description?`, `instructions?`, `personality?` | Patch the canonical profile; stale revisions return 409. |
 | `set_member_abilities` | `member_id`, `expected_revision?`, `capabilities?`, `tool_policies?`, `workspace?` | Patch specific `{id, mode}` policies (`allow`, `ask`, `block`), optionally in a workspace override. Other policies and safety guards are preserved. |
 | `add_member_directory` / `remove_member_directory` | `member_id`, `path`, `expected_revision?` | Grant/revoke an extra project folder for later turns. Existing folders inside the physical home only; no deleting files or removing the primary workspace. |
@@ -177,8 +178,8 @@ run gets an error naming the missing field. `list_members` shows
 `lastWorkspace` for this.
 
 Errors. Argument problems (unknown fields, bounds, missing required fields)
-are JSON-RPC `-32602`. Bridge refusals and the two documented
-not-available tools come back as tool results with `isError: true` and a
+are JSON-RPC `-32602`. Bridge refusals and the documented
+not-available model tool come back as tool results with `isError: true` and a
 JSON body `{ error, code?, status? }`.
 
 ## Safety and data scope
@@ -264,3 +265,26 @@ expose channel/member deletion or credential values.
 present, so the installed app and the portable archive can run `squad mcp`.
 Ownership/backup support also packages `@autohand/squad-portable` and its
 pinned YAML/Zod dependencies. See [portable backups](backups.md).
+
+## Member management contract v2
+
+Both MCP initialize responses report server version `2.0.0`. This versions the
+tool contract independently of the app release and portable backup schema.
+Refresh tools after reconnecting; `create_member` is now a real operation
+rather than a placeholder, and requires `request_id`, `name` and `role`.
+
+Created members belong to the connection’s currently selected owner. They
+start with restrictive tool/capability policies and no work is dispatched.
+An omitted workspace saves no folder grant and creates no default folder.
+An engine ID must exist in the harness catalog; credentials and arbitrary
+executables cannot be supplied. Skill IDs are validated against the catalog;
+selection is not evidence of installation. `responsibilities` is an alias of
+`description`; supplying both is rejected.
+
+`memories` is at most 100 texts of at most 500 characters, saved as member
+profile memories. It does not overwrite team/project memory, conversation
+history, collected documents or files. Credentials are refused in these texts.
+Use profile revisions to reject stale edits. Creation request IDs persist in
+the owned registry: a retry cannot overwrite later profile changes, revive a
+deleted member or recreate work. No Git repository or engine is initialized
+by member creation.

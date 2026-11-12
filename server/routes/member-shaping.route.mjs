@@ -57,7 +57,11 @@ export function patchedProfileText(profile, patch) {
   const line = (label, value) => { text = text.replace(new RegExp(`^${label}: .*$`, "m"), () => `${label}: ${String(value).replace(/\s+/g, " ").trim()}`); };
   if (patch.name) line("Name", patch.name);
   if (patch.role) line("Role", patch.role);
-  if (typeof patch.instructions === "string" && patch.instructions.trim() && text.includes(BRAIN_CARD_HEADER)) {
+  if (typeof patch.description === 'string') {
+    line('Description', patch.description);
+    line('Responsibilities', patch.description);
+  }
+  if (typeof patch.instructions === "string" && text.includes(BRAIN_CARD_HEADER)) {
     const next = `Operating instructions: ${patch.instructions.trim()}`;
     const current = /^Operating instructions: [\s\S]*?(?=\nBrain card fields for this run:)/m;
     text = current.test(text) ? text.replace(current, () => next) : text.replace(BRAIN_CARD_HEADER, () => `\n${next}${BRAIN_CARD_HEADER}`);

@@ -140,6 +140,9 @@ jobs:
       - name: Check owned backup settings and restore in a browser
         run: bun run check:owned-backups:browser
 
+      - name: Check MCP member management in the app
+        run: node scripts/check-member-management-browser.mjs
+
       - name: Check agent tasks, history and default-folder consent
         env:
           AUTOHAND_REQUIRE_BROWSER: "1"

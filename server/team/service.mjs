@@ -17,10 +17,14 @@ import { join } from "node:path";
 import { cleanMemoryText, createTeamStore } from "./store.mjs";
 import { validateArgs } from "../control-plane/control-plane.mjs";
 import { PROFILE_LIMITS } from "../../src/lib/member-shaping.js";
+import { MANAGED_MEMBER_TOOLS } from '../control-plane/management.mjs';
+import { SERVER_VERSION } from '../control-plane/control-plane.mjs';
 
 export const TEAM_MCP_SERVER_NAME = "autohand-squad";
 export const TEAM_MAX_DEPTH = 3;
 export const TEAM_WAIT_SECONDS = 45;
+export const TEAM_REQUESTED_WAIT_SECONDS = 600;
+export const TEAM_TRANSPORT_WAIT_SECONDS = 50;
 // The pinned Autohand CLI (0.9.7) fails any MCP request after 30 s
 // (MCP_REQUEST_TIMEOUT_MS in its McpClientManager, not configurable per
 // server), so a 45 s wait for a teammate ended as "MCP request tools/call
@@ -32,6 +36,7 @@ const BUSY_POLL_MS = 2000;
 const REPLY_CHARS = 6000;
 
 const TOOLS = [
+  ...MANAGED_MEMBER_TOOLS,
   {
     name: "squad_team",
     description: "List your Squad teammates: name, role, the engine each runs on and whether they are working right now. Use it before messaging someone whose exact name you do not know.",
@@ -45,7 +50,7 @@ const TOOLS = [
       properties: {
         to: { type: "string", description: "The teammate's name (first name is enough) or id." },
         message: { type: "string", description: "What you need from them, self-contained: they have not seen your conversation." },
-        wait_seconds: { type: "integer", minimum: 0, maximum: 50, description: `How long to wait for the reply (default ${TEAM_WAIT_SECONDS}). 0 sends and returns at once.` },
+        wait_seconds: { type: "integer", minimum: 0, maximum: TEAM_REQUESTED_WAIT_SECONDS, description: `Requested wait in seconds (default ${TEAM_WAIT_SECONDS}). Squad bounds each call to its harness transport budget (at most ${TEAM_TRANSPORT_WAIT_SECONDS}s; Autohand at most ${AUTOHAND_TEAM_WAIT_SECONDS}s), returns a delivery id, and preserves late replies for squad_replies. 0 sends and returns at once.` },
         request_id: { type: "string", minLength: 1, maxLength: 128, description: "Reuse this id when retrying the same message; Squad delivers it once." },
       },
       required: ["to", "message"],
@@ -227,7 +232,7 @@ const TOOLS = [
 
 TOOLS.push({
   name: "squad_propose_team",
-  description: "Propose new Squad members as a team for the person to confirm. This is the only way to create teammates in Squad: Autohand Code's create_team/add_teammate start processes inside your own session and never make a Squad member. Squad shows the roster under your reply with a Create team button; nothing is created until the person confirms. Describe each member's role and what they own; names and skills are optional.",
+  description: "Propose new Squad members as a team for the person to confirm. For direct creation use squad_create_member under your saved management permission. Autohand Code's create_team/add_teammate start processes inside your own session and never make a Squad member. Squad shows the roster under your reply with a Create team button; nothing is created until the person confirms. Describe each member's role and what they own; names and skills are optional.",
   inputSchema: {
     type: "object",
     properties: {
@@ -382,7 +387,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
     "- For a requested reminder or anything that should happen later or repeat, call squad_schedule in this turn. The request authorizes it: do not ask for confirmation again. Report the persisted receipt. Use mode propose for an unsolicited suggestion or an explicit draft. A scheduled automation is not a blocked task.",
     "- squad_ask asks the person one question and waits for the answer, when you cannot continue without it, in a conversation they are watching; otherwise end your reply with the question. Do not ask what you can find out with your tools.",
     "- squad_read_chat reads one of your saved earlier chats in full by the id shown in 'Earlier conversations', when the person refers to something the short recall line does not cover.",
-    "- To add teammates or build an organisation of agents, call squad_propose_team with each member's role and what they own; the person confirms the roster in Squad and the members are created there. It is the only way to create Squad members. Autohand Code's create_team, add_teammate and delegate_* tools run inside your own session and never create a Squad member; do not offer them as a way to build the team.",
+    "- To add teammates or build an organisation of agents, call squad_propose_team with each member's role and what they own; the person confirms the roster in Squad and the members are created there. For requested direct creation, squad_create_member saves a real member under your management permission; use squad_get_member_profile, squad_update_member_profile, squad_set_member_skills and squad_set_member_memories to configure it, and squad_create_routine/squad_update_routine for its saved automations. Creation never starts work. Autohand Code's create_team, add_teammate and delegate_* tools run inside your own session and never create a Squad member; do not offer them as a way to build the team.",
     "- When you need a decision or an answer from the person, finish your reply with the question and wait for their next message; ask_followup_question is not available in Squad. When a tool asks for permission, Squad shows the person an Allow/Deny card for it, so say what you are waiting for rather than treating a denial as final. Keep drafts safe: write the design or brief you promised to a file in the workspace, or save it with squad_remember, before you ask where it should go.",
     depth >= TEAM_MAX_DEPTH - 1 ? "- You are answering a teammate's message several hops deep: finish this yourself and do not message further teammates." : "",
   ];
@@ -397,7 +402,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   return sections.join("\n\n");
 }
 
-export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, artifacts, ownedData, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
+export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, artifacts, ownedData, manageMembers, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
   const store = createTeamStore({ stateDir });
   const sessions = new Map();
   const byToken = new Map();
@@ -421,7 +426,7 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
    * credential/config for its warm session (ADR-0030). Ephemeral work uses
    * its own scope so another thread cannot retarget the active credential.
    */
-  async function openWork({ memberId, runId = "", workspace = "", depth = 0, channel = null, maxWaitSeconds = 50, automationDraft = false, scope = "", ancestorIds = [], prepareOnly = false }) {
+  async function openWork({ memberId, runId = "", workspace = "", depth = 0, channel = null, maxWaitSeconds = TEAM_TRANSPORT_WAIT_SECONDS, automationDraft = false, scope = "", ancestorIds = [], prepareOnly = false }) {
     if (typeof memberId !== "string" || !memberId.trim()) throw new TeamError("A member identity is required.");
     const owner = memberId.trim();
     const key = JSON.stringify([owner, String(scope)]);
@@ -440,7 +445,7 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
       session.automationDraft = automationDraft === true;
       // The channel thread this turn answers in, so a teammate's reply can be shown there.
       session.channel = channel?.channelId && channel?.threadId ? channel : null;
-      session.maxWaitSeconds = Math.max(0, Math.min(50, Number(maxWaitSeconds) || 0));
+      session.maxWaitSeconds = Math.max(0, Math.min(TEAM_TRANSPORT_WAIT_SECONDS, Number(maxWaitSeconds) || 0));
     }
     const memory = await store.memoryFor(owner, prepareOnly ? workspace : session.workspace);
     const mcpServer = {
@@ -542,6 +547,14 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
     if (errors.length) return failure(errors.join("; "));
     const operation = { ...session, operationId };
     try {
+      if (MANAGED_MEMBER_TOOLS.some(tool => tool.name === name)) {
+        if (!manageMembers) throw new TeamError('Member management is unavailable in this runtime.');
+        const assertCurrent = () => {
+          const current = byToken.get(session.token);
+          if (!current?.active || current.runId !== session.runId) throw new TeamError('This member has no active Squad turn.', 401);
+        };
+        return text(await manageMembers(name, args, operation, assertCurrent));
+      }
       switch (name) {
         case "squad_member_data":
         case "squad_member_files": {
@@ -582,15 +595,15 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           if (session.ancestorIds.includes(to.id)) return failure("You are already answering this teammate's delivery. Return your answer or clarification as this turn's final text; Squad sends it back automatically. Queuing another message to a waiting sender can create a cycle.");
           const delivery = await store.addDelivery({ fromId: self.id, fromName: self.name, toId: to.id, toName: to.name, message: body, runId: "", fromRunId: session.runId, requestId: args.request_id || operationId });
           addReceipt(session, { id: `team-message-${delivery.id}`, type: "team_message", actorId: self.id, status: "applied", deliveryId: delivery.id, toId: to.id, message: `Asked ${to.name}.` });
-          if (delivery.duplicate && !["queued", "running"].includes(delivery.status)) return text({ deliveryId: delivery.id, duplicate: true, ...deliveryView(delivery, to.name) });
+          const wait = Math.max(0, Math.min(session.maxWaitSeconds ?? TEAM_TRANSPORT_WAIT_SECONDS, Number.isFinite(Number(args.wait_seconds)) ? Number(args.wait_seconds) : TEAM_WAIT_SECONDS));
+          if (delivery.duplicate && !["queued", "running"].includes(delivery.status)) return text({ deliveryId: delivery.id, duplicate: true, ...deliveryView(delivery, to.name), requestedWaitSeconds: args.wait_seconds ?? TEAM_WAIT_SECONDS, effectiveWaitSeconds: wait });
           const task = delivery.duplicate ? live.get(delivery.id) : startDelivery(delivery, { from: self, to, session: operation, channel: session.channel });
-          const wait = Math.max(0, Math.min(session.maxWaitSeconds ?? 50, Number.isFinite(Number(args.wait_seconds)) ? Number(args.wait_seconds) : TEAM_WAIT_SECONDS));
           let timeout;
           let settled;
           try { settled = wait && task ? await Promise.race([task, new Promise(resolve => { timeout = setTimeout(() => resolve(null), wait * 1000); })]) : null; }
           finally { clearTimeout(timeout); }
           if (settled) await store.updateDelivery(delivery.id, { readAt: new Date().toISOString() });
-          return text(deliveryView(settled || delivery, to.name));
+          return text({ deliveryId: delivery.id, ...deliveryView(settled || delivery, to.name), requestedWaitSeconds: args.wait_seconds ?? TEAM_WAIT_SECONDS, effectiveWaitSeconds: wait });
         }
         case "squad_teach": {
           if (session.depth >= TEAM_MAX_DEPTH) return failure("This conversation is already several teammates deep. Save your own learning and report back without rebroadcasting.");
@@ -758,7 +771,7 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
     if (!session) throw new TeamError("Team session has expired.", 401);
     if (!record(request) || request.jsonrpc !== "2.0" || typeof request.method !== "string") throw new TeamError("Invalid team request.");
     if (request.method === "initialize") {
-      return { protocolVersion: ["2024-11-05", "2025-03-26", "2025-06-18"].includes(request.params?.protocolVersion) ? request.params.protocolVersion : "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "autohand-squad-team", version: "1" } };
+      return { protocolVersion: ["2024-11-05", "2025-03-26", "2025-06-18"].includes(request.params?.protocolVersion) ? request.params.protocolVersion : "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "autohand-squad-team", version: SERVER_VERSION } };
     }
     if (request.method === "ping" || request.method.startsWith("notifications/")) return {};
     const actor = (await members()).find(member => member.id === session.memberId && !member.removed);

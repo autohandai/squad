@@ -7,7 +7,7 @@ import { MANAGEMENT_TOOLS } from './management.mjs';
 import { OWNERSHIP_TOOLS } from './ownership-tools.mjs';
 
 export const SERVER_NAME = 'autohand-squad-control-plane';
-export const SERVER_VERSION = '1';
+export const SERVER_VERSION = '2.0.0';
 export const PROTOCOL_VERSIONS = ['2024-11-05', '2025-03-26', '2025-06-18'];
 export const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:19821';
 export const NOT_AVAILABLE_CODE = 'not_available_from_bridge';
@@ -144,15 +144,6 @@ export const TOOLS = [
         limit: { type: 'integer', minimum: 1, maximum: 100 },
       },
       required: ['query'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'create_member',
-    description: 'Not available from the bridge: members are created and stored by the Squad app. This tool always returns the documented error so clients learn where to create one.',
-    inputSchema: {
-      type: 'object',
-      properties: { name: { type: 'string', maxLength: 120 }, role: { type: 'string', maxLength: 120 } },
       additionalProperties: false,
     },
   },

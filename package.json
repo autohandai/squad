@@ -169,7 +169,7 @@
     "computer-use:fetch": "node scripts/fetch-computer-use.mjs",
     "check:computer-use-bridge": "node scripts/check-computer-use-bridge.mjs",
     "check:vault": "node scripts/check-vault.mjs",
-    "check:team": "node scripts/check-team.mjs && node scripts/check-team-operations.mjs",
+    "check:team": "node scripts/check-team.mjs && node scripts/check-team-operations.mjs && node scripts/check-team-wait-budget.mjs && node scripts/check-member-management.mjs",
     "check:channel-replies": "node scripts/check-channel-replies.mjs",
     "check:computer-use-portable": "node scripts/check-computer-use-portable.mjs",
     "check:channel-lifecycle": "node scripts/check-channel-lifecycle.mjs --api-only",
