@@ -4695,7 +4695,6 @@ function App() {
   // moment; they stay listed in the inbox (they still need a decision) but
   // stop counting in the badge.
   const [inboxReadAt, setInboxReadAt] = useState(() => readStored(storageKeysFor("inboxReadAt"), ""));
-  const [createChannelRequest, setCreateChannelRequest] = useState(0);
   const [channelOperationError, setChannelOperationError] = useState("");
   const [exportNotice, setExportNotice] = useState(null);
   const exportingText = useRef(false);
@@ -6780,8 +6779,7 @@ function App() {
         navigate(`${MEMBER_ROUTE_PREFIX}/new`);
         break;
       case "new-channel":
-        navigate(CHANNELS_ROUTE);
-        setCreateChannelRequest((count) => count + 1);
+        navigate(channelsPath());
         break;
       case "inbox":
         navigate(inboxPath());
@@ -10046,8 +10044,6 @@ function App() {
             onMissionControl={() => navigate(missionControlPath())}
             onOnboarding={openOnboarding}
             onAnalytics={openAnalytics}
-            onCreateChannel={createChannel}
-            createChannelRequest={createChannelRequest}
             unreadChannelIds={unreadChannelIds}
             onMarkChannelsRead={markChannelsRead}
             draftAgentIds={draftAgentIds}
@@ -10519,7 +10515,6 @@ function App() {
               }}
               onOnboarding={openOnboarding}
               onAnalytics={openAnalytics}
-              onCreateChannel={createChannel}
               unreadChannelIds={unreadChannelIds}
               onMarkChannelsRead={markChannelsRead}
               draftAgentIds={draftAgentIds}
@@ -10847,7 +10842,6 @@ function ChannelsPage({
   const { profile: accountProfile } = useContext(AccountContext);
   const [manageMembersOpen, setManageMembersOpen] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
   // "The lazy way": a reaction becomes a flow from the message it is on,
   // rather than from channel settings three clicks away.
@@ -11167,23 +11161,8 @@ function ChannelsPage({
 
   return (
     <div className={cn("flex h-[calc(100vh-56px)] min-h-0 w-full flex-col lg:h-screen", attachmentDraft.dragging && "ring-1 ring-inset ring-primary/60")} data-file-drop-target="channel" {...attachmentDraft.bind}>
-      <ChannelCreateDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        agents={agents}
-        copy={copy}
-        onCreateChannel={onCreateChannel}
-      />
-
       {!channel ? (
-        <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-start justify-center gap-2 px-4 lg:px-10">
-          <p className="text-sm text-muted-foreground">{channels.length ? copy.channelSelectPrompt : copy.channelNoChannels}</p>
-          <p className="max-w-md text-sm text-muted-foreground">{copy.channelsDescription}</p>
-          <Button variant="outline" className="mt-3" onClick={() => setCreateOpen(true)}>
-            <Plus data-icon="inline-start" />
-            {copy.createChannel}
-          </Button>
-        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto"><ChannelCreateForm key={activeChannelId || "new"} agents={agents} copy={copy} onCreateChannel={onCreateChannel} onCancel={() => navigate(squadDirectoryPath())} /></div>
       ) : (
         <>
           <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border/70 px-4 lg:px-6">
@@ -12638,9 +12617,8 @@ function BrandMark({ theme = "dark", className }) {
   );
 }
 
-function ChannelCreateDialog({
-  open,
-  onOpenChange,
+function ChannelCreateForm({
+  onCancel,
   agents = [],
   copy = getLocaleCopy(DEFAULT_LOCALE),
   onCreateChannel,
@@ -12661,12 +12639,6 @@ function ChannelCreateDialog({
     setDraftAutoMode(false);
     setCreateError("");
     requestIdRef.current = "";
-  }
-
-  function setOpen(nextOpen) {
-    if (submittingRef.current) return;
-    onOpenChange?.(nextOpen);
-    if (!nextOpen) resetDraft();
   }
 
   function toggleDraftMember(agentId) {
@@ -12691,7 +12663,6 @@ function ChannelCreateDialog({
       memberIds: draftMemberIds,
       autoModeDefault: draftAutoMode === true,
     });
-      onOpenChange?.(false);
       resetDraft();
     } catch (error) {
       setCreateError(error.message || "Could not create this channel. Try again.");
@@ -12699,18 +12670,18 @@ function ChannelCreateDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="sm:max-w-[440px]">
-        <form onSubmit={submitCreate} className="flex flex-col gap-5">
-          <DialogHeader>
-            <DialogTitle>{copy.createChannel}</DialogTitle>
-            <DialogDescription>Create the channel, then describe its goal in chat. Squad will prepare the specialists and start their work.</DialogDescription>
-          </DialogHeader>
+    <section className="mx-auto w-full max-w-2xl px-5 py-8 sm:px-8 sm:py-12" data-testid="channel-create-page">
+        <form onSubmit={submitCreate} className="flex flex-col gap-6">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">{copy.createChannel}</h1>
+            <p className="mt-2 text-sm text-muted-foreground">Create the channel, then describe its goal in chat. Squad will prepare the specialists and start their work.</p>
+          </div>
 
           <div className="flex flex-col gap-2">
             <Label htmlFor="channel-name">{copy.channelName}</Label>
             <Input
               id="channel-name"
+              maxLength={80}
               value={draftName}
               placeholder={copy.channelNamePlaceholder}
               autoFocus
@@ -12726,12 +12697,15 @@ function ChannelCreateDialog({
                 const Icon = option.icon;
                 const selected = draftVisibility === option.id;
                 return (
-                  <button
+                  <Button
                     key={option.id}
                     type="button"
+                    variant="ghost"
+                    aria-label={copy[option.labelKey]}
                     aria-pressed={selected}
+                    disabled={creating}
                     className={cn(
-                      "flex items-start gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors",
+                      "h-auto justify-start items-start gap-2.5 whitespace-normal rounded-md px-2.5 py-2 text-left transition-colors",
                       selected ? "bg-muted/80" : "hover:bg-muted/45"
                     )}
                     onClick={() => setDraftVisibility(option.id)}
@@ -12741,7 +12715,7 @@ function ChannelCreateDialog({
                       <span className="block text-sm font-medium">{copy[option.labelKey]}</span>
                       <span className="block text-xs text-muted-foreground">{copy[option.detailKey]}</span>
                     </span>
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -12750,28 +12724,31 @@ function ChannelCreateDialog({
           <div className="flex flex-col gap-2">
             <Label>{copy.channelMembers}</Label>
             <p className="text-xs text-muted-foreground">{copy.channelMembersDetail}</p>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex gap-2 overflow-x-auto pb-2" role="group" aria-label="Choose channel members">
               {agents.map((agent) => {
                 const selected = draftMemberIds.includes(agent.id);
                 return (
-                  <button
+                  <Button
                     key={agent.id}
                     type="button"
+                    variant="ghost"
                     aria-pressed={selected}
+                    aria-label={`Include ${agent.name}`}
+                    disabled={creating}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-md border py-1 pl-1 pr-2.5 text-sm transition-colors",
-                      selected
-                        ? "border-primary/50 bg-primary/10 text-foreground"
-                        : "border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                      "h-auto w-20 shrink-0 flex-col gap-2 px-2 py-2 text-sm font-normal",
+                      selected ? "bg-muted text-foreground" : "text-muted-foreground"
                     )}
                     onClick={() => toggleDraftMember(agent.id)}
                   >
-                    <AgentAvatar agent={agent} className="size-5 rounded-md" />
-                    {agent.name}
-                  </button>
+                    <AgentAvatar agent={agent} className={cn("size-12 rounded-md", selected && "ring-2 ring-primary ring-offset-2 ring-offset-background")} />
+                    <span className="w-full truncate">{agent.name}</span>
+                  </Button>
                 );
               })}
             </div>
+            {!agents.length ? <p className="text-sm text-muted-foreground">No members yet. You can add specialists after describing this channel’s goal.</p> : null}
+            {draftMemberIds.length ? <p role="status" className="text-xs text-muted-foreground">{draftMemberIds.length} selected</p> : null}
           </div>
 
           <div className="flex items-start justify-between gap-4">
@@ -12781,20 +12758,21 @@ function ChannelCreateDialog({
             </div>
             <Switch
               id="channel-auto-mode"
+              disabled={creating}
               checked={draftAutoMode}
               onCheckedChange={(checked) => setDraftAutoMode(checked === true)}
             />
           </div>
 
-          <DialogFooter>
-            {createError ? <p role="alert" className="text-sm text-destructive">{createError}</p> : null}
+          {createError ? <p role="alert" className="text-sm text-destructive">{createError}</p> : null}
+          <div className="flex items-center gap-2 border-t border-border/60 pt-4">
             <Button type="submit" disabled={creating || !draftName.trim()}>
               {creating ? "Creating…" : copy.createChannel}
             </Button>
-          </DialogFooter>
+            <Button type="button" variant="ghost" disabled={creating} onClick={onCancel}>{copy.cancel || "Cancel"}</Button>
+          </div>
         </form>
-      </DialogContent>
-    </Dialog>
+    </section>
   );
 }
 
@@ -13166,8 +13144,6 @@ function SidebarContent({
   onOnboarding,
   onAnalytics,
   onCollapse,
-  onCreateChannel,
-  createChannelRequest = 0,
   unreadChannelIds = new Set(),
   unreadCountByAgent = new Map(),
   inboxCount = 0,
@@ -13183,10 +13159,6 @@ function SidebarContent({
 }) {
   const visibleAgents = agents.filter((agent) => agent?.id && agent?.name);
   const { entryFor: entryForPresence } = usePresence();
-  const [createChannelOpen, setCreateChannelOpen] = useState(false);
-  useEffect(() => {
-    if (createChannelRequest) setCreateChannelOpen(true);
-  }, [createChannelRequest]);
   const memberId = activeAgent?.id || visibleAgents[0]?.id;
   const chatPath = memberChatPath(memberId);
   const isCreatingMember = isCreateMemberRoute(route);
@@ -13264,7 +13236,7 @@ function SidebarContent({
         memory: () => navigate("/memory"),
         channel: (channelId) => navigate(channelsPath(channelId)),
         member: (targetId) => navigate(memberChatPath(targetId)),
-        createChannel: () => setCreateChannelOpen(true),
+        createChannel: () => navigate(channelsPath()),
         markChannelsRead: onMarkChannelsRead,
         createMember: () => navigate(`${MEMBER_ROUTE_PREFIX}/new`),
         createTeam: onCreateTeam,
@@ -13274,16 +13246,7 @@ function SidebarContent({
         missionControl: onMissionControl,
       }}
       footer={
-        <>
-          <ChannelCreateDialog
-            open={createChannelOpen}
-            onOpenChange={setCreateChannelOpen}
-            agents={visibleAgents}
-            copy={copy}
-            onCreateChannel={onCreateChannel}
-          />
-          <SidebarAccountFooter updateAvailable={updateAvailable} copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
-        </>
+        <SidebarAccountFooter updateAvailable={updateAvailable} copy={copy} onSettings={onSettings} onMissionControl={onMissionControl} onOnboarding={onOnboarding} onAnalytics={onAnalytics} />
       }
       onCollapse={onCollapse}
       searchShortcutLabel={SEARCH_SHORTCUT_LABEL}

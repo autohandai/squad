@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- Channel creation now opens directly in the main view with a name field, current-member avatar selection, visibility and auto mode. Deleting a channel returns to that same creation screen.
 - Private group chats with their own Direct Messages rows. Create one from the inline recipient chooser, delete it, or convert it into a public/private channel while keeping its members and messages. The app and both Squad MCP connections share these operations.
 - Direct Messages → + now lets you search existing members, choose multiple recipients, or explicitly name and describe a new member before opening their chat. Opening the chooser creates nothing; new members receive connected harness defaults and fallbacks without an artificial greeting.
 - New members automatically receive connected fallback engines with their default models and reasoning settings. MCP creation chooses a ready primary when none is specified; Model settings lets you change or remove the saved fallback chain.
