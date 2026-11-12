@@ -25,6 +25,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Updated the native app and runtime’s TLS dependencies to patched releases, including the runtime’s QUIC transport.
 - Pinned and hidden members keep your choices after reopening Squad, while removed members stay removed.
 - The first Chief of Staff now receives connected fallback engines, and a CLI monthly-quota notice triggers failover instead of appearing as a completed answer.
 
