@@ -10,6 +10,11 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Artifact release checks verify that the preview receives pointer input before clicking, and use real taps on touch layouts. Slow browser runs no longer mistake a delivered automation command for an interactive preview.
+- Windows process-cleanup checks wait for the durable cleanup receipt before starting a replacement, avoiding a timing-dependent false failure.
+
 ### Added
 
 - A per-member “Use the computer” switch in Model settings and Permissions. Turning it on asks for native confirmation; turning it off revokes access and removes Computer Use instructions and tools from later work. Operator MCP clients can read the saved scope and revoke it.
