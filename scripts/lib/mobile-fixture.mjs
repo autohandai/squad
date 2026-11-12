@@ -2,11 +2,22 @@ import { mkdir, chmod, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startBridge } from './reliability-browser.mjs';
+import { createServer } from 'node:http';
 
 /** Real owner-bound bridge/queue, isolated home and an offline fixture engine. */
-export async function startMobileFixture() {
+export async function startMobileFixture({ announcements = [] } = {}) {
   let member, counter;
-  const bridge = await startBridge({ cwd: fileURLToPath(new URL('../../', import.meta.url)), development: false, prepare: async directory => {
+  const announcementCalls = [];
+  const upstream = createServer(async (request, response) => {
+    let body = ''; for await (const chunk of request) body += chunk;
+    announcementCalls.push({ url: request.url, body });
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(request.method === 'GET' ? { success: true, announcements } : { success: true }));
+  });
+  await new Promise((resolve, reject) => { upstream.once('error', reject); upstream.listen(0, '127.0.0.1', resolve); });
+  let bridge;
+  try {
+  bridge = await startBridge({ cwd: fileURLToPath(new URL('../../', import.meta.url)), development: false, prepare: async directory => {
     const home = join(directory, 'home'), workspace = join(home, 'project');
     await mkdir(workspace, { recursive: true });
     const preload = join(directory, 'home.mjs');
@@ -22,13 +33,14 @@ console.log(JSON.stringify({type:'turn.completed'}));
     await chmod(engine, 0o755);
     member = { id: 'fixture-eva', name: 'Eva', role: 'QA Engineer', status: 'online', workspace, projects: [{ path: workspace }],
       harness: { id: 'codex', executablePath: engine }, permissions: { permissionMode: 'restricted' }, memory: [] };
-    return { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, OPENAI_API_KEY: 'fixture-no-provider' };
+    return { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, OPENAI_API_KEY: 'fixture-no-provider', AUTOHAND_API_URL: `http://127.0.0.1:${upstream.address().port}` };
   } });
-  try {
+    const closeBridge = bridge.close;
+    bridge.close = async () => { try { await closeBridge(); } finally { await new Promise(resolve => upstream.close(resolve)); } };
     const saved = await bridge.api(`/api/members/${member.id}/channel-access`, 'PUT', { agent: member, profile: '', profilePatch: {} });
     if (!saved.success) throw Error(saved.error);
     const setup = await bridge.api('/api/mobile/config', 'PUT', { enabled: false, mode: 'local', endpoint: '', port: 0 });
     if (!setup.success) throw Error(setup.error);
-    return { bridge, member, counter };
-  } catch (error) { await bridge.close(); throw error; }
+    return { bridge, member, counter, announcementCalls };
+  } catch (error) { if (bridge) await bridge.close(); else await new Promise(resolve => upstream.close(resolve)); throw error; }
 }

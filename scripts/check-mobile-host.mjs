@@ -5,7 +5,7 @@ import { until } from './lib/reliability-browser.mjs';
 import { sealPacket, openPacket } from '../server/mobile/protocol.mjs';
 import { createRemoteRegistry } from '../server/remote/registry.mjs';
 
-const { bridge, member } = await startMobileFixture();
+const { bridge, member, announcementCalls } = await startMobileFixture({ announcements: [{ id: 'fixture-update', title: 'Fixture update', ctaUrl: 'javascript:alert(1)' }] });
 try {
   const configured = await bridge.api('/api/mobile/config', 'PUT', { enabled: true, mode: 'local', endpoint: '', port: 0 });
   assert.equal(configured.success, true);
@@ -33,6 +33,14 @@ try {
   assert.ok(snapshot.data.capabilities.includes('tasks'));
   assert.ok(snapshot.data.account.id && snapshot.data.account.email);
   assert.equal('token' in snapshot.data.account, false);
+  const news = await request('announcements', { appVersion: '0.2.0' });
+  assert.equal(news.ok, true, news.error);
+  assert.equal(news.data.announcements[0].ctaUrl, '', 'phone announcements keep desktop URL sanitization');
+  const targeted = new URL(announcementCalls.at(-1).url, 'http://fixture.test');
+  assert.equal(targeted.searchParams.get('platform'), 'ios');
+  assert.equal(targeted.searchParams.get('appVersion'), '0.2.0');
+  assert.equal((await request('announcement.act', { id: 'fixture-update', action: 'seen', step: 2 })).data.ok, true);
+  assert.equal(JSON.parse(announcementCalls.at(-1).body).lastStep, 2);
   const parameters = { memberID: member.id, title: 'Check mobile delegation', detail: 'Use the same persisted task and member queue as Squad MCP.' }, id = randomUUID();
   const assigned = await request('delegate', parameters, { id });
   assert.equal(assigned.ok, true, assigned.error);
