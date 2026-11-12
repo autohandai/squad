@@ -74,10 +74,16 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
   }
   async function setAccess(id, input) {
     id = sanitizeId(id);
+    if (input.creation && (typeof input.creation !== 'object' || !/^[a-f0-9]{64}$/.test(input.creation.requestHash || ''))) throw channelError('Invalid member creation fingerprint.');
     let renamed = null;
     let profileChanged = false;
     const result = await store.mutate(state => {
       const previous = state.agentChannelAccess[id];
+      if (input.creation && previous) {
+        if (previous.creation?.requestHash !== input.creation.requestHash || previous.removed) throw channelError('This member creation request conflicts with an earlier request.', 409);
+        return { memberId: id, created: false, profileRevision: memberProfileRevision(previous.agent) };
+      }
+      if (input.creation && Object.values(state.agentChannelAccess).filter(access => !access.removed).length >= 200) throw channelError('This Squad has reached its 200-member limit.', 409);
       if (input.expectedProfileRevision !== undefined && (!previous?.agent || previous.removed || !Number.isSafeInteger(input.expectedProfileRevision) || input.expectedProfileRevision !== memberProfileRevision(previous.agent))) throw channelError('Member profile changed. Read it again before applying this edit.', 409);
       const before = String(previous?.agent?.name || '').trim();
       if (input.removed === true) {
@@ -98,19 +104,20 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
           agent.name = uniqueName(input.profilePatch.name, Object.entries(state.agentChannelAccess).filter(([otherId, access]) => otherId !== id && !access.removed).map(([, access]) => access.agent?.name));
         }
         const after = String(agent.name || '').trim();
+        if (input.creation && !previous) agent.name = uniqueName(after, Object.values(state.agentChannelAccess).filter(access => !access.removed).map(access => access.agent?.name));
         if (!previous?.removed && before && after && before !== after) renamed = { from: before, to: after, role: String(agent.role || '') };
         profileChanged = Boolean(previous?.agent) && MEMBER_PROFILE_FIELDS.some(key => JSON.stringify(previous.agent[key]) !== JSON.stringify(agent[key]));
         agent.profileRevision = memberProfileRevision(previous?.agent) + (profileChanged ? 1 : 0);
         let profile = String(input.profile || previous?.profile || '').slice(0, 64000);
         for (const [label, value] of [['Name', agent.name], ['Role', agent.role]]) if (value) profile = profile.replace(new RegExp(`^${label}: .*$`, 'm'), () => `${label}: ${String(value).replace(/\s+/g, ' ')}`);
-        state.agentChannelAccess[id] = { agent, profile, mode: mode(agent), workspaceModes: workspaceModes(agent), removed: false, updatedAt: at() };
+        state.agentChannelAccess[id] = { agent, profile, mode: mode(agent), workspaceModes: workspaceModes(agent), removed: false, updatedAt: at(), ...(previous?.creation || input.creation ? { creation: previous?.creation || input.creation } : {}) };
         // The copy keeps every name the member went by, so a channel @Max
         // or a member's relayed "@Max" still reaches it after the rename.
         const formerNames = [...new Set([...(previous?.agent?.formerNames || []), ...(agent.formerNames || []), ...(renamed ? [before] : [])])].filter(name => typeof name === 'string' && name.trim() && name !== after);
         if (formerNames.length) state.agentChannelAccess[id].agent.formerNames = formerNames.slice(-10);
       }
       const current = state.agentChannelAccess[id];
-      return { memberId: id, mode: current.mode, removed: current.removed, updatedAt: current.updatedAt, profileRevision: memberProfileRevision(current.agent), profile: Object.fromEntries(MEMBER_PROFILE_FIELDS.filter(key => key in (current.agent || {})).map(key => [key, current.agent[key]])) };
+      return { memberId: id, ...(input.creation ? { created: true } : {}), mode: current.mode, removed: current.removed, updatedAt: current.updatedAt, profileRevision: memberProfileRevision(current.agent), profile: Object.fromEntries(MEMBER_PROFILE_FIELDS.filter(key => key in (current.agent || {})).map(key => [key, current.agent[key]])) };
     });
     if (profileChanged) await Promise.resolve(onProfileChanged(id)).catch(error => reportError(error));
     // Every rename passes here: a member's own (squad_set_profile, or the

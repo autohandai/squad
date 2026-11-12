@@ -28,7 +28,7 @@ const harness = join(directory, "mock-codex");
 const config = join(directory, "user.json");
 const calls = join(directory, "calls.jsonl");
 
-const noah = { id: "team-noah", name: "Noah", role: "Frontend", status: "online", workspace: root, projects: [{ path: root }], harness: { id: "codex", executablePath: harness }, permissions: { permissionMode: "restricted" } };
+const noah = { id: "team-noah", name: "Noah", role: "Frontend", status: "online", workspace: root, projects: [{ path: root }], harness: { id: "codex", executablePath: harness }, permissions: { permissionMode: "restricted", builtInPolicies: Object.fromEntries(['squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_memories', 'squad_set_member_skills', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine'].map(name => [name, "allow"])) } };
 const eva = { id: "team-eva", name: "Eva Green", role: "QA", status: "online", workspace: root, projects: [{ path: root }], harness: { id: "codex", executablePath: harness }, permissions: { permissionMode: "restricted" } };
 const squadMembers = [noah, eva];
 
@@ -119,6 +119,19 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
     log({ kind: 'tools', response: await rpc('tools/list', {}) });
     if (scenario === 'assign-held') await call('squad_assign_task', { to: 'Eva Green', title: 'Paused queued task', request_id: 'held-assignment' });
     if (scenario === 'assign') await call('squad_assign_task', { to: 'Eva Green', title: 'Verify the queued release task', detail: 'Inspect the release result.', request_id: 'release-assignment' });
+    if (scenario === 'manage') {
+      const created = (await call('squad_create_member', { request_id: 'specialist-once', name: 'Tatiana', role: 'Software engineer', responsibilities: 'Own the code-cli architecture.', personality: 'Precise and thoughtful.', instructions: 'Verify boundaries before editing.', memories: ['Keep CLI and API boundaries explicit.'] })).result.structuredContent;
+      await call('squad_create_member', { request_id: 'specialist-once', name: 'Tatiana', role: 'Software engineer', responsibilities: 'Own the code-cli architecture.', personality: 'Precise and thoughtful.', instructions: 'Verify boundaries before editing.', memories: ['Keep CLI and API boundaries explicit.'] });
+      if (!created.id) throw new Error('Member was not persisted.');
+      await call('squad_update_member_profile', { member_id: created.id, responsibilities: 'Own CLI interoperability.' });
+      await call('squad_set_member_skills', { member_id: created.id, skill_ids: [] });
+      await call('squad_set_member_memories', { member_id: created.id, memories: ['Use the actual saved tool contracts.'] });
+      await call('squad_get_member_profile', { member_id: created.id });
+      const routine = (await call('squad_create_routine', { member_id: created.id, title: 'Review API boundaries', instructions: 'Review changes and report evidence.', schedule: {kind:'weekdays', days:[1,2,3,4,5], time:'09:00', timeZone:'Pacific/Auckland'} })).result.structuredContent;
+      if (!routine.id) throw new Error('Routine was not persisted.');
+      await call('squad_update_routine', { routine_id: routine.id, instructions: 'Review CLI and MCP contracts.', enabled: false });
+      await call('squad_list_routines', { member_id: created.id });
+    }
     if (scenario === 'message') {
       await call('squad_team', {});
       await call('squad_message', { to: '@Eva,', message: 'Is the build green?', wait_seconds: 30 });
@@ -170,7 +183,7 @@ const say = (text) => { console.log(JSON.stringify({ type: 'thread.started', thr
 
 try {
   // --- pure pieces --------------------------------------------------------
-  assert.deepEqual(TEAM_TOOL_NAMES, ["squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_assign_task", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask", "squad_publish_artifact", "squad_member_data", "squad_member_files", "squad_export_member"]);
+  assert.deepEqual(TEAM_TOOL_NAMES, ['squad_create_member', 'squad_get_member_profile', 'squad_update_member_profile', 'squad_set_member_memories', 'squad_set_member_skills', 'squad_list_routines', 'squad_create_routine', 'squad_update_routine', "squad_team", "squad_message", "squad_replies", "squad_teach", "squad_remember", "squad_recall", "squad_forget", "squad_set_profile", "squad_schedule", "squad_get_profile", "squad_update_memory", "squad_channels", "squad_channel_messages", "squad_post_channel", "squad_create_channel", "squad_work_plan", "squad_assign_task", "squad_task", "squad_models", "squad_set_fallbacks", "squad_search_memory", "squad_memory_graph", "squad_read_memory", "squad_share_memory", "squad_relate_memories", "squad_organize_memory", "squad_propose_team", "squad_read_chat", "squad_ask", "squad_publish_artifact", "squad_member_data", "squad_member_files", "squad_export_member"]);
   assert.deepEqual([...SQUAD_TEAM_TOOLS].sort(), [...TEAM_TOOL_NAMES].sort(), "the permission rows people see are exactly the tools the team server offers (ADR-0161)");
   const roster = [{ id: "a1", name: "Eva Green" }, { id: "a2", name: "Noah" }, { id: "a3", name: "Max Power" }, { id: "a4", name: "Max Steel" }];
   assert.equal(resolveTeammate("@Eva,", roster).member?.id, "a1", "a first name with @ and a comma finds the teammate");
@@ -520,6 +533,26 @@ try {
   assert.deepEqual(migrated.agent.formerNames, ["Max"]);
   await until(async () => (await api("/api/team")).data.memory.some((entry) => entry.source === "rename" && entry.text === "Max is now called Robert."));
   await until(async () => JSON.parse(await readFile(join(app, "agents", max.id, "profile.json"), "utf8")).name === "Robert");
+
+  // Real managed stdio MCP -> owner-bound HTTP -> canonical saved member.
+  const harnessesBeforeManagement = (await entries()).filter(entry => entry.kind === 'harness').length;
+  result = await chat(noah, "team-scenario-manage");
+  assert.equal(result.success, true, result.text);
+  const management = (await entries()).filter(entry => entry.kind === 'tool' && entry.scenario === 'manage');
+  assert.equal(management.length, 9);
+  for (const entry of management) assert.notEqual(entry.response.result?.isError, true, JSON.stringify(entry));
+  const made = management[0].response.result.structuredContent;
+  assert.equal(management[1].response.result.structuredContent.id, made.id);
+  assert.equal(management[1].response.result.structuredContent.created, false);
+  const savedManagerChild = (await api('/api/control-plane/members/' + made.id)).data;
+  assert.equal(savedManagerChild.responsibilities, 'Own CLI interoperability.');
+  assert.equal(savedManagerChild.memories[0].text, 'Use the actual saved tool contracts.');
+  assert.match(savedManagerChild.personality, /Precise and thoughtful/);
+  const childRoutines = (await api('/api/routines?memberId=' + made.id)).data.routines;
+  assert.equal(childRoutines.length, 1);
+  assert.equal(childRoutines[0].enabled, false);
+  assert.equal(childRoutines[0].instructions, 'Review CLI and MCP contracts.');
+  assert.equal((await entries()).filter(entry => entry.kind === 'harness').length, harnessesBeforeManagement + 1, 'only the acting member runs; creation and disabled routines launch no child engine');
 
   // --- a stale token is refused -------------------------------------------
   const stale = await fetch(`${origin}/api/team/mcp`, { method: "POST", headers: { "content-type": "application/json", "x-squad-team-token": "nope" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });

@@ -211,3 +211,49 @@ that is not ready, or from the bridge step when every member is.
   permission preset; the import dialog passes `"suggest-commands"`.
 - Both dialogs mount beside the member delete dialog; `onImported` reloads
   channels, workflows and presets.
+
+## Direct member management through managed MCP
+
+The agent-facing server and operator server advertise contract version
+`2.0.0`. Existing self-profile, shared/private/project memory and scheduling
+tools remain available. Agents can additionally call:
+
+| Tool | Purpose |
+| --- | --- |
+| `squad_create_member` | Save an owned member with a stable creation request ID, profile, selected skill packages and initial profile memories. |
+| `squad_get_member_profile` | Read a target member’s saved fields and revision. |
+| `squad_update_member_profile` | Patch name, role, description/responsibilities, instructions and personality. |
+| `squad_set_member_skills` | Assign validated catalog package IDs. |
+| `squad_set_member_memories` | Replace profile memory texts, preserving other memory scopes and files. |
+| `squad_list_routines` | Inspect saved schedules and their states, optionally by member. |
+| `squad_create_routine` | Create a target member’s routine; disabled unless explicitly enabled. |
+| `squad_update_routine` | Edit or pause/resume a saved routine without changing its owner. |
+
+These reuse operator routes and canonical storage, within the executing
+member’s current Squad. Their Built-in tool rules default to Ask first.
+Squad shows the exact operation in the existing question card; Allow once
+applies only that operation. Confirmation expires after 15 seconds without
+a mutation, keeping below the smallest supported harness transport budget.
+Unattended work cannot approve itself. A saved Allow rule permits direct
+management; Block refuses it. Current policy and active turn are rechecked
+before transport, including workspace-specific overrides.
+
+For example, `squad_create_member({request_id:"qa-specialist-1",name:"Eva",
+role:"QA engineer",responsibilities:"Own release acceptance.",
+memories:["Check the actual packaged app."]})` returns the saved ID. Use that
+ID with the target-member tools. A managed creation inherits the current
+work folder unless a folder already assigned to the acting member is named.
+It does not copy broad execution permissions, launch an engine, create Git
+or enable a routine. Use `squad_propose_team` when the person should review
+a roster together before creating it.
+
+### Message waits
+
+`squad_message.wait_seconds` accepts integers from 0 through 600, including
+60. It requests a budget; it does not extend the harness MCP deadline.
+Actual waiting remains capped at 50 seconds and at 25 seconds for Autohand.
+The receipt reports `requestedWaitSeconds` and `effectiveWaitSeconds`. A
+zero budget sends immediately. Queued work continues and `squad_replies`
+collects a late answer once; do not resend merely because it is still working.
+A stable `request_id` deduplicates an intentional retry. Negative, fractional,
+string and above-600 budgets are rejected before delivery.

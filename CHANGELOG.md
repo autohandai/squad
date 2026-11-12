@@ -12,6 +12,8 @@ list to the section for that version.
 
 ### Added
 
+- Agents and connected MCP clients can create saved Squad members and configure their profiles, responsibilities, skill packages, profile memories and routines. Managed tools use the member’s saved permissions and the selected owner.
+
 - User and Autohand team ownership for Squad data, with account switching isolated from previously saved agents and memories.
 - Portable JSON and YAML backups for agents, memories, conversations, skills, routines and managed files, with checksums and explicit recovery into a selected owner.
 - Settings → Backups previews verified imports into the selected personal or team Squad. Imported agents and routines stay paused; earlier data is preserved separately and interrupted operations recover to a Restart Squad screen.
@@ -25,6 +27,8 @@ list to the section for that version.
 - Desktop backup downloads open in your browser, keeping Squad open while you save the verified file.
 
 ### Fixed
+
+- Asking a teammate with `squad_message` and `wait_seconds: 60` now sends the message instead of failing validation. Waits stay within the harness deadline and late replies remain available.
 
 - Hosted sign-in and team access checks reach Autohand's identity service when both services run on Cloudflare Workers.
 - Squad stops retrying undeployed device, feature-flag, heartbeat and telemetry endpoints every minute. Local diagnostics distinguish unsupported services from authentication errors or outages; disabled telemetry no longer produces failure logs.

@@ -21,10 +21,15 @@ const schedule = {
 const tool = (name, description, properties, required = [], readOnly = false) => ({ name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false }, annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, openWorldHint: ['send_channel_message', 'run_routine'].includes(name) } });
 const member = { member_id: id(), expected_revision: revision };
 const routineFields = { title: text(160), instructions: text(20000), workspace: text(1000), schedule, enabled: { type: 'boolean' }, max_run_minutes: { type: 'integer', minimum: 1, maximum: 1440 } };
+const profileFields = { name: text(60), role: text(80), description: { type: 'string', maxLength: 600 }, responsibilities: { type: 'string', maxLength: 600, description: 'Alias of the saved description. Do not send both.' }, instructions: { type: 'string', maxLength: 1200 }, personality: { type: 'string', maxLength: 600 } };
+const skillIds = { type: 'array', maxItems: 32, items: text(500) };
+const memoryTexts = { type: 'array', maxItems: 100, items: text(500), description: 'Profile memories only; does not replace shared, project or conversation memory.' };
 
 export const MANAGEMENT_TOOLS = [
+  tool('create_member', 'Create a real saved Squad member in the selected owner. A stable request_id makes retries idempotent. Saves profile, catalog skill selections and initial profile memories without launching work, granting broad permissions or enabling routines. Workspace is optional; no folder is created implicitly.', { request_id: text(128), ...profileFields, skills: skillIds, memories: memoryTexts, workspace: text(1000), engine: text(200) }, ['request_id', 'name', 'role']),
   tool('get_member_profile', 'Read a member\'s saved name, personality, operating instructions, skills, folders and abilities, with its revision and available ability IDs. Operator access.', { member_id: id() }, ['member_id'], true),
-  tool('update_member_profile', 'Change a saved member name, role, personality or operating instructions. Preserves other fields and current work. expected_revision rejects stale edits; changes apply to later turns.', { ...member, name: text(60), role: text(80), description: { type: 'string', maxLength: 600 }, instructions: { type: 'string', maxLength: 1200 }, personality: { type: 'string', maxLength: 600 } }, ['member_id']),
+  tool('update_member_profile', 'Change a saved member name, role, responsibilities, personality or operating instructions. Preserves other fields and current work. expected_revision rejects stale edits; changes apply to later turns.', { ...member, ...profileFields }, ['member_id']),
+  tool('set_member_memories', 'Replace a member\'s profile memory texts with a revision-checked write (empty clears those texts). Preserves shared/project memory, conversation history and collected files.', { ...member, memories: memoryTexts }, ['member_id', 'memories']),
   tool('set_member_abilities', 'Set specific capability/tool policies to allow, ask or block. Get supported IDs from get_member_profile. Preserves unmentioned policies and workspace overrides. Optional workspace edits that folder\'s override. Does not grant OS permissions or disable safety guards.', { ...member, capabilities: policies, tool_policies: policies, workspace: text(1000) }, ['member_id']),
   tool('add_member_directory', 'Grant an existing project folder to a member, equivalent to --add-dir on later turns. Persists the folder on the member, validates its real path, and preserves other folders. Does not restart current work.', { ...member, path: text(1000) }, ['member_id', 'path']),
   tool('remove_member_directory', 'Remove an extra folder grant for later turns. Does not delete files or interrupt current work. The current primary workspace cannot be removed here.', { ...member, path: text(1000) }, ['member_id', 'path']),
@@ -63,6 +68,7 @@ export function createManagementTools(bridge, legacy) {
   const routineBody = args => Object.fromEntries(Object.entries(args).filter(([key]) => !['member_id', 'routine_id', 'max_run_minutes'].includes(key)).concat(args.max_run_minutes !== undefined ? [['maxRunMinutes', args.max_run_minutes]] : []));
 
   return {
+    create_member: args => bridge.post('/api/control-plane/members', args),
     get_member_profile: ({ member_id }) => profile(member_id),
     update_member_profile: ({ member_id, expected_revision, ...patch }) => patchMember(member_id, patch, expected_revision),
     set_member_abilities: ({ member_id, expected_revision, ...abilities }) => patchMember(member_id, { abilities }, expected_revision),
@@ -79,6 +85,7 @@ export function createManagementTools(bridge, legacy) {
       return bridge.get(`/api/skills/catalog?${new URLSearchParams({ q: query, workspace: current.workspace || '', offset: String(offset) })}`);
     },
     set_member_skills: ({ member_id, expected_revision, skill_ids }) => patchMember(member_id, { skills: skill_ids }, expected_revision),
+    set_member_memories: ({ member_id, expected_revision, memories }) => patchMember(member_id, { memories }, expected_revision),
     async get_channel({ channel_id }) { return (await channelFor(channel_id)).channel; },
     async update_channel({ channel_id, ...patch }) {
       if (!Object.keys(patch).length) throw new Error('Provide at least one channel setting to change.');
@@ -139,3 +146,6 @@ export function createManagementTools(bridge, legacy) {
     run_routine: ({ routine_id }) => bridge.post(`/api/routines/${encodeURIComponent(routine_id)}/run`, {}),
   };
 }
+
+export const MEMBER_MANAGEMENT_NAMES = Object.freeze(['create_member', 'get_member_profile', 'update_member_profile', 'set_member_skills', 'set_member_memories', 'list_routines', 'create_routine', 'update_routine']);
+export const MANAGED_MEMBER_TOOLS = MANAGEMENT_TOOLS.filter(tool => MEMBER_MANAGEMENT_NAMES.includes(tool.name)).map(tool => ({ ...tool, name: `squad_${tool.name}`, description: `${tool.description} Uses this member's saved management permission; ask mode needs the person's bounded confirmation in Squad.` }));

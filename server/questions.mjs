@@ -59,7 +59,7 @@ export class PersonQuestions {
    * person answers, { status: "unanswered", reason } when the wait or the
    * turn ends first. Rejects only for a turn nobody watches.
    */
-  ask({ runId, agentId, question, options = [] }) {
+  ask({ runId, agentId, question, options = [], waitMs }) {
     const send = this.streams.get(String(runId || ""));
     if (!send) throw new PersonQuestionError("No person is watching this reply, so a question here would wait on nobody. Finish the reply with the question instead; the person answers in their next message.", 409);
     const text = String(question || "").trim().slice(0, QUESTION_MAX_CHARS);
@@ -74,7 +74,8 @@ export class PersonQuestions {
       pending.resolve = resolve;
       // Referenced on purpose: it is cleared by the answer or when the reply
       // ends, and while a reply waits on the person the loop must stay up.
-      pending.timer = setTimeout(() => this.close(requestId, { status: "unanswered", reason: "no answer yet", source: "timeout" }), this.waitMs);
+      const budget = Number.isSafeInteger(waitMs) && waitMs > 0 ? Math.min(waitMs, this.waitMs) : this.waitMs;
+      pending.timer = setTimeout(() => this.close(requestId, { status: "unanswered", reason: "no answer yet", source: "timeout" }), budget);
     });
   }
 

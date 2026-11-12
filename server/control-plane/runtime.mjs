@@ -296,10 +296,6 @@ export function createTools(bridge) {
       return { query: data?.query ?? query, mode: data?.mode || '', results: (data?.results || []).slice(0, 100), tookMs: data?.tookMs ?? null };
     },
 
-    async create_member() {
-      throw notAvailable('create_member', 'members are created and stored by the Squad app and only mirrored to the bridge as a read-only status snapshot.', 'Create the member in the app (New member); it then appears in list_members.');
-    },
-
     async create_channel({ name, visibility, member_ids, section } = {}) {
       const channel = await bridge.post('/api/channels', {
         name,
