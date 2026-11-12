@@ -42,12 +42,17 @@ try {
   await browser.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: graphBounds.x + 80, y: graphBounds.y + 55, button: 'left', clickCount: 1 });
   assert.notEqual(await browser.evaluate("document.querySelector('.memory-camera').getAttribute('transform')"), beforePan, 'Pointer dragging pans the canvas');
   await browser.click('Fit all memories');
+  // Fit changes the camera with a CSS transition. Hit-test after the actual
+  // transition finishes so pointer-down targets the node rather than its old
+  // position while the camera is still moving (the Linux CI failure).
+  await browser.evaluate(`(async()=>{await new Promise(requestAnimationFrame);await Promise.all(document.querySelector('.memory-camera').getAnimations().map(animation=>animation.finished.catch(()=>{})));await new Promise(requestAnimationFrame);})()`);
   const target = snapshot.records.find(item => item.sourceType === 'team');
   const beforeDrag = await browser.evaluate(`(()=>{const node=document.querySelector('[data-memory-node=${JSON.stringify(target.id)}]');const rect=node.getBoundingClientRect();return{transform:node.getAttribute('transform'),x:rect.x+rect.width/2,y:rect.y+rect.height/2};})()`);
+  assert.equal(await browser.evaluate(`document.elementFromPoint(${beforeDrag.x},${beforeDrag.y})?.closest('[data-memory-node]')?.dataset.memoryNode`), target.id, 'drag begins on the visible node');
   await browser.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: beforeDrag.x, y: beforeDrag.y, button: 'left', clickCount: 1 });
   await browser.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: beforeDrag.x + 35, y: beforeDrag.y + 20, button: 'left', buttons: 1 });
   await browser.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: beforeDrag.x + 35, y: beforeDrag.y + 20, button: 'left', clickCount: 1 });
-  assert.notEqual(await browser.evaluate(`document.querySelector('[data-memory-node=${JSON.stringify(target.id)}]').getAttribute('transform')`), beforeDrag.transform, 'Memory nodes can be repositioned');
+  await until(() => browser.evaluate(`document.querySelector('[data-memory-node=${JSON.stringify(target.id)}]').getAttribute('transform')!==${JSON.stringify(beforeDrag.transform)}`), 'Memory nodes can be repositioned');
   await browser.click('Fit all memories');
   await browser.evaluate(`document.querySelector('[data-memory-node=${JSON.stringify(target.id)}]').focus()`);
   await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });

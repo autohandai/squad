@@ -97,3 +97,9 @@ add a generic filesystem plugin, or attest live-provider behavior. Browser
 downloads still depend on browser policy and can require its usual multiple
 download consent. Native filesystem tests and simulated browser IPC must be
 reported separately from a real native webview save or a public release.
+
+## Review follow-up: collision receipts and browser synchronization
+
+The UTF-8 filename boundary must hold for the final native receipt as well as the requested name. A real Rust filesystem regression reproduced a 180-byte request returning a 184-byte collision name, which the renderer correctly rejected after the file was already saved. Collision suffixes now reserve their byte budget before truncating the stem at a UTF-8 character boundary. Tests cover ASCII, three-byte and four-byte characters, Markdown/JSON extensions, multiple collisions and unchanged original content. No path, overwrite or origin authority is widened.
+
+The Linux CI failure was the existing memory-graph drag check: it measured a node immediately after Fit started a camera transition, then dispatched pointer-down at a moving coordinate. The check now waits for that actual animation to finish, verifies that the pointer target is the expected visible node and waits for the resulting transform. Product graph motion remains unchanged. Native unit tests prove disk writes; Chromium export checks use simulated native receipts and do not establish packaged webview IPC behavior.

@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
+const MAX_FILENAME_BYTES: usize = 180;
 const MAX_TEXT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
@@ -18,7 +19,7 @@ pub(crate) struct ExportReceipt {
 
 fn validate(filename: &str, content: &str) -> Result<(), String> {
     if filename.is_empty()
-        || filename.len() > 180
+        || filename.len() > MAX_FILENAME_BYTES
         || filename.trim() != filename
         || filename
             .chars()
@@ -53,7 +54,12 @@ fn save_in_directory(
         let filename = if index == 0 {
             filename.to_string()
         } else {
-            format!("{stem} ({index}).{extension}")
+            let suffix = format!(" ({index}).{extension}");
+            let mut end = stem.len().min(MAX_FILENAME_BYTES - suffix.len());
+            while !stem.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}{suffix}", &stem[..end])
         };
         let path = directory.join(&filename);
         let mut options = OpenOptions::new();
@@ -163,6 +169,38 @@ mod tests {
         }
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn collision_names_stay_within_the_renderer_utf8_receipt_limit() {
+        let root = temporary_directory();
+        for filename in [
+            format!("{}.md", "x".repeat(177)),
+            format!("{}.md", "界".repeat(59)),
+            format!("{}x.md", "🦎".repeat(44)),
+            format!("{}x.json", "界".repeat(58)),
+        ] {
+            assert_eq!(filename.len(), 180);
+            fs::write(root.join(&filename), "original").unwrap();
+            for index in 1..=11 {
+                let receipt = save_in_directory(&root, &filename, "new content").unwrap();
+                assert!(
+                    receipt.filename.len() <= 180,
+                    "{} bytes at collision {index}",
+                    receipt.filename.len()
+                );
+                validate(&receipt.filename, "new content").unwrap();
+                assert_eq!(
+                    fs::read_to_string(root.join(&receipt.filename)).unwrap(),
+                    "new content"
+                );
+            }
+            assert_eq!(
+                fs::read_to_string(root.join(&filename)).unwrap(),
+                "original"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn invalid_paths_and_oversized_text_create_nothing() {
         let root = temporary_directory();
