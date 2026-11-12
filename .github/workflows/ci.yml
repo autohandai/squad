@@ -169,6 +169,8 @@ jobs:
           bun run check:agent-channel-actions
           bun run check:control-plane
           bun run check:member-by-chat:browser
+          bun run check:channel-replies
+          bun run check:team-proposals:browser
 
       - name: Upload update regression evidence
         if: always()

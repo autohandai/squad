@@ -33,6 +33,7 @@ Module files:
 | `src/components/teams/CreateMenu.jsx` | The sidebar's "+": New member, New team…, Templates…. |
 | `scripts/check-team-builder.mjs` | `bun run check:team-builder` (in the `ci` chain after `check:teams`). |
 | `scripts/check-team-builder-browser.mjs` | `bun run check:team-builder:browser`: New team, Templates, detail and the preparing rows in headless Chrome, with screenshots under `.codex-artifacts/lanes/team-builder/`. |
+| `scripts/check-team-proposals-browser.mjs` | `bun run check:team-proposals:browser`: actual managed MCP proposal, saved-run recovery, channel/thread rendering, persistent decisions and explicit creation through the existing team importer, with an isolated controlled engine. |
 | `src/components/ui/checkbox.jsx` | shadcn checkbox, written from the registry source. |
 | `scripts/check-teams.mjs` | `bun run check:teams` (in the `ci` chain). |
 

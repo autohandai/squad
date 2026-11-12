@@ -10,10 +10,6 @@ list to the section for that version.
 
 ## [Unreleased]
 
-### Fixed
-
-- A full local cache now shows an actionable startup error and Retry instead of leaving Squad on Loading. Saved conversations remain unchanged.
-
 ### Added
 
 - User and Autohand team ownership for Squad data, with account switching isolated from previously saved agents and memories.
@@ -30,6 +26,7 @@ list to the section for that version.
 
 ### Fixed
 
+- A full local cache now shows an actionable startup error and Retry instead of leaving Squad on Loading. Saved conversations remain unchanged.
 - Squad stops retrying undeployed device, feature-flag, heartbeat and telemetry endpoints every minute. Local diagnostics distinguish unsupported services from authentication errors or outages; disabled telemetry no longer produces failure logs.
 
 - Reopening an agent keeps the current chat's start point instead of bringing earlier conversations back into it.
@@ -40,6 +37,8 @@ list to the section for that version.
 - Combined live updates leave browser connections available for saving and backing up data when another Squad window is open.
 - Outside-session hooks connect through the owned broker and record only for the account, Squad and dataset where they were enabled. Settings can explicitly update hooks from an earlier setup.
 - Launching an updated Squad explains when an older bridge must be closed first, preserving its running work instead of reusing its unowned data service.
+- Team proposals show Create team in channel replies and their threads. Saved decisions survive reopening, and older completed replies recover their roster from the original saved run.
+- Failed team creation keeps the proposal available to retry. Consecutive clicks submit one creation, and recovered replies retain a newer save timestamp even when their run finished earlier.
 
 ## [0.1.22] - 2026-11-10
 
