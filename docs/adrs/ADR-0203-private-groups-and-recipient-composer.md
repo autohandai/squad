@@ -80,6 +80,29 @@ message composer. New member asks for name, role and responsibilities and
 uses the canonical creation API, including connected harness defaults and
 failovers. No placeholder or greeting is created on entry or cancellation.
 
+## Backup round-trip correction
+
+The integration review found that portable exports kept full channel rows but
+owned restore rebuilt a whitelist that omitted the new kind and lifecycle
+fields. A real export → staged restore regression failed with `kind` missing:
+a genuine group became a normal channel and converted-conversation history
+lost its legacy-snapshot protection.
+
+Restore preserves validated group/channel identity, keeps groups private and
+rebinds membership, messages and threads to the destination's fresh IDs.
+Historical private channels without a kind remain channels. Recreate lifecycle
+fence hashes locally rather than granting source request receipts authority;
+retain a valid conversion timestamp and discard unknown receipt fields.
+Source request replay does not alias a new dataset's identities. Invalid kinds
+or receipt shapes refuse restore instead of silently changing the conversation.
+
+The owned-restore regression now covers real source export, staged restore,
+group get/list/conversion through the serialized store, converted-channel
+identity, exact history and roster references, legacy snapshot omission, and
+two re-export/restore rounds. Source receipts differ from destination fences.
+Fresh fences add no permission grant; old request replay is deliberately
+retired instead of promised across dataset replacement. No harness starts.
+
 ## Consequences and deliberate limits
 
 App and MCP observe one lifecycle/history, and old clients cannot silently

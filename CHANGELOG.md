@@ -33,6 +33,8 @@ list to the section for that version.
 
 ### Fixed
 
+- Portable backup restore keeps private groups and converted channels in the right place, with their conversation history and membership intact.
+
 - Older app snapshots cannot silently remove a new group or reverse its conversion into a channel. Deleted groups remain deleted after refresh and restart.
 - Retrying member creation after a lost save response keeps the saved model and fallback choices, including removed fallbacks, without preparing the teammate again.
 
