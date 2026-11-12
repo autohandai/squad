@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBridge, startBrowser, until } from "./lib/reliability-browser.mjs";
 import { attachmentFixtures } from "./lib/attachment-fixtures.mjs";
+import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 
 const artifact = ".codex-artifacts/chat-attachments-20261029";
 await mkdir(artifact, { recursive: true });
@@ -24,9 +25,9 @@ try {
   const member = { id: "attachment-fixture", name: "Iris", role: "Assistant", workspace: process.cwd(), projects: [{ path: process.cwd() }], permissions: { permissionMode: "unrestricted" }, harness: { id: "autohand" } };
   assert.equal((await bridge.api("/api/agents/provision", "POST", { agentId: member.id, agent: member, workspace: process.cwd() })).success, true);
   browser = await startBrowser();
+  const context=await seedOwnedBrowserFixture(bridge,browser,{members:[member]});
+  const messagesStorageKey=`autohandSquad.owner.v1.${context.storageKey}.${encodeURIComponent('autohandSquad.v1.messages')}`;
   await browser.send("Page.addScriptToEvaluateOnNewDocument", { source: `
-    localStorage.setItem('autohandSquad.v1.agents', ${JSON.stringify(JSON.stringify([member]))});
-    localStorage.setItem('autohandSquad.v1.onboarding', '{"version":1,"status":"skipped"}');
     window.attachmentUploads = 0;
     window.attachmentPayloads = [];
     const originalFetch = window.fetch.bind(window);
@@ -35,7 +36,7 @@ try {
       if (path === '/api/chat/warm') return Promise.resolve(new Response('{"success":true,"data":{}}', {headers:{'content-type':'application/json'}}));
       if (path === '/api/attachments' && options?.method === 'POST') window.attachmentUploads++;
       if (path === '/api/chat/stream') window.attachmentPayloads.push(JSON.parse(options.body));
-      if (path === '/api/attachments' && window.failAttachmentOnce && decodeURIComponent(options.headers['x-file-name']) === 'retry.pdf') {
+      if (path === '/api/attachments' && window.failAttachmentOnce && decodeURIComponent(new Headers(options.headers).get('x-file-name')) === 'retry.pdf') {
         window.failAttachmentOnce = false;
         return Promise.resolve(new Response('{"success":false,"error":"Synthetic upload failure"}',{status:500,headers:{'content-type':'application/json'}}));
       }
@@ -92,7 +93,7 @@ try {
   await browser.evaluate("window.preAttachmentReload = true");
   await browser.send("Page.reload");
   await until(() => browser.evaluate(`!window.preAttachmentReload && Boolean(document.querySelector('textarea[placeholder="Talk to Iris..."]')) && document.querySelectorAll('[data-message-id] [data-attachment-id]').length === ${fixtures.length}`), "file previews survive reloading saved history");
-  assert.equal(await browser.evaluate("JSON.stringify(JSON.parse(localStorage.getItem('autohandSquad.v1.messages'))).includes('data:image')"), false, "History stores references, not base64 blobs");
+  assert.equal(await browser.evaluate(`JSON.stringify(JSON.parse(localStorage.getItem(${JSON.stringify(messagesStorageKey)}))).includes('data:image')`), false, "Owned history stores references, not base64 blobs");
 
   await browser.fill('textarea[placeholder="Talk to Iris..."]', "Keep this draft.");
   await browser.evaluate("window.failAttachmentOnce=true");

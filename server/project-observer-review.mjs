@@ -1,4 +1,5 @@
-import { spawn, execFile } from 'node:child_process';
+import { spawnOwnedEngine } from './ownership/engine-child.mjs';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -40,18 +41,19 @@ export function blueprintObservationEnvelope(member,observation){
 
 function terminate(child){
   if(child.exitCode!==null||child.signalCode!==null)return;
-  const signal=(name)=>{try{if(process.platform!=='win32'&&child.pid){process.kill(-child.pid,name);return;}child.kill(name);}catch{try{child.kill(name);}catch{}}};
+  const signal=(name)=>{if(child.ownedEngine){child.kill(name);return;}try{if(process.platform!=='win32'&&child.pid){process.kill(-child.pid,name);return;}child.kill(name);}catch{try{child.kill(name);}catch{}}};
   signal('SIGTERM');const timer=setTimeout(()=>signal('SIGKILL'),2500);timer.unref?.();child.once('close',()=>clearTimeout(timer));
 }
 
 /** The pinned CLI constructs no tool manager in this profile. Validate its
  * runtime acknowledgement before passing project evidence to inference. */
-export async function runBlueprintObservation({cliPath,configPath,envVars={},model,workspace,envelope,signal,timeoutMs=90_000,spawnProcess=spawn}){
+export async function runBlueprintObservation({cliPath,configPath,envVars={},model,workspace,envelope,signal,timeoutMs=90_000,spawnProcess=spawnOwnedEngine}){
   if(signal?.aborted)throw new Error('Project observation stopped.');
   const args=['--mode','rpc','--answer-only','--restricted','--client-context','blueprint','--path',workspace,'--config',configPath];
   if(model)args.push('--model',String(model));
+    const child=await spawnProcess(cliPath,args,{cwd:workspace,env:guiSafeEnv(envVars),detached:process.platform!=='win32',stdio:['pipe','pipe','pipe'],windowsHide:true});
   return new Promise((resolve,reject)=>{
-    const child=spawnProcess(cliPath,args,{cwd:workspace,env:guiSafeEnv(envVars),detached:process.platform!=='win32',stdio:['pipe','pipe','pipe'],windowsHide:true});
+
     let pending='',stderr='',settled=false,total=0;
     const cleanup=()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);};
     const finish=(error,result)=>{if(settled)return;settled=true;cleanup();terminate(child);if(error)reject(error);else resolve(result);};
@@ -93,7 +95,7 @@ export async function runBlueprintObservation({cliPath,configPath,envVars={},mod
   });
 }
 
-export function createProjectObserverReview({prepareAutohandRuntime,readiness=assertHarnessReady,timeoutMs=90_000,execCommand=exec,runHarness=runExternalHarness,spawnProcess=spawn}={}){
+export function createProjectObserverReview({prepareAutohandRuntime,readiness=assertHarnessReady,timeoutMs=90_000,execCommand=exec,runHarness=runExternalHarness,spawnProcess=spawnOwnedEngine}={}){
   return async({member,workspace,observation,prompt,signal})=>{
     const assignment=harnessAssignmentFromAgent(member);
     const scratch=await mkdtemp(join(tmpdir(),'squad-project-review-'));

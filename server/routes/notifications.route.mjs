@@ -211,7 +211,7 @@ export function createNotificationsPlugin({ postNative = postNativeNotification,
 
   function rememberAppUrl(req) {
     const host = String(req?.headers?.host || "").trim();
-    if (host && !process.env.AUTOHAND_SQUAD_APP_URL) state.appUrl = `http://${host}`;
+    if (host && !process.env.AUTOHAND_SQUAD_APP_URL) state.appUrl = ctx?.ownedBrokerOrigin || `http://${host}`;
   }
 
   async function handle(req, res, url, context) {

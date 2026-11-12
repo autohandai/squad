@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {createOwnedBridgeFixture,ownedFixtureHeaders} from './lib/owned-bridge-fixture.mjs';
 // A member born in conversation (ADR-0126): pure checks for the shared rules
 // in src/lib/member-shaping.js, then a real bridge in an isolated state dir
 // with the disposable fake Claude Code harness from check-chats. No vendor,
@@ -96,7 +97,7 @@ await new Promise((r) => socket.listen(0, '127.0.0.1', r));
 const port = socket.address().port;
 await new Promise((r) => socket.close(r));
 const origin = `http://127.0.0.1:${port}`;
-let bridge;
+let bridge,ownership;
 let logs = '';
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, label, timeout = 15000) {
@@ -105,7 +106,7 @@ async function until(fn, label, timeout = 15000) {
   throw new Error(`${label} timed out; bridge: ${logs.slice(-3000)}`);
 }
 const api = async (path, body, method) => {
-  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: await ownedFixtureHeaders(origin), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json(); return { status: response.status, ...data };
 };
 const calls = async () => (await readFile(callsFile, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
@@ -118,15 +119,15 @@ const payload = (id, prompt, extra = {}) => ({ agentId: id, agent: members[id], 
 // The fake replies "Inspected the readme." unless the prompt carries REPLY<<text>>.
 const reply = (text) => `REPLY<<${text}>>`;
 async function chat(id, prompt, extra) {
-  const raw = await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload(id, prompt, extra)) })).text();
+  const raw = await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify(payload(id, prompt, extra)) })).text();
   const events = raw.split('\n\n').map((chunk) => { const event = chunk.match(/^event: (.+)$/m)?.[1]; const data = chunk.match(/^data: (.+)$/m)?.[1]; return event && data ? { event, data: JSON.parse(data) } : null; }).filter(Boolean);
   return { raw, done: events.find((item) => item.event === 'done')?.data || null };
 }
-const registered = async (id) => JSON.parse(await readFile(join(directory, 'squad', 'channels.json'), 'utf8')).agentChannelAccess?.[id]?.agent || null;
+const registered = async (id) => JSON.parse(await readFile(join(ownership.paths.dataRoot, 'channels.json'), 'utf8')).agentChannelAccess?.[id]?.agent || null;
 async function startBridge() {
   bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: rootDir,
-    env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider' },
+    env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   bridge.stdout.on('data', (d) => { logs += d; }); bridge.stderr.on('data', (d) => { logs += d; });
@@ -160,6 +161,7 @@ emit({type:'result',subtype:'success',result:text,session_id:session,usage:{inpu
 process.exit(0);
 `);
   await chmod(fake, 0o700);
+  if(!ownership){await writeFile(join(directory,'config.json'),JSON.stringify({auth:{token:'fixture-no-provider',email:'member@example.test',expiresAt:'2099-01-01T00:00:00Z'}}));ownership=await createOwnedBridgeFixture({serviceRoot:join(directory,'squad'),appRoot:join(directory,'app')});}
   await startBridge();
 
   // (i) A blank member's turn carries the instruction.
@@ -224,6 +226,7 @@ process.exit(0);
   console.error(`bridge log tail: ${logs.slice(-2500)}`);
   throw error;
 } finally {
+  await ownership?.close();
   await stopBridge();
   await rm(directory, { recursive: true, force: true });
 }

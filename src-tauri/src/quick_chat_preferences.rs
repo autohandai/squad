@@ -27,7 +27,24 @@ impl Default for Preferences {
     }
 }
 pub(crate) fn read() -> Preferences {
-    std::fs::read(default_paths().root.join("settings.json"))
+    let Some(context) = autohand_squad_runtime::ownership::read_active_context(&default_paths())
+        .ok()
+        .flatten()
+    else {
+        return Preferences {
+            quick_chat_enabled: false,
+            quick_chat_show_usage: false,
+            ..Preferences::default()
+        };
+    };
+    if !context.can_write {
+        return Preferences {
+            quick_chat_enabled: false,
+            quick_chat_show_usage: false,
+            ..Preferences::default()
+        };
+    }
+    std::fs::read(context.data_paths.root.join("settings.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
@@ -86,7 +103,15 @@ pub(crate) fn usage_lines(harness: &HarnessUsage) -> Vec<String> {
         })
         .collect()
 }
-pub(crate) fn fetch_usage(base: &str) -> Vec<HarnessUsage> {
+pub(crate) fn fetch_usage(
+    base: &str,
+    context: &autohand_squad_runtime::ownership::OwnedContext,
+) -> Vec<HarnessUsage> {
+    if !context.can_write
+        || !autohand_squad_runtime::ownership::still_current(&default_paths(), context)
+    {
+        return Vec::new();
+    }
     #[derive(Deserialize)]
     struct Response {
         success: bool,
@@ -97,7 +122,7 @@ pub(crate) fn fetch_usage(base: &str) -> Vec<HarnessUsage> {
         #[serde(default)]
         harnesses: Vec<HarnessUsage>,
     }
-    reqwest::blocking::Client::builder()
+    let result = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(12))
         .build()
         .ok()
@@ -107,6 +132,7 @@ pub(crate) fn fetch_usage(base: &str) -> Vec<HarnessUsage> {
                     "{}/api/harnesses/usage?refresh=1",
                     base.trim_end_matches('/')
                 ))
+                .header("x-squad-context", &context.generation)
                 .send()
                 .ok()
         })
@@ -122,7 +148,12 @@ pub(crate) fn fetch_usage(base: &str) -> Vec<HarnessUsage> {
                 .take(2)
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if autohand_squad_runtime::ownership::still_current(&default_paths(), context) {
+        result
+    } else {
+        Vec::new()
+    }
 }
 
 fn available(member: &autohand_squad_runtime::desktop_tray::TrayMember) -> bool {
@@ -165,7 +196,11 @@ pub(crate) fn apply(
     shell: &Arc<Shell>,
     model: &DesktopTrayModel,
     icons: &std::collections::HashMap<String, tauri::image::Image<'static>>,
+    context: Option<&autohand_squad_runtime::ownership::OwnedContext>,
 ) {
+    if !crate::native_scope_current(context) {
+        return;
+    }
     let prefs = read();
     if let Some(window) = app.get_webview_window(quick_chat::QUICK_CHAT_WINDOW) {
         crate::quick_chat_appearance::apply(&window, shell, &prefs);
@@ -219,6 +254,7 @@ pub(crate) fn apply(
                     .unwrap_or_else(|| id.clone());
                 let member_id = id.clone();
                 let events_shell = shell.clone();
+                let context = context.cloned();
                 let tray = tauri::tray::TrayIconBuilder::with_id(format!("member-tray:{id}"))
                     .icon(
                         icons
@@ -230,6 +266,9 @@ pub(crate) fn apply(
                     .tooltip(tooltip)
                     .show_menu_on_left_click(false)
                     .on_tray_icon_event(move |tray, event| {
+                        if !crate::native_scope_current(context.as_ref()) {
+                            return;
+                        }
                         if matches!(
                             event,
                             tauri::tray::TrayIconEvent::Click {
@@ -311,7 +350,14 @@ pub(crate) async fn squad_refresh_quick_chat(
     app: AppHandle,
     window: WebviewWindow,
     shell: tauri::State<'_, Arc<Shell>>,
+    context_generation: String,
 ) -> Result<(), String> {
+    let context = autohand_squad_runtime::ownership::read_active_context(&default_paths())
+        .map_err(|error| error.to_string())?
+        .ok_or("Select a verified Squad first.")?;
+    if context.generation != context_generation {
+        return Err("The selected Squad changed. Reopen Settings.".into());
+    }
     let base = lock(&shell.app_url)
         .clone()
         .ok_or("Squad is still starting.")?;
@@ -334,6 +380,7 @@ pub(crate) async fn squad_refresh_quick_chat(
                 &state,
                 &DesktopTrayModel::default(),
                 &std::collections::HashMap::new(),
+                Some(&context),
             )
         })
         .map_err(|error| error.to_string())?;
@@ -341,6 +388,9 @@ pub(crate) async fn squad_refresh_quick_chat(
         let handle = app.clone();
         let state = shell.inner().clone();
         app.run_on_main_thread(move || {
+            if !crate::native_scope_current(Some(&context)) {
+                return;
+            }
             if let Some(window) = handle.get_webview_window(quick_chat::QUICK_CHAT_WINDOW) {
                 crate::quick_chat_appearance::apply(&window, &state, &read());
             }

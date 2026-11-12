@@ -139,9 +139,19 @@ pub async fn run_tray_action(
     let runtime = tray_runtime(&paths, config);
     let config = runtime.config;
     let status = runtime.status;
-    if let Some(status) = &status {
-        let _ = local_json_request::<LifecycleResponse>(
+    let context = crate::ownership::read_active_context(&paths)
+        .ok()
+        .flatten()
+        .filter(|context| {
+            status
+                .as_ref()
+                .and_then(|status| status.ownership.as_ref())
+                .is_some_and(|scope| scope.matches(context))
+        });
+    if let (Some(status), Some(context)) = (&status, context.as_ref()) {
+        let _ = crate::cli::local_json_request_for_context::<LifecycleResponse>(
             &config,
+            context,
             "POST",
             "/telemetry",
             Some(&serde_json::to_string(&ui_event(
@@ -505,32 +515,63 @@ fn squad_args(command: SquadCommand, overrides: &PartialSquadConfig) -> SquadCli
     }
 }
 
-fn tray_runtime(paths: &StatePaths, config: SquadConfig) -> TrayRuntime {
-    if let Ok(status) = local_json_request::<StatusResponse>(&config, "GET", "/status", None) {
-        return TrayRuntime {
-            config,
-            status: Some(status),
-            live_status: None,
-        };
-    }
-
-    if let Ok(Some(record)) = read_daemon_record(paths) {
-        let mut recorded_config = config.clone();
-        recorded_config.host = record.host;
-        recorded_config.port = record.port;
-        if let Ok(status) =
-            local_json_request::<StatusResponse>(&recorded_config, "GET", "/status", None)
-        {
+fn tray_runtime(paths: &StatePaths, mut config: SquadConfig) -> TrayRuntime {
+    let owned = crate::ownership::read_active_context(paths).ok().flatten();
+    config.account_email = owned
+        .as_ref()
+        .and_then(|context| (!context.actor.email.is_empty()).then(|| context.actor.email.clone()));
+    let matches = |status: &StatusResponse| {
+        owned.as_ref().is_some_and(|context| {
+            status
+                .ownership
+                .as_ref()
+                .is_some_and(|scope| scope.matches(context))
+                && crate::ownership::still_current(paths, context)
+        })
+    };
+    if let Some(status) = owned.as_ref().and_then(|context| {
+        crate::cli::local_json_request_for_context::<StatusResponse>(
+            &config, context, "GET", "/status", None,
+        )
+        .ok()
+    }) {
+        if matches(&status) {
             return TrayRuntime {
-                config: recorded_config,
+                config,
                 status: Some(status),
                 live_status: None,
             };
         }
     }
-
+    if let Ok(Some(record)) = read_daemon_record(paths) {
+        let mut recorded_config = config.clone();
+        recorded_config.host = record.host;
+        recorded_config.port = record.port;
+        if let Some(status) = owned.as_ref().and_then(|context| {
+            crate::cli::local_json_request_for_context::<StatusResponse>(
+                &recorded_config,
+                context,
+                "GET",
+                "/status",
+                None,
+            )
+            .ok()
+        }) {
+            if matches(&status) {
+                return TrayRuntime {
+                    config: recorded_config,
+                    status: Some(status),
+                    live_status: None,
+                };
+            }
+        }
+    }
+    let live_status = owned
+        .as_ref()
+        .filter(|context| crate::ownership::still_current(paths, context))
+        .and_then(|context| read_fresh_live_status_snapshot(&context.data_paths));
     TrayRuntime {
-        live_status: read_fresh_live_status_snapshot(paths),
+        live_status,
         config,
         status: None,
     }
@@ -623,7 +664,11 @@ pub fn about_route_for_paths(paths: &StatePaths) -> String {
 }
 
 fn route_with_modal_query(paths: &StatePaths, pairs: &[(&str, &str)]) -> String {
-    let route = read_fresh_live_status_snapshot(paths)
+    let route = crate::ownership::read_active_context(paths)
+        .ok()
+        .flatten()
+        .filter(|context| crate::ownership::still_current(paths, context))
+        .and_then(|context| read_fresh_live_status_snapshot(&context.data_paths))
         .and_then(|status| status.current_route)
         .and_then(|route| clean_current_route(&route))
         .unwrap_or_else(|| "/mission-control".to_string());
@@ -742,6 +787,7 @@ mod tests {
     fn status() -> StatusResponse {
         StatusResponse {
             success: true,
+            ownership: None,
             service: "autohand-squad-daemon".to_string(),
             version: "1.2.3".to_string(),
             url: "http://127.0.0.1:19821".to_string(),
@@ -1000,14 +1046,16 @@ mod tests {
 
     #[test]
     fn modal_routes_use_fresh_current_route_and_strip_existing_modal_params() {
-        let root = std::env::temp_dir().join(format!(
-            "autohand-squad-feedback-route-{}",
-            crate::state::now_string().replace(':', "-")
-        ));
-        let paths = StatePaths::from_root(root.clone());
+        let fixture = crate::ownership::tests::Fixture::new();
+        let _auth = fixture.authenticate();
+        let paths = fixture.service.clone();
+        let root = paths.root.clone();
+        let owned = crate::ownership::read_active_context(&paths)
+            .unwrap()
+            .unwrap();
         paths.ensure().unwrap();
         std::fs::write(
-            &paths.web_status_json,
+            &owned.data_paths.web_status_json,
             r#"{"source":"web-console","updatedAt":"test","currentRoute":"/squad-members/asq_1/home?tab=work&feedback=bug","onlineMembers":1}"#,
         )
         .unwrap();

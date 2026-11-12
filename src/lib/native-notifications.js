@@ -7,9 +7,10 @@ export function normalizeNativeNotificationPermission(value) {
 /** No browser permission is substituted for the native app's OS permission. */
 export function getNativeNotificationClient({ userAgent = globalThis.navigator?.userAgent || "", invoke = globalThis.window?.__TAURI_INTERNALS__?.invoke } = {}) {
   if (!/^AutohandSquad(?:Desktop|QuickChat)\/[^\s]+ \(macos(?:; [^)]*)?\)$/.test(userAgent) || typeof invoke !== "function") return null;
+  const contextGeneration = currentOwnership()?.generation || '';
 
   async function invokeCommand(command, args) {
-    try { return await invoke(command, args); }
+    try { return await invoke(command, { ...args, contextGeneration }); }
     catch (error) { throw new Error(typeof error === "string" ? error : error?.message || "The native notification action failed."); }
   }
 
@@ -42,3 +43,4 @@ export function notificationTestMessage(result) {
     ? "macOS accepted the test notification. Banner display follows your notification settings and Focus mode."
     : "Notification submitted. Display follows your system notification settings.";
 }
+import { currentOwnership } from "./ownership-client.js";

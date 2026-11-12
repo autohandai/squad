@@ -86,6 +86,15 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
       ["squad_update_memory", "allow"],
       ["squad_schedule", "allow"],
       ["squad_create_channel", "ask"],
+      ["squad_create_member", "ask"],
+      ["squad_get_member_profile", "ask"],
+      ["squad_update_member_profile", "ask"],
+      ["squad_list_skills", "ask"],
+      ["squad_set_member_skills", "ask"],
+      ["squad_set_member_memories", "ask"],
+      ["squad_list_routines", "ask"],
+      ["squad_create_routine", "ask"],
+      ["squad_update_routine", "ask"],
       ["squad_channels", "allow"],
       ["squad_channel_messages", "allow"],
       ["squad_post_channel", "allow"],
@@ -103,6 +112,9 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
       ["squad_propose_team", "allow"],
       ["squad_read_chat", "allow"],
       ["squad_publish_artifact", "allow"],
+      ["squad_member_data", "allow"],
+      ["squad_member_files", "allow"],
+      ["squad_export_member", "allow"],
     ],
   },
   {
@@ -459,7 +471,7 @@ export const SQUAD_TEAM_TOOLS = Object.freeze(
 
 // Squad decides these itself (proposal or direct creation, ADR-0110/0126); the
 // MCP layer must let the call through so that decision can happen.
-export const SQUAD_GATED_TOOLS = Object.freeze(["squad_create_channel", "squad_schedule"]);
+export const SQUAD_GATED_TOOLS = Object.freeze(["squad_create_channel", "squad_schedule", "squad_create_member", "squad_get_member_profile", "squad_update_member_profile", "squad_list_skills", "squad_set_member_skills", "squad_set_member_memories", "squad_list_routines", "squad_create_routine", "squad_update_routine"]);
 
 // Computer Use tools the bridge proxies (server/computer-use.mjs). The proxy
 // checks the member's observe/control grant on every call; the engine only

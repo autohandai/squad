@@ -16,6 +16,7 @@ const bridge = await startBridge({ development: false, prepare: async directory 
   await writeFile(join(directory, 'squad', 'member-threads.json'), JSON.stringify({ version: 1, threads: [{ id: 'dm-test', memberId: 'eva', parentMessageId: root.id, root, createdAt: '2026-11-08T02:00:00Z', updatedAt: '2026-11-08T02:02:00Z', messages: [{ id: 'thread-question', role: 'user', body: 'Look at the artifact', status: 'complete' }, { id: 'thread-answer', role: 'agent', body: 'Reviewed it.', status: 'complete', runId: 'run-evidence' }] }] }));
   return {};
 } });
+chats = new ChatStore({ squadStateDir: bridge.dataRoot });
 const prefix = '/api/members/eva/history';
 try {
   const list = await bridge.api(prefix);

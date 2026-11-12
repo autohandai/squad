@@ -318,6 +318,7 @@ dependencies = [
  "sha2 0.11.1",
  "tokio",
  "turbovec",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -12,7 +12,8 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "zod": "^4.3.6"
+    "@autohand/squad-portable": "file:../../packages/squad-portable",
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "2.0.0-beta.v.5",

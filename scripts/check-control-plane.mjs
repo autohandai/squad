@@ -10,6 +10,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import { join, resolve } from 'node:path';
 
 import { createBridgeClient, createTools } from '../server/control-plane/runtime.mjs';
+import { createOwnedBridgeFixture } from './lib/owned-bridge-fixture.mjs';
 
 import {
   TOOL_NAMES, decodeFrames, goalOutcome, parseBridgeUrl, redactSecrets, runOutcome, validateArgs, TOOLS,
@@ -19,8 +20,9 @@ const rootDir = resolve(new URL('..', import.meta.url).pathname);
 const mcpEntry = join(rootDir, 'server', 'control-plane', 'mcp-server.mjs');
 const SECRET_A = 'sk-live-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const SECRET_B = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123';
-const MANAGEMENT_TOOLS = ['get_member_profile', 'update_member_profile', 'set_member_abilities', 'add_member_directory', 'remove_member_directory', 'list_skills', 'set_member_skills', 'get_channel', 'update_channel', 'set_channel_members', 'list_channel_threads', 'create_group_chat', 'send_channel_message', 'list_routines', 'get_routine', 'preview_routine', 'create_routine', 'update_routine', 'run_routine'];
-const EXPECTED_TOOLS = ['list_members', 'list_channels', 'get_messages', 'search', 'create_member', 'create_channel', 'send_message', 'wait_for_reply', 'interrupt', 'set_model', 'message_member', 'get_conversation', 'get_member_queue', 'wait_for_message', 'list_artifacts', 'get_artifact', 'list_memories', 'read_memory', ...MANAGEMENT_TOOLS];
+const MANAGEMENT_TOOLS = ['create_member', 'get_member_profile', 'update_member_profile', 'set_member_memories', 'set_member_abilities', 'add_member_directory', 'remove_member_directory', 'list_skills', 'set_member_skills', 'get_channel', 'update_channel', 'set_channel_members', 'list_channel_threads', 'create_group_chat', 'send_channel_message', 'list_routines', 'get_routine', 'preview_routine', 'create_routine', 'update_routine', 'run_routine'];
+const OWNERSHIP_TOOLS = ['get_squad_context', 'list_squad_owners', 'select_squad_owner', 'get_member_data', 'get_member_files', 'get_member_memories', 'export_squad', 'export_member', 'prepare_squad_import','prepare_legacy_recovery','restore_squad','reset_squad_data','get_squad_data_operation','restart_squad_data','list_cloud_backups','save_cloud_backup','get_cloud_backup_operation','download_cloud_backup','prepare_cloud_restore','remove_cloud_backup','reconnect_cloud_backups'];
+const EXPECTED_TOOLS = ['list_members', 'list_channels', 'get_messages', 'search', 'create_channel', 'send_message', 'wait_for_reply', 'interrupt', 'set_model', 'message_member', 'get_conversation', 'get_member_queue', 'wait_for_message', 'list_artifacts', 'get_artifact', 'list_memories', 'read_memory', ...MANAGEMENT_TOOLS, ...OWNERSHIP_TOOLS];
 
 let passed = 0;
 const ok = (condition, label) => { assert.ok(condition, label); passed += 1; };
@@ -102,7 +104,8 @@ try {
 await mkdir(join(rootDir, '.codex-artifacts'), { recursive: true });
 const directory = await mkdtemp(join(rootDir, '.codex-artifacts', 'squad-control-plane-'));
 const workspaceDir = join(directory, 'workspace');
-const squadHome = join(directory, 'squad');
+const serviceRoot = join(directory, 'squad');
+let squadHome = serviceRoot,ownedFixture;
 const callsFile = join(directory, 'calls.jsonl');
 const fake = join(directory, 'fixture-codex.cjs');
 const socket = createServer();
@@ -120,7 +123,8 @@ async function until(fn, label, timeout = 10000) {
   throw new Error(`${label} timed out; bridge: ${logs.slice(-3000)}`);
 }
 const api = async (path, body, method) => {
-  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const context=(await(await fetch(origin+'/api/ownership/context')).json()).data;
+  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json','x-squad-context':context.generation }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json(); return { status: response.status, ...data };
 };
 const calls = async () => (await readFile(callsFile, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
@@ -130,7 +134,8 @@ function startBridge() {
     cwd: rootDir,
     env: {
       ...process.env,
-      AUTOHAND_SQUAD_HOME: squadHome,
+      ...ownedFixture.env,
+      AUTOHAND_SQUAD_HOME: serviceRoot,
       AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'),
       AUTOHAND_HOME: join(directory, 'autohand'),
       AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'),
@@ -233,6 +238,7 @@ try {
   await writeFile(join(squadHome, 'channels.json'), JSON.stringify({
     version: 1,
     revision: 3,
+    agentChannelAccess: {kai:{agent:{id:'kai',name:'Kai',role:'Engineer',status:'online'},removed:false},iris:{agent:{id:'iris',name:'Iris',role:'Reviewer',status:'offline'},removed:false}},
     channels: [{ id: 'channel-general', name: 'general', visibility: 'public', memberIds: ['kai', 'iris'], projects: [{ path: workspaceDir, name: 'autohandSWE' }], createdAt: seededAt, updatedAt: seededAt }],
     threads: [{ id: 'thread-seeded', channelId: 'channel-general', title: 'Seeded kickoff', creatorId: 'iris', memberIds: ['kai'], replyCount: 1, createdAt: seededAt, updatedAt: seededAt }],
     messages: { 'channel-general': [
@@ -267,6 +273,8 @@ if(prompt.includes('DELAY GROUP fixture'))setTimeout(finish,600);else finish();
   await mkdir(join(directory, 'skill-repo', 'fixture-registry'), { recursive: true });
   await writeFile(join(directory, 'skill-repo', 'fixture-registry', 'SKILL.md'), '---\nname: Registry fixture\n---\nRegistry fixture package.\n');
   await writeFile(join(directory, 'skill-fixture.mjs'), `const original = globalThis.fetch; globalThis.fetch = (url, options) => String(url) === 'https://skilled.autohand.ai/skills-index.json' ? Promise.resolve(new Response(${JSON.stringify(JSON.stringify(registry))}, { headers: { 'content-type': 'application/json' } })) : original(url, options);`);
+  await writeFile(join(directory,'config.json'),JSON.stringify({auth:{token:'fixture-only-no-provider',email:'reliability@example.test',expiresAt:'2099-01-01T00:00:00Z'}}));
+  ownedFixture=await createOwnedBridgeFixture({serviceRoot,appRoot:join(directory,'app')});squadHome=ownedFixture.paths.dataRoot;
   await startBridge();
 
   // The app prepares a member before its first turn; the bridge keeps that
@@ -296,7 +304,7 @@ if(prompt.includes('DELAY GROUP fixture'))setTimeout(finish,600);else finish();
   const iris = members.data.members.find((member) => member.id === 'iris');
   eq(kai?.name, 'Kai', 'seeded member name'); eq(kai?.role, 'Engineer', 'seeded member role'); eq(kai?.presence, 'online', 'presence from the bridge');
   eq(iris?.presence, 'offline', 'offline member presence'); eq(kai?.harness, null, 'provisioned-only fixture has no registered roster profile before the first turn');
-  ok(String(members.data.source.roster).includes('web-status.json'), 'roster source is stated');
+  ok(String(members.data.source.roster).includes('selected-owner registry'), 'canonical owned roster source is stated');
 
   const channels = await client.call('list_channels');
   ok(!channels.isError, 'list_channels ok');
@@ -346,10 +354,22 @@ if(prompt.includes('DELAY GROUP fixture'))setTimeout(finish,600);else finish();
   const duplicate = await client.call('create_channel', { name: 'ops' });
   eq(duplicate.isError, true, 'duplicate channel name is refused'); ok(String(duplicate.data.error).includes('already exists'), 'duplicate reason surfaced');
 
-  const notAvailableCreate = await client.call('create_member', { name: 'Nova' });
-  eq(notAvailableCreate.isError, true, 'create_member is a tool error');
-  eq(notAvailableCreate.data.code, 'not_available_from_bridge', 'create_member error code');
-  ok(String(notAvailableCreate.data.error).startsWith('create_member is not available from the bridge'), 'create_member error text');
+  const createdMember = await client.call('create_member', { request_id: 'operator-specialist', name: 'Nova', role: 'Designer', responsibilities: 'Own accessible product flows.', workspace: workspaceDir, memories: ['Preserve user drafts.'] });
+  ok(!createdMember.isError, `create_member persists: ${JSON.stringify(createdMember)}`);
+  ok(createdMember.data.id && createdMember.data.created, 'member creation returns its canonical id');
+  const againMember = await client.call('create_member', { request_id: 'operator-specialist', name: 'Nova', role: 'Designer', responsibilities: 'Own accessible product flows.', workspace: workspaceDir, memories: ['Preserve user drafts.'] });
+  eq(againMember.data.id, createdMember.data.id, 'creation retry has one canonical id');
+  eq(againMember.data.created, false, 'creation retry preserves the saved member');
+  const racedArgs = { request_id: 'operator-race', name: 'Taylor', role: 'Engineer' };
+  const raced = await Promise.all(Array.from({ length: 3 }, () => client.call('create_member', racedArgs)));
+  eq(new Set(raced.map(item => item.data.id)).size, 1, 'concurrent creation has one persisted id');
+  eq(raced.filter(item => item.data.created).length, 1, 'exactly one concurrent creation owns the receipt');
+  const racedId = raced[0].data.id;
+  await client.call('update_member_profile', { member_id: racedId, name: 'Taylor Smith' });
+  eq((await client.call('create_member', racedArgs)).data.name, 'Taylor Smith', 'creation replay cannot overwrite a later profile edit');
+  eq((await client.call('create_member', { ...racedArgs, role: 'QA' })).data.status, 409, 'creation request id cannot be reused for another intent');
+  await api(`/api/members/${racedId}/channel-access`, { removed: true }, 'PUT');
+  eq((await client.call('create_member', racedArgs)).data.status, 409, 'creation replay cannot resurrect a removed member');
   const notAvailableModel = await client.call('set_model', { member_id: 'kai', model: 'gpt-5' });
   eq(notAvailableModel.isError, true, 'set_model is a tool error');
   eq(notAvailableModel.data.code, 'not_available_from_bridge', 'set_model error code');
@@ -514,7 +534,7 @@ if(prompt.includes('DELAY GROUP fixture'))setTimeout(finish,600);else finish();
   eq(grantedReply.data.outcome, 'settled', 'run with granted folder completes');
   const latestCall = (await calls()).filter(item => item.kind === 'start').at(-1);
   ok(latestCall.args.some((arg, index) => arg === '--add-dir' && latestCall.args[index + 1] === extraDirectory) || latestCall.args.some(arg => arg.startsWith('sandbox_workspace_write.writable_roots=') && JSON.parse(arg.split('=').slice(1).join('=')).includes(extraDirectory)), 'extra folder reaches fresh or resumed engine access settings');
-  const savedProfile = JSON.parse(await readFile(join(directory, 'app', 'agents', 'kai', 'profile.json'), 'utf8'));
+  const savedProfile = JSON.parse(await readFile(join(ownedFixture.paths.appRoot, 'agents', 'kai', 'profile.json'), 'utf8'));
   eq(savedProfile.name, 'Morgan', 'profile projection preserves rename');
   ok(savedProfile.skillInstall.installed.some(item => item.id === 'fixture-skill'), 'selected skill package is installed on next turn');
   ok(savedProfile.skillInstall.installed.some(item => item.id === 'registry:autohandai/community-skills::fixture-registry' && item.reference.authority === 'registry:autohandai/community-skills'), 'qualified registry package installs with its explicit origin');
@@ -630,5 +650,6 @@ if(prompt.includes('DELAY GROUP fixture'))setTimeout(finish,600);else finish();
 } finally {
   for (const child of children) child.kill('SIGKILL');
   await stopBridge();
+  await ownedFixture?.close();
   await rm(directory, { recursive: true, force: true });
 }

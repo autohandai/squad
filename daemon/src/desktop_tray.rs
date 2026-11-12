@@ -4,16 +4,17 @@
 //! any other controller.
 
 use crate::account_usage::{fetch_account_usage_blocking, now_unix, usage_line, AccountUsage};
-use crate::cli::{fetch_status_blocking, stack_daemon_config, web_port_for};
+use crate::cli::{local_json_request_for_context, stack_daemon_config, web_port_for};
 use crate::config::{read_autohand_user_auth, resolve_config, ConfigOverrides, SquadConfig};
 use crate::daemon::StatusResponse;
 use crate::live_status::{read_fresh_live_status_snapshot, LiveStatusMember};
+use crate::ownership::{read_active_context, still_current};
 use crate::state::StatePaths;
 use anyhow::Result;
 
 /// The signed-in account, resolved the way the bridge resolves it: the Squad
-/// session first, then the Autohand CLI session the user may have signed in
-/// with directly.
+/// shared Autohand CLI credential. Old Squad email/token fields are labels,
+/// never a fallback identity after the shared credential changes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AccountSession {
     pub token: Option<String>,
@@ -29,22 +30,12 @@ impl AccountSession {
     }
 }
 
-pub fn account_session(config: &SquadConfig) -> AccountSession {
-    let squad_token = config
-        .api_auth_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
-        .map(str::to_string);
+pub fn account_session(_config: &SquadConfig) -> AccountSession {
     let user = read_autohand_user_auth();
     AccountSession {
-        email: config
-            .account_email
-            .clone()
-            .filter(|email| !email.trim().is_empty())
-            .or_else(|| user.email.clone()),
+        email: user.email,
         name: user.name.clone(),
-        token: squad_token.or(user.token),
+        token: user.token,
     }
 }
 
@@ -76,12 +67,34 @@ pub struct DesktopTrayModel {
 }
 
 /// Fetch fresh usage for the signed-in account, if there is one.
-pub fn refresh_account_usage(config: &SquadConfig) -> Result<Option<AccountUsage>> {
+pub fn refresh_account_usage(
+    paths: &StatePaths,
+    config: &SquadConfig,
+) -> Result<Option<AccountUsage>> {
+    let Some(context) = read_active_context(paths)? else {
+        return Ok(None);
+    };
     let session = account_session(config);
     let Some(token) = session.token.as_deref().filter(|_| session.signed_in()) else {
         return Ok(None);
     };
-    fetch_account_usage_blocking(&config.api_base_url, token).map(Some)
+    use sha2::{Digest, Sha256};
+    let fingerprint: String = Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let origin = reqwest::Url::parse(&config.api_base_url)?;
+    let issuer = reqwest::Url::parse(&context.owner.issuer)?;
+    if fingerprint != context.credential_fingerprint
+        || origin.origin() != issuer.origin()
+        || !origin.username().is_empty()
+        || origin.password().is_some()
+        || !still_current(paths, &context)
+    {
+        return Ok(None);
+    }
+    let usage = fetch_account_usage_blocking(&config.api_base_url, token)?;
+    Ok(still_current(paths, &context).then_some(usage))
 }
 
 /// Build the tray model from the local squad state and a cached usage
@@ -91,6 +104,7 @@ pub fn load_desktop_tray_model(
     overrides: &ConfigOverrides,
     usage: Option<&AccountUsage>,
     usage_error: Option<&str>,
+    usage_generation: Option<&str>,
 ) -> DesktopTrayModel {
     let config = match resolve_config(paths, overrides.clone()) {
         Ok(config) => config,
@@ -99,22 +113,86 @@ pub fn load_desktop_tray_model(
     // The resolved config addresses the web app; the daemon listens on its
     // own port, derived the same way `squad status` derives it.
     let daemon_config = stack_daemon_config(&config, Some(web_port_for(&config)));
-    let status = fetch_status_blocking(&daemon_config).ok();
-    let live = if status.is_none() {
-        read_fresh_live_status_snapshot(paths)
+    let context = read_active_context(paths).ok().flatten();
+    let status = context
+        .as_ref()
+        .and_then(|context| {
+            local_json_request_for_context::<StatusResponse>(
+                &daemon_config,
+                context,
+                "GET",
+                "/status",
+                None,
+            )
+            .ok()
+        })
+        .filter(|status| {
+            context.as_ref().is_some_and(|context| {
+                status
+                    .ownership
+                    .as_ref()
+                    .is_some_and(|scope| scope.matches(context))
+            })
+        });
+    let mut live = if status.is_none() {
+        context
+            .as_ref()
+            .and_then(|context| read_fresh_live_status_snapshot(&context.data_paths))
     } else {
         None
     };
-    let session = account_session(&config);
-    build_model(
+    let mut session = context
+        .as_ref()
+        .map(|_| account_session(&config))
+        .unwrap_or_default();
+    if let Some(context) = context.as_ref() {
+        session.email = (!context.actor.email.is_empty()).then(|| context.actor.email.clone());
+        if !context.can_write {
+            if let Some(snapshot) = live.as_mut() {
+                snapshot.active_work = 0;
+                snapshot.online_members = 0;
+                snapshot.working_agents = 0;
+                snapshot.queue_depth = 0;
+                snapshot.queued_jobs = 0;
+                snapshot.scheduled_jobs = 0;
+                snapshot.jobs.clear();
+                snapshot.automations.clear();
+                for member in &mut snapshot.members {
+                    member.working = false;
+                    member.status = "offline".to_string();
+                    member.queued_jobs = 0;
+                    member.scheduled_jobs = 0;
+                }
+            }
+        }
+    }
+    let matching_usage = context
+        .as_ref()
+        .is_some_and(|context| usage_generation == Some(context.generation.as_str()));
+    let model = build_model(
         &config,
         &session,
         status.as_ref(),
         live.as_ref().map(|snapshot| snapshot.members.as_slice()),
-        usage,
-        usage_error,
+        usage.filter(|_| matching_usage),
+        usage_error.filter(|_| matching_usage),
         now_unix(),
-    )
+    );
+    if context
+        .as_ref()
+        .is_some_and(|context| !still_current(paths, context))
+    {
+        return build_model(
+            &config,
+            &AccountSession::default(),
+            None,
+            None,
+            None,
+            None,
+            now_unix(),
+        );
+    }
+    model
 }
 
 pub fn build_model(

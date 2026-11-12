@@ -1,3 +1,4 @@
+import { OwnershipEventSource } from "@/lib/ownership-client";
 import { useCallback, useEffect, useState } from "react";
 
 import { PaymentApprovalCard } from "@/components/chat/PaymentApprovalCard";
@@ -9,7 +10,7 @@ import { SecureRequestCard } from "@/components/chat/SecureRequestCard";
  * /api/vault/events. Returns the list plus the handlers the cards and Needs
  * you use. `api(path, options)` is the app's JSON helper.
  */
-export function useVaultRequests(api) {
+export function useVaultRequests(api, { subscribe = true } = {}) {
   const [requests, setRequests] = useState([]);
   const [cards, setCards] = useState([]);
   const [error, setError] = useState("");
@@ -27,15 +28,16 @@ export function useVaultRequests(api) {
 
   useEffect(() => {
     void reload();
+    if(!subscribe)return undefined;
     let source;
     try {
-      source = new EventSource("/api/vault/events");
+      source = new OwnershipEventSource("/api/vault/events");
       source.addEventListener("changed", () => { void reload(); });
     } catch {
       source = null;
     }
     return () => source?.close();
-  }, [reload]);
+  }, [reload,subscribe]);
 
   const submitSecret = useCallback(async (id, body) => {
     await api(`/api/vault/requests/${encodeURIComponent(id)}/secret`, { method: "POST", body: JSON.stringify(body) });

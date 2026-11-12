@@ -85,7 +85,7 @@ try {
     assert.equal(saved.messages.find(item => item.id === messages.at(-1).id).body, messages.at(-1).body);
     const replaced = await bridge.api('/api/channels', 'PUT', saved);
     assert.equal(replaced.status, 200, replaced.error);
-    const path = join(bridge.directory, 'squad', 'channels.json');
+    const path = join(bridge.dataRoot, 'channels.json');
     const before = await readFile(path, 'utf8');
     const oversized = await bridge.api('/api/channels/sync', 'PUT', { messages: [{ id: 'too-large', channelId: created.data.id, body: 'x'.repeat(16 * 1024 * 1024) }] });
     assert.equal(oversized.status, 413);
@@ -93,7 +93,7 @@ try {
     assert.equal((await bridge.api('/api/channels', 'POST', { name: 'too-large', purpose: 'x'.repeat(1024 * 1024) })).status, 413, 'Individual mutations keep the original limit');
   });
   await check('legacy documents migrate and damaged persistence cannot be overwritten', async () => {
-    const path = join(bridge.directory, 'squad', 'channels.json');
+    const path = join(bridge.dataRoot, 'channels.json');
     const saved = await readFile(path, 'utf8');
     await writeFile(path, JSON.stringify([{ id: 'legacy', name: 'legacy', memberIds: ['iris'] }]));
     await bridge.restart();
@@ -107,7 +107,7 @@ try {
     await writeFile(path, saved);
   });
   await check('a torn-tail document recovers with its original kept and agent channel routes stay loaded', async () => {
-    const path = join(bridge.directory, 'squad', 'channels.json');
+    const path = join(bridge.dataRoot, 'channels.json');
     const saved = await readFile(path, 'utf8');
     const expected = JSON.parse(saved);
     // 0.1.5 wrote channels.json from two unserialised writers; a shorter
@@ -120,9 +120,9 @@ try {
     assert.equal(state.data.channels.length, expected.channels.length);
     assert.equal(state.data.messages.length, expected.messages.length);
     assert.equal(JSON.parse(await readFile(path, 'utf8')).channels.length, expected.channels.length, 'the saved file is valid JSON again');
-    const backups = (await readdir(join(bridge.directory, 'squad'))).filter(name => name.startsWith('channels.json.damaged-'));
+    const backups = (await readdir(join(bridge.dataRoot))).filter(name => name.startsWith('channels.json.damaged-'));
     assert.equal(backups.length, 1, 'the damaged original is kept beside the recovered file');
-    assert.equal(await readFile(join(bridge.directory, 'squad', backups[0]), 'utf8'), torn);
+    assert.equal(await readFile(join(bridge.dataRoot, backups[0]), 'utf8'), torn);
     assert.equal((await bridge.api('/api/channel-actions')).status, 200, 'agent channel routes load after recovery');
     assert.equal((await bridge.api('/api/channels', 'POST', { name: 'after-recovery' })).status, 201);
     await writeFile(path, `${saved.trimEnd()}\n{"not": "a closer"}\n`);

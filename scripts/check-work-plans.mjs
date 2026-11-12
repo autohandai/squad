@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createOwnedBridgeFixture,ownedFixtureHeaders } from './lib/owned-bridge-fixture.mjs';
 // Member work plans (ADR-0124): a real bridge in an isolated state dir with
 // the disposable fake Claude Code harness from check-chats. No vendor,
 // credentials, installed app or provider requests are used.
@@ -105,7 +106,7 @@ await new Promise((r) => socket.listen(0, '127.0.0.1', r));
 const port = socket.address().port;
 await new Promise((r) => socket.close(r));
 const origin = `http://127.0.0.1:${port}`;
-let bridge;
+let bridge,ownership;
 let logs = '';
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, label, timeout = 15000) {
@@ -114,7 +115,7 @@ async function until(fn, label, timeout = 15000) {
   throw new Error(`${label} timed out; bridge: ${logs.slice(-3000)}`);
 }
 const api = async (path, body, method) => {
-  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: await ownedFixtureHeaders(origin), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json(); return { status: response.status, ...data };
 };
 const calls = async () => (await readFile(callsFile, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
@@ -125,7 +126,7 @@ const payload = (id, prompt, extra = {}) => ({ agentId: id, agent: member(id), w
 // The fake replies "Inspected the readme." unless the prompt carries REPLY<<text>>; HOLD:<name> keeps it running until release-<name> exists.
 const reply = (text) => `REPLY<<${text}>>`;
 async function chat(id, prompt, extra) {
-  const raw = await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload(id, prompt, extra)) })).text();
+  const raw = await (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify(payload(id, prompt, extra)) })).text();
   const events = raw.split('\n\n').map((chunk) => { const event = chunk.match(/^event: (.+)$/m)?.[1]; const data = chunk.match(/^data: (.+)$/m)?.[1]; return event && data ? { event, data: JSON.parse(data) } : null; }).filter(Boolean);
   const finished = events.find((item) => item.event === 'done');
   return { raw, events, done: finished?.data || null };
@@ -134,7 +135,7 @@ const tasksFor = async (id) => (await api(`/api/work?memberId=${id}`)).data.task
 async function startBridge() {
   bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: rootDir,
-    env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider' },
+    env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   bridge.stdout.on('data', (d) => { logs += d; }); bridge.stderr.on('data', (d) => { logs += d; });
@@ -173,6 +174,7 @@ process.exit(0);
 });
 `);
   await chmod(fake, 0o700);
+  if(!ownership){await writeFile(join(directory,'config.json'),JSON.stringify({auth:{token:'fixture-no-provider',email:'work@example.test',expiresAt:'2099-01-01T00:00:00Z'}}));ownership=await createOwnedBridgeFixture({serviceRoot:join(directory,'squad'),appRoot:join(directory,'app')});}
   await startBridge();
 
   // (i) The instructions and the plan reach a DM turn whose profile had none of them.
@@ -236,7 +238,7 @@ process.exit(0);
   const personDone = await api(`/api/work/${created.data.id}/done`, { outcome: 'found 25' });
   check('(iv) POST /done marks it done for the person', personDone.data.status === 'done' && personDone.data.outcome === 'found 25' && personDone.data.history.at(-1).by === 'person');
   check('(iv) DELETE removes it; 404 after', (await api(`/api/work/${created.data.id}`, undefined, 'DELETE')).status === 200 && (await api(`/api/work/${created.data.id}`)).status === 404);
-  const workflows = await fetch(origin + '/api/workflows?channelId=none').then((r) => r.text());
+  const workflows = await fetch(origin + '/api/workflows?channelId=none',{headers:await ownedFixtureHeaders(origin)}).then((r) => r.text());
   check('(iv) /api/workflows is not swallowed by the work route', !/task not found/.test(workflows), workflows.slice(0, 200));
 
   // (v) The safety net: recurring work named, no schedule proposed.
@@ -298,6 +300,7 @@ process.exit(0);
   console.error(`bridge log tail: ${logs.slice(-2500)}`);
   throw error;
 } finally {
+  await ownership?.close();
   await stopBridge();
   await rm(directory, { recursive: true, force: true });
 }

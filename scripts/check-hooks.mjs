@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import { FORWARDER_MARK, hooksInstalled, withSquadHooks, withoutSquadHooks } from "../server/hooks/install.mjs";
 import { lastAssistantText } from "../server/hooks/sessions.mjs";
 import { externalRunBelongs, runsForMember } from "../src/lib/external-sessions.js";
+import { createOwnedBridgeFixture } from "./lib/owned-bridge-fixture.mjs";
 
 // ---------- pure ----------
 const theirs = { model: "fable", hooks: { Stop: [{ hooks: [{ type: "command", command: "/x/notify.sh" }] }], PostToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "/x/notify.sh" }] }] } };
@@ -50,13 +51,15 @@ const socket = createServer(); await new Promise((r) => socket.listen(0, "127.0.
 const origin = `http://127.0.0.1:${port}`;
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 let logs = "";
+await writeFile(join(directory,'config.json'),JSON.stringify({auth:{token:'fixture-only-no-provider',email:'reliability@example.test',expiresAt:'2099-01-01T00:00:00Z'}}));
+const ownedFixture=await createOwnedBridgeFixture({serviceRoot:join(directory,'squad'),appRoot:join(directory,'app')});
 const bridge = spawn(process.execPath, ["server.mjs", "--host", "127.0.0.1", "--port", String(port)], {
   cwd: rootDir,
-  env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, "squad"), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, "app"), AUTOHAND_HOME: join(directory, "autohand"), AUTOHAND_USER_CONFIG_PATH: join(directory, "config.json"), CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexHome, AUTOHAND_SQUAD_MEMBER: "" },
+  env: { ...process.env,...ownedFixture.env, AUTOHAND_SQUAD_HOME: join(directory, "squad"), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, "app"), AUTOHAND_HOME: join(directory, "autohand"), AUTOHAND_USER_CONFIG_PATH: join(directory, "config.json"), CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: codexHome, AUTOHAND_SQUAD_MEMBER: "" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 bridge.stdout.on("data", (d) => { logs += d; }); bridge.stderr.on("data", (d) => { logs += d; });
-const api = async (path, body) => { const r = await fetch(origin + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); return { status: r.status, ...(await r.json()) }; };
+const api = async (path, body) => { const context=(await(await fetch(origin+'/api/ownership/context')).json()).data;const r = await fetch(origin + path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json",'x-squad-context':context.generation }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); return { status: r.status, ...(await r.json()) }; };
 async function until(fn, label, timeout = 15000) { const end = Date.now() + timeout; while (Date.now() < end) { const v = await fn().catch(() => null); if (v) return v; await delay(50); } throw new Error(`${label} timed out; bridge: ${logs.slice(-2000)}`); }
 // Run the command the installer wrote, exactly as the engine would.
 async function fire(commandLine, event, env = {}) {
@@ -78,13 +81,25 @@ try {
   assert.equal(claudeConfig.model, "fable"); assert.equal(claudeConfig.hooks.Stop[0].hooks[0].command, "/x/notify.sh", "the person's hooks are kept");
   assert.ok((await readdir(claudeDir)).some((name) => name.startsWith("settings.json.squad-backup-")), "a backup was written before the change");
   const ourCommand = claudeConfig.hooks.UserPromptSubmit.at(-1).hooks[0].command;
-  assert.ok(ourCommand.includes(FORWARDER_MARK) && ourCommand.endsWith(` claude ${port}`), ourCommand);
+  assert.ok(ourCommand.includes(FORWARDER_MARK) && ourCommand.includes(` claude ${port} `), ourCommand);
   const codexCommand = JSON.parse(await readFile(join(codexHome, "hooks.json"), "utf8")).hooks.Stop[0].hooks[0].command;
 
   // A Claude Code session in a terminal: prompt, a tool, the reply in the transcript.
   const transcript = join(directory, "transcript.jsonl");
   await writeFile(transcript, `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Shortlist written." }] } })}\n`);
   const base = { session_id: "sess-123456789", cwd: "/w/leads", transcript_path: transcript };
+  const capturedScope=(await api('/api/ownership/context')).data.storageKey;
+  assert(ourCommand.includes(capturedScope),'installed hook binds actor, owner and dataset');
+  const wrongScope=capturedScope.replace(/^./,character=>character==='a'?'b':'a');
+  await fire(ourCommand.replace(capturedScope,wrongScope),{...base,hook_event_name:'UserPromptSubmit',prompt:'Must not enter another Squad'});
+  await fire(ourCommand.slice(0,ourCommand.lastIndexOf(' ')),{...base,hook_event_name:'UserPromptSubmit',prompt:'Unscoped legacy hook must stay inert'});
+  assert.equal((await api('/api/runs')).data.length,0,'wrong-owner and legacy hook commands never record in the current Squad');
+  const staleConfig=JSON.parse(JSON.stringify(claudeConfig));
+  for(const groups of Object.values(staleConfig.hooks))for(const group of groups)for(const hook of group.hooks||[])if(String(hook.command).includes(FORWARDER_MARK))hook.command=hook.command.replace(capturedScope,wrongScope);
+  await writeFile(join(claudeDir,'settings.json'),JSON.stringify(staleConfig));
+  const staleStatus=(await api('/api/hooks/status')).data.claude;
+  assert.equal(staleStatus.needsReinstall,true);assert.equal(staleStatus.installed,false);
+  assert.equal((await api('/api/hooks/claude/install',{})).data.installed,true,'explicit setup can replace an old owner binding');
   await fire(ourCommand, { ...base, hook_event_name: "SessionStart", source: "startup" });
   await fire(ourCommand, { ...base, hook_event_name: "UserPromptSubmit", prompt: "write the NZ shortlist" });
   await fire(ourCommand, { ...base, hook_event_name: "PostToolUse", tool_name: "Write", tool_input: { file_path: "shortlist.csv" }, tool_response: {} });
@@ -123,5 +138,6 @@ try {
   bridge.kill("SIGTERM");
   await delay(300);
   if (bridge.exitCode === null) bridge.kill("SIGKILL");
+  await ownedFixture.close();
   await rm(directory, { recursive: true, force: true });
 }

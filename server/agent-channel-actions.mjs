@@ -6,6 +6,7 @@ import { withoutHereMentions } from '../src/lib/channel-mentions.js';
 import { MEMBER_PROFILE_FIELDS, memberProfileRevision, mergeMemberProfile } from '../src/lib/member-shaping.js';
 import { normalizeModelRouting } from '../src/lib/model-routing.js';
 import { uniqueName } from '../src/lib/teams.js';
+import { stampOwnedProfile } from './ownership/profile.mjs';
 
 const at = () => new Date().toISOString();
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -13,7 +14,7 @@ const nameKey = value => String(value || '').replace(/^@/, '').trim().toLowerCas
 const mode = agent => ['allow', 'ask', 'block'].includes(agent?.permissions?.builtInPolicies?.squad_create_channel) ? agent.permissions.builtInPolicies.squad_create_channel : 'ask';
 const workspaceModes = agent => Object.fromEntries(Object.entries(agent?.channelPoliciesByWorkspace || {}).filter(([, policy]) => ['allow', 'ask', 'block'].includes(policy)));
 const paths = agent => [...new Set([...(agent?.projects || []).map(p => p.path), agent?.workspace].filter(Boolean))];
-const memberFields = ['id', 'name', 'formerNames', 'profileRevision', 'role', 'employeeType', 'avatar', 'avatarVersion', 'createdAt', 'updatedAt', 'stats', 'tools', 'description', 'instructions', 'brainCard', 'memory', 'skills', 'permissions', 'modelAssignment', 'modelRouting', 'harness', 'projects', 'workspace', 'launch', 'status', 'staffId', 'profileFiles', 'profileDocs', 'skillSource', 'skillInstall'];
+const memberFields = ['id', 'name', 'formerNames', 'profileRevision', 'role', 'employeeType', 'avatar', 'avatarVersion', 'createdAt', 'updatedAt', 'conversationStartedAt', 'lastConversationAt', 'stats', 'tools', 'description', 'instructions', 'brainCard', 'memory', 'skills', 'permissions', 'modelAssignment', 'modelRouting', 'harness', 'projects', 'workspace', 'launch', 'status', 'staffId', 'profileFiles', 'profileDocs', 'skillSource', 'skillInstall'];
 const memberCopy = (agent, id) => Object.fromEntries(memberFields.filter(key => key in agent).map(key => [key, key === 'id' ? id : structuredClone(agent[key]) ]));
 
 // Same bound and wording as the browser's channel relay (src/App.jsx,
@@ -41,7 +42,8 @@ function parseReply(reply) {
 // The execution wrapper supplies identity and scope. Model output supplies only
 // channel name, named teammates and purpose. Permissions, proposals, channels
 // and purpose receipts share the existing channel mutation queue and document.
-export function createAgentChannelActions({ store, availability, sanitizeId, run, reportError = console.error, onRename = () => {}, onProfileChanged = () => {} }) {
+export function createAgentChannelActions({ store, availability, sanitizeId, run, owner, reportError = console.error, onRename = () => {}, onProfileChanged = () => {} }) {
+  const copyMember = (agent, id) => owner ? { ...memberCopy(stampOwnedProfile(agent, owner), id), ownership: owner } : memberCopy(agent, id);
   let draining = false;
   const schedule = () => setImmediate(() => drain().catch(reportError));
   // Other proposal kinds (ADR-0110: `schedule`) ride the same SQUAD_ACTION
@@ -52,7 +54,7 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
   const register = (state, agent, profile = '') => {
     if (!agent?.id) return;
     const id = sanitizeId(agent.id);
-    if (!state.agentChannelAccess[id]) state.agentChannelAccess[id] = { agent: memberCopy(agent, id), profile: String(profile || agent.squadProfile || '').slice(0, 64000), mode: mode(agent), workspaceModes: workspaceModes(agent), removed: false, updatedAt: at() };
+    if (!state.agentChannelAccess[id]) state.agentChannelAccess[id] = { agent: copyMember(agent, id), profile: String(profile || agent.squadProfile || '').slice(0, 64000), mode: mode(agent), workspaceModes: workspaceModes(agent), removed: false, updatedAt: at() };
   };
   async function begin(payload) {
     const actorId = sanitizeId(payload.agent?.id || payload.agentId);
@@ -72,10 +74,16 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
   }
   async function setAccess(id, input) {
     id = sanitizeId(id);
+    if (input.creation && (typeof input.creation !== 'object' || !/^[a-f0-9]{64}$/.test(input.creation.requestHash || ''))) throw channelError('Invalid member creation fingerprint.');
     let renamed = null;
     let profileChanged = false;
     const result = await store.mutate(state => {
       const previous = state.agentChannelAccess[id];
+      if (input.creation && previous) {
+        if (previous.creation?.requestHash !== input.creation.requestHash || previous.removed) throw channelError('This member creation request conflicts with an earlier request.', 409);
+        return { memberId: id, created: false, profileRevision: memberProfileRevision(previous.agent) };
+      }
+      if (input.creation && Object.values(state.agentChannelAccess).filter(access => !access.removed).length >= 200) throw channelError('This Squad has reached its 200-member limit.', 409);
       if (input.expectedProfileRevision !== undefined && (!previous?.agent || previous.removed || !Number.isSafeInteger(input.expectedProfileRevision) || input.expectedProfileRevision !== memberProfileRevision(previous.agent))) throw channelError('Member profile changed. Read it again before applying this edit.', 409);
       const before = String(previous?.agent?.name || '').trim();
       if (input.removed === true) {
@@ -90,25 +98,26 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
         // patches on the latest member, including any primary/permission edits
         // made by the person while that discovery was running.
         const incoming = agentRouting || input.expectedProfileRevision !== undefined ? previous.agent : input.agent;
-        const agent = { ...mergeMemberProfile(memberCopy(incoming, id), previous?.agent), ...(input.profilePatch || {}) };
+        const agent = { ...mergeMemberProfile(copyMember(incoming, id), previous?.agent), ...(input.profilePatch || {}) };
         if (agent.modelRouting) agent.modelRouting = normalizeModelRouting(agent.modelRouting, { strict: Boolean(input.profilePatch?.modelRouting) });
         if (input.profilePatch?.name && input.profilePatch.name !== before) {
           agent.name = uniqueName(input.profilePatch.name, Object.entries(state.agentChannelAccess).filter(([otherId, access]) => otherId !== id && !access.removed).map(([, access]) => access.agent?.name));
         }
         const after = String(agent.name || '').trim();
+        if (input.creation && !previous) agent.name = uniqueName(after, Object.values(state.agentChannelAccess).filter(access => !access.removed).map(access => access.agent?.name));
         if (!previous?.removed && before && after && before !== after) renamed = { from: before, to: after, role: String(agent.role || '') };
         profileChanged = Boolean(previous?.agent) && MEMBER_PROFILE_FIELDS.some(key => JSON.stringify(previous.agent[key]) !== JSON.stringify(agent[key]));
         agent.profileRevision = memberProfileRevision(previous?.agent) + (profileChanged ? 1 : 0);
         let profile = String(input.profile || previous?.profile || '').slice(0, 64000);
         for (const [label, value] of [['Name', agent.name], ['Role', agent.role]]) if (value) profile = profile.replace(new RegExp(`^${label}: .*$`, 'm'), () => `${label}: ${String(value).replace(/\s+/g, ' ')}`);
-        state.agentChannelAccess[id] = { agent, profile, mode: mode(agent), workspaceModes: workspaceModes(agent), removed: false, updatedAt: at() };
+        state.agentChannelAccess[id] = { agent, profile, mode: mode(agent), workspaceModes: workspaceModes(agent), removed: false, updatedAt: at(), ...(previous?.creation || input.creation ? { creation: previous?.creation || input.creation } : {}) };
         // The copy keeps every name the member went by, so a channel @Max
         // or a member's relayed "@Max" still reaches it after the rename.
         const formerNames = [...new Set([...(previous?.agent?.formerNames || []), ...(agent.formerNames || []), ...(renamed ? [before] : [])])].filter(name => typeof name === 'string' && name.trim() && name !== after);
         if (formerNames.length) state.agentChannelAccess[id].agent.formerNames = formerNames.slice(-10);
       }
       const current = state.agentChannelAccess[id];
-      return { memberId: id, mode: current.mode, removed: current.removed, updatedAt: current.updatedAt, profileRevision: memberProfileRevision(current.agent), profile: Object.fromEntries(MEMBER_PROFILE_FIELDS.filter(key => key in (current.agent || {})).map(key => [key, current.agent[key]])) };
+      return { memberId: id, ...(input.creation ? { created: true } : {}), mode: current.mode, removed: current.removed, updatedAt: current.updatedAt, profileRevision: memberProfileRevision(current.agent), profile: Object.fromEntries(MEMBER_PROFILE_FIELDS.filter(key => key in (current.agent || {})).map(key => [key, current.agent[key]])) };
     });
     if (profileChanged) await Promise.resolve(onProfileChanged(id)).catch(error => reportError(error));
     // Every rename passes here: a member's own (squad_set_profile, or the

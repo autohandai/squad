@@ -1,3 +1,5 @@
+import { ownedSessionStorage } from './owned-storage.js';
+import { ownershipFetch } from './ownership-client.js';
 // Explicit product events only. No DOM capture, prompt text, paths or request bodies.
 import { roleTemplates } from "./member-profiles.js";
 
@@ -34,10 +36,10 @@ export function sanitizeSquadEvent(event, input = {}) {
 }
 
 function sessionStore() {
-  try { return globalThis.sessionStorage; } catch { return undefined; }
+  try { return ownedSessionStorage; } catch { return undefined; }
 }
 
-export function createSquadTelemetryClient({ fetchImpl = (...args) => globalThis.fetch(...args), navigatorImpl = globalThis.navigator, storage = sessionStore() } = {}) {
+export function createSquadTelemetryClient({ fetchImpl = ownershipFetch, navigatorImpl = globalThis.navigator, storage = sessionStore() } = {}) {
   let signedInAs = "";
   let loginStarted = false;
   const noTracking = () => navigatorImpl?.doNotTrack === "1" || navigatorImpl?.msDoNotTrack === "1" || navigatorImpl?.globalPrivacyControl === true;

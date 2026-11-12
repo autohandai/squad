@@ -31,3 +31,19 @@ Scope: terminology for the accepted [adaptive skills design](docs/superpowers/sp
 | Restore | Reconstitute persisted goal metadata and references; this does not authorize execution. |
 | Resume | Explicitly continue a restored goal after current ownership, workspace, permission, and revision checks. |
 | Teaching | An explicit existing Squad delivery of shared knowledge to recipients, separate from local learning. |
+
+## Ownership and portability
+
+**Account identity**: A person identified by the immutable subject issued by Autohand's identity service. An email address and display name describe the person but do not identify ownership.
+
+**Owner**: The account identity or Autohand team that owns an agent and its saved data. Ownership is distinct from the agent that authored a memory or file.
+
+**Team**: An existing Autohand organization/account whose current human memberships authorize access to team-owned agents. A team is not an agent roster or the older Squad cloud-sync tenant.
+
+**Member**: An agent in a Squad. A member is distinct from a human team membership.
+
+**Ownership context**: One authenticated account identity accessing its personal Squad or one authorized team's Squad.
+
+**Backup**: A versioned portable document containing selected agents, their saved data and managed file contents, with an explicit inventory of exclusions. JSON and YAML encode the same document.
+
+**Legacy recovery**: The explicit import of data saved before its owner was recorded. That data has no inferred owner and is never assigned by signing in.

@@ -46,7 +46,7 @@ export class AutohandSDK {
   return { OPENAI_API_KEY: 'fixture-only-no-provider', AUTOHAND_SKILLS_REPO_DIR: skillsDir, NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --import=${preload}`.trim(), AUTOHAND_AGENT_SDK_ENTRY: entry, AUTOHAND_AGENT_SDK_DIR: directory };
 } });
 const workspace = process.cwd();
-const profilePath = id => join(bridge.directory, 'app', 'agents', id, 'profile.json');
+const profilePath = id => join(bridge.appRoot, 'agents', id, 'profile.json');
 const profile = async id => JSON.parse(await readFile(profilePath(id), 'utf8'));
 const recordings = async () => (await readFile(join(bridge.directory, 'runtime.jsonl'), 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
 const permissions = { permissionMode: 'restricted', builtInToolPolicyEnabled: true, builtInPolicies: { ...builtInPoliciesForRank(2), write_file: 'block' } };

@@ -60,7 +60,8 @@ function fail(ctx, res, error) {
   });
 }
 
-function bridgeUrlFor(req) {
+function bridgeUrlFor(req,ctx) {
+  if(ctx.ownedBrokerOrigin)return ctx.ownedBrokerOrigin;
   const host = String(req.headers.host || "").trim();
   return host ? `http://${host}` : "";
 }
@@ -155,7 +156,7 @@ export async function handle(req, res, url, ctx) {
       const record = await registry.addServedToken({ token, label: payload.label });
       ctx.logEvent?.(ctx.SEVERITY?.INFO, `minted remote token ${record.id} (${record.label})`, { "event.name": "remote.token.minted" });
       // The clear token leaves the bridge exactly once, in this response.
-      ctx.json(res, 201, { success: true, data: { ...record, token, url: bridgeUrlFor(req), header: REMOTE_TRANSPORT_HEADER } });
+      ctx.json(res, 201, { success: true, data: { ...record, token, url: bridgeUrlFor(req,ctx), header: REMOTE_TRANSPORT_HEADER } });
       return true;
     }
     const tokenMatch = url.pathname.match(/^\/api\/remote\/tokens\/([^/]+)$/);

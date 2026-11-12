@@ -42,8 +42,11 @@ app-state directory unless explicitly configured otherwise. Unattributed
 orphan processes are left alone rather than risking another live instance.
 A future orphan reaper needs a durable ownership registry and identity checks.
 
-Resolve staging's source directory with `cargo metadata`, honoring both
-`CARGO_TARGET_DIR` and Cargo's local target-dir configuration. Before an
+Resolve staging and memory-check source directories with `cargo metadata`,
+honoring both `CARGO_TARGET_DIR` and Cargo's local target-dir configuration.
+Memory checks use the same resolver for debug/release binaries; a scoped build
+exposed their independent hardcoded directory as an unavailable index.
+Before an
 isolation test invokes `stop`, probe `squad stop --help` for the instance-scoped
 command contract. Probe and execute the same private temporary copy, so a
 concurrent bundle build cannot replace the candidate between those operations.

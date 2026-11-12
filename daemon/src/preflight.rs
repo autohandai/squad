@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-pub const MIN_NODE_MAJOR: u32 = 18;
-pub const MIN_NODE_MINOR: u32 = 17;
+pub const MIN_NODE_MAJOR: u32 = 22;
+pub const MIN_NODE_MINOR: u32 = 13;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,7 +337,7 @@ fn check_node_runtime() -> (CheckResult, Option<PathBuf>) {
                     "Node.js runtime",
                     CheckStatus::Fail,
                     format!("{error:#}"),
-                    "Reinstall Autohand Squad (installers bundle Node), or install Node.js 18.17+ and set AUTOHAND_SQUAD_NODE.",
+                    "Reinstall Autohand Squad (installers bundle Node), or install Node.js 22.13 LTS or 24+ and set AUTOHAND_SQUAD_NODE.",
                 ),
                 None,
             )
@@ -347,7 +347,7 @@ fn check_node_runtime() -> (CheckResult, Option<PathBuf>) {
         Ok(output) => {
             let version = output.trim().to_string();
             match parse_node_version(&version) {
-                Some((major, minor, _)) if (major, minor) >= (MIN_NODE_MAJOR, MIN_NODE_MINOR) => (
+                Some((major, minor, _)) if (major == MIN_NODE_MAJOR && minor >= MIN_NODE_MINOR) || major >= 24 => (
                     check(
                         "node-runtime",
                         "Node.js runtime",
@@ -362,8 +362,8 @@ fn check_node_runtime() -> (CheckResult, Option<PathBuf>) {
                         "node-runtime",
                         "Node.js runtime",
                         CheckStatus::Fail,
-                        format!("{version} at {} is older than {MIN_NODE_MAJOR}.{MIN_NODE_MINOR}", node.display()),
-                        "Reinstall Autohand Squad or point AUTOHAND_SQUAD_NODE at Node.js 18.17 or newer.",
+                        format!("{version} at {} is unsupported; use Node {MIN_NODE_MAJOR}.{MIN_NODE_MINOR} LTS or 24+", node.display()),
+                        "Reinstall Autohand Squad or point AUTOHAND_SQUAD_NODE at Node.js 22.13 LTS or 24+.",
                     ),
                     Some(node),
                 ),

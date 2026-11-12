@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { computerUseAttachments, evidenceForMessage, getComputerUseConsentClient } from "../src/components/computer-use/model.js";
+import { activateOwnedStorage } from '../src/lib/owned-storage.js';
+const contextGeneration='12345678-1234-1234-1234-123456789012';
+activateOwnedStorage({state:'ready',storageKey:'computer-consent-fixture',generation:contextGeneration,actor:{id:'fixture'},owner:{kind:'user',id:'fixture'}});
 
 const file = (name, type = "image/png") => ({ name, mediaType: type, size: 300, url: `/api/computer-use/evidence/session-1/${name}` });
 const screenshot = file("recording/action-1/click.png");
@@ -13,10 +16,10 @@ await native.confirm("asq_eva", "control");
 await native.revoke("asq_eva");
 await native.setup();
 assert.deepEqual(calls, [
-  ["squad_confirm_computer_use", { memberId: "asq_eva", scope: "observe" }],
-  ["squad_confirm_computer_use", { memberId: "asq_eva", scope: "control" }],
-  ["squad_revoke_computer_use", { memberId: "asq_eva" }],
-  ["squad_setup_computer_use", {}],
+  ["squad_confirm_computer_use", { memberId: "asq_eva", scope: "observe", contextGeneration }],
+  ["squad_confirm_computer_use", { memberId: "asq_eva", scope: "control", contextGeneration }],
+  ["squad_revoke_computer_use", { memberId: "asq_eva", contextGeneration }],
+  ["squad_setup_computer_use", { contextGeneration }],
 ]);
 const files = computerUseAttachments([screenshot, screenshot, detail, { ...screenshot, url: "https://example.com/screen.png" }, { ...screenshot, mediaType: "text/html" }]);
 assert.equal(files.length, 2);

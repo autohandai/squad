@@ -5,6 +5,7 @@
 // disposable Codex-shaped member fixture. No vendor, credentials, installed
 // app, or provider requests are used.
 import assert from "node:assert/strict";
+import { createOwnedBridgeFixture, ownedFixtureHeaders } from "./lib/owned-bridge-fixture.mjs";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -161,7 +162,9 @@ async function freePort() {
 }
 
 const directory = await mkdtemp(join(tmpdir(), "squad-remote-access-"));
-const squadHome = join(directory, "squad");
+const serviceRoot = join(directory, "squad");
+let squadHome = serviceRoot;
+let ownership;
 const fake = join(directory, "fixture-codex");
 const callsFile = join(directory, "calls.jsonl");
 const telegram = await startFakeTelegram();
@@ -180,7 +183,7 @@ async function until(fn, label, timeout = 12_000) {
   throw new Error(`${label} timed out${last ? `: ${last.message}` : ""}; bridge: ${logs.slice(-3000)}`);
 }
 const api = async (path, method = "GET", body) => {
-  const response = await fetch(origin + path, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) });
+  const response = await fetch(origin + path, { method, headers: await ownedFixtureHeaders(origin), ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) });
   return { status: response.status, ...(await response.json()) };
 };
 async function stopBridge() {
@@ -195,7 +198,8 @@ async function startBridge() {
     cwd: rootDir,
     env: {
       ...process.env,
-      AUTOHAND_SQUAD_HOME: squadHome,
+      ...ownership.env,
+      AUTOHAND_SQUAD_HOME: serviceRoot,
       AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, "app"),
       AUTOHAND_HOME: join(directory, "autohand"),
       AUTOHAND_USER_CONFIG_PATH: join(directory, "config.json"),
@@ -245,6 +249,8 @@ emit({ type: 'item.completed', item: { id: 'reply', type: 'agent_message', text:
 emit({ type: 'turn.completed' });
 `);
   await chmod(fake, 0o700);
+  await writeFile(join(directory, "config.json"), JSON.stringify({provider:"autohandai",auth:{token:"fixture-no-provider",email:"reliability@example.test",expiresAt:"2099-01-01T00:00:00Z"}}));
+  ownership=await createOwnedBridgeFixture({serviceRoot,appRoot:join(directory,"app")});squadHome=ownership.paths.dataRoot;
   await startBridge();
 
   // The member's launch record, as the app registers it on its first chat.
@@ -421,6 +427,7 @@ emit({ type: 'turn.completed' });
   console.log("Remote access checks passed: formatting and pairing rules, browser reconciliation, bad token not saved, pairing with rotation and refusals, member picker, bridge-owned turn with status edits and a formatted reply, turns listed for the app, handoff deep link, notify modes, proposal Approve through the decision route, /stop, restart persistence, unpair and disconnect.");
 } finally {
   await stopBridge();
+  await ownership?.close();
   await telegram.close();
   await rm(directory, { recursive: true, force: true });
 }

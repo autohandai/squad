@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ChatStore, buildChatRecord } from '../server/chats/store.mjs';
@@ -18,7 +19,9 @@ for (const [theme, width] of [['light', 1440], ['dark', 380]]) {
     browser = await startBrowser();
     const fixtures = { agents: [member], removedAgents: initialAgents.map(agent => agent.id), tasks: [], messages: {}, channels: [], channelMessages: {}, channelThreads: {}, automations: [], memoryInbox: [], onboarding: { version: 1, status: 'skipped', lastStep: 'skipped' }, theme: { mode: theme, lightTheme: 'autohand-light', darkTheme: 'autohand-dark' } };
     await browser.send('Emulation.setDeviceMetricsOverride', { width, height: 950, deviceScaleFactor: 1, mobile: width < 600 });
-    await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (!localStorage.getItem('history-fixture')) { for (const [key,value] of Object.entries(${JSON.stringify(fixtures)})) localStorage.setItem('autohandSquad.v1.'+key, JSON.stringify(value)); localStorage.setItem('history-fixture','true'); }` });
+    const context=await seedOwnedBrowserFixture(bridge,browser,{members:[member],messages:fixtures.messages,storage:Object.fromEntries(Object.entries(fixtures).filter(([key])=>!['agents','messages','theme'].includes(key)).map(([key,value])=>['autohandSquad.v1.'+key,JSON.stringify(value)]))});
+    const messagesKey=`autohandSquad.owner.v1.${context.storageKey}.${encodeURIComponent('autohandSquad.v1.messages')}`;
+    await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`window.__historyMessagesKey=${JSON.stringify(messagesKey)};localStorage.setItem('autohandSquad.v1.theme',${JSON.stringify(JSON.stringify({mode:theme,lightTheme:'autohand-light',darkTheme:'autohand-dark'}))});`});
     await browser.navigate(`${bridge.origin}/conversations/new?member=${member.id}`);
     await until(() => browser.evaluate(`!!document.querySelector('[data-testid="previous-chats"]')`), 'history control');
     await browser.click('History');
@@ -58,7 +61,7 @@ for (const [theme, width] of [['light', 1440], ['dark', 380]]) {
     await until(() => browser.evaluate(`!document.querySelector('[data-history-kind="thread"]')`), 'reply thread deleted from unified history');
     await browser.evaluate(`Array.from(document.querySelectorAll('[data-history-kind="chat"] div button')).find(button => button.textContent.includes('Release decisions')).click()`);
     await until(() => browser.evaluate(`!document.querySelector('[data-testid="conversation-history"]') && document.body.innerText.includes('First release discussion') && document.body.innerText.includes('Full answer for chat-one')`), 'merged discussion really reopens');
-    await until(() => browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.messages') || '{}')[${JSON.stringify(member.id)}]?.some(message => message.trace?.output?.length === 600000)`), 'large saved evidence survives rendered Open');
+    await until(() => browser.evaluate(`JSON.parse(localStorage.getItem(window.__historyMessagesKey) || '{}')[${JSON.stringify(member.id)}]?.some(message => message.trace?.output?.length === 600000)`), 'large saved evidence survives rendered Open');
     await browser.evaluate(`(() => { const originalFetch = window.fetch; window.fetch = async (input, init) => { if (new URL(typeof input === 'string' ? input : input.url, location.href).pathname === '/api/chat/stream') { window.historyFollowupRequest = JSON.parse(init.body); return new Response('event: done\\ndata: {"reply":"Follow-up fixture complete."}\\n\\n', { headers: { 'content-type': 'text/event-stream' } }); } return originalFetch(input, init); }; })()`);
     await browser.fill('textarea', 'Continue with the earlier release question');
     await browser.evaluate(`document.querySelector('textarea').focus()`);
@@ -67,7 +70,7 @@ for (const [theme, width] of [['light', 1440], ['dark', 380]]) {
     await until(() => browser.evaluate(`!!window.historyFollowupRequest`), 'reopened merged chat sends a follow-up');
     assert.equal(await browser.evaluate(`window.historyFollowupRequest.conversationContext.some(message => message.role === 'user' && message.body === 'First release discussion')`), true, 'the rendered follow-up carries earlier human questions into the fresh session');
     await until(() => browser.evaluate(`document.body.innerText.includes('Follow-up fixture complete.')`), 'follow-up finishes through the fixture transport');
-    assert.deepEqual(await browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.messages'))[${JSON.stringify(member.id)}].slice(0, 3).map(message => message.body)`), mergedRecord.messages.map(message => message.body), 'the first follow-up preserves the saved merged transcript order');
+    assert.deepEqual(await browser.evaluate(`JSON.parse(localStorage.getItem(window.__historyMessagesKey))[${JSON.stringify(member.id)}].slice(0, 3).map(message => message.body)`), mergedRecord.messages.map(message => message.body), 'the first follow-up preserves the saved merged transcript order');
     assert.equal(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), true);
     assert.deepEqual(browser.errors, []);
     await browser.screenshot(`.codex-artifacts/agent-work/history-${theme}-merged.png`);

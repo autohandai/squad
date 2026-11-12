@@ -16,10 +16,10 @@ export function DefaultWorkspaceConsent({ api, setup, onChoose, onBrowse }) {
     finally { setBusy(false); }
   }
   return <section className="mx-4 border-b border-border/70 py-3 text-sm sm:mx-6" aria-label="Choose a work folder" data-testid="default-workspace-consent">
-    <p className="font-medium">{setup?.exists ? 'Choose a folder for this conversation' : 'Create your default work folder?'}</p>
-    <p className="mt-1 text-muted-foreground">Squad can work in <span className="select-text break-all font-mono text-xs" title={setup?.path}>~/Documents/autohand-desktop/</span>. Git is optional and is never initialized by this choice.</p>
+    <p className="font-medium">{setup?.needsReuseConsent ? 'Use this existing folder for this Squad?' : setup?.exists ? 'Choose a folder for this conversation' : 'Create your default work folder?'}</p>
+    <p className="mt-1 text-muted-foreground">Squad can work in <span className="select-text break-all font-mono text-xs" title={setup?.path}>~/Documents/autohand-desktop/</span>. {setup?.needsReuseConsent ? 'Its existing contents will be available to this Squad. ' : ''}Git is optional and is never initialized by this choice.</p>
     <div className="mt-2 flex flex-wrap gap-2">
-      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => choose(true)}>{setup?.exists ? 'Use default folder' : 'Create folder'}</Button>
+      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => choose(true)}>{setup?.needsReuseConsent ? 'Use existing folder' : setup?.exists ? 'Use default folder' : 'Create folder'}</Button>
       <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => choose(false)}>Choose another folder</Button>
     </div>
     {busy ? <p role="status" className="mt-2 text-xs text-muted-foreground">Preparing your work folder…</p> : null}

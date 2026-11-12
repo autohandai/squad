@@ -14,6 +14,7 @@
 // line and the chief of staff's refusal to learn from
 // a failed reply (the last one lives in check-chief-of-staff.mjs).
 import assert from 'node:assert/strict';
+import { createOwnedBridgeFixture, ownedFixtureHeaders } from './lib/owned-bridge-fixture.mjs';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -125,6 +126,7 @@ const port = socket.address().port;
 await new Promise((r) => socket.close(r));
 const origin = `http://127.0.0.1:${port}`;
 let bridge;
+let ownership;
 let logs = '';
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, label, timeout = 10000) {
@@ -133,23 +135,23 @@ async function until(fn, label, timeout = 10000) {
   throw new Error(`${label} timed out; bridge: ${logs.slice(-3000)}`);
 }
 const api = async (path, body, method) => {
-  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: await ownedFixtureHeaders(origin), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json(); return { status: response.status, ...data };
 };
 const calls = async () => (await readFile(callsFile, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
 const starts = async (member) => (await calls()).filter((c) => c.member === member && c.kind === 'start');
 const member = (id, executablePath = fake) => ({ id, name: id, harness: { id: 'claude', executablePath }, projects: [{ path: rootDir }] });
 const payload = (id, prompt, executablePath) => ({ agentId: id, agent: member(id, executablePath), workspace: rootDir, prompt, profile: 'Use the chosen permission rules.' });
-const chat = async (id, prompt, executablePath) => (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload(id, prompt, executablePath)) })).text();
+const chat = async (id, prompt, executablePath) => (await fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify(payload(id, prompt, executablePath)) })).text();
 const streamError = (text) => { const match = text.match(/event: error\ndata: (\{.*\})/); return match ? JSON.parse(match[1]).error : ''; };
-const sessionsFile = (id) => join(directory, 'app', 'agents', id, 'harness-sessions.json');
+const sessionsFile = (id) => join(ownership.paths.appRoot, 'agents', id, 'harness-sessions.json');
 const resumeIdOnDisk = async (id) => Object.values(JSON.parse(await readFile(sessionsFile(id), 'utf8').catch(() => '{}')).claude || {})[0]?.resumeId || '';
 const release = (token) => writeFile(join(directory, `release-${token}`), '');
 const runsOf = async (id) => (await api('/api/runs')).data.filter((run) => run.agentId === id);
 async function startBridge() {
   bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: rootDir,
-    env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider' },
+    env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CLAUDE_CONFIG_DIR: join(directory, 'claude'), ANTHROPIC_API_KEY: 'fixture-only-no-provider' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   bridge.stdout.on('data', (d) => { logs += d; }); bridge.stderr.on('data', (d) => { logs += d; });
@@ -163,6 +165,8 @@ async function stopBridge(signal = 'SIGTERM') {
   if (bridge.exitCode === null && bridge.signalCode === null) { bridge.kill('SIGKILL'); await exited; }
 }
 try {
+  await writeFile(join(directory, 'config.json'), JSON.stringify({ provider: 'autohandai', auth: { token: 'fixture-no-provider', email: 'reliability@example.test', expiresAt: '2099-01-01T00:00:00Z' } }));
+  ownership = await createOwnedBridgeFixture({ serviceRoot: join(directory, 'squad'), appRoot: join(directory, 'app') });
   await mkdir(join(directory, 'claude'), { recursive: true });
   await writeFile(fake, `#!${process.execPath}
 const fs=require('node:fs');const path=require('node:path');
@@ -205,6 +209,10 @@ if(!wait){finish();}else{
 `);
   await chmod(fake, 0o700);
   await startBridge();
+  for (const id of ['alex', 'bob']) {
+    const registered = await api(`/api/members/${id}/channel-access`, { agent: member(id), profile: '', profilePatch: {} }, 'PUT');
+    assert.equal(registered.success, true, JSON.stringify(registered));
+  }
 
   // 1. A normal turn: the resume id is on disk afterwards.
   const first = await chat('alex', 'Look around');
@@ -268,7 +276,7 @@ if(!wait){finish();}else{
   assert.equal(interrupted.logs.at(-1).at, interrupted.finishedAt);
   assert.deepEqual(after.filter((run) => run.status === 'completed').map((run) => run.id).sort(), before.filter((run) => run.status === 'completed').map((run) => run.id).sort(), 'finished runs are still there');
   assert.equal(await resumeIdOnDisk('alex'), session, 'the engine session survived the crash');
-  const otlp = await readFile(join(directory, 'app', 'logs', 'web.otlp.jsonl'), 'utf8').catch(() => '');
+  const otlp = await readFile(join(ownership.paths.logsRoot, 'web.otlp.jsonl'), 'utf8').catch(() => '');
   assert.ok(otlp.includes('interrupted by the restart'), 'the bridge logged the recovery in its structured log');
   assert.equal((await api('/api/queues/alex')).data.paused, false, 'no queue was running, so the member is not paused');
 
@@ -299,5 +307,6 @@ if(!wait){finish();}else{
   console.log('Reliability bridge checks passed: cold start named and retried once, session ids kept, mid-turn crash listed as interrupted, Retry through the queue resumes the session.');
 } finally {
   await stopBridge();
+  await ownership?.close();
   await rm(directory, { recursive: true, force: true });
 }

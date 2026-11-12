@@ -10,8 +10,40 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- Agents and connected MCP clients can create saved Squad members and configure their profiles, responsibilities, skill packages, profile memories and routines. Managed tools use the member’s saved permissions and the selected owner.
+
+- User and Autohand team ownership for Squad data, with account switching isolated from previously saved agents and memories.
+- Portable JSON and YAML backups for agents, memories, conversations, skills, routines and managed files, with checksums and explicit recovery into a selected owner.
+- Settings → Backups previews verified imports into the selected personal or team Squad. Imported agents and routines stay paused; earlier data is preserved separately and interrupted operations recover to a Restart Squad screen.
+- Save retained cloud snapshots for the selected owner, download or preview them for restore, and resolve newer cloud versions explicitly. Read-only teams can download snapshots; account changes cancel in-flight cloud requests.
+- Recover older unowned agents from explicitly chosen local folders or old browser data in Settings → Backups or Squad MCP. Preview first, keep original data, and confirm the destination before importing; different browser and saved conversations are both preserved.
+
+### Changed
+
+- Portable Squad archives need Node 22.13 LTS or 24+ for safe local data locking. Desktop installers continue to bundle their runtime.
+- Reset applies to the selected Squad’s data and keeps its earlier dataset. Completion follows a durable operation receipt instead of waiting for a different process ID.
+- Desktop backup downloads open in your browser, keeping Squad open while you save the verified file.
+
 ### Fixed
 
+- MCP teammate messages retain a delivery reference after a fast reply or delivery error, so callers can inspect the saved result.
+
+- A full local cache now shows an actionable startup error and Retry instead of leaving Squad on Loading. Saved conversations remain unchanged.
+- Asking a teammate with `squad_message` and `wait_seconds: 60` now sends the message instead of failing validation. Waits stay within the harness deadline and late replies remain available.
+
+- Hosted sign-in and team access checks reach Autohand's identity service when both services run on Cloudflare Workers.
+- Squad stops retrying undeployed device, feature-flag, heartbeat and telemetry endpoints every minute. Local diagnostics distinguish unsupported services from authentication errors or outages; disabled telemetry no longer produces failure logs.
+
+- Reopening an agent keeps the current chat's start point instead of bringing earlier conversations back into it.
+- Reset from Settings now reaches the owned-data transaction and waits for its completion before reopening Squad. Earlier data remains available for recovery.
+- Windows account changes and data recovery supervise the whole worker process tree, including detached children, before admitting another Squad.
+- Account changes wait for the old agents and native work to finish saving. A surviving background process blocks data recovery instead of being mistaken for an idle Squad.
+- Native work left by a previous service no longer appears as currently running after confirmed cleanup. Unverifiable older runs remain marked unknown, with their original history preserved.
+- Combined live updates leave browser connections available for saving and backing up data when another Squad window is open.
+- Outside-session hooks connect through the owned broker and record only for the account, Squad and dataset where they were enabled. Settings can explicitly update hooks from an earlier setup.
+- Launching an updated Squad explains when an older bridge must be closed first, preserving its running work instead of reusing its unowned data service.
 - Team proposals show Create team in channel replies and their threads. Saved decisions survive reopening, and older completed replies recover their roster from the original saved run.
 - Failed team creation keeps the proposal available to retry. Consecutive clicks submit one creation, and recovered replies retain a newer save timestamp even when their run finished earlier.
 
@@ -44,7 +76,6 @@ list to the section for that version.
 - Repeated text exports with long or multilingual names keep valid filenames and show a successful save instead of reporting a false failure.
 
 - Desktop conversation exports now save Markdown and JSON, and channel exports save Markdown, in Downloads. Earlier files are preserved and the app shows the saved filenames or any failure instead of doing nothing.
-- Squad stops retrying undeployed device, feature-flag, heartbeat and telemetry endpoints every minute. Local diagnostics distinguish unsupported services from authentication errors or outages; disabled telemetry no longer produces failure logs.
 
 - Connect to Squad from Autohand Desktop and other MCP clients when launched outside a source checkout. The installed command now locates its bundled `runtime` directory on macOS and Windows.
 - macOS app updates build with one native tray implementation, avoiding the duplicate Objective-C class that blocked newer Squad installers.

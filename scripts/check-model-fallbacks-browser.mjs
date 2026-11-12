@@ -3,6 +3,7 @@ import {mkdir,writeFile,readFile,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {startBridge,startBrowser,until} from './lib/reliability-browser.mjs';
 import {prepareModelRoutingFixture} from './lib/model-routing-fixtures.mjs';
+import {seedOwnedBrowserFixture} from './lib/owned-bridge-fixture.mjs';
 
 const packaged=process.argv.includes('--packaged');
 const artifact='.codex-artifacts/model-fallbacks-20261029'+(packaged?'/packaged':'');
@@ -22,7 +23,9 @@ try{
   const saveFallbacks=async({settle=true}={})=>{await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&!button.disabled)"),'Save fallbacks ready');await browser.click('Save fallbacks');if(settle)await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&button.disabled)"),'fallback save settled in the window');};
   const savedMember=async()=>(await bridge.api('/api/channels')).data.agentChannelAccess[member.id].agent;
   browser=await startBrowser();
-  await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`if(!localStorage.getItem('modelVerify.seeded')){localStorage.setItem('autohandSquad.v1.agents',${JSON.stringify(JSON.stringify([member]))});localStorage.setItem('autohandSquad.v1.onboarding','{"version":1,"status":"skipped"}');localStorage.setItem('modelVerify.seeded','1');}`});
+  const fixtureContext=await seedOwnedBrowserFixture(bridge,browser);
+  const membersKey=`autohandSquad.owner.v1.${fixtureContext.storageKey}.${encodeURIComponent('autohandSquad.v1.agents')}`;
+  await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`window.__fixtureMembersKey=${JSON.stringify(membersKey)};`});
   await browser.navigate(bridge.origin+'/squad-members/'+member.id+'/model');
   await until(()=>browser.evaluate("document.body.innerText.includes('Save model assignment')"),'member model assignment page');
   assert(await browser.evaluate("Boolean(document.querySelector('[role=combobox][aria-label=Model]'))"),'The override must offer the harness-supported model IDs instead of a free-text-only field');
@@ -102,7 +105,7 @@ try{
   await browser.click('Send chat message');
   // The member's tool turn runs a real bridge turn on the fixture engine; the CI runner takes longer than the ten-second default (the 30 October and 2 November runs timed out here).
   await until(async()=>(await savedMember()).modelRouting.fallbacks[0]?.harness.model==='codex-second','member fallback tool persisted its profile revision',60000);
-  await until(()=>browser.evaluate("JSON.parse(localStorage.getItem('autohandSquad.v1.agents')||'[]').find(agent=>agent.id==='asq_model_fixture')?.modelRouting?.fallbacks[0]?.harness.model==='codex-second'"),'committed receipt projects the fallback model before a roster refresh',5000);
+  await until(()=>browser.evaluate("JSON.parse(localStorage.getItem(window.__fixtureMembersKey)||'[]').find(agent=>agent.id==='asq_model_fixture')?.modelRouting?.fallbacks[0]?.harness.model==='codex-second'"),'committed receipt projects the fallback model before a roster refresh',5000);
   await browser.evaluate('window.__modelHoldChannels=false');
   await browser.navigate(bridge.origin+'/squad-members/'+member.id+'/model');
   await until(()=>browser.evaluate("document.querySelector('[role=combobox][aria-label=\"Fallback 1 model\"]')?.textContent.includes('codex-second')"),'member tool receipt updates the editor',60000);
@@ -125,6 +128,6 @@ try{
   console.log('PASS catalog IDs/names, failed save/refresh recovery, connected engine/model selection, ordered edits, optional member tools, reload persistence, native failover identity and partial-answer replacement in one chat.');
 }catch(error){
   // The bridge's side of a failure: CI shows only this output.
-  try{const runs=(await bridge.api('/api/runs')).data||[];console.error('bridge runs',JSON.stringify(runs.slice(0,3).map(run=>({status:run.status,harness:run.harness,title:String(run.title||'').slice(0,60),reply:String(run.reply||'').slice(0,80),logs:(run.logs||[]).slice(-10).map(entry=>`${entry.source}: ${String(entry.line).slice(0,300)}`)})),null,1));const toolRows=(await readFile(join(bridge.directory,'model-calls.jsonl'),'utf8').catch(()=>'')).trim().split('\n').filter(line=>line.includes('routing-tool')).slice(-2);console.error('member tool responses',toolRows.map(line=>line.slice(0,600)).join('\n'));const member=(await bridge.api('/api/channels')).data.agentChannelAccess['asq_model_fixture']?.agent;console.error('bridge member',JSON.stringify({profileRevision:member?.profileRevision,fallbacks:member?.modelRouting?.fallbacks?.map(route=>route.harness.model)}));if(browser)console.error('window member',await browser.evaluate("JSON.stringify(JSON.parse(localStorage.getItem('autohandSquad.v1.agents')||'[]').filter(agent=>agent.id==='asq_model_fixture').map(agent=>({profileRevision:agent.profileRevision,fallbacks:agent.modelRouting?.fallbacks?.map(route=>route.harness.model)})))"));}catch(dumpError){console.error('bridge state unavailable:',dumpError.message);}
+  try{const runs=(await bridge.api('/api/runs')).data||[];console.error('bridge runs',JSON.stringify(runs.slice(0,3).map(run=>({status:run.status,harness:run.harness,title:String(run.title||'').slice(0,60),reply:String(run.reply||'').slice(0,80),logs:(run.logs||[]).slice(-10).map(entry=>`${entry.source}: ${String(entry.line).slice(0,300)}`)})),null,1));const toolRows=(await readFile(join(bridge.directory,'model-calls.jsonl'),'utf8').catch(()=>'')).trim().split('\n').filter(line=>line.includes('routing-tool')).slice(-2);console.error('member tool responses',toolRows.map(line=>line.slice(0,600)).join('\n'));const member=(await bridge.api('/api/channels')).data.agentChannelAccess['asq_model_fixture']?.agent;console.error('bridge member',JSON.stringify({profileRevision:member?.profileRevision,fallbacks:member?.modelRouting?.fallbacks?.map(route=>route.harness.model)}));if(browser)console.error('window member',await browser.evaluate("JSON.stringify(JSON.parse(localStorage.getItem(window.__fixtureMembersKey)||'[]').filter(agent=>agent.id==='asq_model_fixture').map(agent=>({profileRevision:agent.profileRevision,fallbacks:agent.modelRouting?.fallbacks?.map(route=>route.harness.model)})))"));}catch(dumpError){console.error('bridge state unavailable:',dumpError.message);}
   if(browser){await browser.screenshot(artifact+'/model-picker.png').catch(()=>{});console.error(await browser.evaluate("JSON.stringify({text:document.body.innerText.slice(-3500),errors:window.__modelVerifyErrors,buttons:[...document.querySelectorAll('button')].filter(button=>button.getAttribute('aria-label')?.includes('chat message')).map(button=>({label:button.getAttribute('aria-label'),disabled:button.disabled}))})").catch(()=>''));}console.error(bridge.logs.slice(-1500));throw error;}
 finally{await browser?.close();await bridge.close();}

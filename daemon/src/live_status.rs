@@ -79,8 +79,7 @@ pub struct LiveStatusAutomation {
 }
 
 pub fn read_live_status_snapshot(paths: &StatePaths) -> Option<LiveStatusSnapshot> {
-    let content = fs::read_to_string(&paths.web_status_json).ok()?;
-    serde_json::from_str(&content).ok()
+    crate::ownership::read_private_json(&paths.web_status_json, 8 * 1024 * 1024).ok()
 }
 
 pub fn read_fresh_live_status_snapshot(paths: &StatePaths) -> Option<LiveStatusSnapshot> {

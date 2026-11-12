@@ -12,7 +12,12 @@ pub mod live_status;
 pub mod memory_index;
 #[cfg(feature = "native-tray")]
 pub mod native_tray;
+mod native_work_intents;
 pub mod otel;
+#[cfg(windows)]
+pub mod owned_windows;
+pub mod ownership;
+mod ownership_activity;
 pub mod preflight;
 pub mod squad_api;
 pub mod startup_ports;

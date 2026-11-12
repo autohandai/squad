@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { contextGauge, contextUsageFromUsage } from '../server/queues/context-gauge.mjs';
 import { RESTART_PAUSE_REASON, RESTART_REASON, STOP_PAUSE_REASON } from '../server/queues/store.mjs';
 import { movedQueueIds, queuedItems, reconcileQueueMessages, contextGaugeLabel, contextWarning } from '../src/lib/member-queue.js';
+import { createOwnedBridgeFixture, ownedFixtureHeaders } from './lib/owned-bridge-fixture.mjs';
 
 // ---------- pure checks ----------
 assert.deepEqual(contextUsageFromUsage({ input_tokens: 4000, cache_creation_input_tokens: 20000, cache_read_input_tokens: 60000, output_tokens: 10, modelUsage: { 'claude-x': { contextWindow: 200000 } } }), { contextTokens: 84000, contextWindow: 200000 }, 'Claude: cache tokens count as context and modelUsage carries the window');
@@ -77,6 +78,7 @@ const port = socket.address().port;
 await new Promise((r) => socket.close(r));
 const origin = `http://127.0.0.1:${port}`;
 let bridge;
+let ownership;
 let logs = '';
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, label, timeout = 10000) {
@@ -85,7 +87,7 @@ async function until(fn, label, timeout = 10000) {
   throw new Error(`${label} timed out; bridge: ${logs.slice(-3000)}`);
 }
 const api = async (path, body, method) => {
-  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(origin + path, { method: method || (body === undefined ? 'GET' : 'POST'), headers: await ownedFixtureHeaders(origin), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json(); return { status: response.status, ...data };
 };
 const calls = async () => (await readFile(callsFile, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
@@ -99,7 +101,7 @@ const release = (token) => writeFile(join(directory, `release-${token}`), '');
 async function startBridge() {
   bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: rootDir,
-    env: { ...process.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CODEX_HOME: join(directory, 'codex'), OPENAI_API_KEY: 'fixture-only-no-provider', ANTHROPIC_API_KEY: 'fixture-only-no-provider' },
+    env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_USER_CONFIG_PATH: join(directory, 'config.json'), CODEX_HOME: join(directory, 'codex'), OPENAI_API_KEY: 'fixture-only-no-provider', ANTHROPIC_API_KEY: 'fixture-only-no-provider' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   bridge.stdout.on('data', (d) => { logs += d; }); bridge.stderr.on('data', (d) => { logs += d; });
@@ -113,6 +115,8 @@ async function stopBridge(signal = 'SIGTERM') {
   if (bridge.exitCode === null && bridge.signalCode === null) { bridge.kill('SIGKILL'); await exited; }
 }
 try {
+  await writeFile(join(directory, 'config.json'), JSON.stringify({ provider: 'autohandai', auth: { token: 'fixture-no-provider', email: 'reliability@example.test', expiresAt: '2099-01-01T00:00:00Z' } }));
+  ownership = await createOwnedBridgeFixture({ serviceRoot: join(directory, 'squad'), appRoot: join(directory, 'app') });
   await mkdir(join(directory, 'codex'), { recursive: true });
   await writeFile(join(directory, 'codex', 'auth.json'), '{}');
   await writeFile(fake, `#!${process.execPath}
@@ -152,9 +156,13 @@ if(!wait){finish();}else{
 `);
   await chmod(fake, 0o700);
   await startBridge();
+  for (const id of ['q1', 'q2', 'q3', 'q4', 'ctx-claude']) {
+    const registered = await api(`/api/members/${id}/channel-access`, { agent: member(id, id === 'ctx-claude' ? 'claude' : 'codex'), profile: '', profilePatch: {} }, 'PUT');
+    assert.equal(registered.success, true, JSON.stringify(registered));
+  }
 
   // 1. Three follow-ups while a browser-owned reply runs: all stay queued.
-  const hold = fetch(origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload('q1', 'WAIT:hold1')) });
+  const hold = fetch(origin + '/api/chat/stream', { method: 'POST', headers: await ownedFixtureHeaders(origin), body: JSON.stringify(payload('q1', 'WAIT:hold1')) });
   await until(async () => (await starts('q1')).length === 1, 'browser chat in flight');
   const a = (await enqueue('q1', 'WAIT:qa')).data; const b = (await enqueue('q1', 'Inspect B')).data; const c = (await enqueue('q1', 'WAIT:qc')).data;
   assert.equal(a.status, 'queued'); assert.equal(a.launch, undefined, 'the public item never carries the launch payload');
@@ -232,7 +240,7 @@ if(!wait){finish();}else{
   const context = await until(async () => { const r = await api('/api/queues/context'); return r.data['ctx-claude'] ? r.data : null; }, 'gauge after a Claude turn');
   assert.equal(context['ctx-claude'].percent, 42); assert.equal(context['ctx-claude'].usedTokens, 84000); assert.equal(context['ctx-claude'].window, 200000); assert.equal(context['ctx-claude'].warning, false);
   assert.equal(context.q1, undefined, 'Codex reported usage but no window: no gauge');
-  const telemetry = (await readFile(join(directory, 'squad', 'telemetry.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+  const telemetry = (await readFile(join(ownership.paths.dataRoot, 'telemetry.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
   assert.ok(telemetry.some((r) => r.metadata.agentId === 'q1' && r.metadata.contextTokens === 90000 && !r.metadata.contextWindow), 'the Codex usage itself was recorded');
   assert.equal((await queueOf('ctx-claude')).context.percent, 42, 'the member queue carries its gauge');
 
@@ -262,5 +270,6 @@ if(!wait){finish();}else{
   console.log('Queue bridge checks passed: strict FIFO one at a time, reorder, edit, cancel, pause/resume, break, stop, crash recovery with explicit resume, clear, Claude gauge present and Codex gauge absent.');
 } finally {
   await stopBridge();
+  await ownership?.close();
   await rm(directory, { recursive: true, force: true });
 }

@@ -161,7 +161,7 @@ export async function handle(req, res, url, ctx) {
       let routines = [];
       let routineError = "";
       try {
-        routines = choices.routines === false ? [] : await createRoutines(ctx, plan, memberIds, { host: String(req.headers?.host || ""), timeZone: String(body?.timeZone || "") });
+        routines = choices.routines === false ? [] : await createRoutines(ctx, plan, memberIds, { timeZone: String(body?.timeZone || "") });
       } catch (error) {
         routineError = error?.message || "routines could not be created";
       }

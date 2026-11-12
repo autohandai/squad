@@ -1,3 +1,5 @@
+import { ownedLocalStorage } from "@/lib/owned-storage";
+import { currentOwnership } from "@/lib/ownership-client";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldContent, FieldDescription, FieldTitle } from "@/components/ui/field";
@@ -20,11 +22,11 @@ export function QuickChatPreferences({ api }) {
     try {
       const saved = await api("/api/system/settings", { method: "PUT", body: JSON.stringify({ [key]: value }) });
       setSettings(saved);
-      try { localStorage.setItem("autohandSquad.v1.quickChatSettings", JSON.stringify(saved)); } catch { /* Native polling still applies saved settings. */ }
+      try { ownedLocalStorage.setItem("autohandSquad.v1.quickChatSettings", JSON.stringify(saved)); } catch { /* Native polling still applies saved settings. */ }
       window.dispatchEvent(new Event("squad:quick-chat-settings"));
       const invoke = window.__TAURI_INTERNALS__?.invoke;
       if (invoke) {
-        try { await invoke("squad_refresh_quick_chat"); }
+        try { await invoke("squad_refresh_quick_chat", { contextGeneration: currentOwnership()?.generation }); }
         catch { setNotice("Preferences saved. Reopen an updated Squad desktop app to apply the menu bar changes."); }
       }
     } catch (failure) { setError(failure.message || "Could not save Quick Chat settings."); }

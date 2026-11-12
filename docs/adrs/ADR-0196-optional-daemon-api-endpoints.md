@@ -61,6 +61,22 @@ and a refused connection. The ordinary native suite passed all 93 library tests;
 regression passed again after the event metadata and disabled-policy changes.
 `cargo fmt --check` and `git diff --check` also passed.
 
+## Ownership integration
+
+The native remote callbacks continue constructing clients from captured
+configuration: device/flag probes use machine configuration without account
+credentials, while workload and telemetry use only the verified current owner.
+Only endpoint support is shared, scoped to that configuration digest. A locked
+or ineligible owner produces a disabled/skipped snapshot with no error and no
+private read or network request; it never falls back to machine data.
+
+The combined ownership regression runs three authenticated cycles against the
+real isolated HTTP fixture, sees four probes with unsupported snapshots, then
+locks the owner and runs three more cycles with no additional requests or
+failure diagnostics. The combined native suite passed 110 library tests and
+two binary tests. This integration amends the ownership callbacks while
+preserving their activity leases, issuer checks and owned destinations.
+
 ## Consequences and limits
 
 An undeployed optional service no longer creates a minute-by-minute error

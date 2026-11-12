@@ -14,7 +14,7 @@ const agent={id:'asq_config_proof',name:'Config proof',role:'Engineer',skills:[]
 const provision=(bridge,member=agent)=>bridge.api('/api/agents/provision','POST',{agentId:member.id,agent:member,workspace:process.cwd()});
 for(const kind of ['invalid-json','null','array','string','unreadable-path']) await check(kind+' config refuses preparation without changing the saved personality or reporting success',async bridge=>{
   assert.equal((await provision(bridge)).success,true);
-  const home=join(bridge.directory,'app','agents',agent.id), config=join(home,'config.json'), profile=join(home,'profile.json');
+  const home=join(bridge.appRoot,'agents',agent.id), config=join(home,'config.json'), profile=join(home,'profile.json');
   const saved=await readFile(profile,'utf8'), persona=JSON.parse(saved).profileDocs.files.find(file=>file.section==='persona').path;
   const originalPersona=await readFile(persona,'utf8');
   const damaged={ 'invalid-json':'{"permissions":', null:'null', array:'[]', string:'"invalid"' }[kind];
@@ -30,7 +30,7 @@ for(const kind of ['invalid-json','null','array','string','unreadable-path']) aw
 });
 await check('runtime config write failure preserves the confirmed profile and retries after permissions recover',async bridge=>{
   assert.equal((await provision(bridge)).success,true);
-  const home=join(bridge.directory,'app','agents',agent.id), profile=join(home,'profile.json'), config=join(home,'config.json');
+  const home=join(bridge.appRoot,'agents',agent.id), profile=join(home,'profile.json'), config=join(home,'config.json');
   const original=await readFile(profile,'utf8'), originalConfig=await readFile(config,'utf8');
   const persona=JSON.parse(original).profileDocs.files.find(file=>file.section==='persona').path;
   const originalPersona=await readFile(persona,'utf8');
@@ -48,7 +48,7 @@ await check('runtime config write failure preserves the confirmed profile and re
 });
 await check('valid existing config customizations survive a confirmed permission update',async bridge=>{
   assert.equal((await provision(bridge)).success,true);
-  const path=join(bridge.directory,'app','agents',agent.id,'config.json');
+  const path=join(bridge.appRoot,'agents',agent.id,'config.json');
   const config=JSON.parse(await readFile(path,'utf8'));config.retainedCustomization={marker:'CUSTOM_CONFIG_PRESERVED'};
   await writeFile(path,JSON.stringify(config));
   assert.equal((await provision(bridge,{...agent,permissions:{permissionMode:'restricted',builtInToolPolicyEnabled:true,builtInPolicies:{write_file:'block'}}})).success,true);

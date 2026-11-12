@@ -223,7 +223,16 @@ async fn run_squad_command_with_paths_inner(
         SquadCommand::Stop => stop_stack(&paths, &config).await,
         SquadCommand::Queue => queue(&paths, &config).await,
         SquadCommand::Open => start_stack(&paths, &config, true, tray_requested).await,
-        SquadCommand::Config => json_output(&config),
+        SquadCommand::Config => {
+            let mut public = config.clone();
+            public.api_auth_token = None;
+            public.company_secret = None;
+            public.account_email = crate::ownership::read_active_context(&paths)
+                .ok()
+                .flatten()
+                .map(|context| context.actor.email);
+            json_output(&public)
+        }
         SquadCommand::AnalyticsStart { analytics_port } => {
             analytics_start(&paths, &config, analytics_port).await
         }
@@ -388,15 +397,41 @@ async fn start_stack_with_analytics_port(
 }
 
 async fn stack_status(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput> {
+    let context = crate::ownership::read_active_context(paths)?;
     let web_port = web_port_from_open_url(&config.open_url).unwrap_or(DEFAULT_WEB_PORT);
     let daemon_config =
         daemon_config_from_record(paths, &stack_daemon_config(config, Some(web_port)));
-    let daemon = fetch_status(&daemon_config).await.ok();
+    let daemon = context.as_ref().and_then(|context| {
+        local_json_request_for_context::<StatusResponse>(
+            &daemon_config,
+            context,
+            "GET",
+            "/status",
+            None,
+        )
+        .ok()
+    });
     let analytics_port = crate::startup_ports::analytics_port_for(paths, &config.host);
     let analytics_running = analytics_is_ready(&daemon_config, analytics_port);
-    let analytics = fetch_analytics(&daemon_config, analytics_port).await.ok();
+    let analytics = post_to_with_context::<AnalyticsSnapshot>(
+        &daemon_config.host,
+        analytics_port,
+        "GET",
+        "/metrics",
+        None,
+        context.as_ref().map(|context| context.generation.as_str()),
+    )
+    .ok();
     let web = if is_local_open_url(&config.open_url) {
-        fetch_web_runtime(config.host.as_str(), web_port).ok()
+        post_to_with_context::<serde_json::Value>(
+            &config.host,
+            web_port,
+            "GET",
+            "/api/runtime",
+            None,
+            context.as_ref().map(|context| context.generation.as_str()),
+        )
+        .ok()
     } else {
         None
     };
@@ -411,6 +446,12 @@ async fn stack_status(paths: &StatePaths, config: &SquadConfig) -> Result<Comman
         })
     });
 
+    if context
+        .as_ref()
+        .is_some_and(|context| !crate::ownership::still_current(paths, context))
+    {
+        bail!("The selected Squad changed. Run the command again.");
+    }
     json_output(&json!({
         "success": true,
         "openUrl": config.open_url,
@@ -551,18 +592,23 @@ async fn stop(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput>
     }
 }
 
-async fn queue(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput> {
-    let daemon_config = daemon_config_from_record(paths, config);
-    match fetch_queue(&daemon_config).await {
-        Ok(queue) => json_output(&queue),
-        Err(_) => {
-            let items = read_queue_items(paths)?;
-            json_output(&QueueResponse {
-                success: true,
-                items,
-            })
-        }
+async fn queue(paths: &StatePaths, _config: &SquadConfig) -> Result<CommandOutput> {
+    let context = crate::ownership::read_active_context(paths)?;
+    let items = context
+        .as_ref()
+        .map(|context| read_queue_items(&context.data_paths))
+        .transpose()?
+        .unwrap_or_default();
+    if context
+        .as_ref()
+        .is_some_and(|context| !crate::ownership::still_current(paths, context))
+    {
+        bail!("The selected Squad changed. Run the command again.");
     }
+    json_output(&QueueResponse {
+        success: true,
+        items,
+    })
 }
 
 async fn analytics_start(
@@ -677,7 +723,11 @@ async fn serve(
     dev: bool,
     web_port: u16,
 ) -> Result<CommandOutput> {
+    crate::startup_ports::require_owned_web_protocol(paths, config.host.as_str(), web_port)?;
     if web_runtime_is_ready(config.host.as_str(), web_port) {
+        if !crate::startup_ports::own_web(paths, config.host.as_str(), web_port) {
+            bail!("Another Squad data folder owns this web address. Choose another port or close that instance; it was left running.");
+        }
         return Ok(CommandOutput::ok(format!(
             "Autohand Squad web server is already running at http://{}:{}\n",
             config.host, web_port
@@ -804,6 +854,20 @@ async fn serve_stop(
     config: &SquadConfig,
     web_port: u16,
 ) -> Result<CommandOutput> {
+    if let Ok(health) =
+        post_to::<serde_json::Value>(&config.host, web_port, "GET", "/api/health", None)
+    {
+        if health["ownership"] == 1
+            && health["service"] == "autohand-squad-bridge"
+            && health["stateDir"]
+                .as_str()
+                .is_some_and(|root| Path::new(root) == paths.root)
+        {
+            // Protocol 1 must prove its own drain. Never fall back to killing
+            // a PID after a rejected or uncertain machine-control request.
+            return stop_owned_broker(paths, &config.host, web_port, &health).await;
+        }
+    }
     if !crate::startup_ports::own_web(paths, &config.host, web_port)
         && crate::startup_ports::owned_web(paths, config, web_port).is_none()
     {
@@ -874,6 +938,117 @@ async fn serve_stop(
     Ok(CommandOutput::error(format!(
         "Autohand Squad web server is still responding at http://{}:{} but no managed pid was found\n",
         config.host, web_port
+    )))
+}
+
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct BrokerControl {
+    version: u8,
+    broker_id: String,
+    token: String,
+}
+
+async fn stop_owned_broker(
+    paths: &StatePaths,
+    host: &str,
+    port: u16,
+    health: &serde_json::Value,
+) -> Result<CommandOutput> {
+    if host != "localhost"
+        && !host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+    {
+        bail!("Owned Squad shutdown requires a loopback address");
+    }
+    let control_path = paths.root.join("ownership-control.json");
+    let control: BrokerControl = crate::ownership::read_private_json(&control_path, 4096)?;
+    if control.version != 1
+        || health["brokerId"].as_str() != Some(control.broker_id.as_str())
+        || control.token.len() != 64
+        || !control
+            .token
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        bail!("Squad's local service changed; no process was stopped");
+    }
+    let pid = health["pid"]
+        .as_u64()
+        .filter(|pid| *pid > 0 && *pid <= u32::MAX as u64)
+        .ok_or_else(|| anyhow!("Invalid Squad broker identity"))?;
+    let started_at = health["startedAt"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("Invalid Squad broker start identity"))?;
+    let before = read_web_server_record(paths)?;
+    let address = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.into()
+    };
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(60))
+        .build()?;
+    let response = client
+        .post(format!("http://{address}:{port}/api/shutdown"))
+        .header("x-squad-ownership-control", &control.token)
+        .header("connection", "close")
+        .json(&json!({"version":1,"brokerId":control.broker_id,"pid":pid,"startedAt":started_at}))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        bail!("Squad did not authorize or finish its service drain; no process was force-stopped");
+    }
+    let ack: serde_json::Value = response.json().await?;
+    if ack["success"] != true
+        || ack["drained"] != true
+        || ack["brokerId"].as_str() != Some(control.broker_id.as_str())
+        || ack["pid"].as_u64() != Some(pid)
+        || ack["startedAt"].as_str() != Some(started_at)
+    {
+        bail!("Squad did not prove that this service finished draining");
+    }
+    let mut stopped = false;
+    for _ in 0..60 {
+        if let Ok(Err(error)) = tokio::time::timeout(
+            Duration::from_millis(300),
+            tokio::net::TcpStream::connect((host, port)),
+        )
+        .await
+        {
+            if error.kind() == std::io::ErrorKind::ConnectionRefused {
+                stopped = true;
+                break;
+            }
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    let current: BrokerControl = crate::ownership::read_private_json(&control_path, 4096)?;
+    if !stopped || current != control {
+        bail!(
+            "Squad's listener did not stop, or another service replaced it; records were preserved"
+        );
+    }
+    if let (Some(before), Some(current)) = (before, read_web_server_record(paths)?) {
+        if before.pid == pid as u32
+            && before.host == host
+            && before.port == port
+            && current.pid == before.pid
+            && current.host == before.host
+            && current.port == before.port
+            && current.started_at == before.started_at
+            && current.server_path == before.server_path
+        {
+            remove_web_server_record(paths)?;
+        }
+    }
+    Ok(CommandOutput::ok(format!(
+        "Autohand Squad service drained and stopped at http://{address}:{port}\n"
     )))
 }
 
@@ -948,10 +1123,6 @@ fn doctor(paths: &StatePaths, config: &SquadConfig) -> Result<CommandOutput> {
     })
 }
 
-async fn fetch_queue(config: &SquadConfig) -> Result<QueueResponse> {
-    local_json_request(config, "GET", "/queue", None)
-}
-
 async fn post_lifecycle(
     config: &SquadConfig,
     path: &str,
@@ -971,6 +1142,27 @@ where
     post_to(config.host.as_str(), config.port, method, path, body)
 }
 
+/// Use the caller's captured account lease; never recapture a different account.
+pub(crate) fn local_json_request_for_context<T>(
+    config: &SquadConfig,
+    context: &crate::ownership::OwnedContext,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    post_to_with_context(
+        config.host.as_str(),
+        config.port,
+        method,
+        path,
+        body,
+        Some(&context.generation),
+    )
+}
+
 pub(crate) fn post_to<T>(
     host: &str,
     port: u16,
@@ -981,13 +1173,47 @@ pub(crate) fn post_to<T>(
 where
     T: DeserializeOwned,
 {
+    post_to_with_context(host, port, method, path, body, None)
+}
+
+fn post_to_with_context<T>(
+    host: &str,
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    generation: Option<&str>,
+) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    if generation.is_some()
+        && host != "localhost"
+        && !host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+    {
+        bail!("Private Squad requests require a loopback address");
+    }
+    let context_header = match generation {
+        Some(value)
+            if !value.is_empty()
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') =>
+        {
+            format!("X-Squad-Context: {value}\r\n")
+        }
+        Some(_) => bail!("Invalid Squad context generation"),
+        None => String::new(),
+    };
     let mut stream = TcpStream::connect((host, port))
         .with_context(|| format!("connect http://{host}:{port}"))?;
     stream.set_read_timeout(Some(Duration::from_millis(800)))?;
     stream.set_write_timeout(Some(Duration::from_millis(800)))?;
     let body = body.unwrap_or("");
     let request = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {}:{}\r\nAccept: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "{method} {path} HTTP/1.1\r\nHost: {}:{}\r\nAccept: application/json\r\n{context_header}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
         host,
         port,
         body.len(),
@@ -1045,10 +1271,10 @@ pub(crate) fn analytics_is_ready(config: &SquadConfig, port: u16) -> bool {
 
 pub(crate) fn web_runtime_is_ready(host: &str, port: u16) -> bool {
     match post_to::<serde_json::Value>(host, port, "GET", "/api/health", None) {
-        Ok(value) => value["success"] == true && value["service"] == "autohand-squad-bridge",
-        // Reattach to older releases that have no lightweight endpoint.
-        Err(error) if error.to_string().contains("HTTP 404") => {
-            fetch_web_runtime(host, port).is_ok_and(|value| is_squad_web_runtime(&value))
+        Ok(value) => {
+            value["success"] == true
+                && value["service"] == "autohand-squad-bridge"
+                && value["ownership"] == 1
         }
         Err(_) => false,
     }
@@ -1565,7 +1791,7 @@ pub(crate) fn locate_node_runtime() -> Result<PathBuf> {
 
     find_on_path(executable_name).ok_or_else(|| {
         anyhow!(
-            "Node.js was not found. Reinstall Autohand Squad or set AUTOHAND_SQUAD_NODE to a Node.js 18.17+ executable."
+            "Node.js was not found. Reinstall Autohand Squad or set AUTOHAND_SQUAD_NODE to a Node.js 22.13 LTS or 24+ executable."
         )
     })
 }
@@ -1794,6 +2020,9 @@ pub(crate) fn spawn_web_server(
     }
     if let Ok(tray) = locate_tray_binary(paths) {
         command.env("AUTOHAND_SQUAD_TRAY", tray);
+    }
+    if let Ok(daemon) = locate_daemon_binary(paths) {
+        command.env("AUTOHAND_SQUAD_DAEMON", daemon);
     }
     if dev {
         command.arg("--dev");
@@ -2246,11 +2475,16 @@ mod tests {
 
     #[tokio::test]
     async fn queue_command_falls_back_to_local_queue_directory() {
-        let paths = temp_state_paths();
+        let fixture = crate::ownership::tests::Fixture::new();
+        let _auth = fixture.authenticate();
+        let paths = fixture.service.clone();
         paths.ensure().unwrap();
         let cleanup_root = paths.root.clone();
+        let context = crate::ownership::read_active_context(&paths)
+            .unwrap()
+            .unwrap();
         fs::write(
-            paths.queue_dir.join("one.json"),
+            context.data_paths.queue_dir.join("one.json"),
             r#"{"id":"one","status":"queued"}"#,
         )
         .unwrap();

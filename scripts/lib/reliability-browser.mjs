@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
+import { createOwnedBridgeFixture } from './owned-bridge-fixture.mjs';
 
 export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 // GitHub's runners are several times slower than a developer machine for a
@@ -52,25 +53,32 @@ export async function startBridge({ signedIn = true, prepare, cwd = process.cwd(
   const config = join(directory, 'config.json');
   await writeFile(config, JSON.stringify(signedIn ? { provider: 'autohandai', auth: { token: 'fixture-only-no-provider', email: 'reliability@example.test', expiresAt: '2099-01-01T00:00:00Z' } } : {}));
   const prepared = prepare ? await prepare(directory) : {};
+  const ownership=await createOwnedBridgeFixture({serviceRoot:join(directory,'squad'),appRoot:join(directory,'app')});
   // Bridges started for checks never post to the person's desktop (lane 72e49cb).
-  const env = { AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: 'macos', ...process.env, ...prepared, AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_USER_CONFIG_PATH: config };
+  const env = { AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: 'macos', ...process.env, ...prepared, ...ownership.env, AUTOHAND_HOME: join(directory, 'autohand'), AUTOHAND_SQUAD_HOME: join(directory, 'squad'), AUTOHAND_SQUAD_APP_STATE_DIR: join(directory, 'app'), AUTOHAND_USER_CONFIG_PATH: config };
   let child;
   let logs = '';
+  const headers = async () => {
+    const context=await fetch(origin+'/api/ownership/context').then(response=>response.json());
+    return {'content-type':'application/json',...(context?.data?.generation?{'x-squad-context':context.data.generation}:{})};
+  };
   // A bridge call stretches with the waits: a busy runner (or a dev bridge
   // compiling App.jsx on its main thread) can hold a ten-second reset call.
   const api = async (path, method = 'GET', body, timeout = 10000 * WAIT_SCALE) => {
     try {
-      const response = await fetch(origin + path, { method, signal: AbortSignal.timeout(timeout), headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      const context=path.startsWith('/api/ownership/context')?null:await fetch(origin+'/api/ownership/context',{signal:AbortSignal.timeout(timeout)}).then(response=>response.json());
+      const response = await fetch(origin + path, { method, signal: AbortSignal.timeout(timeout), headers: { 'content-type': 'application/json',...(context?.data?.generation?{'x-squad-context':context.data.generation}:{}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       return { status: response.status, ...await response.json() };
     } catch (error) { throw new Error(`${method} ${path}: ${error.message}`, { cause: error }); }
   };
   const start = async () => {
     child = spawn(process.execPath, ['server.mjs', ...(development ? ['--dev'] : []), '--host', '127.0.0.1', '--port', String(port), '--hmr-port', String(hmrPort)], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', data => { logs += data; }); child.stderr.on('data', data => { logs += data; });
-    await until(async () => (await api('/api/runtime')).success, 'isolated bridge start', 60000);
+    await until(async () => {const context=await api('/api/ownership/context');return ['ready','unbound','signed_out','awaiting_restart'].includes(context.data?.state);},'isolated ownership verification',60000);
+    if((await api('/api/ownership/context')).data.state==='ready')await until(async () => (await api('/api/runtime')).success, 'isolated bridge start', 60000);
   };
-  try { await start(); } catch (error) { await stop(child); await rm(directory, { recursive: true, force: true }); throw new Error(`${error.message}\n${logs}`); }
-  return { directory, origin, api, get logs() { return logs; }, restart: async () => { await stop(child); await start(); }, close: async () => { await stop(child); await rm(directory, { recursive: true, force: true }); } };
+  try { await start(); } catch (error) { await stop(child); await ownership.close();await rm(directory, { recursive: true, force: true }); throw new Error(`${error.message}\n${logs}`); }
+  return { directory, origin, api, headers, get dataRoot(){return ownership.paths.dataRoot;},get appRoot(){return ownership.paths.appRoot;},get workspaceRoot(){return ownership.paths.workspaceRoot;}, get logs() { return logs; }, restart: async () => { await stop(child); await start(); }, close: async () => { await stop(child); await ownership.close();await rm(directory, { recursive: true, force: true }); } };
 }
 
 // Full-navigation tests can opt out of frozen pages retaining SSE connections.

@@ -92,6 +92,28 @@
 
 - Cloud sync is an optional Settings section with plain team/workspace selectors and an explicit Enable sync action. State the scope as shared team memories, and name the receiving team before upload. Discovery never uploads memories. Show connection status, last successful sync, Sync now and Disconnect as simple rows/actions. Keep local / Use cloud preserves both sides until a person chooses; errors retain local data. Tokens and sync diagnostics stay in the bridge, outside browser state and agent prompts (ADR-0151/0152).
 
+## Ownership and backups
+
+- Backup and owned-file downloads retain the current page and use the system browser in the desktop app. Keep their captured ownership context in the download URL and explain the browser handoff beside the backup receipt.
+
+- The canonical member profile preserves the current conversation's start and last-conversation timestamps. Reopening a window must not refill a new chat with earlier turns from that member's history.
+
+- Native notifications, dialogs and attention counts belong to the selected Squad. On an account change, dismiss its old confirmation and withdraw its old notifications; a stale notification never opens the next account's conversation. Relaunch does not adopt notifications from a previous native process.
+
+- Verify the signed-in identity and selected personal/team Squad before loading private browser state or displaying member avatars. Account/scope transitions hide the old data and use a fresh context; an unavailable ownership check never displays another account's cached roster.
+- Personal Squad and existing Autohand teams are explicit ownership choices. Show the selected Squad in the directory and the owner when creating a member. Explain team visibility before creation; changing a profile cannot silently transfer its owner.
+- A read-only Squad is a calm data view for browsing agents, memories, conversations and files and saving backups. It does not show working agents or start schedulers, providers or integrations. Keep choosing another Squad and signing out available.
+- Backups are a Settings section of divider rows: selected agents, JSON/YAML, included data, exclusions, Export, explicit cloud backup and Restore. JSON and YAML encode the same documented versioned document. Never label a profile preset as a full backup or silently omit files to meet a limit.
+- Cloud backup controls name the receiving personal/team owner and stay idle until an explicit action. Newer cloud records require a reviewed local/cloud choice; pending completion keeps its immutable local snapshot and request ID across reloads. Saved plans remain until explicit removal, which keeps live agents and local files. Read-only views offer cloud list/download without upload, restore or removal actions.
+- Restore names the destination personal/team Squad, previews included agents and exclusions, and explicitly confirms replacement of its selected dataset. The earlier dataset is preserved separately; restore does not silently merge its agents with the import. Managed files receive fresh contained work folders; external folders and machine credentials need explicit reconnection. Imported agents, routines and autonomous work remain paused. A durable completion screen offers Restart Squad, including after a lost response or service relaunch.
+- A local-cache hydration failure must leave Loading with an actionable error and Retry. A full device store cannot discard owner drafts, mount incomplete private state or strand startup; stale ownership callbacks cannot update the replacement view.
+- Saved current conversations use revision checks. Flush this window’s current conversation before exporting or replacing data; a conflict stops the operation and offers a local draft download and reload of the saved version. A cached draft never silently overwrites another window’s saved conversations after reopening.
+- Keep live channel, vault and relay updates on one scoped stream per main window so ordinary saves remain responsive with another window open. Live signals carry no credential or secret payload; data reloads still require the captured ownership context.
+- Legacy data with no recorded owner stays out of ordinary member lists and account discovery. Recovery is a deliberate import; the next sign-in never claims it automatically.
+- Manual recovery reads only explicitly selected old data/agent/work folders and optional old browser data after consent. Show the destination owner and team visibility before preview. Leave original sources intact; differing saved/browser conversations are both retained. Preview never imports or starts work.
+- Existing default work folders require acceptance by the current owner before their contents become available to this Squad. Merely finding the folder is not consent to reuse it across accounts.
+- Outside-session recording belongs to the actor, owner and dataset where it was enabled. Explain a stale hook binding and allow explicit setup for the selected destination; sign-in never silently rewrites machine hooks to capture another account’s terminal work.
+
 ## Collective memory
 
 - Memory is a primary sidebar destination and a searchable Settings section. The library opens as an open, theme-aware graph canvas with a quiet group rail and a plain inspector on selection; List is an equally usable alternative. No metric tiles or knowledge-card wall.
@@ -289,6 +311,9 @@
 
 ## Maintenance
 
+- Account switches and data recovery stay in a progress state until admitted work has finished saving. A missing roster or zero visible activity never means a reset or restore has completed; uncertain shutdown keeps the data preserved and explains the next action.
+- Hide and fence the old account's view immediately, then wait for a stable ownership result before navigating to its replacement. A draining service must not leave the person on a browser error page.
+
 - Connectors lists Autohand Squad’s managed MCP connection alongside added servers, with its actual tool list and member permissions explained. Core tools have no misleading third-party on/off switch.
 - A member’s Library is a dated divider list of files they published, with search, an in-app preview and download. The same artifact opens from its chat receipt and its source entry in the knowledge base. Preview keeps the conversation behind it and opens without zoom so embedded controls stay in place; generated HTML runs in an opaque frame with no access to app storage or native commands.
 - Artifact links in quick chat open the same preview in the main Squad window, keeping the compact conversation available.
@@ -343,4 +368,5 @@
 - Quick Chat's Apple glass appearance uses real `NSGlassEffectView` on macOS 26+, with the existing webview assigned as `contentView`; earlier macOS versions use native popover translucency. Solid removes the material without reloading the conversation. Honor the system's accessibility treatment; do not substitute CSS blur for Apple's glass. A saved preference in an older native shell must show that an updated desktop app is needed rather than silently pretending it was applied.
 - Connected harness limits show reported window/model names, used percentages and reset times. Unknown values say unavailable or not reported; zero is shown only when reported. Usage checks never submit agent prompts.
 
+- Members created through Squad MCP use the current owner’s ordinary directory and profile controls. Management tools keep saved Allow / Ask / Block rules, including unattended work; Ask uses the existing question card with operation-specific consent, expires without changing data, and never silently becomes Allow. Creating a member saves its configuration without an artificial greeting, launched task or enabled automation.
 - Export collision names preserve the extension and UTF-8 filename limit so a successful native save always yields a receipt the UI can acknowledge. Existing files are never overwritten.

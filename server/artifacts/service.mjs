@@ -12,6 +12,8 @@ const clean = (value, limit) => [...String(value || '').replace(/[\x00-\x1f\x7f]
 const inside = (root, file) => { const path = relative(root, file); return path && path !== '..' && !path.startsWith('..' + sep) && !isAbsolute(path); };
 const publicRecord = record => { const { contentHash, sourcePath, ...data } = record; return { ...data, href: `/squad-members/${encodeURIComponent(record.ownerId)}/library?artifact=${record.id}`, contentUrl: `/api/artifacts/${record.id}/content`, downloadUrl: `/api/artifacts/${record.id}/download` }; };
 
+export const artifactMemoryRecord = item => ({ id: item.id, ownerId: item.ownerId || '', authorId: item.ownerId || '', authorName: item.authorName || '', scope: 'member', workspace: item.workspace || '', title: item.title || '', text: [item.title, item.description, `Saved artifact: ${item.filename} (revision ${item.revision}).`].filter(Boolean).join('\n'), kind: 'artifact', tags: ['artifact', item.kind || 'file'], createdAt: item.createdAt || '', updatedAt: item.updatedAt || '', sourceType: 'artifact', sourceKey: `artifact:${item.id}`, sourceLabel: 'Member artifact', sourceRef: item.id, sourceHref: item.href || '', sharedWith: [] });
+
 /** Immutable file snapshots, attributed to the authenticated publishing turn. */
 export function createArtifactService({ stateDir, members, emit = () => {} }) {
   const root = join(stateDir, 'artifacts'), indexPath = join(root, 'library.json');
@@ -87,7 +89,7 @@ export function createArtifactService({ stateDir, members, emit = () => {} }) {
     return task;
   }
   async function memoryRecords() {
-    return (await list()).map(item => ({ id: item.id, ownerId: item.ownerId, authorId: item.ownerId, authorName: item.authorName, scope: 'member', workspace: item.workspace, title: item.title, text: [item.title, item.description, `Saved artifact: ${item.filename} (revision ${item.revision}).`].filter(Boolean).join('\n'), kind: 'artifact', tags: ['artifact', item.kind], createdAt: item.createdAt, updatedAt: item.updatedAt, sourceType: 'artifact', sourceKey: `artifact:${item.id}`, sourceLabel: 'Member artifact', sourceRef: item.id, sourceHref: item.href, sharedWith: [] }));
+    return (await list()).map(artifactMemoryRecord);
   }
   return { publish, list, get, content, memoryRecords };
 }

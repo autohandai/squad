@@ -10,6 +10,7 @@ import { createServer } from "node:net";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { createOwnedBridgeFixture,ownedFixtureHeaders } from "./lib/owned-bridge-fixture.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const directory = await mkdtemp(join(tmpdir(), "squad-engine-output-"));
@@ -22,7 +23,7 @@ await new Promise((r) => socket.listen(0, "127.0.0.1", r));
 const port = socket.address().port;
 await new Promise((r) => socket.close(r));
 const origin = `http://127.0.0.1:${port}`;
-let bridge;
+let bridge,ownedFixture;
 let logs = "";
 
 const member = (id, harness) => ({ id, name: id[0].toUpperCase() + id.slice(1), role: "Engineer", status: "online", workspace: root, projects: [{ path: root }], harness });
@@ -31,7 +32,7 @@ const codex = member("cody", { id: "codex", executablePath: fakeCodex });
 const squadMembers = [autohand, codex];
 
 async function stream(agent, prompt, extra = {}) {
-  const response = await fetch(`${origin}/api/chat/stream`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: agent.id, agent, workspace: root, prompt, profile: "You are a fixture member.", squadMembers, ...extra }) });
+  const response = await fetch(`${origin}/api/chat/stream`, { method: "POST", headers: await ownedFixtureHeaders(origin), body: JSON.stringify({ agentId: agent.id, agent, workspace: root, prompt, profile: "You are a fixture member.", squadMembers, ...extra }) });
   const text = await response.text();
   const blocks = text.split("\n\n").filter(Boolean).map((block) => ({ event: /^event: (.+)$/m.exec(block)?.[1], data: JSON.parse(/^data: (.*)$/m.exec(block)?.[1] || "null") }));
   return { done: blocks.find((block) => block.event === "done")?.data, error: blocks.find((block) => block.event === "error")?.data, blocks };
@@ -85,10 +86,12 @@ emit({ type: 'item.completed', item: { id: 'reply', type: 'agent_message', text:
 emit({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } });
 `);
   await chmod(fakeCodex, 0o700);
+  ownedFixture=await createOwnedBridgeFixture({serviceRoot:join(directory,'squad'),appRoot:join(directory,'app')});
   bridge = spawn(process.execPath, ["server.mjs", "--host", "127.0.0.1", "--port", String(port)], {
     cwd: root,
     env: {
       ...process.env,
+      ...ownedFixture.env,
       AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: "",
       AUTOHAND_SQUAD_NATIVE_NOTIFICATIONS: "",
       AUTOHAND_SQUAD_HOME: join(directory, "squad"),
@@ -106,7 +109,7 @@ emit({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } });
   });
   bridge.stdout.on("data", (b) => { logs += b; });
   bridge.stderr.on("data", (b) => { logs += b; });
-  await until(async () => (await fetch(`${origin}/api/harnesses`)).ok);
+  await until(async () => (await fetch(`${origin}/api/harnesses`,{headers:await ownedFixtureHeaders(origin)})).ok);
 
   {
     // Autohand's reflection paragraph is the engine's, not the member's answer.
@@ -124,5 +127,6 @@ emit({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } });
     await Promise.race([closed, new Promise((r) => setTimeout(r, 3000))]);
     if (bridge.exitCode === null) bridge.kill("SIGKILL");
   }
+  await ownedFixture?.close();
   await rm(directory, { recursive: true, force: true });
 }

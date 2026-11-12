@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { getNativeNotificationClient, normalizeNativeNotificationPermission, notificationTestMessage } from "../src/lib/native-notifications.js";
+import { activateOwnedStorage } from "../src/lib/owned-storage.js";
+
+const generation = '12345678-1234-1234-1234-123456789012';
+activateOwnedStorage({ state:'ready', storageKey:'native-notification-fixture', generation, actor:{id:'fixture-alice'}, owner:{kind:'user',id:'fixture-alice'} });
 
 let passed = 0;
 async function check(name, run) { await run(); console.log(`ok ${++passed} - ${name}`); }
@@ -27,7 +31,7 @@ await check("only macOS Squad main and quick-chat shells expose native controls"
 await check("reading permission never prompts or posts", async () => {
   const { client, calls } = fixture("not-determined");
   assert.equal(await client.permission(), "not-determined");
-  assert.deepEqual(calls, [{ command: "squad_notification_permission", args: { request: false } }]);
+  assert.deepEqual(calls, [{ command: "squad_notification_permission", args: { request: false, contextGeneration: generation } }]);
 });
 await check("explicit enable reads permission before requesting not-determined state", async () => {
   const { client, calls } = fixture("not-determined");
@@ -44,6 +48,7 @@ await check("explicit test can request permission then posts only after grant", 
   const { client, calls } = fixture("not-determined");
   assert.equal((await client.test({ requestPermission: true })).posted, true);
   assert.deepEqual(calls.map((call) => [call.command, call.args?.request]), [["squad_notification_permission", false], ["squad_notification_permission", true], ["squad_notification_test", undefined]]);
+  assert.ok(calls.every(call=>call.args.contextGeneration===generation), 'permission and its delayed test retain one captured context');
 });
 await check("denied prompt prevents notification submission", async () => {
   const { client, calls } = fixture("not-determined", "denied");
@@ -83,7 +88,7 @@ await check("test text reports submission and retains native display limitation"
 await check("settings invokes one fixed command without a client-provided URL", async () => {
   const { client, calls } = fixture();
   await client.openSettings();
-  assert.deepEqual(calls, [{ command: "squad_notification_settings", args: undefined }]);
+  assert.deepEqual(calls, [{ command: "squad_notification_settings", args: { contextGeneration: generation } }]);
 });
 await check("native invocation failure propagates without fallback", async () => {
   const client = getNativeNotificationClient({ userAgent: "AutohandSquadDesktop/0.1.5 (macos)", invoke() { throw new Error("Native permission reader failed"); } });

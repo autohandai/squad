@@ -1,3 +1,5 @@
+import { ownedSessionStorage } from './owned-storage.js';
+import { currentOwnership } from './owned-storage.js';
 /** Settings keeps the originating app screen, rather than guessing a member. */
 export function isSettingsDestination(route) {
   const path = String(route || '').split(/[?#]/)[0];
@@ -15,16 +17,17 @@ export function settingsReturnSnapshot(value) {
 const SETTINGS_RETURN_KEY = 'autohandSquad.v1.settingsReturn';
 
 export function readSettingsReturn() {
-  const state = settingsReturnSnapshot(window.history.state?.squadSettingsReturn);
+  const state = window.history.state?.squadOwnership === currentOwnership()?.storageKey
+    ? settingsReturnSnapshot(window.history.state?.squadSettingsReturn) : null;
   if (state) return state;
-  try { return settingsReturnSnapshot(JSON.parse(window.sessionStorage.getItem(SETTINGS_RETURN_KEY))); }
+  try { return settingsReturnSnapshot(JSON.parse(ownedSessionStorage.getItem(SETTINGS_RETURN_KEY))); }
   catch { return null; }
 }
 
 export function rememberSettingsReturn(value) {
   try {
-    if (value) window.sessionStorage.setItem(SETTINGS_RETURN_KEY, JSON.stringify(value));
-    else window.sessionStorage.removeItem(SETTINGS_RETURN_KEY);
+    if (value) ownedSessionStorage.setItem(SETTINGS_RETURN_KEY, JSON.stringify(value));
+    else ownedSessionStorage.removeItem(SETTINGS_RETURN_KEY);
   } catch { /* The current app state and history still support returning. */ }
 }
 
@@ -50,6 +53,7 @@ export const SETTINGS_SECTION_IDS = Object.freeze([
   'connectors',
   'memory',
   'cloud',
+  'backups',
   'updates',
   'system',
 ]);
@@ -93,6 +97,7 @@ export const SETTINGS_KEYWORDS = Object.freeze({
   language: 'language locale translation english portuguese spanish region',
   providers: 'llm provider model api key openai anthropic openrouter ollama gemini default model',
   "quick-chat": "quick chat menu bar menubar tray active agent icons usage limits popup popover disable",
+  backups: 'backups export import restore portable yaml json account team ownership agents files memories library',
   chat: 'chat replies work details cli output streaming composer',
   notifications: 'notifications alerts sound badge desktop notify',
   voice: 'voice read aloud speech elevenlabs tts microphone dictation',

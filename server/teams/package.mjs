@@ -364,15 +364,14 @@ export async function planTeamImport(ctx, document, { existingMemberNames = [] }
  * importer's zone for schedules the file left without one. Returns the
  * routines created; one whose member was not created is left out.
  */
-export async function createRoutines(ctx, plan, memberIds = {}, { host = "", timeZone = "" } = {}) {
+export async function createRoutines(ctx, plan, memberIds = {}, { timeZone = "" } = {}) {
   const created = [];
-  const origin = `http://${host || "127.0.0.1:19821"}`;
   for (const routine of plan.routines || []) {
     const memberId = String(memberIds?.[routine.memberKey] || "").trim();
     if (!memberId) continue;
     const schedule = { ...routine.schedule };
     if (!schedule.timeZone && timeZone) schedule.timeZone = timeZone;
-    const response = await fetch(`${origin}/api/routines`, {
+    const response = await ctx.ownedBrokerRequest('/api/routines', {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ memberId, title: routine.title, instructions: routine.instructions, schedule, maxRunMinutes: routine.maxRunMinutes || 0, enabled: false, timeZone: timeZone || undefined }),

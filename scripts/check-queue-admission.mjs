@@ -71,7 +71,7 @@ const release = marker => writeFile(join(bridge.directory, `release-${marker}`),
 const payload = (member, marker, harness = 'autohand') => ({ agentId: member, agent: { id: member, name: member, role: 'Engineer', harness: { id: harness, ...(harness !== 'autohand' ? { executablePath: executable } : {}) }, workspace, projects: [{ path: workspace }], permissions: {} }, workspace, prompt: `REQUEST:${marker}`, requestId: crypto.randomUUID(), effort: 'high', access: 'full' });
 const queue = async member => (await bridge.api(`/api/queues/${member}`)).data;
 const chat = (member, marker, stream = true, harness = 'autohand', extra = {}) => {
-  const pending = fetch(bridge.origin + `/api/chat${stream ? '/stream' : ''}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload(member, marker, harness), ...extra }) }).then(async response => { const result = { status: response.status, body: await response.text() }; responses.push({ member, marker, ...result }); return result; });
+  const pending = bridge.headers().then(headers=>fetch(bridge.origin + `/api/chat${stream ? '/stream' : ''}`, { method: 'POST', headers, body: JSON.stringify({ ...payload(member, marker, harness), ...extra }) })).then(async response => { const result = { status: response.status, body: await response.text() }; responses.push({ member, marker, ...result }); return result; });
   pending.catch(() => {}); // A failing assertion closes the fixture bridge.
   return pending;
 };
@@ -100,7 +100,7 @@ try {
     const admitted = await later;
     assert.match(admitted.body, index % 2 ? /event: queued/ : /"queued":true/);
     assert.deepEqual((await queue(member)).items.filter(item => item.status === 'queued').map(item => item.text), [`REQUEST:${next}`, `REQUEST:${last}`]);
-    const saved = JSON.parse(await readFile(join(bridge.directory, 'squad/queues.json'), 'utf8'));
+    const saved = JSON.parse(await readFile(join(bridge.dataRoot, 'queues.json'), 'utf8'));
     assert.equal(saved.items.find(item => item.id === head.data.id).launch.effort, 'high');
     assert.equal(saved.items.find(item => item.id === head.data.id).launch.access, 'full');
     await release(first); await initial;

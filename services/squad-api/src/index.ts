@@ -6,13 +6,19 @@ import { tenantRoutes, workspace } from "./tenants.js";
 import { memoryRoutes } from "./memory.js";
 import { releaseRoutes } from "./releases.js";
 import { idSchema, nameSchema } from "./schema.js";
+import { agentRoutes } from "./agents.js";
+import { availableOwners } from "./owners.js";
+import { backupJsonSchema } from "@autohand/squad-portable";
 
 async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (url.pathname === "/health" && request.method === "GET") return ok({ service: "squad-api", apiVersion: 1 });
+  if (url.pathname === "/schemas/squad-backup-v1.json" && request.method === "GET") return Response.json(backupJsonSchema(), { headers: { "cache-control": "public, max-age=86400" } });
   const release = await releaseRoutes(request, env, url); if (release) return release;
   if (url.pathname === "/v1/auth/exchange" && request.method === "POST") return exchangeIdentity(request, env);
   const user = await authenticate(request, env);
-  if (url.pathname === "/v1/me" && request.method === "GET") return ok({ id: user.id, email: user.email, displayName: user.displayName });
+  if (url.pathname === "/v1/owners" && request.method === "GET") return ok({ owners: await availableOwners(request, env, user) });
+  const agents = await agentRoutes(request, env, user, url); if (agents) return agents;
+  if (url.pathname === "/v1/me" && request.method === "GET") return ok({ id: user.id, issuer:user.issuer,subject:user.subject,email: user.email, displayName: user.displayName });
   if (url.pathname === "/v1/auth/session" && request.method === "DELETE") {
     await env.DB.prepare("DELETE FROM sessions WHERE id=? AND user_id=?").bind(user.sessionId, user.id).run(); return ok({ signedOut: true });
   }
@@ -46,7 +52,7 @@ export default {
   async fetch(request, env): Promise<Response> {
     const requestId = crypto.randomUUID(); const url = new URL(request.url);
     const origin = request.headers.get("origin");
-    const publicRelease = request.method === "GET" && /^\/v1\/releases\/(stable|nightly)\/manifest$/.test(url.pathname);
+    const publicRelease = request.method === "GET" && (/^\/v1\/releases\/(stable|nightly)\/manifest$/.test(url.pathname) || url.pathname === "/schemas/squad-backup-v1.json");
     let response: Response;
     try {
       requireValue(!origin || origin === env.WEB_ORIGIN || publicRelease, 403, "origin_denied", "This browser origin is not allowed.");
@@ -67,8 +73,8 @@ export default {
       response.headers.set("access-control-allow-origin", publicRelease ? "*" : origin || env.WEB_ORIGIN);
       response.headers.set("vary", "Origin");
       response.headers.set("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-      response.headers.set("access-control-allow-headers", "Authorization,Content-Type,Idempotency-Key,If-None-Match");
-      response.headers.set("access-control-expose-headers", "ETag,X-Request-Id");
+      response.headers.set("access-control-allow-headers", "Authorization,Content-Type,Idempotency-Key,If-None-Match,X-Autohand-Identity");
+      response.headers.set("access-control-expose-headers", "ETag,X-Request-Id,Content-Disposition");
     }
     return response;
   },
@@ -78,6 +84,7 @@ export default {
       env.DB.prepare("DELETE FROM auth_limits WHERE expires_at<?").bind(now),
       env.DB.prepare("DELETE FROM sessions WHERE expires_at<?").bind(now),
       env.DB.prepare("DELETE FROM invitations WHERE expires_at<?").bind(now),
+      env.DB.prepare("DELETE FROM owned_exports WHERE expires_at<? AND retained_at IS NULL").bind(now),
     ]);
   },
 } satisfies ExportedHandler<Env>;

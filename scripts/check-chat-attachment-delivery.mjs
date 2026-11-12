@@ -33,7 +33,7 @@ try {
   const agent = { id: "attachment-delivery-fixture", name: "Iris", role: "Reviewer", workspace: process.cwd(), projects: [{ path: process.cwd() }], permissions: { permissionMode: "unrestricted" }, harness: { id: "autohand" } };
   const payload = { agentId: agent.id, agent, workspace: process.cwd(), profile: "Attachment delivery fixture" };
   assert.equal((await bridge.api("/api/agents/provision", "POST", payload)).success, true);
-  const upload = await fetch(`${bridge.origin}/api/attachments`, { method: "POST", headers: { "x-file-name": "screenshot.png", "content-type": "image/png" }, body: png });
+  const upload = await fetch(`${bridge.origin}/api/attachments`, { method: "POST", headers: { ...await bridge.headers(), "x-file-name": "screenshot.png", "content-type": "image/png" }, body: png });
   const record = (await upload.json()).data;
   assert(record?.id, "image upload saved");
   const reply = await bridge.api("/api/chat", "POST", { ...payload, prompt: "Describe the attached image.", attachments: [record] }, 20000);
@@ -45,16 +45,16 @@ try {
   const fixtures = await attachmentFixtures();
   const records = [];
   for (const fixture of fixtures) {
-    const response = await fetch(`${bridge.origin}/api/attachments`, { method: "POST", headers: { "x-file-name": encodeURIComponent(fixture.name), "content-type": "application/octet-stream" }, body: fixture.bytes });
+    const response = await fetch(`${bridge.origin}/api/attachments`, { method: "POST", headers: { ...await bridge.headers(), "x-file-name": encodeURIComponent(fixture.name), "content-type": "application/octet-stream" }, body: fixture.bytes });
     const saved = (await response.json()).data; assert(saved?.id, fixture.name);
     assert.equal(saved.mime, fixture.mime, `${fixture.name} infers a useful MIME type even when a desktop drop supplies none`);
-    const download = await fetch(bridge.origin + saved.url);
+    const download = await fetch(bridge.origin + saved.url, {headers:await bridge.headers()});
     assert.equal(download.headers.get("content-type"), fixture.mime);
     assert.deepEqual(Buffer.from(await download.arrayBuffer()), fixture.bytes, `${fixture.name} retains exact original bytes`);
     records.push(saved);
   }
   const svg = records.find(file => file.name === "diagram.svg");
-  const preview = await fetch(`${bridge.origin}/api/attachments/${svg.id}/preview`, { method: "POST", headers: { "content-type": "image/png" }, body: png });
+  const preview = await fetch(`${bridge.origin}/api/attachments/${svg.id}/preview`, { method: "POST", headers: { ...await bridge.headers(), "content-type": "image/png" }, body: png });
   assert.equal(preview.status, 200); Object.assign(svg, (await preview.json()).data);
   const matrix = await bridge.api("/api/chat", "POST", { ...payload, prompt: "Review these files.", attachments: records.map(file => ({ ...file, path: "/forged/path", mime: "forged/type" })) }, 20000);
   assert.equal(matrix.success, true, JSON.stringify(matrix));
@@ -101,8 +101,10 @@ try {
   const remoteAgent={...agent,id:'remote-attachment-fixture'};
   const remoteLaunch={...payload,agentId:remoteAgent.id,agent:remoteAgent};
   assert.equal((await remoteBridge.api('/api/agents/provision','POST',remoteLaunch)).success,true);
+  assert.equal((await bridge.api('/api/agents/provision','POST',remoteLaunch)).success,true,'The source must own the member whose remote route it changes.');
   const token=(await remoteBridge.api('/api/remote/tokens','POST',{label:'attachment test only'})).data.token;
-  assert.equal((await bridge.api(`/api/remote/members/${remoteAgent.id}`,'PUT',{url:remoteBridge.origin,token,label:'attachment test only',workspace:process.cwd()})).success,true);
+  const remoteRoute=await bridge.api(`/api/remote/members/${remoteAgent.id}`,'PUT',{url:remoteBridge.origin,token,label:'attachment test only',workspace:process.cwd()});
+  assert.equal(remoteRoute.success,true,JSON.stringify(remoteRoute));
   const forwarded=await bridge.api('/api/chat','POST',{...remoteLaunch,prompt:'Review these files on the remote bridge.',attachments:records},30000);
   assert.equal(forwarded.success,true,forwarded.error);
   const remoteCall=(await readCalls()).at(-1);

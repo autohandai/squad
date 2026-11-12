@@ -32,7 +32,7 @@ async function chat(payload) {
   // timeoutMs is an inactivity window in the SDK, not a total duration. Use
   // the normal streamed transport so active turns cannot hit HTTP's headers
   // deadline while the provider continues to emit events.
-  const response = await fetch(bridge.origin + '/api/chat/stream', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(480000) });
+  const response = await fetch(bridge.origin + '/api/chat/stream', { method: 'POST', headers: await bridge.headers(), body: JSON.stringify(payload), signal: AbortSignal.timeout(480000) });
   assert.equal(response.ok, true, 'Live streaming request was rejected.');
   const decoder = new TextDecoder();
   let pending = '', result, failure, events = 0;

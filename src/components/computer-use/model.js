@@ -1,7 +1,8 @@
 export function getComputerUseConsentClient({ userAgent = globalThis.navigator?.userAgent || "", invoke = globalThis.window?.__TAURI_INTERNALS__?.invoke } = {}) {
   if (!/^AutohandSquadDesktop\/[^\s]+ \(macos(?:; [^)]*)?\)$/.test(userAgent) || typeof invoke !== "function") return null;
   async function call(command, args) {
-    try { return await invoke(command, args); }
+    const context = currentOwnership();
+    try { return await invoke(command, { ...args, contextGeneration: context?.generation || '' }); }
     catch (error) { throw new Error(typeof error === "string" ? error : error?.message || "Could not update Computer Use permission."); }
   }
   return {
@@ -36,3 +37,4 @@ export function evidenceForMessage(message, sessions = []) {
   const stored = sessions.find((session) => session.id === identity.sessionId);
   return computerUseAttachments([...(Array.isArray(identity.files) ? identity.files : []), ...(Array.isArray(stored?.files) ? stored.files : [])]);
 }
+import { currentOwnership } from "../../lib/ownership-client.js";

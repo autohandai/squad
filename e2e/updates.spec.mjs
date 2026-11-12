@@ -36,6 +36,9 @@ test.beforeAll(async () => {
     await writeFile(join(directory, "squad", "update.json"), JSON.stringify(snapshot()));
     return { AUTOHAND_API_URL: fixtureOrigin };
   } });
+  // Native release metadata belongs to the machine service, outside datasets.
+  await writeFile(join(bridge.directory,'squad','daemon.json'),JSON.stringify({url:fixtureOrigin}));
+  await writeFile(join(bridge.directory,'squad','update.json'),JSON.stringify(snapshot()));
 });
 test.afterAll(async () => { await bridge?.close(); await new Promise(resolve => daemon?.close(resolve)); });
 

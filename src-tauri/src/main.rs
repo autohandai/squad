@@ -33,6 +33,8 @@ mod computer_use_grant;
 mod computer_use_setup;
 mod dock_badge;
 mod native_notifications;
+#[cfg(all(test, target_os = "macos"))]
+mod ownership_test_support;
 mod quick_chat;
 mod quick_chat_appearance;
 mod quick_chat_preferences;
@@ -51,6 +53,7 @@ const USAGE_REFRESH_TICKS: u32 = 60;
 
 #[derive(Default)]
 struct UsageCache {
+    generation: Option<String>,
     snapshot: Option<AccountUsage>,
     error: Option<String>,
 }
@@ -69,6 +72,7 @@ struct Shell {
     usage_refresh_requested: std::sync::atomic::AtomicBool,
     tray_refreshing: std::sync::atomic::AtomicBool,
     usage: Mutex<UsageCache>,
+    ownership_generation: Mutex<Option<String>>,
     reset: Mutex<system_reset::ResetGuard>,
 }
 
@@ -92,8 +96,6 @@ fn main() {
             squad_quit_for_update,
             quick_chat_preferences::squad_refresh_quick_chat,
             system_reset::squad_set_system_reset_stage,
-            system_reset::squad_system_reset_status,
-            system_reset::squad_restart_after_system_reset,
             artifact_preview::squad_open_artifact_in_browser,
             text_exports::squad_save_text_export
         ])
@@ -102,6 +104,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            dock_badge::initialize();
             computer_use_grant::prepare_bridge_secret()?;
             point_runtime_at_bundle(app.handle());
             let shell = Arc::new(Shell {
@@ -117,6 +120,7 @@ fn main() {
                 usage_refresh_requested: std::sync::atomic::AtomicBool::new(false),
                 tray_refreshing: std::sync::atomic::AtomicBool::new(false),
                 usage: Mutex::new(UsageCache::default()),
+                ownership_generation: Mutex::new(None),
                 reset: Mutex::new(system_reset::ResetGuard::default()),
             });
             app.manage(shell.clone());
@@ -327,7 +331,9 @@ async fn squad_quit_for_update(
     app: AppHandle,
     window: tauri::WebviewWindow,
     shell: tauri::State<'_, Arc<Shell>>,
+    context_generation: String,
 ) -> Result<(), String> {
+    let owned = require_native_context(&context_generation, true)?;
     if system_reset::blocked(&app) {
         return Err("Finish the reset before installing an update.".into());
     }
@@ -350,6 +356,7 @@ async fn squad_quit_for_update(
             "{}/api/updates/progress",
             base.trim_end_matches('/')
         ))
+        .header("x-squad-context", &owned.generation)
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -364,8 +371,25 @@ async fn squad_quit_for_update(
     {
         return Err("No verified update is ready to install. Squad was left open.".into());
     }
-    app.exit(0);
-    Ok(())
+    require_current_native_context(&owned)?;
+    let handle = app.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let result = require_current_native_context(&owned);
+        let closing = result.is_ok();
+        let _ = sender.send(result);
+        if closing {
+            handle.exit(0);
+        }
+    })
+    .map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        receiver
+            .recv()
+            .map_err(|_| "The update restart was cancelled.".to_owned())?
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn sidecar_name(base: &str) -> String {
@@ -534,7 +558,7 @@ fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
         account_label: "Starting…".to_string(),
         ..Default::default()
     };
-    let menu = tray_menu(app, &starting)?;
+    let menu = tray_menu(app, &starting, &std::collections::HashMap::new(), None)?;
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
         .tooltip("Autohand Squad")
@@ -582,7 +606,12 @@ fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
 
 /// The tray menu: account and plan usage at a glance (quiet, disabled lines),
 /// then the actions. Rebuilt from a fresh model on every refresh.
-fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wry>> {
+fn tray_menu(
+    app: &AppHandle,
+    model: &DesktopTrayModel,
+    icons: &std::collections::HashMap<String, tauri::image::Image<'static>>,
+    generation: Option<&str>,
+) -> tauri::Result<Menu<Wry>> {
     let info = |id: &str, label: &str| MenuItem::with_id(app, id, label, false, None::<&str>);
     let action = |id: &str, label: &str, enabled: bool| {
         MenuItem::with_id(app, id, label, enabled, None::<&str>)
@@ -636,8 +665,6 @@ fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wr
     owned.push(Box::new(action("open", "Open Autohand Squad", true)?));
     owned.push(Box::new(action("mission-control", "Needs you", true)?));
     if !model.members.is_empty() {
-        #[cfg(target_os = "macos")]
-        let icons = quick_chat::member_icons(app, app.state::<Arc<Shell>>().inner());
         let members = model
             .members
             .iter()
@@ -646,7 +673,7 @@ fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wr
                 {
                     tauri::menu::IconMenuItem::with_id(
                         app,
-                        format!("member:{}", member.id),
+                        format!("member:{}:{}", generation.unwrap_or("locked"), member.id),
                         &member.label,
                         true,
                         Some(
@@ -660,7 +687,11 @@ fn tray_menu(app: &AppHandle, model: &DesktopTrayModel) -> tauri::Result<Menu<Wr
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
-                    action(&format!("member:{}", member.id), &member.label, true)
+                    action(
+                        &format!("member:{}:{}", generation.unwrap_or("locked"), member.id),
+                        &member.label,
+                        true,
+                    )
                 }
             })
             .collect::<tauri::Result<Vec<_>>>()?;
@@ -794,7 +825,17 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
             });
         }
         other => {
-            if let Some(member_id) = other.strip_prefix("member:") {
+            if let Some((generation, member_id)) = other
+                .strip_prefix("member:")
+                .and_then(|value| value.split_once(':'))
+            {
+                if autohand_squad_runtime::ownership::read_active_context(&default_paths())
+                    .ok()
+                    .flatten()
+                    .is_none_or(|context| context.generation != generation)
+                {
+                    return;
+                }
                 #[cfg(target_os = "macos")]
                 {
                     *lock(&shell.popup_anchor) = None;
@@ -852,24 +893,137 @@ fn navigate_app(handle: &AppHandle, shell: &Shell, path: &str) {
     focus_main_window(handle);
 }
 
+fn clear_private_native_ui(app: &AppHandle, shell: &Arc<Shell>) {
+    system_reset::invalidate(shell);
+    computer_use_grant::clear_stale_dialog();
+    native_notifications::invalidate_scope();
+    dock_badge::invalidate_scope();
+    let ids: Vec<String> = lock(&shell.member_trays).keys().cloned().collect();
+    for id in ids {
+        drop(app.remove_tray_by_id(&format!("member-tray:{id}")));
+    }
+    lock(&shell.member_trays).clear();
+    lock(&shell.member_portraits).clear();
+    *lock(&shell.popup_anchor) = None;
+    if let Some(window) = app.get_webview_window(quick_chat::QUICK_CHAT_WINDOW) {
+        let _ = window.destroy();
+    }
+    if let Ok(menu) = tray_menu(
+        app,
+        &DesktopTrayModel {
+            account_label: "Verifying account…".into(),
+            ..Default::default()
+        },
+        &std::collections::HashMap::new(),
+        None,
+    ) {
+        if let Some(tray) = lock(&shell.tray).clone() {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
+}
+
 fn start_tray_refresh(handle: AppHandle, shell: Arc<Shell>) {
     refresh_tray(handle.clone(), shell.clone(), true);
     std::thread::spawn(move || {
         let mut tick: u32 = 0;
+        let mut observed = autohand_squad_runtime::ownership::read_active_context(&default_paths())
+            .ok()
+            .flatten()
+            .map(|context| context.generation);
+        let refresh_ticks = (TRAY_REFRESH.as_millis() / 250).max(1) as u32;
         loop {
-            std::thread::sleep(TRAY_REFRESH);
+            std::thread::sleep(Duration::from_millis(250));
             tick = tick.wrapping_add(1);
-            refresh_tray(
-                handle.clone(),
-                shell.clone(),
-                tick % USAGE_REFRESH_TICKS == 0,
-            );
+            let context = autohand_squad_runtime::ownership::read_active_context(&default_paths())
+                .ok()
+                .flatten();
+            let generation = context.as_ref().map(|context| context.generation.clone());
+            let changed = generation != observed;
+            if changed {
+                observed = generation;
+                *lock(&shell.usage) = UsageCache::default();
+                lock(&shell.harness_usage).clear();
+                let app = handle.clone();
+                let state = shell.clone();
+                let _ = handle.run_on_main_thread(move || {
+                    if !native_scope_current(context.as_ref()) {
+                        return;
+                    }
+                    clear_private_native_ui(&app, &state);
+                });
+            }
+            if changed || tick % refresh_ticks == 0 {
+                refresh_tray(
+                    handle.clone(),
+                    shell.clone(),
+                    changed || tick % (refresh_ticks * USAGE_REFRESH_TICKS) == 0,
+                );
+            }
         }
     });
 }
 
 /// Rebuild the tray menu from fresh squad status and (optionally) fresh
 /// account usage. Runs off the main thread; the menu swap is dispatched.
+fn native_scope_current(context: Option<&autohand_squad_runtime::ownership::OwnedContext>) -> bool {
+    match context {
+        Some(context) => {
+            autohand_squad_runtime::ownership::still_current(&default_paths(), context)
+        }
+        None => autohand_squad_runtime::ownership::read_active_context(&default_paths())
+            .ok()
+            .flatten()
+            .is_none(),
+    }
+}
+
+fn require_native_context(
+    generation: &str,
+    write: bool,
+) -> Result<autohand_squad_runtime::ownership::OwnedContext, String> {
+    let context = autohand_squad_runtime::ownership::read_active_context(&default_paths())
+        .map_err(|_| "Squad's account could not be verified.")?
+        .ok_or("Select a verified Squad first.")?;
+    if context.generation != generation || (write && !context.can_write) {
+        return Err(
+            "The selected Squad changed or cannot perform this action. Reopen it and try again."
+                .into(),
+        );
+    }
+    Ok(context)
+}
+
+fn require_current_native_context(
+    context: &autohand_squad_runtime::ownership::OwnedContext,
+) -> Result<(), String> {
+    if native_scope_current(Some(context)) {
+        Ok(())
+    } else {
+        Err("The selected Squad changed. Reopen it and try again.".into())
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod ownership_command_tests {
+    #[test]
+    fn captured_native_context_cannot_rebind_to_the_next_account() {
+        let fixture = crate::ownership_test_support::Fixture::new();
+        let alice = fixture.select("alice", "1234abcd-1234-4abc-8def-0123456789ab");
+        assert!(crate::require_current_native_context(&alice).is_ok());
+        let bob = fixture.select("bob", "2234abcd-1234-4abc-8def-0123456789ab");
+        assert!(crate::require_current_native_context(&alice).is_err());
+        assert!(crate::require_native_context(&alice.generation, true).is_err());
+        assert_eq!(
+            crate::require_native_context(&bob.generation, true)
+                .unwrap()
+                .actor
+                .id,
+            "bob"
+        );
+    }
+}
+
 fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
     if refresh_usage {
         shell
@@ -885,6 +1039,36 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
     std::thread::spawn(move || {
         let paths = default_paths();
         let overrides = PartialSquadConfig::default();
+        let owned = autohand_squad_runtime::ownership::read_active_context(&paths)
+            .ok()
+            .flatten();
+        let generation = owned.as_ref().map(|context| context.generation.clone());
+        let changed = {
+            let mut previous = lock(&shell.ownership_generation);
+            let changed = *previous != generation;
+            *previous = generation.clone();
+            changed
+        };
+        if changed {
+            *lock(&shell.usage) = UsageCache::default();
+            lock(&shell.harness_usage).clear();
+            lock(&shell.member_portraits).clear();
+            *lock(&shell.popup_anchor) = None;
+            let clear_handle = handle.clone();
+            let clear_shell = shell.clone();
+            let captured = owned.clone();
+            let _ = handle.run_on_main_thread(move || {
+                if !native_scope_current(captured.as_ref()) {
+                    return;
+                }
+                clear_private_native_ui(&clear_handle, &clear_shell);
+                if let Some(window) = clear_handle.get_webview_window(quick_chat::QUICK_CHAT_WINDOW)
+                {
+                    let _ = window.destroy();
+                }
+            });
+        }
+
         if shell
             .usage_refresh_requested
             .load(std::sync::atomic::Ordering::Acquire)
@@ -901,29 +1085,47 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
                 let paths = default_paths();
                 let overrides = PartialSquadConfig::default();
 
+                let owned = autohand_squad_runtime::ownership::read_active_context(&paths)
+                    .ok()
+                    .flatten();
                 let result = resolve_config(&paths, overrides.clone())
-                    .map(|config| refresh_account_usage(&config));
+                    .map(|config| refresh_account_usage(&paths, &config));
                 let mut cache = lock(&usage_shell.usage);
-                match result {
-                    Ok(Ok(Some(snapshot))) => {
-                        cache.snapshot = Some(snapshot);
-                        cache.error = None;
-                    }
-                    Ok(Ok(None)) => {
-                        cache.snapshot = None;
-                        cache.error = None;
-                    }
-                    Ok(Err(error)) | Err(error) => {
-                        cache.error = Some(format!("{error:#}"));
+                let current = owned.as_ref().is_some_and(|context| {
+                    autohand_squad_runtime::ownership::still_current(&paths, context)
+                });
+                if current
+                    && cache.generation.as_deref()
+                        != owned.as_ref().map(|context| context.generation.as_str())
+                {
+                    *cache = UsageCache::default();
+                }
+                if current {
+                    cache.generation = owned.as_ref().map(|context| context.generation.clone());
+                    match result {
+                        Ok(Ok(Some(snapshot))) => {
+                            cache.snapshot = Some(snapshot);
+                            cache.error = None;
+                        }
+                        Ok(Ok(None)) => {
+                            cache.snapshot = None;
+                            cache.error = None;
+                        }
+                        Ok(Err(error)) | Err(error) => {
+                            cache.snapshot = None;
+                            cache.error = Some(format!("{error:#}"));
+                        }
                     }
                 }
 
                 drop(cache);
                 if quick_chat_preferences::read().quick_chat_show_usage {
                     let base = lock(&usage_shell.app_url).clone();
-                    if let Some(base) = base {
-                        *lock(&usage_shell.harness_usage) =
-                            quick_chat_preferences::fetch_usage(&base);
+                    if let (Some(base), Some(context)) = (base, owned.as_ref()) {
+                        let windows = quick_chat_preferences::fetch_usage(&base, context);
+                        if native_scope_current(Some(context)) {
+                            *lock(&usage_shell.harness_usage) = windows;
+                        }
                     }
                 } else {
                     lock(&usage_shell.harness_usage).clear();
@@ -934,16 +1136,29 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
                 refresh_tray(usage_handle, usage_shell, false);
             });
         }
-        let (usage, error) = {
+        let (usage, error, usage_generation) = {
             let cache = lock(&shell.usage);
-            (cache.snapshot.clone(), cache.error.clone())
+            (
+                cache.snapshot.clone(),
+                cache.error.clone(),
+                cache.generation.clone(),
+            )
         };
-        let model = load_desktop_tray_model(&paths, &overrides, usage.as_ref(), error.as_deref());
+        let model = load_desktop_tray_model(
+            &paths,
+            &overrides,
+            usage.as_ref(),
+            error.as_deref(),
+            usage_generation.as_deref(),
+        );
         #[cfg(target_os = "macos")]
         let icons = if !quick_chat_preferences::visible_ids(&model, &quick_chat_preferences::read())
             .is_empty()
         {
-            quick_chat::member_icons(&handle, &shell)
+            owned
+                .as_ref()
+                .map(|context| quick_chat::member_icons(&handle, &shell, context))
+                .unwrap_or_default()
         } else {
             std::collections::HashMap::new()
         };
@@ -951,21 +1166,28 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
         let icons = std::collections::HashMap::new();
         let apply_handle = handle.clone();
         let apply_shell = shell.clone();
-        let apply_model = model.clone();
         let _ = handle.run_on_main_thread(move || {
-            quick_chat_preferences::apply(&apply_handle, &apply_shell, &apply_model, &icons)
-        });
-        match tray_menu(&handle, &model) {
-            Ok(menu) => {
-                let tray = lock(&shell.tray).clone();
-                if let Some(tray) = tray {
-                    if let Err(error) = tray.set_menu(Some(menu)) {
-                        eprintln!("tray menu update failed: {error}");
+            if !native_scope_current(owned.as_ref()) {
+                return;
+            }
+            quick_chat_preferences::apply(
+                &apply_handle,
+                &apply_shell,
+                &model,
+                &icons,
+                owned.as_ref(),
+            );
+            match tray_menu(&apply_handle, &model, &icons, generation.as_deref()) {
+                Ok(menu) => {
+                    if let Some(tray) = lock(&apply_shell.tray).clone() {
+                        if let Err(error) = tray.set_menu(Some(menu)) {
+                            eprintln!("tray menu update failed: {error}");
+                        }
                     }
                 }
+                Err(error) => eprintln!("tray menu build failed: {error}"),
             }
-            Err(error) => eprintln!("tray menu build failed: {error}"),
-        }
+        });
         shell
             .tray_refreshing
             .store(false, std::sync::atomic::Ordering::Release);

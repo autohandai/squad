@@ -74,12 +74,11 @@ export async function handle(req, res, url, ctx) {
 function recycleDesigner(ctx, req, agentId, body) {
   if (agentId !== MEMBER_DESIGNER_ID) return;
   const workspace = String(body?.workspace || ctx.getRuntime?.()?.defaultWorkspace || "").trim();
-  const host = String(req?.headers?.host || "127.0.0.1:19821");
   Promise.resolve()
     .then(() => ctx.sdkSessions?.reset?.(agentId, "member draft is one-shot"))
     .then(() => {
       if (!workspace) return null;
-      return fetch(`http://${host}/api/chat/warm`, {
+      return ctx.ownedBrokerRequest('/api/chat/warm', {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ agentId, workspace }),
@@ -99,14 +98,12 @@ async function askModel(ctx, description, body, req, agentId) {
   const runtime = ctx.getRuntime?.() || {};
   const workspace = String(body?.workspace || runtime.defaultWorkspace || "").trim();
   if (!workspace) throw new Error("no workspace to run in");
-  // The request arrived at this bridge, so its own Host header is the address
-  // to call back on. Guessing a port would break a bridge on any other one.
-  const host = String(req?.headers?.host || "127.0.0.1:19821");
+  // The immutable broker binding owns both the public address and generation.
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), DRAFT_TIMEOUT_MS);
   try {
-    const response = await fetch(`http://${host}/api/chat`, {
+    const response = await ctx.ownedBrokerRequest('/api/chat', {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

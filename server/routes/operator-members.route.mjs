@@ -1,7 +1,9 @@
 import { realpath, stat } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
 import { isAbsolute, resolve, sep } from 'node:path';
 import { MEMBER_PROFILE_FIELDS, memberProfileRevision, validateProfileAction } from '../../src/lib/member-shaping.js';
-import { BUILT_IN_TOOL_POLICY_GROUPS } from '../../src/lib/permission-policy.js';
+import { BUILT_IN_TOOL_POLICY_GROUPS, builtInPoliciesForRank } from '../../src/lib/permission-policy.js';
+import { cleanMemoryText } from '../team/store.mjs';
 import { projectsWithFolder } from '../../src/lib/folder-access.js';
 import { patchedMemberCopy, patchedProfileText } from './member-shaping.route.mjs';
 
@@ -32,11 +34,56 @@ function publicProfile(ctx, memberId, agent) {
   return {
     id: memberId, revision: memberProfileRevision(agent), name: agent.name || memberId,
     role: agent.role || '', description: agent.description || '', instructions: agent.instructions || '',
+    responsibilities: agent.description || '', memories: agent.memory || [],
     personality: agent.profileFiles?.find(file => file.section === 'persona')?.content || '',
     skills: agent.skills || [], projects: agent.projects || [], workspace: workspaceFor(ctx, memberId, agent),
     permissions: agent.permissions || {}, availableAbilities: { capabilities: CAPABILITIES, tools: TOOLS },
     takesEffect: 'next_turn',
   };
+}
+
+function responsibilities(fields) {
+  if (fields.responsibilities === undefined) return fields;
+  if (fields.description !== undefined) throw fail('Use either description or responsibilities; they describe the same saved field.');
+  const { responsibilities: description, ...rest } = fields;
+  return { ...rest, description };
+}
+
+function memories(value) {
+  if (!Array.isArray(value) || value.length > 100 || value.some(item => typeof item !== 'string')) throw fail('Provide at most 100 memory texts.');
+  return [...new Set(value.map(cleanMemoryText))].map(text => ({ id: `memory-${randomUUID()}`, text, at: new Date().toISOString() }));
+}
+
+async function createMember(ctx, input) {
+  keys(input, ['request_id', 'name', 'role', 'description', 'responsibilities', 'instructions', 'personality', 'skills', 'memories', 'workspace', 'engine']);
+  if (typeof input.request_id !== 'string' || !input.request_id.trim() || input.request_id.length > 256) throw fail('Provide a stable request_id for member creation.');
+  const { request_id, workspace = '', engine = 'autohand', skills = [], memories: initialMemory = [], ...fields } = input;
+  const { patch } = validateProfileAction({ op: 'set', ...responsibilities(fields) });
+  if (!patch.name || !patch.role) throw fail('A member needs a name and role.');
+  if (typeof workspace !== 'string' || typeof engine !== 'string' || !engine.trim()) throw fail('Workspace and engine must be text.');
+  const id = `member-${createHash('sha256').update(request_id).digest('hex').slice(0, 32)}`;
+  const requestHash = createHash('sha256').update(JSON.stringify({ ...patch, workspace, engine, skills, initialMemory })).digest('hex');
+  const previous = await ctx.agentChannelActions.memberAccess(id);
+  if (previous) {
+    if (previous.removed || previous.creation?.requestHash !== requestHash) throw fail('This member creation request conflicts with an earlier request.', 409);
+    return { ...publicProfile(ctx, id, previous.agent), created: false };
+  }
+  const state = await ctx.readChannelsState();
+  if (Object.values(state.agentChannelAccess || {}).filter(item => !item.removed).length >= 200) throw fail('This Squad has reached its 200-member limit.', 409);
+  const folder = workspace ? await ctx.cleanWorkspace(workspace) : '';
+  const harnesses = await ctx.memberHarnesses();
+  if (!harnesses.some(item => item.id === engine)) throw fail('Choose an engine ID from the harness catalog.');
+  const agent = patchedMemberCopy({ id, name: patch.name, role: patch.role, createdAt: new Date().toISOString(),
+    status: 'idle', harness: { id: engine }, workspace: folder, projects: folder ? [{ path: folder }] : [],
+    skills: [], memory: memories(initialMemory),
+    permissions: { permissionMode: 'restricted', modes: Object.fromEntries(CAPABILITIES.map(id => [id, ['file.read', 'search.text'].includes(id) ? 'allow' : 'block'])), builtInPolicies: builtInPoliciesForRank(1) },
+  }, patch);
+  if (!Array.isArray(skills) || skills.length > 32 || skills.some(id => typeof id !== 'string' || !id.trim() || id.length > 500)) throw fail('Choose at most 32 skill package IDs.');
+  await ctx.validateSkillSelections(agent, skills);
+  agent.skills = [...new Set(skills)];
+  const receipt = await ctx.agentChannelActions.setAccess(id, { agent, creation: { requestHash }, profile: `Name: ${agent.name}\nRole: ${agent.role}\nResponsibilities: ${agent.description || ''}\nOperating instructions: ${agent.instructions || ''}\nBrain card fields for this run:\n` });
+  const saved = await accessFor(ctx, id);
+  return { ...publicProfile(ctx, id, saved.agent), created: receipt.created !== false, note: 'Saved without starting work or enabling routines. Review permissions before assigning work.' };
 }
 
 function abilityPatch(agent, input) {
@@ -75,8 +122,12 @@ async function save(ctx, memberId, access, next, profile, expectedRevision) {
 }
 
 export async function handle(req, res, url, ctx) {
-  if (!url.pathname.startsWith('/api/control-plane/members/')) return false;
+  if (url.pathname !== '/api/control-plane/members' && !url.pathname.startsWith('/api/control-plane/members/')) return false;
   try {
+    if (url.pathname === '/api/control-plane/members' && req.method === 'POST') {
+      const data = await createMember(ctx, await ctx.readBody(req));
+      ctx.json(res, data.created ? 201 : 200, { success: true, data }); return true;
+    }
     const match = url.pathname.match(MEMBER);
     if (!match) throw fail('Invalid member route.');
     const [, memberId, action] = match;
@@ -108,12 +159,13 @@ export async function handle(req, res, url, ctx) {
         next = { ...access.agent, projects: projects.filter((item, index) => roots[index] !== path && resolve(item.path) !== displayPath) };
       }
     } else if (!action && req.method === 'PATCH') {
-      keys(body, ['expectedRevision', 'name', 'role', 'description', 'instructions', 'personality', 'skills', 'abilities']);
-      const { expectedRevision: _revision, abilities, skills, ...fields } = body;
-      if (!Object.keys(fields).length && abilities === undefined && skills === undefined) throw fail('Choose a profile field to change.');
-      const patch = Object.keys(fields).length ? validateProfileAction({ op: 'set', ...fields }).patch : {};
+      keys(body, ['expectedRevision', 'name', 'role', 'description', 'responsibilities', 'instructions', 'personality', 'skills', 'memories', 'abilities']);
+      const { expectedRevision: _revision, abilities, skills, memories: memory, ...fields } = body;
+      if (!Object.keys(fields).length && abilities === undefined && skills === undefined && memory === undefined) throw fail('Choose a profile field to change.');
+      const patch = Object.keys(fields).length ? validateProfileAction({ op: 'set', ...responsibilities(fields) }).patch : {};
       next = patchedMemberCopy(access.agent, patch);
       profile = patchedProfileText(access.profile, patch);
+      if (memory !== undefined) next.memory = memories(memory);
       if (abilities !== undefined) {
         if (abilities.workspace) abilities.workspace = await ctx.cleanWorkspace(abilities.workspace);
         next.permissions = abilityPatch(access.agent, abilities);

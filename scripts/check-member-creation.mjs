@@ -102,7 +102,7 @@ await check('rapid submit and refresh retry use one identity and preserve custom
   await until(()=>browser.evaluate(`location.pathname==='/conversations/new'`),'confirmed creation navigation',20000);
   const requests=await calls(browser);assert.equal(requests.length,2);assert.equal(requests[1].agentId,id);
   assert.equal((await members(browser)).filter(member=>member.id===id).length,1);
-  const profile=JSON.parse(await readFile(join(bridge.directory,'app','agents',id,'profile.json'),'utf8'));
+  const profile=JSON.parse(await readFile(join(bridge.appRoot,'agents',id,'profile.json'),'utf8'));
   assert.match(profile.instructions,/CUSTOM_INSTRUCTIONS_PRESERVED/);assert.equal(profile.name,'Recovered member');
   await bridge.restart();await browser.navigate(bridge.origin+'/');
   await until(()=>browser.evaluate(`document.body.textContent.includes('Recovered member')`),'confirmed roster after restart');
@@ -156,7 +156,7 @@ await check('handwritten role preserves its authored personality and brain card 
   await browser.evaluate(`sessionStorage.setItem('creation.fail','false')`);await submit(browser);
   await until(()=>browser.evaluate(`location.pathname==='/conversations/new'`),'confirmed handwritten member',20000);
   assert.equal((await calls(browser))[1].agentId,id);
-  const profile=JSON.parse(await readFile(join(bridge.directory,'app','agents',id,'profile.json'),'utf8'));
+  const profile=JSON.parse(await readFile(join(bridge.appRoot,'agents',id,'profile.json'),'utf8'));
   assert.equal(profile.role,'GTM APAC Leader');assert.match(profile.brainCard.purpose,/AUTHORED_PURPOSE/);
   assert.match(profile.instructions,/^Act as GTM APAC Leader\./);
   assert.match(profile.profileFiles.find(file=>file.section==='persona').content,/AUTHORED_PERSONALITY/);
@@ -172,7 +172,7 @@ await check('interrupted acknowledgement recovers the prepared member with the s
   await submit(browser);
   await until(()=>browser.evaluate(`sessionStorage.getItem('creation.prepared')==='true'`),'prepared response held before acknowledgement',20000);
   const id=(await calls(browser))[0].agentId;
-  assert.equal(JSON.parse(await readFile(join(bridge.directory,'app','agents',id,'profile.json'),'utf8')).name,'Recovered member');
+  assert.equal(JSON.parse(await readFile(join(bridge.appRoot,'agents',id,'profile.json'),'utf8')).name,'Recovered member');
   assert.ok(!(await members(browser)).some(member=>member.id===id));
   await browser.navigate(bridge.origin+'/squad-members/new?workspace='+encodeURIComponent(process.cwd()));
   await until(()=>browser.evaluate(`document.querySelector('[role="alert"]')?.textContent.includes('Preparation was interrupted')`),'interrupted preparation recovery');

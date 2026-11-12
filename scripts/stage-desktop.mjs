@@ -79,9 +79,10 @@ async function stageRuntime() {
   await mkdir(sdkDestination, { recursive: true });
   await copyFile(join(sdkSource, 'package.json'), join(sdkDestination, 'package.json'));
   await cp(join(sdkSource, 'dist'), join(sdkDestination, 'dist'), { recursive: true });
-  for (const dependency of ['toml', 'yaml']) {
+  for (const dependency of ['toml', 'yaml', 'zod']) {
     await cp(join(modulesRoot, dependency), join(runtimeDir, 'node_modules', dependency), { recursive: true, dereference: true });
   }
+  await cp(join(rootDir, 'packages', 'squad-portable'), join(runtimeDir, 'node_modules', '@autohand', 'squad-portable'), { recursive: true, dereference: true });
   await stageClaudeSdk(modulesRoot, runtimeDir);
 
   // Vendored Autohand CLI for this platform, verified against BUILD_INFO.
@@ -136,7 +137,9 @@ async function stageSidecars({ buildRust = true } = {}) {
   await assertFile(nodeSource);
   const version = spawnSync(nodeSource, ['--version'], { encoding: 'utf8' }).stdout.trim();
   const [major, minor] = version.replace(/^v/, '').split('.').map(Number);
-  if (major < 18 || (major === 18 && minor < 17)) throw new Error(`Node runtime must be 18.17 or newer; found ${version}`);
+  if (!((major === 22 && minor >= 13) || major >= 24)) throw new Error(`Node runtime must be 22.13 LTS or 24+ with built-in SQLite; found ${version}`);
+  const sqlite = spawnSync(nodeSource, ['--input-type=module', '-e', "import {DatabaseSync} from 'node:sqlite'; const db=new DatabaseSync(':memory:'); db.exec('BEGIN EXCLUSIVE; ROLLBACK;'); db.close();"], { encoding:'utf8', timeout:10_000 });
+  if (sqlite.status !== 0) throw new Error('The selected Node runtime cannot provide the built-in SQLite writer lease. Choose Node 22.13 LTS or 24+ with SQLite enabled.');
   const nodeTarget = join(binariesDir, `${exe(`node-${triple}`)}`.replace(`-${triple}.exe`, `-${triple}.exe`));
   await copyFile(nodeSource, nodeTarget);
   if (!isWindows) await chmod(nodeTarget, 0o755);

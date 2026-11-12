@@ -66,7 +66,7 @@ export function renderNotes({ version, channel, tag, repository, sourceSha, chan
     '- **macOS:** open the DMG and drag Autohand Squad to Applications. Apple Silicon and Intel builds are separate.',
     '- **Windows:** run the setup EXE; it installs for the current user and fetches WebView2 if it is missing.',
     '- **Linux:** `sudo apt install ./autohand-squad-*.deb`, or make the AppImage executable and run it.',
-    '- **Headless / servers:** the portable `.tar.gz` runs `bin/squad` with a system Node 18.17+.',
+    '- **Headless / servers:** the portable `.tar.gz` runs `bin/squad` with a system Node 22.13 LTS or 24+.',
     '',
     '## Verify',
     '',

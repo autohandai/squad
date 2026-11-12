@@ -42,6 +42,7 @@ export function OutsideSessionsSettings({ api }) {
       <div className="px-2">
         <div className="font-medium">Sessions outside Squad</div>
         <p className="mt-1 text-sm text-muted-foreground">Record Claude Code and Codex sessions you start in a terminal. Each prompt appears in the Runs tab of the member on that engine and folder, and in All work. Squad adds its own hooks to the engine's config and keeps a backup; your other hooks are left alone.</p>
+        <p className="mt-2 text-xs text-muted-foreground">Recording belongs to the Squad where you enable it. Another account or a restored/reset dataset needs its own explicit setup.</p>
       </div>
       <div className="mt-2 divide-y divide-border/60">
         {ENGINES.map((engine) => {
@@ -50,12 +51,12 @@ export function OutsideSessionsSettings({ api }) {
             <label key={engine.id} className="flex items-center justify-between gap-4 px-2 py-3">
               <span className="min-w-0">
                 <span className="block text-sm">{engine.label}</span>
-                <span className="mt-0.5 block truncate text-xs text-muted-foreground">{entry?.error || (entry?.installed ? `Recording · ${entry.path}` : entry?.path || engine.file)}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground [overflow-wrap:anywhere]">{entry?.error || (entry?.installed ? `Recording · ${entry.path}` : entry?.path || engine.file)}</span>
               </span>
               <Switch
                 aria-label={`Record ${engine.label} sessions started outside Squad`}
                 checked={Boolean(entry?.installed)}
-                disabled={!status || busy === engine.id || Boolean(entry?.error)}
+                disabled={!status || busy === engine.id || Boolean(entry?.error)&&!entry?.needsReinstall}
                 onCheckedChange={(on) => toggle(engine.id, on)}
               />
             </label>

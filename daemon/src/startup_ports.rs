@@ -33,6 +33,19 @@ fn same_state(value: &serde_json::Value, paths: &StatePaths) -> bool {
         .is_some_and(|root| Path::new(root) == paths.root)
 }
 
+pub(crate) fn require_owned_web_protocol(paths: &StatePaths, host: &str, port: u16) -> Result<()> {
+    if let Ok(value) = post_to::<serde_json::Value>(host, port, "GET", "/api/health", None) {
+        if value["success"] == true
+            && value["service"] == "autohand-squad-bridge"
+            && same_state(&value, paths)
+            && value["ownership"] != 1
+        {
+            bail!("An incompatible Squad bridge is still running for this data folder. Close its older app or server, then relaunch this version. Running work and saved data were left unchanged.");
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn own_web(paths: &StatePaths, host: &str, port: u16) -> bool {
     if !web_runtime_is_ready(host, port) {
         return false;
@@ -267,6 +280,7 @@ pub fn prepare_desktop_startup(paths: &StatePaths, config: &SquadConfig) -> Resu
     let mut analytics_port = analytics_port_for(paths, &config.host);
     let original_web = web_port_for(config);
     if crate::cli::is_local_open_url(&config.open_url) {
+        require_owned_web_protocol(paths, &config.host, original_web)?;
         let record = read_web_server_record(paths)
             .ok()
             .flatten()
@@ -386,6 +400,48 @@ mod tests {
     fn ports_do_not_overlap() {
         let port = select_port("127.0.0.1", 19821, &[19821], false, false, false).unwrap();
         assert_ne!(port, 19821);
+    }
+
+    #[test]
+    fn legacy_bridge_is_not_ready_or_reused_and_gets_an_actionable_handoff() {
+        use std::io::{Read, Write};
+        let root = std::env::temp_dir().join(format!(
+            "squad-protocol-handoff-{}-{}",
+            std::process::id(),
+            crate::state::now_string().replace(':', "-")
+        ));
+        let paths = StatePaths::from_root(&root);
+        for protocol in [None, Some(1), Some(2)] {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let mut health = serde_json::json!({"success":true,"service":"autohand-squad-bridge","stateDir":paths.root});
+            if let Some(version) = protocol {
+                health["ownership"] = serde_json::json!(version);
+            }
+            let body = health.to_string();
+            let server = std::thread::spawn(move || {
+                for _ in 0..2 {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                        .unwrap();
+                    let mut request = [0; 4096];
+                    let _ = stream.read(&mut request).unwrap();
+                    write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+                }
+            });
+            assert_eq!(web_runtime_is_ready("127.0.0.1", port), protocol == Some(1));
+            let result = require_owned_web_protocol(&paths, "127.0.0.1", port);
+            if protocol == Some(1) {
+                assert!(result.is_ok());
+            } else {
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Close its older app or server"));
+            }
+            server.join().unwrap();
+        }
     }
 
     #[test]

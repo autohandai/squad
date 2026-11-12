@@ -263,7 +263,8 @@ assertIncludes(packager, 'autohandai/squad', 'Release packager defaults to the o
 assertIncludes(packager, 'binaryName: sourceName', 'Windows manifests retain executable suffixes');
 assertIncludes(portablePackager, "'autohand-squad-ui'", 'Portable bundle includes every native runtime binary');
 assertIncludes(portablePackager, "'autohand-windows-x64.exe'", 'Portable bundle includes the Windows Agent SDK CLI');
-assertIncludes(portablePackager, "for (const dependency of ['toml', 'yaml'])", 'Portable bundle vendors production SDK dependencies');
+// The archive composition check imports the real runtime packages; do not
+// freeze the source spelling of its production-dependency loop here.
 assertIncludes(portablePackager, "spawnSync('tar'", 'Portable bundle creates one extractable archive');
 assertIncludes(installerPackager, "requiredEnv('NODE_RUNTIME_PATH')", 'Native installer requires an explicit Node.js runtime');
 assertIncludes(installerPackager, "binary === 'autohand-squad-ui'", 'Native installer launches the desktop UI binary');

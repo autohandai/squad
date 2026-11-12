@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import {getAttentionBadgeClient} from '../src/lib/attention-badge.js';
+import {activateOwnedStorage} from '../src/lib/owned-storage.js';
+const generation='12345678-1234-1234-1234-123456789012';
+activateOwnedStorage({state:'ready',storageKey:'native-badge-fixture',generation,actor:{id:'fixture-alice'},owner:{kind:'user',id:'fixture-alice'}});
 const ua='AutohandSquadDesktop/0.1.5 (macos; aarch64)';
 for(const userAgent of ['Mozilla/5.0','AutohandSquadQuickChat/0.1.5 (macos)','AutohandSquadDesktop/0.1.5 (windows; x64)'])assert.equal(getAttentionBadgeClient({userAgent,invoke:async()=>{throw Error('must not run');}}),null);
 const calls=[];let finish;
-const client=getAttentionBadgeClient({userAgent:ua,invoke:(command,{count})=>{calls.push({command,count});return new Promise(resolve=>{finish=()=>resolve({supported:true,count});});}});
+const client=getAttentionBadgeClient({userAgent:ua,invoke:(command,{count,contextGeneration})=>{assert.equal(contextGeneration,generation);calls.push({command,count});return new Promise(resolve=>{finish=()=>resolve({supported:true,count});});}});
 const first=client.setCount(3);client.setCount(8);client.setCount(2);assert.equal(calls.length,1);finish();await new Promise(r=>setTimeout(r,0));assert.deepEqual(calls.map(c=>c.count),[3,2]);finish();await first;await client.setCount(2);assert.equal(calls.length,2);
 const clear=client.setCount(0);finish();await clear;assert.equal(calls.at(-1).count,0);
 await assert.rejects(client.setCount(-1));await assert.rejects(client.setCount(1.5));

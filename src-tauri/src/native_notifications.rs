@@ -35,10 +35,15 @@ pub(crate) async fn squad_notification_permission(
     window: WebviewWindow,
     shell: tauri::State<'_, Arc<Shell>>,
     request: bool,
+    context_generation: String,
 ) -> Result<PermissionReply, String> {
     trusted_caller(&window, &shell)?;
+    let owned = crate::require_native_context(&context_generation, false)?;
     tauri::async_runtime::spawn_blocking(move || {
-        permission(request).map(|permission| PermissionReply { permission })
+        crate::require_current_native_context(&owned)?;
+        let permission = permission(request)?;
+        crate::require_current_native_context(&owned)?;
+        Ok(PermissionReply { permission })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -48,13 +53,15 @@ pub(crate) async fn squad_notification_permission(
 pub(crate) async fn squad_notification_test(
     window: WebviewWindow,
     shell: tauri::State<'_, Arc<Shell>>,
+    context_generation: String,
 ) -> Result<serde_json::Value, String> {
     trusted_caller(&window, &shell)?;
+    let owned = crate::require_native_context(&context_generation, true)?;
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(target_os = "macos")]
         {
             if permission(false)? != "granted" { return Err("Allow notifications for Autohand Squad in macOS System Settings first.".into()); }
-            macos::submit("squad-test", "Autohand Squad", "Your test notification is ready. Click to open Needs you.", "/work")?;
+            macos::submit("squad-test", "Autohand Squad", "Your test notification is ready. Click to open Needs you.", "/work", &owned)?;
             Ok(serde_json::json!({"posted":true,"method":"macos-user-notifications","message":"macOS accepted the test notification. Banner display follows your notification settings and Focus mode."}))
         }
         #[cfg(not(target_os = "macos"))]
@@ -66,8 +73,10 @@ pub(crate) async fn squad_notification_test(
 pub(crate) fn squad_notification_settings(
     window: WebviewWindow,
     shell: tauri::State<'_, Arc<Shell>>,
+    context_generation: String,
 ) -> Result<(), String> {
     trusted_caller(&window, &shell)?;
+    let _owned = crate::require_native_context(&context_generation, false)?;
     #[cfg(target_os = "macos")]
     return tauri_plugin_opener::open_url(
         "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
@@ -127,6 +136,11 @@ pub(crate) fn install(app: &AppHandle, shell: Arc<Shell>) {
     macos::install(app, shell);
 }
 
+pub(crate) fn invalidate_scope() {
+    #[cfg(target_os = "macos")]
+    macos::invalidate_scope();
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
@@ -134,15 +148,66 @@ mod macos {
     use objc2::rc::Retained;
     use objc2::runtime::{Bool, ProtocolObject};
     use objc2::{define_class, msg_send, AnyThread, DefinedClass};
-    use objc2_foundation::{NSError, NSObject, NSObjectProtocol, NSString};
+    use objc2_foundation::{NSArray, NSDictionary, NSError, NSObject, NSObjectProtocol, NSString};
     use objc2_user_notifications::*;
     use std::collections::{HashMap, HashSet};
     use std::io::Read;
     use std::ptr::NonNull;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Mutex, OnceLock};
     use std::time::Duration;
 
-    static CLICK_ROUTES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    #[derive(Clone)]
+    struct ClickTarget {
+        route: String,
+        context: autohand_squad_runtime::ownership::OwnedContext,
+        event_key: String,
+    }
+    static CLICK_ROUTES: OnceLock<Mutex<HashMap<String, ClickTarget>>> = OnceLock::new();
+
+    fn scoped_identifier(
+        id: &str,
+        context: &autohand_squad_runtime::ownership::OwnedContext,
+    ) -> String {
+        format!("autohand-squad:{}:{id}", context.generation)
+    }
+    fn target_current(target: &ClickTarget) -> bool {
+        crate::native_scope_current(Some(&target.context))
+    }
+    fn current_target(identifier: &str) -> Option<ClickTarget> {
+        CLICK_ROUTES
+            .get()
+            .and_then(|routes| lock(routes).get(identifier).cloned())
+            .filter(target_current)
+    }
+    fn remove_os(identifiers: &[String]) {
+        let strings: Vec<_> = identifiers
+            .iter()
+            .map(|value| NSString::from_str(value))
+            .collect();
+        let references: Vec<_> = strings.iter().map(|value| &**value).collect();
+        let ids = NSArray::from_slice(&references);
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        center.removePendingNotificationRequestsWithIdentifiers(&ids);
+        center.removeDeliveredNotificationsWithIdentifiers(&ids);
+    }
+    fn retain_targets(mut keep: impl FnMut(&str, &ClickTarget) -> bool) {
+        let mut routes = lock(CLICK_ROUTES.get_or_init(Default::default));
+        let mut removed = Vec::new();
+        routes.retain(|id, target| {
+            if keep(id, target) {
+                true
+            } else {
+                removed.push(id.clone());
+                false
+            }
+        });
+        drop(routes);
+        remove_os(&removed);
+    }
+    pub(super) fn invalidate_scope() {
+        retain_targets(|_, target| target_current(target));
+    }
     struct DelegateIvars {
         app: AppHandle,
         shell: Arc<Shell>,
@@ -159,12 +224,18 @@ mod macos {
             fn will_present(
                 &self,
                 _center: &UNUserNotificationCenter,
-                _notification: &UNNotification,
+                notification: &UNNotification,
                 completion: &DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
             ) {
-                completion.call((UNNotificationPresentationOptions::Banner
-                    | UNNotificationPresentationOptions::List
-                    | UNNotificationPresentationOptions::Sound,));
+                let identifier = notification.request().identifier().to_string();
+                if current_target(&identifier).is_some() {
+                    completion.call((UNNotificationPresentationOptions::Banner
+                        | UNNotificationPresentationOptions::List
+                        | UNNotificationPresentationOptions::Sound,));
+                } else {
+                    remove_os(&[identifier]);
+                    completion.call((UNNotificationPresentationOptions::empty(),));
+                }
             }
             #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
             fn did_receive(
@@ -174,20 +245,17 @@ mod macos {
                 completion: &DynBlock<dyn Fn()>,
             ) {
                 let identifier = response.notification().request().identifier().to_string();
-                let route = CLICK_ROUTES
-                    .get()
-                    .and_then(|routes| lock(routes).get(&identifier).cloned());
-                if let Some(route) = route.and_then(|route| notification_route(&route)) {
+                if let Some(target) = current_target(&identifier) {
                     let app = self.ivars().app.clone();
                     let handle = app.clone();
                     let shell = self.ivars().shell.clone();
                     let _ = app.run_on_main_thread(move || {
                         // Open the original conversation, including channel
                         // threads, in the main app rather than a browser tab.
-                        crate::navigate_app(&handle, &shell, &route);
+                        if target_current(&target) {
+                            crate::navigate_app(&handle, &shell, &target.route);
+                        }
                     });
-                } else {
-                    crate::focus_main_window(&self.ivars().app);
                 }
                 completion.call(());
             }
@@ -195,6 +263,11 @@ mod macos {
     );
 
     pub(super) fn install(app: &AppHandle, shell: Arc<Shell>) {
+        // OS entries can outlive the process that held their context. A new
+        // native process never adopts an unscoped or previous-process entry.
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        center.removeAllPendingNotificationRequests();
+        center.removeAllDeliveredNotifications();
         let allocated = SquadNotificationDelegate::alloc().set_ivars(DelegateIvars {
             app: app.clone(),
             shell: shell.clone(),
@@ -252,21 +325,70 @@ mod macos {
             .map_err(|_| "Could not read macOS notification permission.".into())
     }
 
-    pub(super) fn submit(id: &str, title: &str, body: &str, route: &str) -> Result<(), String> {
+    pub(super) fn submit(
+        id: &str,
+        title: &str,
+        body: &str,
+        route: &str,
+        owned: &autohand_squad_runtime::ownership::OwnedContext,
+    ) -> Result<(), String> {
+        crate::require_current_native_context(owned)?;
         let route = notification_route(route).ok_or("Invalid notification destination.")?;
-        let identifier = format!("autohand-squad:{id}");
+        let event_key = scoped_identifier(id, owned);
+        let mut nonce = [0_u8; 16];
+        getrandom::fill(&mut nonce)
+            .map_err(|_| "Could not create a native notification identifier.")?;
+        let identifier = format!(
+            "{event_key}:{}",
+            nonce
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+        retain_targets(|_, target| target.event_key != event_key);
         let routes = CLICK_ROUTES.get_or_init(Default::default);
-        lock(routes).insert(identifier.clone(), route);
+        let target = ClickTarget {
+            route: route.clone(),
+            context: owned.clone(),
+            event_key,
+        };
         let content = UNMutableNotificationContent::new();
         content.setTitle(&NSString::from_str(title));
         content.setBody(&NSString::from_str(body));
         content.setSound(Some(&UNNotificationSound::defaultSound()));
+        let keys = [
+            NSString::from_str("generation"),
+            NSString::from_str("ownerKey"),
+            NSString::from_str("datasetId"),
+            NSString::from_str("route"),
+        ];
+        let values = [
+            NSString::from_str(&owned.generation),
+            NSString::from_str(&owned.owner_key),
+            NSString::from_str(&owned.dataset_id),
+            NSString::from_str(&route),
+        ];
+        let info = NSDictionary::from_slices(
+            &keys.iter().map(|key| &**key).collect::<Vec<_>>(),
+            &values.iter().map(|value| &**value).collect::<Vec<_>>(),
+        );
+        // SAFETY: NSDictionary generic parameters are erased in Objective-C;
+        // every key and value here is an immutable property-list NSString.
+        unsafe {
+            content.setUserInfo(
+                &*((&*info as *const NSDictionary<NSString, NSString>).cast::<NSDictionary>()),
+            );
+        }
         let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
             &NSString::from_str(&identifier),
             &content,
             None,
         );
         let (sender, receiver) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let callback_cancelled = cancelled.clone();
+        let callback_context = owned.clone();
+        let callback_identifier = identifier.clone();
         let block = RcBlock::new(move |error: *mut NSError| {
             let result = if error.is_null() {
                 Ok(())
@@ -274,15 +396,30 @@ mod macos {
                 // SAFETY: Apple owns a live NSError during this callback.
                 Err(unsafe { &*error }.localizedDescription().to_string())
             };
-            let _ = sender.send(result);
+            if callback_cancelled.load(Ordering::Acquire)
+                || crate::require_current_native_context(&callback_context).is_err()
+            {
+                remove_os(&[callback_identifier.clone()]);
+            }
+            if sender.send(result).is_err() {
+                remove_os(&[callback_identifier.clone()]);
+            }
         });
-        UNUserNotificationCenter::currentNotificationCenter()
-            .addNotificationRequest_withCompletionHandler(&request, Some(&block));
+        {
+            let mut routes = lock(routes);
+            crate::require_current_native_context(owned)?;
+            routes.insert(identifier.clone(), target);
+            UNUserNotificationCenter::currentNotificationCenter()
+                .addNotificationRequest_withCompletionHandler(&request, Some(&block));
+        }
         let result = receiver
             .recv_timeout(Duration::from_secs(5))
-            .map_err(|_| "macOS did not confirm notification submission.".to_string())?;
-        if result.is_err() {
+            .unwrap_or_else(|_| Err("macOS did not confirm notification submission.".to_string()));
+        if result.is_err() || crate::require_current_native_context(owned).is_err() {
+            cancelled.store(true, Ordering::Release);
             lock(routes).remove(&identifier);
+            remove_os(&[identifier]);
+            return Err("The notification was not submitted for the current Squad.".into());
         }
         result
     }
@@ -290,30 +427,63 @@ mod macos {
     fn poll_queue(app: AppHandle, shell: Arc<Shell>) {
         let Ok(client) = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(4))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
         else {
             return;
         };
         let mut submitted: HashSet<String> = HashSet::new();
+        let mut generation = String::new();
         loop {
             std::thread::sleep(Duration::from_secs(2));
-            let Some(bridge) = lock(&shell.app_url).clone() else {
+            let Some(owned) =
+                autohand_squad_runtime::ownership::read_active_context(&crate::default_paths())
+                    .ok()
+                    .flatten()
+                    .filter(|context| context.can_write)
+            else {
+                submitted.clear();
+                invalidate_scope();
+                continue;
+            };
+            if generation != owned.generation {
+                submitted.clear();
+                generation = owned.generation.clone();
+                invalidate_scope();
+            }
+            let Some(bridge) = lock(&shell.app_url)
+                .as_deref()
+                .and_then(|value| Url::parse(value).ok())
+                .filter(|url| {
+                    url.scheme() == "http"
+                        && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                })
+            else {
                 continue;
             };
             let Ok(response) = client
-                .get(format!(
-                    "{}/api/notifications",
-                    bridge.trim_end_matches('/')
-                ))
+                .get(
+                    bridge
+                        .join("/api/notifications")
+                        .expect("fixed notification path"),
+                )
+                .header("x-squad-context", &owned.generation)
                 .send()
             else {
                 continue;
             };
+            if !response.status().is_success() {
+                continue;
+            }
             let mut bytes = Vec::new();
             if response
-                .take(2 * 1024 * 1024)
+                .take(2 * 1024 * 1024 + 1)
                 .read_to_end(&mut bytes)
                 .is_err()
+                || bytes.len() > 2 * 1024 * 1024
+                || crate::require_current_native_context(&owned).is_err()
             {
                 continue;
             }
@@ -321,45 +491,37 @@ mod macos {
                 continue;
             };
             let Some(items) = payload
-                .get("data")
-                .and_then(|data| data.get("items"))
-                .and_then(|items| items.as_array())
+                .pointer("/data/items")
+                .and_then(|value| value.as_array())
             else {
                 continue;
             };
-            let feed_ids: HashSet<&str> = items
+            let feed_ids: HashSet<String> = items
                 .iter()
                 .take(100)
-                .filter_map(|item| item.get("id").and_then(|value| value.as_str()))
+                .filter_map(|item| item.get("id").and_then(|v| v.as_str()))
+                .map(|id| scoped_identifier(id, &owned))
                 .collect();
-            submitted.retain(|id| feed_ids.contains(id.as_str()));
-            lock(CLICK_ROUTES.get_or_init(Default::default)).retain(|identifier, _| {
-                identifier == "autohand-squad:squad-test"
-                    || identifier
-                        .strip_prefix("autohand-squad:")
-                        .is_some_and(|id| feed_ids.contains(id))
+            submitted.retain(|id| feed_ids.contains(id));
+            retain_targets(|_, target| {
+                target_current(target)
+                    && (target.event_key == scoped_identifier("squad-test", &owned)
+                        || feed_ids.contains(&target.event_key))
             });
-            // Restore click targets from acknowledged events on relaunch. The
-            // OS can keep delivered notifications across process lifetimes.
-            for item in items.iter().take(100) {
-                if let (Some(id), Some(route)) = (
-                    item.get("id").and_then(|value| value.as_str()),
-                    item.get("route")
-                        .and_then(|value| value.as_str())
-                        .and_then(notification_route),
-                ) {
-                    lock(CLICK_ROUTES.get_or_init(Default::default))
-                        .insert(format!("autohand-squad:{id}"), route);
-                }
-            }
-            if permission(false).as_deref() != Ok("granted") {
+            if permission(false).as_deref() != Ok("granted")
+                || crate::require_current_native_context(&owned).is_err()
+            {
                 continue;
             }
             for item in items.iter().rev().take(100) {
+                if crate::require_current_native_context(&owned).is_err() {
+                    break;
+                }
                 let Some(id) = item.get("id").and_then(|value| value.as_str()) else {
                     continue;
                 };
-                if submitted.contains(id)
+                let identifier = scoped_identifier(id, &owned);
+                if submitted.contains(&identifier)
                     || item.get("suppressed").and_then(|value| value.as_bool()) == Some(true)
                     || item
                         .pointer("/native/method")
@@ -375,22 +537,74 @@ mod macos {
                 ) else {
                     continue;
                 };
-                let result = submit(id, title, body, route);
+                let result = submit(id, title, body, route, &owned);
+                if crate::require_current_native_context(&owned).is_err() {
+                    break;
+                }
                 if result.is_ok() {
-                    submitted.insert(id.to_owned());
+                    submitted.insert(identifier);
                 }
                 let acknowledgement =
                     serde_json::json!({"id":id,"posted":result.is_ok(),"error":result.err()});
                 let _ = client
-                    .post(format!(
-                        "{}/api/notifications/native-delivery",
-                        bridge.trim_end_matches('/')
-                    ))
+                    .post(
+                        bridge
+                            .join("/api/notifications/native-delivery")
+                            .expect("fixed notification path"),
+                    )
+                    .header("x-squad-context", &owned.generation)
                     .json(&acknowledgement)
                     .send();
             }
-            // Keep the worker alive while all windows are hidden in the tray.
             let _ = &app;
+        }
+    }
+
+    #[cfg(test)]
+    mod ownership_tests {
+        use super::*;
+        #[test]
+        fn captured_notification_context_rejects_stale_presentation_and_clicks() {
+            let fixture = crate::ownership_test_support::Fixture::new();
+            let alice = fixture.select("alice", "1234abcd-1234-4abc-8def-0123456789ab");
+            let identifier = scoped_identifier("same-event-id", &alice);
+            let target = ClickTarget {
+                route: notification_route("/conversations/new?member=eva").unwrap(),
+                context: alice,
+                event_key: identifier.clone(),
+            };
+            lock(CLICK_ROUTES.get_or_init(Default::default)).insert(identifier.clone(), target);
+            let queued_click = current_target(&identifier).unwrap();
+            let bob = fixture.select("bob", "2234abcd-1234-4abc-8def-0123456789ab");
+            let bob_id = scoped_identifier("same-event-id", &bob);
+            assert_ne!(
+                identifier, bob_id,
+                "event IDs cannot collide across datasets"
+            );
+            assert!(
+                current_target(&identifier).is_none(),
+                "OS presentation and click capture reject the old account"
+            );
+            assert!(
+                !target_current(&queued_click),
+                "a click queued before switching is rejected at native dispatch too"
+            );
+            lock(CLICK_ROUTES.get_or_init(Default::default)).insert(
+                bob_id.clone(),
+                ClickTarget {
+                    route: "/work".into(),
+                    context: bob,
+                    event_key: bob_id.clone(),
+                },
+            );
+            assert!(current_target(&bob_id).is_some());
+            assert!(
+                current_target("autohand-squad:same-event-id").is_none(),
+                "legacy unscoped notifications have no native routing authority"
+            );
+            let mut routes = lock(CLICK_ROUTES.get_or_init(Default::default));
+            routes.remove(&identifier);
+            routes.remove(&bob_id);
         }
     }
 }

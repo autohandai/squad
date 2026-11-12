@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createAnnouncements } from "../server/announcements.mjs";
-import { startBridge } from "./lib/reliability-browser.mjs";
+import { startBridge, until } from "./lib/reliability-browser.mjs";
 
 let credential = "fixture-only-no-provider", redirect = false, failed = false;
 const calls = [];
@@ -49,6 +49,7 @@ try {
   failed = false;
   assert.equal((await bridge.api("/api/announcements/squad-news/dismiss", "POST", {})).data.ok, true);
   await writeFile(join(bridge.directory, "config.json"), "{}");
-  assert.deepEqual((await bridge.api("/api/announcements")).data.announcements, []);
+  await until(async () => (await bridge.api('/api/ownership/context')).data.state === 'signed_out', 'announcement account revoked');
+  assert.equal((await bridge.api("/api/announcements")).status, 401, 'signed-out clients cannot reach a private feed');
   console.log("PASS real bridge feed/seen/dismiss, Squad/version/platform targeting, server-only auth, account changes/sign-out, safe URLs, redirect refusal and failed-dismiss retry. Upstream API fixture only.");
 } finally { await bridge?.close(); await new Promise(resolve => upstream.close(resolve)); }

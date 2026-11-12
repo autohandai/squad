@@ -6,7 +6,7 @@ export class ApiError extends Error {
 export function requireValue(condition: unknown, status: number, code: string, message: string): asserts condition {
   if (!condition) throw new ApiError(status, code, message);
 }
-export async function body<T>(request: Pick<Request, "headers" | "body">, schema: z.ZodType<T>, limit = 128 * 1024): Promise<T> {
+export async function body<T>(request: Pick<Request, "headers" | "body">, schema: z.ZodType<T>, limit = 128 * 1024, maxTokens = 200_000): Promise<T> {
   requireValue(request.headers.get("content-type")?.split(";")[0].trim() === "application/json", 415, "json_required", "Send application/json.");
   requireValue(Number(request.headers.get("content-length") || 0) <= limit, 413, "body_too_large", "Request is too large.");
   const reader = request.body?.getReader();
@@ -21,7 +21,21 @@ export async function body<T>(request: Pick<Request, "headers" | "body">, schema
   const bytes = new Uint8Array(size); let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   let value: unknown;
-  try { value = JSON.parse(new TextDecoder().decode(bytes)); }
+  const text = new TextDecoder().decode(bytes);
+  let quoted = false, escaped = false, tokens = 0, depth = 0;
+  // Bound structural amplification before JSON.parse allocates a large tree.
+  // Strings and escapes are skipped; syntax remains JSON.parse's authority.
+  for (const character of text) {
+    if (quoted) { if (escaped) escaped = false; else if (character === "\\") escaped = true; else if (character === '"') quoted = false; }
+    else if (character === '"') quoted = true;
+    else {
+      if (character === "{" || character === "[") { depth++; tokens++; }
+      if (character === "}" || character === "]") depth--;
+      if (character === "," || character === ":") tokens++;
+      requireValue(depth <= 64 && tokens <= maxTokens, 413, "structure_too_large", "This request exceeds its structural complexity limit.");
+    }
+  }
+  try { value = JSON.parse(text); }
   catch { throw new ApiError(400, "invalid_json", "Send valid JSON."); }
   const parsed = schema.safeParse(value);
   if (!parsed.success) throw new ApiError(400, "invalid_request", "Request validation failed.", parsed.error.issues.map(issue => ({ path: issue.path, message: issue.message })));

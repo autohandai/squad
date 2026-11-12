@@ -36,7 +36,7 @@ try {
   await bridge.api('/api/channels','PUT',legacyState);
   assert.equal((await bridge.api('/api/channels')).data.threads.find(thread=>thread.id==='legacy-thread').replyCount,1,'a completed legacy thread-only answer counts once');
   const png=(await attachmentFixtures())[0];
-  const uploaded=await fetch(bridge.origin+'/api/attachments',{method:'POST',headers:{'content-type':png.mime,'x-file-name':png.name},body:png.bytes});
+  const uploaded=await fetch(bridge.origin+'/api/attachments',{method:'POST',headers:{...await bridge.headers(),'content-type':png.mime,'x-file-name':png.name},body:png.bytes});
   const file=(await uploaded.json()).data;assert(file?.id);
   const design=objective=>bridge.api('/api/teams/design','POST',{objective,attachments:[{id:file.id}],workspace,channelName:'goal-proof',existingNames:['Mira']});
   const mobile=await design('Build a mobile app and prepare its first release with UX and QA.');

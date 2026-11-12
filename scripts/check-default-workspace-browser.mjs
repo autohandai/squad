@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 import { access, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { initialAgents } from '../src/data.js';
@@ -15,7 +16,8 @@ for (const [theme, width] of [['light', 1440], ['dark', 380]]) {
     const member = { id: 'folder-eva', name: 'Eva', role: 'Engineer', workspace: '', projects: [], permissions: {}, harness: { id: 'claude' }, skills: [], memory: [], status: 'online', avatar: '/avatars/birds/kiwi.webp' };
     const fixtures = { agents: [member], removedAgents: initialAgents.map(agent => agent.id), tasks: [], messages: {}, channels: [], channelMessages: {}, channelThreads: {}, automations: [], memoryInbox: [], onboarding: { version: 1, status: 'skipped', lastStep: 'skipped' }, theme: { mode: theme, lightTheme: 'autohand-light', darkTheme: 'autohand-dark' } };
     await browser.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
-    await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (!localStorage.getItem('default-folder-fixture')) { for (const [key,value] of Object.entries(${JSON.stringify(fixtures)})) localStorage.setItem('autohandSquad.v1.'+key, JSON.stringify(value)); localStorage.setItem('default-folder-fixture','true'); }` });
+    await seedOwnedBrowserFixture(bridge,browser,{members:[member],messages:{},storage:Object.fromEntries(Object.entries(fixtures).filter(([key])=>!['agents','messages','theme'].includes(key)).map(([key,value])=>['autohandSquad.v1.'+key,JSON.stringify(value)]))});
+    await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`localStorage.setItem('autohandSquad.v1.theme',${JSON.stringify(JSON.stringify({mode:theme,lightTheme:'autohand-light',darkTheme:'autohand-dark'}))});`});
     await browser.navigate(`${bridge.origin}/squad-members/new`);
     await until(() => browser.evaluate(`!!document.querySelector('[data-testid="default-workspace-consent"]')`), 'New member asks for its work folder');
     await browser.fill('#member-description', 'Keep this role draft while choosing where to work');
@@ -49,7 +51,7 @@ for (const [theme, width] of [['light', 1440], ['dark', 380]]) {
   } });
   try {
     browser = await startBrowser({ disableBackForwardCache: true });
-    await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `localStorage.setItem('autohandSquad.v1.onboarding', JSON.stringify({version:1,status:'skipped',lastStep:'skipped'}));` });
+    await seedOwnedBrowserFixture(bridge,browser);
     await browser.navigate(bridge.origin + '/squad-members/new');
     await until(() => browser.evaluate(`!!document.querySelector('[data-testid="default-workspace-consent"]')`), 'blank member draft folder choice');
     await browser.fill('#member-description', 'A release engineer who verifies every signed build');

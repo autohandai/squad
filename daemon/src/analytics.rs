@@ -1,5 +1,7 @@
 use crate::daemon::read_queue_items;
+use crate::daemon::StatusOwnership;
 use crate::live_status::{read_fresh_live_status_snapshot, LiveStatusSnapshot};
+use crate::ownership::{read_active_context, still_current, OwnedContext};
 use crate::state::{
     now_string, read_analytics_record, read_daemon_record, read_install_record,
     read_web_server_record, remove_analytics_record, write_analytics_record, AnalyticsRecord,
@@ -13,14 +15,13 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
 
 pub const DEFAULT_ANALYTICS_PORT: u16 = 19823;
 
@@ -28,6 +29,8 @@ pub const DEFAULT_ANALYTICS_PORT: u16 = 19823;
 #[serde(rename_all = "camelCase")]
 pub struct AnalyticsSnapshot {
     pub success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<StatusOwnership>,
     pub generated_at: String,
     pub source: String,
     pub state_dir: String,
@@ -180,6 +183,7 @@ struct AnalyticsState {
 struct HttpRequest {
     method: String,
     path: String,
+    ownership_context: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -227,8 +231,6 @@ pub async fn run_analytics_daemon_with_paths(
         shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
     });
 
-    tokio::spawn(snapshot_loop(paths.clone()));
-
     loop {
         tokio::select! {
             accepted = listener.accept() => {
@@ -251,35 +253,92 @@ pub async fn run_analytics_daemon_with_paths(
     Ok(())
 }
 
-async fn snapshot_loop(paths: StatePaths) {
-    loop {
-        let snapshot_paths = paths.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            collect_analytics_snapshot(&snapshot_paths, "analytics-daemon")
-        })
-        .await;
-        sleep(Duration::from_secs(5)).await;
-    }
-}
-
 pub fn collect_analytics_snapshot(
     paths: &StatePaths,
     source: impl Into<String>,
 ) -> AnalyticsSnapshot {
-    let queue = read_queue_items(paths).unwrap_or_default();
-    let runs = read_json_values_from_dir(&paths.runs_dir);
-    let live_status = read_fresh_live_status_snapshot(paths);
-    let telemetry = read_json_lines(&paths.telemetry_log);
+    let owned = read_active_context(paths).ok().flatten();
+    collect_for_context(paths, owned.as_ref(), source.into())
+}
+
+fn collect_for_context(
+    paths: &StatePaths,
+    owned: Option<&OwnedContext>,
+    source: String,
+) -> AnalyticsSnapshot {
+    let snapshot = build_snapshot(
+        paths,
+        owned.map(|context| &context.data_paths),
+        owned.is_some_and(|context| context.can_write),
+        source.clone(),
+    );
+    if owned.is_some_and(|context| !still_current(paths, context)) {
+        return build_snapshot(paths, None, false, source);
+    }
+    AnalyticsSnapshot {
+        ownership: owned.map(|context| StatusOwnership {
+            generation: context.generation.clone(),
+            owner_key: context.owner_key.clone(),
+            dataset_id: context.dataset_id.clone(),
+        }),
+        ..snapshot
+    }
+}
+
+fn build_snapshot(
+    paths: &StatePaths,
+    data: Option<&StatePaths>,
+    can_write: bool,
+    source: String,
+) -> AnalyticsSnapshot {
+    let queue = data
+        .filter(|_| can_write)
+        .map(|paths| read_queue_items(paths).unwrap_or_default())
+        .unwrap_or_default();
+    let runs = data
+        .map(|paths| read_json_values_from_dir(&paths.runs_dir))
+        .unwrap_or_default();
+    let live_status = data
+        .filter(|_| can_write)
+        .and_then(read_fresh_live_status_snapshot);
+    let telemetry = data
+        .map(|paths| read_json_lines(&paths.telemetry_log))
+        .unwrap_or_default();
     let generated_at = now_string();
     let services = service_metrics(paths);
     let versions = version_metrics(paths);
-    let work = work_metrics(&queue, &runs, live_status.as_ref());
+    let mut work = work_metrics(&queue, &runs, live_status.as_ref());
     let telemetry_metrics = telemetry_metrics(&telemetry);
-    let usage = usage_metrics(&runs, &telemetry);
-    let timestamps = runtime_timestamps(paths, Some(generated_at.clone()));
-    let recent_errors = recent_errors(paths, &runs, &telemetry);
+    let mut usage = usage_metrics(&runs, &telemetry);
+    if !can_write {
+        work.active_work = 0;
+        work.running_runs = 0;
+        work.online_members = 0;
+        work.working_agents = 0;
+        work.queue_depth = 0;
+        work.queued_jobs = 0;
+        work.scheduled_jobs = 0;
+        usage.active_sessions = 0;
+    }
+    let timestamps = RuntimeTimestamps {
+        last_device_registration_at: timestamp_field(
+            &paths.device_registration_json,
+            &["registeredAt"],
+        ),
+        last_feature_flag_check_at: timestamp_field(&paths.feature_flags_json, &["checkedAt"]),
+        last_update_check_at: timestamp_field(&paths.update_json, &["checkedAt"]),
+        last_snapshot_at: Some(generated_at.clone()),
+        last_ping_at: data.and_then(|paths| timestamp_field(&paths.ping_json, &["pingedAt"])),
+        last_telemetry_flush_at: data
+            .and_then(|paths| timestamp_field(&paths.telemetry_flush_json, &["flushedAt"])),
+        last_sync_at: data.and_then(|paths| timestamp_field(&paths.sync_json, &["syncedAt"])),
+    };
+    let recent_errors = data
+        .map(|paths| recent_errors(paths, &runs, &telemetry))
+        .unwrap_or_default();
     let snapshot = AnalyticsSnapshot {
         success: true,
+        ownership: None,
         generated_at,
         source: source.into(),
         state_dir: paths.root.display().to_string(),
@@ -291,7 +350,6 @@ pub fn collect_analytics_snapshot(
         timestamps,
         recent_errors,
     };
-    let _ = write_snapshot(paths, &snapshot);
     snapshot
 }
 
@@ -754,27 +812,6 @@ where
     rows
 }
 
-fn runtime_timestamps(paths: &StatePaths, last_snapshot_at: Option<String>) -> RuntimeTimestamps {
-    RuntimeTimestamps {
-        last_device_registration_at: timestamp_field(
-            &paths.device_registration_json,
-            &["registeredAt", "registered_at"],
-        ),
-        last_ping_at: timestamp_field(&paths.ping_json, &["pingedAt", "pinged_at"]),
-        last_feature_flag_check_at: timestamp_field(
-            &paths.feature_flags_json,
-            &["checkedAt", "checked_at"],
-        ),
-        last_telemetry_flush_at: timestamp_field(
-            &paths.telemetry_flush_json,
-            &["flushedAt", "flushed_at"],
-        ),
-        last_sync_at: timestamp_field(&paths.sync_json, &["syncedAt", "synced_at"]),
-        last_update_check_at: timestamp_field(&paths.update_json, &["checkedAt", "checked_at"]),
-        last_snapshot_at,
-    }
-}
-
 fn recent_errors(paths: &StatePaths, runs: &[Value], telemetry: &[Value]) -> Vec<RecentError> {
     let mut errors = Vec::new();
 
@@ -872,8 +909,14 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<AnalyticsState>) ->
         }
         ("GET", "/metrics") => {
             let paths = state.paths.clone();
+            let owned = read_active_context(&paths)
+                .ok()
+                .flatten()
+                .filter(|context| {
+                    request.ownership_context.as_deref() == Some(&context.generation)
+                });
             let snapshot = tokio::task::spawn_blocking(move || {
-                collect_analytics_snapshot(&paths, "analytics-daemon")
+                collect_for_context(&paths, owned.as_ref(), "analytics-daemon".into())
             })
             .await
             .context("collect analytics snapshot")?;
@@ -951,7 +994,16 @@ async fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest> {
         .next()
         .unwrap_or("/")
         .to_string();
-    Ok(HttpRequest { method, path })
+    let ownership_context = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("x-squad-context")
+            .then(|| value.trim().to_string())
+    });
+    Ok(HttpRequest {
+        method,
+        path,
+        ownership_context,
+    })
 }
 
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
@@ -1130,19 +1182,6 @@ fn tail_lines(path: &Path, limit: usize) -> Vec<String> {
     lines
 }
 
-fn write_snapshot(paths: &StatePaths, snapshot: &AnalyticsSnapshot) -> Result<()> {
-    write_json(&paths.analytics_snapshot_json, snapshot)
-}
-
-fn write_json<T: Serialize>(path: &PathBuf, value: &T) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let content = serde_json::to_string_pretty(value)?;
-    fs::write(path, format!("{content}\n")).with_context(|| format!("write {}", path.display()))?;
-    Ok(())
-}
-
 fn append_analytics_log(paths: &StatePaths, message: &str) {
     let _ = paths.ensure();
     if let Ok(mut file) = fs::OpenOptions::new()
@@ -1237,7 +1276,17 @@ mod tests {
         )
         .unwrap();
 
-        let snapshot = collect_analytics_snapshot(&paths, "test");
+        let hidden = collect_analytics_snapshot(&paths, "test");
+        assert_eq!(
+            hidden.work.total_runs, 0,
+            "legacy analytics are never attributed to the next login"
+        );
+        assert_eq!(hidden.usage.total_tokens, 0);
+        assert!(
+            !paths.analytics_snapshot_json.exists(),
+            "analytics reads have no owned write side effects"
+        );
+        let snapshot = build_snapshot(&paths, Some(&paths), true, "test".into());
 
         assert_eq!(snapshot.work.queue_depth, 1);
         assert_eq!(snapshot.work.scheduled_jobs, 1);

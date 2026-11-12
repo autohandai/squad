@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {initialAgents} from '../src/data.js';
 import {startBridge,startBrowser,until} from './lib/reliability-browser.mjs';
+import {seedOwnedBrowserFixture} from './lib/owned-bridge-fixture.mjs';
 
 const artifact='.codex-artifacts/chat-latency-20261028';
 await mkdir(artifact,{recursive:true});
@@ -20,11 +21,8 @@ try {
  const toolEvents=[...events.slice(0,3),{type:'tool_start',tool:{id:'read-one',name:'read_file',args:{path:'package.json'}},timestamp:start},{type:'tool_end',toolId:'read-one',toolName:'read_file',success:true,output:'Configuration read.',timestamp:end},{type:'tool_start',tool:{id:'run-one',name:'bash',args:{command:'bun run check'}},timestamp:start},{type:'tool_end',toolId:'run-one',toolName:'bash',success:true,output:'Checks passed.',timestamp:end},{type:'message_end',content:'Checked the project.',timestamp:end}];
  const messages=[{id:'greeting-user',role:'user',body:'hey',status:'complete'},{id:'greeting-answer',role:'agent',body:'Hey! What can I help you with?',status:'complete',startedAt:start,completedAt:end,durationMs:42000,streamEvents:events,trace:{events,toolCalls:[]}},{id:'tool-answer',role:'agent',body:'Checked the project.',status:'complete',startedAt:start,completedAt:end,durationMs:1200,streamEvents:toolEvents}];
  browser=await startBrowser();
+ await seedOwnedBrowserFixture(bridge,browser,{members:[member],messages:{[member.id]:messages}});
  await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`
- localStorage.setItem('autohandSquad.v1.agents',${JSON.stringify(JSON.stringify([member]))});
- localStorage.setItem('autohandSquad.v1.removedAgents',${JSON.stringify(JSON.stringify(initialAgents.filter(a=>a.id!==member.id).map(a=>a.id)))});
- localStorage.setItem('autohandSquad.v1.onboarding','{"version":1,"status":"skipped"}');
- localStorage.setItem('autohandSquad.v1.messages',${JSON.stringify(JSON.stringify({[member.id]:messages}))});
  const originalFetch=window.fetch.bind(window);window.fetch=(input,options)=>new URL(typeof input==='string'?input:input.url,location.origin).pathname==='/api/chat/warm'?Promise.resolve(new Response('{"success":true,"data":{}}',{headers:{'content-type':'application/json'}})):originalFetch(input,options);
  `});
  await browser.navigate(bridge.origin+'/conversations/new?member='+member.id);

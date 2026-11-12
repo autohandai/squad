@@ -7,6 +7,7 @@ import { createServer } from 'node:net';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createOwnedBridgeFixture, ownedFixtureHeaders } from './lib/owned-bridge-fixture.mjs';
 import { BREAK_REPLY } from '../server/members/availability.mjs';
 
 const directory = await mkdtemp(join(tmpdir(), 'squad-goal-http-'));
@@ -19,7 +20,7 @@ await new Promise(resolve => socket.listen(0,'127.0.0.1',resolve));
 const port = socket.address().port;
 await new Promise(resolve => socket.close(resolve));
 const origin = `http://127.0.0.1:${port}`;
-let bridge;
+let bridge, ownership;
 let logs = '';
 const delay = (ms) => new Promise(resolve => setTimeout(resolve,ms));
 async function until(fn, label, timeout=7000) {
@@ -28,7 +29,7 @@ async function until(fn, label, timeout=7000) {
   throw new Error(`${label} timed out; bridge: ${logs.slice(-2500)}`);
 }
 const api = async(path,body)=>{
-  const response=await fetch(origin+path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});
+  const response=await fetch(origin+path,{method:body===undefined?'GET':'POST',headers:await ownedFixtureHeaders(origin),...(body===undefined?{}:{body:JSON.stringify(body)})});
   const data=await response.json();return {status:response.status,...data};
 };
 const calls=async()=> (await readFile(callsFile,'utf8').catch(()=> '')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));
@@ -94,12 +95,14 @@ export class AutohandSDK {
 }
 `);
   await chmod(fake,0o700);
+  await writeFile(join(directory,'config.json'),JSON.stringify({auth:{token:'fixture-only-no-provider',email:'goal@example.test',expiresAt:'2099-01-01T00:00:00Z'}}));
+  ownership=await createOwnedBridgeFixture({serviceRoot:join(directory,'squad'),appRoot:join(directory,'app')});
   bridge=spawn(process.execPath,['server.mjs','--host','127.0.0.1','--port',String(port)],{
-    cwd:rootDir,env:{...process.env,AUTOHAND_SQUAD_HOME:join(directory,'squad'),AUTOHAND_SQUAD_APP_STATE_DIR:join(directory,'app'),AUTOHAND_HOME:join(directory,'autohand'),AUTOHAND_USER_CONFIG_PATH:join(directory,'config.json'),CODEX_HOME:join(directory,'codex'),OPENAI_API_KEY:'fixture-only-no-provider',ANTHROPIC_API_KEY:'fixture-only-no-provider',AUTOHAND_AGENT_SDK_DIR:directory,AUTOHAND_AGENT_SDK_ENTRY:fakeSdk},stdio:['ignore','pipe','pipe'],
+    cwd:rootDir,env:{...process.env,...ownership.env,AUTOHAND_SQUAD_HOME:join(directory,'squad'),AUTOHAND_SQUAD_APP_STATE_DIR:join(directory,'app'),AUTOHAND_HOME:join(directory,'autohand'),AUTOHAND_USER_CONFIG_PATH:join(directory,'config.json'),CODEX_HOME:join(directory,'codex'),OPENAI_API_KEY:'fixture-only-no-provider',ANTHROPIC_API_KEY:'fixture-only-no-provider',AUTOHAND_AGENT_SDK_DIR:directory,AUTOHAND_AGENT_SDK_ENTRY:fakeSdk},stdio:['ignore','pipe','pipe'],
   });
   bridge.stdout.on('data',data=>logs+=data);bridge.stderr.on('data',data=>logs+=data);
   await until(async()=>{const r=await api('/api/goals');return r.success;},'bridge start');
-  const streamResponse=await fetch(origin+'/api/chat/stream',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload('pursuit','Verify selected workspace'),mode:'goal'})});
+  const streamResponse=await fetch(origin+'/api/chat/stream',{method:'POST',headers:await ownedFixtureHeaders(origin),body:JSON.stringify({...payload('pursuit','Verify selected workspace'),mode:'goal'})});
   assert.equal(streamResponse.status,200);
   const sse=await streamResponse.text();
   const doneBlock=sse.split('\n\n').find(block=>block.startsWith('event: done\n'));
@@ -114,7 +117,7 @@ export class AutohandSDK {
   assert.equal((await api('/api/goals?agentId=pursuit')).data.length,1);
 
   const claudeLaunch=payload('claude-pursuit','Verify selected workspace');claudeLaunch.agent.harness.id='claude';
-  const claudeResponse=await fetch(origin+'/api/chat/stream',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...claudeLaunch,mode:'goal'})});
+  const claudeResponse=await fetch(origin+'/api/chat/stream',{method:'POST',headers:await ownedFixtureHeaders(origin),body:JSON.stringify({...claudeLaunch,mode:'goal'})});
   const claudeSse=await claudeResponse.text();
   const claudeDone=JSON.parse(claudeSse.split('\n\n').find(b=>b.startsWith('event: done\n')).split('\ndata: ')[1]);
   assert.equal(claudeDone.goal.status,'completed',JSON.stringify(claudeDone.goal));assert.equal(claudeDone.goal.turnCount,2);assert.equal(claudeDone.goal.harness,'claude');
@@ -125,7 +128,7 @@ export class AutohandSDK {
   // A disposable usable token selects the fake SDK; no provider ever receives it.
   await writeFile(join(directory,'config.json'),JSON.stringify({provider:'autohandai',auth:{token:'fixture-only-no-provider'},autohandai:{model:'auto'}}));
   const sdkLaunch=payload('sdk-pursuit','Verify SDK workspace');sdkLaunch.agent.harness={id:'autohand'};
-  const sdkResponse=await fetch(origin+'/api/chat/stream',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...sdkLaunch,mode:'goal'})});
+  const sdkResponse=await fetch(origin+'/api/chat/stream',{method:'POST',headers:await ownedFixtureHeaders(origin),body:JSON.stringify({...sdkLaunch,mode:'goal'})});
   const sdkSse=await sdkResponse.text();
   const sdkDone=JSON.parse(sdkSse.split('\n\n').find(b=>b.startsWith('event: done\n')).split('\ndata: ')[1]);
   assert.equal(sdkDone.goal.status,'completed',JSON.stringify(sdkDone.goal));assert.equal(sdkDone.goal.turnCount,2);assert.equal(sdkDone.goal.harness,'autohand');
@@ -140,7 +143,7 @@ export class AutohandSDK {
   await until(async()=> (await calls()).some(c=>c.member==='sdk-break'&&c.kind==='sdk-abort'),'SDK interrupt');
   assert.equal((await api('/api/goals/'+sdkStarted.data.goalId)).data.status,'paused');
 
-  const detached=await fetch(origin+'/api/chat/stream',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload('detached','SLOW fixture'),mode:'goal'})});
+  const detached=await fetch(origin+'/api/chat/stream',{method:'POST',headers:await ownedFixtureHeaders(origin),body:JSON.stringify({...payload('detached','SLOW fixture'),mode:'goal'})});
   // The stream opens with a ": connected" comment written separately, so the
   // first read can hold only that; read until the first data event arrives.
   const reader=detached.body.getReader();const decoder=new TextDecoder();let firstEvent='';
@@ -163,7 +166,7 @@ export class AutohandSDK {
   const chatBefore=(await calls()).length;
   const declined=await api('/api/chat',payload('breaker','Incoming handoff'));
   assert.equal(declined.data.reply,BREAK_REPLY);assert.equal(declined.data.declined,true);
-  const declineStream=await fetch(origin+'/api/chat/stream',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload('breaker','New channel mention'))});
+  const declineStream=await fetch(origin+'/api/chat/stream',{method:'POST',headers:await ownedFixtureHeaders(origin),body:JSON.stringify(payload('breaker','New channel mention'))});
   assert.ok((await declineStream.text()).includes('"declined":true'));
   const declinedRun=await api('/api/runs',payload('breaker','Incoming task'));assert.equal(declinedRun.status,409);assert.equal(declinedRun.reason,'break');
   assert.equal((await api('/api/goals/'+start.data.goalId+'/resume',{})).status,409);
@@ -173,13 +176,14 @@ export class AutohandSDK {
   const cancelled=await api('/api/goals/'+start.data.goalId+'/cancel',{});assert.equal(cancelled.data.status,'cancelled');
 
   // A normal live chat also stops its external child when break begins.
-  const ordinaryHold=fetch(origin+'/api/chat/stream',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload('live','HOLD fixture'))});
+  const ordinaryHold=fetch(origin+'/api/chat/stream',{method:'POST',headers:await ownedFixtureHeaders(origin),body:JSON.stringify(payload('live','HOLD fixture'))});
   await until(async()=> (await calls()).some(c=>c.member==='live'&&c.kind==='start'),'ordinary in-flight child');
   const liveBreak=await api('/api/members/live/break',{active:true});assert.equal(liveBreak.data.stoppedChats,1);
   await until(async()=> (await calls()).some(c=>c.member==='live'&&c.kind==='abort'),'ordinary child abort');
   assert.ok((await (await ordinaryHold).text()).includes('event: error'));
   console.log('Goal bridge checks passed: Autohand SDK/Codex/Claude fixture pursuit, chosen workspace/resume/warm SDK reuse, native live plan, metadata hiding, ordinary single turn, break pause/abort/decline, controls and no refused spawn.');
 } finally {
+  await ownership?.close();
   if(bridge&&!bridge.killed){bridge.kill('SIGTERM');await Promise.race([new Promise(resolve=>bridge.once('exit',resolve)),delay(3000)]);if(bridge.exitCode===null)bridge.kill('SIGKILL');}
   await rm(directory,{recursive:true,force:true});
 }

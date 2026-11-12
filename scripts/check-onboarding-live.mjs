@@ -64,7 +64,7 @@ try {
   const members = await browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.agents'))`);
   assert.equal(members.filter(member => member.id === id).length, 1);
   const member = members.find(member => member.id === id);
-  const persisted = JSON.parse(await readFile(join(bridge.directory, 'app', 'agents', id, 'profile.json'), 'utf8'));
+  const persisted = JSON.parse(await readFile(join(bridge.appRoot, 'agents', id, 'profile.json'), 'utf8'));
   assert.equal(persisted.name, member.name);
   observations.push({ setup: onboarding.status, role: member.role, workspace: folder, installedSkills: persisted.skillInstall, initialRosterSize: members.length });
   await save({ status: 'in progress' });
