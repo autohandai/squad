@@ -145,12 +145,12 @@ export function NotificationSettings({ settings, channels = [], onChannelChange,
         {[...channels].sort((a, b) => a.name.localeCompare(b.name)).map(channel => {
           const preference = channelNotificationPreference(current, channel.id);
           return <div key={channel.id} className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 py-4">
-            <span className="min-w-0 flex-1 text-sm font-medium">{isGroupChat(channel) ? channel.name : `#${channel.name}`}</span>
+            <span className="min-w-0 basis-full break-words text-sm font-medium sm:basis-auto sm:flex-1">{isGroupChat(channel) ? channel.name : `#${channel.name}`}</span>
             <Select value={preference.inherited ? 'default' : preference.mode} disabled={saving} onValueChange={mode => void save(() => onChannelChange(channel.id, { mode }))}>
               <SelectTrigger aria-label={`Notifications for ${channel.name}`} className="w-44"><SelectValue /></SelectTrigger>
               <SelectContent><SelectGroup><SelectItem value="default">Use Settings default</SelectItem><SelectItem value="all">All new posts</SelectItem><SelectItem value="mentions">Just mentions</SelectItem><SelectItem value="muted">Muted</SelectItem></SelectGroup></SelectContent>
             </Select>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch disabled={saving} checked={preference.hidden} aria-label={`Hide ${channel.name} in sidebar`} onCheckedChange={hidden => void save(() => onChannelChange(channel.id, { hidden }))} />Hide in sidebar</label>
+            <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground"><Switch disabled={saving} checked={preference.hidden} aria-label={`Hide ${channel.name} in sidebar`} onCheckedChange={hidden => void save(() => onChannelChange(channel.id, { hidden }))} />Hide in sidebar</label>
           </div>;
         })}
         <p className="pt-3 text-xs text-muted-foreground">Hidden channels remain available under Hidden channels in the sidebar.</p>

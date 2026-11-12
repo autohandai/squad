@@ -63,8 +63,14 @@ the originating channel suppresses its post alert; viewing that member's
 direct chat does not. A canonical human-mention event is still emitted for
 audit/search/history without creating a second notification.
 
-The selected owner's existing `notifications.json` stores the feed and
-preferences. There is no new notification worker or durable delivery queue:
+Personal datasets retain `notifications.json`. Team datasets use
+`notifications-<actorKey>.json`, where the existing identity helper hashes
+the verified issuer and immutable subject; email/name do not select storage.
+This isolates different humans' feeds and hide/mute choices while keeping
+team conversations shared. Older un-attributed team `notifications.json`
+files stay untouched and are not automatically assigned to the next human;
+this change does not add a recovery UI for those earlier preferences.
+There is no new notification worker or durable delivery queue:
 OS denial/Focus can prevent a visible banner, and a service failure during
 publication is not retried as a guaranteed delivery. Restart never replays
 old posts. Operator MCP provides `get_notification_preferences`,

@@ -71,6 +71,7 @@ try {
   await pointer('[role=option]', 'left', 'Just mentions');
   await until(async () => (await bridge.api('/api/notifications/settings')).data.settings.channelDefault === 'mentions', 'phone notification selection saves');
   await browser.evaluate("document.querySelector('[aria-label=\"Default channel notifications\"]').scrollIntoView({block:'start'})");
+  assert.equal(await browser.evaluate(`(() => { const control = document.querySelector('[aria-label="Notifications for Final review room"]'); const label = control.parentElement.firstElementChild; return label.getBoundingClientRect().bottom <= control.getBoundingClientRect().top; })()`), true, 'phone channel names sit above their controls without overlap');
   await browser.screenshot('.codex-artifacts/group-chats/channel-notifications-phone.png');
   await browser.send('Emulation.clearDeviceMetricsOverride');
   await browser.navigate(bridge.origin + '/channels/' + room.id);

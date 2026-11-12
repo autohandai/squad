@@ -23,6 +23,14 @@ stdio control-plane check exercises the new operator tools and a refused
 unconfirmed deletion. An initial assertion expected a tool error for the
 schema-invalid `confirm_delete:false`; the protocol correctly rejects it as
 JSON-RPC -32602, so the assertion was corrected, without weakening validation.
+The 390px screenshot then exposed squeezed conversation names overlapping
+their selects even though the page had no horizontal overflow. Names now take
+their own line on small screens; the rendered check verifies separation.
+Review also caught that a team-owned dataset is shared by successive human
+actors. Keeping its single `notifications.json` would share personal hiding
+and feed state. A real broker/worker regression first reproduced adoption of
+the old team's muted default, then verifies Alice/Bob/Alice isolation on the
+same team and shared conversation.
 
 ## Decision
 
@@ -30,6 +38,9 @@ JSON-RPC -32602, so the assertion was corrected, without weakening validation.
   defaults and per-ID mode/visibility overrides in the selected owner's existing
   notification file. Ignore replacement override maps from global/legacy writes.
   Serialize read-modify-write and acknowledge settings only after persistence.
+  For team datasets, select `notifications-<verified actorKey>.json` using the
+  existing issuer/subject digest; personal datasets keep `notifications.json`.
+  Old team files remain untouched rather than assigning them to the next actor.
 - Compose one action definition into registry shadcn ContextMenu and DropdownMenu
   primitives. Rename preserves history and roster; delete requires a second
   selection. Recover hidden conversations through Hidden channels and Settings;
@@ -50,6 +61,10 @@ leaves a channel or stops its agents. Global muted defaults do not hide every
 channel automatically. Explicit overrides survive later default changes.
 Legacy clients keep the previous five boolean settings and cannot erase the
 new override map with an older snapshot.
+Team notification files are private to the acting account as well as the team
+and dataset. Historical team files have no reliable human attribution; they
+are preserved but not auto-imported into a human's new feed or preferences.
+There is no automatic migration or new recovery UI for those old preferences.
 
 Saved-post alerts are at most once per running observer, not guaranteed durable
 delivery. A failure during publication has no new retry worker; OS permission,

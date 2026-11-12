@@ -188,7 +188,9 @@ export function createNotificationsPlugin({ postNative = postNativeNotification,
 
   async function init(context) {
     ctx = context;
-    statePath = join(ctx.squadStateDir, "notifications.json");
+    const actor = ctx.notificationActorKey;
+    if (actor && !/^[a-f0-9]{64}$/.test(actor)) throw new Error('Notification preferences require a verified account identity.');
+    statePath = join(ctx.squadStateDir, actor ? `notifications-${actor}.json` : 'notifications.json');
     try {
       const saved = await ctx.readOptionalJsonFile?.(statePath);
       if (saved && typeof saved === "object") {

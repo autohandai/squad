@@ -8718,6 +8718,7 @@ function routeContext() {
     appStateDir,
     ownedBrokerOrigin: privateOwnerContext.publicUrl,
     notificationProfile: () => { assertOwnerRead(); return { name: privateOwnerContext.actor?.name || '', email: privateOwnerContext.actor?.email || '' }; },
+    notificationActorKey: privateOwnerContext.owner?.kind === 'team' ? verifiedActorKey(privateOwnerContext.actor) : '',
     ownedBrokerRequest,
     ownedHookScope: privateOwnerContext.owner ? `${verifiedActorKey(privateOwnerContext.actor)}.${verifiedOwnerKey(privateOwnerContext.owner)}.${privateOwnerContext.datasetId}` : '',
     squadWorkspaceRoot,
