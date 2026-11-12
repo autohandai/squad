@@ -75,6 +75,7 @@ try {
   await browser.send('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
   await browser.evaluate("document.querySelector('[data-testid=member-computer-use]').scrollIntoView({block:'center'})");
   assert.equal(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), true, 'Computer Use controls fit on a phone');
+  await browser.evaluate("Promise.all(document.querySelector('[data-testid=member-computer-use] [role=switch]').getAnimations({subtree:true}).map(animation => animation.finished.catch(() => {})))");
   await browser.screenshot('.codex-artifacts/group-chats/computer-toggle-phone.png');
   assert.deepEqual(browser.errors, []);
   console.log('PASS: per-member Model/Permissions Computer Use switch, native cancellation/failure/retry, confirmed on, persisted off and independent member grants at390px. Simulated native/OS; no real computer operation.');
