@@ -59,6 +59,22 @@ Release packaging already includes this tree; ADR-0191 records that boundary.
   contract 2.2.0. Managed agents receive no personal-preference authority.
   Contract version is distinct from app, backup and MCP wire-protocol versions.
 
+## Scan completion handoff correction
+
+A follow-up Spec check reproduced a lost change between a completed drain loop
+and its separate `Promise.finally` cleanup. A second saved post arriving in
+that microtask gap attached to the old drain and remained unnoticed until a
+third channel event. Both posts had valid current timestamps and no publication
+failure, so the documented failure/durable-delivery limits did not explain it.
+
+Release the drain latch in the async loop's own synchronous `finally`, before
+its promise resolves. A later event either marks an active scan dirty or starts
+a new scan. The public observer regression queues a second saved write as the
+first publication settles, verifies delivery without another event, and checks
+that a subsequent scan does not replay either post. It was red on current main
+and passes with the correction. Error propagation and the existing lack of a
+durable publication retry worker remain unchanged.
+
 ## Consequences and limits
 
 Hiding is reversible and local to the selected owner's preferences; it never

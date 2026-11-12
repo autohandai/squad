@@ -34,8 +34,14 @@ export async function createChannelPostObserver({ read, profile, onPost, now = D
     if (closed) return Promise.resolve();
     dirty = true;
     if (!draining) draining = (async () => {
-      while (dirty && !closed) { dirty = false; await scan(); }
-    })().finally(() => { draining = null; });
+      try {
+        while (dirty && !closed) { dirty = false; await scan(); }
+      } finally {
+        // Release synchronously with the loop. Promise.finally leaves a
+        // microtask gap where a new change can attach to a finished drain.
+        draining = null;
+      }
+    })();
     return draining;
   }
 
