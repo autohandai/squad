@@ -197,3 +197,27 @@ fixture packaging, workflow metadata, Actionlint and diff checks passed.
 Native installer replacement, notarization, live vendor exhaustion/recovery
 and cross-platform native UI were not exercised by this change. No new
 release was committed, installed or published for this goal.
+
+
+## Revision, 2026-11-12: ten attempts and overload
+
+The release checklist requires ten attempts for a failing engine. The existing
+router performed two: updating the public execute regression to expect ten
+failed primary attempts plus one successful fallback produced `3 !== 11`.
+The corrected router bounds transient/no-response attempts at ten. Useful
+output, permission waits, cancellation and uncertain tools retain their earlier
+barriers; work is never repeated merely to reach the attempt count.
+
+Overload is a different failure: a 529/overloaded response originally produced
+ten primary attempts, so the immediate-switch test failed `11 !== 2`. Explicit
+overload and 503 service-unavailable failures now advance immediately, like
+usage limits. Other transient connection/runtime failures retain the ten-attempt
+bound and the existing five-minute cooldown. The first-response deadline stays
+45 seconds per attempt, so a completely silent engine may take up to ten such
+deadlines before switching. This knowingly trades slower recovery for the
+requested retry allowance; Stop remains effective during every attempt.
+
+Evidence: `node scripts/check-model-routing.mjs` red/green for exact counts,
+no-response abort cleanup, rate limits, completed-work continuation, permission,
+uncertain tool and Stop barriers. Local logs are in the private release-audit
+artifacts; controlled callbacks are not live-provider availability evidence.

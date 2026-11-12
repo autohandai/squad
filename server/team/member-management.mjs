@@ -60,7 +60,6 @@ export function createMemberManagement({ actions, request, askPerson, timeoutMs 
       args.request_id = `${session.memberId}:${args.request_id}`;
       const folders = [initial.agent.workspace, ...(initial.agent.projects || []).map(project => project.path)].filter(Boolean);
       args.workspace ??= folders.includes(session.workspace) ? session.workspace : folders[0] || '';
-      args.engine ||= initial.agent.harness?.id || 'autohand';
     }
     const tools = createManagementTools({ get: path => checked(path), post: (path, value) => checked(path, 'POST', value), patch: (path, value) => checked(path, 'PATCH', value) });
     return tools[name](args);

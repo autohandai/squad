@@ -5,6 +5,7 @@ import { MEMBER_PROFILE_FIELDS, memberProfileRevision, validateProfileAction } f
 import { BUILT_IN_TOOL_POLICY_GROUPS, builtInPoliciesForRank } from '../../src/lib/permission-policy.js';
 import { cleanMemoryText } from '../team/store.mjs';
 import { projectsWithFolder } from '../../src/lib/folder-access.js';
+import { initialMemberExecution, normalizeModelRouting } from '../../src/lib/model-routing.js';
 import { patchedMemberCopy, patchedProfileText } from './member-shaping.route.mjs';
 
 export const name = 'operator-members';
@@ -36,6 +37,7 @@ function publicProfile(ctx, memberId, agent) {
     role: agent.role || '', description: agent.description || '', instructions: agent.instructions || '',
     responsibilities: agent.description || '', memories: agent.memory || [],
     personality: agent.profileFiles?.find(file => file.section === 'persona')?.content || '',
+    harness: agent.harness || { id: 'autohand' }, modelRouting: normalizeModelRouting(agent.modelRouting),
     skills: agent.skills || [], projects: agent.projects || [], workspace: workspaceFor(ctx, memberId, agent),
     permissions: agent.permissions || {}, availableAbilities: { capabilities: CAPABILITIES, tools: TOOLS },
     takesEffect: 'next_turn',
@@ -54,13 +56,18 @@ function memories(value) {
   return [...new Set(value.map(cleanMemoryText))].map(text => ({ id: `memory-${randomUUID()}`, text, at: new Date().toISOString() }));
 }
 
+function skillSelections(value) {
+  if (!Array.isArray(value) || value.length > 32 || value.some(id => typeof id !== 'string' || !id.trim() || id.length > 500)) throw fail('Choose at most 32 skill package IDs.');
+  return [...new Set(value)];
+}
+
 async function createMember(ctx, input) {
   keys(input, ['request_id', 'name', 'role', 'description', 'responsibilities', 'instructions', 'personality', 'skills', 'memories', 'workspace', 'engine']);
   if (typeof input.request_id !== 'string' || !input.request_id.trim() || input.request_id.length > 256) throw fail('Provide a stable request_id for member creation.');
-  const { request_id, workspace = '', engine = 'autohand', skills = [], memories: initialMemory = [], ...fields } = input;
+  const { request_id, workspace = '', engine, skills = [], memories: initialMemory = [], ...fields } = input;
   const { patch } = validateProfileAction({ op: 'set', ...responsibilities(fields) });
   if (!patch.name || !patch.role) throw fail('A member needs a name and role.');
-  if (typeof workspace !== 'string' || typeof engine !== 'string' || !engine.trim()) throw fail('Workspace and engine must be text.');
+  if (typeof workspace !== 'string' || (engine !== undefined && (typeof engine !== 'string' || !engine.trim()))) throw fail('Workspace and engine must be text.');
   const id = `member-${createHash('sha256').update(request_id).digest('hex').slice(0, 32)}`;
   const requestHash = createHash('sha256').update(JSON.stringify({ ...patch, workspace, engine, skills, initialMemory })).digest('hex');
   const previous = await ctx.agentChannelActions.memberAccess(id);
@@ -72,18 +79,19 @@ async function createMember(ctx, input) {
   if (Object.values(state.agentChannelAccess || {}).filter(item => !item.removed).length >= 200) throw fail('This Squad has reached its 200-member limit.', 409);
   const folder = workspace ? await ctx.cleanWorkspace(workspace) : '';
   const harnesses = await ctx.memberHarnesses();
-  if (!harnesses.some(item => item.id === engine)) throw fail('Choose an engine ID from the harness catalog.');
+  if (engine !== undefined && !harnesses.some(item => item.id === engine)) throw fail('Choose an engine ID from the harness catalog.');
+  const execution = initialMemberExecution(harnesses, { harness: engine });
   const agent = patchedMemberCopy({ id, name: patch.name, role: patch.role, createdAt: new Date().toISOString(),
-    status: 'idle', harness: { id: engine }, workspace: folder, projects: folder ? [{ path: folder }] : [],
+    status: 'idle', ...execution, workspace: folder, projects: folder ? [{ path: folder }] : [],
     skills: [], memory: memories(initialMemory),
     permissions: { permissionMode: 'restricted', modes: Object.fromEntries(CAPABILITIES.map(id => [id, ['file.read', 'search.text'].includes(id) ? 'allow' : 'block'])), builtInPolicies: builtInPoliciesForRank(1) },
   }, patch);
-  if (!Array.isArray(skills) || skills.length > 32 || skills.some(id => typeof id !== 'string' || !id.trim() || id.length > 500)) throw fail('Choose at most 32 skill package IDs.');
-  await ctx.validateSkillSelections(agent, skills);
-  agent.skills = [...new Set(skills)];
+  agent.skills = skillSelections(skills);
+  await ctx.validateSkillSelections(agent, agent.skills);
   const receipt = await ctx.agentChannelActions.setAccess(id, { agent, creation: { requestHash }, profile: `Name: ${agent.name}\nRole: ${agent.role}\nResponsibilities: ${agent.description || ''}\nOperating instructions: ${agent.instructions || ''}\nBrain card fields for this run:\n` });
   const saved = await accessFor(ctx, id);
-  return { ...publicProfile(ctx, id, saved.agent), created: receipt.created !== false, note: 'Saved without starting work or enabling routines. Review permissions before assigning work.' };
+  return { ...publicProfile(ctx, id, saved.agent), created: receipt.created !== false,
+    note: `Saved without starting work or enabling routines. Review permissions before assigning work.${saved.agent.modelRouting?.fallbacks.length ? '' : ' No other connected engine is available for automatic failover; connect one in Settings and edit Model settings.'}` };
 }
 
 function abilityPatch(agent, input) {
@@ -171,8 +179,7 @@ export async function handle(req, res, url, ctx) {
         next.permissions = abilityPatch(access.agent, abilities);
       }
       if (skills !== undefined) {
-        if (!Array.isArray(skills) || skills.length > 32 || skills.some(id => typeof id !== 'string' || !id.trim() || id.length > 500)) throw fail('Choose at most 32 skill package IDs.');
-        const selected = [...new Set(skills)];
+        const selected = skillSelections(skills);
         await ctx.validateSkillSelections({ ...access.agent, workspace: workspaceFor(ctx, memberId, access.agent) }, selected);
         next.skills = selected;
       }

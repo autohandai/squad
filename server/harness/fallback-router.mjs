@@ -5,6 +5,7 @@ import { harnessLabel } from '../../src/lib/harness.js';
 
 export const FALLBACK_COOLDOWN_MS = 5 * 60_000;
 export const FIRST_RESPONSE_MS = 45_000;
+export const MAX_ROUTE_ATTEMPTS = 10;
 
 export function routingFailure(error) {
   const text = String(error?.message || error || '');
@@ -14,6 +15,7 @@ export function routingFailure(error) {
   const status = Number(error?.status || error?.statusCode || error?.code);
   if (error?.name === 'AutohandAuthError' || [401, 403].includes(status) || /not signed in|signed out|needs sign.in|sign.in required|authentication|unauthori[sz]ed|token.*expired/i.test(text)) return { kind: 'sign-in', immediate: true, label: 'needs sign-in' };
   if (status === 429 || /rate.?limit|quota|usage limit|out of usage|credit.*(?:exhaust|insufficient)|limit.*(?:reached|exceed)|reached.*limit/i.test(text)) return { kind: 'quota', immediate: true, label: 'reached its usage limit' };
+  if ([503, 529].includes(status) || /overloaded|over.capacity|too many requests/i.test(text)) return { kind: 'overload', immediate: true, label: 'is overloaded' };
   if (error?.name === 'HarnessNotReadyError' || /not ready|not detected|CLI.*not found|ENOENT|could not start|failed to start/i.test(text)) return { kind: 'startup', immediate: true, label: 'could not start' };
   if (error?.code === 'SQUAD_NO_RESPONSE' || /timed? ?out|no (?:events|response)|without activity|did not answer|not responding/i.test(text)) return { kind: 'timeout', immediate: false, label: 'did not respond' };
   const exitCode = error?.details?.trace?.exitCode;
@@ -65,7 +67,7 @@ export function createFallbackRouter({ stateDir, now = Date.now, cooldownMs = FA
           note(`Continuing with ${label}${route.harness.model ? ` · ${route.harness.model}` : ''}.`);
         }
         let uncertainTool=false;
-        for(let retry=0;retry<2;retry++) {
+        for(let retry=0;retry<MAX_ROUTE_ATTEMPTS;retry++) {
           const controller=new AbortController();
           const abort=()=>controller.abort(signal?.reason);
           if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});
@@ -109,7 +111,7 @@ export function createFallbackRouter({ stateDir, now = Date.now, cooldownMs = FA
             if(!failure||waitingPermission||uncertainTool)throw error;
             lastError=error;
             attempts.push({harness:route.harness.id,model:route.harness.model,status:'failed',reason:failure.kind});
-            if(!failure.immediate&&retry===0&&!useful){note(`${label} ${failure.label}; retrying once.`);continue;}
+            if(!failure.immediate&&retry<MAX_ROUTE_ATTEMPTS-1&&!useful){note(`${label} ${failure.label}; retrying (${retry+2}/${MAX_ROUTE_ATTEMPTS}).`);continue;}
             await mutate(state=>{const member=state.members[memberId]||{routes:{}};member.routes[key]={blockedUntil:now()+cooldownMs,reason:failure.kind};member.updatedAt=now();state.members[memberId]=member;});
             note(`${label} ${failure.label}.`);
             break;

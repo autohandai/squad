@@ -24,6 +24,9 @@ try{
   assert.equal(calls.length,2);assert.equal(calls[1].agent.harness.id,'autohand','Fallback never rewrites the canonical member');
   assert.deepEqual(calls[1].agent.permissions,payload.agent.permissions);assert.deepEqual(calls[1].attachments,payload.attachments);assert(calls[1].prompt.includes('NZ-42'));assert.equal(calls[1].workspace,payload.workspace);assert.deepEqual(payload,original);
   assert(events.some(row=>row.event==='fallback'&&row.data.to==='codex'));
+  await router.reset(payload.agentId);calls.length=0;
+  await router.execute(payload,{stream,execute:async turn=>{calls.push(turn);if(turn._routeTarget.harness.id==='autohand')throw Object.assign(new Error('The engine is overloaded'),{status:529});return{reply:'Recovered from overload'};}});
+  assert.equal(calls.length,2,'overload switches immediately rather than repeating ten requests');
   calls.length=0;
   const restarted=createFallbackRouter({stateDir:directory,now:()=>now,cooldownMs:100,firstResponseMs:25});
   await restarted.execute(payload,{execute,stream});assert.equal(calls.length,1,'cooldown survives a bridge restart');assert.equal(calls[0]._routeTarget.harness.id,'codex');
@@ -33,10 +36,10 @@ try{
   await router.reset(payload.agentId);
   calls.length=0;
   await router.execute(payload,{execute:async turn=>{calls.push(turn);if(turn._routeTarget.harness.id==='autohand')throw new Error('ECONNRESET');return{reply:'OK'};},stream});
-  assert.equal(calls.length,3,'a transient failure gets one retry, then the configured fallback');
+  assert.equal(calls.length,11,'a transient failure gets ten attempts, then the configured fallback');
   await router.reset(payload.agentId);calls.length=0;
   await router.execute(payload,{execute:async(turn,{signal})=>{calls.push(turn);if(turn._routeTarget.harness.id==='codex')return{reply:'OK'};return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));},stream});
-  assert.equal(calls.length,3,'an unresponsive engine is cancelled, retried once and replaced');
+  assert.equal(calls.length,11,'an unresponsive engine is cancelled after each attempt and replaced after ten attempts');
   for(const message of ['permission denied','chat stopped by the user','ENOSPC: disk is full','The attachment is invalid','unrelated programming exception']){
     await router.reset(payload.agentId);calls.length=0;
     await assert.rejects(router.execute(payload,{execute:async turn=>{calls.push(turn);throw new Error(message);},stream}),new RegExp(message));assert.equal(calls.length,1,message+' must not switch engines');
@@ -74,7 +77,7 @@ try{
   const coldPool=new SdkSessionPool({sweepMs:10_000,createSdk:()=>{let release;return{async start(){coldStarts++;await new Promise(resolve=>{release=resolve;});},async close(){coldCloses++;release?.();},async interrupt(){}};}});
   try{
     const cold=await router.execute({...payload,agentId:'cold-start'},{stream,execute:async(turn,{signal})=>{if(turn._routeTarget.harness.id==='codex')return{reply:'Continued after cold startup stalled'};const lease=await coldPool.acquire({agentId:'cold-start',workspace:payload.workspace,options:{},signal});await lease.release();throw new Error('An aborted startup may not start a prompt');}});
-    assert.equal(cold.routing.used.harness,'codex');assert.equal(coldStarts,2);assert.equal(coldCloses,2);assert.equal(coldPool.stats().active,0,'Both silent starts close before the next engine answers');
+    assert.equal(cold.routing.used.harness,'codex');assert.equal(coldStarts,10);assert.equal(coldCloses,10);assert.equal(coldPool.stats().active,0,'Every silent start closes before the next engine answers');
   }finally{await coldPool.closeAll();}
-  console.log('PASS ordered fallback, one retry, no-response cancellation, persisted recovery, identity/context/files/access, completed-work continuation, stop/approval/disk guards, strict catalogs and atomic primary/grant preservation.');
+  console.log('PASS ordered fallback, ten-attempt bound, no-response cancellation, persisted recovery, identity/context/files/access, completed-work continuation, stop/approval/disk guards, strict catalogs and atomic primary/grant preservation.');
 }finally{await rm(directory,{recursive:true,force:true});}

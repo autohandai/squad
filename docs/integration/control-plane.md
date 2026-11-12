@@ -276,7 +276,7 @@ rather than a placeholder, and requires `request_id`, `name` and `role`.
 Created members belong to the connection’s currently selected owner. They
 start with restrictive tool/capability policies and no work is dispatched.
 An omitted workspace saves no folder grant and creates no default folder.
-An engine ID must exist in the harness catalog; credentials and arbitrary
+An explicit engine ID must exist in the harness catalog; credentials and arbitrary
 executables cannot be supplied. Skill IDs are validated against the catalog;
 selection is not evidence of installation. `responsibilities` is an alias of
 `description`; supplying both is rejected.
@@ -288,3 +288,14 @@ Use profile revisions to reject stale edits. Creation request IDs persist in
 the owned registry: a retry cannot overwrite later profile changes, revive a
 deleted member or recreate work. No Git repository or engine is initialized
 by member creation.
+
+With no `engine`, creation prefers the ready default engine, otherwise the
+first connected ready engine. It saves up to four other connected engines as
+ordered fallbacks, using each engine's configured default model and reasoning.
+Fetch-on-use/uninstalled ACP entries and engines requiring setup are excluded
+from automatic choices. An explicit primary is retained, including its setup
+requirement. If no alternative is connected, the receipt explains that no
+automatic fallback is available; creation never installs or signs into one.
+`get_member_profile` and creation receipts expose `harness` and `modelRouting`.
+Users can edit/remove the saved choices in the app's Model settings. Replay
+returns the saved routing and never recomputes it after discovery changes.

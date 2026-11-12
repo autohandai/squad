@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- New members automatically receive connected fallback engines with their default models and reasoning settings. MCP creation chooses a ready primary when none is specified; Model settings lets you change or remove the saved fallback chain.
 - Agents and connected MCP clients can create saved Squad members and configure their profiles, responsibilities, skill packages, profile memories and routines. Managed tools use the member’s saved permissions and the selected owner.
 
 - User and Autohand team ownership for Squad data, with account switching isolated from previously saved agents and memories.
@@ -22,6 +23,7 @@ list to the section for that version.
 
 ### Changed
 
+- Transient engine failures can retry up to ten times before failover; usage limits and overload switch immediately. Permission waits, uncertain tool actions and Stop still prevent automatic switching.
 - Portable Squad archives need Node 22.13 LTS or 24+ for safe local data locking. Desktop installers continue to bundle their runtime.
 - Reset applies to the selected Squad’s data and keeps its earlier dataset. Completion follows a durable operation receipt instead of waiting for a different process ID.
 - Desktop backup downloads open in your browser, keeping Squad open while you save the verified file.

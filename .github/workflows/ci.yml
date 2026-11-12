@@ -142,7 +142,9 @@ jobs:
         run: bun run check:owned-backups:browser
 
       - name: Check MCP member management in the app
-        run: node scripts/check-member-management-browser.mjs
+        run: |
+          node scripts/check-member-management-browser.mjs
+          node scripts/check-member-default-routing-browser.mjs
 
       - name: Check agent tasks, history and default-folder consent
         env:

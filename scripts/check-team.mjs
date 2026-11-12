@@ -546,6 +546,9 @@ try {
   assert.equal(management[1].response.result.structuredContent.id, made.id);
   assert.equal(management[1].response.result.structuredContent.created, false);
   const savedManagerChild = (await api('/api/control-plane/members/' + made.id)).data;
+  assert.equal(savedManagerChild.harness.id, made.harness.id, 'managed creation returns its persisted primary assignment');
+  assert(Array.isArray(savedManagerChild.modelRouting.fallbacks), 'managed creation persists the same automatic-routing contract as operator creation');
+  assert.deepEqual(savedManagerChild.modelRouting, made.modelRouting);
   assert.equal(savedManagerChild.responsibilities, 'Own CLI interoperability.');
   assert.equal(savedManagerChild.memories[0].text, 'Use the actual saved tool contracts.');
   assert.match(savedManagerChild.personality, /Precise and thoughtful/);
