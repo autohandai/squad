@@ -202,3 +202,38 @@ corpus is on screen. It has no continuously running force simulation, semantic
 clustering, summary-model calls, or background agent conversations. Source file
 limits and collection warnings remain visible. This is a deliberate local-first
 implementation, not a multi-tenant memory service.
+
+## Browser pointer acceptance correction (2026-11-11)
+
+[Linux runtime job130257679580](https://github.com/autohandai/squad/actions/runs/42939471582/job/130257679580)
+failed its node-drag assertion: the node's transform was unchanged. The graph
+implementation was unchanged by the text-export PR. The check clicked Fit and
+immediately measured the bounding box, whose center can include a visible
+label, while the camera has a 260ms CSS transition. It then asserted immediately
+after sending the pointer events.
+
+The ranked explanations were a moving camera, a missed node and an uncommitted
+React update. A local sixfold CPU-throttle probe observed a running camera
+animation with rendered scale1.08031 while its target scale was0.95421. Adding
+90ms between the coordinate read and pointer press hit the background and
+reproduced the same unchanged-transform failure. The first probe happened to
+hit the right node and passed; that pass did not establish stationary geometry.
+
+Wait for the camera's actual animations to finish before pointer input, derive
+the circle's origin from its SVG screen matrix rather than a group bounding-box
+center, assert that the point hits the intended memory, and wait for actual pan
+or node movement before releasing. Retain the final movement assertions. This
+synchronizes the check with rendered input and does not disable animations,
+add a fixed sleep to acceptance tests, change graph behavior or excuse a broken
+drag. The task-local latency probe is separate from the committed check.
+
+The corrected full browser suite passes with real pointer input, graph/list
+editing, concurrency, collection settings/restart, light/dark, mobile and
+reduced motion. A focused probe applies sixfold CPU throttling only after the
+graph loads, injects the same 90ms read-to-press latency, verifies the intended
+node is hit and confirms that its transform changes. It passes without
+screenshot or startup throttling obscuring the pointer result. Logs are
+`memory-pointer-fixed-normal.log` and `memory-pointer-fixed-throttled.log` in
+`.codex-artifacts/desktop-downloads/`; the actual Linux runner must still verify
+the committed check. The earlier whole-suite throttled attempts timed out in
+startup/screenshot work and did not supply a green pointer verdict.

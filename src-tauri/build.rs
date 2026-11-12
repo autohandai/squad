@@ -14,6 +14,7 @@ fn main() {
             "squad_system_reset_status",
             "squad_restart_after_system_reset",
             "squad_open_artifact_in_browser",
+            "squad_save_text_export",
         ]),
     ))
     .expect("build Squad native permissions")
