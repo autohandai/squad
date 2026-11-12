@@ -41,6 +41,8 @@ list to the section for that version.
 
 ### Fixed
 
+- Channel notifications notice a new saved post even when it arrives just as the previous scan finishes.
+
 - Computer Use grants in a team Squad stay with the signed-in person who confirmed them. Earlier team grants without a recorded person remain off until confirmed again; the old files are preserved.
 - Channel mentions notify the person only when a saved reply actually addresses them; mentioning another agent no longer creates a personal mention alert. Failed preference saves retain the earlier settings and can be retried.
 - Portable backup restore keeps private groups and converted channels in the right place, with their conversation history and membership intact.
