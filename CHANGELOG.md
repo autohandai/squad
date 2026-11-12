@@ -13,6 +13,7 @@ list to the section for that version.
 ### Fixed
 
 - Artifact release checks verify that the preview receives pointer input before clicking, and use real taps on touch layouts. Slow browser runs no longer mistake a delivered automation command for an interactive preview.
+- Windows process-cleanup checks wait for the durable cleanup receipt before starting a replacement, avoiding a timing-dependent false failure.
 
 ### Added
 

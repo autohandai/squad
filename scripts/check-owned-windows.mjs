@@ -58,7 +58,13 @@ try {
   const [held]=await once(broker,'message');
   await assert.rejects(createWorkerLedger(ledgerRoot,'contender'),/previous private Squad process/);
   const holderExited=once(broker,'exit');broker.kill('SIGKILL');await holderExited;
-  await until(async()=>gone(held.root)&&gone(held.grandchild)&&await windowsJobDrained(held.jobName,{receiptPath:held.receiptPath,bootUptimeMs:held.bootUptimeMs}),'broker crash closes job host pipe and owned tree').catch(async error=>{
+  await until(async()=>{
+    if(!gone(held.root)||!gone(held.grandchild))return false;
+    // An empty live job is not a published receipt. Wait for stable proof so
+    // replacement cannot straddle receipt publication and watchdog exit.
+    try{await readFile(held.receiptPath);}catch(error){if(error.code==='ENOENT')return false;throw error;}
+    return windowsJobDrained(held.jobName,{receiptPath:held.receiptPath,bootUptimeMs:held.bootUptimeMs});
+  },'broker crash closes job host pipe and records its drained tree').catch(async error=>{
     const evidence={rootGone:gone(held.root),grandchildGone:gone(held.grandchild),hostGone:gone(held.host),receipt:await readFile(held.receiptPath,'utf8').catch(error=>error.code),jobEmpty:await windowsJobIsEmpty(held.jobName).catch(error=>error.message)};
     throw Error(`${error.message}; isolated Windows evidence: ${JSON.stringify(evidence)}`);
   });
