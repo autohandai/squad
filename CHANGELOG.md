@@ -25,6 +25,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Pinned and hidden members keep your choices after reopening Squad, while removed members stay removed.
 - The first Chief of Staff now receives connected fallback engines, and a CLI monthly-quota notice triggers failover instead of appearing as a completed answer.
 
 - Run the setup guide now lets you review an existing member and replace missing work folders. It reuses your saved squad and keeps explicit consent before creating the default Documents folder.

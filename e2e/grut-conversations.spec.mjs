@@ -79,6 +79,9 @@ test('Grut selects a persistent conversation layout with real previews and exist
   await sidebar.getByRole('button', { name: 'New message', exact: true }).click();
   await expect(page.getByTestId('conversation-composer')).toBeVisible();
   await page.goto(bridge.origin + `/channels/${group.id}`);
+  if (compact) await page.getByRole('button', { name: 'Sidebar', exact: true }).tap();
+  await expect(sidebar.getByRole('button', { name: /^Noah,/ }).getByLabel('Pinned', { exact: true })).toBeVisible();
+  if (compact) await page.getByRole('dialog', { name: 'Navigation', exact: true }).getByRole('button', { name: 'Close', exact: true }).tap();
   const groupUser = page.locator('main [data-channel-message-id="grut-group-user"]');
   await expect(groupUser.locator('.chat-user-bubble')).toContainText('Review this together.');
   const groupPosition = await groupUser.evaluate(element => ({ left: element.getBoundingClientRect().left, parent: element.parentElement.getBoundingClientRect().left }));
@@ -123,6 +126,18 @@ test('Grut selects a persistent conversation layout with real previews and exist
   if (compact) await page.getByRole('button', { name: 'Sidebar', exact: true }).tap();
   await expect(page.locator('.app-sidebar[data-sidebar-layout="workspace"]:visible')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Direct messages', exact: true })).toBeVisible();
+  const noahDefault = page.locator('.app-sidebar:visible').getByRole('button', { name: /^Noah,/ });
+  await expect(noahDefault.getByLabel('Pinned', { exact: true })).toBeVisible();
+  await page.goto(bridge.origin + '/squad');
+  await page.locator('main').getByRole('button', { name: 'Actions for Noah', exact: true }).click();
+  await page.getByRole('button', { name: 'Hide', exact: true }).click();
+  await expect(page.locator('main').getByRole('button', { name: /^Hidden.*1$/ })).toBeVisible();
+  await page.reload();
+  await page.locator('main').getByRole('button', { name: /^Hidden.*1$/ }).click();
+  const hiddenMember = page.locator('main').getByRole('region', { name: /^Hidden/ });
+  await expect(hiddenMember.getByRole('button', { name: 'Noah', exact: true })).toBeVisible();
+  await hiddenMember.getByRole('button', { name: 'Show', exact: true }).click();
+  await expect(page.locator('main').getByRole('button', { name: /^Hidden.*1$/ })).toHaveCount(0);
   expect(Object.keys((await bridge.api('/api/channels')).data.agentChannelAccess)).toEqual([member.id, other.id]);
   expect(errors).toEqual([]);
 });

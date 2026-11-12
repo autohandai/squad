@@ -60,6 +60,9 @@ The next review caught that the shared compact-message avatar column also held
 its only clock. Hiding that column hid consecutive-message timestamps as well.
 Grut keeps those clocks in the message column, visible on touch layouts too;
 the fixture checks consecutive human roots and agent thread replies.
+Rendered full-navigation verification also exposed discarded Pin/Hide choices
+in shared ownership startup, beyond the original sort issue. ADR-0219 records
+the narrowly scoped cache restoration and its authority boundary.
 
 ## Consequences and proof limits
 
