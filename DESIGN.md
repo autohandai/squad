@@ -3,6 +3,7 @@
 ## UI Component Style
 
 - Computers settings owns phone pairing, explicit matching-code approval and individual revocation. A QR offer grants no access before approval. Name the computer receiving work; a workspace is not a separate computer or VM. Show saved tunnel configuration separately from verified reachability, and preserve uncertain delivery receipts instead of silently sending a second copy.
+- Reach from anywhere is an explicit Computers connection choice with no port field. Show connected only after the outbound relay confirms this computer and while its heartbeat and owner lease remain current. Relay downtime keeps the saved choice and offers an honest waiting state; it never silently opens a public listener or changes the connection mode.
 - Interactive HTML artifacts must support deliberate pointer and touch input while retaining their opaque sandbox. Verification must check the resulting interaction, not only that an automation command returned successfully.
 
 - Product UI should feel simple, functional, and Notion-like: calm document surfaces, clear hierarchy, whitespace, and concise controls.

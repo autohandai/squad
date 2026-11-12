@@ -19,6 +19,12 @@ test('a phone pairs only after desktop approval and uses the real member queue',
   const settings = page.getByTestId('computers-settings');
   const toggle = settings.getByRole('switch', { name: 'Connect phones' });
   await expect(toggle).not.toBeChecked();
+  await settings.getByRole('combobox', { name: 'Connection', exact: true }).click();
+  await page.getByRole('option', { name: 'Reach from anywhere', exact: true }).click();
+  await expect(settings.getByLabel('Connection port', { exact: true })).toHaveCount(0);
+  await expect(settings).toContainText('without opening a network port');
+  await settings.getByRole('combobox', { name: 'Connection', exact: true }).click();
+  await page.getByRole('option', { name: 'On this network', exact: true }).click();
   await toggle.click(); await expect(toggle).toBeChecked();
   const response = page.waitForResponse(value => value.url().endsWith('/api/mobile/pair') && value.request().method() === 'POST');
   await settings.getByRole('button', { name: 'Connect a phone', exact: true }).click();

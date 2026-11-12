@@ -7,8 +7,9 @@ a desktop or App Store release.
 ## Connect a computer
 
 1. Open Squad on the computer, sign in, and choose the personal or team Squad.
-2. In **Settings → Computers**, enable **Connect phones**. Choose the local
-   network connection, or a tunnel already configured for that computer.
+2. In **Settings → Computers**, choose **Reach from anywhere** for Autohand's
+   relay, **On this network**, or **My secure tunnel** for your own tunnel.
+   Save the connection and enable **Connect phones**. Wait for confirmation.
 3. Choose **Connect a phone**. Scan the private QR code in Squad for iOS, or
    explicitly copy and paste its pairing link. The offer expires in ten minutes.
 4. Compare the six-digit code on both devices and approve on the computer.
@@ -16,19 +17,26 @@ a desktop or App Store release.
    fallbacks and permissions remain controlled by the computer.
 
 The computer needs to be awake with Squad running. Revoke a phone using its
-**Disconnect** action. Disabling phone connections stops the listener and keeps
+**Disconnect** action. Disabling phone connections stops the transport and keeps
 pairings; it does not stop agents or revoke their work permissions.
 
 ## Tunnel configuration
 
 The default port is 29323. **On this network** listens on local interfaces and
 puts the private LAN address in the QR code. Both devices need network reachability.
-**Secure tunnel** listens on `127.0.0.1` and advertises the address you supply.
+**My secure tunnel** listens on `127.0.0.1` and advertises the address you supply.
 Configure your existing HTTPS reverse proxy/tunnel to forward `/v1/mobile` and,
 optionally, `/v1/health` to that port. Do not forward the main desktop API port.
 HTTPS addresses have no credentials, query, fragment or path prefix. Plain HTTP
 is accepted only for local addresses. Saving a URL does not create a tunnel or
-prove external connectivity. Automatic relay setup is still pending.
+prove external connectivity.
+
+**Reach from anywhere** opens an outbound authenticated WebSocket to
+`https://squad.autohand.ai`, without an inbound listener or a port field. It
+requires the relay-enabled desktop, mobile client and deployed Squad API.
+The status is connected only after a relay acknowledgement and while the
+heartbeat and current-owner lease are valid. Offline configuration stays
+saved and reconnects; it never changes to a different connection mode.
 
 All phone commands are AES-GCM encrypted end to end. A proxy sees encrypted
 packets and routing metadata, not message bodies. Pairing links contain a private
@@ -49,6 +57,17 @@ The plaintext request has `issuedAt` (Unix seconds), `command`, and `parameters`
 The response is encrypted with the same routing fields and the response direction:
 `{ok:true,data:…}` or `{ok:false,error:…}`. Pairing packets use the QR's temporary
 256-bit key; approved device packets use the device's 256-bit key.
+
+Relay offers add `relayToken` (64 lowercase hex characters) and a canonical
+`https://squad.autohand.ai/mobile/<64-hex-roomID>` endpoint. The phone posts
+`{relayToken,packet}` to `<endpoint>/v1/mobile`; the response is the original
+encrypted packet. The capability belongs in the body, never a URL query or
+authorization credential for the desktop API. Old direct offers omit it and
+keep posting the bare packet. Keep this capability with the paired key in
+Keychain. A relay forwards pairing packets only until offer expiry, then
+allows device packets only after explicit computer approval. It never
+receives a decryption key. See [ADR-0212](../adrs/ADR-0212-outbound-encrypted-phone-relay.md)
+for access checks, resource limits, leases and metadata retained by the relay.
 
 | Command | Parameters | Result |
 | --- | --- | --- |
@@ -82,8 +101,8 @@ requires pairing its actual execution computer; the phone refuses a local fallba
 
 Phone pairing does not grant Computer Use, arbitrary HTTP/API access, automatic
 folder creation or Git initialization. APNs is notification transport, not a
-substitute for an awake computer or a message tunnel. APNs, automatic internet
-relay and per-agent VM provisioning are not delivered by this first integration.
+substitute for an awake computer or a message tunnel. APNs and per-agent VM
+provisioning are not delivered by this integration.
 
 ## Verification
 
@@ -92,3 +111,11 @@ Swift) `node scripts/check-mobile-interop.mjs <mobile-project-directory>`. Nativ
 acceptance uses `node Scripts/native-smoke.mjs <squad-checkout> [simulator-UDID]`
 from the iOS project. These create isolated homes/owners and use an offline engine.
 They do not change the installed app, grant OS permissions, or call a live model.
+
+The API package's `npm test` includes the actual laptop relay client and desktop
+controller with a local workerd runtime and canonical queue. On macOS, run
+`SQUAD_MOBILE_PROJECT=<mobile-project> npx tsx --test test/mobile-relay.test.ts`
+from `services/squad-api` to include the real Swift CryptoKit client. Add
+`SQUAD_MOBILE_NATIVE_DEVICE=<your-verification-simulator-UDID>` to run native
+pair/chat/revoke UI through that same local relay. Those checks do not prove
+the public deployment or physical-device camera and cellular connectivity.

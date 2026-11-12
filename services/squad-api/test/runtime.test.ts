@@ -27,7 +27,7 @@ const content = (text: string) => ({ text, scope: "team", memberId: null, projec
 const write = (id: string, baseRevision: number, text: string | null, session = alice, key = crypto.randomUUID()) => call(`${prefix()}/memory/${id}`, "PUT", { baseRevision, content: text === null ? null : content(text) }, session, key);
 
 before(async () => {
-  const bundle = await build({ entryPoints: ["src/index.ts"], bundle: true, write: false, format: "esm", platform: "browser", target: "es2024" });
+  const bundle = await build({ entryPoints: ["src/index.ts"], bundle: true, write: false, format: "esm", platform: "browser", target: "es2024", external: ["cloudflare:workers"] });
   runtime = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: "squad-api", modules: true, script: bundle.outputFiles[0].text, compatibilityDate: "2026-10-27",
     d1Databases: ["DB"], r2Buckets: ["MEMORY", "RELEASES"],
     bindings: { IDENTITY_ORIGIN: "https://api.autohand.ai", WEB_ORIGIN: "https://squad.example.test", RELEASE_PUBLISHER_TOKEN: publisher },

@@ -6,7 +6,8 @@ buckets, not a namespace hosted by the general Autohand API.
 
 `cloudflare.config.ts` defines the service and its bindings. `/health` identifies
 the service; private operations require a **Squad session**, not an Autohand
-inference/API token. Autohand identity is verified only at session exchange.
+inference/API token. Autohand identity is verified at session exchange and
+again for current-owner operations such as phone relay control and team access.
 
 ## Run and verify
 
@@ -80,6 +81,36 @@ The public release manifest is a flat, versioned JSON document, with ETags.
 | GET | `/v1/tenants/:tenant/workspaces/:workspace/memory/changes?cursor=0&limit=100` | Ordered immutable changes, including deletions |
 | GET | `/v1/tenants/:tenant/audit` | Administrator reads latest content-free events |
 | GET / PUT | `/v1/releases/:channel/manifest` | Public discovery / separate publisher credential |
+
+## Encrypted phone relay
+
+Computers explicitly enable **Reach from anywhere** and connect outbound to
+the `MobileRelay` SQLite Durable Object export. Every control route below
+requires a Squad session and `X-Autohand-Identity` for the same actor. Team
+write access is freshly checked. Room IDs bind actor, owner, dataset and
+computer; knowing an ID is not authority.
+
+| Method | Path | Body / result |
+| --- | --- | --- |
+| POST | `/v1/mobile-relays` | `{computerID,actorID,ownerScope,teamID?}` → `{roomID}`; ownerScope is the desktop's opaque dataset scope SHA-256 |
+| GET + WebSocket upgrade | `/v1/mobile-relays/:roomID/host` | One outbound computer socket; `relay.ready` confirms protocol, computerID and leaseUntil |
+| POST | `/v1/mobile-relays/:roomID/lease` | Renew the ten-minute host lease after current access verification |
+| POST | `/v1/mobile-relays/:roomID/offers` | `{pairingID,expiresAt}` → `{endpoint,relayToken}`; ten-minute bootstrap route |
+| POST | `/v1/mobile-relays/:roomID/offers/:pairingID/approve` | `{deviceID}` promotes that route after local matching-code approval |
+| POST | `/v1/mobile-relays/:roomID/devices/sync` | `{deviceIDs}` removes cloud capabilities no longer in the local private key store |
+| DELETE | `/v1/mobile-relays/:roomID/devices/:deviceID` | Remove one phone's routing capability |
+| POST | `/mobile/:roomID/v1/mobile` | Native phone `{relayToken,packet}` → original encrypted packet; no account credential |
+
+The public route rejects browser Origins, unknown routes, invalid/expired
+capabilities and unapproved device IDs. Raw capabilities stay in QR/device
+storage and POST bodies; only SHA-256 hashes persist at the relay. Socket
+frames contain ciphertext and routing IDs, not Autohand credentials or keys.
+The relay has no durable message queue: at most sixteen pending requests,
+twenty approved phones and 25 seconds per response. Reconnect does not replay
+work. The computer's durable receipt and canonical queue own deduplication.
+Apply migration `0003_mobile_relays.sql` before deploying the SQLite export.
+See [phone protocol and verification](../../docs/integration/mobile-companion.md)
+and [ADR-0212](../../docs/adrs/ADR-0212-outbound-encrypted-phone-relay.md).
 
 ## Owned agents and portable backups
 

@@ -5,7 +5,7 @@ import { startBridge } from './reliability-browser.mjs';
 import { createServer } from 'node:http';
 
 /** Real owner-bound bridge/queue, isolated home and an offline fixture engine. */
-export async function startMobileFixture({ announcements = [] } = {}) {
+export async function startMobileFixture({ announcements = [], relayApiUrl } = {}) {
   let member, counter;
   const announcementCalls = [];
   const upstream = createServer(async (request, response) => {
@@ -33,7 +33,7 @@ console.log(JSON.stringify({type:'turn.completed'}));
     await chmod(engine, 0o755);
     member = { id: 'fixture-eva', name: 'Eva', role: 'QA Engineer', status: 'online', workspace, projects: [{ path: workspace }],
       harness: { id: 'codex', executablePath: engine }, permissions: { permissionMode: 'restricted' }, memory: [] };
-    return { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, OPENAI_API_KEY: 'fixture-no-provider', AUTOHAND_API_URL: `http://127.0.0.1:${upstream.address().port}` };
+    return { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, OPENAI_API_KEY: 'fixture-no-provider', AUTOHAND_API_URL: `http://127.0.0.1:${upstream.address().port}`, ...(relayApiUrl ? { AUTOHAND_SQUAD_API_URL: relayApiUrl } : {}) };
   } });
     const closeBridge = bridge.close;
     bridge.close = async () => { try { await closeBridge(); } finally { await new Promise(resolve => upstream.close(resolve)); } };

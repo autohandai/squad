@@ -8715,6 +8715,11 @@ function routeContext() {
     squadStateDir,
     appStateDir,
     ownedBrokerOrigin: privateOwnerContext.publicUrl,
+    mobileRelayIdentity: () => {
+      assertOwnerExecution();
+      return { token: readOwnerCredential(userConfigPath).token, actorID: privateOwnerContext.actor.id,
+        ...(privateOwnerContext.owner.kind === 'team' ? { teamID: privateOwnerContext.owner.id } : {}) };
+    },
     notificationProfile: () => { assertOwnerRead(); return { name: privateOwnerContext.actor?.name || '', email: privateOwnerContext.actor?.email || '' }; },
     notificationActorKey: privateOwnerContext.owner?.kind === 'team' ? verifiedActorKey(privateOwnerContext.actor) : '',
     ownedBrokerRequest,

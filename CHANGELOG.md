@@ -10,6 +10,14 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- Reach your Squad agents from an approved iPhone away from home through an encrypted relay. Enable “Reach from anywhere” in Computers settings, scan the code and approve the matching six digits. Your computer keeps message keys and needs to stay awake with Squad running.
+
+### Changed
+
+- Phone connections keep their computer identity and delivery receipts after a restart. Disconnecting a phone locally also removes its relay access when the computer reconnects.
+
 ### Fixed
 
 - macOS release checks now verify the bundled CLI directly from a fresh home, so a signed-out computer's private runtime response no longer causes a false failure. Windows release tests build their required process helper first.
@@ -19,7 +27,7 @@ list to the section for that version.
 
 ### Added
 
-- Settings → Computers pairs the native iPhone/iPad companion using a private QR code and matching-code approval. Phones can chat with saved agents, follow canonical task progress and delegate through the same task operation as Squad MCP. Local networking and an explicitly configured secure tunnel are supported; automatic relay setup, push delivery and VM provisioning remain in progress.
+- Settings → Computers pairs the native iPhone/iPad companion using a private QR code and matching-code approval. Phones can chat with saved agents, follow canonical task progress and delegate through the same task operation as Squad MCP. Choose the local network, Autohand’s relay or your own secure tunnel; push delivery and VM provisioning remain in progress.
 - Paired phones discover supported commands and the computer's version. Messages and tasks retain retry receipts across restarts, and each phone can be revoked individually.
 - A per-member “Use the computer” switch in Model settings and Permissions. Turning it on asks for native confirmation; turning it off revokes access and removes Computer Use instructions and tools from later work. Operator MCP clients can read the saved scope and revoke it.
 - Right-click and ellipsis actions to rename or delete channels and groups, choose all posts or mentions, or mute and hide a conversation. Hidden channels can be shown again; Settings provides defaults and individual overrides.
