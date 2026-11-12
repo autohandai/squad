@@ -55,4 +55,10 @@ const answer = await questions.ask({ runId: 'bounded', agentId: 'manager', quest
 assert.equal(answer.status, 'unanswered');
 assert.throws(() => questions.answer(requestId, 'Allow once'), /no longer|not found|closed/i);
 detach();
+permissions.squad_create_member = 'allow';
+await manage('squad_create_member', { request_id: 'no-folder', name: 'Eva', role: 'QA' }, session, assertCurrent);
+assert.equal(mutations.at(-1).value.workspace, '', 'a conversation-only actor creates no implicit folder grant');
+const beforeEscape = mutations.length;
+await assert.rejects(() => manage('squad_create_member', { request_id: 'escape', name: 'Eva', role: 'QA', workspace: process.cwd() }, session, assertCurrent), /already assigned/);
+assert.equal(mutations.length, beforeEscape);
 console.log('PASS: block/ask/allow, workspace overrides, stopped turns, permission revocation, before-write fencing and bounded consent.');

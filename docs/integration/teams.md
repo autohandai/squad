@@ -244,8 +244,10 @@ acknowledgement before retrying.
 For example, `squad_create_member({request_id:"qa-specialist-1",name:"Eva",
 role:"QA engineer",responsibilities:"Own release acceptance.",
 memories:["Check the actual packaged app."]})` returns the saved ID. Use that
-ID with the target-member tools. A managed creation inherits the current
-work folder unless a folder already assigned to the acting member is named.
+ID with the target-member tools. A managed creation inherits an assigned work
+folder when available, otherwise it saves without one; it never turns an
+unassigned runtime folder into a grant. An explicit folder must already be
+assigned to the acting member.
 It does not copy broad execution permissions, launch an engine, create Git
 or enable a routine. Use `squad_propose_team` when the person should review
 a roster together before creating it.

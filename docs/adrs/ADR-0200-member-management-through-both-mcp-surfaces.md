@@ -52,8 +52,9 @@ writes; a timed-out read must not proceed to mutation. A lost write acknowledgem
 still requires inspecting the saved record rather than claiming a rollback.
 
 Creation saves restrictive execution permissions and starts no work. Managed
-creation inherits the current work folder or an explicitly named folder already
-assigned to the actor. Routine folder changes must use a folder assigned to
+creation inherits an assigned work folder, or saves without one when the actor
+has none; an unassigned runtime fallback is not an access grant. An explicitly
+named folder must already belong to the actor. Routine folder changes use a folder assigned to
 their target. Operator clients retain their existing explicit folder authority.
 No default folder, Git repository, credential or arbitrary executable is created
 or supplied by this tool. A selected engine must exist in the harness catalog;
