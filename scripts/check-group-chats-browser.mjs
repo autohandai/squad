@@ -7,6 +7,17 @@ const bridge = await startBridge({ development: false, prepare: prepareModelRout
 let browser;
 try {
   browser = await startBrowser();
+  await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const response = await originalFetch(input, init);
+      const url = new URL(typeof input === 'string' ? input : input.url, location.origin);
+      if (init?.method === 'PATCH' && /^\\/api\\/channels\\/[^/]+$/.test(url.pathname) && response.ok) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      return response;
+    };
+  ` });
   const members = ['Eva', 'Noah'].map(name => ({ id: 'group-' + name.toLowerCase(), name, role: 'Reviewer', status: 'online', workspace: process.cwd(), projects: [{ path: process.cwd() }], harness: { id: 'codex' }, permissions: {} }));
   await seedOwnedBrowserFixture(bridge, browser, { members });
   await browser.navigate(bridge.origin + '/squad');
@@ -43,12 +54,14 @@ try {
   await browser.click('Save group');
   await until(async () => (await bridge.api('/api/group-chats/' + id)).data.name === 'Release review group', 'saved group rename');
   await until(() => browser.evaluate("document.getElementById('group-channel-name').value === 'Release review group'"), 'untouched conversion name follows the saved group rename');
+  await until(() => browser.evaluate("[...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Save group')"), 'first group save acknowledgement finishes rendering');
   await browser.fill('#group-channel-name', 'release-reviews');
   await browser.fill('#channel-details-name', 'Launch reviewers');
   await browser.click('Save group');
   await until(async () => (await bridge.api('/api/group-chats/' + id)).data.name === 'Launch reviewers', 'second saved group rename');
+  await until(() => browser.evaluate("!!document.querySelector('button[aria-label=\"Group chat: Launch reviewers\"]')"), 'saved group rename renders in its direct-message row');
+  await until(() => browser.evaluate("[...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Save group')"), 'second group save acknowledgement finishes rendering');
   assert.equal(await browser.evaluate("document.getElementById('group-channel-name').value"), 'release-reviews', 'an intentional conversion name is retained across source updates');
-  assert.equal(await browser.evaluate("!!document.querySelector('button[aria-label=\"Group chat: Launch reviewers\"]')"), true, 'saved group rename updates its direct-message row');
   await browser.evaluate("document.getElementById('group-channel-visibility').click()");
   await until(() => browser.evaluate("!!document.querySelector('[role=option]')"), 'channel visibility options');
   await browser.evaluate("[...document.querySelectorAll('[role=option]')].find(option => option.textContent.trim() === 'Public').click()");

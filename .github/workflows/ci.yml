@@ -148,6 +148,9 @@ jobs:
       - name: Check owned backup settings and restore in a browser
         run: bun run check:owned-backups:browser
 
+      - name: Check account destinations and Settings navigation
+        run: bun run check:shell-settings:browser
+
       - name: Check MCP member management in the app
         run: |
           node scripts/check-member-management-browser.mjs

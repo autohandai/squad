@@ -16,10 +16,13 @@ list to the section for that version.
 
 ### Changed
 
+- The account menu now starts with Inbox, Settings, About, and Licenses and agreements. Analytics lives beside Memory in Settings, with Back returning to your conversation and unsent draft.
 - Phone connections keep their computer identity and delivery receipts after a restart. Disconnecting a phone locally also removes its relay access when the computer reconnects.
 
 ### Fixed
 
+- Double-clicking the empty desktop titlebar once again enlarges and restores the window.
+- Group-chat browser checks wait for the saved name to appear and the save acknowledgement to finish, avoiding a false failure on slower connections.
 - macOS release checks now verify the bundled CLI directly from a fresh home, so a signed-out computer's private runtime response no longer causes a false failure. Windows release tests build their required process helper first.
 - Windows cleanup recognizes a valid receipt written while the operating-system status check was running, while still refusing replacement without matching proof.
 - Artifact release checks verify that the preview receives pointer input before clicking, and use real taps on touch layouts. Slow browser runs no longer mistake a delivered automation command for an interactive preview.

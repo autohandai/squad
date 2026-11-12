@@ -236,6 +236,8 @@ const UI_COPY_BY_LANGUAGE = {
     upgradeAvailable: "Upgrade available",
     checkForUpgrades: "Check for upgrades",
     aboutSquad: "About Autohand Squad",
+    about: "About",
+    licensesAndAgreements: "Licenses and agreements",
     runtimeBridge: "Runtime bridge",
     settings: "Settings",
     appearance: "Appearance",
