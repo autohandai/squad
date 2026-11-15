@@ -132,3 +132,15 @@ prints the host's error message so a recurrence is diagnosable.
   only stored address is the local one.
 - Not done: APNs, waking a sleeping computer, automatic grant rotation, and a
   per-route health line on the phone beyond the route last used.
+
+## Deployment (2026-11-16)
+
+The owner approved deploying the relay change. `cf deploy` from
+`services/squad-api` (local `main` at `7d31b72`, whose `services/squad-api` differs
+from `origin/main` only by this change) produced Worker version
+`feebd76f-fcd2-4b68-9e0c-e13dc2dd5e87` on `squad.autohand.ai`. No migration was
+needed. Afterwards, an unauthenticated `POST
+/v1/mobile-relays/<room>/devices/grants` answered 401 (sign-in required)
+rather than 404, and the owner's restarted bridge connected both routes with
+no relay error. A phone paired on Wi-Fi reaching the Mac through the
+deployed relay has not yet been observed on a real device.
