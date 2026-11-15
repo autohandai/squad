@@ -22,9 +22,10 @@ This does not establish a runtime defect or a reason to skip its release gate.
 
 ## Decision
 
-Keep the helper lookup inside the test module. Starting at the running test's
-directory, search its ancestors for the already-built daemon helper. Use the
-same lookup in the real Windows ownership test and a cross-platform regression
+Keep the helper lookup inside the test module. Identify Cargo's profile directory
+from the running test's `deps` or nested `build/.../out` layout and check only
+that profile's already-built daemon helper. Use the same lookup in the real
+Windows ownership test and a cross-platform regression
 covering both `deps` and the observed nested `build/.../out` layout. A missing
 helper remains a test failure; do not use PATH or the installed application.
 
@@ -37,6 +38,14 @@ the lookup change, `cargo test --manifest-path daemon/Cargo.toml --locked -j1
 Rust 1.90.0, including the regression and existing ownership tests.
 `cargo fmt -- --check` and `git diff --check` also passed. The fixture removes its temporary
 files before asserting and also checks absence after removal.
+
+Review caught that an initial ancestor search could escape the profile and
+select an unrelated executable. A second RED run put a decoy above the profile
+with the actual helper absent and reproduced that wrong selection. Discovery
+now stops at the identified profile; the decoy must remain unselected. This
+supports the two observed Cargo layouts without assuming the profile name or
+hard-coding the checkout's target directory. An unrecognized layout still fails
+instead of guessing a different executable.
 
 This changes test discovery, not production executable discovery or the
 process-supervision boundary. The cross-platform fixture proves filesystem

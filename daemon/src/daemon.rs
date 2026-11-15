@@ -2716,12 +2716,16 @@ fn read_timestamp_field(path: &PathBuf, field: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     fn built_windows_daemon(test_executable: &std::path::Path) -> Option<std::path::PathBuf> {
-        // Cargo's test executable may live in deps/ or a nested build/.../out/.
-        // Only use the helper built alongside this test, never PATH or an install.
-        test_executable.parent()?.ancestors().find_map(|directory| {
-            let helper = directory.join("autohand-squad-daemon.exe");
-            helper.is_file().then_some(helper)
-        })
+        // Identify the profile from Cargo's deps/ or nested build/.../out/ layout.
+        // A missing profile helper must not fall back to an ancestor or install.
+        let output = test_executable.parent()?.ancestors().find(|directory| {
+            matches!(
+                directory.file_name().and_then(std::ffi::OsStr::to_str),
+                Some("deps" | "build")
+            )
+        })?;
+        let helper = output.parent()?.join("autohand-squad-daemon.exe");
+        helper.is_file().then_some(helper)
     }
 
     #[test]
@@ -2742,9 +2746,15 @@ mod tests {
         let nested = built_windows_daemon(
             &profile.join("build/autohand-squad-runtime/hash/out/runtime-tests.exe"),
         );
+        std::fs::remove_file(&helper).unwrap();
+        std::fs::write(root.join("autohand-squad-daemon.exe"), b"unrelated helper").unwrap();
+        let outside_profile = built_windows_daemon(
+            &profile.join("build/autohand-squad-runtime/hash/out/runtime-tests.exe"),
+        );
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(standard, Some(helper.clone()));
         assert_eq!(nested, Some(helper));
+        assert_eq!(outside_profile, None);
         assert!(built_windows_daemon(&profile.join("deps/runtime-tests.exe")).is_none());
     }
 
