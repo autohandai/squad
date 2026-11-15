@@ -21,6 +21,13 @@ thirty-five minutes for the other platforms. Both execute a cold, single-job
 release-mode Rust build. PR83's Intel dry run was still building when this
 mismatch was found; its completion was not assumed.
 
+For comparison, the earlier successful canary run 43218946948 built its Intel
+runtime in 13 minutes 28 seconds (job 131206335270, 12:50:29–13:03:57 UTC on
+12 November). That predates the current dependency graph. It prevents treating
+the new timeout as normal established build duration or proving that the
+budget mismatch is the sole cause. The bounded allowance is the first repair;
+fresh completion or a useful failure log is still needed to assess the build.
+
 ## Decision
 
 Use the Release workflow's existing platform-specific budget in CI: sixty

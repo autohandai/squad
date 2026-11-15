@@ -25,7 +25,7 @@ list to the section for that version.
 
 ### Fixed
 
-- Intel Mac release dry runs have the same build-time allowance as the release workflow, avoiding a premature CI timeout during a cold build.
+- Intel Mac release dry runs now allow up to sixty minutes, matching the release workflow instead of cancelling after thirty-five minutes.
 - Windows release tests find their built process helper when Cargo uses a deeper test-output directory, avoiding a false release failure.
 - Quick Chat loads its members, portraits and harness limits when Squad opens directly on a Settings or conversation page.
 - Updated the native app and runtime’s TLS dependencies to patched releases, including the runtime’s QUIC transport.
