@@ -50,9 +50,26 @@ export class MobileRelay extends DurableObject<Env> {
     const row = this.ctx.storage.sql.exec<CapabilityRow>("SELECT * FROM capabilities WHERE pairing_id=?", pairingID).toArray()[0];
     if (!row || row.expires_at <= Date.now()) return failure(400, "offer_expired", "Generate a new pairing code.");
     if (row.device_id && row.device_id !== deviceID) return failure(409, "claim_changed", "This pairing code already belongs to another phone.");
-    if (!row.device_id && this.ctx.storage.sql.exec<{ total: number }>("SELECT COUNT(*) AS total FROM capabilities WHERE device_id IS NOT NULL").one().total >= 20) return failure(409, "device_limit", "Disconnect a phone before pairing another one.");
+    if (!row.device_id && this.ctx.storage.sql.exec<{ total: number }>("SELECT COUNT(DISTINCT device_id) AS total FROM capabilities WHERE device_id IS NOT NULL AND device_id<>?", deviceID).one().total >= 20) return failure(409, "device_limit", "Disconnect a phone before pairing another one.");
     this.ctx.storage.sql.exec("UPDATE capabilities SET device_id=? WHERE pairing_id=?", deviceID, pairingID);
     return { success: true, data: { approved: true } };
+  }
+  /**
+   * The computer gives an approved device a standing route (ADR-0228), e.g. a
+   * phone first approved on the local network. Only the SHA-256 of the token
+   * arrives here; the token itself travels to the phone inside the device's
+   * own AES-GCM channel. One grant per device, replaced in place. A grant can
+   * never route a pairing packet: its pairing_id is not a valid packet peer ID
+   * and it has no pairing expiry.
+   */
+  grant(grants: { deviceID: string; hash: string }[]): ControlResult<{ granted: number }> {
+    const devices = this.ctx.storage.sql.exec<{ device_id: string }>("SELECT DISTINCT device_id FROM capabilities WHERE device_id IS NOT NULL").toArray().map(row => row.device_id);
+    if (new Set([...devices, ...grants.map(grant => grant.deviceID)]).size > 20) return failure(409, "device_limit", "Disconnect a phone before pairing another one.");
+    for (const { deviceID, hash } of grants) {
+      this.ctx.storage.sql.exec("DELETE FROM capabilities WHERE pairing_id=? OR hash=?", `grant:${deviceID}`, hash);
+      this.ctx.storage.sql.exec("INSERT INTO capabilities(hash,pairing_id,device_id,expires_at) VALUES (?,?,?,0)", hash, `grant:${deviceID}`, deviceID);
+    }
+    return { success: true, data: { granted: grants.length } };
   }
   revoke(deviceID: string): { removed: true } {
     this.ctx.storage.sql.exec("DELETE FROM capabilities WHERE device_id=?", deviceID);
@@ -176,6 +193,10 @@ export async function mobileRelayRoutes(request: Request, env: Env, user: Princi
   if (path === "/devices/sync" && request.method === "POST") {
     const input = await body(request, z.object({ deviceIDs: z.array(z.uuid()).max(20) }).strict());
     return ok(await room.synchronize(input.deviceIDs));
+  }
+  if (path === "/devices/grants" && request.method === "POST") {
+    const input = await body(request, z.object({ grants: z.array(z.object({ deviceID: z.uuid(), hash: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(20) }).strict());
+    return ok(accepted(await room.grant(input.grants)));
   }
   if (path === "/offers" && request.method === "POST") {
     const input = await body(request, z.object({ pairingID: z.uuid(), expiresAt: z.number().finite() }).strict());

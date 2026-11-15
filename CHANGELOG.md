@@ -14,9 +14,10 @@ list to the section for that version.
 
 - Squad MCP 2.4 adds workspace replacement through both connections, so the app, CLI and other clients can change an existing member’s primary and additional work folders together.
 - Reach your Squad agents from an approved iPhone away from home through an encrypted relay. Enable “Reach from anywhere” in Computers settings, scan the code and approve the matching six digits. Your computer keeps message keys and needs to stay awake with Squad running.
-
+- Your phone now works at home and away without pairing again. Computers settings lets Same Wi-Fi and From anywhere (Autohand’s relay) run at the same time, alongside your own tunnel. A phone paired on one of them learns the others from your computer and switches by itself: the same network when it can, the relay everywhere else.
 ### Changed
 
+- Turning on “From anywhere” no longer turns off the local network connection, so a phone paired on your Wi-Fi keeps working. Existing settings upgrade automatically: a computer that used the local network or the relay now keeps both on; a computer set up with your own tunnel stays as it was.
 - Fallbacks now read like Codync's: the Model page says which engine is answering ("Using Codex while Claude Code has reached its usage limit") with Switch back, rows are compact with an In use badge and a … menu, and changes save as you make them. Squad for iPhone shows the same line in that member's chat.
 - The bundled Autohand Code CLI is updated to 0.9.11.
 - Grut now changes the conversation layout: agents, groups and channels share one list with larger avatars, saved previews and times, plus quiet message bubbles in light and dark. Choose it in Appearance.

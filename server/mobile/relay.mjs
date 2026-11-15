@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { connectWebSocket } from '../../relay/ws.mjs';
 import { createSquadApi, squadApiUrl } from '../squad-cloud/client.mjs';
@@ -13,6 +13,10 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
   const origin = squadApiUrl(baseUrl), abort = new AbortController();
   let stopped = false, socket = null, session = null, roomID = '', lastPong = 0, leaseUntil = 0;
   let error = '', retry = null, attempt = 0, connecting = null, heartbeat = null, renewal = null;
+  // Grants and revocations run one at a time so a late grant can never
+  // re-add a route for a phone that was just revoked.
+  let devices = Promise.resolve(), grantsSupported = true;
+  const inOrder = fn => { const result = devices.then(fn); devices = result.catch(() => {}); return result; };
   function current() {
     if (stopped) throw Error('Phone connections are off.');
     return credentialSchema.parse(identity());
@@ -40,6 +44,22 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
     try { return await client.request(`/v1/mobile-relays/${roomID}${path}`, { method, body }); }
     catch (failure) { if (failure.status === 401) session = null; throw failure; }
   };
+  /**
+   * Give every approved device a standing relay route (ADR-0228), including
+   * phones first approved on the local network. The relay stores only the
+   * token's SHA-256; the phone receives the token in its encrypted snapshot.
+   * An older relay without grants answers 404 and simply gets none.
+   */
+  const grant = () => inOrder(async () => {
+    if (stopped || !roomID || !grantsSupported) return;
+    const room = roomID, rows = service.relayGrants(room);
+    const minted = rows.filter(row => !row.token).map(row => ({ deviceID: row.deviceID, token: randomBytes(32).toString('hex') }));
+    const all = [...rows.filter(row => row.token), ...minted];
+    if (!all.length) return;
+    try { await control('/devices/grants', 'POST', { grants: all.map(row => ({ deviceID: row.deviceID, hash: createHash('sha256').update(row.token).digest('hex') })) }); }
+    catch (failure) { if (failure.status === 404) { grantsSupported = false; return; } throw failure; }
+    if (minted.length && room === roomID) await service.saveRelayGrants(room, minted);
+  });
   function disconnected() {
     leaseUntil = 0;
     if (stopped || retry) return;
@@ -55,7 +75,8 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
         method: 'POST', body: { computerID: service.computerID, actorID: credential.actorID, ownerScope, ...(credential.teamID ? { teamID: credential.teamID } : {}) },
       }));
       current(); roomID = registration.roomID;
-      await control('/devices/sync', 'POST', { deviceIDs: service.status().devices.map(device => device.id) });
+      await inOrder(() => control('/devices/sync', 'POST', { deviceIDs: service.status().devices.map(device => device.id) }));
+      await grant().catch(() => { /* Retried on the next connection or approval. */ });
       if (current().token !== credential.token) throw Error('The account changed. Reconnect the phone connection.');
       const next = await connect(`${origin}/v1/mobile-relays/${roomID}/host`, { headers: { authorization: `Bearer ${token}`, 'x-autohand-identity': credential.token } });
       if (stopped) { next.close(); throw Error('Phone connections are off.'); }
@@ -110,7 +131,8 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
         }).catch(() => { if (!stopped && socket === renewing) renewing.close(); });
       }, 5 * 60_000); renewal.unref?.();
     },
-    status: () => ({ connected: Boolean(socket?.open && leaseUntil > Date.now() && Date.now() - lastPong <= 45_000), endpoint: roomID ? `${origin}/mobile/${roomID}` : '', error }),
+    status: () => ({ connected: Boolean(socket?.open && leaseUntil > Date.now() && Date.now() - lastPong <= 45_000), endpoint: roomID ? `${origin}/mobile/${roomID}` : '', roomID, error }),
+    grant,
     async offer(metadata) {
       if (!socket?.open || leaseUntil <= Date.now()) throw Error('Wait for the relay to connect before pairing a phone.');
       return z.object({ endpoint: z.string(), relayToken: z.string().regex(/^[a-f0-9]{64}$/) }).parse(await control('/offers', 'POST', { pairingID: metadata.pairingID, expiresAt: metadata.expiresAt }));
@@ -120,7 +142,7 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
       // Local credential removal is authoritative even while cloud is offline.
       // Reconnect synchronizes the retained device IDs before accepting packets.
       const revoking = socket;
-      try { await control(`/devices/${deviceID}`, 'DELETE'); } catch { if (socket === revoking) revoking?.close(); }
+      await inOrder(() => control(`/devices/${deviceID}`, 'DELETE')).catch(() => { if (socket === revoking) revoking?.close(); });
     },
     close() {
       stopped = true; abort.abort(); clearTimeout(retry); clearInterval(heartbeat); clearInterval(renewal);

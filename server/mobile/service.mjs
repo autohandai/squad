@@ -7,10 +7,13 @@ import { commandSchema, packetSchema, sealPacket, openPacket, confirmationCode, 
 const deviceSchema = z.object({ deviceID: z.uuid(), deviceName: z.string().trim().min(1).max(100), deviceKey: z.string().regex(/^[A-Za-z0-9+/]{43}=$/) }).strict();
 const stable = value => Array.isArray(value) ? value.map(stable) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
 const digest = value => createHash('sha256').update(JSON.stringify(stable(value))).digest('hex');
+// A QR's `endpoint` (with `relayToken` for the relay) is its first route;
+// `routes` names the other direct routes the computer serves (ADR-0228).
+const routeListSchema = z.array(z.object({ kind: z.enum(['local', 'tunnel']), endpoint: z.string() }).strict()).max(2);
 const deny = () => Object.assign(Error('This device is not connected. Pair it again in Squad.'), { status: 401 });
 
 /** Owner-scoped device credentials. No native OS grants or general API proxy. */
-export async function createMobileService({ directory, computerName, assertCurrent, execute, beforeApprove = async () => {}, afterRevoke = async () => {}, now = Date.now }) {
+export async function createMobileService({ directory, computerName, assertCurrent, execute, routes = async () => undefined, beforeApprove = async () => {}, afterRevoke = async () => {}, afterApprove = async () => {}, now = Date.now }) {
   const file = join(directory, 'mobile-devices.json');
   const initial = { version: 1, computerID: randomUUID(), devices: {}, receipts: {} };
   let state = await readPersistentJson(file, initial);
@@ -52,6 +55,12 @@ export async function createMobileService({ directory, computerName, assertCurre
         return respond({ ok: true, data: { removed: true } });
       }
       if (!['snapshot', 'conversation', 'message', 'delegate', 'tasks', 'announcements', 'announcement.act'].includes(command.command)) throw Error('This action is unavailable from a phone.');
+      if (command.command === 'snapshot') {
+        // Routes travel only inside this device's authenticated reply (ADR-0228).
+        const data = await execute(command.command, parameters, { deviceID: packet.peerID, requestID: packet.requestID });
+        const advertised = await routes(packet.peerID);
+        return respond({ ok: true, data: advertised?.length ? { ...data, routes: advertised } : data });
+      }
       if (!['message', 'delegate'].includes(command.command)) return respond({ ok: true, data: await execute(command.command, parameters, { deviceID: packet.peerID, requestID: packet.requestID }) });
       const receiptID = `${packet.peerID}:${packet.requestID}`, hash = digest({ command: command.command, parameters });
       const previous = state.receipts[receiptID];
@@ -82,7 +91,8 @@ export async function createMobileService({ directory, computerName, assertCurre
       const metadata = { computerID: state.computerID, pairingID: randomUUID(), expiresAt: now() / 1000 + 600 };
       const transport = typeof endpoint === 'function' ? await endpoint(metadata) : { endpoint };
       const relayToken = transport.relayToken === undefined ? undefined : z.string().regex(/^[a-f0-9]{64}$/).parse(transport.relayToken);
-      offer = { version: 1, ...metadata, computerName, endpoint: validateEndpoint(transport.endpoint), secret: randomBytes(32).toString('base64'), ...(relayToken ? { relayToken } : {}) };
+      const routes = transport.routes === undefined ? undefined : routeListSchema.parse(transport.routes).map(route => ({ ...route, endpoint: validateEndpoint(route.endpoint) }));
+      offer = { version: 1, ...metadata, computerName, endpoint: validateEndpoint(transport.endpoint), secret: randomBytes(32).toString('base64'), ...(relayToken ? { relayToken } : {}), ...(routes?.length ? { routes } : {}) };
       claim = null; approved = false; rejected = false;
       return { ...offer };
     }),
@@ -95,9 +105,18 @@ export async function createMobileService({ directory, computerName, assertCurre
       const next = structuredClone(state);
       next.devices[claim.deviceID] = { name: claim.deviceName, key: claim.deviceKey, pairedAt: new Date(now()).toISOString() };
       await save(next); approved = true;
+      await afterApprove(claim.deviceID);
       return { approved: true };
     }),
     reject: () => serial(async () => { rejected = true; }),
+    /** Standing relay routes per approved device, scoped to one relay room. */
+    relayGrant: (deviceID, roomID) => { const grant = state.devices[deviceID]?.relayGrant; return grant?.roomID === roomID ? grant.token : undefined; },
+    relayGrants: roomID => Object.entries(state.devices).map(([deviceID, device]) => ({ deviceID, token: device.relayGrant?.roomID === roomID ? device.relayGrant.token : undefined })),
+    saveRelayGrants: (roomID, grants) => serial(async () => {
+      const next = structuredClone(state);
+      for (const { deviceID, token } of grants) if (next.devices[deviceID]) next.devices[deviceID].relayGrant = { roomID, token: z.string().regex(/^[a-f0-9]{64}$/).parse(token) };
+      await save(next);
+    }),
     revoke: deviceID => serial(async () => {
       await assertCurrent();
       const next = structuredClone(state); delete next.devices[deviceID]; await save(next);

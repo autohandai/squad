@@ -19,13 +19,20 @@ test('a phone pairs only after desktop approval and uses the real member queue',
   const settings = page.getByTestId('computers-settings');
   const toggle = settings.getByRole('switch', { name: 'Connect phones' });
   await expect(toggle).not.toBeChecked();
-  await settings.getByRole('combobox', { name: 'Connection', exact: true }).click();
-  await page.getByRole('option', { name: 'Reach from anywhere', exact: true }).click();
-  await expect(settings.getByLabel('Connection port', { exact: true })).toHaveCount(0);
+  // Routes are independent switches (ADR-0228); the fixture saved Same Wi-Fi only.
+  const local = settings.getByRole('switch', { name: 'Same Wi-Fi', exact: true });
+  const anywhere = settings.getByRole('switch', { name: 'From anywhere', exact: true });
+  await expect(local).toBeChecked(); await expect(anywhere).not.toBeChecked();
   await expect(settings).toContainText('without opening a network port');
-  await settings.getByRole('combobox', { name: 'Connection', exact: true }).click();
-  await page.getByRole('option', { name: 'On this network', exact: true }).click();
+  await local.click(); await anywhere.click();
+  await expect(settings.getByLabel('Connection port', { exact: true })).toHaveCount(0);
+  await expect(settings.getByRole('button', { name: 'Save connection', exact: true })).toBeEnabled();
+  await page.screenshot({ path: info.outputPath('phone-routes.png'), fullPage: true });
+  await anywhere.click(); await local.click();
+  await expect(settings.getByLabel('Connection port', { exact: true })).toBeVisible();
+  await expect(settings.getByRole('button', { name: 'Save connection', exact: true })).toBeDisabled();
   await toggle.click(); await expect(toggle).toBeChecked();
+  await expect(settings).toContainText('Same Wi-Fi ready.');
   const response = page.waitForResponse(value => value.url().endsWith('/api/mobile/pair') && value.request().method() === 'POST');
   await settings.getByRole('button', { name: 'Connect a phone', exact: true }).click();
   const offerResponse = await (await response).json(); expect(offerResponse.success, offerResponse.error).toBe(true);

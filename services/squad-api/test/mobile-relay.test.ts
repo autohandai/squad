@@ -113,6 +113,129 @@ test("the desktop relay setting dispatches phone work to the canonical queue", a
   } finally { clearInterval(approval); if (probe && probe.exitCode === null && probe.signalCode === null) probe.kill('SIGTERM'); await fixture.bridge.close(); }
 });
 
+test("a phone first approved on the local network reaches the same computer through the relay without a new QR", async () => {
+  const fixture = await startMobileFixture({ relayApiUrl: (await runtime.ready).origin });
+  try {
+    // Today's 0.1 situation: paired while the computer listened locally only.
+    const local = await fixture.bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: true, relay: false, tunnel: false, endpoint: '', port: 0 });
+    assert.equal(local.success, true, local.error);
+    const port = Number(new URL(local.data.routes.find((route: { kind: string }) => route.kind === 'local').endpoint).port);
+    const offered = await fixture.bridge.api('/api/mobile/pair', 'POST'); assert.equal(offered.success, true, offered.error);
+    const offer = JSON.parse(Buffer.from(new URL(offered.data.link).searchParams.get('data')!, 'base64url').toString());
+    assert.equal(offer.relayToken, undefined, 'a local-only offer carries no relay capability');
+    const key = randomBytes(32), deviceID = randomUUID();
+    const seal = (command: string, parameters: Record<string, unknown>, pair: boolean, requestID = randomUUID()) => sealPacket({ issuedAt: Date.now() / 1000, command, parameters }, pair ? Buffer.from(offer.secret, 'base64') : key,
+      { kind: pair ? 'pair' : 'device', computerID: offer.computerID, peerID: pair ? offer.pairingID : deviceID, requestID }, 'request');
+    const direct = async (command: string, parameters: Record<string, unknown> = {}, pair = false) => {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/mobile`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(seal(command, parameters, pair)) });
+      assert.equal(response.status, 200); return openPacket(await response.json(), pair ? Buffer.from(offer.secret, 'base64') : key, 'response');
+    };
+    const relayed = (endpoint: string, relayToken: string, packet: unknown) => fetch(endpoint + '/v1/mobile', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relayToken, packet }) });
+    assert.equal((await direct('pair.claim', { deviceID, deviceName: 'Wi-Fi phone', deviceKey: key.toString('base64') }, true)).data.state, 'pending');
+    const pending = (await fixture.bridge.api('/api/mobile/status')).data.pending;
+    assert.equal((await fixture.bridge.api('/api/mobile/approve', 'POST', { pairingID: pending.pairingID, code: pending.code })).success, true);
+    assert.deepEqual((await direct('snapshot')).data.routes.map((route: { kind: string }) => route.kind), ['local'], 'only routes that exist are advertised');
+
+    // The owner turns the relay on beside the local listener: no new QR.
+    const both = await fixture.bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: true, relay: true, tunnel: false, endpoint: '', port });
+    assert.equal(both.success, true, both.error);
+    assert.deepEqual(both.data.routes.map((route: { kind: string; connected: boolean }) => [route.kind, route.connected]), [['local', true], ['relay', true]]);
+    let routes: { kind: string; endpoint: string; relayToken?: string }[] = [];
+    const deadline = Date.now() + 10_000;
+    while (!(routes = (await direct('snapshot')).data.routes).find(route => route.kind === 'relay')?.relayToken) {
+      assert.ok(Date.now() < deadline, 'the relay grant reaches the phone in its encrypted snapshot');
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    const relay = routes.find(route => route.kind === 'relay')!;
+    assert.match(relay.endpoint, /\/mobile\/[a-f0-9]{64}$/); assert.match(relay.relayToken!, /^[a-f0-9]{64}$/);
+    const away = await relayed(relay.endpoint, relay.relayToken!, seal('message', { memberID: fixture.member.id, text: 'Sent from away' }, false));
+    assert.equal(away.status, 200, 'the locally approved phone is accepted through the relay');
+    assert.equal(openPacket(await away.json(), key, 'response').ok, true);
+    assert.equal((await relayed(relay.endpoint, '0'.repeat(64), seal('snapshot', {}, false))).status, 403, 'only the granted capability routes');
+
+    // A relay restart keeps the same grant: no churn of what the phone holds.
+    await fixture.bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: true, relay: true, tunnel: false, endpoint: '', port });
+    const again = (await direct('snapshot')).data.routes.find((route: { kind: string }) => route.kind === 'relay');
+    assert.equal(again.relayToken, relay.relayToken);
+    assert.equal((await relayed(relay.endpoint, relay.relayToken!, seal('snapshot', {}, false))).status, 200);
+
+    // Local revocation also ends the granted relay route.
+    const device = (await fixture.bridge.api('/api/mobile/status')).data.devices[0];
+    assert.equal((await fixture.bridge.api(`/api/mobile/devices/${device.id}`, 'DELETE')).success, true);
+    assert.equal((await relayed(relay.endpoint, relay.relayToken!, seal('snapshot', {}, false))).status, 403);
+  } finally { await fixture.bridge.close(); }
+});
+
+test("a new QR names every route; a phone pairs on one and the relay approves the same device", async () => {
+  const fixture = await startMobileFixture({ relayApiUrl: (await runtime.ready).origin });
+  try {
+    const both = await fixture.bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: true, relay: true, tunnel: false, endpoint: '', port: 0 });
+    assert.equal(both.success, true, both.error);
+    const offered = await fixture.bridge.api('/api/mobile/pair', 'POST'); assert.equal(offered.success, true, offered.error);
+    const offer = JSON.parse(Buffer.from(new URL(offered.data.link).searchParams.get('data')!, 'base64url').toString());
+    assert.deepEqual(offer.routes.map((route: { kind: string }) => route.kind), ['local'], 'the QR adds the direct route beside its relay endpoint');
+    assert.match(offer.endpoint, /\/mobile\/[a-f0-9]{64}$/, 'older phones that read only `endpoint` get the route that works away from home');
+    assert.match(offer.relayToken, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(offer).includes('fixture-only-no-provider'), false, 'no account credential in the QR');
+    const port = Number(new URL(offer.routes[0].endpoint).port), key = randomBytes(32), deviceID = randomUUID();
+    const seal = (command: string, parameters: Record<string, unknown>, pair: boolean) => sealPacket({ issuedAt: Date.now() / 1000, command, parameters }, pair ? Buffer.from(offer.secret, 'base64') : key,
+      { kind: pair ? 'pair' : 'device', computerID: offer.computerID, peerID: pair ? offer.pairingID : deviceID, requestID: randomUUID() }, 'request');
+    const claim = await fetch(`http://127.0.0.1:${port}/v1/mobile`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(seal('pair.claim', { deviceID, deviceName: 'Two-route phone', deviceKey: key.toString('base64') }, true)) });
+    assert.equal(claim.status, 200);
+    const pending = (await fixture.bridge.api('/api/mobile/status')).data.pending;
+    const approved = await fixture.bridge.api('/api/mobile/approve', 'POST', { pairingID: pending.pairingID, code: pending.code });
+    assert.equal(approved.success, true, approved.error);
+    // The QR's relay capability was promoted for this device at approval.
+    const viaQR = await fetch(offer.endpoint + '/v1/mobile', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relayToken: offer.relayToken, packet: seal('snapshot', {}, false) }) });
+    assert.equal(viaQR.status, 200);
+    assert.ok(openPacket(await viaQR.json(), key, 'response').data.routes.some((route: { kind: string; relayToken?: string }) => route.kind === 'relay' && route.relayToken));
+  } finally { await fixture.bridge.close(); }
+});
+
+test("the Swift client paired on the local network learns the relay and sends through it", { skip: !process.env.SQUAD_MOBILE_PROJECT }, async () => {
+  const fixture = await startMobileFixture({ relayApiUrl: (await runtime.ready).origin });
+  let probe: ReturnType<typeof spawn> | undefined;
+  try {
+    const local = await fixture.bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: true, relay: false, tunnel: false, endpoint: '', port: 0 });
+    assert.equal(local.success, true, local.error);
+    const port = Number(new URL(local.data.routes[0].endpoint).port);
+    const offered = await fixture.bridge.api('/api/mobile/pair', 'POST'); assert.equal(offered.success, true, offered.error);
+    const file = join(fixture.bridge.directory, 'routes-offer.txt');
+    await writeFile(file, offered.data.link, { mode: 0o600 });
+    const child = probe = spawn('swift', ['run', '--package-path', process.env.SQUAD_MOBILE_PROJECT!, 'SquadMobileProbe', '--routes', file], { stdio: 'inherit' });
+    const exited = new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
+    const deadline = Date.now() + 120_000;
+    let code = '';
+    while (!code) {
+      assert.ok(Date.now() < deadline, 'the Swift client claims the local offer');
+      code = await readFile(file + '.approve', 'utf8').catch(() => '');
+      if (!code) await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    const pending = (await fixture.bridge.api('/api/mobile/status')).data.pending;
+    assert.equal(code, pending.code, 'Swift and the computer display the same code');
+    assert.equal((await fixture.bridge.api('/api/mobile/approve', 'POST', { pairingID: pending.pairingID, code })).success, true);
+    // Only now does the owner turn on the relay, as on a computer upgraded after pairing.
+    const both = await fixture.bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: true, relay: true, tunnel: false, endpoint: '', port });
+    assert.equal(both.success, true, both.error);
+    const timer = setTimeout(() => child.kill('SIGTERM'), 120_000);
+    try { assert.equal(await exited, 0, 'the actual Swift client reaches the relay with its granted route'); } finally { clearTimeout(timer); }
+    assert.equal((await fixture.bridge.api(`/api/queues/${fixture.member.id}`)).data.items.length, 1);
+  } finally { if (probe && probe.exitCode === null && probe.signalCode === null) probe.kill('SIGTERM'); await fixture.bridge.close(); }
+});
+
+test("an approved device's standing grant routes device packets only, within the device limit", async () => {
+  const room = await call("/v1/mobile-relays", "POST", { ...registration, computerID: "grant-computer" });
+  const control = `/v1/mobile-relays/${room.json.data.roomID}`;
+  const grants = Array.from({ length: 21 }, () => ({ deviceID: randomUUID(), hash: randomBytes(32).toString("hex") }));
+  assert.equal((await call(`${control}/devices/grants`, "POST", { grants: grants.slice(0, 20) })).status, 200);
+  assert.equal((await call(`${control}/devices/grants`, "POST", { grants: grants.slice(0, 20) })).status, 200, "re-asserting the same grants is idempotent");
+  assert.equal((await call(`${control}/devices/grants`, "POST", { grants: [grants[20]] })).json.error?.code, "device_limit");
+  assert.equal((await call(`${control}/devices/grants`, "POST", { grants: [{ deviceID: grants[0].deviceID, hash: "A".repeat(64) }] })).status, 400);
+  assert.equal((await call(`${control}/devices/grants`, "POST", { grants: grants.slice(0, 1) }, bob)).status, 404, "another actor cannot grant routes into this room");
+  assert.equal((await call(`${control}/devices/sync`, "POST", { deviceIDs: [] })).status, 200);
+  assert.equal((await call(`${control}/devices/grants`, "POST", { grants: [grants[20]] })).status, 200, "sync removed grants for devices the computer no longer keeps");
+});
+
 test("native iPhone UI pairs, chats and revokes through the outbound relay", { skip: !process.env.SQUAD_MOBILE_NATIVE_DEVICE || !process.env.SQUAD_MOBILE_PROJECT }, async () => {
   const child = spawn(process.execPath, [join(process.env.SQUAD_MOBILE_PROJECT!, 'Scripts/native-smoke.mjs'), fileURLToPath(new URL('../../../', import.meta.url)), process.env.SQUAD_MOBILE_NATIVE_DEVICE!], {
     stdio: 'inherit', env: { ...process.env, SQUAD_MOBILE_RELAY_API_URL: (await runtime.ready).origin },

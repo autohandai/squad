@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { createHash, randomUUID } from 'node:crypto';
 import { createMobileRelay } from '../server/mobile/relay.mjs';
 
 // Exercise the real reconnect callback, while holding the old HTTP response.
@@ -54,3 +55,50 @@ try {
   }
   console.log('PASS relay reconnect: late failure, expired success and refused renewal cannot close or expire the replacement connection.');
 } finally { globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear; }
+
+// Standing relay grants (ADR-0228): every approved device, including one first
+// approved on the local network, gets a relay route. The relay sees hashes only.
+for (const relaySupportsGrants of [true, false]) {
+  const calls = [], saved = {};
+  const devices = [randomUUID(), randomUUID()];
+  const service = {
+    computerID: 'fixture', status: () => ({ devices: devices.map(id => ({ id })) }),
+    relayGrants: room => devices.map(deviceID => ({ deviceID, token: saved[deviceID]?.roomID === room ? saved[deviceID].token : undefined })),
+    saveRelayGrants: async (roomID, grants) => { for (const { deviceID, token } of grants) saved[deviceID] = { roomID, token }; },
+  };
+  const relay = createMobileRelay({
+    service, identity: () => ({ token: 'fixture-current', actorID: 'alice' }), ownerScope: 'c'.repeat(64), baseUrl: 'http://127.0.0.1:9876',
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : undefined });
+      if (String(url).endsWith('/devices/grants') && !relaySupportsGrants) return Response.json({ success: false, error: { code: 'not_found', message: 'Not found.' } }, { status: 404 });
+      const data = String(url).endsWith('/auth/exchange') ? { token: 'ss_' + 'b'.repeat(64), expiresAt: new Date(Date.now() + 3600_000).toISOString() }
+        : String(url).endsWith('/v1/mobile-relays') ? { roomID: 'a'.repeat(64) } : {};
+      return Response.json({ success: true, data });
+    },
+    connect: async () => {
+      class Socket extends EventEmitter { open = true; send() {} ping() { this.emit('pong'); } close() { if (this.open) { this.open = false; queueMicrotask(() => this.emit('close')); } } }
+      const socket = new Socket();
+      setImmediate(() => socket.emit('message', JSON.stringify({ type: 'relay.ready', protocolVersion: 1, computerID: 'fixture', leaseUntil: Date.now() + 600_000 })));
+      return socket;
+    },
+  });
+  try {
+    await relay.start();
+    assert.equal(relay.status().connected, true, 'grants never block the relay connection');
+    const sent = calls.filter(call => call.url.endsWith('/devices/grants'));
+    assert.equal(sent.length, 1);
+    const syncIndex = calls.findIndex(call => call.url.endsWith('/devices/sync')), grantIndex = calls.findIndex(call => call.url.endsWith('/devices/grants'));
+    assert.ok(syncIndex >= 0 && syncIndex < grantIndex, 'retained devices are synchronized before grants are re-asserted');
+    if (!relaySupportsGrants) { assert.deepEqual(saved, {}, 'an older relay without grants leaves the phone on its existing routes'); continue; }
+    assert.deepEqual(Object.keys(saved).sort(), [...devices].sort());
+    for (const grant of sent[0].body.grants) {
+      assert.equal(grant.hash, createHash('sha256').update(saved[grant.deviceID].token).digest('hex'));
+      assert.equal(JSON.stringify(calls).includes(saved[grant.deviceID].token), false, 'the raw token never leaves the computer except to its phone');
+    }
+    const before = structuredClone(saved);
+    await relay.grant();
+    assert.deepEqual(saved, before, 're-asserting keeps the tokens phones already hold');
+    assert.deepEqual(calls.filter(call => call.url.endsWith('/devices/grants'))[1].body, sent[0].body);
+  } finally { relay.close(); }
+}
+console.log('PASS relay grants: every approved device gets a standing route after sync, only hashes reach the relay, tokens stay stable, and an older relay without grants still connects.');

@@ -4,9 +4,17 @@ import { startMobileFixture } from './lib/mobile-fixture.mjs';
 import { until } from './lib/reliability-browser.mjs';
 import { sealPacket, openPacket } from '../server/mobile/protocol.mjs';
 import { createRemoteRegistry } from '../server/remote/registry.mjs';
-import { readdir, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { migrateSavedConfiguration } from '../server/mobile/controller.mjs';
 import { join } from 'node:path';
 import { primaryRoute, routeKey } from '../src/lib/model-routing.js';
+
+// A saved 0.1 exclusive mode upgrades to independent routes (ADR-0228).
+assert.deepEqual(migrateSavedConfiguration({ enabled: true, mode: 'local', endpoint: '', port: 29323 }), { enabled: true, local: true, relay: true, tunnel: false, endpoint: '', port: 29323 }, 'a local pairing gains the relay without a new QR');
+assert.deepEqual(migrateSavedConfiguration({ enabled: true, mode: 'relay', endpoint: '', port: 29323 }), { enabled: true, local: true, relay: true, tunnel: false, endpoint: '', port: 29323 }, 'a relay computer listens locally again so phones paired there reconnect');
+assert.deepEqual(migrateSavedConfiguration({ enabled: false, mode: 'tunnel', endpoint: 'https://t.example.test', port: 4000 }), { enabled: false, local: false, relay: false, tunnel: true, endpoint: 'https://t.example.test', port: 4000 }, 'a user-operated tunnel stays exactly as chosen');
+const current = { enabled: true, local: false, relay: true, tunnel: false, endpoint: '', port: 29323 };
+assert.deepEqual(migrateSavedConfiguration(current), current, 'a saved choice of independent routes is kept as is');
 
 const { bridge, member, announcementCalls } = await startMobileFixture({ announcements: [{ id: 'fixture-update', title: 'Fixture update', ctaUrl: 'javascript:alert(1)' }] });
 try {
@@ -36,6 +44,18 @@ try {
   assert.ok(snapshot.data.capabilities.includes('tasks'));
   assert.ok(snapshot.data.account.id && snapshot.data.account.email);
   assert.equal('token' in snapshot.data.account, false);
+  // Routes (ADR-0228): advertised only inside the device's encrypted reply,
+  // naming what this computer serves now. The legacy `{mode}` request above
+  // asked for exactly one route, so no relay is advertised or started.
+  assert.equal(offer.routes, undefined, 'a single-route QR adds no extra routes');
+  assert.deepEqual(snapshot.data.routes.map(route => route.kind), ['local']);
+  assert.equal(snapshot.data.routes[0].endpoint, offer.endpoint);
+  const routesConfig = await bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: true, relay: false, tunnel: true, endpoint: 'https://phone-tunnel.example.test', port });
+  assert.equal(routesConfig.success, true, routesConfig.error);
+  assert.deepEqual(routesConfig.data.config, { enabled: true, local: true, relay: false, tunnel: true, endpoint: 'https://phone-tunnel.example.test', port });
+  assert.deepEqual((await request('snapshot')).data.routes, [{ kind: 'local', endpoint: offer.endpoint }, { kind: 'tunnel', endpoint: 'https://phone-tunnel.example.test' }], 'local and a user-operated tunnel serve at once');
+  assert.equal((await bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: false, relay: false, tunnel: false, endpoint: '', port })).success, false, 'connections on need at least one route');
+  assert.equal((await bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: true, relay: false, tunnel: false, endpoint: '', port })).success, true);
   // Which engine answers (ADR-0222): the saved primary while healthy; while it
   // cools down, the reason, retry time and the fallback answering instead.
   const engineOf = async () => (await request('snapshot')).data.members.find(row => row.id === member.id).engine;
@@ -76,7 +96,14 @@ try {
   assert.equal(tasks.filter(task => task.id === assigned.data.taskID).length, 1);
   assert.equal((await bridge.api('/api/work')).data.tasks.find(task => task.id === assigned.data.taskID).status, 'done');
   assert.equal((await request('computer.grant')).ok, false);
+  // An installed 0.1 file with an exclusive mode is migrated on start and
+  // rewritten; paired phones keep working (tunnel listens on loopback).
+  await writeFile(join(mobileDir, 'config.json'), JSON.stringify({ enabled: true, mode: 'tunnel', endpoint: 'https://phone-tunnel.example.test', port }));
   await bridge.restart();
+  const migrated = (await bridge.api('/api/mobile/status')).data;
+  assert.deepEqual(migrated.config, { enabled: true, local: false, relay: false, tunnel: true, endpoint: 'https://phone-tunnel.example.test', port });
+  assert.equal('mode' in JSON.parse(await readFile(join(mobileDir, 'config.json'), 'utf8')), false, 'the migrated choice is saved');
+  assert.deepEqual((await request('snapshot')).data.routes, [{ kind: 'tunnel', endpoint: 'https://phone-tunnel.example.test' }]);
   const retry = await request('delegate', parameters, { id });
   assert.equal(retry.ok, true, retry.error);
   assert.equal(retry.data.taskID, assigned.data.taskID, 'task receipts survive a host restart');
@@ -89,5 +116,5 @@ try {
   assert.match(refused.error, /another computer/);
   assert.equal((await request('delegate', { ...parameters, title: 'Never delegate on the wrong computer.' })).ok, false);
   assert.equal((await bridge.api(`/api/queues/${member.id}`)).data.items.length, 1, 'remote-assigned work must not enter the local queue');
-  console.log('PASS phone host contract: discover capabilities/account, report the engine answering (primary, cooling reason, fallback in use, switch back), persist one canonical MCP task, run through the real queue, deduplicate across host restart, refuse OS-grant commands. Offline fixture engine only.');
+  console.log('PASS phone host contract: migrate a 0.1 exclusive mode, serve local + tunnel at once and advertise only live routes in the encrypted snapshot, discover capabilities/account, report the engine answering (primary, cooling reason, fallback in use, switch back), persist one canonical MCP task, run through the real queue, deduplicate across host restart, refuse OS-grant commands. Offline fixture engine only.');
 } finally { await bridge.close(); }
