@@ -428,7 +428,8 @@ jobs:
   release-dry-run:
     name: Release dry run (${{ matrix.id }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+    # Match the release workflow's cold Intel runtime-build budget (ADR-0226).
+    timeout-minutes: ${{ matrix.id == 'macos-x64' && 60 || 35 }}
     needs:
       - web
       - runtime
