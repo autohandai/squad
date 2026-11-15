@@ -128,10 +128,7 @@ pub(crate) fn fetch_usage(
         .ok()
         .and_then(|client| {
             client
-                .get(format!(
-                    "{}/api/harnesses/usage?refresh=1",
-                    base.trim_end_matches('/')
-                ))
+                .get(quick_chat::bridge_api_url(base, "/api/harnesses/usage?refresh=1").ok()?)
                 .header("x-squad-context", &context.generation)
                 .send()
                 .ok()
