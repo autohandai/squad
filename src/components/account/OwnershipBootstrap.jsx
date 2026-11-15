@@ -150,7 +150,12 @@ export function OwnershipBootstrap({ children }) {
   const busy = !error && (!context || ['verifying', 'changing', 'loading','draining'].includes(context.state));
   return <main className="flex min-h-[100svh] items-center justify-center bg-background px-6 text-foreground">
     <div className="w-full max-w-md space-y-4">
-      <h1 className="text-xl font-semibold">Autohand Squad</h1>
+      <div className="flex items-center gap-3">
+        {/* Startup uses the dark root tokens before the owned app sets a theme class. */}
+        <img src="/brand/autohand-squad/autohand-squad-mark-light.webp" width="48" height="48" alt="" aria-hidden="true" className="hidden size-12 shrink-0 object-contain [.light_&]:block" />
+        <img src="/brand/autohand-squad/autohand-squad-mark-dark.webp" width="48" height="48" alt="" aria-hidden="true" className="size-12 shrink-0 object-contain [.light_&]:hidden" />
+        <h1 className="text-xl font-semibold">Autohand Squad</h1>
+      </div>
       <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">{busy ? <Spinner className="size-4" /> : null}{busy ? context?.state === 'draining'?'Finishing background work and preparing your Squad’s data…':context?.state === 'loading' ? 'Loading your Squad…' : 'Verifying your Squad…' : error || context?.error || 'Your Squad could not be verified.'}</p>
       {!busy ? <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={retry}>Retry</Button>

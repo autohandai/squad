@@ -25,6 +25,7 @@ list to the section for that version.
 
 ### Fixed
 
+- The Squad logo appears beside the app name while verifying, loading or recovering your Squad, in both light and dark mode.
 - Intel Mac release dry runs now allow up to sixty minutes, matching the release workflow instead of cancelling after thirty-five minutes.
 - Windows release tests find their built process helper when Cargo uses a deeper test-output directory, avoiding a false release failure.
 - Quick Chat loads its members, portraits and harness limits when Squad opens directly on a Settings or conversation page.
