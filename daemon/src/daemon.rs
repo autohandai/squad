@@ -2715,6 +2715,49 @@ fn read_timestamp_field(path: &PathBuf, field: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    fn built_windows_daemon(test_executable: &std::path::Path) -> Option<std::path::PathBuf> {
+        // Identify the profile from Cargo's deps/ or nested build/.../out/ layout.
+        // A missing profile helper must not fall back to an ancestor or install.
+        let output = test_executable.parent()?.ancestors().find(|directory| {
+            matches!(
+                directory.file_name().and_then(std::ffi::OsStr::to_str),
+                Some("deps" | "build")
+            )
+        })?;
+        let helper = output.parent()?.join("autohand-squad-daemon.exe");
+        helper.is_file().then_some(helper)
+    }
+
+    #[test]
+    fn windows_daemon_helper_survives_nested_test_output() {
+        let root = std::env::temp_dir().join(format!(
+            "squad-test-helper-layout-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let profile = root.join("debug");
+        std::fs::create_dir_all(&profile).unwrap();
+        let helper = profile.join("autohand-squad-daemon.exe");
+        std::fs::write(&helper, b"fixture path only").unwrap();
+        let standard = built_windows_daemon(&profile.join("deps/runtime-tests.exe"));
+        let nested = built_windows_daemon(
+            &profile.join("build/autohand-squad-runtime/hash/out/runtime-tests.exe"),
+        );
+        std::fs::remove_file(&helper).unwrap();
+        std::fs::write(root.join("autohand-squad-daemon.exe"), b"unrelated helper").unwrap();
+        let outside_profile = built_windows_daemon(
+            &profile.join("build/autohand-squad-runtime/hash/out/runtime-tests.exe"),
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(standard, Some(helper.clone()));
+        assert_eq!(nested, Some(helper));
+        assert_eq!(outside_profile, None);
+        assert!(built_windows_daemon(&profile.join("deps/runtime-tests.exe")).is_none());
+    }
+
     #[cfg(any(unix, windows))]
     #[tokio::test]
     async fn owned_native_run_stops_its_group_after_context_loss() {
@@ -2733,16 +2776,8 @@ mod tests {
             let key = "AUTOHAND_SQUAD_DAEMON";
             let guard = RestoreAuth(key, std::env::var_os(key));
             let executable = std::env::current_exe().unwrap();
-            let helper = executable
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("autohand-squad-daemon.exe");
-            assert!(
-                helper.is_file(),
-                "Build the real daemon helper before Windows runtime tests"
-            );
+            let helper = built_windows_daemon(&executable)
+                .expect("Build the real daemon helper before Windows runtime tests");
             std::env::set_var(key, helper);
             guard
         };
