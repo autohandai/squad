@@ -4,6 +4,9 @@ import { startMobileFixture } from './lib/mobile-fixture.mjs';
 import { until } from './lib/reliability-browser.mjs';
 import { sealPacket, openPacket } from '../server/mobile/protocol.mjs';
 import { createRemoteRegistry } from '../server/remote/registry.mjs';
+import { readdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { primaryRoute, routeKey } from '../src/lib/model-routing.js';
 
 const { bridge, member, announcementCalls } = await startMobileFixture({ announcements: [{ id: 'fixture-update', title: 'Fixture update', ctaUrl: 'javascript:alert(1)' }] });
 try {
@@ -33,6 +36,26 @@ try {
   assert.ok(snapshot.data.capabilities.includes('tasks'));
   assert.ok(snapshot.data.account.id && snapshot.data.account.email);
   assert.equal('token' in snapshot.data.account, false);
+  // Which engine answers (ADR-0222): the saved primary while healthy; while it
+  // cools down, the reason, retry time and the fallback answering instead.
+  const engineOf = async () => (await request('snapshot')).data.members.find(row => row.id === member.id).engine;
+  assert.deepEqual(await engineOf(), { primary: 'Codex' }, 'a healthy member reports only its primary engine');
+  const findState = async directory => { for (const entry of await readdir(directory, { withFileTypes: true })) { const path = join(directory, entry.name); if (entry.isFile() && entry.name === 'mobile-devices.json') return directory; if (entry.isDirectory() && !['node_modules', '.git'].includes(entry.name)) { const found = await findState(path).catch(() => null); if (found) return found; } } return null; };
+  // The phone host keeps devices in <dataset>/state/mobile/<id>; the router's
+  // health file lives in <dataset>/state.
+  const mobileDir = await findState(bridge.directory); assert.ok(mobileDir, 'phone host state found');
+  const stateDir = mobileDir.slice(0, mobileDir.lastIndexOf('/state/') + '/state'.length);
+  const until5 = Date.now() + 5 * 60_000;
+  await writeFile(join(stateDir, 'model-routing-health.json'), JSON.stringify({ version: 1, members: { [member.id]: { routes: { [routeKey(primaryRoute({ agent: member }))]: { blockedUntil: until5, reason: 'quota' } }, updatedAt: Date.now() } } }));
+  let engine = await engineOf();
+  assert.equal(engine.primary, 'Codex'); assert.equal(engine.reason, 'quota'); assert.equal(engine.inUse, null, 'no fallback configured: nothing answers instead');
+  assert.equal(Date.parse(engine.retryAt), until5);
+  const withFallback = await bridge.api(`/api/members/${member.id}/channel-access`, 'PUT', { agent: { ...member, modelRouting: { fallbacks: [{ harness: { id: 'claude', model: '', effort: '' } }], allowAgentChanges: false } }, profile: '', profilePatch: {} });
+  assert.equal(withFallback.success, true, withFallback.error);
+  engine = await engineOf();
+  assert.equal(engine.inUse, 'Claude Code', 'the phone hears which fallback is answering');
+  await bridge.api(`/api/members/${member.id}/model-routing/reset`, 'POST', {});
+  assert.deepEqual(await engineOf(), { primary: 'Codex' }, 'Switch back returns the phone to the primary');
   const news = await request('announcements', { appVersion: '0.2.0' });
   assert.equal(news.ok, true, news.error);
   assert.equal(news.data.announcements[0].ctaUrl, '', 'phone announcements keep desktop URL sanitization');
@@ -66,5 +89,5 @@ try {
   assert.match(refused.error, /another computer/);
   assert.equal((await request('delegate', { ...parameters, title: 'Never delegate on the wrong computer.' })).ok, false);
   assert.equal((await bridge.api(`/api/queues/${member.id}`)).data.items.length, 1, 'remote-assigned work must not enter the local queue');
-  console.log('PASS phone host contract: discover capabilities/account, persist one canonical MCP task, run through the real queue, deduplicate across host restart, refuse OS-grant commands. Offline fixture engine only.');
+  console.log('PASS phone host contract: discover capabilities/account, report the engine answering (primary, cooling reason, fallback in use, switch back), persist one canonical MCP task, run through the real queue, deduplicate across host restart, refuse OS-grant commands. Offline fixture engine only.');
 } finally { await bridge.close(); }

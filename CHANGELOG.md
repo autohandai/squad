@@ -17,7 +17,7 @@ list to the section for that version.
 
 ### Changed
 
-- Fallbacks now read like Codync's: the Model page says which engine is answering ("Using Codex while Claude Code has reached its usage limit") with Switch back, rows are compact with an In use badge and a … menu, and changes save as you make them.
+- Fallbacks now read like Codync's: the Model page says which engine is answering ("Using Codex while Claude Code has reached its usage limit") with Switch back, rows are compact with an In use badge and a … menu, and changes save as you make them. Squad for iPhone shows the same line in that member's chat.
 - The bundled Autohand Code CLI is updated to 0.9.11.
 - Grut now changes the conversation layout: agents, groups and channels share one list with larger avatars, saved previews and times, plus quiet message bubbles in light and dark. Choose it in Appearance.
 

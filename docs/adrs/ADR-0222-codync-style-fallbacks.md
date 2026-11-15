@@ -61,4 +61,9 @@ assigned fallbacks visible in the collapsed rows.
 - The status is as fresh as the last health read (≤ 30 s, or on focus), not
   pushed live from the router.
 - No vendor logos; the glyph is the same for every engine.
-- The phone app does not yet show which engine is answering.
+- The phone hears it too: the phone host's `snapshot` adds per member
+  `engine: { primary, inUse, reason, retryAt }`, computed from the same
+  route keys and health, and Squad for iPhone shows the same sentence above
+  the composer. `node scripts/check-mobile-host.mjs` asserts primary-only
+  while healthy, the reason and retry time while cooling, the fallback in
+  use once configured, and primary-only again after Switch back.

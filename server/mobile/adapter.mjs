@@ -1,6 +1,8 @@
 import { hostname } from 'node:os';
 import { z } from 'zod';
 import { createBridgeClient, createTools } from '../control-plane/runtime.mjs';
+import { harnessLabel } from '../../src/lib/harness.js';
+import { normalizeModelRouting, primaryRoute, routeKey } from '../../src/lib/model-routing.js';
 
 const memberID = z.object({ memberID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/) });
 /** The phone uses the same roster, transcripts and durable queue as MCP/CLI. */
@@ -17,12 +19,28 @@ export function createMobileAdapter({ origin, computerID, version, computerName 
       throw Error('This member runs on another computer. Pair that computer to send work there from your phone.');
     }
   }
+  // Which engine answers for a member right now (ADR-0222): the saved primary,
+  // and while it cools down after a failure, the first fallback that is not.
+  // The same route keys and health the desktop's Fallbacks status line reads.
+  async function engineStatus(id, agent) {
+    if (!agent?.harness) return undefined;
+    const primary = primaryRoute({ agent });
+    const status = { primary: harnessLabel(primary.harness.id) };
+    const routing = await bridge.get(`/api/members/${encodeURIComponent(id)}/model-routing`).catch(() => null);
+    if (!routing) return status;
+    const now = Date.now(), cooling = route => { const entry = routing.health?.[routeKey(route)]; return entry && Number(entry.blockedUntil) > now ? entry : null; };
+    const down = cooling(primary);
+    if (!down) return status;
+    const fallback = normalizeModelRouting(routing.configuration).fallbacks.find(route => !cooling(route));
+    return { ...status, inUse: fallback ? harnessLabel(fallback.harness.id) : null, reason: String(down.reason || ''), retryAt: new Date(Number(down.blockedUntil)).toISOString() };
+  }
   return {
     assertCurrent: () => bridge.get('/api/ownership/context'),
     execute: async (command, parameters, { deviceID, requestID }) => {
       if (command === 'snapshot') {
         z.object({}).strict().parse(parameters);
-        const [{ members }, remotes, context] = await Promise.all([tools.list_members(), bridge.get('/api/remote/members'), bridge.get('/api/ownership/context')]);
+        const [{ members }, remotes, context, channels] = await Promise.all([tools.list_members(), bridge.get('/api/remote/members'), bridge.get('/api/ownership/context'), bridge.get('/api/channels').catch(() => null)]);
+        const engines = new Map(await Promise.all(members.map(async row => [row.id, await engineStatus(row.id, channels?.agentChannelAccess?.[row.id]?.agent)])));
         return { computer: { id: computerID, name: computerName, version, connectedAt: new Date().toISOString() },
           capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : [])],
           ...(context.actor ? { account: { id: context.actor.id, name: context.actor.name || '', email: context.actor.email || '' } } : {}),
@@ -31,7 +49,7 @@ export function createMobileAdapter({ origin, computerID, version, computerName 
             return { id: row.id, name: row.name || row.id, role: row.role || '', presence: row.presence || 'unknown',
               harness: typeof row.harness === 'string' ? row.harness : row.harness?.id || '',
               executionMode: remote ? 'remoteComputer' : 'workspace', computerName: remote?.label || computerName,
-              workspace: remote?.workspace || row.lastWorkspace || '' };
+              workspace: remote?.workspace || row.lastWorkspace || '', ...(engines.get(row.id) ? { engine: engines.get(row.id) } : {}) };
           }) };
       }
       if (command === 'conversation') {
