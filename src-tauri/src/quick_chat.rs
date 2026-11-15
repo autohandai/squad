@@ -209,7 +209,7 @@ pub(crate) fn open_quick_chat_picker(app: &AppHandle, shell: Arc<Shell>) {
         };
         let read = |path: &str| -> Option<serde_json::Value> {
             let response = client
-                .get(format!("{}{path}", bridge.trim_end_matches('/')))
+                .get(bridge_api_url(&bridge, path).ok()?)
                 .header("x-squad-context", &context.generation)
                 .send()
                 .ok()?;
@@ -266,6 +266,18 @@ pub(crate) fn quick_chat_url(bridge: &str, member: &str) -> Result<Url, String> 
     url.set_fragment(None);
     url.query_pairs_mut().append_pair("member", member);
     Ok(url)
+}
+
+pub(crate) fn bridge_api_url(bridge: &str, path: &str) -> Result<Url, String> {
+    let base = Url::parse(bridge).map_err(|error| error.to_string())?;
+    if !matches!(base.scheme(), "http" | "https")
+        || !base.username().is_empty()
+        || base.password().is_some()
+        || !path.starts_with("/api/")
+    {
+        return Err("Invalid bridge API URL".into());
+    }
+    base.join(path).map_err(|error| error.to_string())
 }
 
 fn main_route(url: &Url) -> Option<String> {
@@ -460,11 +472,11 @@ pub(crate) fn member_icons(
     else {
         return icons;
     };
+    let Ok(url) = bridge_api_url(&bridge, "/api/status/snapshot") else {
+        return icons;
+    };
     let Ok(response) = client
-        .get(format!(
-            "{}/api/status/snapshot",
-            bridge.trim_end_matches('/')
-        ))
+        .get(url)
         .header("x-squad-context", &context.generation)
         .send()
     else {
@@ -645,6 +657,35 @@ mod tests {
         );
         for member in ["", "../x", "x&member=other", "x/route", "a<script>", "x\n"] {
             assert!(quick_chat_url("http://127.0.0.1:19821", member).is_err());
+        }
+    }
+
+    #[test]
+    fn quick_chat_api_requests_ignore_the_open_page_route() {
+        for path in [
+            "/api/status/snapshot",
+            "/api/members/breaks",
+            "/api/harnesses/usage?refresh=1",
+        ] {
+            let url = bridge_api_url(
+                "http://127.0.0.1:19821/settings/quick-chat?from=menu#old",
+                path,
+            )
+            .unwrap();
+            assert_eq!(url.as_str(), format!("http://127.0.0.1:19821{path}"));
+        }
+        for base in [
+            "file:///settings",
+            "https://person:secret@example.test/settings",
+        ] {
+            assert!(bridge_api_url(base, "/api/status/snapshot").is_err());
+        }
+        for path in [
+            "//other.test/api/status/snapshot",
+            "/settings",
+            "https://other.test/api/status/snapshot",
+        ] {
+            assert!(bridge_api_url("http://127.0.0.1:19821", path).is_err());
         }
     }
 
