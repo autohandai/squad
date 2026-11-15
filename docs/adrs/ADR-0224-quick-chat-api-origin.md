@@ -29,6 +29,13 @@ its scheme/host/port and the endpoint's own query. Reject credential-bearing or
 non-HTTP URLs and paths outside `/api/`, including network-relative URLs.
 Keep the existing ownership-generation headers, deadlines and scope checks.
 
+Review found that checking only the input's `/api/` prefix was insufficient:
+URL joining normalizes literal/encoded dot segments and backslashes. A second
+RED regression reproduced an input escaping to `/settings`. Validate the final
+origin and normalized `/api/` pathname too, and reject fragments. Current
+callers supply fixed constants; this was a resolver-contract gap, not evidence
+of a renderer-controlled request exploit.
+
 ## Verification and consequences
 
 After correction, the locked serial native suite passed all 39 tests on macOS

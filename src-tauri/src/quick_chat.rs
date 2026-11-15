@@ -277,7 +277,14 @@ pub(crate) fn bridge_api_url(bridge: &str, path: &str) -> Result<Url, String> {
     {
         return Err("Invalid bridge API URL".into());
     }
-    base.join(path).map_err(|error| error.to_string())
+    let target = base.join(path).map_err(|error| error.to_string())?;
+    if target.origin() != base.origin()
+        || !target.path().starts_with("/api/")
+        || target.fragment().is_some()
+    {
+        return Err("Invalid bridge API URL".into());
+    }
+    Ok(target)
 }
 
 fn main_route(url: &Url) -> Option<String> {
@@ -684,6 +691,10 @@ mod tests {
             "//other.test/api/status/snapshot",
             "/settings",
             "https://other.test/api/status/snapshot",
+            "/api/../settings",
+            "/api/%2e%2e/settings",
+            "/api/..\\settings",
+            "/api/status/snapshot#ignored",
         ] {
             assert!(bridge_api_url("http://127.0.0.1:19821", path).is_err());
         }
