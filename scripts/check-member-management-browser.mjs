@@ -14,7 +14,7 @@ try {
   await until(() => browser.evaluate("document.body.innerText.includes('Members to include') && document.body.innerText.includes('Tatiana')"), 'MCP-created member appears in the actual owned app', 30000);
   await browser.navigate(bridge.origin + '/squad-members/' + member.id + '/model');
   await until(() => browser.evaluate("document.querySelectorAll('[data-fallback-row]').length >= 2"), 'automatically saved failovers appear in the ordinary Model editor', 30000);
-  await until(() => browser.evaluate("document.querySelector('[aria-label=\"Fallback engine 1\"]')?.textContent.includes('Codex')"), 'saved fallback names resolve when the engine catalog loads', 15000);
+  await until(() => browser.evaluate("document.querySelector('[data-fallback-row=\"0\"]')?.textContent.includes('Codex')"), 'saved fallback names resolve when the engine catalog loads', 15000);
   await browser.screenshot('.codex-artifacts/release-audit/automatic-fallbacks.png');
   await browser.navigate(bridge.origin + '/settings/backups');
   const updated = await tools.update_member_profile({ member_id: member.id, name: 'Tatiana Smith' });

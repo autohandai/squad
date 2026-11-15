@@ -13,14 +13,6 @@ let browser;
 try{
   const member={id:'asq_model_fixture',name:'Model Verify',role:'Reviewer',workspace:process.cwd(),projects:[{path:process.cwd()}],harness:{id:'autohand'},modelAssignment:{mode:'override',provider:'autohandai',model:'fixture-moa'},permissions:{}};
   await bridge.api('/api/members/'+member.id+'/channel-access','PUT',{agent:member,profile:''});
-  // "Save fallbacks" reads "Saving…" until the window has handled the save,
-  // which can be after the bridge copy already shows it. The 0.1.16 release
-  // run clicked during that gap: "Missing button: Save fallbacks".
-  // A save that succeeds is finished only when the window shows it saved:
-  // until then the editor resets its draft to the incoming saved copy, which
-  // undid the switch flip CI made right after the bridge had the save
-  // ("Save fallbacks ready timed out", 3 November).
-  const saveFallbacks=async({settle=true}={})=>{await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&!button.disabled)"),'Save fallbacks ready');await browser.click('Save fallbacks');if(settle)await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&button.disabled)"),'fallback save settled in the window');};
   const savedMember=async()=>(await bridge.api('/api/channels')).data.agentChannelAccess[member.id].agent;
   browser=await startBrowser();
   const fixtureContext=await seedOwnedBrowserFixture(bridge,browser);
@@ -54,25 +46,31 @@ try{
   await browser.evaluate("document.querySelector('[role=combobox][aria-label=Model]').click()");
   assert(await browser.evaluate("[...document.querySelectorAll('[role=option]')].some(option=>option.textContent.includes('Fixture Moa'))"),'A refresh error retains the usable list');
   await chooseOption('fixture-fantail');await browser.evaluate('window.__modelFailRefresh=false');await browser.click('Refresh model list');
-  await until(()=>browser.evaluate("document.querySelector('button')&&[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Add fallback'&&!button.disabled)"),'connected engines loaded');
+  await until(()=>browser.evaluate("document.querySelector('button')&&[...document.querySelectorAll('button')].some(button=>button.getAttribute('aria-label')==='Add fallback'&&!button.disabled)"),'connected engines loaded');
+  // Codync-style rows (ADR-0222): + opens an editor, Done saves it, a failed
+  // save keeps the edit with Retry; reorder and remove live in the … menu.
+  const openRowMenu=async index=>{await browser.evaluate(`(()=>{const trigger=document.querySelector('[aria-label="Fallback ${index} options"]');trigger.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}));})()`);await until(()=>browser.evaluate("document.querySelectorAll('[role=menuitem]').length>0"),'fallback row menu open');};
+  const menuItem=text=>browser.evaluate(`(()=>{const item=[...document.querySelectorAll('[role=menuitem]')].find(element=>element.textContent.trim()===${JSON.stringify(text)});if(!item)throw new Error('Missing menu item: '+${JSON.stringify(text)});item.click();})()`);
   await browser.click('Add fallback');await choose('Fallback 1 model','codex-recovery');
-  await browser.evaluate('window.__modelFailSave=true');await saveFallbacks({settle:false});
+  await browser.evaluate('window.__modelFailSave=true');await browser.click('Done');
   await until(()=>browser.evaluate("[...document.querySelectorAll('section[aria-label=Fallbacks] [role=alert]')].some(element=>element.textContent.includes('Fixture save refused'))"),'failed fallback save is visible');
-  await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='Save fallbacks'&&!button.disabled)"),'fallback save ready to retry');
   assert(!(await savedMember()).modelRouting?.fallbacks?.length,'A failed fallback save leaves the persisted list alone');
   assert(await browser.evaluate("document.querySelector('[role=combobox][aria-label=\"Fallback 1 model\"]').textContent.includes('codex-recovery')"),'The unsaved fallback choice survives failure');
-  await browser.evaluate('window.__modelFailSave=false');await saveFallbacks();
+  await browser.evaluate('window.__modelFailSave=false');await browser.click('Retry');
   await until(async()=>(await savedMember()).modelRouting?.fallbacks[0]?.harness.model==='codex-recovery','fallback model saved');
-  await browser.click('Add fallback');await choose('Fallback engine 2','Claude Code');await choose('Fallback 2 model','claude-fixture');
-  await browser.click('Move fallback 2 up');await saveFallbacks();
-  await until(async()=>(await savedMember()).modelRouting?.fallbacks[0]?.harness.id==='claude','fallback order saved');
+  await until(()=>browser.evaluate("!document.querySelector('[role=combobox][aria-label=\"Fallback 1 model\"]')&&document.querySelector('[data-fallback-row=\"0\"]')?.textContent.includes('codex-recovery')"),'saved row collapses to Engine · model');
+  await until(()=>browser.evaluate("[...document.querySelectorAll('button')].some(button=>button.getAttribute('aria-label')==='Add fallback'&&!button.disabled)"),'add ready again');
+  await browser.click('Add fallback');await choose('Fallback engine 2','Claude Code');await choose('Fallback 2 model','claude-fixture');await browser.click('Done');
+  await until(async()=>(await savedMember()).modelRouting?.fallbacks[1]?.harness.id==='claude','second fallback saved');
+  await openRowMenu(2);await menuItem('Move up');
+  await until(async()=>(await savedMember()).modelRouting?.fallbacks[0]?.harness.id==='claude','fallback order saved immediately');
   await browser.screenshot(artifact+'/fallback-editor.png');
   await browser.evaluate('window.beforeRoutingReload=true');await browser.send('Page.reload');
   await until(()=>browser.evaluate("!window.beforeRoutingReload&&document.querySelector('[data-fallback-row=\"0\"]')?.textContent.includes('Claude')"),'saved fallback ordering reloaded');
-  await browser.click('Move fallback 1 down');await saveFallbacks();
+  await openRowMenu(1);await menuItem('Move down');
   await until(async()=>(await savedMember()).modelRouting?.fallbacks[0]?.harness.id==='codex','Codex first again');
   assert.equal((await savedMember()).modelRouting.allowAgentChanges,false,'Agent edits start disabled');
-  await browser.evaluate("document.querySelector('[role=switch][aria-label=\"Let this member manage fallbacks\"]').click()");await until(()=>browser.evaluate("document.querySelector('[role=switch][aria-label=\"Let this member manage fallbacks\"]')?.getAttribute('aria-checked')==='true'"),'member fallback permission switched on');await saveFallbacks();
+  await browser.evaluate("document.querySelector('[role=switch][aria-label=\"Let this member manage fallbacks\"]').click()");await until(()=>browser.evaluate("document.querySelector('[role=switch][aria-label=\"Let this member manage fallbacks\"]')?.getAttribute('aria-checked')==='true'"),'member fallback permission switched on');
   await until(async()=>(await savedMember()).modelRouting.allowAgentChanges===true,'optional agent permission saved');
 
   await writeFile(join(bridge.directory,'fail-autohand'),'fail');
@@ -88,6 +86,13 @@ try{
   await browser.screenshot(artifact+'/fallback-answer.png');
   await browser.evaluate('window.beforeRoutingReload=true');await browser.send('Page.reload');
   await until(()=>browser.evaluate("!window.beforeRoutingReload&&document.body.innerText.includes('fallback via Codex')&&document.body.innerText.includes('Codex fixture continued the same task.')"),'fallback attribution survives history reload');
+  await browser.navigate(bridge.origin+'/squad-members/'+member.id+'/model');
+  await until(()=>browser.evaluate("document.querySelector('[data-fallback-status]')?.textContent.includes('Using Codex while Autohand Code')&&Boolean(document.querySelector('[data-fallback-row=\"0\"] [data-fallback-in-use]'))"),'model page names the engine in use',15000);
+  await browser.screenshot(artifact+'/fallback-in-use.png');
+  await browser.click('Switch back');
+  await until(()=>browser.evaluate("!document.querySelector('[data-fallback-status]')&&!document.querySelector('[data-fallback-in-use]')"),'Switch back returns to the primary');
+  await browser.navigate(bridge.origin+'/conversations/new?member='+member.id);
+  await until(()=>browser.evaluate("Boolean(document.querySelector('textarea[placeholder=\"Talk to Model Verify...\"]'))"),'chat composer again');
   await bridge.api('/api/members/'+member.id+'/model-routing/reset','POST',{});
   await rm(join(bridge.directory,'fail-autohand'));await writeFile(join(bridge.directory,'partial-autohand'),'partial');
   await browser.fill('textarea[placeholder="Talk to Model Verify..."]','Continue after a partial primary answer.');
@@ -108,7 +113,7 @@ try{
   await until(()=>browser.evaluate("JSON.parse(localStorage.getItem(window.__fixtureMembersKey)||'[]').find(agent=>agent.id==='asq_model_fixture')?.modelRouting?.fallbacks[0]?.harness.model==='codex-second'"),'committed receipt projects the fallback model before a roster refresh',5000);
   await browser.evaluate('window.__modelHoldChannels=false');
   await browser.navigate(bridge.origin+'/squad-members/'+member.id+'/model');
-  await until(()=>browser.evaluate("document.querySelector('[role=combobox][aria-label=\"Fallback 1 model\"]')?.textContent.includes('codex-second')"),'member tool receipt updates the editor',60000);
+  await until(()=>browser.evaluate("document.querySelector('[data-fallback-row=\"0\"]')?.textContent.includes('codex-second')"),'member tool receipt updates the editor',60000);
   assert.equal((await savedMember()).modelAssignment.model,'fixture-fantail','The tool leaves the primary model alone');
   await writeFile(join(bridge.directory,'fail-autohand'),'fail');await bridge.api('/api/members/'+member.id+'/model-routing/reset','POST',{});
   const thread=(await bridge.api('/api/members/'+member.id+'/threads','POST',{root:{id:'model-thread-parent',role:'user',body:'Fallback thread verification'}})).data;
