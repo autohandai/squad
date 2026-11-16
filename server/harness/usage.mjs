@@ -77,7 +77,10 @@ export async function readClaudeUsage(executable, { timeoutMs = 10000, cwd, env 
 }
 
 export function createHarnessUsage({ listHarnesses, cwd, readers = { codex: readCodexUsage, claude: readClaudeUsage }, now = Date.now, ttlMs = 60000 }) {
-  let cached, expiresAt = 0, pending, lastStarted = -Infinity;
+  // The last reading that reported windows, per harness. One slow or failed
+  // probe (Claude Code starting cold can outlast the timeout) keeps showing
+  // that reading, marked stale, instead of replacing it with an error.
+  let cached, expiresAt = 0, pending, lastStarted = -Infinity; const lastGood = new Map();
   return async ({ force = false } = {}) => {
     if (pending) return pending;
     if (cached && now() < expiresAt && (!force || now() - lastStarted < 10000)) return cached;
@@ -89,8 +92,14 @@ export function createHarnessUsage({ listHarnesses, cwd, readers = { codex: read
         try {
           const data = await readers[harness.id](harness.executablePath, { cwd });
           const windows = harness.id === 'codex' ? normalizeCodexUsage(data) : normalizeClaudeUsage(data);
-          return { ...base, status: windows.length ? 'available' : 'unavailable', windows, ...(windows.length ? {} : { message: 'Plan limits are not reported for this connection.' }) };
-        } catch { return { ...base, status: 'unavailable', windows: [], message: 'Usage is unavailable. Check this harness’s connection or version.' }; }
+          const reading = { ...base, status: windows.length ? 'available' : 'unavailable', windows, ...(windows.length ? {} : { message: 'Plan limits are not reported for this connection.' }) };
+          if (windows.length) lastGood.set(harness.id, reading);
+          return reading;
+        } catch {
+          const previous = lastGood.get(harness.id);
+          if (previous) return { ...previous, stale: true };
+          return { ...base, status: 'unavailable', windows: [], message: 'Usage is unavailable. Check this harness’s connection or version.' };
+        }
       }));
       cached = { harnesses, updatedAt: new Date(now()).toISOString() }; expiresAt = now() + ttlMs;
       return cached;

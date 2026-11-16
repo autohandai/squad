@@ -17,6 +17,18 @@ assert.equal(closed, 1);
 await assert.rejects(() => readClaudeUsage('fixture', { timeoutMs: 10, queryFactory: () => ({ usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => new Promise(() => {}), close: () => closed++ }) }), /timed out/);
 assert.equal(closed, 2);
 let probes = 0, now = 0;
+{
+  // A failed probe after a good one keeps the good reading, marked stale.
+  let at = 0, fail = false;
+  const flaky = createHarnessUsage({ now: () => at, listHarnesses: async () => [{ id: 'claude', status: 'ready' }], readers: { claude: async () => { if (fail) throw new Error('Usage request timed out.'); return { rate_limits_available: true, rate_limits: { seven_day: { utilization: 8, resets_at: '2099-01-01T00:00:00Z' } } }; } } });
+  const good = (await flaky()).harnesses[0];
+  assert.equal(good.status, 'available'); assert.equal(good.stale, undefined);
+  fail = true; at = 70000;
+  const kept = (await flaky()).harnesses[0];
+  assert.equal(kept.status, 'available'); assert.equal(kept.stale, true); assert.equal(kept.windows[0].usedPercent, 8);
+  const never = createHarnessUsage({ listHarnesses: async () => [{ id: 'claude', status: 'ready' }], readers: { claude: async () => { throw new Error('down'); } } });
+  assert.equal((await never()).harnesses[0].status, 'unavailable');
+}
 const service = createHarnessUsage({ now: () => now, listHarnesses: async () => [{ id: 'claude', status: 'ready' }, { id: 'codex', status: 'not-detected' }], readers: { claude: async () => { probes++; return {}; } } });
 await Promise.all([service(), service()]); assert.equal(probes, 1); await service({ force: true }); assert.equal(probes, 1); now = 10001; await service({ force: true }); assert.equal(probes, 2); await service(); assert.equal(probes, 2); now = 70002; await service(); assert.equal(probes, 3);
 const root = await mkdtemp(join(tmpdir(), 'squad-usage-'));
