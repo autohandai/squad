@@ -12,21 +12,37 @@ list to the section for that version.
 
 ### Added
 
+- Choose a layout: **Full** (everything in the sidebar, as before) or **Minified**, a calm, chat-first Squad. Minified puts your pinned teammates up top as large portraits, then one list of conversations with previews, and shows replies as bubbles with a slim centred header. Squad, Memory, new channels and new members are under More (…) and ⌘K. It works with every skin, in light and dark. Pick it during onboarding or any time in Settings › Appearance.
+- Onboarding has a new step, Choose your layout, right after work folders, with a small preview of each layout. Your choice is saved straight away.
+- Pair your iPhone from anywhere: the Local menu at the top of the sidebar now has Pair iPhone…, which shows the QR code and six-digit approval in a window.
+- Onboarding now asks how Squad shows in your menu bar on the Mac: pick One Squad icon or Agent avatars while a small preview shows the menu bar and Quick Chat opening from it. Your choice is saved straight to Settings › Quick Chat.
+- Onboarding now invites you to pair your iPhone: show the pairing code, match the six digits and approve, all in the same step. Not now is remembered, and you can pair later in Settings › Computers.
+- Choose a member’s fallbacks right where you choose its engine: the engine menu in the chat header lists them in order, each with its own engine, model and reasoning effort picked from what that engine offers, with Switch back and Add. The same engine can’t be added twice, and the main engine isn’t offered as its own fallback.
 - Squad MCP 2.4 adds workspace replacement through both connections, so the app, CLI and other clients can change an existing member’s primary and additional work folders together.
 - Reach your Squad agents from an approved iPhone away from home through an encrypted relay. Enable “Reach from anywhere” in Computers settings, scan the code and approve the matching six digits. Your computer keeps message keys and needs to stay awake with Squad running.
 - Your phone now works at home and away without pairing again. Computers settings lets Same Wi-Fi and From anywhere (Autohand’s relay) run at the same time, alongside your own tunnel. A phone paired on one of them learns the others from your computer and switches by itself: the same network when it can, the relay everywhere else.
 ### Changed
 
+- Switching between your personal Squad and a team Squad now happens in Settings › Squads, which lists every Squad you belong to, marks the current one and says what switching does. The “Personal Squad ⌄” menu is gone from the sidebar. If you belong to more than one Squad, the account menu names the one you are in and offers Switch Squad….
+- The Setup guide is now called Onboarding, in Settings and on its own screen, and Run onboarding again walks through every step with quiet progress (Step 2 of 3) and Back. Saving work folders moves on to the next step instead of leaving onboarding.
+- The menu-bar menu now draws usage as coloured bars beside each limit, under Claude Code, Codex and your Autohand plan, each with its own mark. Bars turn red from 90% used, and choosing a row opens Settings.
 - Turning on “From anywhere” no longer turns off the local network connection, so a phone paired on your Wi-Fi keeps working. Existing settings upgrade automatically: a computer that used the local network or the relay now keeps both on; a computer set up with your own tunnel stays as it was.
 - Fallbacks now read like Codync's: the Model page says which engine is answering ("Using Codex while Claude Code has reached its usage limit") with Switch back, rows are compact with an In use badge and a … menu, and changes save as you make them. Squad for iPhone shows the same line in that member's chat.
 - The bundled Autohand Code CLI is updated to 0.9.11.
-- Grut now changes the conversation layout: agents, groups and channels share one list with larger avatars, saved previews and times, plus quiet message bubbles in light and dark. Choose it in Appearance.
+- Grut is now a skin like the others: cool greys, a blue accent and blob faces. Its conversation list and message bubbles became the Minified layout, which works with every skin. If you were using Grut, Squad switches you to Minified once so nothing you chose disappears; pick Full in Settings › Appearance to go back.
 
 - The account menu now starts with Inbox, Settings, About, and Licenses and agreements. Analytics lives beside Memory in Settings, with Back returning to your conversation and unsent draft.
 - Phone connections keep their computer identity and delivery receipts after a restart. Disconnecting a phone locally also removes its relay access when the computer reconnects.
 
 ### Fixed
 
+- Quick Chat opens ready to type: the cursor is already in the message box.
+- Quick Chat’s usage is now one quiet line naming the tightest limit, such as “Codex at its limit · resets in 6d 17h”; open it to see every limit.
+- While a fallback is answering, the chat header now says so, for example “Claude Code · fallback” with its model, instead of naming the engine that ran out.
+- New members get better automatic fallbacks: one per company, never another engine from the same company as the main one, and each with a real model chosen.
+- Clicking a member in the Squad list opens your chat with them straight away; their profile is still in the … menu.
+- Esc leaves Settings and returns you to where you were, even after clicking an empty part of the page.
+- Quick Chat and the menu bar keep showing the last Claude Code or Codex limits they read, marked “Last reported”, when one check is slow, instead of saying usage is unavailable.
 - The Squad logo appears beside the app name while verifying, loading or recovering your Squad, in both light and dark mode.
 - Intel Mac release dry runs now allow up to sixty minutes, matching the release workflow instead of cancelling after thirty-five minutes.
 - Windows release tests find their built process helper when Cargo uses a deeper test-output directory, avoiding a false release failure.

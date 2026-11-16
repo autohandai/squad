@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /** A catalog belongs to an engine/provider/workspace, never another row. */
-export function HarnessModelSelect({ api, harness = 'autohand', provider = '', executablePath = '', workspace = '', value = '', onChange, label = 'Model', allowDefault = true, disabled = false }) {
+export function HarnessModelSelect({ api, harness = 'autohand', provider = '', executablePath = '', workspace = '', value = '', onChange, label = 'Model', allowDefault = true, disabled = false, compact = false }) {
   const [state, setState] = useState({ status: 'loading', models: [] });
   const [refresh, setRefresh] = useState(0);
   const [custom, setCustom] = useState(false);
@@ -24,6 +24,34 @@ export function HarnessModelSelect({ api, harness = 'autohand', provider = '', e
   const customInput = custom && state.key === key;
   const known = catalog.models.some(model => model.id === value);
   const engineManaged = catalog.status === 'ready' && catalog.modelSelection === false;
+  // Compact (the chat header's fallback rows): one small picker showing the
+  // model's name only; refresh lives in the list, and a failed or
+  // engine-managed catalog is a short state on the trigger, never a raw error.
+  if (compact) {
+    const unavailable = catalog.status === 'error';
+    const placeholder = catalog.status === 'loading' ? 'Loading…' : engineManaged ? 'Chooses its own model' : unavailable ? 'Engine default' : allowDefault ? 'Engine default' : 'Choose a model';
+    const current = catalog.models.find(model => model.id === value);
+    return <div className="grid min-w-0 gap-1">
+      <Select value={customInput ? '__custom' : value || (allowDefault ? '__default' : '')} disabled={disabled || catalog.status === 'loading' || engineManaged} onValueChange={next => {
+        if (next === '__refresh') { setRefresh(currentValue => currentValue + 1); return; }
+        if (next === '__custom') { setCustom(true); return; }
+        setCustom(false); onChange(next === '__default' ? '' : next);
+      }}>
+        <SelectTrigger aria-label={label} title={unavailable ? `Models unavailable: ${catalog.detail || ''}` : current ? current.id : undefined} className="h-8 w-full min-w-0 text-xs">
+          {value && !customInput ? <span className="truncate">{current?.label || value}</span> : <SelectValue placeholder={placeholder} />}
+        </SelectTrigger>
+        <SelectContent>
+          {allowDefault ? <SelectItem value="__default">Engine default{catalog.defaultModel ? ` · ${catalog.defaultModel}` : ''}</SelectItem> : null}
+          {catalog.models.map(model => <SelectItem key={model.id} value={model.id}>{model.label}{model.label !== model.id ? <span className="text-muted-foreground"> · {model.id}</span> : null}</SelectItem>)}
+          {value && !known ? <SelectItem value={value}>{value} · saved ID</SelectItem> : null}
+          <SelectItem value="__custom">Custom model ID…</SelectItem>
+          <SelectItem value="__refresh">Refresh model list</SelectItem>
+        </SelectContent>
+      </Select>
+      {customInput ? <Input aria-label={`Custom ${label.toLowerCase()} ID`} className="h-8 text-xs" value={value} onChange={event => onChange(event.target.value)} placeholder="Exact model ID" /> : null}
+      {unavailable ? <p className="truncate text-[11px] text-muted-foreground" title={catalog.detail}>Couldn’t list models. It will use its default.</p> : null}
+    </div>;
+  }
   return <div className="grid gap-2">
     <div className="flex items-center gap-2">
       <Select value={customInput ? '__custom' : value || (allowDefault ? '__default' : '')} disabled={disabled || catalog.status === 'loading' || engineManaged} onValueChange={next => {

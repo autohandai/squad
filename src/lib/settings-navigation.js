@@ -41,6 +41,7 @@ export function rememberSettingsReturn(value) {
 // App.jsx, so "Settings → Vault" links opened Settings at the top.
 export const SETTINGS_SECTION_IDS = Object.freeze([
   'setup',
+  'squads',
   'appearance',
   'language',
   'providers',
@@ -100,6 +101,7 @@ export function settingsSectionFromRoute(route, hash = '') {
 // and "api key" finds LLM Providers.
 export const SETTINGS_KEYWORDS = Object.freeze({
   setup: 'setup guide getting started onboarding first',
+  squads: 'squads switch squad team teams personal owner ownership account organisation organization',
   appearance: 'theme dark light colour color skin palette font look',
   language: 'language locale translation english portuguese spanish region',
   providers: 'llm provider model api key openai anthropic openrouter ollama gemini default model',

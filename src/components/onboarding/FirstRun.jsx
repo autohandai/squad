@@ -4,13 +4,51 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DefaultWorkspaceConsent } from "@/components/chat/DefaultWorkspaceConsent";
+import { menuBarAvailableHere } from "@/components/settings/QuickChatPreferences";
+import { MenuBarStep } from "@/components/onboarding/MenuBarStep";
+import { PhoneStep } from "@/components/onboarding/PhoneStep";
+import { LayoutStep } from "@/components/onboarding/LayoutStep";
+import { cn } from "@/lib/utils";
+
+const STEP_LABELS = { folders: "Work folders", layout: "Layout", "menu-bar": "Menu bar", phone: "iPhone" };
+const BIRDS = [{ key: "bird-kea", name: "Chief of Staff", bird: "kea" }, { key: "bird-tui", name: "Tūī", bird: "tui" }, { key: "bird-ruru", name: "Ruru", bird: "ruru" }];
+const birdAvatar = bird => className => <img src={`/avatars/birds/${bird}.webp`} alt="" className={cn("object-cover", className)} decoding="async" />;
+
+/** Quiet progress: a short line of segments and "Step 2 of 3 · Menu bar". */
+function StepProgress({ steps, step }) {
+  const index = steps.indexOf(step);
+  return <div className="flex items-center gap-3 text-xs text-muted-foreground" data-testid="onboarding-progress">
+    <ol className="flex gap-1" aria-hidden="true">{steps.map((item, position) => <li key={item} className={cn("h-0.5 w-6 rounded-full transition-colors duration-300", position <= index ? "bg-foreground/70" : "bg-foreground/15")} />)}</ol>
+    <span aria-current="step">Step {index + 1} of {steps.length} · {STEP_LABELS[step]}</span>
+  </div>;
+}
 
 const memberFolders = member => [...new Set([member?.workspace, ...(member?.projects || []).map(project => project.path)].filter(Boolean))];
 
 /** First install creates one coordinator. Review edits an existing member’s
  * folders; analysis only suggests specialists for explicit creation. */
-export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces = [], onboardingState, updateOnboardingState, api, loginRequestStatus = '', onRequestLogin, onRefreshAccount, onRefreshRuntime, providerReady, onOpenProviders, renderTemplateAvatar, onStart, onSaveWorkspaces, onRefreshMembers, onContinue, onReviewSuggestion, setupSnapshot, setupError, onRefreshSetup, brand }) {
+export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces = [], onboardingState, updateOnboardingState, api, loginRequestStatus = '', onRequestLogin, onRefreshAccount, onRefreshRuntime, providerReady, onOpenProviders, renderTemplateAvatar, renderMemberAvatar, onStart, onSaveWorkspaces, onRefreshMembers, onContinue, onReviewSuggestion, setupSnapshot, setupError, onRefreshSetup, brand, layout = 'full', onLayoutChange }) {
   const existing = ['completed', 'existing'].includes(setupSnapshot?.status);
+  // One guided flow: work folders, the layout (ADR-0233), then (macOS app only)
+  // the menu bar, then a phone.
+  const [steps] = useState(() => ['folders', 'layout', ...(menuBarAvailableHere() ? ['menu-bar'] : []), 'phone']);
+  const [step, setStep] = useState(() => steps.includes(onboardingState.lastStep) ? onboardingState.lastStep : 'folders');
+  // Whether the squad was created in this run, so finishing opens #general like before.
+  const [startedHere, setStartedHere] = useState(false);
+  const flowRef = useRef(null);
+  const firstStepChange = useRef(true);
+  useEffect(() => {
+    if (firstStepChange.current) { firstStepChange.current = false; return; }
+    window.scrollTo?.({ top: 0 });
+    flowRef.current?.querySelector('h1')?.focus({ preventScroll: true });
+  }, [step]);
+  function go(next) { setStep(next); updateOnboardingState({ lastStep: next }); }
+  const after = current => steps[steps.indexOf(current) + 1];
+  const before = current => steps[steps.indexOf(current) - 1];
+  function finish(phonePairing) {
+    updateOnboardingState({ lastStep: 'complete', ...(phonePairing ? { phonePairing } : {}) });
+    onContinue?.(startedHere ? 'channel' : 'squad');
+  }
   const [memberId, setMemberId] = useState('');
   const reviewInitialized = useRef(false);
   const selectedMember = agents.find(member => member.id === memberId && !remoteByMember[member.id]);
@@ -106,7 +144,8 @@ export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces
     try {
       const folders = existing ? paths : plan.repositories.map(item => item.path);
       if (existing) await onSaveWorkspaces({ memberId, workspace: folders[0], directories: folders.slice(1), expectedRevision: selectedMember.profileRevision || 0 });
-      else await onStart(folders);
+      else { await onStart(folders); setStartedHere(true); }
+      go(after('folders'));
     }
     catch (cause) { setError(cause.message || 'Could not save setup. Your folder choices are kept; retry to continue.'); }
     finally { startingRef.current = false; setStarting(false); }
@@ -118,11 +157,22 @@ export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces
   const preparing = ['preparing', 'downloading', 'verifying', 'installing'].includes(runtimeSetup.phase) && !runtime?.bridgeUnavailable;
   const recent = workspaces.filter(item => item.path && !paths.includes(item.path)).slice(0, 5);
   const recommendations = plan?.recommendations || [];
+  const local = agents.filter(member => !remoteByMember[member.id]).slice(0, 3)
+    .map(member => ({ key: member.id, name: member.name, avatar: renderMemberAvatar ? className => renderMemberAvatar(member, className) : birdAvatar('kea') }));
+  const lead = local[0] || { ...BIRDS[0], avatar: birdAvatar(BIRDS[0].bird) };
+  const others = [...local.slice(1), ...BIRDS.slice(1).map(item => ({ ...item, avatar: birdAvatar(item.bird) }))];
+  const previewMembers = [others[0], lead, others[1]];
 
-  return <div className="min-h-screen bg-background" data-testid="first-run">
-    <div className="mx-auto w-full max-w-2xl px-6 py-12 lg:py-16">
-      <header className="flex items-center gap-3">{brand}<div><div className="text-sm font-semibold">Autohand Squad</div><div className="text-xs text-muted-foreground">{complete ? 'Review setup' : 'First run'}</div></div></header>
-      <h1 className="mt-10 text-3xl font-semibold tracking-tight">{complete ? 'Review where your squad works.' : 'Choose where your squad works.'}</h1>
+  const exit = existing && step !== 'phone' ? <Button variant="ghost" size="sm" onClick={() => finish()} disabled={starting}>Open your squad</Button> : null;
+  return <div className="min-h-screen bg-background" data-testid="first-run" data-step={step}>
+    <div ref={flowRef} className="mx-auto w-full max-w-2xl px-6 py-12 lg:py-16 [&_h1]:outline-none">
+      <header className="flex items-center gap-3">{brand}<div className="min-w-0 flex-1"><div className="text-sm font-semibold">Autohand Squad</div><div className="text-xs text-muted-foreground">Onboarding</div></div>{exit}</header>
+      <nav className="mt-8" aria-label="Onboarding progress"><StepProgress steps={steps} step={step} /></nav>
+      {step === 'layout' ? <div key="layout" className="mt-6 onboarding-step-enter"><LayoutStep layout={layout} onChange={onLayoutChange} members={previewMembers} onBack={!startedHere ? () => go(before('layout')) : null} onContinue={() => go(after('layout'))} /></div>
+      : step === 'menu-bar' ? <div key="menu-bar" className="mt-6 onboarding-step-enter"><MenuBarStep api={api} members={previewMembers} onBack={before('menu-bar') && (before('menu-bar') !== 'folders' || !startedHere) ? () => go(before('menu-bar')) : null} onContinue={() => go(after('menu-bar'))} /></div>
+      : step === 'phone' ? <div key="phone" className="mt-6 onboarding-step-enter"><PhoneStep api={api} member={lead} onBack={before('phone') && (before('phone') !== 'folders' || !startedHere) ? () => go(before('phone')) : null} onPaired={() => updateOnboardingState({ phonePairing: 'paired' })} onSkip={outcome => finish(outcome)} onFinish={() => finish('paired')} /></div>
+      : <div key="folders" className="onboarding-step-enter">
+      <h1 tabIndex={-1} className="mt-6 text-3xl font-semibold tracking-tight">{complete ? 'Review where your squad works.' : 'Choose where your squad works.'}</h1>
       <p className="mt-3 text-base text-muted-foreground">{complete ? 'Choose an existing member and review their work folders. Saved changes apply to future work.' : 'Choose one or more project folders. Git is optional. You’ll start with one Chief of Staff on Autohand Code and one channel, #general.'}</p>
 
       {!signedIn ? <div className="mt-6 flex flex-wrap items-center gap-3 border-y py-4 text-sm"><span className="flex-1">Sign in with your Autohand account to continue.</span><Button onClick={onRequestLogin}>Sign in</Button><Button variant="ghost" size="sm" onClick={onRefreshAccount}><RefreshCw />Refresh</Button>{loginRequestStatus ? <span className="basis-full text-muted-foreground">{loginRequestStatus}</span> : null}</div> : null}
@@ -178,14 +228,15 @@ export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces
 
       <footer className="mt-10 border-t border-border/70 pt-6">
         {existing ? <>
-          <div className="flex flex-wrap items-center gap-2"><Button onClick={start} disabled={!canSave || starting}>{starting ? <Loader2 className="animate-spin" /> : null}{starting ? 'Saving work folders…' : 'Save work folders'}</Button><Button variant="ghost" onClick={onContinue} disabled={starting}>Open your squad</Button></div>
-          <p className="mt-3 text-xs text-muted-foreground">Replaces this member’s primary and additional work folders. Files stay where they are.</p>
+          <div className="flex flex-wrap items-center gap-2"><Button onClick={start} disabled={!canSave || starting}>{starting ? <Loader2 className="animate-spin" /> : null}{starting ? 'Saving work folders…' : 'Save work folders'}</Button><Button variant="ghost" onClick={() => go(after('folders'))} disabled={starting}>Next</Button></div>
+          <p className="mt-3 text-xs text-muted-foreground">Replaces this member’s primary and additional work folders. Files stay where they are. Next keeps them as they are.</p>
         </> : <>
           <div className="flex items-center gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-md bg-muted text-sm font-semibold" aria-hidden="true">CS</div><div><div className="text-sm font-medium">Chief of Staff</div><div className="text-xs text-muted-foreground">Autohand Code · coordinates your selected folders</div></div></div>
           <Button className="mt-5" onClick={start} disabled={!canStart || starting}>{starting ? <Loader2 className="animate-spin" /> : null}{starting ? 'Preparing your squad…' : 'Start with Chief of Staff'}</Button>
-          <p className="mt-3 text-xs text-muted-foreground">Creates only your Chief of Staff and #general. Your repository choices are saved so you can return to setup.</p>
+          <p className="mt-3 text-xs text-muted-foreground">Creates only your Chief of Staff and #general. Your repository choices are saved so you can return to onboarding.</p>
         </>}
       </footer>
+      </div>}
     </div>
   </div>;
 }

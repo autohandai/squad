@@ -57,6 +57,12 @@ try {
   await browser.fill('#first-run-repository', folder); await browser.click('Add folder');
   await until(() => browser.evaluate(`[...document.querySelectorAll('button')].find(item=>item.textContent==='Start with Chief of Staff')?.disabled===false`), 'real repository profile', 30000);
   await browser.click('Start with Chief of Staff');
+  // The layout step comes first (ADR-0233); Continue keeps the saved layout.
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid="onboarding-layout"]')`), 'onboarding layout step', 60000);
+  await browser.click('Continue');
+  // Onboarding continues to the phone step (ADR-0230); Not now finishes into #general.
+  await until(() => browser.evaluate(`[...document.querySelectorAll('button')].some(item=>item.textContent==='Not now')`), 'onboarding phone step', 60000);
+  await browser.click('Not now');
   await until(() => browser.evaluate(`location.pathname === '/channels/channel_general'`), 'real coordinator provision', 60000);
   const onboarding = await browser.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.onboarding'))`);
   assert.equal(onboarding.status, 'completed');

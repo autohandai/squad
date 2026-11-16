@@ -1,6 +1,6 @@
 # ADR-0221: The personal/team Squad switcher lives in the sidebar, only when there is a choice
 
-Status: Accepted
+Status: Superseded in part by ADR-0234 (switching moved to Settings › Squads; the sidebar no longer has a Squad switcher)
 Date: 2026-11-13
 
 ## Context

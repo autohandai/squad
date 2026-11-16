@@ -97,20 +97,31 @@ export function SettingsShell({ sections = [], activeId = "", onSelect, onBack, 
     rowRefs.current.get(ids[next])?.focus();
   }
 
-  function onShellKeyDown(event) {
-    if (event.key !== "Escape" || event.defaultPrevented || !onBack) return;
-    const target = event.target instanceof Element ? event.target : null;
-    if (target?.closest("input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='dialog'], [role='menu'], [role='listbox'], [data-radix-popper-content-wrapper], [data-state='open']")) return;
-    event.preventDefault();
-    onBack();
-  }
+  // Escape is heard on the whole document, not only inside the shell: after a
+  // click on empty space focus falls back to <body>, and a shell-only listener
+  // never saw the key (the owner pressed Esc and nothing happened).
+  const backRef = useRef(onBack);
+  backRef.current = onBack;
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (event.key !== "Escape" || event.defaultPrevented || !backRef.current) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='dialog'], [role='menu'], [role='listbox'], [data-radix-popper-content-wrapper], [data-state='open']")) return;
+      // A menu, select or dialog that is still open owns this Escape.
+      if (document.querySelector("[role='dialog'], [role='alertdialog'], [role='menu'], [role='listbox'], [data-radix-popper-content-wrapper]")) return;
+      event.preventDefault();
+      backRef.current();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const indicatorStyle = indicator
     ? { "--settings-indicator-top": `${indicator.top}px`, "--settings-indicator-height": `${indicator.height}px`, "--settings-indicator-left": `${indicator.left}px`, "--settings-indicator-width": `${indicator.width}px` }
     : undefined;
 
   return (
-    <div className="settings-shell min-h-screen bg-background" data-testid="settings-shell" onKeyDown={onShellKeyDown}>
+    <div className="settings-shell min-h-screen bg-background" data-testid="settings-shell">
       <div className="flex h-14 items-center gap-3 border-b border-border/75 bg-background/92 px-5 backdrop-blur-xl sm:px-6">
         <Button variant="ghost" size="icon-sm" aria-label={backLabel} title={backLabel} onClick={onBack}>
           <ArrowLeft />

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUpRight, RefreshCw, Settings2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -11,7 +11,42 @@ export function usageResetLabel(value, now = Date.now()) {
   return `resets in ${Math.floor(minutes / 60) ? `${Math.floor(minutes / 60)}h ` : ""}${minutes % 60}m`;
 }
 
+/** The tightest limit, for the collapsed usage line: "Codex at its limit · resets in 6d 17h". */
+export function tightestUsage(harnesses = [], now = Date.now()) {
+  let best = null;
+  for (const harness of harnesses) for (const window of harness.windows || []) {
+    if (window.usedPercent === null || window.usedPercent === undefined) continue;
+    if (!best || window.usedPercent > best.window.usedPercent) best = { harness, window };
+  }
+  if (!best) return "";
+  const { harness, window } = best;
+  const state = window.usedPercent >= 100 ? `${harness.label} at its limit` : `${harness.label} ${window.label.toLowerCase()} ${window.usedPercent}% used`;
+  return `${state} · ${usageResetLabel(window.resetsAt, now)}`;
+}
+
+const USAGE_OPEN_KEY = "autohandSquad.quickChatUsageOpen";
+function readUsageOpen() { try { return globalThis.localStorage?.getItem(USAGE_OPEN_KEY) === "true"; } catch { return false; } }
+
 export function QuickChatPanel({ api, member, chatPath, children }) {
+  const panelRef = useRef(null);
+  const [usageOpen, setUsageOpen] = useState(readUsageOpen);
+  // Opening Quick Chat means "I want to type": put the caret in the composer
+  // every time the popover is shown, and again once macOS makes it key, unless
+  // the person is already in another field.
+  useEffect(() => {
+    const focusComposer = () => requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body && panelRef.current?.contains(active) && active.matches("input, textarea, [contenteditable='true']")) return;
+      const composer = panelRef.current?.querySelector("textarea:not([disabled])");
+      if (!composer) return;
+      composer.focus({ preventScroll: true });
+      const end = composer.value.length; composer.setSelectionRange?.(end, end);
+    });
+    focusComposer();
+    window.addEventListener("squad:popup-shown", focusComposer);
+    window.addEventListener("focus", focusComposer);
+    return () => { window.removeEventListener("squad:popup-shown", focusComposer); window.removeEventListener("focus", focusComposer); };
+  }, [member?.id]);
   useEffect(() => {
     if (!/^AutohandSquadQuickChat\//.test(navigator.userAgent)) return;
     document.documentElement.dataset.quickChat = "true";
@@ -56,7 +91,7 @@ export function QuickChatPanel({ api, member, chatPath, children }) {
     return () => { disposed = true; controller?.abort(); clearInterval(timer); for (const event of events) window.removeEventListener(event, refresh); window.removeEventListener("storage", storage); };
   }, [api, attempt]);
   const enabled = settings?.quickChatEnabled !== false;
-  return <div className="flex min-h-0 min-w-0 flex-col bg-background text-foreground" data-testid="mac-quick-chat">
+  return <div ref={panelRef} className="flex min-h-0 min-w-0 flex-col bg-background text-foreground" data-testid="mac-quick-chat">
     <header className="quick-chat-toolbar flex h-9 shrink-0 items-center gap-1 px-3">
       <span className="min-w-0 flex-1 text-xs font-medium text-muted-foreground">Quick Chat</span>
       <Button asChild variant="ghost" size="icon-xs"><a href={chatPath} aria-label={member ? `Open ${member.name} in Squad` : "Open Squad"} title="Open in Squad"><ArrowUpRight className="size-3.5" /></a></Button>
@@ -65,8 +100,10 @@ export function QuickChatPanel({ api, member, chatPath, children }) {
     </header>
     <div className={enabled ? "contents" : "hidden"}>{children}</div>
     {!enabled ? <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-3 px-5"><h1 className="text-sm font-medium">Quick Chat is off</h1><p className="text-xs text-muted-foreground">Your agents and their work keep running in Squad.</p><Button asChild variant="outline" size="sm"><a href="/settings/quick-chat">Open settings</a></Button></div> : null}
-    {enabled && settings?.quickChatShowUsage && (usageError || usage?.harnesses?.length) ? <details open className="shrink-0 border-t border-border/60 px-3 py-2" data-testid="quick-chat-usage">
-      <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">Usage &amp; limits</summary>
+    {enabled && settings?.quickChatShowUsage && (usageError || usage?.harnesses?.length) ? <details open={usageOpen} onToggle={event => { const open = event.currentTarget.open; setUsageOpen(open); try { localStorage.setItem(USAGE_OPEN_KEY, String(open)); } catch { /* per-device convenience */ } }} className="shrink-0 border-t border-border/60 px-3 py-1.5" data-testid="quick-chat-usage">
+      {/* Quick Chat is for the conversation: usage stays one quiet line naming
+          the tightest limit until opened (ADR-0232). */}
+      <summary className="cursor-pointer truncate text-[11px] text-muted-foreground">{usageOpen || usageError ? "Usage & limits" : tightestUsage(usage?.harnesses) || "Usage & limits"}</summary>
       <div className="mt-2 flex max-h-32 flex-col gap-2 overflow-y-auto">
         {usageError ? <p className="text-xs text-muted-foreground">{usageError}</p> : usage.harnesses.map(harness => <div key={harness.id}>
           <div className="mb-1 flex items-center justify-between gap-2"><span className="text-xs font-medium">{harness.label}</span>{harness.stale ? <span className="text-[10px] text-muted-foreground">Last reported</span> : null}</div>

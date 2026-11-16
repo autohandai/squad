@@ -208,4 +208,19 @@ assert.equal(
   `styles.css insets soft by ${softInset[1]}px but the radius is chosen for ${SKIN_INSET_PX.soft}px`
 );
 
+// Layout is its own choice (ADR-0233): no skin carries one, and only a Grut
+// user without a saved layout is moved to Minified, once.
+const { LAYOUTS, resolveLayoutId, topMembers } = await import("../src/lib/layouts.js");
+for (const skin of SKINS) assert.equal(skin.layout, undefined, `${skin.id} must not choose a layout`);
+assert.deepEqual(LAYOUTS.map(layout => layout.id), ["full", "minified"]);
+assert.equal(resolveLayoutId(null, "grut"), "minified", "a Grut user keeps the conversation list once");
+assert.equal(resolveLayoutId("full", "grut"), "full", "a saved choice beats the migration");
+assert.equal(resolveLayoutId(null, "paper"), "full");
+assert.equal(resolveLayoutId("nonsense", "default"), "full");
+const people = [{ id: "a" }, { id: "b", pinned: true }, { id: "c" }, { id: "d", pinned: true }];
+assert.deepEqual(topMembers(people).members.map(m => m.id), ["b", "d"], "pinned members lead, in pin order");
+assert.deepEqual(topMembers(people.map(({ id }) => ({ id })), id => ({ a: 1, b: 3, c: 2, d: 0 })[id.id]).members.map(m => m.id), ["b", "c", "a", "d"]);
+const css2 = readFileSync("src/styles.css", "utf8");
+assert.ok(!/data-skin="grut"\][^{]*chat-(user-bubble|agent-answer)/.test(css2), "bubbles belong to the Minified layout, not the Grut skin");
+
 console.log(`check-skins: ok (${SKINS.length} skins, ${BLOB_SHAPES.length * BLOB_EXPRESSIONS.length * BLOB_COLOURS.length} blobs)`);

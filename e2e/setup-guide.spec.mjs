@@ -30,7 +30,7 @@ test('setup guide repairs a saved member folder with explicit default-folder con
   }, `autohandSquad.owner.v1.${context.storageKey}.`);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(bridge.origin + '/settings/setup');
-  await page.getByRole('button', { name: 'Run the setup guide', exact: true }).click();
+  await page.getByRole('button', { name: 'Run onboarding again', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Review where your squad works.', exact: true })).toBeVisible();
   const folders = page.getByRole('list', { name: 'Selected work folders', exact: true });
   await expect(folders).toContainText(missing);
@@ -48,6 +48,10 @@ test('setup guide repairs a saved member folder with explicit default-folder con
   await page.evaluate(() => scrollTo(0, 0));
   await page.screenshot({ path: info.outputPath('review-work-folders.png'), fullPage: true });
   await page.getByRole('button', { name: 'Save work folders', exact: true }).click();
+  // Saving continues onboarding (ADR-0230): the layout (ADR-0233), then Not now
+  // on the phone step finishes it.
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Not now', exact: true }).click();
   await expect(page).toHaveURL(bridge.origin + '/squad');
   const after = (await bridge.api('/api/channels')).data;
   const saved = after.agentChannelAccess[member.id].agent;
@@ -104,6 +108,10 @@ test('review preserves a Git subfolder alias and its workspace permissions', asy
   await page.goto(bridge.origin + '/welcome');
   await expect(page.getByRole('list', { name: 'Selected work folders', exact: true })).toContainText(alias);
   await page.getByRole('button', { name: 'Save work folders', exact: true }).click();
+  // Saving continues onboarding (ADR-0230): the layout (ADR-0233), then Not now
+  // on the phone step finishes it.
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Not now', exact: true }).click();
   await expect(page).toHaveURL(bridge.origin + '/squad');
   const saved = (await bridge.api('/api/channels')).data.agentChannelAccess[member.id].agent;
   expect(saved.workspace).toBe(alias);
@@ -162,10 +170,12 @@ test('an earlier save receipt cannot replace a newer streamed workspace', async 
     // This proves the newer revision has reached React before the old reply.
     await expect(page.getByTestId('first-run').getByRole('combobox')).toContainText('Eva updated elsewhere', { timeout: 20000 });
   } finally { releaseSave(); }
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Not now', exact: true }).click();
   await expect(page).toHaveURL(bridge.origin + '/squad');
   await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
-  await page.getByTestId('settings-sections').getByRole('link', { name: 'Setup guide', exact: true }).click();
-  await page.getByRole('button', { name: 'Run the setup guide', exact: true }).click();
+  await page.getByTestId('settings-sections').getByRole('link', { name: 'Onboarding', exact: true }).click();
+  await page.getByRole('button', { name: 'Run onboarding again', exact: true }).click();
   await expect(page.getByRole('list', { name: 'Selected work folders', exact: true })).toContainText(newer);
 });

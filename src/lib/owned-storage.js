@@ -1,4 +1,5 @@
-const DEVICE_KEYS = new Set(['autohandSquad.v1.theme', 'autohandSquad.v1.skin', 'autohandSquad.v1.locale']);
+// Layout is a device choice like skin and theme (ADR-0233).
+const DEVICE_KEYS = new Set(['autohandSquad.v1.theme', 'autohandSquad.v1.skin', 'autohandSquad.v1.layout', 'autohandSquad.v1.locale']);
 let ownership = null;
 let closed = false;
 const changed = () => Object.assign(new Error('The account or selected Squad changed. Reopen Squad.'), { name: 'AbortError', code: 'context_changed' });

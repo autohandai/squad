@@ -522,56 +522,93 @@ html[data-skin="grut"] .app-sidebar,
 html[data-skin="grut"] .app-main {
   box-shadow: none;
 }
-/* Grut changes the conversation composition as well as its palette. Work
-   details and approval controls keep their own surface beneath the answer. */
-html[data-skin="grut"] .app-main [data-message-role="assistant"][data-message-compact="false"] {
+/* Minified (ADR-0233) changes the conversation composition, in every skin:
+   answers become quiet bubbles without the avatar column, the person's own
+   messages an inverted bubble on the right. Work details and approval
+   controls keep their own surface beneath the answer. This used to be the
+   Grut skin's; Grut is now colour, shape and faces only. */
+html[data-layout="minified"] .app-main [data-message-role="assistant"][data-message-compact="false"] {
   display: block;
 }
-html[data-skin="grut"] .app-main [data-message-role="assistant"] > .chat-reply-avatar {
+html[data-layout="minified"] .app-main [data-message-role="assistant"] > .chat-reply-avatar {
   display: none;
 }
-html[data-skin="grut"] .app-main .chat-channel-compact-time {
+html[data-layout="minified"] .app-main .chat-channel-compact-time {
   display: block;
 }
-html[data-skin="grut"] .app-main [data-channel-message-id][data-message-role="user"] {
+html[data-layout="minified"] .app-main [data-channel-message-id][data-message-role="user"] {
   display: block;
   width: fit-content;
   max-width: 88%;
   margin-left: auto;
 }
-html[data-skin="grut"] .app-main [data-channel-message-id][data-message-role="user"] > .chat-reply-avatar {
+html[data-layout="minified"] .app-main [data-channel-message-id][data-message-role="user"] > .chat-reply-avatar {
   display: none;
 }
-html[data-skin="grut"] .app-main [data-channel-message-id] .chat-user-bubble {
-  border-radius: 14px;
-  padding: 12px 16px;
+/* Bubble corners follow the skin's own radius, a step rounder than its
+   controls, so Blueprint stays crisp and Grut stays soft. */
+html[data-layout="minified"] {
+  --bubble-radius: calc(var(--radius) + 6px);
+  --bubble-surface: var(--foreground);
+  --bubble-ink: var(--background);
 }
-html[data-skin="grut"] .app-main .chat-agent-answer {
+html[data-layout="minified"] .app-main [data-channel-message-id] .chat-user-bubble {
+  border-radius: var(--bubble-radius);
+  padding: 10px 14px;
+}
+html[data-layout="minified"] .app-main .chat-agent-answer {
   width: fit-content;
   max-width: 100%;
-  border-radius: 14px;
-  padding: 12px 16px;
+  border-radius: var(--bubble-radius);
+  padding: 10px 14px;
   background: var(--muted);
 }
-html[data-skin="grut"] {
-  --grut-bubble-surface: var(--foreground);
-  --grut-bubble-ink: var(--background);
+html[data-layout="minified"] .app-main .chat-user-bubble {
+  --foreground: var(--bubble-ink);
+  --background: var(--bubble-surface);
+  --muted-foreground: var(--bubble-ink);
+  --primary: var(--bubble-ink);
+  --primary-foreground: var(--bubble-surface);
+  --muted: color-mix(in srgb, var(--bubble-ink) 10%, var(--bubble-surface));
+  --border: color-mix(in srgb, var(--bubble-ink) 15%, var(--bubble-surface));
+  border-radius: var(--bubble-radius);
+  background: var(--bubble-surface);
+  color: var(--bubble-ink);
 }
-html[data-skin="grut"] .app-main .chat-user-bubble {
-  --foreground: var(--grut-bubble-ink);
-  --background: var(--grut-bubble-surface);
-  --muted-foreground: var(--grut-bubble-ink);
-  --primary: var(--grut-bubble-ink);
-  --primary-foreground: var(--grut-bubble-surface);
-  --muted: color-mix(in srgb, var(--grut-bubble-ink) 10%, var(--grut-bubble-surface));
-  --border: color-mix(in srgb, var(--grut-bubble-ink) 15%, var(--grut-bubble-surface));
-  background: var(--grut-bubble-surface);
-  color: var(--grut-bubble-ink);
-}
-html[data-skin="grut"] .app-main .chat-user-bubble a {
+html[data-layout="minified"] .app-main .chat-user-bubble a {
   color: inherit;
   text-decoration: underline;
 }
+/* The conversation header is one centred chip: who you are talking to and
+   whether they are here. Workspace, model and context stay on the profile
+   popover and the engine chip; on a phone the header keeps its own contract
+   (ADR-0161). */
+@media (min-width: 48rem) {
+  html[data-layout="minified"] .app-main .chat-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+  html[data-layout="minified"] .app-main .chat-header > .chat-header-identity {
+    grid-column: 2;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: 28rem;
+  }
+  html[data-layout="minified"] .app-main .chat-header > .chat-header-actions {
+    grid-column: 3;
+    justify-self: end;
+  }
+  html[data-layout="minified"] .app-main .chat-header .chat-header-meta {
+    margin: 0;
+    justify-content: center;
+  }
+  html[data-layout="minified"] .app-main .chat-header .chat-header-detail {
+    display: none;
+  }
+}
+
 /* Custom skins own the sidebar colour, rather than compositing bg-card/70
    over the page or native window material. Autohand retains its vibrancy. */
 html[data-skin]:not([data-skin="default"]) .app-sidebar {
@@ -647,3 +684,66 @@ html[data-skin] [data-slot="avatar"] {
 
 html[data-quick-chat="true"], html[data-quick-chat="true"] body, html[data-quick-chat="true"] #root { background: transparent !important; }
 html[data-quick-chat="true"][data-quick-chat-appearance="glass"] [data-testid="mac-quick-chat"] { background: color-mix(in srgb, var(--background) 65%, transparent); }
+
+/* Onboarding (ADR-0230). A step arrives like a Settings section does. */
+.onboarding-step-enter {
+  animation: settings-section-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Menu bar preview: one 7.5s loop. The pointer reaches the Squad item, the
+   item takes the native pressed highlight, Quick Chat drops from it and the
+   member's reply writes itself in. Then it all rests and repeats. */
+.menu-bar-preview .mb-cursor { animation: mb-cursor 7.5s cubic-bezier(0.45, 0, 0.2, 1) infinite; }
+.menu-bar-preview .mb-item { animation: mb-press 7.5s linear infinite; }
+.menu-bar-preview .mb-popover { transform-origin: calc(100% - var(--mb-anchor)) 0; animation: mb-popover 7.5s cubic-bezier(0.2, 0.8, 0.2, 1) infinite; }
+.menu-bar-preview .mb-type { animation: mb-type 7.5s steps(32, end) infinite; }
+@keyframes mb-cursor {
+  0% { opacity: 0; transform: translate(-150px, 120px); }
+  8% { opacity: 1; transform: translate(-150px, 120px); }
+  28% { transform: translate(1px, 3px); }
+  31% { transform: translate(1px, 3px) scale(0.86); }
+  34%, 80% { opacity: 1; transform: translate(1px, 3px); }
+  92%, 100% { opacity: 0; transform: translate(-60px, 90px); }
+}
+@keyframes mb-press {
+  0%, 30% { background-color: transparent; }
+  32%, 84% { background-color: color-mix(in srgb, var(--foreground) 13%, transparent); }
+  90%, 100% { background-color: transparent; }
+}
+@keyframes mb-popover {
+  0%, 32% { opacity: 0; transform: translateY(-6px) scale(0.96); }
+  40%, 84% { opacity: 1; transform: none; }
+  91%, 100% { opacity: 0; transform: translateY(-3px) scale(0.98); }
+}
+@keyframes mb-type {
+  0%, 44% { clip-path: inset(0 100% 0 0); }
+  64%, 100% { clip-path: inset(0 0 0 0); }
+}
+
+/* Phone hint: the question goes out, the member answers, both rest. */
+.phone-hint .phone-hint-out { animation: phone-hint-in 6s cubic-bezier(0.2, 0.8, 0.2, 1) infinite; }
+.phone-hint .phone-hint-in { animation: phone-hint-in 6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.9s infinite both; }
+@keyframes phone-hint-in {
+  0%, 6% { opacity: 0; transform: translateY(4px); }
+  14%, 86% { opacity: 1; transform: none; }
+  96%, 100% { opacity: 0; transform: none; }
+}
+
+/* Layout preview (ADR-0233): the messages of the pictured conversation
+   arrive one after another, rest, and fade together before the next pass. */
+.layout-preview .layout-preview-msg { animation: layout-msg 7s cubic-bezier(0.2, 0.8, 0.2, 1) var(--d, 0s) infinite both; }
+@keyframes layout-msg {
+  0%, 4% { opacity: 0; transform: translateY(5px); }
+  12%, 78% { opacity: 1; transform: none; }
+  90%, 100% { opacity: 0; transform: none; }
+}
+
+/* Reduced motion: one still frame with Quick Chat open and the reply written. */
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-step-enter { animation: none; }
+  .layout-preview .layout-preview-msg { animation: none; opacity: 1; transform: none; }
+  .menu-bar-preview .mb-cursor { display: none; }
+  .menu-bar-preview .mb-item { animation: none; background-color: color-mix(in srgb, var(--foreground) 13%, transparent); }
+  .menu-bar-preview .mb-popover, .menu-bar-preview .mb-type { animation: none; opacity: 1; transform: none; clip-path: none; }
+  .phone-hint .phone-hint-out, .phone-hint .phone-hint-in { animation: none; opacity: 1; transform: none; }
+}

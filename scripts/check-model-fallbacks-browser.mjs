@@ -84,6 +84,16 @@ try{
   const selected=(await savedMember());assert.equal(selected.harness.id,'autohand');assert.equal(selected.modelAssignment.model,'fixture-fantail');
   const engineCalls=(await readFile(join(bridge.directory,'model-calls.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);assert.equal(engineCalls.findLast(row=>row.engine==='codex'&&row.kind==='turn').model,'codex-recovery');
   await browser.screenshot(artifact+'/fallback-answer.png');
+  // ADR-0231: the header names the engine answering now, not the primary,
+  // and its engine menu lists the fallbacks with engine and model pickers.
+  await until(()=>browser.evaluate("document.querySelector('[data-testid=chat-engine-label]')?.textContent.includes('Codex')&&document.querySelector('[data-testid=chat-engine-label]')?.textContent.includes('fallback')"),'chat header names the fallback engine',15000);
+  assert(await browser.evaluate("document.querySelector('[data-testid=chat-model-label]')?.textContent.includes('codex-recovery')"),'chat header shows the fallback model');
+  assert(await browser.evaluate("document.querySelector('[data-testid=chat-engine-label]').getAttribute('title').startsWith('Using Codex while Autohand Code')"),'header explains why the fallback answers');
+  await browser.evaluate("document.querySelector('[data-testid=chat-engine-label]').click()");
+  await until(()=>browser.evaluate("document.body.innerText.includes('If Autohand Code can’t answer')&&Boolean(document.querySelector('[role=combobox][aria-label=\"Fallback 1 engine\"]'))&&Boolean(document.querySelector('[role=combobox][aria-label=\"Fallback 1 model\"]'))"),'header engine menu lists fallbacks with engine and model pickers');
+  await until(()=>browser.evaluate(`Boolean(document.querySelector('[role=combobox][aria-label="Fallback 1 reasoning effort"]'))`),'each fallback offers its reasoning effort');
+  await new Promise(done=>setTimeout(done,600));await browser.screenshot(artifact+'/header-engine-menu.png');
+  await browser.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await browser.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
   await browser.evaluate('window.beforeRoutingReload=true');await browser.send('Page.reload');
   await until(()=>browser.evaluate("!window.beforeRoutingReload&&document.body.innerText.includes('fallback via Codex')&&document.body.innerText.includes('Codex fixture continued the same task.')"),'fallback attribution survives history reload');
   await browser.navigate(bridge.origin+'/squad-members/'+member.id+'/model');

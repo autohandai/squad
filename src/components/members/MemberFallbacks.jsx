@@ -33,7 +33,7 @@ const modelName = (harness) => harness.model || "Default";
  * a row's engine/model/effort save when its editor is closed with Done. A
  * failed save keeps the edit and offers Retry (ADR-0222).
  */
-export function MemberFallbacks({ agent, api, providerSettings, updateAgent }) {
+export function MemberFallbacks({ agent, api, providerSettings, updateAgent, compact = false, onChanged }) {
   const saved = normalizeModelRouting(agent.modelRouting);
   const savedKey = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
@@ -89,13 +89,15 @@ export function MemberFallbacks({ agent, api, providerSettings, updateAgent }) {
       if (result?.error) throw new Error(result.error);
       setDraft(normalized);
       if (closeEditor) setEditing(null);
+      onChanged?.();
     } catch (problem) { setError(problem.message); } finally { setSaving(false); }
   }
   const patch = (index, update) => setDraft((current) => ({ ...current, fallbacks: current.fallbacks.map((row, i) => (i === index ? { ...row, ...update } : row)) }));
   function add() {
     const engine = connected.find((item) => item.id !== agent.harness?.id && !draft.fallbacks.some((row) => row.harness.id === item.id)) || connected.find((item) => item.id !== agent.harness?.id) || connected[0];
     if (!engine) return;
-    const row = { harness: { id: engine.id, model: "", effort: "" }, ...(engine.id === "autohand" ? { provider: providerSettings?.defaultProvider || "autohandai" } : {}) };
+    const listed = Array.isArray(engine.models) ? engine.models.map((item) => (typeof item === "string" ? item : item?.id)).filter(Boolean) : [];
+    const row = { harness: { id: engine.id, model: engine.defaults?.model || listed[0] || "", effort: engine.defaults?.effort || "" }, ...(engine.id === "autohand" ? { provider: providerSettings?.defaultProvider || "autohandai" } : {}) };
     setDraft((current) => ({ ...current, fallbacks: [...current.fallbacks, row] }));
     setEditing(draft.fallbacks.length);
   }
@@ -108,11 +110,97 @@ export function MemberFallbacks({ agent, api, providerSettings, updateAgent }) {
     void persist({ ...draft, fallbacks: draft.fallbacks.filter((_, i) => i !== index) });
   }
   async function switchBack() {
-    try { await api(`/api/members/${encodeURIComponent(agent.id)}/model-routing/reset`, { method: "POST", body: "{}" }); setError(""); await loadHealth(); }
+    try { await api(`/api/members/${encodeURIComponent(agent.id)}/model-routing/reset`, { method: "POST", body: "{}" }); setError(""); await loadHealth(); onChanged?.(); }
     catch (problem) { setError(problem.message); }
   }
 
   const inUseLabel = inUse >= 0 && savedRows[inUse] ? harnessLabel(savedRows[inUse].harness.id) : "";
+
+  // Compact: the chat header's engine menu. Every fallback shows its engine
+  // and model as pickers straight away, filled from what each connected
+  // engine reports, and each change saves at once (ADR-0231).
+  if (compact) {
+    const choose = (index, update) => {
+      const fallbacks = draft.fallbacks.map((row, i) => (i === index ? { ...row, ...update } : row));
+      void persist({ ...draft, fallbacks });
+    };
+    const append = () => {
+      const engine = connected.find((item) => item.id !== agent.harness?.id && !draft.fallbacks.some((row) => row.harness.id === item.id));
+      if (!engine) return;
+      const listed = Array.isArray(engine.models) ? engine.models.map((item) => (typeof item === "string" ? item : item?.id)).filter(Boolean) : [];
+      const row = { harness: { id: engine.id, model: engine.defaults?.model || listed[0] || "", effort: engine.defaults?.effort || "" }, ...(engine.id === "autohand" ? { provider: providerSettings?.defaultProvider || "autohandai" } : {}) };
+      void persist({ ...draft, fallbacks: [...draft.fallbacks, row] });
+    };
+    return (
+      <section className="mt-3 grid gap-2 border-t border-border/70 pt-3" aria-label="Fallbacks">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium">If {primaryLabel} can’t answer</span>
+          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={!loaded || !connected.some((item) => item.id !== agent.harness?.id && !draft.fallbacks.some((row) => row.harness.id === item.id)) || draft.fallbacks.length >= MAX_FALLBACKS || saving} onClick={append}><Plus className="size-3.5" />Add</Button>
+        </div>
+        {inUse === null && primaryBlocked ? <p className="text-xs text-destructive">{primaryLabel} {reasonOf(primaryBlocked).phrase} and no fallback can answer right now.</p> : null}
+        {inUse >= 0 && primaryBlocked ? (
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>Using {inUseLabel} while {primaryLabel} {reasonOf(primaryBlocked).phrase}. Back at {clock(primaryBlocked.blockedUntil)}.</span>
+            <Button type="button" size="sm" variant="ghost" className="h-7 shrink-0 px-2 text-xs" onClick={switchBack}>Switch back</Button>
+          </div>
+        ) : null}
+        {draft.fallbacks.length ? (
+          <ol className="divide-y divide-border/60">
+            {draft.fallbacks.map((row, index) => {
+              const readiness = harnesses.find((item) => item.id === row.harness.id);
+              const cooling = blocked(row);
+              const levels = effortLevelsFor(row.harness.id, readiness, row.harness.model);
+              // Never the primary, never an engine another row already uses.
+              const choices = connected.filter((engine) => engine.id === row.harness.id || (engine.id !== agent.harness?.id && !draft.fallbacks.some((other, i) => i !== index && other.harness.id === engine.id)));
+              return (
+                <li key={index} className="grid gap-1.5 py-2 first:pt-0" data-fallback-row={index}>
+                  <div className="flex items-center gap-2">
+                    <span className="w-3 shrink-0 text-xs tabular-nums text-muted-foreground">{index + 1}</span>
+                    <Select value={row.harness.id} disabled={saving} onValueChange={(id) => { const engine = connected.find((item) => item.id === id); const listed = Array.isArray(engine?.models) ? engine.models.map((item) => (typeof item === "string" ? item : item?.id)).filter(Boolean) : []; choose(index, { harness: { id, model: engine?.defaults?.model || listed[0] || "", effort: engine?.defaults?.effort || "" }, provider: id === "autohand" ? providerSettings?.defaultProvider || "autohandai" : "" }); }}>
+                      <SelectTrigger aria-label={`Fallback ${index + 1} engine`} className="h-8 min-w-0 flex-1 text-xs font-medium"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {choices.map((engine) => <SelectItem key={engine.id} value={engine.id}>{engine.label}</SelectItem>)}
+                        {!connected.some((engine) => engine.id === row.harness.id) ? <SelectItem value={row.harness.id}>{readiness?.label || harnessLabel(row.harness.id)}{loaded ? " · unavailable" : ""}</SelectItem> : null}
+                      </SelectContent>
+                    </Select>
+                    {inUse === index ? <Badge variant="secondary" className="shrink-0">In use</Badge> : null}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button type="button" variant="ghost" size="icon-sm" className="shrink-0" aria-label={`Fallback ${index + 1} options`} disabled={saving}><MoreHorizontal className="size-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem disabled={index === 0} onSelect={() => move(index, -1)}>Move up</DropdownMenuItem>
+                        <DropdownMenuItem disabled={index === draft.fallbacks.length - 1} onSelect={() => move(index, 1)}>Move down</DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem variant="destructive" onSelect={() => remove(index)}>Remove</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  <div className="flex items-start gap-2 pl-5 pr-10">
+                    <div className="min-w-0 flex-1">
+                      <HarnessModelSelect compact api={api} harness={row.harness.id} executablePath={row.harness.executablePath} provider={row.provider || ""} workspace={agent.workspace} value={row.harness.model || ""} label={`Fallback ${index + 1} model`} onChange={(model) => choose(index, { harness: { ...row.harness, model, effort: effortLevelsFor(row.harness.id, readiness, model).includes(row.harness.effort) ? row.harness.effort : "" } })} />
+                    </div>
+                    {levels.length ? (
+                      <Select value={row.harness.effort || "__default"} disabled={saving} onValueChange={(effort) => choose(index, { harness: { ...row.harness, effort: effort === "__default" ? "" : effort } })}>
+                        <SelectTrigger aria-label={`Fallback ${index + 1} reasoning effort`} title="Reasoning effort" className="h-8 w-28 shrink-0 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__default">Default effort</SelectItem>
+                          {levels.map((level) => <SelectItem key={level} value={level}>{level.charAt(0).toUpperCase() + level.slice(1)}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    ) : null}
+                  </div>
+                  {cooling ? <span className="pl-5 text-[11px] text-muted-foreground">{reasonOf(cooling).short} · tries again at {clock(cooling.blockedUntil)}</span> : null}
+                </li>
+              );
+            })}
+          </ol>
+        ) : <p className="text-xs text-muted-foreground">{loaded && !connected.length ? "Connect another engine in Settings to add a fallback." : "No fallbacks. Add one so work carries on when this engine runs out."}</p>}
+        {error ? <p className="text-xs text-destructive" role="alert">{error}</p> : null}
+      </section>
+    );
+  }
+
   return (
     <section className="grid gap-5 border-t border-border/70 pt-7 lg:grid-cols-[220px_minmax(0,1fr)]" aria-label="Fallbacks">
       <div>

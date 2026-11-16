@@ -31,11 +31,15 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await fixture?.bridge.close(); });
 
-test('Grut selects a persistent conversation layout with real previews and existing group actions', async ({ page }, info) => {
+// ADR-0233: the conversation list and bubbles belong to the Minified layout,
+// chosen beside the skin; Grut is colour, shape and faces in either layout.
+test('Grut in the Minified layout keeps real previews and existing group actions', async ({ page }, info) => {
   const { bridge, member } = fixture;
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto(bridge.origin + '/settings/appearance');
   await page.locator('[data-skin-option="grut"]').click();
+  await page.locator('[data-layout-option="minified"]').click();
+  await expect(page.locator('html')).toHaveAttribute('data-layout', 'minified');
   await page.getByRole('radio', { name: info.project.name.endsWith('light') ? 'Light' : 'Dark', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-skin', 'grut');
   await page.goto(bridge.origin + `/conversations/new?member=${member.id}`);
@@ -43,7 +47,7 @@ test('Grut selects a persistent conversation layout with real previews and exist
   await expect(page.locator('main')).toContainText('The checklist is ready.');
   const compact = info.project.name.startsWith('compact');
   if (compact) await page.getByRole('button', { name: 'Sidebar', exact: true }).click();
-  const sidebar = page.locator('.app-sidebar[data-sidebar-layout="conversations"]:visible');
+  const sidebar = page.locator('.app-sidebar[data-sidebar-layout="minified"]:visible');
   await expect(sidebar).toBeVisible();
   const conversations = sidebar.getByRole('navigation', { name: 'Conversations', exact: true });
   const eva = conversations.getByRole('button', { name: /^Eva,/ });
@@ -121,10 +125,14 @@ test('Grut selects a persistent conversation layout with real previews and exist
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.goto(bridge.origin + '/settings/appearance');
   await page.locator('[data-skin-option="default"]').click();
+  // A skin no longer carries a layout: Minified stays until Full is chosen.
+  await expect(page.locator('html')).toHaveAttribute('data-layout', 'minified');
+  await page.locator('[data-layout-option="full"]').click();
   await page.goto(bridge.origin + `/conversations/new?member=${member.id}`);
   await expect(page.locator('html')).toHaveAttribute('data-skin', 'default');
+  await expect(page.locator('html')).toHaveAttribute('data-layout', 'full');
   if (compact) await page.getByRole('button', { name: 'Sidebar', exact: true }).tap();
-  await expect(page.locator('.app-sidebar[data-sidebar-layout="workspace"]:visible')).toBeVisible();
+  await expect(page.locator('.app-sidebar[data-sidebar-layout="full"]:visible')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Direct messages', exact: true })).toBeVisible();
   const noahDefault = page.locator('.app-sidebar:visible').getByRole('button', { name: /^Noah,/ });
   await expect(noahDefault.getByLabel('Pinned', { exact: true })).toBeVisible();

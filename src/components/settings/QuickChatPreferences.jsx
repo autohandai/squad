@@ -6,6 +6,30 @@ import { Field, FieldGroup, FieldContent, FieldDescription, FieldTitle } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 
+/** The menu bar exists only in the macOS desktop shell; the web app has no tray. */
+export function menuBarAvailableHere() {
+  if (typeof window === "undefined" || !window.__TAURI_INTERNALS__?.invoke) return false;
+  return /Mac/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || "");
+}
+
+/**
+ * The one save path for Quick Chat preferences, shared by Settings › Quick
+ * Chat and onboarding: the bridge stores them, this window caches them, and
+ * the native shell is asked to re-read them. Returns `{ saved, notice }`.
+ */
+export async function saveQuickChatSettings(api, patch) {
+  const saved = await api("/api/system/settings", { method: "PUT", body: JSON.stringify(patch) });
+  try { ownedLocalStorage.setItem("autohandSquad.v1.quickChatSettings", JSON.stringify(saved)); } catch { /* Native polling still applies saved settings. */ }
+  window.dispatchEvent(new Event("squad:quick-chat-settings"));
+  let notice = "";
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  if (invoke) {
+    try { await invoke("squad_refresh_quick_chat", { contextGeneration: currentOwnership()?.generation }); }
+    catch { notice = "Preferences saved. Reopen an updated Squad desktop app to apply the menu bar changes."; }
+  }
+  return { saved, notice };
+}
+
 export function QuickChatPreferences({ api }) {
   const [settings, setSettings] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -20,15 +44,9 @@ export function QuickChatPreferences({ api }) {
   async function change(key, value) {
     setBusy(true); setError(""); setNotice("");
     try {
-      const saved = await api("/api/system/settings", { method: "PUT", body: JSON.stringify({ [key]: value }) });
+      const { saved, notice: savedNotice } = await saveQuickChatSettings(api, { [key]: value });
       setSettings(saved);
-      try { ownedLocalStorage.setItem("autohandSquad.v1.quickChatSettings", JSON.stringify(saved)); } catch { /* Native polling still applies saved settings. */ }
-      window.dispatchEvent(new Event("squad:quick-chat-settings"));
-      const invoke = window.__TAURI_INTERNALS__?.invoke;
-      if (invoke) {
-        try { await invoke("squad_refresh_quick_chat", { contextGeneration: currentOwnership()?.generation }); }
-        catch { setNotice("Preferences saved. Reopen an updated Squad desktop app to apply the menu bar changes."); }
-      }
+      if (savedNotice) setNotice(savedNotice);
     } catch (failure) { setError(failure.message || "Could not save Quick Chat settings."); }
     finally { setBusy(false); }
   }

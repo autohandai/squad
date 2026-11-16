@@ -43,6 +43,8 @@ import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
 import { NEED_HELP, joinList, proposalCopy, proposalKey, proposeMembers } from "@/lib/squad-recruiting";
 import { DEFAULT_SKIN_ID, SKINS, SKIN_VAR_DEFAULTS, isSkinId, memberAvatar, skinById, tokensForSkin } from "@/lib/skins";
+import { LAYOUTS, LAYOUT_STORAGE_KEY, isLayoutId, resolveLayoutId } from "@/lib/layouts";
+import { LayoutGlyph } from "@/components/onboarding/LayoutStep";
 import { blobForMember, blobSvg } from "@/lib/blob-avatar";
 import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
@@ -65,6 +67,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   ArrowLeft,
+  ArrowLeftRight,
   BadgeCheck,
   Ban,
   BookOpen,
@@ -337,7 +340,8 @@ import { duplicateCreationStash, hiddenMembers, hidePatch, markUnreadReadAt, ord
 import { planImport, presetTemplate, uniqueName, validateTeamFile } from "@/lib/teams";
 import { BootChecks } from "@/components/shell/BootChecks";
 import { WorkspaceSwitcher } from "@/components/shell/WorkspaceSwitcher";
-import { SquadOwnerSwitcher, useSquadOwnership } from "@/components/account/SquadOwnerSwitcher";
+import { SquadSyncNotice, squadOwnerKey, useSquadOwners, useSquadOwnership } from "@/components/account/SquadOwnerSwitcher";
+import { SquadsSettings } from "@/components/settings/SquadsSettings";
 import { RelaySettings } from "@/components/settings/RelaySettings";
 import { ComputersSettings } from "@/components/settings/ComputersSettings";
 import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
@@ -374,6 +378,8 @@ import { PromptTextarea } from "@/components/chat/PromptTextarea";
 import { AttachmentButton, AttachmentList, useAttachments } from "@/components/chat/Attachments";
 import { HarnessModelSelect } from "@/components/members/HarnessModelSelect";
 import { MemberFallbacks } from "@/components/members/MemberFallbacks";
+import { useEngineInUse } from "@/components/members/useEngineInUse";
+import { PairPhoneDialog } from "@/components/shell/PairPhoneDialog";
 import { fallbackLabel, initialMemberExecution, normalizeModelRouting } from "@/lib/model-routing";
 import { ATTACHMENT_COUNT_LIMIT, attachmentOnlyPrompt, attachmentReferences } from "@/lib/attachments";
 import { ReadAloudButton } from "@/components/chat/ReadAloudButton";
@@ -509,6 +515,7 @@ const STORAGE_KEYS = {
   tasks: "autohandSquad.v1.tasks",
   theme: "autohandSquad.v1.theme",
   skin: "autohandSquad.v1.skin",
+  layout: LAYOUT_STORAGE_KEY,
   inboxReadAt: "autohandSquad.v1.inboxReadAt",
   channelProposals: "autohandSquad.v1.channelProposals",
   workflowTriggers: "autohandSquad.v1.workflowTriggers",
@@ -575,6 +582,8 @@ const PresenceContext = createContext({ presenceMap: {}, bridgeReachable: true, 
 // The active skin, so the twenty-four AgentAvatar call sites do not each have
 // to be handed it.
 const SkinContext = createContext(skinById(DEFAULT_SKIN_ID));
+// Full or Minified (ADR-0233). Independent of the skin; Quick Chat ignores it.
+const LayoutContext = createContext("full");
 
 const RemoteMembersContext = createContext({ remoteByMember: {}, refreshRemoteMembers: async () => {} });
 function useRemoteMembers() {
@@ -2510,6 +2519,8 @@ function normalizeOnboardingState(value) {
     nameTouched: source.nameTouched === true,
     memberId: /^asq_[a-z0-9_-]+$/.test(savedMemberId) ? savedMemberId : "",
     memberReady: source.memberReady === true,
+    // "skipped" remembers Not now on the phone step; "paired" a phone approved there.
+    phonePairing: ["skipped", "paired"].includes(source.phonePairing) ? source.phonePairing : "",
     lastStep: String(source.lastStep || "welcome").trim() || "welcome",
     updatedAt: source.updatedAt || "",
   };
@@ -2578,6 +2589,16 @@ function readSkinId() {
     return isSkinId(stored) ? stored : DEFAULT_SKIN_ID;
   } catch {
     return DEFAULT_SKIN_ID;
+  }
+}
+
+// A missing layout is resolved once from the skin, so a Grut user keeps the
+// conversation list they chose before layouts existed (ADR-0233).
+function readLayoutId() {
+  try {
+    return resolveLayoutId(ownedLocalStorage.getItem(STORAGE_KEYS.layout), ownedLocalStorage.getItem(STORAGE_KEYS.skin));
+  } catch {
+    return resolveLayoutId(null, null);
   }
 }
 
@@ -4558,14 +4579,16 @@ function App() {
   const [workspacesError, setWorkspacesError] = useState("");
   const [themePreference, setThemePreference] = useState(readThemePreference);
   const [skinId, setSkinId] = useState(readSkinId);
+  const [layoutId, setLayoutId] = useState(readLayoutId);
   useEffect(() => {
     function readSharedAppearance() {
       const preference = readThemePreference();
       setThemePreference(current => JSON.stringify(current) === JSON.stringify(preference) ? current : preference);
       setSkinId(readSkinId());
+      setLayoutId(readLayoutId());
     }
     function onStorage(event) {
-      if (!event.key || [...storageKeysFor("theme"), ...storageKeysFor("skin")].includes(event.key)) readSharedAppearance();
+      if (!event.key || [...storageKeysFor("theme"), ...storageKeysFor("skin"), ...storageKeysFor("layout")].includes(event.key)) readSharedAppearance();
     }
     function onVisible() { if (document.visibilityState === "visible") readSharedAppearance(); }
     window.addEventListener("storage", onStorage);
@@ -4867,6 +4890,18 @@ function App() {
       // Ignore storage failures in private browsing or locked-down webviews.
     }
   }, [activeThemePreset, activeSkin, theme, themePreference]);
+
+  // The layout is a device choice like the skin. Written at once so a second
+  // window (and a reload during onboarding) reads the same arrangement.
+  const changeLayout = useCallback((next) => {
+    if (!isLayoutId(next)) return;
+    setLayoutId(next);
+    try { ownedLocalStorage.setItem(STORAGE_KEYS.layout, next); } catch { /* storage may be off */ }
+  }, []);
+  useEffect(() => {
+    document.documentElement.dataset.layout = layoutId;
+    try { ownedLocalStorage.setItem(STORAGE_KEYS.layout, layoutId); } catch { /* storage may be off */ }
+  }, [layoutId]);
 
   useEffect(() => {
     try {
@@ -6099,17 +6134,22 @@ function App() {
     () => buildWorkspaceList({ relayConfig, relayStatus, hostName: runtime?.hostName, copy: localeCopy }),
     [relayConfig, relayStatus, runtime?.hostName, localeCopy]
   );
-  const squadOwnership = useSquadOwnership();
+  // Switching Squads lives in Settings › Squads and the account menu
+  // (ADR-0234); the sidebar header keeps the workspace switcher and, only
+  // when there is one, a backup sync problem.
+  const [pairPhoneOpen, setPairPhoneOpen] = useState(false);
+  const pairPhoneMember = agents[0] ? { name: agents[0].name, avatar: (className) => <AgentAvatar agent={agents[0]} className={className} /> } : undefined;
   const workspaceSwitcher = (
     <div className="flex min-w-0 flex-wrap items-center gap-x-1">
-      <SquadOwnerSwitcher context={squadOwnership} />
       <WorkspaceSwitcher
         workspaces={relayWorkspaces}
         selectedId={workspaceSelection.selectedId}
         onSelect={(id) => setWorkspaceSelection((current) => selectWorkspace(current, relayWorkspaces, id))}
         onConnectRelay={() => navigate(`/settings?section=relay`)}
+        onPairPhone={() => setPairPhoneOpen(true)}
         copy={localeCopy}
       />
+      <SquadSyncNotice />
     </div>
   );
 
@@ -6882,6 +6922,8 @@ function App() {
   }, [route]);
 
   function openOnboarding() {
+    // Running it again starts at the first step, not wherever a past run stopped.
+    if (!onboardingIsIncomplete(onboardingState)) updateOnboardingState({ lastStep: "repositories" });
     navigate(ONBOARDING_ROUTE);
   }
 
@@ -6940,8 +6982,8 @@ function App() {
     }
     await reloadChannelsFromBridge();
     setSetupSnapshot(saved);
+    // Onboarding continues to its remaining steps; finishing opens #general.
     updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete", selectedRepositories: saved.repositories.map(item => item.path), selectedWorkspace: saved.repositories[0].path, memberId: saved.memberId, memberReady: true });
-    navigate(channelsPath("channel_general"));
   }
 
   async function saveSetupWorkspaces({ memberId, workspace, directories, expectedRevision }) {
@@ -6950,11 +6992,11 @@ function App() {
     });
     setAgents(current => current.map(member => member.id === memberId ? mergeMemberProfile(member, { workspace: saved.workspace, projects: saved.projects, profileRevision: saved.revision }) : member));
     updateOnboardingState({ status: ONBOARDING_STATUS_COMPLETED, lastStep: "complete" });
-    navigate(squadDirectoryPath());
   }
 
-  function finishOnboarding() {
-    navigate(channels.some(channel => channel.id === "channel_general") ? channelsPath("channel_general") : squadDirectoryPath());
+  // A squad created in this run lands in #general; a reviewed one in the directory.
+  function finishOnboarding(target = "squad") {
+    navigate(target === "channel" && channels.some(channel => channel.id === "channel_general") ? channelsPath("channel_general") : squadDirectoryPath());
   }
 
   function openFeedback(kind = "feedback") {
@@ -9928,6 +9970,7 @@ function App() {
   return (
     <AccountContext.Provider value={accountContextValue}>
     <SkinContext.Provider value={activeSkin}>
+    <LayoutContext.Provider value={layoutId}>
     <PresenceContext.Provider value={presenceContextValue}>
     <RemoteMembersContext.Provider value={remoteMembersContextValue}>
     <TooltipProvider>
@@ -10004,6 +10047,7 @@ function App() {
           void refreshTeamPresets();
         }}
       />
+      <PairPhoneDialog api={api} open={pairPhoneOpen} onOpenChange={setPairPhoneOpen} member={pairPhoneMember} />
       <NewTeamDialog
         open={newTeamOpen}
         onOpenChange={setNewTeamOpen}
@@ -10032,12 +10076,12 @@ function App() {
         <div
           className={cn(
             "relative grid min-h-screen transition-[grid-template-columns] duration-200 ease-out",
-            isSettings || (isOnboarding && onboardingIsIncomplete(onboardingState)) ? "lg:grid-cols-[minmax(0,1fr)]" : desktopSidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[280px_minmax(0,1fr)]"
+            isSettings || isOnboarding ? "lg:grid-cols-[minmax(0,1fr)]" : desktopSidebarCollapsed ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[280px_minmax(0,1fr)]"
           )}
         >
           {/* Settings is its own shell (ADR-0119): no app sidebar, the page
               carries Back and its own section list. */}
-          {isSettings || (isOnboarding && onboardingIsIncomplete(onboardingState)) ? null : <DesktopSidebar
+          {isSettings || isOnboarding ? null : <DesktopSidebar
             updateAvailable={updates?.snapshot?.updateAvailable === true}
             agents={agents}
             activeAgent={activeAgent}
@@ -10095,7 +10139,7 @@ function App() {
             ) : null}
             <AgentChannelProposals proposals={agentChannelActions.filter(action => action.status === "proposed")} members={agents} onDecision={decideChannelProposal} />
             <VaultRequests vault={vaultRequests} members={agents} copy={localeCopy} />
-            {isSettings || (isOnboarding && onboardingIsIncomplete(onboardingState)) ? null : <MobileTopbar
+            {isSettings || isOnboarding ? null : <MobileTopbar
               activeAgent={activeAgent}
               showsMember={sidebarActiveTarget(route, activeAgent).kind === "member"}
               theme={theme}
@@ -10128,6 +10172,7 @@ function App() {
                 renderTemplateAvatar={(template, className) => (
                   <AgentAvatar agent={{ name: template.title, role: template.title, employeeType: template.id, avatar: birdAvatarForRole(template.id, template.title, template.id) }} className={className} />
                 )}
+                renderMemberAvatar={(member, className) => <AgentAvatar agent={member} className={className} />}
                 onStart={startFirstConversation}
                 onSaveWorkspaces={saveSetupWorkspaces}
                 onRefreshMembers={async () => { await Promise.all([reloadChannelsFromBridge(), refreshRemoteMembers()]); }}
@@ -10136,6 +10181,8 @@ function App() {
                 setupSnapshot={setupSnapshot}
                 setupError={setupError}
                 onRefreshSetup={refreshSetup}
+                layout={layoutId}
+                onLayoutChange={changeLayout}
                 brand={
                   <>
                     <BrandMark theme="dark" className="size-9 dark:hidden" />
@@ -10291,6 +10338,8 @@ function App() {
                 themePreference={themePreference}
                 activeSkin={activeSkin}
                 onSkinChange={setSkinId}
+                layoutId={layoutId}
+                onLayoutChange={changeLayout}
                 setThemePreference={setThemePreference}
                 handoffSettings={handoffSettings}
                 setHandoffSettings={setHandoffSettings}
@@ -10572,6 +10621,7 @@ function App() {
     </TooltipProvider>
     </RemoteMembersContext.Provider>
     </PresenceContext.Provider>
+    </LayoutContext.Provider>
     </SkinContext.Provider>
     </AccountContext.Provider>
   );
@@ -13188,7 +13238,7 @@ function SidebarContent({
   onMarkChannelsRead,
   draftAgentIds = new Set(),
 }) {
-  const skin = useContext(SkinContext);
+  const layout = useContext(LayoutContext);
   const visibleAgents = useMemo(() => agents.filter((agent) => agent?.id && agent?.name), [agents]);
   const sidebarAgents = useMemo(() => orderMembers(visibleAgents), [visibleAgents]);
   const { entryFor: entryForPresence } = usePresence();
@@ -13243,12 +13293,13 @@ function SidebarContent({
           aria-label="Open Autohand Squad"
         >
           <BrandMark theme={theme} className="size-8" />
-          <span className="truncate text-base font-bold">Autohand Squad</span>
+          {/* Minified carries More, New message and collapse in this row. */}
+          <span className="truncate text-base font-bold">{layout === "minified" ? "Squad" : "Autohand Squad"}</span>
         </Button>
       }
       copy={copy}
       agents={sidebarAgents}
-      conversationLayout={skin.layout === "conversations"}
+      conversationLayout={layout === "minified"}
       inDrawer={inDrawer}
       messagesByAgent={messagesByAgent}
       messagesByChannel={messagesByChannel}
@@ -13403,6 +13454,13 @@ function AccountMenuButton({
 }) {
   const { profile, signOut, signingOut, openFeedback, openAppInfo } = useContext(AccountContext);
   const [open, setOpen] = useState(false);
+  // Switching Squads is offered only when there is a choice (ADR-0234); the
+  // current Squad's name then sits quietly under the email.
+  const squadOwnership = useSquadOwnership();
+  const { owners: squadOwners } = useSquadOwners(squadOwnership);
+  const squadChoice = squadOwners.length > 1 && Boolean(squadOwnership?.owner);
+  const currentSquad = squadChoice ? squadOwners.find((item) => squadOwnerKey(item.owner) === squadOwnerKey(squadOwnership.owner)) : null;
+  const currentSquadLabel = squadChoice ? (currentSquad?.label || squadOwnership.ownerLabel) + (squadOwnership.owner.kind === "team" ? " · Team Squad" : "") : "";
   const menuPlacement = placement === 'right-start'
     ? { side: 'right', align: 'end' }
     : { side: placement === 'bottom-end' ? 'bottom' : 'top', align: 'end' };
@@ -13445,6 +13503,7 @@ function AccountMenuButton({
               <span className="min-w-0">
                 <span className="block truncate text-sm font-semibold">{profile.name}</span>
                 <span className="block truncate text-xs text-muted-foreground">{profile.email || copy.loggedIn}</span>
+                {currentSquadLabel ? <span className="block truncate text-xs text-muted-foreground" data-current-squad>{currentSquadLabel}</span> : null}
               </span>
             </div>
           </div>
@@ -13452,6 +13511,7 @@ function AccountMenuButton({
           {/* Plain links: a › here promised a submenu that never opened. */}
           <AccountMenuItem icon={Inbox} label={copy.inbox || "Inbox"} onClick={() => choose(onMissionControl)} />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} />
+          {squadChoice ? <AccountMenuItem icon={ArrowLeftRight} label="Switch Squad…" onClick={() => choose(() => onSettings?.("squads"))} /> : null}
           {openAppInfo ? <AccountMenuItem icon={BookOpen} label={copy.about || "About"} onClick={() => choose(() => openAppInfo("about"))} /> : null}
           {openAppInfo ? <AccountMenuItem icon={FileText} label={copy.licensesAndAgreements || "Licenses and agreements"} onClick={() => choose(() => openAppInfo("licenses"))} /> : null}
           <DropdownMenuSeparator />
@@ -14044,6 +14104,14 @@ function Conversation({
   }, [messages]);
   const engineModel = engineModelSummary({ harness: agent.harness, readiness: engineReadiness, lastEffectiveModel: lastReplyModel });
   const memberModelLabel = engineModel ? engineModel.label : providerSummaryLabel(effectiveModel);
+  // While a fallback answers, the header names it (engine, model, why), not
+  // the saved primary; it refreshes after each reply (ADR-0231).
+  const latestMessage = messages[messages.length - 1];
+  // Streamed replies update the last message in place, so the count alone
+  // misses the moment the router switched engines.
+  const routingKey = `${messages.length}:${latestMessage?.id || ""}:${latestMessage?.status || ""}:${latestMessage?.routing?.used?.harness || ""}:${latestMessage?.effectiveModel?.model || ""}`;
+  const answering = useEngineInUse({ api, agent, harnesses, refreshKey: routingKey });
+  const headerModelLabel = answering.fallback && answering.route ? (answering.model || "default model") : memberModelLabel;
   // Always-on (ADR-0125): what the member started on its own, for the one
   // quiet line above the composer. The bridge holds it; a slow poll is enough.
   const [agenda, setAgenda] = useState(null);
@@ -15038,8 +15106,8 @@ function Conversation({
 
   return (
     <div className={cn("flex w-full max-w-full flex-col overflow-x-hidden bg-background/75", compact ? "min-h-0 flex-1" : "h-[calc(100svh-4rem)] min-h-[560px] lg:h-screen lg:min-h-screen", attachmentDraft.dragging && "ring-1 ring-inset ring-primary/60")} data-file-drop-target="member" {...attachmentDraft.bind}>
-      <header className="flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6" data-tauri-drag-region="deep">
-        <div className="min-w-0 flex-1">
+      <header className="chat-header flex min-h-14 max-w-full items-center justify-between gap-3 border-b border-border/70 bg-background px-4 py-2.5 sm:px-6" data-tauri-drag-region="deep">
+        <div className="chat-header-identity min-w-0 flex-1">
           <Popover key={agent.id}>
             <PopoverTrigger asChild>
               <button
@@ -15065,7 +15133,7 @@ function Conversation({
               onViewProfile={() => navigate(memberProfilePath(agent.id, "home"))}
             />
           </Popover>
-            <div className="-mt-4 ml-12 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <div className="chat-header-meta -mt-4 ml-12 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               {runtime?.available ? (
                 <>
                   <PresenceLabel entry={chatSending ? { state: "working" } : entryForPresence(agent)} copy={copy} className="shrink-0 whitespace-nowrap" />
@@ -15079,29 +15147,37 @@ function Conversation({
                   <span className="min-w-0 truncate">{copy.autohandMissing}</span>
                 </>
               )}
-              {!compact ? <>
+              {!compact ? <span className="chat-header-detail contents">
                 {/* On a phone the composer already names the folder; the
                     status gets the room instead of both truncating. */}
                 <span className="hidden text-border sm:inline">·</span>
                 <span className="hidden min-w-0 max-w-[18rem] truncate sm:inline">{workspaceName(workspace) || workspaceLabel(workspace, workspaces)}</span>
                 <span className="hidden text-border sm:inline">·</span>
-                <span className="hidden min-w-0 max-w-48 truncate sm:inline" data-testid="chat-model-label">{memberModelLabel}</span>
+                <span className="hidden min-w-0 max-w-48 truncate sm:inline" data-testid="chat-model-label">{headerModelLabel}</span>
                 <ContextGaugeMeta gauge={contextGauge} copy={copy} className="hidden sm:inline" separator={<span className="hidden text-border sm:inline">·</span>} />
-              </> : null}
+              </span> : null}
               <span className={cn("text-border", !compact && "hidden sm:inline")}>·</span>
               <Popover open={harnessPopoverOpen} onOpenChange={setHarnessPopoverOpen}>
                 <PopoverTrigger asChild>
                   <button
                     type="button"
                     className={cn("items-center gap-1 rounded-md px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground", compact ? "inline-flex shrink-0 whitespace-nowrap" : "hidden sm:inline-flex")}
-                    aria-label="Change the engine this member runs with"
+                    aria-label={answering.fallback ? `${answering.sentence}. Change engines and fallbacks` : "Change the engine and fallbacks this member runs with"}
+                    title={answering.fallback ? answering.sentence : undefined}
+                    data-testid="chat-engine-label"
                   >
                     <Cpu className="size-3.5" aria-hidden="true" />
-                    <span>{harnessLabel(harnessForAgent(agent).id)}</span>
+                    {answering.fallback && answering.route ? (
+                      <span>{answering.label} <span className="text-amber-600 dark:text-amber-400">· fallback</span></span>
+                    ) : answering.fallback ? (
+                      <span className="text-destructive">No engine can answer</span>
+                    ) : (
+                      <span>{harnessLabel(harnessForAgent(agent).id)}</span>
+                    )}
                     <ChevronDown className="size-3 opacity-70" aria-hidden="true" />
                   </button>
                 </PopoverTrigger>
-                <PopoverContent align="start" sideOffset={8} className="w-[min(24rem,calc(100vw-2rem))] p-3">
+                <PopoverContent align="start" sideOffset={8} className="max-h-[min(80vh,42rem)] w-[min(28rem,calc(100vw-2rem))] overflow-y-auto p-3">
                   <HarnessSelect
                     api={api}
                     id="chat-harness"
@@ -15115,6 +15191,7 @@ function Conversation({
                     onRefresh={onRefreshHarnesses}
                     description="Changes apply to the next message. Personality, model, and permissions stay the same."
                   />
+                  <MemberFallbacks compact agent={agent} api={api} providerSettings={providerSettings} updateAgent={updateAgent} onChanged={answering.reload} />
                   <KeepWorkingSwitch api={api} memberId={agent.id} memberName={agent.name} copy={copy} className="mt-3 border-t border-border/70 pt-3" />
                   <div className="mt-3 flex items-center justify-end gap-2">
                     <Button type="button" variant="ghost" size="sm" onClick={() => navigate(memberProfilePath(agent.id, "harness"))}>
@@ -15137,7 +15214,7 @@ function Conversation({
             </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="chat-header-actions flex shrink-0 items-center gap-1">
           {/* Stop only means something while there is work to end. */}
           {stopMember && (chatSending || runningCount > 0) && !["offline", "unknown"].includes(entryForPresence(agent).state) ? (
             <StopMemberButton member={agent} onStop={stopMember} iconOnly copy={copy} disabled={!runtime?.available} />
@@ -17333,7 +17410,17 @@ function SquadMemberRow({
     // time, ragged, and they were the largest thing on the row. What stays is
     // the one line naming the current commitment, because "can I give this
     // person something" is the roster's question.
-    <li className="group flex items-start gap-3 border-b border-border/60 px-2 py-3 transition-colors hover:bg-muted/30">
+    // The row is the chat: clicking anywhere that is not one of its own
+    // controls opens the conversation, the way a person expects from a list of
+    // people. The profile stays in the … menu. Portalled menus bubble through
+    // React, so their items are excluded by role as well as by element.
+    <li
+      className="group flex cursor-pointer items-start gap-3 border-b border-border/60 px-2 py-3 transition-colors hover:bg-muted/30"
+      onClick={(event) => {
+        if (event.target instanceof Element && event.target.closest("button, a, input, select, textarea, [role='menu'], [role='menuitem'], [role='menuitemradio'], [role='option'], [role='dialog']")) return;
+        navigate(memberChatPath(agent.id));
+      }}
+    >
       <span className="relative inline-flex shrink-0">
         <AgentAvatar agent={agent} />
         <span
@@ -17350,7 +17437,8 @@ function SquadMemberRow({
         <div className="flex flex-wrap items-baseline gap-x-2">
           <button
             type="button"
-            onClick={() => navigate(memberProfilePath(agent.id, "home"))}
+            onClick={() => navigate(memberChatPath(agent.id))}
+            title={copy.openChat || "Open chat"}
             className="truncate text-sm font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline"
           >
             {agent.name}
@@ -24866,6 +24954,8 @@ function SettingsPage({
   themePreference,
   activeSkin = skinById(DEFAULT_SKIN_ID),
   onSkinChange,
+  layoutId = "full",
+  onLayoutChange,
   setThemePreference,
   handoffSettings,
   setHandoffSettings,
@@ -24960,7 +25050,8 @@ function SettingsPage({
   // Labels only: a second line per row made the pinned list taller than a
   // 760px window, which hid the last sections behind the fold.
   const settingsSections = [
-    { id: "setup", label: copy.setupGuide || "Setup guide" },
+    { id: "setup", label: copy.setupGuide || "Onboarding" },
+    { id: "squads", label: "Squads" },
     { id: "appearance", label: copy.appearance || "Appearance" },
     { id: "language", label: copy.language },
     { id: "providers", label: "LLM Providers" },
@@ -25051,18 +25142,19 @@ function SettingsPage({
         <AnalyticsPanel active locale={activeLocale} />
       </>
     ),
+    squads: () => <SquadsSettings />,
     // Onboarding, not an account action. It used to sit in the account menu
     // beside Sign out, where a first-run checklist has no business being, and
     // there was no way back to it.
     setup: () => (
       <>
         <SettingsSectionHeader
-          title={copy.setupGuide || "Setup guide"}
-          description={copy.setupGuideDetail || "Run the first-run checks again: runtime, account, model provider, workspace and your first squad member."}
+          title={copy.setupGuide || "Onboarding"}
+          description={copy.setupGuideDetail || "Walk through it again: account and runtime, work folders, how Squad shows in your menu bar, and pairing your iPhone."}
         />
         <Button type="button" variant="outline" onClick={onOnboarding} disabled={!onOnboarding}>
           <ListChecks data-icon="inline-start" />
-          {copy.runSetupGuide || "Run the setup guide"}
+          {copy.runSetupGuide || "Run onboarding again"}
         </Button>
       </>
     ),
@@ -25100,9 +25192,39 @@ function SettingsPage({
 
           <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
             <div className="min-w-0">
+              <h4 id="layout-title" className="text-sm font-medium">{copy.layout || "Layout"}</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {copy.layoutDescription || "What the sidebar holds and how a conversation reads. Works with every skin."}
+              </p>
+            </div>
+            <ToggleGroup type="single" orientation="vertical" role="radiogroup" aria-labelledby="layout-title" value={layoutId} onValueChange={(value) => value && onLayoutChange?.(value)} className="flex w-full flex-col items-stretch rounded-none border-t border-border/60">
+              {LAYOUTS.map((option) => {
+                const selected = option.id === layoutId;
+                return (
+                  <ToggleGroupItem
+                    key={option.id}
+                    value={option.id}
+                    aria-label={option.label}
+                    data-layout-option={option.id}
+                    className="flex h-auto w-full items-center justify-start gap-3 whitespace-normal rounded-none border-b border-border/60 px-2 py-3 text-left text-foreground transition-colors hover:bg-muted/30 hover:text-foreground focus-visible:bg-muted/40 data-[state=on]:bg-transparent data-[state=on]:text-foreground data-[spacing=0]:first:rounded-none data-[spacing=0]:last:rounded-none"
+                  >
+                    <LayoutGlyph layout={option.id} />
+                    <span className="min-w-0 flex-1">
+                      <span className={cn("block text-sm", selected ? "font-semibold" : "font-medium")}>{option.label}</span>
+                      <span className="block text-xs text-muted-foreground">{option.description}</span>
+                    </span>
+                    {selected ? <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
+                  </ToggleGroupItem>
+                );
+              })}
+            </ToggleGroup>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+            <div className="min-w-0">
               <h4 id="skin-title" className="text-sm font-medium">{copy.skin || "Skin"}</h4>
               <p className="mt-1 text-sm text-muted-foreground">
-                {copy.skinDescription || "The whole look: layout, type, shape, spacing and member portraits. Every skin follows your mode."}
+                {copy.skinDescription || "Colour, type, shape, spacing and member portraits. Every skin follows your mode and works in either layout."}
               </p>
             </div>
             <ToggleGroup type="single" orientation="vertical" role="radiogroup" aria-labelledby="skin-title" value={activeSkin.id} onValueChange={(value) => value && onSkinChange?.(value)} className="flex w-full flex-col items-stretch rounded-none border-t border-border/60">

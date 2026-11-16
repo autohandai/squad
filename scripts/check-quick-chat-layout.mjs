@@ -58,7 +58,16 @@ try {
   await browser.screenshot(`${output}/settings.png`);
   await browser.send('Emulation.setDeviceMetricsOverride', { width: 420, height: 600, deviceScaleFactor: 1, mobile: false });
   await browser.navigate(`${bridge.origin}/quick-chat?member=${member.id}`);
+  // ADR-0232: opening Quick Chat puts the caret in the composer, and usage
+  // starts as one collapsed line naming the tightest limit.
+  await until(() => browser.evaluate(`document.activeElement?.tagName==='TEXTAREA'&&!!document.activeElement.closest('[data-testid=mac-quick-chat]')`), 'composer focused on open', 15000);
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid=quick-chat-usage] summary')&&document.querySelector('[data-testid=quick-chat-usage]').open===false`), 'usage collapsed by default', 35000);
+  assert.match(await browser.evaluate(`document.querySelector('[data-testid=quick-chat-usage] summary').textContent`), /% used|at its limit/, 'collapsed usage names the tightest limit');
+  await browser.evaluate(`document.querySelector('[data-testid=quick-chat-usage] summary').click()`);
   await until(() => browser.evaluate(`document.querySelector('[data-testid=quick-chat-usage]')?.innerText.includes('53% used')`), 'provider usage rows rendered', 35000);
+  await browser.evaluate(`document.querySelector('textarea').blur()`);
+  await browser.evaluate(`window.dispatchEvent(new Event('squad:popup-shown'))`);
+  await until(() => browser.evaluate(`document.activeElement?.tagName==='TEXTAREA'`), 'composer refocused each time the popover is shown');
   assert.equal(await browser.evaluate(`document.querySelector('[aria-label="Claude Code Fable used"]').getAttribute('aria-valuenow')`), '0', 'genuine zero is visible');
   await browser.fill('textarea', 'Preserve this unsent Quick Chat draft.');
   await bridge.api('/api/system/settings', 'PUT', { quickChatEnabled: false });

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ChevronDown, Plug } from "lucide-react";
+import { Check, ChevronDown, Plug, Smartphone } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -19,7 +19,7 @@ function StatusDot({ workspace }) {
  * relay workspace when one is configured. Purely presentational; the list
  * comes from `buildWorkspaceList` in src/lib/workspaces.js.
  */
-export function WorkspaceSwitcher({ workspaces = [], selectedId, onSelect, onConnectRelay, copy = {}, className }) {
+export function WorkspaceSwitcher({ workspaces = [], selectedId, onSelect, onConnectRelay, onPairPhone, copy = {}, className }) {
   const [open, setOpen] = useState(false);
   const current = currentWorkspace(workspaces, selectedId);
   if (!current) return null;
@@ -74,9 +74,24 @@ export function WorkspaceSwitcher({ workspaces = [], selectedId, onSelect, onCon
             );
           })}
         </ul>
+        {onPairPhone || onConnectRelay ? <div className="my-1 border-t border-border/65" /> : null}
+        {/* Pairing a phone is a way to reach this computer, so it sits with
+            the other connections, one click from anywhere in the app. */}
+        {onPairPhone ? (
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground/85 transition-colors hover:bg-muted/55 hover:text-foreground"
+            onClick={() => {
+              onPairPhone();
+              setOpen(false);
+            }}
+          >
+            <Smartphone className="size-4 text-muted-foreground" aria-hidden="true" />
+            <span className="truncate">{copy.pairIphone || "Pair iPhone…"}</span>
+          </button>
+        ) : null}
         {onConnectRelay ? (
           <>
-            <div className="my-1 border-t border-border/65" />
             <button
               type="button"
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground/85 transition-colors hover:bg-muted/55 hover:text-foreground"

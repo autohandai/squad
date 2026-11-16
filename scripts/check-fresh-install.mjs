@@ -105,6 +105,12 @@ try {
   const receipts = await Promise.all([bridge.api('/api/setup/complete', 'POST', { paths: [web, mobile] }), bridge.api('/api/setup/complete', 'POST', { paths: [web, mobile] })]);
   assert.ok(receipts.every(result => result.status === 200), JSON.stringify(receipts.map(result => ({status:result.status,error:result.error}))));
   assert.equal(receipts[0].data.memberId, receipts[1].data.memberId, 'concurrent finish requests share identity');
+  // The layout step comes first (ADR-0233); Continue keeps the saved layout.
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid="onboarding-layout"]')`), 'onboarding layout step', 60000);
+  await browser.click('Continue');
+  // Onboarding continues to the phone step (ADR-0230); Not now finishes into #general.
+  await until(() => browser.evaluate(`[...document.querySelectorAll('button')].some(item=>item.textContent==='Not now')`), 'onboarding phone step', 60000);
+  await browser.click('Not now');
   await until(() => browser.evaluate(`location.pathname==='/channels/channel_general'`), 'rendered default channel', 60000);
   const completed = (await bridge.api('/api/setup')).data;
   let snapshot = await state();

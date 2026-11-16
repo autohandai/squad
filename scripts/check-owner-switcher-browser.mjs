@@ -1,7 +1,12 @@
-// The personal/team Squad choice lives in the sidebar header, never as a
-// window-wide strip (that strip sat under the macOS traffic lights). With only
-// a personal Squad there is no ownership chrome at all; with a team as well,
-// one quiet switcher appears beside the workspace switcher.
+// Switching between a personal Squad and team Squads lives in Settings ›
+// Squads, reached from the account menu (ADR-0234; it replaced the sidebar
+// switcher of ADR-0221). Nothing ownership-related sits in the sidebar header
+// or across the top of the window. With only a personal Squad the account menu
+// offers no switch; with a team as well it names the current Squad under the
+// email and offers "Switch Squad…", which opens Settings › Squads, where the
+// switch goes through the broker and reloads into the new owner.
+//
+// SQUADS_SHOTS_DIR=<dir> saves screenshots there (default .codex-artifacts/ownership).
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -31,6 +36,11 @@ async function scenario(name, owners) {
     const paths = await ensureDataset(serviceRoot, ownerKey(personal));
     const profile = { id: 'eva', name: 'Eva', role: 'QA Engineer', ownership: personal, status: 'active', harness: { id: 'autohand', model: 'fixture' }, workspace: '', projects: [], memory: [], skills: [], profileFiles: [] };
     await seed(join(paths.dataRoot, 'channels.json'), { version: 1, revision: 1, channels: [], threads: [], messages: [], agentChannelAccess: { eva: { agent: profile, mode: 'ask', workspaceModes: {}, removed: false } } });
+    if (owners.includes(team)) {   // the team has its own member, so the reload lands on a real Squad
+      const teamPaths = await ensureDataset(serviceRoot, ownerKey(team));
+      const teamMember = { ...profile, id: 'tom', name: 'Tom', role: 'Designer', ownership: team };
+      await seed(join(teamPaths.dataRoot, 'channels.json'), { version: 1, revision: 1, channels: [], threads: [], messages: [], agentChannelAccess: { tom: { agent: teamMember, mode: 'ask', workspaceModes: {}, removed: false } } });
+    }
     const list = owners.map(owner => ({ owner, label: owner.kind === 'team' ? 'Acme' : 'Personal Squad', role: 'owner', canWrite: true }));
     const identity = { credential: () => ({ token, fingerprint }), verify: async () => ({ actor, fingerprint, expiresAt: Date.now() + 3600_000 }),
       personal: () => list[0], authorize: async (_actor, selected) => list.find(item => item.owner.id === selected.id) || list[0], owners: async () => list };
@@ -39,24 +49,86 @@ async function scenario(name, owners) {
     await until(() => broker.context().state === 'ready', 'owned fixture ready');
     browser = await startBrowser({ disableBackForwardCache: true });
     await browser.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
-    await browser.navigate(`${origin}/squad`);
-    await until(() => browser.evaluate("document.body.innerText.includes('Eva')"), 'Squad renders', 30_000);
-    await new Promise(resolve => setTimeout(resolve, 800));   // owners list resolves
-    // Nothing ownership-related in the top 64px, where the traffic lights sit.
+    const shots = process.env.SQUADS_SHOTS_DIR || '.codex-artifacts/ownership';
+    const shot = file => browser.screenshot(join(shots, `squads-${name}-${file}.png`));
+    const setTheme = theme => browser.evaluate(`localStorage.setItem('autohandSquad.v1.theme', JSON.stringify({ mode: ${JSON.stringify(theme)} }))`);
+    const pointerClick = async point => { await browser.send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point }); await browser.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point }); };
+    const centre = selectorJs => browser.evaluate(`(() => { const node = ${selectorJs}; if (!node) return null; const r = node.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const openAccountMenu = async () => {
+      await pointerClick(await centre(`[...document.querySelectorAll('button[aria-label="Open account menu"]')].find(item => item.getBoundingClientRect().width)`));
+      await until(() => browser.evaluate(`!!document.querySelector('[role=menu]')`), 'account menu opens');
+      await new Promise(resolve => setTimeout(resolve, 300));   // let the menu finish opening before a screenshot
+    };
+    const menuItems = () => browser.evaluate(`[...document.querySelectorAll('[role=menu] [role=menuitem]')].map(item => item.textContent.trim())`);
+    const closeMenu = async () => {
+      await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await until(() => browser.evaluate(`!document.querySelector('[role=menu]')`), 'account menu closes');
+    };
+    const squadRows = () => browser.evaluate(`[...document.querySelectorAll('[data-squad-row]')].map(row => ({ key: row.dataset.squadRow, text: row.innerText, current: row.getAttribute('aria-current') === 'true', switch: !!row.querySelector('button') }))`);
+    const openApp = async () => {
+      await browser.navigate(`${origin}/squad`);
+      await until(() => browser.evaluate("document.body.innerText.includes('Eva') && !!document.querySelector('button[aria-label=\"Open account menu\"]')"), 'Squad renders', 30_000);
+      await new Promise(resolve => setTimeout(resolve, 800));   // owners list resolves
+    };
+    await openApp();
+    await setTheme('light'); await openApp();
+    assert.equal(await browser.evaluate(`document.documentElement.classList.contains('dark')`), false, 'light theme for the first screenshots');
+    // Nothing ownership-related in the top 64px, where the traffic lights sit,
+    // and no Squad switcher anywhere in the app shell.
     const topStrip = await browser.evaluate(`[...document.querySelectorAll('body *')].filter(node => node.children.length === 0 && /personal members and data|Team-owned members|Choose personal or team/i.test(node.innerText || node.getAttribute?.('aria-label') || '') && node.getBoundingClientRect().top < 64).length`);
     assert.equal(topStrip, 0, `${name}: no ownership strip across the top of the window`);
-    const switcher = await browser.evaluate(`(() => { const button = [...document.querySelectorAll('button')].find(item => (item.getAttribute('aria-label') || '').includes('Choose personal or team Squad')); if (!button) return null; const box = button.getBoundingClientRect(); const sidebar = button.closest('aside, nav, [data-sidebar]'); return { top: box.top, left: box.left, text: button.innerText, inSidebar: Boolean(sidebar) || box.left < 400 }; })()`);
-    if (owners.length === 1) assert.equal(switcher, null, 'one owner: no switcher, nothing to choose');
-    else {
-      assert.ok(switcher, 'two owners: the switcher is shown');
-      assert.ok(switcher.inSidebar && switcher.top >= 40, `switcher sits in the sidebar header below the window controls (${JSON.stringify(switcher)})`);
-      assert.match(switcher.text, /Personal Squad/);
-      await browser.evaluate("[...document.querySelectorAll('button')].find(item => (item.getAttribute('aria-label') || '').includes('Choose personal or team Squad')).click()");
-      await until(() => browser.evaluate("[...document.querySelectorAll('[role=option]')].map(item => item.innerText).join('|').includes('Acme')"), 'popover lists both Squads');
-      await browser.screenshot(`.codex-artifacts/ownership/owner-switcher-${name}-open.png`);
-      await browser.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    const switcher = await browser.evaluate(`[...document.querySelectorAll('button')].filter(item => /Choose personal or team Squad/.test(item.getAttribute('aria-label') || '')).length`);
+    assert.equal(switcher, 0, `${name}: no Squad switcher in the sidebar`);
+    const sidebarSquadText = await browser.evaluate(`[...document.querySelectorAll('aside')].some(node => /Personal Squad|Acme/.test(node.innerText))`);
+    assert.equal(sidebarSquadText, false, `${name}: the sidebar does not name the Squad`);
+    assert.equal(await browser.evaluate(`!!document.querySelector('button[aria-label="Switch workspace"]')`), true, `${name}: the workspace switcher is still there`);
+
+    await openAccountMenu();
+    const items = await menuItems();
+    const header = await browser.evaluate(`document.querySelector('[role=menu] [data-current-squad]')?.textContent || ''`);
+    if (owners.length === 1) {
+      assert.ok(!items.includes('Switch Squad…'), `one Squad: no Switch Squad… (${items.join(', ')})`);
+      assert.equal(header, '', 'one Squad: the menu header does not name it');
+      await closeMenu();
+    } else {
+      assert.ok(items.includes('Switch Squad…'), `with a team: Switch Squad… is offered (${items.join(', ')})`);
+      assert.equal(items.indexOf('Switch Squad…'), items.indexOf('Settings') + 1, 'Switch Squad… follows Settings');
+      assert.equal(header, 'Personal Squad', 'the menu header names the current Squad');
+      await shot('account-menu-light');
+      await pointerClick(await centre(`[...document.querySelectorAll('[role=menuitem]')].find(item => item.textContent.trim() === 'Switch Squad…')`));
+      await until(() => browser.evaluate(`location.pathname === '/settings/squads'`), 'Switch Squad… opens Settings › Squads');
     }
-    await browser.screenshot(`.codex-artifacts/ownership/owner-switcher-${name}.png`);
+
+    // Settings › Squads lists every Squad and marks the current one.
+    if (owners.length === 1) await browser.navigate(`${origin}/settings/squads`);
+    await until(() => browser.evaluate(`document.querySelectorAll('[data-squad-row]').length === ${owners.length}`), 'Settings › Squads lists the Squads', 30_000);
+    assert.equal(await browser.evaluate(`[...document.querySelectorAll('h3')].map(node => node.textContent.trim()).join('|')`), 'Squads', 'one section heading: Squads');
+    let rows = await squadRows();
+    assert.ok(rows[0].current && /Personal Squad/.test(rows[0].text) && /Current/.test(rows[0].text) && !rows[0].switch, `the personal Squad is current (${JSON.stringify(rows)})`);
+    await shot('settings-light');
+    await setTheme('dark'); await browser.navigate(`${origin}/settings/squads`);
+    await until(() => browser.evaluate(`document.querySelectorAll('[data-squad-row]').length === ${owners.length} && document.documentElement.classList.contains('dark')`), 'dark Settings › Squads', 30_000);
+    await shot('settings-dark');
+    if (owners.length > 1) {
+      assert.ok(/Acme/.test(rows[1].text) && /Team/.test(rows[1].text) && rows[1].switch && !rows[1].current, `the team offers Switch (${JSON.stringify(rows)})`);
+      await openApp(); await openAccountMenu(); await shot('account-menu-dark'); await closeMenu();
+      await setTheme('light'); await browser.navigate(`${origin}/settings/squads`);
+      await until(() => browser.evaluate(`document.querySelectorAll('[data-squad-row] button').length === 1`), 'Settings › Squads again', 30_000);
+      // Switch through the broker: it drains, verifies and the page reloads into /squad.
+      await pointerClick(await centre(`document.querySelector('[data-squad-row] button')`));
+      await until(() => broker.context().owner?.id === 'acme' && broker.context().state === 'ready', 'the broker switches to the team', 30_000);
+      await until(() => browser.evaluate(`location.pathname === '/squad' && !document.getElementById('boot') && document.body.innerText.includes('Tom') && !document.body.innerText.includes('Eva') && !!document.querySelector('button[aria-label="Open account menu"]')`), 'the app reloads into the team Squad and shows its member', 30_000).catch(async failure => { console.error(await browser.evaluate('location.pathname + " :: " + document.body.innerText.slice(0, 600)')); throw failure; });
+      await new Promise(resolve => setTimeout(resolve, 800));
+      await openAccountMenu();
+      assert.equal(await browser.evaluate(`document.querySelector('[role=menu] [data-current-squad]')?.textContent || ''`), 'Acme · Team Squad', 'after switching, the menu names the team');
+      await closeMenu();
+      await browser.navigate(`${origin}/settings/squads`);
+      await until(() => browser.evaluate(`document.querySelectorAll('[data-squad-row]').length === 2`), 'Settings › Squads after switching', 30_000);
+      rows = await squadRows();
+      assert.ok(rows[1].current && !rows[0].current && rows[0].switch, `the team is now current (${JSON.stringify(rows)})`);
+      await shot('settings-after-switch-light');
+    }
     assert.deepEqual(browser.errors, [], `${name}: no JS errors`);
   } finally {
     await browser?.close(); await broker?.close();
@@ -67,4 +139,4 @@ async function scenario(name, owners) {
 
 await scenario('personal-only', [personal]);
 await scenario('with-team', [personal, team]);
-console.log('Owner switcher: no ownership strip under the window controls; personal-only shows no switcher; with a team, one sidebar switcher lists both Squads. Isolated broker and fixture identity; installed app and real data untouched.');
+console.log('Squads: no switcher in the sidebar or under the window controls; personal-only has no Switch Squad… and Settings › Squads lists one current Squad; with a team, the account menu names the current Squad, Switch Squad… opens Settings › Squads, and Switch moves the broker to the team and reloads into it. Isolated broker and fixture identity; installed app and real data untouched.');

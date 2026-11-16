@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createBridgeClient, createTools } from '../server/control-plane/runtime.mjs';
 import { startBridge } from './lib/reliability-browser.mjs';
 import { prepareModelRoutingFixture } from './lib/model-routing-fixtures.mjs';
-import { initialMemberExecution } from '../src/lib/model-routing.js';
+import { initialMemberExecution, engineInUse, routeKey } from '../src/lib/model-routing.js';
 
 const available = [
   { id: 'autohand', isDefault: true, status: 'setup-required' },
@@ -20,6 +20,36 @@ assert.equal(explicit.harness.effort, 'xhigh');
 assert.equal(explicit.harness.access, 'plan');
 assert.deepEqual(explicit.modelRouting.fallbacks, [], 'the user can explicitly disable automatic fallbacks');
 assert.deepEqual(initialMemberExecution([]).modelRouting.fallbacks, [], 'no connected engine does not invent a fallback');
+
+// One fallback per company, never the primary's own company (its quota and
+// account usually fail together), first-party CLIs before ACP adapters, and a
+// concrete model whenever the engine lists one (observed 2026-11-16: an
+// Autohand primary fell back to two more Autohand engines, and Claude Code
+// was saved with no model).
+const owners = [
+  { id: 'autohand', isDefault: true, status: 'ready', vendor: 'Autohand' },
+  { id: 'codex', status: 'ready', vendor: 'OpenAI', defaults: { model: 'gpt-6.1-sol', effort: 'max' }, models: ['gpt-6.1-sol'] },
+  { id: 'acp:codex-acp', status: 'ready', installed: true, fetchOnUse: true, vendor: 'OpenAI' },
+  { id: 'claude', status: 'ready', vendor: 'Anthropic', defaults: { model: '', effort: '' }, models: ['fable', 'opus', 'sonnet'] },
+  { id: 'autohand-acp', status: 'ready', installed: true, fetchOnUse: true, vendor: 'Autohand AI' },
+  { id: 'acp:autohand', status: 'ready', installed: true, fetchOnUse: true, vendor: 'Autohand AI' },
+  { id: 'acp:gemini', status: 'ready', installed: true, fetchOnUse: true, vendor: 'Google' },
+];
+const owned = initialMemberExecution(owners).modelRouting.fallbacks.map(route => [route.harness.id, route.harness.model]);
+assert.deepEqual(owned, [['codex', 'gpt-6.1-sol'], ['claude', 'fable'], ['acp:gemini', '']], 'one fallback per company, none from the primary’s company, with a listed model');
+
+{
+  // The header names the engine that answers now, not the saved primary.
+  const agent = { harness: { id: 'autohand' } };
+  const routing = { fallbacks: [{ harness: { id: 'codex', model: 'gpt-6.1-sol' } }, { harness: { id: 'claude', model: 'fable' } }] };
+  const now = 1000;
+  assert.equal(engineInUse({ agent, routing, now }).fallback, false);
+  const health = { [routeKey({ harness: { id: 'autohand', executablePath: '', model: '' } })]: { blockedUntil: 5000, reason: 'quota' }, [routeKey({ harness: { id: 'codex', model: 'gpt-6.1-sol' } })]: { blockedUntil: 5000, reason: 'quota' } };
+  const using = engineInUse({ agent, routing, health, now });
+  assert.equal(using.label, 'Claude Code'); assert.equal(using.model, 'fable');
+  assert.equal(using.sentence, 'Using Claude Code while Autohand Code has reached its usage limit');
+  assert.equal(engineInUse({ agent, routing, health, now: 6000 }).fallback, false, 'a cooled-down primary answers again');
+}
 
 // Real owned HTTP/MCP-client boundary; recording engines provide readiness,
 // defaults and authentication without a vendor request or real credentials.

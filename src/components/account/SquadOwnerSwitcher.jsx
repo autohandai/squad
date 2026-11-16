@@ -18,18 +18,16 @@ async function request(path, generation, init = {}) {
 
 const describe = (owner) => (owner?.kind === "team" ? "Team-owned members and data" : "Your personal members and data");
 
+export const squadOwnerKey = (owner) => `${owner?.kind}:${owner?.id}`;
+
 /**
- * Quiet personal/team Squad switcher for the sidebar header, styled like the
- * workspace switcher beside it. It renders nothing when there is no choice
- * (a personal Squad only), so a person without teams never sees ownership
- * chrome; a backup sync problem still surfaces as one muted line.
+ * The Squads this account belongs to (personal first, then teams), read from
+ * the ownership broker under the current context. `owners` is empty until it
+ * resolves; `error` carries a broker or team-lookup problem as one sentence.
  */
-export function SquadOwnerSwitcher({ context, className, alwaysShow = false }) {
+export function useSquadOwners(context) {
   const [owners, setOwners] = useState([]);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(false);
-
   useEffect(() => {
     if (!context?.generation) return undefined;
     let active = true;
@@ -39,12 +37,58 @@ export function SquadOwnerSwitcher({ context, className, alwaysShow = false }) {
     );
     return () => { active = false; };
   }, [context?.generation]);
+  return { owners, error, setError };
+}
 
+/**
+ * Switch to another Squad through the broker. The broker revokes the current
+ * context, drains background work and verifies the new owner before it is
+ * ready; the page then reloads into a fresh JavaScript realm for that owner
+ * (OwnershipBootstrap shows "Finishing background work…" meanwhile). Resolves
+ * false when `item` is already the selected Squad; throws with a sentence when
+ * the broker refuses.
+ */
+export async function switchSquadOwner(context, item) {
+  if (!context?.owner || squadOwnerKey(item.owner) === squadOwnerKey(context.owner)) return false;
+  await request("/api/ownership/select", context.generation, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ owner: item.owner, expectedGeneration: context.generation }),
+  });
+  window.location.replace("/squad");
+  return true;
+}
+
+/**
+ * A backup sync failure, as one muted line. It used to ride along with the
+ * sidebar switcher; the sidebar keeps only this line (ADR-0234).
+ */
+export function SquadSyncNotice() {
+  const [error, setError] = useState("");
   useEffect(() => {
     const show = (event) => setError(event.detail || "Current conversations could not be saved for backups.");
     window.addEventListener("squad:backup-sync-error", show);
     return () => window.removeEventListener("squad:backup-sync-error", show);
   }, []);
+  return error ? <p className="px-1.5 text-xs text-destructive" role="status">{error}</p> : null;
+}
+
+/**
+ * Quiet personal/team Squad switcher for the pages that stand outside the app
+ * shell (the read-only team page and the restore-complete page), where
+ * Settings is not reachable and a person still needs a way to leave. Inside
+ * the app, switching lives in Settings › Squads (ADR-0234).
+ */
+export function SquadOwnerSwitcher({ context, className, alwaysShow = false }) {
+  const { owners, error, setError } = useSquadOwners(context);
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const show = (event) => setError(event.detail || "Current conversations could not be saved for backups.");
+    window.addEventListener("squad:backup-sync-error", show);
+    return () => window.removeEventListener("squad:backup-sync-error", show);
+  }, [setError]);
 
   if (!context?.owner) return null;
   const selected = `${context.owner.kind}:${context.owner.id}`;
@@ -54,18 +98,11 @@ export function SquadOwnerSwitcher({ context, className, alwaysShow = false }) {
   if (!hasChoice && !alwaysShow && !status) return errorLine;
 
   async function choose(item) {
-    const key = `${item.owner.kind}:${item.owner.id}`;
     setOpen(false);
-    if (key === selected) return;
+    if (squadOwnerKey(item.owner) === selected) return;
     setBusy(true); setError("");
-    try {
-      await request("/api/ownership/select", context.generation, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ owner: item.owner, expectedGeneration: context.generation }),
-      });
-      window.location.replace("/squad");
-    } catch (failure) { setError(failure.message); setBusy(false); }
+    try { await switchSquadOwner(context, item); }
+    catch (failure) { setError(failure.message); setBusy(false); }
   }
 
   return (

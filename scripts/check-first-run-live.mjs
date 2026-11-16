@@ -225,6 +225,12 @@ try {
   await until(() => browser.evaluate(`[...document.querySelectorAll('button')].find(item=>item.textContent==='Start with Chief of Staff')?.disabled===false`), 'repository profile and runtime readiness', 60000);
   await shot('01-first-run');
   await browser.click('Start with Chief of Staff');
+  // The layout step comes first (ADR-0233); Continue keeps the saved layout.
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid="onboarding-layout"]')`), 'onboarding layout step', 120000);
+  await browser.click('Continue');
+  // Onboarding continues to the phone step (ADR-0230); Not now finishes into #general.
+  await until(() => browser.evaluate(`[...document.querySelectorAll('button')].some(item=>item.textContent==='Not now')`), 'onboarding phone step', 120000);
+  await browser.click('Not now');
   await until(() => browser.evaluate(`location.pathname === '/channels/channel_general'`), 'coordinator provisioned', 120000);
   const onboarding = (await bridge.api('/api/setup')).data;
   const id = onboarding.memberId;

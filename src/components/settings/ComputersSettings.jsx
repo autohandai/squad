@@ -4,16 +4,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 
-function PairingCode({ offer }) {
+export function PairingCode({ offer, width = 300 }) {
   const canvas = useRef(null), [error, setError] = useState('');
   useEffect(() => {
     let active = true;
     setError('');
-    QRCode.toCanvas(canvas.current, offer.link, { errorCorrectionLevel: 'M', margin: 4, width: 300 }, failure => {
+    QRCode.toCanvas(canvas.current, offer.link, { errorCorrectionLevel: 'M', margin: 4, width }, failure => {
       if (active && failure) setError('The QR code could not be drawn. Copy the pairing link instead.');
     });
     return () => { active = false; };
-  }, [offer.link]);
+  }, [offer.link, width]);
   return <>{error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}<canvas ref={canvas} role="img" aria-label={`Private pairing code for ${offer.computerName}`} className="max-w-full" /></>;
 }
 
