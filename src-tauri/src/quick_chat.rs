@@ -87,8 +87,11 @@ fn show_popup(app: &AppHandle, shell: &Shell, window: &tauri::WebviewWindow) -> 
 // the shared skin and theme every time it is shown.
 fn reveal_popup(window: &tauri::WebviewWindow) -> Result<(), String> {
     window.show().map_err(|error| error.to_string())?;
+    // Key window first, then tell the page: its composer focus only shows a
+    // caret once the panel is key.
+    let focused = window.set_focus().map_err(|error| error.to_string());
     let _ = window.eval("window.dispatchEvent(new Event('squad:popup-shown'))");
-    window.set_focus().map_err(|error| error.to_string())
+    focused
 }
 
 #[cfg(not(target_os = "macos"))]

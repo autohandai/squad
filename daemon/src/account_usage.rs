@@ -212,6 +212,34 @@ pub fn time_until(reset_at: &str, now_unix: u64) -> Option<String> {
     })
 }
 
+/// The words beside a drawn usage bar: `8% used · resets in 5d 8h`, or
+/// `7 used` for a window without a ceiling.
+pub fn usage_detail(window: &UsageWindow, now_unix: u64) -> String {
+    let mut detail = match window.percent_used() {
+        Some(percent) => format!("{percent}% used"),
+        None => format!("{} used", window.used),
+    };
+    if let Some(until) = window
+        .reset_at
+        .as_deref()
+        .and_then(|reset_at| time_until(reset_at, now_unix))
+    {
+        detail.push_str(&format!(" · resets in {until}"));
+    }
+    detail
+}
+
+/// Menu wording for an account window: `5 h` reads as `5-hour`, `Week` as `Weekly`.
+pub fn window_title(label: &str) -> &str {
+    match label {
+        "5 h" => "5-hour",
+        "24 h" => "Daily",
+        "Week" => "Weekly",
+        "Month" => "Monthly",
+        other => other,
+    }
+}
+
 /// One tray line for a usage window: `5 h    ▰▰▱▱▱▱▱▱▱▱   2% · resets in 4h 52m`.
 pub fn usage_line(label: &str, window: &UsageWindow, now_unix: u64) -> String {
     let mut line = format!("{label:<5}");
@@ -354,6 +382,9 @@ mod tests {
         };
         assert_eq!(unmetered.percent_used(), None);
         assert_eq!(usage_line("24 h", &unmetered, now), "24 h 7 used");
+        assert_eq!(usage_detail(&window, now), "2% used · resets in 4h 52m");
+        assert_eq!(usage_detail(&unmetered, now), "7 used");
+        assert_eq!(window_title("Week"), "Weekly");
     }
 
     #[test]

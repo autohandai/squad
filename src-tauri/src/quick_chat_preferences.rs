@@ -1,6 +1,6 @@
 use crate::{default_paths, lock, quick_chat, Shell, MAIN_WINDOW};
 use autohand_squad_runtime::account_usage::{now_unix, time_until, usage_gauge};
-use autohand_squad_runtime::desktop_tray::DesktopTrayModel;
+use autohand_squad_runtime::desktop_tray::{DesktopTrayModel, TrayUsageBar};
 use serde::Deserialize;
 #[cfg(target_os = "macos")]
 use std::collections::HashSet;
@@ -71,6 +71,7 @@ fn clean_label(text: &str) -> String {
         .take(80)
         .collect()
 }
+#[cfg_attr(target_os = "macos", allow(dead_code))] // Windows and Linux text gauges.
 pub(crate) fn usage_lines(harness: &HarnessUsage) -> Vec<String> {
     if harness.windows.is_empty() {
         return vec!["Usage unavailable for this connection".into()];
@@ -100,6 +101,36 @@ pub(crate) fn usage_lines(harness: &HarnessUsage) -> Vec<String> {
                 line.push_str(&format!(" · resets in {reset}"));
             }
             line
+        })
+        .collect()
+}
+/// Each harness window as a drawable bar: `Weekly`, 8, `8% used · resets in 5d 8h`.
+pub(crate) fn usage_bars(harness: &HarnessUsage) -> Vec<TrayUsageBar> {
+    harness
+        .windows
+        .iter()
+        .take(8)
+        .map(|window| {
+            let percent = window
+                .used_percent
+                .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
+                .map(|value| value.round() as u8);
+            let mut detail = match percent {
+                Some(value) => format!("{value}% used"),
+                None => "Not reported".to_string(),
+            };
+            if let Some(reset) = window
+                .resets_at
+                .as_deref()
+                .and_then(|at| time_until(at, now_unix()))
+            {
+                detail.push_str(&format!(" · resets in {reset}"));
+            }
+            TrayUsageBar {
+                title: clean_label(&window.label),
+                percent,
+                detail,
+            }
         })
         .collect()
 }
@@ -533,5 +564,10 @@ mod tests {
         let lines = usage_lines(&item);
         assert!(lines[0].contains("0% used"));
         assert!(lines[1].contains("Not reported"));
+        let bars = usage_bars(&item);
+        assert_eq!(bars[0].percent, Some(0));
+        assert_eq!(bars[0].detail, "0% used");
+        assert_eq!(bars[1].percent, None);
+        assert_eq!(bars[1].detail, "Not reported");
     }
 }

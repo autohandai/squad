@@ -3,7 +3,9 @@
 //! items; everything here is plain data so it can be unit-tested and reused by
 //! any other controller.
 
-use crate::account_usage::{fetch_account_usage_blocking, now_unix, usage_line, AccountUsage};
+use crate::account_usage::{
+    fetch_account_usage_blocking, now_unix, usage_detail, usage_line, window_title, AccountUsage,
+};
 use crate::cli::{local_json_request_for_context, stack_daemon_config, web_port_for};
 use crate::config::{read_autohand_user_auth, resolve_config, ConfigOverrides, SquadConfig};
 use crate::daemon::StatusResponse;
@@ -48,6 +50,15 @@ pub struct TrayMember {
     pub working: bool,
 }
 
+/// One metered window, drawn natively as a bar beside `title · detail`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayUsageBar {
+    pub title: String,
+    /// None when the window has no ceiling; the bar is then left empty.
+    pub percent: Option<u8>,
+    pub detail: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DesktopTrayModel {
     pub signed_in: bool,
@@ -57,6 +68,8 @@ pub struct DesktopTrayModel {
     pub plan_label: Option<String>,
     /// One line per metered window (see `account_usage::usage_line`).
     pub usage_lines: Vec<String>,
+    /// The same windows as structured bars, for menus that can draw them.
+    pub usage_bars: Vec<TrayUsageBar>,
     /// Why usage is missing, shown as one quiet line.
     pub usage_note: Option<String>,
     pub daemon_running: bool,
@@ -215,23 +228,32 @@ pub fn build_model(
         (false, _) => "Not signed in".to_string(),
     };
 
-    let (plan_label, usage_lines, usage_note) = match (signed_in, usage) {
-        (false, _) => (None, Vec::new(), None),
+    let (plan_label, usage_lines, usage_bars, usage_note) = match (signed_in, usage) {
+        (false, _) => (None, Vec::new(), Vec::new(), None),
         (true, Some(usage)) => {
-            let lines = usage
-                .windows()
-                .into_iter()
+            let windows = usage.windows();
+            let lines = windows
+                .iter()
                 .map(|(label, window)| usage_line(label, window, now))
+                .collect::<Vec<_>>();
+            let bars = windows
+                .iter()
+                .map(|(label, window)| TrayUsageBar {
+                    title: window_title(label).to_string(),
+                    percent: window.percent_used(),
+                    detail: usage_detail(window, now),
+                })
                 .collect::<Vec<_>>();
             let note = if lines.is_empty() {
                 Some("No metered usage windows on this plan".to_string())
             } else {
                 None
             };
-            (Some(usage.display_name.clone()), lines, note)
+            (Some(usage.display_name.clone()), lines, bars, note)
         }
         (true, None) => (
             None,
+            Vec::new(),
             Vec::new(),
             Some(match usage_error {
                 Some(error) => format!("Usage unavailable: {}", first_line(error)),
@@ -271,6 +293,7 @@ pub fn build_model(
         account_label,
         plan_label,
         usage_lines,
+        usage_bars,
         usage_note,
         daemon_running,
         launch_at_login,
@@ -357,6 +380,9 @@ mod tests {
         assert_eq!(model.usage_lines.len(), 2);
         assert!(model.usage_lines[0].starts_with("5 h "));
         assert!(model.usage_lines[1].contains("resets in 4d 23h"));
+        assert_eq!(model.usage_bars.len(), 2);
+        assert_eq!(model.usage_bars[0].title, "5-hour");
+        assert!(model.usage_bars[1].detail.ends_with("resets in 4d 23h"));
         assert!(!model.daemon_running);
         assert!(model.squad_line.is_none());
     }

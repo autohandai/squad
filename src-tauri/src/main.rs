@@ -40,6 +40,7 @@ mod quick_chat;
 mod quick_chat_appearance;
 mod quick_chat_preferences;
 mod system_reset;
+mod tray_art;
 mod update_swap;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
@@ -622,41 +623,106 @@ fn tray_menu(
     let mut owned: Vec<Box<dyn IsMenuItem<Wry>>> = Vec::new();
 
     owned.push(Box::new(info("account", &model.account_label)?));
-    if let Some(plan) = &model.plan_label {
-        owned.push(Box::new(info("plan", plan)?));
-    }
     let preferences = quick_chat_preferences::read();
-    for (index, line) in model
-        .usage_lines
-        .iter()
-        .filter(|_| preferences.quick_chat_show_usage)
-        .enumerate()
+    // macOS draws each window as a coloured bar image beside its words, under
+    // a heading with the provider's mark. Rows stay enabled so they read at full
+    // contrast; choosing one opens Settings.
+    #[cfg(target_os = "macos")]
     {
-        owned.push(Box::new(info(&format!("usage-{index}"), line)?));
-    }
-    if let Some(note) = model
-        .usage_note
-        .as_ref()
-        .filter(|_| preferences.quick_chat_show_usage)
-    {
-        owned.push(Box::new(info("usage-note", note)?));
-    }
-    if preferences.quick_chat_show_usage {
-        let harness_usage = lock(&app.state::<Arc<Shell>>().harness_usage).clone();
-        for harness in &harness_usage {
-            owned.push(Box::new(PredefinedMenuItem::separator(app)?));
-            owned.push(Box::new(info(
-                &format!("harness-{}", harness.id),
-                &harness.label,
+        let row = |id: &str, label: &str, icon: Option<tauri::image::Image<'static>>| {
+            tauri::menu::IconMenuItem::with_id(app, id, label, true, icon, None::<&str>)
+        };
+        let bar_row =
+            |id: &str, bar: &autohand_squad_runtime::desktop_tray::TrayUsageBar, provider: &str| {
+                row(
+                    id,
+                    &format!("{} · {}", bar.title, bar.detail),
+                    Some(tray_art::usage_bar(
+                        bar.percent,
+                        tray_art::provider_colour(provider),
+                    )),
+                )
+            };
+        if let Some(plan) = &model.plan_label {
+            owned.push(Box::new(row(
+                "usage-plan",
+                plan,
+                tray_art::autohand_mark(),
             )?));
-            for (index, line) in quick_chat_preferences::usage_lines(harness)
-                .iter()
-                .enumerate()
-            {
-                owned.push(Box::new(info(
-                    &format!("harness-{}-{index}", harness.id),
-                    line,
+        }
+        if preferences.quick_chat_show_usage {
+            for (index, bar) in model.usage_bars.iter().enumerate() {
+                owned.push(Box::new(bar_row(
+                    &format!("usage-{index}"),
+                    bar,
+                    "autohand",
                 )?));
+            }
+            if let Some(note) = &model.usage_note {
+                owned.push(Box::new(info("usage-note", note)?));
+            }
+            let harness_usage = lock(&app.state::<Arc<Shell>>().harness_usage).clone();
+            for harness in &harness_usage {
+                owned.push(Box::new(PredefinedMenuItem::separator(app)?));
+                owned.push(Box::new(row(
+                    &format!("usage-harness-{}", harness.id),
+                    &harness.label,
+                    Some(tray_art::provider_mark(&harness.id)),
+                )?));
+                let bars = quick_chat_preferences::usage_bars(harness);
+                if bars.is_empty() {
+                    owned.push(Box::new(info(
+                        &format!("harness-{}-none", harness.id),
+                        "Usage unavailable for this connection",
+                    )?));
+                }
+                for (index, bar) in bars.iter().enumerate() {
+                    owned.push(Box::new(bar_row(
+                        &format!("usage-harness-{}-{index}", harness.id),
+                        bar,
+                        &harness.id,
+                    )?));
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(plan) = &model.plan_label {
+            owned.push(Box::new(info("plan", plan)?));
+        }
+        for (index, line) in model
+            .usage_lines
+            .iter()
+            .filter(|_| preferences.quick_chat_show_usage)
+            .enumerate()
+        {
+            owned.push(Box::new(info(&format!("usage-{index}"), line)?));
+        }
+        if let Some(note) = model
+            .usage_note
+            .as_ref()
+            .filter(|_| preferences.quick_chat_show_usage)
+        {
+            owned.push(Box::new(info("usage-note", note)?));
+        }
+        if preferences.quick_chat_show_usage {
+            let harness_usage = lock(&app.state::<Arc<Shell>>().harness_usage).clone();
+            for harness in &harness_usage {
+                owned.push(Box::new(PredefinedMenuItem::separator(app)?));
+                owned.push(Box::new(info(
+                    &format!("harness-{}", harness.id),
+                    &harness.label,
+                )?));
+                for (index, line) in quick_chat_preferences::usage_lines(harness)
+                    .iter()
+                    .enumerate()
+                {
+                    owned.push(Box::new(info(
+                        &format!("harness-{}-{index}", harness.id),
+                        line,
+                    )?));
+                }
             }
         }
     }
@@ -783,6 +849,7 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
             );
         }
         "refresh" => refresh_tray(handle.clone(), shell, true),
+        usage if usage.starts_with("usage-") => navigate_app(handle, &shell, "/settings"),
         "login" | "logout" | "start" | "stop" | "restart" | "launch-at-login" => {
             let action = match id {
                 "login" => TrayAction::Login,
@@ -922,6 +989,8 @@ fn clear_private_native_ui(app: &AppHandle, shell: &Arc<Shell>) {
     ) {
         if let Some(tray) = lock(&shell.tray).clone() {
             let _ = tray.set_menu(Some(menu));
+            #[cfg(target_os = "macos")]
+            tray_art::keep_menu_images_visible(&tray);
         }
     }
 }
@@ -1186,6 +1255,8 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
                         if let Err(error) = tray.set_menu(Some(menu)) {
                             eprintln!("tray menu update failed: {error}");
                         }
+                        #[cfg(target_os = "macos")]
+                        tray_art::keep_menu_images_visible(&tray);
                     }
                 }
                 Err(error) => eprintln!("tray menu build failed: {error}"),
