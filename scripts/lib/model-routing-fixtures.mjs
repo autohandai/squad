@@ -51,6 +51,12 @@ export async function prepareModelRoutingFixture(directory){
         const response=await fetch(team.env.AUTOHAND_SQUAD_TEAM_URL,{method:'POST',headers:{'content-type':'application/json','x-squad-team-token':team.env.AUTOHAND_SQUAD_TEAM_TOKEN},body:JSON.stringify({jsonrpc:'2.0',id:7,method:'tools/call',params:{name:'squad_set_fallbacks',arguments:args}})});
         appendFileSync(${JSON.stringify(calls)},JSON.stringify({engine:'autohand',kind:'routing-tool',response:await response.json()})+'\\n');
       }
+      if(p.message.includes('MCP_AVATAR_')){
+        const team=this.config.mcp.servers.find(s=>s.name==='autohand-squad');
+        const bird=p.message.match(/MCP_AVATAR_([A-Za-z]+)/)[1];
+        const response=await fetch(team.env.AUTOHAND_SQUAD_TEAM_URL,{method:'POST',headers:{'content-type':'application/json','x-squad-team-token':team.env.AUTOHAND_SQUAD_TEAM_TOKEN},body:JSON.stringify({jsonrpc:'2.0',id:8,method:'tools/call',params:{name:'squad_set_avatar',arguments:{bird}}})});
+        appendFileSync(${JSON.stringify(calls)},JSON.stringify({engine:'autohand',kind:'avatar-tool',response:await response.json()})+'\\n');
+      }
       yield{type:'message_end',content:'Autohand fixture continued the same task.'};}
     async interrupt(){}async close(){}
   }`);

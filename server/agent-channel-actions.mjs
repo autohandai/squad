@@ -7,6 +7,7 @@ import { MEMBER_PROFILE_FIELDS, memberProfileRevision, mergeMemberProfile } from
 import { normalizeModelRouting } from '../src/lib/model-routing.js';
 import { uniqueName } from '../src/lib/teams.js';
 import { stampOwnedProfile } from './ownership/profile.mjs';
+import { birdFromAvatar } from '../src/lib/bird-cast.js';
 
 const at = () => new Date().toISOString();
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -90,14 +91,20 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
         state.agentChannelAccess[id] = { ...previous, removed: true, mode: 'block', updatedAt: at() };
       } else {
         if (!input.agent || sanitizeId(input.agent.id) !== id) throw channelError('Matching member configuration is required.');
-        if (input.profilePatch && (typeof input.profilePatch !== 'object' || Array.isArray(input.profilePatch) || Object.keys(input.profilePatch).some(key => !MEMBER_PROFILE_FIELDS.includes(key)))) throw channelError('Profile patch contains an unsupported field.');
+        // A member's own avatar (squad_set_avatar, ADR-0243) is the one field
+        // outside the revisioned profile a patch may carry, and only a cast
+        // bird: never a URL or image a model chose.
+        const agentAvatar = input.avatarActor === 'agent';
+        if (input.profilePatch && (typeof input.profilePatch !== 'object' || Array.isArray(input.profilePatch) || Object.keys(input.profilePatch).some(key => !MEMBER_PROFILE_FIELDS.includes(key) && !(agentAvatar && key === 'avatar')))) throw channelError('Profile patch contains an unsupported field.');
+        if (agentAvatar && (previous?.removed || !previous?.agent)) throw channelError('This member is no longer available.', 409);
+        if (agentAvatar && (Object.keys(input.profilePatch || {}).join() !== 'avatar' || !birdFromAvatar(input.profilePatch.avatar))) throw channelError('An avatar tool may only set the member\'s own avatar to a Squad bird.', 403);
         const agentRouting = input.modelRoutingActor === 'agent';
         if (agentRouting && (previous?.removed || !normalizeModelRouting(previous?.agent?.modelRouting).allowAgentChanges || input.profilePatch?.modelRouting?.allowAgentChanges !== true)) throw channelError('The person has not allowed this member to manage fallbacks.', 403);
         if (agentRouting && Object.keys(input.profilePatch || {}).some(key => key !== 'modelRouting')) throw channelError('A fallback tool may only change its fallback configuration.', 403);
         // Catalog discovery is asynchronous. Rebase managed/revision-checked
         // patches on the latest member, including any primary/permission edits
         // made by the person while that discovery was running.
-        const incoming = agentRouting || input.expectedProfileRevision !== undefined ? previous.agent : input.agent;
+        const incoming = agentRouting || agentAvatar || input.expectedProfileRevision !== undefined ? previous.agent : input.agent;
         const agent = { ...mergeMemberProfile(copyMember(incoming, id), previous?.agent), ...(input.profilePatch || {}) };
         if (agent.modelRouting) agent.modelRouting = normalizeModelRouting(agent.modelRouting, { strict: Boolean(input.profilePatch?.modelRouting) });
         if (input.profilePatch?.name && input.profilePatch.name !== before) {
@@ -106,7 +113,7 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
         const after = String(agent.name || '').trim();
         if (input.creation && !previous) agent.name = uniqueName(after, Object.values(state.agentChannelAccess).filter(access => !access.removed).map(access => access.agent?.name));
         if (!previous?.removed && before && after && before !== after) renamed = { from: before, to: after, role: String(agent.role || '') };
-        profileChanged = Boolean(previous?.agent) && MEMBER_PROFILE_FIELDS.some(key => JSON.stringify(previous.agent[key]) !== JSON.stringify(agent[key]));
+        profileChanged = Boolean(previous?.agent) && (MEMBER_PROFILE_FIELDS.some(key => JSON.stringify(previous.agent[key]) !== JSON.stringify(agent[key])) || (agentAvatar && previous.agent.avatar !== agent.avatar));
         agent.profileRevision = memberProfileRevision(previous?.agent) + (profileChanged ? 1 : 0);
         let profile = String(input.profile || previous?.profile || '').slice(0, 64000);
         for (const [label, value] of [['Name', agent.name], ['Role', agent.role]]) if (value) profile = profile.replace(new RegExp(`^${label}: .*$`, 'm'), () => `${label}: ${String(value).replace(/\s+/g, ' ')}`);

@@ -2,6 +2,7 @@ import { hostname } from 'node:os';
 import { z } from 'zod';
 import { createBridgeClient, createTools } from '../control-plane/runtime.mjs';
 import { harnessLabel } from '../../src/lib/harness.js';
+import { birdFromAvatar } from '../../src/lib/bird-cast.js';
 import { normalizeModelRouting, primaryRoute, routeKey } from '../../src/lib/model-routing.js';
 
 const memberID = z.object({ memberID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/) });
@@ -39,7 +40,10 @@ export function createMobileAdapter({ origin, computerID, version, computerName 
     execute: async (command, parameters, { deviceID, requestID }) => {
       if (command === 'snapshot') {
         z.object({}).strict().parse(parameters);
-        const [{ members }, remotes, context, channels] = await Promise.all([tools.list_members(), bridge.get('/api/remote/members'), bridge.get('/api/ownership/context'), bridge.get('/api/channels').catch(() => null)]);
+        const [{ members }, remotes, context, channels, status] = await Promise.all([tools.list_members(), bridge.get('/api/remote/members'), bridge.get('/api/ownership/context'), bridge.get('/api/channels').catch(() => null), bridge.get('/api/status/snapshot').catch(() => null)]);
+        // The member's bird (ADR-0243), as the same /avatars/birds/<bird>.webp
+        // the menu bar reads; uploaded pictures stay on the computer.
+        const avatars = new Map((status?.members || []).filter(row => birdFromAvatar(row?.avatar)).map(row => [row.id, row.avatar]));
         const engines = new Map(await Promise.all(members.map(async row => [row.id, await engineStatus(row.id, channels?.agentChannelAccess?.[row.id]?.agent)])));
         return { computer: { id: computerID, name: computerName, version, connectedAt: new Date().toISOString() },
           capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : [])],
@@ -49,7 +53,7 @@ export function createMobileAdapter({ origin, computerID, version, computerName 
             return { id: row.id, name: row.name || row.id, role: row.role || '', presence: row.presence || 'unknown',
               harness: typeof row.harness === 'string' ? row.harness : row.harness?.id || '',
               executionMode: remote ? 'remoteComputer' : 'workspace', computerName: remote?.label || computerName,
-              workspace: remote?.workspace || row.lastWorkspace || '', ...(engines.get(row.id) ? { engine: engines.get(row.id) } : {}) };
+              workspace: remote?.workspace || row.lastWorkspace || '', ...(engines.get(row.id) ? { engine: engines.get(row.id) } : {}), ...(avatars.has(row.id) ? { avatar: avatars.get(row.id) } : {}) };
           }) };
       }
       if (command === 'conversation') {

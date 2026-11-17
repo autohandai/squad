@@ -12,12 +12,15 @@ list to the section for that version.
 
 ### Added
 
+- **300 birds** to choose from for your squad, from around the world, all in the same drawn style as the kiwi: owls, parrots, penguins, kingfishers, hummingbirds, ducks and many more. The New Zealand birds are still the ones new members get first.
+- **Change a member's avatar from where you see them.** Click the face on their profile card, use Change avatar in the chat header's profile card, or pick **Change avatar…** from any member menu. Search the birds by name ("owl", "penguin", "tui"), use the arrow keys, and Save: the new face shows everywhere at once, including the menu bar, and stays after Squad restarts.
+- **Members can change their own avatar.** Ask one to "pick an owl for yourself" and it can choose any of the 300 birds through Squad's team tools; the change shows everywhere without a reload, with a line under the reply saying what it chose. You can turn this off per member in Permissions (squad_set_avatar).
 - **Continue with Apple** on the sign-in screen. Squad asks autohand.ai to go straight to Sign in with Apple; until the website honours that, the autohand.ai page still gets you there: Sign In to Continue, then Continue with Apple.
 - Install and restart now shows an **Updating Squad** screen while Squad gets ready, installs and reopens, with a few of the squad's birds waiting on a perch. It says what the install stops and what it keeps, and if the install doesn't finish it offers Try again, Back to Squad and Download the latest version.
 
 - Settings › Appearance › Avatars: draw every member's bird Flat (the default), in 3D as a soft glossy toy, or in matte Clay. Same bird and same face in every skin and theme; only the material changes.
 
-- Sixteen more birds in the same drawn style: from Brazil the tucano, arara-azul, bem-te-vi, sabiá, beija-flor, quero-quero, harpia and joão-de-barro; from the United States the bald eagle, cardinal, blue jay, robin, roadrunner, puffin, flamingo and chickadee. Pick them in Edit Profile, where birds are grouped by country. New Zealand birds stay the default.
+- Sixteen more birds in the same drawn style: from Brazil the tucano, arara-azul, bem-te-vi, sabiá, beija-flor, quero-quero, harpia and joão-de-barro; from the United States the bald eagle, cardinal, blue jay, robin, roadrunner, puffin, flamingo and chickadee. Pick them in Edit Profile. New Zealand birds stay the default.
 
 - Settings › Chat › **Reply in threads**, off by default. Off, members' replies in groups and channels appear in order in the conversation; on, they gather under the message they answer, as before.
 - The Local menu at the top of the sidebar now lists your paired phones, each with whether it is reaching this computer right now and when it was paired, and lets you unpair one (Unpair, then Confirm).
@@ -35,6 +38,7 @@ list to the section for that version.
 - Your phone now works at home and away without pairing again. Computers settings lets Same Wi-Fi and From anywhere (Autohand’s relay) run at the same time, alongside your own tunnel. A phone paired on one of them learns the others from your computer and switches by itself: the same network when it can, the relay everywhere else.
 ### Changed
 
+- Birds are no longer grouped by country in the picture picker; it is one grid of birds you can search by name.
 - A new sign-in screen: the Squad mark and name, one line, a perch of the squad's birds that land, glance and hop (and pass a hop along while your browser is open), Continue with Autohand account or Continue with Apple, and the terms at the foot. The terminal hint is gone: signing in to Squad also signs in the Autohand CLI it comes with.
 - Settings › Updates shows the download on the perch: the kiwi walks along it to the other birds as the real percentage climbs, and the page says your squad keeps working while it downloads.
 - The start-up screen shows three birds on a perch while Squad loads; the mark no longer pulses.
@@ -55,6 +59,7 @@ list to the section for that version.
 
 ### Fixed
 
+- A picture chosen for a member in Edit Profile went back to the member's default bird the next time Squad opened. The chosen bird now stays.
 - The start-up and sign-in screens follow your light theme: the light start-up screen no longer shows the dark mark, and sign-in no longer opens dark right after a light start-up screen.
 
 - A member's bird no longer shows as an empty grey square in the member profile sidebar, and faces fill their circle everywhere else.
@@ -148,6 +153,7 @@ list to the section for that version.
 - Launching an updated Squad explains when an older bridge must be closed first, preserving its running work instead of reusing its unowned data service.
 - Team proposals show Create team in channel replies and their threads. Saved decisions survive reopening, and older completed replies recover their roster from the original saved run.
 - Failed team creation keeps the proposal available to retry. Consecutive clicks submit one creation, and recovered replies retain a newer save timestamp even when their run finished earlier.
+
 
 ## [0.1.22] - 2026-11-10
 

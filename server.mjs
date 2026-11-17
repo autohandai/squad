@@ -84,6 +84,7 @@ import { describeSchedule, isValidTimeZone, normalizeSchedule, validateSchedule 
 import { scheduleActionInstruction, taskActionInstruction } from "./src/lib/routines.js";
 import { automationNudgeLine, detectRecurringWork, repeatedWorkSignal, replyProposedSchedule } from "./src/lib/work-plans.js";
 import { MEMBER_PROFILE_FIELDS, memberProfileRevision, mergeMemberProfile, memberShapingInstruction, needsShapingInstruction } from "./src/lib/member-shaping.js";
+import { createAvatarSetter } from "./server/team/member-avatar.mjs";
 import { normalizeResponder, responderStatus } from "./src/lib/channel-responders.js";
 import { channelReplyState, normalizeChannelReplyMode } from "./src/lib/channel-replies.js";
 import { readPersistentJson, writePersistentJson } from "./server/persistent-json.mjs";
@@ -620,6 +621,8 @@ const team = createTeamService({
     const saved = await agentChannelActions.setAccess(memberId, { agent: access.agent, profilePatch: { modelRouting }, modelRoutingActor: 'agent' });
     return { id: `fallbacks-${memberId}-${saved.profileRevision}`, type: 'profile', status: 'applied', actorId: memberId, patch: { modelRouting }, profileRevision: saved.profileRevision, message: `Updated ${access.agent.name}'s fallback engines.` };
   },
+  // squad_set_avatar (ADR-0243): the member's own avatar, a cast bird only.
+  setAvatar: createAvatarSetter({ actions: () => agentChannelActions }),
   getProfile: async memberId => {
     const access = await agentChannelActions.memberAccess(memberId);
     if (!access?.agent || access.removed) throw new Error("This member is no longer available.");

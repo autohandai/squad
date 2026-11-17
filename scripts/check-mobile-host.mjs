@@ -108,6 +108,12 @@ try {
   assert.equal(retry.ok, true, retry.error);
   assert.equal(retry.data.taskID, assigned.data.taskID, 'task receipts survive a host restart');
   assert.equal((await bridge.api('/api/work')).data.tasks.length, 1);
+  // The member's bird reaches the phone as the menu bar's file URL
+  // (ADR-0243); an uploaded picture does not leave the computer.
+  await bridge.api('/api/status/snapshot', 'POST', { members: [{ id: member.id, name: 'Eva', avatar: '/avatars/birds/kea.webp' }] });
+  assert.equal((await request('snapshot')).data.members.find(row => row.id === member.id).avatar, '/avatars/birds/kea.webp');
+  await bridge.api('/api/status/snapshot', 'POST', { members: [{ id: member.id, name: 'Eva', avatar: 'data:image/png;base64,AAAA' }] });
+  assert.equal('avatar' in (await request('snapshot')).data.members.find(row => row.id === member.id), false);
   const remotes = createRemoteRegistry({ squadStateDir: bridge.dataRoot });
   await remotes.set(member.id, { url: 'https://another-computer.example.test', token: 'fixture-no-server', label: 'Separate computer', workspace: '/remote/project' });
   assert.equal((await request('snapshot')).data.members.find(row => row.id === member.id).executionMode, 'remoteComputer');

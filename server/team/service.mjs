@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { cleanMemoryText, createTeamStore } from "./store.mjs";
 import { validateArgs } from "../control-plane/control-plane.mjs";
 import { PROFILE_LIMITS } from "../../src/lib/member-shaping.js";
+import { BIRDS, searchBirds } from "../../src/lib/bird-cast.js";
 import { MANAGED_MANAGEMENT_TOOLS } from '../control-plane/management.mjs';
 import { SERVER_VERSION } from '../control-plane/control-plane.mjs';
 
@@ -116,6 +117,16 @@ const TOOLS = [
       },
       additionalProperties: false,
     },
+  },
+  {
+    name: "squad_avatars",
+    description: "List the birds you can use as your avatar (Squad has 300). Optional query searches bird names (\"owl\", \"kingfisher\", \"tui\"); results are paged. Use an id with squad_set_avatar.",
+    inputSchema: { type: "object", properties: { query: { type: "string", maxLength: 80 }, page: { type: "integer", minimum: 1, maximum: 30 } }, additionalProperties: false },
+  },
+  {
+    name: "squad_set_avatar",
+    description: "Change your own avatar to one of Squad's birds when the person asks ('be the kea', 'pick an owl for yourself'). Takes a bird id from squad_avatars; only cast birds, never a URL or image. The app, chats, Quick Chat, menu bar and phone show the new face.",
+    inputSchema: { type: "object", properties: { bird: { type: "string", minLength: 2, maxLength: 40, description: "A bird id from squad_avatars, such as kea." } }, required: ["bird"], additionalProperties: false },
   },
   {
     name: "squad_schedule",
@@ -375,6 +386,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
     "- squad_team lists teammates; squad_message asks one and returns their reply (squad_replies collects late ones).",
     "- When the person says teach the team, share what you learned, tell everyone or pass this on, call squad_teach with the reusable lesson in this turn. It saves team knowledge and actually messages the teammates. Report queued/running/replied states accurately; a promise in chat is not a delivery.",
     "- squad_get_profile reads your saved profile; squad_set_profile changes name, role, description, instructions, personality and skills. A verbal promise does not change Squad.",
+    "- squad_avatars lists the birds Squad draws; squad_set_avatar changes your own avatar to one when the person asks. Confirm only after its receipt.",
     "- squad_models reads connected engines and their supported model IDs. squad_set_fallbacks updates your ordered fallbacks only when the person enabled Let this member manage fallbacks; never claim the list changed without its saved receipt.",
     "- squad_channels and squad_channel_messages read your channels; squad_post_channel publishes a message there; squad_create_channel uses your existing creation permission.",
     "- squad_update_memory corrects a saved entry; squad_forget removes one. Project memories stay with this turn's workspace; personal memories stay with you.",
@@ -402,7 +414,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   return sections.join("\n\n");
 }
 
-export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, memoryLibrary, artifacts, ownedData, manageMembers, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
+export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, setAvatar, memoryLibrary, artifacts, ownedData, manageMembers, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
   const store = createTeamStore({ stateDir });
   const sessions = new Map();
   const byToken = new Map();
@@ -578,6 +590,21 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
           const receipt = await setFallbacks(session.memberId, args.fallbacks);
           addReceipt(session, receipt);
           return text(receipt);
+        }
+        case "squad_avatars": {
+          // A page of 40 keeps the reply small; the person's words usually
+          // name a kind of bird, so a query is the normal way in.
+          const found = searchBirds(args.query || "");
+          const size = 40;
+          const page = Math.max(1, Number(args.page) || 1);
+          const birds = found.slice((page - 1) * size, page * size).map((bird) => ({ id: bird.id, name: bird.label, ...(bird.aliases?.length ? { alsoKnownAs: bird.aliases } : {}) }));
+          return text({ birds, total: found.length, page, pages: Math.max(1, Math.ceil(found.length / size)), castSize: BIRDS.length, note: found.length ? "Pass an id to squad_set_avatar." : "No bird matched; try a shorter name or no query." });
+        }
+        case "squad_set_avatar": {
+          if (!setAvatar) throw new TeamError("Avatar changes are unavailable in this runtime.");
+          const receipt = await setAvatar(session.memberId, args.bird);
+          addReceipt(session, receipt);
+          return text({ bird: receipt.bird, avatar: receipt.patch.avatar, revision: receipt.profileRevision, message: receipt.message, note: "Saved. The person sees the new face everywhere in Squad." });
         }
         case "squad_team": {
           const { self, others } = await teammates(session.memberId);

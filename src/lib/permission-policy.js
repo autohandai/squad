@@ -109,6 +109,8 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
       ["squad_assign_task", "allow"],
       ["squad_models", "allow"],
       ["squad_set_fallbacks", "allow"],
+      ["squad_avatars", "allow"],
+      ["squad_set_avatar", "allow"],
       ["squad_search_memory", "allow"],
       ["squad_memory_graph", "allow"],
       ["squad_read_memory", "allow"],
