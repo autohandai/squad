@@ -9,6 +9,8 @@ import { createMobileAdapter } from './adapter.mjs';
 import { createMobileRelay } from './relay.mjs';
 import { pairingURL, validateEndpoint } from './protocol.mjs';
 import { assignMemberTask } from '../routes/work.route.mjs';
+import { emitBridgeEvent } from '../events.mjs';
+import { createCardStore } from './cards.mjs';
 
 // Independent routes (ADR-0228): the same computer can listen on the local
 // network, keep the Autohand relay connected, and serve a user-operated tunnel
@@ -78,7 +80,9 @@ export async function createMobileController(ctx) {
     afterApprove: () => { void relay?.grant().catch(() => {}); },
     afterRevoke: id => relay?.revoke(id),
   });
-  adapter = createMobileAdapter({ origin: ctx.ownedBrokerOrigin, computerID: service.computerID, version: ctx.packageMetadata.version, assignTask: assignMemberTask, announcements: ctx.announcements });
+  const cards = await createCardStore({ directory });
+  adapter = createMobileAdapter({ origin: ctx.ownedBrokerOrigin, computerID: service.computerID, version: ctx.packageMetadata.version, assignTask: assignMemberTask, announcements: ctx.announcements,
+    rootDir: ctx.rootDir || '', cards, emit: name => emitBridgeEvent(name, {}) });
   const listening = () => routes().some(route => route.connected);
   async function close() {
     relay?.close(); relay = null;
@@ -153,6 +157,13 @@ export async function createMobileController(ctx) {
     approve: async input => { const value = z.object({ pairingID: z.uuid(), code: z.string().regex(/^\d{6}$/) }).strict().parse(input); await service.approve(value.pairingID, value.code); return status(); },
     reject: async () => { await service.reject(); return status(); },
     revoke: async id => { await service.revoke(z.uuid().parse(id)); return status(); },
+    teamDecisions: () => ({ decisions: adapter.teamDecisions() }),
+    claimTeam: async input => ({ claimed: await adapter.claimTeam(z.object({ receiptId: z.string().min(1).max(200) }).strict().parse(input).receiptId) }),
+    settleTeam: async input => {
+      const value = z.object({ receiptId: z.string().min(1).max(200), state: z.enum(['done', 'failed', 'declined']), result: z.string().max(300).optional(), runId: z.string().max(200).optional() }).strict().parse(input);
+      await adapter.settleTeam(value);
+      return { decisions: adapter.teamDecisions() };
+    },
     close,
   };
 }

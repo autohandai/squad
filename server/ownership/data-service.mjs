@@ -32,13 +32,13 @@ export function createOwnedDataService({ context, assertCurrent, readBody, json,
       if(!context.canWrite||!events||!startEventStream)throw Object.assign(Error('Live execution updates are unavailable in this data view.'),{status:403});
       const stream=startEventStream(res),listeners=[];
       const subscriptions={ 'channels.changed':'channels.changed','notifications.settings.changed':'notifications.settings.changed','vault.request.pending':'vault.changed','vault.request.resolved':'vault.changed',
-        'relay.message':'relay.message','relay.channel':'relay.channel','relay.presence':'relay.presence','relay.status':'relay.status' };
+        'relay.message':'relay.message','relay.channel':'relay.channel','relay.presence':'relay.presence','relay.status':'relay.status','mobile.decisions.changed':'mobile.decisions' };
       for(const [source,target]of Object.entries(subscriptions)) {
         const listener=()=>{try{assertCurrent();stream.send(target);}catch{stream.end();}};
         events.on(source,listener);listeners.push([source,listener]);
       }
       res.once('close',()=>{for(const [name,listener]of listeners)events.off(name,listener);});
-      stream.send('channels.changed');stream.send('vault.changed');
+      stream.send('channels.changed');stream.send('vault.changed');stream.send('mobile.decisions');
       return true;
     }
     if (url.pathname === '/api/owned/members' && req.method === 'GET') { reply(res, { members: await repository.list(), ownership: context.owner }); return true; }

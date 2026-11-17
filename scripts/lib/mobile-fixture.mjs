@@ -30,7 +30,10 @@ export async function startMobileFixture({ announcements = [], relayApiUrl } = {
 const args=process.argv.slice(2);if(args[0]==='--version'){console.log('codex 1.0.0');process.exit(0)}if(args[0]==='login'){console.log('Logged in using fixture');process.exit(0)}
 require('node:fs').appendFileSync(${JSON.stringify(counter)},'turn\\n');
 console.log(JSON.stringify({type:'thread.started',thread_id:'mobile-fixture-thread'}));
-console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'Message received on this computer.'}}));
+const prompt=args.join(' ');let text='Message received on this computer.';
+if(prompt.includes('PROPOSE_TEAM'))text+='\\nSQUAD_ACTION: '+JSON.stringify({type:'team',name:'Launch crew',objective:'Ship the launch page.',members:[{name:'Ada',role:'Frontend Developer',purpose:'Owns the pages.'},{name:'Lin',role:'QA Engineer',purpose:'Tests every flow.'}]});
+if(prompt.includes('PROPOSE_SCHEDULE'))text+='\\nSQUAD_ACTION: '+JSON.stringify({type:'schedule',mode:'propose',title:'Morning check',instructions:'Check the build.',timezone:'Europe/London',schedule:{kind:'daily',time:'09:00'}});
+console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text}}));
 console.log(JSON.stringify({type:'turn.completed'}));
 `);
     await chmod(engine, 0o755);

@@ -1,3 +1,6 @@
+import { teamProposalReceipts } from "../../src/lib/team-proposals.js";
+import { replyWithoutReceipts } from "../../src/lib/member-shaping.js";
+
 // A member's direct-message transcript from the bridge's runs (ADR-0163).
 //
 // The conversation a window shows lives in that window's localStorage and in
@@ -6,6 +9,10 @@
 // every turn: `beginChatRun` keeps the prompt and `finishChatRun` the reply,
 // and the history file keeps the newest 200. This folds those runs into the
 // message shape the chat renders, so any window can show what was said.
+//
+// A reply that proposed a team carries the proposal (`teamProposal`, the
+// receipt) and its receipt line leaves the body, as in the window that sent
+// it (ADR-0161, ADR-0252).
 //
 // Pure: no I/O. The route passes the live `runs` Map (restored history
 // included); the browser merges the result into what it already holds.
@@ -75,6 +82,8 @@ export function transcriptFromRuns(runs, { memberId, memberName = "", since = ""
     const requestId = String(run.requestId || run.id);
     const withTrace = index >= turns.length - Math.max(0, Number(traces) || 0);
     const status = messageStatus(run);
+    const teamProposal = teamProposalReceipts(run.channelActions)[0] || null;
+    const body = replyBody(run, name);
     messages.push({
       id: `${requestId}-u`,
       role: "user",
@@ -87,7 +96,7 @@ export function transcriptFromRuns(runs, { memberId, memberName = "", since = ""
     messages.push({
       id: `${requestId}-a`,
       role: "agent",
-      body: replyBody(run, name),
+      body: teamProposal ? replyWithoutReceipts(body, [teamProposal]) || body : body,
       status,
       startedAt: run.startedAt || "",
       ...(run.finishedAt ? { completedAt: run.finishedAt } : {}),
@@ -99,6 +108,7 @@ export function transcriptFromRuns(runs, { memberId, memberName = "", since = ""
       ...(run.transport ? { transport: String(run.transport) } : {}),
       ...(run.workspace ? { workspace: String(run.workspace) } : {}),
       ...(withTrace && isPlainObject(run.trace) ? { trace: run.trace } : {}),
+      ...(teamProposal ? { teamProposal } : {}),
       fromBridge: true,
     });
   });

@@ -6237,6 +6237,31 @@ function App() {
       setConnectors((current) => current.map((item) => (item.id === id ? record : item)));
     },
   }), [refreshConnectors]);
+  // A team a member proposed, decided on a paired phone (ADR-0252). The
+  // bridge holds the decision; this window carries it out through the same
+  // import as Create team (members are only ever created here, ADR-0077),
+  // marks the reply's card and reports the outcome the phone shows.
+  const mobileTeamDecisionsRef = useRef(null);
+  mobileTeamDecisionsRef.current = async () => {
+    let decisions = [];
+    try { decisions = (await api("/api/mobile/team-decisions")).decisions || []; } catch { return; }
+    for (const decision of decisions) {
+      const settle = (state, result = "") => api("/api/mobile/team-decisions", { method: "POST", body: JSON.stringify({ receiptId: decision.receiptId, state, ...(result ? { result } : {}) }) }).catch(() => {});
+      const held = Object.entries(messagesByAgent).flatMap(([agentId, list]) => (list || []).filter((message) => message?.teamProposal?.id === decision.receiptId).map((message) => ({ agentId, message })));
+      const mark = (value) => held.forEach(({ agentId, message }) => updateMessage(agentId, message.id, { teamProposalDecided: value }));
+      if (decision.action !== "create") { mark("dismissed"); await settle("declined"); continue; }
+      try { if (!(await api("/api/mobile/team-decisions/claim", { method: "POST", body: JSON.stringify({ receiptId: decision.receiptId }) })).claimed) continue; } catch { continue; }
+      if (held.some(({ message }) => message.teamProposalDecided === "created")) { await settle("done"); continue; }
+      try {
+        const build = await addTeamFromMemberProposal(agents.find((member) => member.id === decision.memberId), decision.proposal, { workspace: decision.workspace || "" });
+        if (!build) throw new Error("The proposed team did not pass Squad's team file checks.");
+        mark("created");
+        await settle("done");
+      } catch (error) {
+        await settle("failed", String(error?.message || error || "The team could not be created."));
+      }
+    }
+  };
   // One owned stream per window leaves HTTP/1 connection slots for saves and
   // prompts when another window is open. Notifications carry no secret data;
   // every reload still checks the captured ownership generation.
@@ -6253,6 +6278,7 @@ function App() {
     source.addEventListener("channels.changed",onChanged);
     source.addEventListener("notifications.settings.changed", () => void loadNotificationSettings().catch(() => {}));
     source.addEventListener("vault.changed",()=>void vaultRequests.reload());
+    source.addEventListener("mobile.decisions", () => void mobileTeamDecisionsRef.current?.());
     if(relayConfig.enabled) {
       source.addEventListener("relay.message", onChanged);
       source.addEventListener("relay.channel", onChanged);
@@ -15217,6 +15243,8 @@ function Conversation({
     if (!proposal) return;
     if (decision === "create") await onTeamProposal?.(agent, proposal, { workspace });
     onUpdateMessage?.(agent.id, message.id, { teamProposalDecided: decision === "create" ? "created" : "dismissed" });
+    // A paired phone shows the same card; tell it this was decided here.
+    if (message.teamProposal?.id) void api("/api/mobile/team-decisions", { method: "POST", body: JSON.stringify({ receiptId: message.teamProposal.id, state: decision === "create" ? "done" : "declined" }) }).catch(() => {});
   }
 
   function startFreshChat() {

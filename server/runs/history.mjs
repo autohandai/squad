@@ -46,6 +46,16 @@ export function boundedTrace(trace) {
  * (so a crash leaves a trace). A live launched run is still never recorded;
  * its process is gone with the bridge and it has no prompt to retry.
  */
+// At most two proposed-team receipts per run, each bounded (a proposal is
+// eight members of short text, a few KB).
+const TEAM_RECEIPT_BYTES = 32 * 1024;
+export function teamReceipts(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter((receipt) => isPlainObject(receipt) && receipt.type === "team" && receipt.status === "proposed" && isPlainObject(receipt.proposal))
+    .filter((receipt) => { try { return JSON.stringify(receipt).length <= TEAM_RECEIPT_BYTES; } catch { return false; } })
+    .slice(0, 2);
+}
+
 export function historyRecord(run) {
   if (!isPlainObject(run)) return null;
   const liveChat = LIVE_STATUSES.has(run.status) && run.kind === "chat";
@@ -89,6 +99,7 @@ export function historyRecord(run) {
     reply: String(run.reply || "").slice(0, 20000),
     trace: boundedTrace(run.trace),
     sessionId: String(run.sessionId || ""),
+    teamProposals: teamReceipts(run.channelActions),
     logs: logs.map((entry) => ({ source: String(entry?.source || "stdout"), line: String(entry?.line || ""), at: String(entry?.at || "") })),
   };
 }
@@ -113,7 +124,10 @@ export function runFromRecord(record, { bootAt = new Date().toISOString() } = {}
     contextPack: null,
     contextLayers: null,
     computerUse: null,
-    channelActions: [],
+    // A proposed team stays under its reply after a restart (ADR-0252): the
+    // phone and other windows read it from the transcript. Other receipts
+    // were acted on during the turn and are not kept.
+    channelActions: teamReceipts(record.teamProposals),
     restored: true,
     abortController: null,
     process: null,
