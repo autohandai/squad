@@ -15,6 +15,13 @@
     },
     "macOSPrivateApi": true
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["squad"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": false,

@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 mod artifact_preview;
+mod deep_link;
 mod info_windows;
 mod text_exports;
 mod titlebar;
@@ -83,6 +84,8 @@ struct Shell {
     usage: Mutex<UsageCache>,
     ownership_generation: Mutex<Option<String>>,
     reset: Mutex<system_reset::ResetGuard>,
+    /// A `squad://` link that arrived before the bridge was ready (ADR-0246).
+    pending_link_route: Mutex<Option<String>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -109,9 +112,15 @@ fn main() {
             text_exports::squad_save_text_export,
             titlebar::squad_titlebar_double_click
         ])
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // With its deep-link feature, single-instance hands a second launch's
+        // `squad://` argument (Windows, Linux) to the deep-link plugin below.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(route) = deep_link::route_from_args(&args) {
+                open_marketplace_route(app, route);
+            }
             focus_main_window(app);
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             dock_badge::initialize();
@@ -135,8 +144,10 @@ fn main() {
                 usage: Mutex::new(UsageCache::default()),
                 ownership_generation: Mutex::new(None),
                 reset: Mutex::new(system_reset::ResetGuard::default()),
+                pending_link_route: Mutex::new(None),
             });
             app.manage(shell.clone());
+            install_deep_links(app);
             #[cfg(target_os = "macos")]
             native_notifications::install(app.handle(), shell.clone());
 
@@ -217,8 +228,14 @@ fn main() {
                     Ok(BootstrapOutcome::Ready { url }) => {
                         computer_use_grant::clear_bridge_secret_env();
                         *lock(&shell.app_url) = Some(url.clone());
+                        // Opened by a squad:// link: the first page is that
+                        // agent in the Marketplace dialog (ADR-0246).
+                        let first = lock(&shell.pending_link_route)
+                            .take()
+                            .and_then(|route| deep_link::cold_start_url(&url, &route))
+                            .unwrap_or_else(|| url.clone());
                         if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
-                            if let Ok(target) = url.parse() {
+                            if let Ok(target) = first.parse() {
                                 let _ = window.navigate(target);
                             }
                             // Bootstrap fills the existing main window. It
@@ -1237,6 +1254,42 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
             .tray_refreshing
             .store(false, std::sync::atomic::Ordering::Release);
     });
+}
+
+/// `squad://` links (ADR-0246). The bundle registers the scheme on macOS
+/// (Info.plist), Windows (NSIS) and Linux (.desktop); an AppImage or a
+/// development build registers it at runtime. Only links that parse as a
+/// marketplace agent are acted on, and they only open the agent.
+fn install_deep_links(app: &mut tauri::App) {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    #[cfg(any(target_os = "linux", all(debug_assertions, target_os = "windows")))]
+    if let Err(error) = app.deep_link().register_all() {
+        eprintln!("squad:// links could not be registered: {error}");
+    }
+    let handle = app.handle().clone();
+    app.deep_link().on_open_url(move |event| {
+        if let Some(route) = deep_link::route_from_args(event.urls().iter().map(|url| url.as_str())) {
+            open_marketplace_route(&handle, route);
+        }
+    });
+    // A link that launched the app before the handler existed.
+    if let Ok(Some(urls)) = app.deep_link().get_current() {
+        if let Some(route) = deep_link::route_from_args(urls.iter().map(|url| url.as_str())) {
+            open_marketplace_route(app.handle(), route);
+        }
+    }
+}
+
+/// Route the app to an agent, or keep the route for the first page when the
+/// bridge is still starting.
+fn open_marketplace_route(handle: &AppHandle, route: String) {
+    let shell = handle.state::<Arc<Shell>>().inner().clone();
+    if lock(&shell.app_url).is_some() {
+        navigate_app(handle, &shell, &route);
+    } else {
+        *lock(&shell.pending_link_route) = Some(route);
+        focus_main_window(handle);
+    }
 }
 
 fn focus_main_window(app: &AppHandle) {
