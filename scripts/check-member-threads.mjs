@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
-import { initialAgents } from '../src/data.js';
+import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 
 await mkdir('.codex-artifacts',{recursive:true});
 const workspace = await mkdtemp(join(process.cwd(),'.codex-artifacts/member-threads-'));
@@ -78,8 +78,10 @@ try {
   await writeFile(join(bridge.directory,'release-CHANNEL_ONE'),'go');
   if(process.argv.includes('--browser')){
     browser=await startBrowser();
-    const storage={agents:[{...agent,status:'online',memory:[],skills:[],stats:{},modelAssignment:{mode:'inherit'}}],removedAgents:initialAgents.map(member=>member.id),tasks:[],channels:[],automations:[],onboarding:{version:1,status:'skipped',lastStep:'skipped'},messages:{[agent.id]:[{id:'root-one',role:'agent',body:'Investigate the first issue.',status:'complete',time:'Now'},{id:'root-two',role:'user',body:'Investigate the second issue.',status:'complete',time:'Now'}]}};
-    await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`if(!localStorage.getItem('threadProof.seeded')){localStorage.clear();for(const[key,value]of Object.entries(${JSON.stringify(storage)}))localStorage.setItem('autohandSquad.v1.'+key,JSON.stringify(value));localStorage.setItem('threadProof.seeded','true');}`});
+    // Owned Squads read the roster from the registry and conversations from
+    // the owner's browser-state record (ADR-0193), not unprefixed storage.
+    const messages={[agent.id]:[{id:'root-one',role:'agent',body:'Investigate the first issue.',status:'complete',time:'Now'},{id:'root-two',role:'user',body:'Investigate the second issue.',status:'complete',time:'Now'}]};
+    await seedOwnedBrowserFixture(bridge,browser,{members:[{...agent,status:'online',memory:[],skills:[],stats:{},modelAssignment:{mode:'inherit'}}],messages});
     await browser.navigate(`${bridge.origin}/conversations/new?member=${agent.id}`);
     await until(()=>browser.evaluate(`!!document.querySelector('[data-message-id="root-two"] button[aria-label="Reply in thread"]')`),'Reply action on a user message',30000);
     assert.equal(await browser.evaluate(`!!document.querySelector('[data-message-id="root-one"] button[aria-label="Reply in thread"]')`),true,'member answers also offer Reply');

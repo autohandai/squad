@@ -28,7 +28,7 @@ const workspace=join(bridge.directory,'home','workspace');
 const chief={id:'proposal-chief',name:'Chief of Staff',role:'Coordinator',workspace,projects:[{path:workspace}],status:'online',instructions:'Propose the requested team.',harness:{id:'autohand'},permissions:{permissionMode:'unrestricted'}};
 let browser;
 const seed=async()=>{
-  await (owned?owned.seedOwnedBrowserFixture(bridge,browser):browser.send('Page.addScriptToEvaluateOnNewDocument',{source:"localStorage.setItem('autohandSquad.v1.onboarding',JSON.stringify({version:1,status:'skipped'}));localStorage.setItem('autohandSquad.v1.agents',"+JSON.stringify(JSON.stringify([chief]))+");"}));
+  await (owned?owned.seedOwnedBrowserFixture(bridge,browser,{storage:{'autohandSquad.v1.chatSettings':JSON.stringify({threadedReplies:true})}}):browser.send('Page.addScriptToEvaluateOnNewDocument',{source:"localStorage.setItem('autohandSquad.v1.onboarding',JSON.stringify({version:1,status:'skipped'}));localStorage.setItem('autohandSquad.v1.agents',"+JSON.stringify(JSON.stringify([chief]))+");"}));
   await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{
     const originalFetch=window.fetch;
     window.proposalPlanRequests=0;window.proposalUnhandled=[];window.proposalRejectPlan=false;
