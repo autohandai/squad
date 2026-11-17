@@ -5,8 +5,15 @@ Autohand team publishes one member as an **agent template**; anyone can find it
 on `autohand.ai/squad/marketplace/` or inside Squad and add it to their squad.
 Squad also adds a Grok Bot template from its public link, one at a time.
 
+Since ADR-0253 a listing can also be a whole **team template** (2 to 8
+members, their skills and channels), the first screen is curated (Featured,
+Teams, a section per category), and views, Add clicks, downloads and
+installs are counted and traceable from a website click to the install.
+
 Decisions and their evidence are in
-[ADR-0246](../adrs/ADR-0246-agent-marketplace.md). This page is the contract.
+[ADR-0246](../adrs/ADR-0246-agent-marketplace.md) and
+[ADR-0253](../adrs/ADR-0253-marketplace-teams-featured-and-install-analytics.md).
+This page is the contract.
 
 ## Parts
 
@@ -45,6 +52,23 @@ document (object keys sorted, no whitespace). The API stores it per version,
 returns it with the template, and Squad recomputes it after download. A link
 may carry `sha256`; a mismatch refuses the import and adds nothing.
 
+### Team templates (ADR-0253)
+
+A team template is the same format with `kind: "team"` and stricter rules
+(`validateTeamTemplate`):
+
+- 2 to 8 members with distinct names; `team.lead` names one of them (the
+  first member otherwise);
+- at most 10 skills per member and 40 in all, each used by a member;
+- up to 3 channels, among the members only;
+- no workflows, routines, connectors or presets;
+- starter memory per member only where the publisher switched it on;
+- bird pictures only, at most 768 KiB as canonical JSON, secrets refused.
+
+Seeds: `marketplace-seeds/teams.json` names agent seeds by slug
+(`lead`, `members`, `channels`, optional `memory`); the seed script builds
+each team from those agents exactly as they are listed.
+
 ### Listing
 
 | Field | Rule |
@@ -60,7 +84,11 @@ may carry `sha256`; a mismatch refuses the import and adds nothing.
 | `version`, `contentHash`, `bytes`, `skills`, `hasMemory` | current published version |
 | `createdAt`, `updatedAt` | ISO times; "Added 17 Nov 2026" on every surface |
 | `status` | `published`, `unpublished` (by its publisher), `hidden` (moderation), `removed` (admin delete; content purged) |
-| `featured` | set by admins |
+| `featured` | set by admins; the featured row is ordered by `featuredRank` (admin only) |
+| `kind` | `agent` or `team`; fixed at first publish |
+| `members` | 1 for an agent, the member count for a team |
+| `faces` | teams only: member birds, lead first, at most 8 |
+| `installsLabel` | "" under ten installs, then `10+`, `50+`, `100+`, `500+`, `1k+`, `5k+`; exact counts are admin-only |
 
 ## HTTP
 
@@ -71,8 +99,11 @@ All responses use the Squad API envelope (`{success,data}` /
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/v1/marketplace/agents?q=&category=&creator=autohand\|user\|team&cursor=&limit=` | published only; featured first, then newest; `limit` ≤ 50; `{agents,nextCursor,total}` |
-| GET | `/v1/marketplace/categories` | `{categories:[{id,label,count}],total}` |
+| GET | `/v1/marketplace/agents?q=&category=&creator=autohand\|user\|team&kind=agent\|team\|all&cursor=&limit=` | published only; featured first, then newest; `limit` ≤ 50; `{agents,nextCursor,total}`; without `kind`, agents only (clients before team templates) |
+| GET | `/v1/marketplace/categories` | `{categories:[{id,label,count,teams}],total,teams,autohand}`; `count` and `total` are agents |
+| GET | `/v1/marketplace/featured` | `{featured:[listing]}`, agents and teams in the admins' order, ≤ 12 |
+| GET | `/v1/marketplace/home?per=1..12` | `{featured, sections:[{id,label,count,teams,agents}], teams, total, teamsTotal, autohand}`: the first screen in one read |
+| POST | `/v1/marketplace/agents/:id/events` | `{type:"view"\|"add_click"\|"install", source, attribution?, version?}` → 202 `{counted}`; one per network per listing per type per day; 120 per network per 10 minutes; browsers from the site origins only |
 | GET | `/v1/marketplace/agents/:id` | listing plus a preview (instructions, skills, whether it carries memory) and `versions`; ETag |
 | GET | `/v1/marketplace/agents/:id/template?version=` | the document and `contentHash`; rate limited per network (60 per 10 minutes); counts one add per network per day |
 | POST | `/v1/marketplace/agents/:id/reports` | `{reason,details}`; reasons `spam`, `harmful`, `impersonation`, `secrets`, `broken`, `other`; 10 per network per hour; five distinct reporters hide the listing until an admin reviews it |
@@ -112,11 +143,18 @@ token; browsers never do.
 | GET | `/v1/marketplace/admin/reports?status=open` | |
 | PATCH | `/v1/marketplace/admin/reports/:id` | `{status:"resolved"\|"dismissed", note}` |
 | GET | `/v1/marketplace/admin/audit?cursor=` | content-free events, newest first |
+| PUT | `/v1/marketplace/admin/featured` | `{ids:[…]}` puts these featured listings first in this order; audited as `featured.reordered` |
+| GET | `/v1/marketplace/admin/stats?days=1..365&listing=` | `{daily:[{day,views,addClicks,downloads,installs}], totals, top, attribution:{clicks,installs}}` |
+
+Admin rows (`/admin/agents`, filters `kind`, `featured=1`) also carry
+`featuredRank`, `adds` and `stats:{views,addClicks,downloads,installs,attributedInstalls}`.
 
 ## Links
 
-`squad://app/v1/agent-template?id=<id>[&version=<n>][&sha256=<64 hex>]` is the
-only accepted deep link. Scheme, host, path and parameter names are exact;
+`squad://app/v1/agent-template?id=<id>[&version=<n>][&sha256=<64 hex>][&attribution=<20 a-z0-9>]`
+and `squad://app/v1/team-template?…` (same parameters) are the only accepted
+deep links; they open the app routes `/marketplace/agents/<id>` and
+`/marketplace/teams/<id>`. Scheme, host, path and parameter names are exact;
 anything else is ignored. The shell turns it into the app route
 `/marketplace/agents/<id>`, which opens the Marketplace dialog on that agent.
 **A link never adds anything by itself**: the person reads the agent and
@@ -141,6 +179,73 @@ Bot page `https://x.ai/bot/<id>` and `grokbot://app/v1/bot-template?id=<id>`.
    conversations and permissions stay) and adds new skills switched off; **Add
    another** creates a second member with a numbered name.
 4. The receipt records listing, version, hash, member and source.
+
+A team template goes through `addTeam` like Import team: every member
+untrusted, the channels created after the last member. Its receipt has
+`kind: "team"`, `memberId` (the lead) and `memberIds`. Re-adding a team
+offers Add again, never Update.
+
+After a new member or team is recorded, the bridge posts one `install`
+event with `source` (`website-link` when the link carried an attribution id,
+`link` for a pasted or bare link, `in-app` otherwise) and the attribution id.
+The receipt does not keep the attribution id. Updates are not installs.
+
+## Install analytics and the funnel (ADR-0253)
+
+Server-side counts (Squad API, anonymous, one per network per listing per
+type per day): **views** and **Add clicks** from the website, **downloads**
+(template fetched), **installs** (Squad confirmed). Attribution: an Add click
+with an attribution id and an install with the same id join in
+`attributions` for 30 days (`attributedInstalls`).
+
+PostHog, explicit events only. Squad (bridge capture, ADR-0067; DNT and GPC
+send nothing; anonymous allowed with no person profile):
+
+| Event | Properties |
+| --- | --- |
+| `marketplace_opened` | `entry`: directory, minified, command, route, link |
+| `marketplace_listing_viewed` | `listing_id`, `listing_kind`, `version`, `via` |
+| `marketplace_add_started` | `listing_id`, `listing_kind`, `version`, `via`, `attribution_id`? |
+| `marketplace_add_succeeded` | the above plus `action` (add, update, another), `members` |
+| `marketplace_add_failed` | the above plus `reason` (offline, rate_limited, not_found, checksum, invalid, unavailable, failed) |
+
+`via` is `website-link`, `in-app`, `link` or `grok` (Grok has no
+`listing_id`). Every Squad event also carries `source: "squad"`,
+`product: "autohand_squad"`, `app_version` and `platform`, which is why the
+funnel's own source is named `via`.
+
+Website (only with optional analytics accepted, DNT/GPC off;
+`$process_person_profile: false`; `source: "website"`,
+`product: "autohand_squad_marketplace"`):
+
+| Event | Properties |
+| --- | --- |
+| `squad_marketplace_viewed` | `surface` (home, category, search, teams), `category`?, `results_count` |
+| `squad_marketplace_searched` | `query_length`, `results_count`, `category`? (never the text) |
+| `squad_marketplace_category_selected` | `category` |
+| `squad_marketplace_listing_viewed` | `listing_id`, `listing_kind`, `category`, `version`, `featured` |
+| `squad_marketplace_add_clicked` | `listing_id`, `listing_kind`, `category`, `version`, `featured`, `placement` (featured, section, list, detail), `attribution_id` |
+
+The funnel: `squad_marketplace_listing_viewed` → `squad_marketplace_add_clicked`
+→ `marketplace_add_started` → `marketplace_add_succeeded`. The website and
+Squad have different distinct ids, so join the last three on
+`attribution_id`, for example as a HogQL insight:
+
+```sql
+SELECT c.properties.listing_id AS listing,
+       count() AS clicks,
+       countIf(s.event IS NOT NULL) AS installs
+FROM events c
+LEFT JOIN (SELECT event, properties.attribution_id AS attribution_id FROM events
+           WHERE event = 'marketplace_add_succeeded' AND timestamp > now() - INTERVAL 30 DAY) s
+  ON s.attribution_id = c.properties.attribution_id
+WHERE c.event = 'squad_marketplace_add_clicked' AND c.timestamp > now() - INTERVAL 30 DAY
+GROUP BY listing ORDER BY clicks DESC
+```
+
+In-app installs (no website click) are `marketplace_add_succeeded` with
+`via = 'in-app'`. The same funnel without PostHog is
+`GET /v1/marketplace/admin/stats` (Admin › Squad › Marketplace).
 
 ## Grok Bot templates
 
@@ -192,12 +297,16 @@ Squad API (`services/squad-api`, Cloudflare account that owns `autohand.ai`):
    `SQUAD_MARKETPLACE_DATABASE_ID`): `npm run typecheck && npm test && npm run build && npm run deploy`.
    Add `SQUAD_MARKETPLACE_DATABASE_ID` to the CI deploy variables in
    `.github/workflows/squad-api.yml` before enabling automatic deploys.
-5. Seed the 200 agents (idempotent; `createdAt` is the time you run it):
+5. Apply `marketplace-migrations/0002_teams_featured_stats.sql` the same way
+   as step 2 if the database was created before ADR-0253.
+6. Seed the agents, teams and featured order (idempotent; `createdAt` is the time you run it):
    `node scripts/marketplace-seed.mjs --batches .cloudflare/marketplace-seed`, then
    for each file `node_modules/.bin/cf d1 query <id> --batch @<file>`.
    Check: `curl -s https://squad.autohand.ai/v1/marketplace/categories` reports
-   `total: 200` and 20 per category.
-6. Smoke: `GET /v1/marketplace/agents?q=payroll`, one `/template` whose
+   `total: 350`, `teams: 21`, and per category 20 plus the counts in
+   `marketplace-seeds/additions-2026-11.json`; `/v1/marketplace/featured`
+   lists the eight seeded featured listings.
+7. Smoke: `GET /v1/marketplace/agents?q=payroll`, one `/template` whose
    `contentHash` matches the listing, and an admin call with the token and
    `X-Marketplace-Admin` that returns `agents`.
 
