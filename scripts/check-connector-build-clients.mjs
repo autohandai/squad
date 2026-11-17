@@ -2,7 +2,8 @@
 // ADR-0248: the sign-in apps a release build provides reach the bridge.
 // Staging writes CONNECTOR_CLIENTS.json from the build environment; the
 // bridge reads it, the environment wins per provider, a missing file means
-// "not set up", and neither the staging output, the page nor the bridge's
+// "not set up", a client saved in Settings wins over all of them, and
+// neither the staging output, the page nor the bridge's
 // logs carry the values.
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -23,6 +24,7 @@ const OVERRIDE = {
   AUTOHAND_SQUAD_GOOGLE_CLIENT_ID: '210987654321-fixtureenvclient00000000000000.apps.googleusercontent.com',
   AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET: 'GOCSPX-fixtureEnvSecret000000000',
 };
+const SETTINGS = { clientId: '555555555555-fixturesettingsclient00000000.apps.googleusercontent.com', clientSecret: 'GOCSPX-fixtureSettingsSecret0000' };
 const EMPTY = { AUTOHAND_SQUAD_GOOGLE_CLIENT_ID: '', AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET: '', AUTOHAND_SQUAD_GITHUB_CLIENT_ID: '' };
 const root = await mkdtemp(join(tmpdir(), 'squad-connector-clients-'));
 const step = (label) => console.log(`- ${label}`);
@@ -116,6 +118,15 @@ async function bridgeChecks() {
       const logs = `${bridge.logs}\n${await scan(bridge.directory)}`;
       assert.match(logs, /Connector sign-in apps: Google set up \((build|env)\); GitHub set up \(build\)/, 'the bridge says which providers are set up');
       for (const value of [...Object.values(STAGED), ...Object.values(OVERRIDE)]) assert.ok(!logs.includes(value), 'no client value lands in the bridge logs');
+      if (env === EMPTY) {
+        step('bridge: a Google client saved in Settings wins over the build');
+        const saved = await bridge.api('/api/connectors/google-client', 'PUT', SETTINGS);
+        assert.equal(saved.success, true, JSON.stringify(saved));
+        const after = await bridge.api('/api/connectors');
+        assert.equal((after.data ?? after).googleClient.clientId, SETTINGS.clientId);
+        assert.notEqual((after.data ?? after).googleClient.provided, 'build');
+        assert.ok(!JSON.stringify(after).includes(SETTINGS.clientSecret), 'the saved secret is not returned either');
+      }
     } finally { await bridge.close(); }
   }
   step('bridge: no staged file and no environment is "not set up"');

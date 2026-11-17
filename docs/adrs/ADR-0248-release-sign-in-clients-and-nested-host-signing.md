@@ -97,7 +97,8 @@ ad-hoc signed and left Developer ID signing "for the release lane". Measured on
    that provider (development, fixtures, an operator override), otherwise the
    file. An environment client id never borrows the file's secret. A missing
    or unreadable file means "not set up", which the Connectors page already
-   explains. The bridge logs which providers are set up and from where,
+   explains. Precedence for Google is therefore: a client the person saved in
+   Settings › Connectors, then the environment, then the staged file. The bridge logs which providers are set up and from where,
    never a value. The values are passed to the OAuth module and the
    Connectors route explicitly and are **not** copied into `process.env`, so
    member engines, which inherit the bridge's environment, never see them.
@@ -154,7 +155,8 @@ ad-hoc signed and left Developer ID signing "for the release lane". Measured on
   --team J59GX2DRN2 --against ~/Applications/…` passed.
 - `check-connector-build-clients.mjs` starts the real bridge three times from a
   runtime directory holding (or not holding) a staged file: staged clients
-  reach `/api/connectors` as `{ clientId, provided: "build" }`, the
+  reach `/api/connectors` as `{ clientId, provided: "build" }`, a Google
+  client saved through Settings › Connectors then replaces it, the
   environment wins over the file, no file is `null` and "not set up", and
   neither response nor bridge logs (stdout and stderr, and every `.log`,
   `.jsonl`, `.json` and `.txt` file under its state directory) contain a
