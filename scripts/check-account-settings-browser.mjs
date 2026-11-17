@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { initialAgents } from '../src/data.js';
 import { memberFixture } from './lib/member-fixture.mjs';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
+import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 
 const artifact = '.codex-artifacts/local-0.1.6/account-settings';
 await mkdir(artifact, { recursive: true });
@@ -13,15 +13,13 @@ const part = process.env.ACCOUNT_CHECK_PART || 'all';
 try {
   const member = memberFixture({ name: 'Alex', workspace: bridge.directory, projects: [{ path: bridge.directory }], skills: [] });
   browser = await startBrowser();
+  // The member comes from the owner's registry and onboarding from owner-scoped
+  // storage (ADR-0193); unprefixed keys are never read.
+  const { storageKey } = await seedOwnedBrowserFixture(bridge, browser, { members: [member] });
+  const collapsedKey = JSON.stringify(`autohandSquad.owner.v1.${storageKey}.${encodeURIComponent('autohandSquad.v1.sidebarCollapsed')}`);
   await browser.send('Emulation.setDeviceMetricsOverride', {width:1170,height:760,deviceScaleFactor:1,mobile:false});
   await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `
     window.accountDocumentId=crypto.randomUUID();
-    if (!sessionStorage.getItem('account.seeded')) {
-      localStorage.setItem('autohandSquad.v1.agents', ${JSON.stringify(JSON.stringify([member]))});
-      localStorage.setItem('autohandSquad.v1.removedAgents', ${JSON.stringify(JSON.stringify(initialAgents.slice(1).map(agent => agent.id)))});
-      localStorage.setItem('autohandSquad.v1.onboarding', '{"version":1,"status":"skipped"}');
-      sessionStorage.setItem('account.seeded','true');
-    }
     const nativeShell=()=>{document.documentElement.dataset.shell='desktop';document.documentElement.dataset.platform='mac';};
     if(document.documentElement) nativeShell();
     else document.addEventListener('DOMContentLoaded',nativeShell,{once:true});
@@ -47,7 +45,7 @@ try {
   const openMenu = async () => pointerClick(await browser.evaluate(`(() => {const button=[...document.querySelectorAll('button[aria-label="Open account menu"]')].find(item=>item.getBoundingClientRect().width);const r=button.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};})()`));
   for (const [skin, theme] of [['soft','light'],['grut','dark'],['default','light'],['default','dark']]) {
     for (const collapsed of [true,false]) {
-      await browser.evaluate(`localStorage.setItem('autohandSquad.v1.skin',${JSON.stringify(skin)});localStorage.setItem('autohandSquad.v1.theme',JSON.stringify({mode:${JSON.stringify(theme)}}));localStorage.setItem('autohandSquad.v1.sidebarCollapsed',${JSON.stringify(String(collapsed))});`);
+      await browser.evaluate(`localStorage.setItem('autohandSquad.v1.skin',${JSON.stringify(skin)});localStorage.setItem('autohandSquad.v1.theme',JSON.stringify({mode:${JSON.stringify(theme)}}));localStorage.setItem(${collapsedKey},${JSON.stringify(String(collapsed))});`);
       await navigateFresh(route); await ready();
       await browser.fill('textarea', 'Keep this unsent draft.');
       await openMenu();
@@ -88,11 +86,12 @@ try {
   assert.equal(await browser.evaluate(`location.pathname+location.search`), route);
   assert.equal(await browser.evaluate(`document.querySelector('textarea').value`), 'Keep this unsent draft.');
   // Keyboard opening, roving focus and selection use the same menu behavior.
+  // The menu's first action is Inbox since the account menu consolidation (cb66e21).
   await browser.evaluate(`document.querySelector('button[aria-label="Open account menu"]').focus()`);
   await key('ArrowDown','ArrowDown',40);
   await until(() => browser.evaluate(`document.activeElement?.getAttribute('role')==='menuitem'`), 'keyboard focuses first action');
   await key('Home','Home',36);
-  await until(() => browser.evaluate(`document.activeElement?.textContent.trim()==='Needs you'`), 'first keyboard action');
+  await until(() => browser.evaluate(`document.activeElement?.textContent.trim()==='Inbox'`), 'first keyboard action');
   await key('ArrowDown','ArrowDown',40);
   await until(() => browser.evaluate(`document.activeElement?.textContent.trim()==='Settings'`), 'keyboard reaches Settings');
   await key('Enter','Enter',13);
