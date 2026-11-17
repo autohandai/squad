@@ -315,6 +315,15 @@ All on 17 Nov 2026, macOS, Node 24.3.0, in the lane worktree, fixtures only:
   read with hints, id-bound sealing, locked key → 503, explicit secret flags,
   unique names, argument secrets, in-place reinstall, address change signs
   out, removal returns tokens, Google client sealed).
+- `node scripts/check-team-builder.mjs`, `check-artifacts.mjs`,
+  `check-computer-use-portable.mjs`, `check-teams.mjs`,
+  `check-permission-policy.mjs`, `check-member-introduction.mjs`: passed.
+  The team builder check caught a store bug the new checks had missed: the
+  sealing of old files ran on every read, so an empty `Authorization` header
+  a template saves (and any plain value with a key-like name) was moved into
+  the sealed part on reload and listed as configured. Migration now runs only
+  on a version 1 file and skips empty values; `check-connector-store.mjs`
+  reloads the store to prove it.
 - `node scripts/check-connector-catalog.mjs`: passed (12 snapshot servers,
   offline cache and snapshot fallbacks). It found that Supabase's optional
   named arguments were emitted as bare flags (`npx -y --project-ref

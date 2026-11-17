@@ -110,13 +110,13 @@ export async function testConnector(ctx, id) {
 }
 
 async function decorate(ctx, connector, googleClientReady) {
-  const ready = googleClientReady ?? (Boolean(await ctx.connectors.googleClientPublic().catch(() => null)) || Boolean(process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID));
+  const ready = googleClientReady ?? (Boolean(await Promise.resolve(ctx.connectors.googleClientPublic?.()).catch(() => null)) || Boolean(process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID));
   const signingIn = ctx.connectorOAuth?.progress(connector.id)?.waiting === true;
   return { ...connector, health: connectorHealth(connector, { googleClientReady: ready, signingIn }) };
 }
 
 async function listAll(ctx) {
-  const googleClient = await ctx.connectors.googleClientPublic().catch(() => null);
+  const googleClient = await Promise.resolve(ctx.connectors.googleClientPublic?.()).catch(() => null);
   const ready = Boolean(googleClient) || Boolean(process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID);
   const list = await ctx.connectors.list();
   return { connectors: [squadConnection(ctx), ...await Promise.all(list.map((item) => decorate(ctx, item, ready)))], googleClient: googleClient || (process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID ? { clientId: process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID, provided: 'build' } : null), runtimes: packageRuntimes() };
@@ -166,7 +166,7 @@ async function catalogue(ctx, url) {
   const cursor = String(url.searchParams.get('cursor') || '');
   const installed = await ctx.connectors.list();
   const runtimes = packageRuntimes();
-  const googleReady = Boolean(await ctx.connectors.googleClientPublic().catch(() => null)) || Boolean(process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID);
+  const googleReady = Boolean(await Promise.resolve(ctx.connectors.googleClientPublic?.()).catch(() => null)) || Boolean(process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID);
   const google = !cursor ? GOOGLE_ENTRIES.filter((entry) => !search || `${entry.title} ${entry.description} google`.toLowerCase().includes(search.toLowerCase())).map((entry) => googleListing(entry, { installed, googleClientReady: googleReady })) : [];
   let page;
   try { page = await ctx.connectorRegistry.browse({ search, cursor, installed, runtimes }); }

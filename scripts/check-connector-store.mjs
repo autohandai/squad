@@ -60,6 +60,10 @@ try {
   const fresh = createConnectorStore({ stateDir: directory, rootDir: root, keyring });
   const a = await fresh.create({ name: 'Alpha', kind: 'stdio', command: 'node', args: ['a.js'], env: [{ key: 'MODE', value: 'fast' }, { key: 'SECRET_THING', value: 'not-obvious-1234', secret: true }, { key: 'LOOKS_LIKE_TOKEN', value: 'plain-but-named-token', secret: false }] });
   assert.deepEqual(a.env.map((pair) => [pair.key, pair.secret]), [['MODE', false], ['LOOKS_LIKE_TOKEN', false], ['SECRET_THING', true]], 'an explicit secret flag wins over the name heuristic');
+  const reread = await createConnectorStore({ stateDir: directory, rootDir: root, keyring }).get(a.id);
+  assert.deepEqual(reread.env.map((pair) => [pair.key, pair.secret]), [['MODE', false], ['LOOKS_LIKE_TOKEN', false], ['SECRET_THING', true]], 'a plain value stays plain after a reload (no second migration)');
+  const empty = await fresh.create({ name: 'Empty header', kind: 'url', url: 'https://x.example/mcp', headers: [{ key: 'Authorization', value: '' }] });
+  assert.deepEqual((await createConnectorStore({ stateDir: directory, rootDir: root, keyring }).get(empty.id)).headers, [{ name: 'Authorization', value: '', secret: true, configured: false, hint: '' }], 'an empty key-like header is listed, unconfigured');
   await assert.rejects(fresh.create({ name: ' alpha ', kind: 'stdio', command: 'node' }), (error) => error.status === 409, 'names are unique, ignoring case and spaces');
   const renamed = await fresh.rename(a.id, 'Alpha tools');
   assert.equal(renamed.id, a.id); assert.equal(renamed.serverName, a.serverName, 'a rename keeps the member-facing server name');

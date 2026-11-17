@@ -75,7 +75,8 @@ function mergePairs(incoming, stored, { pattern, label, keyLimit = 128, valueLim
     if (value === '' && wasSecret) value = stored.secret[key];
     else if (value === '' && wasPlain && record(entry) && entry.keep === true) value = stored.plain[key];
     const isSecret = record(entry) && typeof entry.secret === 'boolean' ? entry.secret : (wasSecret && value === stored.secret[key]) || looksSecret(key, value);
-    if (isSecret) { secret[key] = value; hints[key] = hint(value); }
+    // An empty value is nothing to seal: it stays a plain, unconfigured entry.
+    if (isSecret && value !== '') { secret[key] = value; hints[key] = hint(value); }
     else plain[key] = value;
   }
   return { plain, secret, hints };
@@ -85,7 +86,7 @@ function publicPairs(plain = {}, secretHints = {}, secretKeys = [], nameField) {
   const keys = [...new Set([...Object.keys(plain), ...secretKeys])];
   return keys.map((key) => (secretKeys.includes(key)
     ? { [nameField]: key, value: '', secret: true, configured: true, hint: secretHints[key] || '' }
-    : { [nameField]: key, value: plain[key], secret: false, configured: Boolean(plain[key]), hint: '' }));
+    : { [nameField]: key, value: plain[key], secret: !plain[key] && looksSecret(key), configured: Boolean(plain[key]), hint: '' }));
 }
 
 function normalizeTest(value) {
@@ -148,7 +149,7 @@ export function createConnectorStore({ stateDir, rootDir, homeDir = process.env.
     for (const [field, keysField, hintsField] of [['env', 'secretEnv', 'envHints'], ['headers', 'secretHeaders', 'headerHints']]) {
       if (!record(item[field])) continue;
       for (const [key, value] of Object.entries(item[field])) {
-        if (!looksSecret(key, value)) continue;
+        if (!value || !looksSecret(key, value)) continue;
         (secrets[field] ||= {})[key] = value;
         item[keysField] = [...new Set([...(item[keysField] || []), key])];
         (item[hintsField] ||= {})[key] = hint(value);
@@ -166,8 +167,10 @@ export function createConnectorStore({ stateDir, rootDir, homeDir = process.env.
     const connectors = stored.connectors.filter((item) => record(item) && typeof item.id === 'string');
     if (!connectors.some((item) => item.id === WEB_RESEARCH_ID)) connectors.unshift(builtinWebResearch());
     const state = { version: 2, connectors, google: record(stored.google) ? stored.google : null };
+    // Only a file written before sealing (version 1) holds clear-text secrets;
+    // in a version 2 file a value outside `sealed` is plain on purpose.
     let legacy = false;
-    for (const item of connectors) legacy = migrateLegacy(item) || legacy;
+    if (stored.version !== 2) for (const item of connectors) legacy = migrateLegacy(item) || legacy;
     state.legacy = legacy;
     return state;
   }
