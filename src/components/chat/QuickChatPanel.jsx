@@ -37,6 +37,10 @@ export function QuickChatPanel({ api, member, chatPath, children }) {
     const focusComposer = () => requestAnimationFrame(() => {
       const active = document.activeElement;
       if (active && active !== document.body && panelRef.current?.contains(active) && active.matches("input, textarea, [contenteditable='true']")) return;
+      // Choosing a member re-runs this. Arrow keys in the member carousel keep
+      // focus there (roving focus); a click still lands in the composer
+      // (ADR-0232 addendum).
+      if (active?.closest?.("[data-testid='quick-chat-member-picker']") && active.matches(":focus-visible")) return;
       const composer = panelRef.current?.querySelector("textarea:not([disabled])");
       if (!composer) return;
       composer.focus({ preventScroll: true });

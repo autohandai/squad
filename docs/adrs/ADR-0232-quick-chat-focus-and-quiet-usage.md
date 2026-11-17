@@ -35,3 +35,22 @@ from the conversation.
   focus on open, refocus on `squad:popup-shown`, collapsed-by-default usage
   and its summary) passes. The native ordering change was exercised by the
   installed app, not by an automated native test.
+
+## Addendum (2026-11-18): the member carousel keeps keyboard focus
+
+"Focus is stolen from nothing else" was wrong. The focusing effect depends on
+`member?.id`, so choosing a member re-runs it. Arrow keys in the member
+carousel select the next member and move focus to that portrait (roving
+focus); the effect then moved focus into the composer, so the second arrow
+press did nothing. `check:goals:browser` caught it: after End, the last member
+was selected, but `document.activeElement` was the textarea ("Keyboard
+selection preserves roving focus").
+
+Decision: the effect leaves focus alone when it is on a member-picker control
+that matches `:focus-visible`. Keyboard focus there matches; a mouse click on a
+portrait does not, so clicking a member still puts the caret in the composer,
+as decision 1 intends. Traded away: a keyboard user who picks a member must Tab
+to the composer, which is the usual cost of a roving-focus control. Relies on
+`:focus-visible` heuristics, which WebKit and Chromium apply the same way for
+programmatic focus after a key press. `check:quick-chat:browser` still passes,
+and the goals check passed this step afterwards.
