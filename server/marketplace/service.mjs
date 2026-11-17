@@ -154,7 +154,7 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
     const kept = (Array.isArray(store.imports) ? store.imports : []).filter((item) => members.has(item?.memberId) && !(item.memberId === memberId && item.listingId === entry.listingId && item.grokId === entry.grokId));
     await ctx.writeJsonFile(importsPath(), { version: 1, imports: [...kept, entry].slice(-1000) });
     // A confirmed install is counted by the marketplace, anonymously, with the
-    // attribution id a website link carried (ADR-0248). Updates are not installs.
+    // attribution id a website link carried (ADR-0253). Updates are not installs.
     if (source === "marketplace" && entry.action === "add") {
       void reportInstall({ id: entry.listingId, version: entry.version, via: entry.via, attribution: input.attribution });
     }

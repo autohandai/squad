@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The Marketplace inside Squad (ADR-0246, ADR-0248), in both layouts and three
+// The Marketplace inside Squad (ADR-0246, ADR-0253), in both layouts and three
 // skins, against a real bridge and the local Squad API (workerd, D1, the 350
 // seed agents and 21 teams): the first screen (Featured, Teams, a section per
 // category with View all), a team added whole from a website link with its
@@ -77,7 +77,7 @@ try {
   browser = await startBrowser();
   await seedOwnedBrowserFixture(bridge, browser, { members: [quill] });
   await browser.send("Network.enable");
-  // What the app sends to the bridge's product-telemetry endpoint (ADR-0248).
+  // What the app sends to the bridge's product-telemetry endpoint (ADR-0253).
   // Bodies are read once and kept: a navigation drops the page's request data.
   const seenBodies = new Map();
   const telemetry = async () => {

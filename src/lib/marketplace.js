@@ -40,7 +40,7 @@ export const CATEGORIES = Object.freeze([
 export const CATEGORY_IDS = Object.freeze(CATEGORIES.map((category) => category.id));
 export const CREATOR_KINDS = Object.freeze(["autohand", "user", "team"]);
 export const LISTING_STATUSES = Object.freeze(["published", "unpublished", "hidden", "removed"]);
-// A listing is one agent or a whole team (ADR-0248). Both are team files.
+// A listing is one agent or a whole team (ADR-0253). Both are team files.
 export const LISTING_KINDS = Object.freeze(["agent", "team"]);
 export const TEAM_TEMPLATE_LIMITS = Object.freeze({
   bytes: 768 * 1024,
@@ -71,7 +71,7 @@ export const TEAM_DEEP_LINK_PATH = "/v1/team-template";
 export const APP_ROUTE_PREFIX = "/marketplace/agents/";
 export const TEAM_APP_ROUTE_PREFIX = "/marketplace/teams/";
 // A short-lived random id a website Add click carries into Squad, so the
-// install can be joined to the click (ADR-0248). It names a click, not a person.
+// install can be joined to the click (ADR-0253). It names a click, not a person.
 export const ATTRIBUTION_ID = /^[a-z0-9]{20}$/;
 export const WEB_ORIGINS = Object.freeze(["https://autohand.ai", "https://www.autohand.ai"]);
 export const WEB_PATH_PREFIX = "/squad/marketplace/";
@@ -266,7 +266,7 @@ export function templateSummary(document) {
 
 /**
  * Validate a team template: an ordinary team file with 2-8 members, their
- * skills and up to three channels among them (ADR-0248). No workflows,
+ * skills and up to three channels among them (ADR-0253). No workflows,
  * routines, connectors or presets: a template is people and how they talk,
  * never something that runs or reaches out on import. Starter memory per
  * member is allowed only because the publisher switched it on, member by

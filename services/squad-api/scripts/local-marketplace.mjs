@@ -23,7 +23,7 @@ const args = process.argv.slice(2);
 const port = Number(args.includes("--port") ? args[args.indexOf("--port") + 1] : 8797);
 export const LOCAL_ADMIN_TOKEN = "local-only-marketplace-admin-credential-0000";
 // Website dev servers whose pages may post reports and listing events here;
-// LOCAL_SITE_ORIGINS adds more, comma separated (ADR-0248).
+// LOCAL_SITE_ORIGINS adds more, comma separated (ADR-0253).
 const siteOrigins = ["https://autohand.ai", "https://www.autohand.ai", "http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8788", ...String(process.env.LOCAL_SITE_ORIGINS || "").split(",").filter(Boolean)].join(",");
 
 const identityFixture = `export default { async fetch(request) {

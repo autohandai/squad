@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The Autohand Squad team's marketplace seeds (ADR-0246, ADR-0248), checked
+// The Autohand Squad team's marketplace seeds (ADR-0246, ADR-0253), checked
 // before they can be inserted: shape, uniqueness across every seed, writing
 // rules, the secret scanner and the same validateAgentTemplate the Worker
 // runs on publish. Team seeds are built from agent seeds and checked with

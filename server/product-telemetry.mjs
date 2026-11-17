@@ -38,7 +38,7 @@ export function createProductTelemetry({ config, account = () => null, fetchImpl
     let currentAccount;
     try { currentAccount = account(); } catch { return { accepted: false }; }
     const identity = squadAnalyticsIdentity(currentAccount);
-    // Sign-in starts and the marketplace funnel (ADR-0248) can be counted
+    // Sign-in starts and the marketplace funnel (ADR-0253) can be counted
     // without a stable anonymous machine profile: each event gets a fresh
     // random id and no person profile. The marketplace's attribution id, not
     // the person, is what joins a website click to the install.

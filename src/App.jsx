@@ -5591,7 +5591,7 @@ function App() {
   const [publishMember, setPublishMember] = useState(null);
   // Browsing opens the same dialog over whatever page is showing, so the
   // person keeps their place (ADR-0246, entry points).
-  // Where it was opened from goes to product telemetry (ADR-0248): a string
+  // Where it was opened from goes to product telemetry (ADR-0253): a string
   // from ⌘K or the route, the directory otherwise (menus pass click events).
   const [marketplaceEntry, setMarketplaceEntry] = useState(() => (pendingMarketplaceLink.request ? "link" : "directory"));
   function openMarketplace(entry) {
@@ -5618,7 +5618,7 @@ function App() {
     setMarketplaceOpen(true);
   }, [route]);
   // A team template goes through the same addTeam as Import team: every
-  // member untrusted, the channels created among them (ADR-0248). The
+  // member untrusted, the channels created among them (ADR-0253). The
   // receipt names the lead and every member, and the bridge then counts one
   // install with the attribution id a website link carried.
   async function addFromMarketplace({ document, receipt }) {

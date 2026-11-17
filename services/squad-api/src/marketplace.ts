@@ -35,7 +35,7 @@ const ATTRIBUTION_DAYS = 30;
 const DAY_MS = 86_400_000;
 
 /**
- * The public face of a listing's installs (ADR-0248): nothing under ten,
+ * The public face of a listing's installs (ADR-0253): nothing under ten,
  * then a floor ("10+", "50+", "100+", "500+", "1k+", "5k+"). Exact counts
  * are for admins; a small exact number invites gaming and says little.
  */
@@ -240,7 +240,7 @@ async function template(request: Request, env: Env, url: URL, id: string): Promi
   return ok({ agent: publicListing(row), version, versionCreatedAt: createdAt, contentHash: hash, document });
 }
 
-// --- events (ADR-0248) ----------------------------------------------------------
+// --- events (ADR-0253) ----------------------------------------------------------
 
 export const EVENT_TYPES = ["view", "add_click", "install"] as const;
 export const EVENT_SOURCES = ["website", "website-link", "in-app", "link", "grok"] as const;

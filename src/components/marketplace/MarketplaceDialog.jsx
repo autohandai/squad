@@ -47,7 +47,7 @@ const teamLine = (listing, copy) => (copy.marketplaceTeamOf || "Team · {n} memb
 const subtitle = (listing, copy) => (listing?.kind === "team" ? teamLine(listing, copy) : listing?.role || "");
 
 /**
- * The marketplace (ADR-0246, ADR-0248): Explore opens on a curated first
+ * The marketplace (ADR-0246, ADR-0253): Explore opens on a curated first
  * screen (Featured, Teams, then each category's first agents with View all);
  * a search, a category or Teams turns it into one paged list. From a link
  * opens a marketplace, Squad or Grok Bot link; Published lists the person's

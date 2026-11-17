@@ -128,7 +128,7 @@ const skill = { name: "release-checklist", description: "Checks a release.", tex
   assert.match(pasted.document.members[0].instructions, /by Mere/);
 }
 
-// --- team templates and attribution (ADR-0248) ------------------------------------
+// --- team templates and attribution (ADR-0253) ------------------------------------
 {
   const teammate = (name, bird, skillName) => ({ member: { ...member, key: name.toLowerCase(), name, look: { avatar: `/avatars/birds/${bird}.webp`, employeeType: "" }, skills: [skillName] }, skills: [{ ...skill, name: skillName, text: skill.text.replace("release-checklist", skillName) }] });
   const members = [teammate("Quill", "tui", "release-checklist"), teammate("Rua", "kea", "triage-pass"), teammate("Mere", "kiwi", "notes-pass")];

@@ -1,4 +1,4 @@
--- Team templates, a curated featured order, and install analytics (ADR-0248).
+-- Team templates, a curated featured order, and install analytics (ADR-0253).
 -- A listing is one agent or a whole team, and both are team files. Counters on
 -- the row are what admins read, listing_stats keeps them per day, seen rows
 -- make each count one per network per listing per day, and attributions join a

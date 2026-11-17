@@ -15,7 +15,7 @@ export const TELEMETRY_FEATURES = new Set([
 const actions = new Set(["open", "create", "send", "start", "stop", "pause", "resume", "accept", "decline", "save", "check", "upgrade", "complete"]);
 const surfaces = new Set(["dm", "channel", "goal", "handoff", "automation"]);
 
-// The marketplace funnel (ADR-0248): public listing ids and bounded words
+// The marketplace funnel (ADR-0253): public listing ids and bounded words
 // only. No names, search text, instructions or member content.
 export const MARKETPLACE_EVENTS = new Set(["marketplace_opened", "marketplace_listing_viewed", "marketplace_add_started", "marketplace_add_succeeded", "marketplace_add_failed"]);
 const marketplaceEntries = new Set(["directory", "minified", "command", "route", "link", "member_form"]);

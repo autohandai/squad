@@ -2,7 +2,7 @@
 //
 // The only links Squad answers are
 //   squad://app/v1/agent-template?id=<12 a-z0-9>[&version=<n>][&sha256=<64 hex>][&attribution=<20 a-z0-9>]
-//   squad://app/v1/team-template?…the same parameters (ADR-0248)
+//   squad://app/v1/team-template?…the same parameters (ADR-0253)
 // and they become the app routes `/marketplace/agents/<id>` and
 // `/marketplace/teams/<id>` with the parameters kept, which open the
 // Marketplace dialog on that agent or team. Nothing is added by the

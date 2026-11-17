@@ -77,7 +77,7 @@ const anonymous = createProductTelemetry({ config: { key: "public-test-key", hos
 assert.equal((await anonymous.capture({ event: "sign_in_started" })).accepted, true);
 assert.equal((await anonymous.capture({ event: "member_created" })).accepted, false);
 
-// The marketplace funnel (ADR-0248): bounded properties only, anonymous allowed.
+// The marketplace funnel (ADR-0253): bounded properties only, anonymous allowed.
 assert.deepEqual(sanitizeSquadEvent("marketplace_opened", { entry: "command", query: "secret search" }), { event: "marketplace_opened", properties: { entry: "command" } });
 assert.deepEqual(sanitizeSquadEvent("marketplace_opened", { entry: "/Users/private" }), { event: "marketplace_opened", properties: { entry: "directory" } });
 assert.deepEqual(sanitizeSquadEvent("marketplace_add_succeeded", { listing_id: "abcdefgh1234", listing_kind: "team", version: 2, source: "website-link", attribution_id: "abcdefghij0123456789", action: "add", members: 4, name: "Alder", instructions: "secret" }),

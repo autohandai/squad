@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The marketplace's Autohand Squad team agents and teams (ADR-0246,
-// ADR-0248): marketplace-seeds/agents.json (the first 200), agents-more/*.json
+// ADR-0253): marketplace-seeds/agents.json (the first 200), agents-more/*.json
 // (added per category on 2026-11-17), teams.json (team templates built from
 // those agents) and featured.json (the initial featured order), to rows in
 // the squad-marketplace database.
