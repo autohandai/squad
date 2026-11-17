@@ -22,8 +22,10 @@ export const squadOwnerKey = (owner) => `${owner?.kind}:${owner?.id}`;
 
 /**
  * The Squads this account belongs to (personal first, then teams), read from
- * the ownership broker under the current context. `owners` is empty until it
- * resolves; `error` carries a broker or team-lookup problem as one sentence.
+ * the ownership broker under the current context. While team Squads are off
+ * for the account (`context.teamSquads`), the broker lists only the Personal
+ * Squad. `owners` is empty until it resolves; `error` carries a broker or
+ * team-lookup problem as one sentence.
  */
 export function useSquadOwners(context) {
   const [owners, setOwners] = useState([]);
@@ -36,7 +38,8 @@ export function useSquadOwners(context) {
       (failure) => { if (active) setError(failure.message); }
     );
     return () => { active = false; };
-  }, [context?.generation]);
+    // Team Squads can be turned on or off for the account without a new context (ADR-0239).
+  }, [context?.generation, context?.teamSquads]);
   return { owners, error, setError };
 }
 

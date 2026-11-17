@@ -6,6 +6,11 @@
 // email and offers "Switch Squad…", which opens Settings › Squads, where the
 // switch goes through the broker and reloads into the new owner.
 //
+// Team Squads sit behind squad_team_squads (ADR-0239). With the flag off the
+// account belongs to a team yet sees only the Personal Squad, Settings ›
+// Squads says nothing about teams, and turning the flag on lists the team
+// without a reload or a switch.
+//
 // SQUADS_SHOTS_DIR=<dir> saves screenshots there (default .codex-artifacts/ownership).
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -24,7 +29,7 @@ const personal = { kind: 'user', issuer, id: 'alice' }, team = { kind: 'team', i
 const token = 'fixture-no-provider-credential', fingerprint = createHash('sha256').update(token).digest('hex');
 const seed = async (path, value) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, JSON.stringify(value)); };
 
-async function scenario(name, owners, { teamWritable = true } = {}) {
+async function scenario(name, owners, { teamWritable = true, flagFlip = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), `squad-owner-switcher-${name}-`)), serviceRoot = join(directory, 'squad');
   const configPath = join(directory, 'config.json'), home = join(directory, 'home'), saved = {};
   const env = { HOME: home, AUTOHAND_HOME: join(home, '.autohand'), AUTOHAND_USER_CONFIG_PATH: configPath, NODE_OPTIONS: `--import=${fileURLToPath(new URL('./fixtures/ownership-browser-guard.mjs', import.meta.url))}` };
@@ -42,8 +47,12 @@ async function scenario(name, owners, { teamWritable = true } = {}) {
       await seed(join(teamPaths.dataRoot, 'channels.json'), { version: 1, revision: 1, channels: [], threads: [], messages: [], agentChannelAccess: { tom: { agent: teamMember, mode: 'ask', workspaceModes: {}, removed: false } } });
     }
     const list = owners.map(owner => ({ owner, label: owner.kind === 'team' ? 'Acme' : 'Personal Squad', role: 'owner', canWrite: owner.kind === 'team' ? teamWritable : true }));
-    const identity = { credential: () => ({ token, fingerprint }), verify: async () => ({ actor, fingerprint, expiresAt: Date.now() + 3600_000 }),
-      personal: () => list[0], authorize: async (_actor, selected) => list.find(item => item.owner.id === selected.id) || list[0], owners: async () => list };
+    // The flag answer changes only when the broker asks, as with the real service.
+    const flag = { wanted: !flagFlip, answer: !flagFlip };
+    const teamSquads = { fixed: false, enabled: () => flag.answer, due: () => true, refresh: async () => (flag.answer = flag.wanted) };
+    const visible = () => (flag.answer ? list : list.filter(item => item.owner.kind !== 'team'));
+    const identity = { credential: () => ({ token, fingerprint }), verify: async () => ({ actor, fingerprint, expiresAt: Date.now() + 3600_000 }), teamSquads,
+      personal: () => list[0], authorize: async (_actor, selected) => visible().find(item => item.owner.id === selected.id) || list[0], owners: async () => visible() };
     broker = createOwnershipBroker({ rootDir, serviceRoot, configPath, identity, port: 0 });
     const origin = await broker.listen();
     await until(() => broker.context().state === 'ready', 'owned fixture ready');
@@ -72,6 +81,30 @@ async function scenario(name, owners, { teamWritable = true } = {}) {
       await new Promise(resolve => setTimeout(resolve, 800));   // owners list resolves
     };
     await openApp();
+    if (flagFlip) {
+      const description = () => browser.evaluate(`document.querySelector('h3')?.parentElement?.innerText || ''`);
+      await openAccountMenu();
+      assert.ok(!(await menuItems()).includes('Switch Squad…'), 'flag off: no Switch Squad…');
+      await closeMenu();
+      await browser.navigate(`${origin}/settings/squads`);
+      await until(() => browser.evaluate(`document.querySelectorAll('[data-squad-row]').length === 1`), 'flag off: Settings › Squads lists the Personal Squad alone', 30_000);
+      await new Promise(resolve => setTimeout(resolve, 800));
+      assert.equal(await browser.evaluate(`document.querySelectorAll('[data-squad-row]').length`), 1, 'flag off: the team stays hidden');
+      assert.match(await description(), /Your Personal Squad holds your own members/);
+      assert.equal(await browser.evaluate(`/Teams you belong to|switching opens/i.test(document.body.innerText)`), false, 'flag off: nothing about teams');
+      await shot('flag-off-light');
+      const generation = broker.context().generation;
+      flag.wanted = true;
+      await until(() => browser.evaluate(`document.querySelectorAll('[data-squad-row]').length === 2`), 'flag on: the team appears without a reload', 30_000);
+      assert.equal(broker.context().generation, generation, 'flag on: nobody is switched');
+      assert.equal(broker.context().owner.kind, 'user');
+      assert.match(await description(), /switching opens the one you choose/);
+      await shot('flag-on-light');
+      flag.wanted = false;
+      await until(() => browser.evaluate(`document.querySelectorAll('[data-squad-row]').length === 1`), 'flag off again: the team goes away', 30_000);
+      assert.deepEqual(browser.errors, [], `${name}: no JS errors`);
+      return;
+    }
     if (!teamWritable) {
       // A read-only team page offers the writable Squad as a plain button; the
       // quiet switcher line alone left people stuck there (ADR-0237).
@@ -155,4 +188,5 @@ async function scenario(name, owners, { teamWritable = true } = {}) {
 await scenario('personal-only', [personal]);
 await scenario('with-team', [personal, team]);
 await scenario('read-only-team', [personal, team], { teamWritable: false });
-console.log('Squads: no switcher in the sidebar or under the window controls; personal-only has no Switch Squad… and Settings › Squads lists one current Squad; with a team, the account menu names the current Squad, Switch Squad… opens Settings › Squads, and Switch moves the broker to the team and reloads into it. Isolated broker and fixture identity; installed app and real data untouched.');
+await scenario('team-flag-off', [personal, team], { flagFlip: true });
+console.log('Squads: no switcher in the sidebar or under the window controls; personal-only has no Switch Squad… and Settings › Squads lists one current Squad; with a team, the account menu names the current Squad, Switch Squad… opens Settings › Squads, and Switch moves the broker to the team and reloads into it; with squad_team_squads off the team is hidden and turning it on lists the team live. Isolated broker and fixture identity; installed app and real data untouched.');

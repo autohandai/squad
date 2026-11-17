@@ -18,7 +18,7 @@ export function squadDetail(item) {
 }
 
 /**
- * Settings › Squads (ADR-0234). Lists the Squads this account belongs to,
+ * Settings › Squads (ADR-0234, ADR-0239). Lists the Squads this account belongs to,
  * marks the current one and switches through the same broker flow the old
  * sidebar switcher used: drain, verify, then reload into the new owner.
  */
@@ -27,6 +27,9 @@ export function SquadsSettings() {
   const { owners, error, setError } = useSquadOwners(context);
   const [switching, setSwitching] = useState(null);
   const current = context?.owner ? squadOwnerKey(context.owner) : "";
+  // Team Squads sit behind the squad_team_squads flag (ADR-0239); while it is
+  // off the list is the Personal Squad alone and says nothing about teams.
+  const teamSquads = context?.teamSquads === true;
 
   async function choose(item) {
     setSwitching(item); setError("");
@@ -41,7 +44,9 @@ export function SquadsSettings() {
     <>
       <SettingsSectionHeader
         title="Squads"
-        description="Each Squad has its own members, conversations and data, and switching opens the one you choose."
+        description={teamSquads
+          ? "Each Squad has its own members, conversations and data, and switching opens the one you choose."
+          : "Your Personal Squad holds your own members, conversations and data."}
       />
       {!context?.owner ? (
         <p className="text-sm text-muted-foreground">Your Squads appear here once Squad has verified your account.</p>
@@ -86,7 +91,7 @@ export function SquadsSettings() {
               Finishing background work, then opening {switching.label}.
             </p>
           ) : null}
-          {owners.length === 1 ? (
+          {teamSquads && owners.length === 1 ? (
             <p className="mt-3 text-sm text-muted-foreground">Teams you belong to on Autohand appear here as their own Squads.</p>
           ) : null}
           {error ? <p className="mt-3 text-sm text-destructive" role="alert">{error}</p> : null}

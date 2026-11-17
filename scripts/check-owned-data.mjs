@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createOwnershipBroker } from '../server/ownership/broker.mjs';
 import { createIdentityService, ownerKey } from '../server/ownership/identity.mjs';
+import { createTeamSquadsFlag } from '../server/ownership/team-squads-flag.mjs';
 import { ensureDataset, readDataset, stageDataset, publishDataset } from '../server/ownership/datasets.mjs';
 import { writePersistentJson } from '../server/persistent-json.mjs';
 import { parseBackup } from '../packages/squad-portable/index.mjs';
@@ -61,7 +62,7 @@ try {
   await seed(join(paths.appRoot, 'agents', 'eva', 'profile', 'PERSONALITY.md'), 'Practical, curious and precise.');
   await seed(join(paths.appRoot, 'agents', 'eva', 'skills', 'qa', 'SKILL.md'), 'Verify actual evidence.');
   await seed(join(paths.appRoot, 'agents', 'eva', 'config.json'), { auth: { token: 'must-not-export' }, mcpServers: { private: { token: 'also-excluded' } } });
-  const identity = createIdentityService({ serviceRoot, configPath, origin: issuer });
+  const identity = createIdentityService({ serviceRoot, configPath, origin: issuer, teamSquads: createTeamSquadsFlag({ origin: issuer, serviceRoot, fixed: true }) });
   broker = createOwnershipBroker({ rootDir, serviceRoot, configPath, identity, port: 0 });
   const origin = await broker.listen();
   await writePersistentJson(configPath, { auth: { token: 'fixture-alice' } });

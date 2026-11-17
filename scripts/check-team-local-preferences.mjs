@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOwnershipBroker } from '../server/ownership/broker.mjs';
 import { createIdentityService, ownerKey } from '../server/ownership/identity.mjs';
+import { createTeamSquadsFlag } from '../server/ownership/team-squads-flag.mjs';
 import { ensureDataset } from '../server/ownership/datasets.mjs';
 import { writePersistentJson } from '../server/persistent-json.mjs';
 import { until } from './lib/reliability-browser.mjs';
@@ -35,7 +36,7 @@ try {
   const nativeFixtureKey = 'd'.repeat(64);
   await writeFile(join(serviceRoot, 'native-grant-token'), nativeFixtureKey, {mode:0o600});
   await writePersistentJson(configPath, { auth: { token: 'fixture-alice' } });
-  broker = createOwnershipBroker({ rootDir: process.cwd(), serviceRoot, configPath, identity: createIdentityService({ serviceRoot, configPath, origin: issuer }), port: 0 });
+  broker = createOwnershipBroker({ rootDir: process.cwd(), serviceRoot, configPath, identity: createIdentityService({ serviceRoot, configPath, origin: issuer, teamSquads: createTeamSquadsFlag({ origin: issuer, serviceRoot, fixed: true }) }), port: 0 });
   const origin = await broker.listen();
   let context;
   const request = async (path, method = 'GET', body, extraHeaders = {}) => {

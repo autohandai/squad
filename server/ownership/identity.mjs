@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { readPersistentJson, writePersistentJson } from '../persistent-json.mjs';
+import { createTeamSquadsFlag } from './team-squads-flag.mjs';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 503, code = 'identity_unavailable') => Object.assign(new Error(message), { status, code });
@@ -56,7 +57,7 @@ async function json(response, schema, limit) {
   return parsed.data;
 }
 
-export function createIdentityService({ serviceRoot, configPath, origin = identityOrigin(), fetchImpl = fetch }) {
+export function createIdentityService({ serviceRoot, configPath, origin = identityOrigin(), fetchImpl = fetch, rootDir, teamSquads = createTeamSquadsFlag({ origin, serviceRoot, fetchImpl, ...(rootDir ? { rootDir } : {}) }) }) {
   const cacheFile = join(serviceRoot, 'ownership-identities.json');
   const cacheKey = fingerprint => `${origin}|${fingerprint}`;
   const credential = () => readCredential(configPath);
@@ -97,6 +98,8 @@ export function createIdentityService({ serviceRoot, configPath, origin = identi
   async function owners(verified) {
     const current = credential();
     if (!current || current.fingerprint !== verified.fingerprint) throw fail('The account changed. Reopen Squad before continuing.', 409, 'context_changed');
+    // With team Squads off for this account, only the Personal Squad exists (ADR-0239).
+    if (!teamSquads.enabled(verified.fingerprint)) return [personal(verified)];
     const { accounts } = await request('/v1/accounts', current, accountsSchema, 1024 * 1024);
     return [personal(verified), ...accounts.filter(item => item.account.type === 'team').map(item => ({
       owner: { kind: 'team', issuer: origin, id: item.account.id }, label: item.account.name,
@@ -107,11 +110,12 @@ export function createIdentityService({ serviceRoot, configPath, origin = identi
   async function authorize(verified, owner, write = false) {
     const current = credential();
     if (!current || current.fingerprint !== verified.fingerprint || verified.expiresAt <= Date.now()) throw fail('The account changed or expired. Reopen Squad.', 409, 'context_changed');
+    if (owner.kind === 'team' && !teamSquads.enabled(verified.fingerprint)) throw fail('Team Squads are not available to this account. Your Personal Squad is open.', 403, 'team_squads_off');
     const access = owner.kind === 'user' && owner.id === verified.actor.id && owner.issuer === origin ? personal(verified)
       : (await owners(verified)).find(item => item.owner.kind === owner.kind && item.owner.id === owner.id && item.owner.issuer === owner.issuer);
     if (!access) throw fail('This Squad is not available to the current account.', 404, 'owner_not_found');
     if (write && !access.canWrite) throw fail('This team is read-only. Backup and retrieval remain available.', 403, 'owner_read_only');
     return access;
   }
-  return { credential, verify, owners, personal, authorize, origin };
+  return { credential, verify, owners, personal, authorize, origin, teamSquads };
 }

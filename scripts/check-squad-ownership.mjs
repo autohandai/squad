@@ -7,24 +7,34 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createOwnershipBroker } from '../server/ownership/broker.mjs';
 import { createIdentityService, ownerKey } from '../server/ownership/identity.mjs';
+import { createTeamSquadsFlag } from '../server/ownership/team-squads-flag.mjs';
 import { writePersistentJson } from '../server/persistent-json.mjs';
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const directory = await mkdtemp(join(tmpdir(), 'squad-ownership-'));
 const serviceRoot = join(directory, 'squad'), configPath = join(directory, 'config.json');
 let membership = true, readOnly = false, unavailable = false;
+// squad_team_squads (ADR-0239): on only for listed people, like actor targeting in the API.
+const teamSquadsFor = new Set(['alice']); let flagDown = false; const flagQueries = [];
 const provider = createServer((req, res) => {
   const who = String(req.headers.authorization || '').replace('Bearer fixture-', '');
   res.setHeader('content-type', 'application/json');
+  const url = new URL(req.url, 'http://127.0.0.1'), path = url.pathname;
+  if (path === '/v1/feature-flags/evaluate') {
+    flagQueries.push(Object.fromEntries(url.searchParams));
+    if (flagDown) { res.writeHead(503); res.end('{}'); return; }
+    res.end(JSON.stringify({ success: true, ttlSeconds: 0, flags: [{ key: 'squad_team_squads', enabled: teamSquadsFor.has(who), reason: teamSquadsFor.has(who) ? 'match' : 'actor_mismatch' }] }));
+    return;
+  }
   if (!['alice', 'bob'].includes(who)) { res.writeHead(401); res.end('{}'); return; }
   if (unavailable) { res.writeHead(503); res.end('{}'); return; }
-  const path = new URL(req.url, 'http://127.0.0.1').pathname;
   if (path === '/v1/profile') res.end(JSON.stringify({ success: true, profile: { id: who, email: `${who}@example.test`, name: who, status: 'active' } }));
   else res.end(JSON.stringify({ success: true, accounts: membership ? [{ account: { id: 'real-team', name: 'Real Autohand Team', type: 'team', accessMode: readOnly ? 'read_only' : 'full' }, role: 'contributor', permissions: ['resources:operate'] }] : [] }));
 });
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 const issuer = `http://127.0.0.1:${provider.address().port}`;
-const identity = createIdentityService({ serviceRoot, configPath, origin: issuer });
+const teamFlag = root => createTeamSquadsFlag({ origin: issuer, serviceRoot: root, rootDir, fixed: undefined, minRefreshMs: 100, retryMs: 100 });
+const identity = createIdentityService({ serviceRoot, configPath, origin: issuer, teamSquads: teamFlag(serviceRoot) });
 const broker = createOwnershipBroker({ rootDir, serviceRoot, configPath, identity, port: 0, workerEntry: join(rootDir, 'scripts/fixtures/ownership-worker.mjs'), teamOutageGraceMs: 1500, outageRetryMs: 200 });
 const origin = await broker.listen();
 const context = async () => (await (await fetch(`${origin}/api/ownership/context`)).json()).data;
@@ -72,6 +82,12 @@ try {
   assert.deepEqual(Object.keys(machineRuntime.data).sort(), ['ownership', 'service'], 'unbound readiness exposes no sessions, member homes or account payload');
   const after = await api('/api/members', bob);
   assert.deepEqual(after.value.data.records, []);
+  // Bob is not listed for team Squads: Personal Squad only, and a team cannot be selected.
+  assert.equal(bob.teamSquads, false);
+  assert.deepEqual((await api('/api/ownership/owners', bob)).value.data.owners.map(item => item.owner.kind), ['user']);
+  const refused = await api('/api/ownership/select', bob, 'POST', { owner: { kind: 'team', issuer, id: 'real-team' }, expectedGeneration: bob.generation });
+  assert.equal(refused.response.status, 403); assert.equal(refused.value.code, 'team_squads_off');
+  assert.ok(flagQueries.every(query => query.clientType === 'squad' && ['macos', 'windows', 'linux'].includes(query.platform) && query.cliVersion), 'Squad asks as itself, with platform and version');
   assert.equal((await pending).includes('bob'), false, 'a request admitted for Alice cannot complete with Bob data');
   assert.equal((await fetch(`${origin}/api/team/tools`, { method: 'POST', headers: { 'x-squad-team-token': `turn-${alice.generation}` } })).status, 401, 'old managed MCP tokens cannot reach the new worker');
   const aliceStop = JSON.parse(await readFile(join(alicePaths.dataRoot, 'fixture-stopped.json'), 'utf8'));
@@ -83,6 +99,8 @@ try {
   assert.equal((await stat(join(serviceRoot, 'ownership-identities.json'))).mode & 0o077, 0);
   await login('alice');
   const restored = await waitFor(value => value.state === 'ready' && value.actor.id === 'alice');
+  assert.equal(restored.teamSquads, true);
+  assert.deepEqual((await api('/api/ownership/owners', restored)).value.data.owners.map(item => item.owner.kind), ['user', 'team']);
   assert.equal((await api('/api/members', restored)).value.data.records[0].name, 'Alice private member', 'switching back restores the right owner without copying data');
   const teamOwner = { kind: 'team', issuer, id: 'real-team' };
   assert.equal((await api('/api/ownership/select', restored, 'POST', { owner: teamOwner, expectedGeneration: restored.generation })).response.status, 200);
@@ -112,6 +130,61 @@ try {
   const personal = { kind: 'user', issuer, id: 'alice' };
   assert.equal((await api('/api/ownership/select', blocked, 'POST', { owner: personal, expectedGeneration: blocked.generation })).response.status, 200);
   const resumed = await waitFor(value => value.state === 'ready' && value.owner.kind === 'user');
+  // Team Squads behind squad_team_squads (ADR-0239).
+  membership = true; readOnly = false;
+  assert.equal((await api('/api/ownership/select', resumed, 'POST', { owner: teamOwner, expectedGeneration: resumed.generation })).response.status, 200);
+  const flagged = await waitFor(value => value.state === 'ready' && value.owner.kind === 'team');
+  flagDown = true;
+  const asked = flagQueries.length;
+  while (flagQueries.length < asked + 3) await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal((await context()).generation, flagged.generation, 'an unreachable flag service keeps the last answer for this account');
+  assert.equal((await api('/api/members', flagged)).response.status, 200);
+  flagDown = false; teamSquadsFor.delete('alice');
+  const fellBack = await waitFor(value => value.state === 'ready' && value.owner.kind === 'user' && value.actor.id === 'alice');
+  assert.equal(fellBack.teamSquads, false, 'turning the flag off moves a team Squad to the Personal Squad');
+  assert.deepEqual((await api('/api/ownership/owners', fellBack)).value.data.owners.map(item => item.owner.kind), ['user']);
+  assert.equal((await api('/api/members', flagged)).response.status, 409, 'the team context is fenced once the flag is off');
+  const savedChoice = JSON.parse(await readFile(join(serviceRoot, 'ownership-selections.json'), 'utf8'));
+  assert.equal(Object.values(savedChoice.owners)[0]?.kind, 'team', 'the team choice is kept for when the flag returns');
+  teamSquadsFor.add('alice');
+  const flagBack = await waitFor(value => value.teamSquads === true);
+  assert.equal(flagBack.owner.kind, 'user', 'turning the flag on lists teams without switching anyone');
+  assert.equal(flagBack.generation, fellBack.generation);
+  assert.deepEqual((await api('/api/ownership/owners', flagBack)).value.data.owners.map(item => item.owner.kind), ['user', 'team']);
+  const flagFile = await readFile(join(serviceRoot, 'ownership-flags.json'), 'utf8');
+  assert.equal(flagFile.includes('fixture-alice'), false, 'the saved flag answer holds no token');
+  // A fresh install that cannot reach the flag service has team Squads off, even with a saved team choice.
+  {
+    const freshRoot = join(directory, 'flag-unreachable'), freshConfig = join(freshRoot, 'config.json');
+    await writePersistentJson(freshConfig, { auth: { token: 'fixture-alice' } });
+    const persist = async () => {
+      const isolated = createOwnershipBroker({ rootDir, serviceRoot: freshRoot, configPath: freshConfig, identity: createIdentityService({ serviceRoot: freshRoot, configPath: freshConfig, origin: issuer, teamSquads: teamFlag(freshRoot) }), port: 0, workerEntry: join(rootDir, 'scripts/fixtures/ownership-worker.mjs') });
+      const isolatedOrigin = await isolated.listen();
+      try {
+        for (let i = 0; i < 400; i++) { const value = (await (await fetch(`${isolatedOrigin}/api/ownership/context`)).json()).data; if (value.state === 'ready') return value; await new Promise(done => setTimeout(done, 25)); }
+        throw new Error('isolated broker did not become ready');
+      } finally { await isolated.close(); }
+    };
+    flagDown = true;
+    await writePersistentJson(join(freshRoot, 'ownership-selections.json'), { version: 1, owners: { [Object.keys(savedChoice.owners)[0]]: teamOwner } });
+    let opened = await persist();
+    assert.equal(opened.teamSquads, false); assert.equal(opened.owner.kind, 'user', 'no answer means team Squads are off');
+    flagDown = false;
+    opened = await persist();
+    assert.equal(opened.teamSquads, true); assert.equal(opened.owner.kind, 'team', 'with the flag on, the saved team choice opens');
+    flagDown = true;
+    opened = await persist();
+    assert.equal(opened.teamSquads, true, 'a saved answer survives a restart during a flag-service outage');
+    flagDown = false;
+  }
+  // AUTOHAND_SQUAD_FLAG_TEAM_SQUADS fixes the answer for checks without asking the service.
+  {
+    const before = flagQueries.length;
+    const on = createTeamSquadsFlag({ origin: issuer, serviceRoot: directory, fixed: true }), off = createTeamSquadsFlag({ origin: issuer, serviceRoot: directory, fixed: false });
+    assert.equal(await on.refresh({ token: 'fixture-bob', fingerprint: 'x' }), true); assert.equal(on.enabled('anything'), true);
+    assert.equal(await off.refresh({ token: 'fixture-alice', fingerprint: 'y' }), false); assert.equal(off.enabled('y'), false);
+    assert.equal(flagQueries.length, before);
+  }
   await login(null);
   locked = await waitFor(value => value.state === 'signed_out');
   assert.equal(locked.actor, null); assert.equal((await api('/api/members', resumed)).response.status, 401);
@@ -147,7 +220,7 @@ try {
       }
     } finally { await isolated.close(); }
   }
-  console.log('Ownership broker: verified A → B → A isolation, stale requests/MCP revocation, private ports, manual legacy quarantine, team revocation and read-only access passed.');
+  console.log('Ownership broker: verified A → B → A isolation, stale requests/MCP revocation, private ports, manual legacy quarantine, team revocation, read-only access and squad_team_squads on/off/unreachable passed.');
 } finally {
   await broker.close(); await new Promise(resolve => provider.close(resolve)); await rm(directory, { recursive: true, force: true });
 }

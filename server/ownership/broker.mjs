@@ -51,7 +51,9 @@ async function readUpload(req) {
 export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host = '127.0.0.1', port = 19821, dev = false, hmrPort, identity, workerEntry = join(rootDir, 'server.mjs'), startupTimeoutMs = 45_000, terminationGraceMs = 10_000,ownedCloudBaseUrl,ownedCloudFetch, teamOutageGraceMs = 120_000, outageRetryMs = 15_000 }) {
   if(hmrPort!==undefined)z.number().int().min(1).max(65535).parse(hmrPort);
   serviceRoot = resolve(serviceRoot);
-  identity ||= createIdentityService({ serviceRoot, configPath });
+  identity ||= createIdentityService({ serviceRoot, configPath, rootDir });
+  // An identity without a team Squads gate (check fixtures) leaves team Squads as they were.
+  const teamSquads = identity.teamSquads || { fixed: true, enabled: () => true, due: () => false, refresh: async () => true };
   const receiptFile = join(serviceRoot, 'ownership-active.json');
   const selectionFile = join(serviceRoot, 'ownership-selections.json');
   const brokerId = randomUUID(), controlToken = randomBytes(32).toString('hex');
@@ -74,6 +76,8 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
     const owner = access.owner, held = access;
     try { const fresh = await identity.authorize(verified, owner); teamVerifiedAt = Date.now(); return fresh; }
     catch (failure) {
+      // Team Squads were turned off for this account: reopen, which lands on the Personal Squad.
+      if (failure?.code === 'team_squads_off' && access === held) void schedule(() => activate(identity.credential()));
       if (outage(failure) && access === held && Date.now() - teamVerifiedAt < TEAM_OUTAGE_GRACE_MS) return held;
       throw failure;
     }
@@ -91,7 +95,7 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
     canWrite: phase === 'ready' && access?.canWrite === true, scopeKey: access ? ownerKey(access.owner) : '',
     datasetId: dataset?.datasetId || '',
     storageKey: verified && access && dataset ? `${actorKey(verified.actor)}.${ownerKey(access.owner)}.${dataset.datasetId}` : '',
-    offline: Boolean(verified?.offline), error,canRestartData:phase==='awaiting_restart'&&access?.canWrite===true, pendingOperation:pendingOperation?operationSummary(pendingOperation):null });
+    offline: Boolean(verified?.offline), teamSquads: Boolean(verified && teamSquads.enabled(verified.fingerprint)), error,canRestartData:phase==='awaiting_restart'&&access?.canWrite===true, pendingOperation:pendingOperation?operationSummary(pendingOperation):null });
   const operationSummary=row=>({id:row.id,kind:row.kind,phase:row.phase,revision:row.revision,beforeDatasetId:row.beforeDatasetId,afterDatasetId:row.afterDatasetId,error:row.error,updatedAt:row.updatedAt,...(row.result?{result:row.result}:{})});
 
   async function publishReceipt() {
@@ -275,8 +279,12 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
       const next = await identity.verify(current);
       if (closing || identity.credential()?.fingerprint !== current.fingerprint) return;
       verified = next;
+      await teamSquads.refresh(current);
+      if (closing || identity.credential()?.fingerprint !== current.fingerprint) return;
       const selections = await readPersistentJson(selectionFile, { version: 1, owners: {} });
-      const selected = selections.owners[actorKey(next.actor)] || identity.personal(next).owner;
+      // A saved team choice stays on disk while team Squads are off, so it returns when they are on again.
+      const saved = selections.owners[actorKey(next.actor)];
+      const selected = saved && (saved.kind !== 'team' || teamSquads.enabled(next.fingerprint)) ? saved : identity.personal(next).owner;
       access = await identity.authorize(next, ownerSchema.parse(selected));
       dataset = await ensureDataset(serviceRoot, ownerKey(access.owner));
       if (identity.credential()?.fingerprint !== current.fingerprint) { verified = null; access = null; return; }
@@ -618,7 +626,17 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
         if (fresh.canWrite !== access.canWrite || fresh.role !== access.role) void schedule(() => activate(identity.credential()));
         else { teamCheckedAt = Date.now(); await publishReceipt(); }
       })
-        .catch(failure => { if (captured === generation) void schedule(() => block(failure.message, undefined, outage(failure))); });
+        .catch(failure => { if (captured === generation && failure?.code !== 'team_squads_off') void schedule(() => block(failure.message, undefined, outage(failure))); });
+    }
+    if (verified && ['ready', 'blocked', 'awaiting_restart'].includes(phase) && teamSquads.due()) {
+      const captured = generation, fingerprint = verified.fingerprint, before = teamSquads.enabled(fingerprint);
+      let current = null;
+      try { current = identity.credential(); } catch { /* checkCredential reports an unreadable sign-in. */ }
+      if (current?.fingerprint === fingerprint) void teamSquads.refresh(current).then(async now => {
+        if (captured !== generation || closing || now === before || verified?.fingerprint !== fingerprint) return;
+        if (!now && access?.owner.kind === 'team') void schedule(() => activate(identity.credential()));
+        else await publishReceipt();
+      }).catch(() => {});
     }
     if (phase === 'blocked' && blockedByOutage && Date.now() >= outageRetryAt) {
       outageRetryAt = Date.now() + OUTAGE_RETRY_MS;
