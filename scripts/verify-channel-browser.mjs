@@ -3,11 +3,11 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { startBridge } from "./lib/reliability-browser.mjs";
 
 const rootDir = process.cwd();
-const appPort = Number(process.env.AUTOHAND_VERIFY_APP_PORT || 19836);
 const chromePort = Number(process.env.AUTOHAND_VERIFY_CHROME_PORT || 9236);
-const baseUrl = process.env.AUTOHAND_VERIFY_BASE_URL || `http://127.0.0.1:${appPort}`;
+let baseUrl = process.env.AUTOHAND_VERIFY_BASE_URL;
 const visibleChrome = process.env.AUTOHAND_VERIFY_VISIBLE === "1";
 const keepChrome = process.env.AUTOHAND_VERIFY_KEEP_CHROME === "1";
 const screenshotPath = process.env.AUTOHAND_VERIFY_SCREENSHOT || join(rootDir, ".codex-artifacts", "channels-browser.png");
@@ -92,44 +92,50 @@ async function createCdpClient() {
   return new CdpClient(ws);
 }
 
-function injectedChannelHarness() {
-  const agents = [
-    {
-      id: "aroha_frontend",
-      staffId: "member-001",
-      name: "Aroha",
-      role: "Frontend engineer",
-      status: "online",
-      workspace: "__WORKSPACE__",
-      projects: [{ id: "project-pieshop", name: "pieshop", label: "pieshop", path: "__WORKSPACE__", kind: "project" }],
-      description: "Builds polished static websites and UI flows.",
-      instructions: "Own the implementation plan and front-end build steps.",
-      memory: ["New Zealand small-business sites should feel local, practical, and quick to scan."],
-      skills: [],
-      stats: { activeDays: 1, automations: 0, tasks: 0, projects: 1 },
-      permissions: {},
-      launch: { mode: "prompt", policy: "restricted", model: "", dryRun: false },
-      modelAssignment: { mode: "inherit" },
-    },
-    {
-      id: "tane_copy",
-      staffId: "member-002",
-      name: "Tane",
-      role: "Market copywriter",
-      status: "online",
-      workspace: "__WORKSPACE__",
-      projects: [{ id: "project-pieshop", name: "pieshop", label: "pieshop", path: "__WORKSPACE__", kind: "project" }],
-      description: "Writes concise market positioning and page copy.",
-      instructions: "Own the New Zealand market angle and page narrative.",
-      memory: ["Pie shop copy should mention local ingredients, hot cabinet service, and catering without sounding corporate."],
-      skills: [],
-      stats: { activeDays: 1, automations: 0, tasks: 0, projects: 1 },
-      permissions: {},
-      launch: { mode: "prompt", policy: "restricted", model: "", dryRun: false },
-      modelAssignment: { mode: "inherit" },
-    },
-  ];
+const fixtureAgents = [
+  {
+    id: "aroha_frontend",
+    staffId: "member-001",
+    name: "Aroha",
+    role: "Frontend engineer",
+    status: "online",
+    workspace: workspace,
+    projects: [{ id: "project-pieshop", name: "pieshop", label: "pieshop", path: workspace, kind: "project" }],
+    description: "Builds polished static websites and UI flows.",
+    instructions: "Own the implementation plan and front-end build steps.",
+    memory: ["New Zealand small-business sites should feel local, practical, and quick to scan."],
+    skills: [],
+    stats: { activeDays: 1, automations: 0, tasks: 0, projects: 1 },
+    permissions: {},
+    launch: { mode: "prompt", policy: "restricted", model: "", dryRun: false },
+    modelAssignment: { mode: "inherit" },
+  },
+  {
+    id: "tane_copy",
+    staffId: "member-002",
+    name: "Tane",
+    role: "Market copywriter",
+    status: "online",
+    workspace: workspace,
+    projects: [{ id: "project-pieshop", name: "pieshop", label: "pieshop", path: workspace, kind: "project" }],
+    description: "Writes concise market positioning and page copy.",
+    instructions: "Own the New Zealand market angle and page narrative.",
+    memory: ["Pie shop copy should mention local ingredients, hot cabinet service, and catering without sounding corporate."],
+    skills: [],
+    stats: { activeDays: 1, automations: 0, tasks: 0, projects: 1 },
+    permissions: {},
+    launch: { mode: "prompt", policy: "restricted", model: "", dryRun: false },
+    modelAssignment: { mode: "inherit" },
+  },
+];
 
+function injectedChannelHarness() {
+  const agents = __AGENTS__;
+
+  // Squad reads browser state under the signed-in owner's prefix
+  // (src/lib/owned-storage.js); unprefixed keys are never read.
+  const __ownedKey = key => "__STORAGE_PREFIX__" + encodeURIComponent(key);
+  window.__ownedKey = __ownedKey;
   const preserveStorage = window.localStorage.getItem("autohandChannelVerify.preserve") === "true";
   if (!preserveStorage) {
     const storage = {
@@ -147,7 +153,7 @@ function injectedChannelHarness() {
       "autohandSquad.v1.chatSettings": JSON.stringify({ threadedReplies: true }),
     };
     for (const [key, value] of Object.entries(storage)) {
-      window.localStorage.setItem(key, value);
+      window.localStorage.setItem(__ownedKey(key), value);
     }
   }
 
@@ -155,8 +161,8 @@ function injectedChannelHarness() {
   window.__downloadedMarkdown = null;
   window.__channelState = preserveStorage
     ? {
-        channels: JSON.parse(window.localStorage.getItem("autohandSquad.v1.channels") || "[]"),
-        threads: Object.values(JSON.parse(window.localStorage.getItem("autohandSquad.v1.channelThreads") || "{}")).flat(),
+        channels: JSON.parse(window.localStorage.getItem(__ownedKey("autohandSquad.v1.channels")) || "[]"),
+        threads: Object.values(JSON.parse(window.localStorage.getItem(__ownedKey("autohandSquad.v1.channelThreads")) || "{}")).flat(),
       }
     : { channels: [], threads: [] };
   const originalFetch = window.fetch.bind(window);
@@ -234,7 +240,10 @@ function injectedChannelHarness() {
     if (url.pathname === "/api/channels" && options.method === "POST") {
       const draft = JSON.parse(options.body);
       const now = new Date().toISOString();
-      const channel = { ...draft, createdAt: now, updatedAt: now };
+      // New channels open on goal setup (2cc157e); that flow, team design
+      // included, is check:channel-goals. This check starts after it, on a
+      // channel whose goal is settled, to prove mentions, threads and export.
+      const channel = { ...draft, goalSetup: { status: "ready", objective: "Launch the pie shop site." }, createdAt: now, updatedAt: now };
       window.__channelState.channels.push(channel);
       return jsonResponse(channel);
     }
@@ -251,7 +260,9 @@ function injectedChannelHarness() {
       }
       return jsonResponse(channel);
     }
-    if (url.pathname === "/api/channels") return jsonResponse(window.__channelState);
+    // The roster is the owner's registry carried on the channel snapshot
+    // (OwnershipBootstrap), so the mocked snapshot names the fixture members.
+    if (url.pathname === "/api/channels") return jsonResponse({ ...window.__channelState, agentChannelAccess: Object.fromEntries(agents.map(agent => [agent.id, { agent }])) });
     if (url.pathname === "/api/chat/stream") {
       const body = JSON.parse(String(options.body || "{}"));
       window.__channelRequests.push(body);
@@ -316,18 +327,15 @@ async function main() {
   if (!chrome) throw new Error("Google Chrome or Chromium was not found.");
 
   const profileDir = await mkdtemp(join(tmpdir(), "autohand-channel-verify-"));
-  const serverStateDir = await mkdtemp(join(tmpdir(), "autohand-channel-fixture-state-"));
   const serverOutput = [];
   const chromeOutput = [];
-  const server = process.env.AUTOHAND_VERIFY_BASE_URL
-    ? null
-    : spawn("node", ["server.mjs", "--dev", "--host", "127.0.0.1", "--port", String(appPort)], {
-      cwd: rootDir,
-      env: { ...process.env, AUTOHAND_HOME: join(serverStateDir, "autohand"), AUTOHAND_SQUAD_HOME: join(serverStateDir, "squad"), AUTOHAND_SQUAD_APP_STATE_DIR: join(serverStateDir, "app"), AUTOHAND_USER_CONFIG_PATH: join(serverStateDir, "config.json") },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  server?.stdout.on("data", (chunk) => serverOutput.push(String(chunk)));
-  server?.stderr.on("data", (chunk) => serverOutput.push(String(chunk)));
+  // A signed-in bridge with an owned fixture dataset: since account ownership
+  // a bare bridge with no account stops at the sign-in screen.
+  const bridge = baseUrl ? null : await startBridge({ cwd: rootDir });
+  if (bridge) baseUrl = bridge.origin;
+  const { storageKey } = (await (await fetch(`${baseUrl}/api/ownership/context`)).json()).data || {};
+  if (!storageKey) throw new Error(`${baseUrl} has no owned Squad to verify against (sign in first).`);
+  const storagePrefix = `autohandSquad.owner.v1.${storageKey}.`;
 
   const chromeArgs = [
     "--disable-gpu",
@@ -347,9 +355,6 @@ async function main() {
 
   try {
     await waitFor(async () => {
-      if (server && server.exitCode !== null) {
-        throw new Error(`server exited with ${server.exitCode}: ${serverOutput.join("").slice(-2000)}`);
-      }
       const response = await fetch(`${baseUrl}/api/runtime`).catch(() => null);
       return response?.ok;
     }, { timeoutMs: 15000, label: "local dev server" });
@@ -365,7 +370,7 @@ async function main() {
       mobile: false,
     });
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
-      source: `(${injectedChannelHarness.toString().replaceAll("__WORKSPACE_ROOT__", workspaceRoot).replaceAll("__WORKSPACE__", workspace)})();`,
+      source: `(${injectedChannelHarness.toString().replaceAll("__WORKSPACE_ROOT__", workspaceRoot).replaceAll("__WORKSPACE__", workspace).replaceAll("__STORAGE_PREFIX__", storagePrefix).replaceAll("__AGENTS__", JSON.stringify(fixtureAgents))})();`,
     });
     await cdp.send("Page.navigate", { url: `${baseUrl}/channels` });
 
@@ -411,33 +416,31 @@ async function main() {
         document.querySelector('button[aria-label="Create channel"]').click();
       })()
     `);
-    await waitFor(() => evaluate(cdp, "Boolean(document.querySelector('#channel-name'))"), { label: "create channel dialog" });
+    await waitFor(() => evaluate(cdp, "Boolean(document.querySelector('#channel-name'))"), { label: "create channel page" });
     await evaluate(cdp, `
       (() => {
         const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
         const input = document.querySelector('#channel-name');
         setValue.call(input, ${JSON.stringify(verifyChannelName)});
         input.dispatchEvent(new Event('input', { bubbles: true }));
-        const dialog = input.closest('[role="dialog"]');
+        // Channel creation is a page in the main view (b728b32), not a dialog.
+        const page = input.closest('[data-testid="channel-create-page"]');
         for (const label of ['Aroha', 'Tane']) {
-          const button = Array.from(dialog.querySelectorAll('button')).find((item) => item.textContent.trim() === label || item.textContent.trim() === label.charAt(0) + label);
-          if (!button) throw new Error('Create channel dialog has no member ' + label + '; it lists: ' + Array.from(dialog.querySelectorAll('button')).map((item) => item.textContent.trim()).filter(Boolean).join(' | '));
+          const button = page.querySelector('button[aria-label="Include ' + label + '"]');
+          if (!button) throw new Error('Create channel page has no member ' + label + '; it lists: ' + Array.from(page.querySelectorAll('button[aria-label^="Include "]')).map((item) => item.getAttribute('aria-label')).join(' | '));
           button.click();
         }
       })()
     `);
     await waitFor(() => evaluate(cdp, `
       (() => {
-        const dialog = document.querySelector('[role="dialog"]');
-        return ['Aroha', 'Tane'].every((label) => {
-          const button = Array.from(dialog.querySelectorAll('button')).find((item) => item.textContent.trim() === label || item.textContent.trim() === label.charAt(0) + label);
-          return button?.getAttribute('aria-pressed') === 'true';
-        });
+        const page = document.querySelector('[data-testid="channel-create-page"]');
+        return ['Aroha', 'Tane'].every((label) => page?.querySelector('button[aria-label="Include ' + label + '"]')?.getAttribute('aria-pressed') === 'true');
       })()
     `), { label: "selected channel members" });
     await evaluate(cdp, `
       (() => {
-        document.querySelector('[role="dialog"] button[type="submit"]').click();
+        document.querySelector('[data-testid="channel-create-page"] button[type="submit"]').click();
       })()
     `);
 
@@ -445,13 +448,13 @@ async function main() {
     await waitFor(async () => {
       lastCreateProbe = await evaluate(cdp, `
         (() => {
-          const channels = JSON.parse(localStorage.getItem('autohandSquad.v1.channels') || '[]');
+          const channels = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channels')) || '[]');
           const channel = channels.find((item) => item.name === ${JSON.stringify(verifyChannelName)});
           return {
             ok: Boolean(channel && channel.memberIds.length === 2 && location.pathname.startsWith('/channels/')),
             href: location.href,
             channels,
-            dialog: document.querySelector('[role="dialog"]')?.innerText || '',
+            createPage: document.querySelector('[data-testid="channel-create-page"]')?.innerText || '',
             body: document.body.innerText.slice(0, 1200),
           };
         })()
@@ -461,7 +464,7 @@ async function main() {
       console.error(JSON.stringify({ lastCreateProbe }, null, 2));
       throw error;
     });
-    await waitFor(() => evaluate(cdp, "!document.querySelector('[role=\"dialog\"]')"), { label: "closed create channel dialog" });
+    await waitFor(() => evaluate(cdp, "!document.querySelector('[data-testid=\"channel-create-page\"]')"), { label: "left the create channel page" });
 
     await evaluate(cdp, `
       (() => {
@@ -476,10 +479,10 @@ async function main() {
     let lastTargetedProbe = null;
     const targetedDispatch = await waitFor(() => evaluate(cdp, `
       (() => {
-        const channels = JSON.parse(localStorage.getItem('autohandSquad.v1.channels') || '[]');
+        const channels = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channels')) || '[]');
         const channel = channels.find((item) => item.name === ${JSON.stringify(verifyChannelName)});
-        const threads = JSON.parse(localStorage.getItem('autohandSquad.v1.channelThreads') || '{}');
-        const messages = JSON.parse(localStorage.getItem('autohandSquad.v1.channelMessages') || '{}');
+        const threads = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channelThreads')) || '{}');
+        const messages = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channelMessages')) || '{}');
         const requests = window.__channelRequests || [];
         const channelThreads = channel ? (threads[channel.id] || []) : [];
         const channelMessages = channel ? (messages[channel.id] || []) : [];
@@ -507,7 +510,7 @@ async function main() {
     await waitFor(() => evaluate(cdp, `Boolean(document.querySelector('[id^="auto-mode-"]'))`), { label: "channel settings switch" });
     await evaluate(cdp, `
       (() => {
-        const channels = JSON.parse(localStorage.getItem('autohandSquad.v1.channels') || '[]');
+        const channels = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channels')) || '[]');
         const channel = channels.find((item) => item.name === ${JSON.stringify(verifyChannelName)});
         document.querySelector('#auto-mode-' + channel.id).click();
       })()
@@ -516,7 +519,7 @@ async function main() {
     let lastAutoModeProbe = null;
     await waitFor(() => evaluate(cdp, `
       (() => {
-        const channels = JSON.parse(localStorage.getItem('autohandSquad.v1.channels') || '[]');
+        const channels = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channels')) || '[]');
         const channel = channels.find((item) => item.name === ${JSON.stringify(verifyChannelName)});
         const main = document.querySelector('main')?.innerText || '';
         lastAutoModeProbe = {
@@ -580,10 +583,10 @@ async function main() {
 
     const verification = await waitFor(() => evaluate(cdp, `
       (() => {
-        const channels = JSON.parse(localStorage.getItem('autohandSquad.v1.channels') || '[]');
+        const channels = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channels')) || '[]');
         const channel = channels.find((item) => item.name === ${JSON.stringify(verifyChannelName)});
-        const threads = JSON.parse(localStorage.getItem('autohandSquad.v1.channelThreads') || '{}');
-        const messages = JSON.parse(localStorage.getItem('autohandSquad.v1.channelMessages') || '{}');
+        const threads = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channelThreads')) || '{}');
+        const messages = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channelMessages')) || '{}');
         const requests = window.__channelRequests || [];
         const channelThreads = channel ? (threads[channel.id] || []) : [];
         const channelMessages = channel ? (messages[channel.id] || []) : [];
@@ -653,16 +656,26 @@ async function main() {
       throw new Error("Channel dispatch must keep the bridge's SDK/CLI selection and carry channel context, model assignment and auto-mode settings (ADR-0030).");
     }
 
+    // Threads collapse under a "Thread: N replies" summary (71cc097); the
+    // replies render inside the expanded thread, not inline under the root.
+    await waitFor(() => evaluate(cdp, `
+      (() => {
+        const summaries = [...document.querySelectorAll('main button[aria-label^="Thread: "]')];
+        if (summaries.map(button => button.getAttribute('aria-label')).join('|') !== 'Thread: 1 reply|Thread: 2 replies') return false;
+        for (const button of summaries) if (button.closest('[data-state]')?.getAttribute('data-state') !== 'open') button.click();
+        return true;
+      })()
+    `), { label: 'collapsed thread summaries' });
     const inlineThreadProbe = await waitFor(() => evaluate(cdp, `
       (() => {
         const main = document.querySelector('main')?.innerText || '';
-        const messages = JSON.parse(localStorage.getItem('autohandSquad.v1.channelMessages') || '{}');
+        const messages = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channelMessages')) || '{}');
         const replies = (messages[${JSON.stringify(verification.channel.id)}] || []).filter(message => message.role === 'agent');
-        const visibleReplies = replies.filter(message => document.querySelector('[data-message-id="' + message.id + '"]')?.closest('article')?.classList.contains('ml-6'));
+        const visibleReplies = replies.filter(message => document.querySelector('[data-message-id="' + message.id + '"]')?.closest('[aria-label="Thread replies"]'));
         const avatarCount = document.querySelectorAll('main [data-slot="avatar"]').length;
         return { ok: visibleReplies.length === 3 && main.includes('Aroha and Tane replied') && avatarCount >= 4, replyCount: visibleReplies.length, avatarCount };
       })()
-    `).then(value => value?.ok ? value : null), { label: 'inline threaded replies and participants' });
+    `).then(value => value?.ok ? value : null), { label: 'threaded replies and participants' });
     await evaluate(cdp, `document.querySelector('main button[aria-label="Reply in thread"]').click()`);
     await waitFor(() => evaluate(cdp, `document.querySelector('main')?.textContent.includes('Replying to')`), { label: 'thread follow-up selection' });
     await evaluate(cdp, `(() => { const input = document.querySelector('main textarea'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Unsent thread follow-up'); input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
@@ -708,10 +721,10 @@ async function main() {
 
     await evaluate(cdp, `
       (() => {
-        const channels = JSON.parse(localStorage.getItem('autohandSquad.v1.channels') || '[]');
+        const channels = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channels')) || '[]');
         const channel = channels.find((item) => item.name === ${JSON.stringify(verifyChannelName)});
-        const threads = JSON.parse(localStorage.getItem('autohandSquad.v1.channelThreads') || '{}');
-        const messages = JSON.parse(localStorage.getItem('autohandSquad.v1.channelMessages') || '{}');
+        const threads = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channelThreads')) || '{}');
+        const messages = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.channelMessages')) || '{}');
         const archivedThread = {
           id: 'thread_missing_messages',
           channelId: channel.id,
@@ -726,8 +739,8 @@ async function main() {
         };
         threads[channel.id] = [...(threads[channel.id] || []).filter((item) => item.id !== archivedThread.id), archivedThread];
         messages[channel.id] = (messages[channel.id] || []).filter((item) => item.threadId !== archivedThread.id);
-        localStorage.setItem('autohandSquad.v1.channelThreads', JSON.stringify(threads));
-        localStorage.setItem('autohandSquad.v1.channelMessages', JSON.stringify(messages));
+        localStorage.setItem(__ownedKey('autohandSquad.v1.channelThreads'), JSON.stringify(threads));
+        localStorage.setItem(__ownedKey('autohandSquad.v1.channelMessages'), JSON.stringify(messages));
         localStorage.setItem('autohandChannelVerify.preserve', 'true');
         location.href = '/channels/' + channel.id;
       })()
@@ -780,8 +793,8 @@ async function main() {
     }, null, 2));
     cdp.close();
   } finally {
-    server?.kill("SIGTERM");
-    await rm(serverStateDir, { recursive: true, force: true }).catch(() => {});
+    if (process.exitCode && bridge) serverOutput.push(bridge.logs);
+    await bridge?.close();
     if (!keepChrome) {
       chromeProcess.kill("SIGTERM");
       await rm(profileDir, { recursive: true, force: true }).catch(() => {});
