@@ -68,6 +68,8 @@ list to the section for that version.
 
 ### Fixed
 
+- Opening an Add to Squad link while Squad starts up now opens that agent, instead of losing the link; and a marketplace that can't be reached no longer makes Squad reload over and over.
+
 - A picture chosen for a member in Edit Profile went back to the member's default bird the next time Squad opened. The chosen bird now stays.
 - The start-up and sign-in screens follow your light theme: the light start-up screen no longer shows the dark mark, and sign-in no longer opens dark right after a light start-up screen.
 - A connector that crashes mid-conversation restarts by itself and the member carries on; a sign-in that expires is renewed instead of failing; a server that forgets the session gets a new one.

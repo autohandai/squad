@@ -34,7 +34,12 @@ export function OwnershipBootstrap({ children }) {
       reloading = true;
       // Private module state is never retargeted. New ownership gets a new
       // JavaScript realm, with old drafts retained only in their own namespace.
-      const route = window.location.pathname === '/quick-chat' ? '/quick-chat' : '/squad';
+      // A marketplace link (squad://app/v1/agent-template, ADR-0246) keeps its
+      // route through this reload, so the agent still opens after sign-in or
+      // account verification; every other route returns to the directory.
+      const route = window.location.pathname === '/quick-chat' ? '/quick-chat'
+        : /^\/marketplace\/agents\/[a-z0-9]{12}\/?$/.test(window.location.pathname) ? window.location.pathname + window.location.search
+        : '/squad';
       window.location.replace(route);
     };
     const apply = next => {

@@ -2950,6 +2950,30 @@ function formatBrainCardForPrompt(agent) {
   ].join("\n\n");
 }
 
+// A squad:// link consumed before start-up finishes (see App). Account
+// verification at start-up can reload the page (OwnershipBootstrap replaces
+// the location when the Squad context changes), so the request is kept for
+// this window's session, not just in memory, until the dialog opens on it.
+const PENDING_MARKETPLACE_KEY = "squad.pendingMarketplaceLink";
+const pendingMarketplaceLink = {
+  get request() {
+    try {
+      const saved = JSON.parse(window.sessionStorage.getItem(PENDING_MARKETPLACE_KEY) || "null");
+      // Only a link opened in the last minute: start-up reloads happen within
+      // seconds, and an old request must not reopen on a later reload.
+      if (!saved || typeof saved !== "object" || !(Date.now() - Number(saved.at) < 60_000)) return null;
+      const value = saved.request;
+      return value && typeof value === "object" && value.kind === "marketplace" && /^[a-z0-9]{12}$/.test(value.id) ? value : null;
+    } catch { return null; }
+  },
+  set request(value) {
+    try {
+      if (value) window.sessionStorage.setItem(PENDING_MARKETPLACE_KEY, JSON.stringify({ request: value, at: Date.now() }));
+      else window.sessionStorage.removeItem(PENDING_MARKETPLACE_KEY);
+    } catch { /* session storage off: the link still opens when no reload happens */ }
+  },
+};
+
 const AVATAR_VERSION = 3;
 
 function normalizeAgentCopy(agent) {
@@ -5559,8 +5583,11 @@ function App() {
   // The agent marketplace (ADR-0246). A squad://app/v1/agent-template link
   // arrives as the route /marketplace/agents/<id>: it opens the dialog on that
   // agent and the directory behind it; nothing is added until Add to squad.
-  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
-  const [marketplaceRequest, setMarketplaceRequest] = useState(null);
+  // A link's request survives the reload that account verification can cause
+  // at start-up: the route is consumed on the first load, and the next load
+  // (after "Verifying your Squad…") must still open the agent.
+  const [marketplaceRequest, setMarketplaceRequest] = useState(() => pendingMarketplaceLink.request);
+  const [marketplaceOpen, setMarketplaceOpen] = useState(() => Boolean(pendingMarketplaceLink.request));
   const [publishMember, setPublishMember] = useState(null);
   useEffect(() => {
     const [path, query = ""] = route.split("?");
@@ -5569,6 +5596,7 @@ function App() {
     window.history.replaceState({ squadOwnership: currentOwnership()?.storageKey }, "", SQUAD_DIRECTORY_ROUTE);
     setRoute(SQUAD_DIRECTORY_ROUTE);
     if (!request) return;
+    pendingMarketplaceLink.request = request;
     setMarketplaceRequest(request);
     setMarketplaceOpen(true);
   }, [route]);
@@ -10159,7 +10187,7 @@ function App() {
         open={marketplaceOpen}
         onOpenChange={(open) => {
           setMarketplaceOpen(open);
-          if (!open) setMarketplaceRequest(null);
+          if (!open) { setMarketplaceRequest(null); pendingMarketplaceLink.request = null; }
         }}
         api={api}
         agents={agents}

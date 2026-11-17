@@ -21,6 +21,20 @@ import { memberExportRecord, skillExportRecord } from "../../src/lib/teams.js";
 export const IMPORTS_FILE = "marketplace-imports.json";
 export const CACHE_FILE = "marketplace-cache.json";
 const fail = (message, status = 400, code = "marketplace_error") => Object.assign(new Error(message), { status, code });
+// The browser treats 401/409 with sign_in_required, context_changed or
+// identity_mismatch as "the Autohand account or Squad changed" and reloads the
+// whole app (ownership-client.js). A cloud answer must never reach the browser
+// in that shape: a squad-api without the marketplace (or without a Squad
+// session) answers 401 sign_in_required, and passing it through reloaded the
+// app in a loop while a squad:// link was open. Auth-shaped cloud answers mean
+// "the marketplace is not available here", not "you signed out".
+const ACCOUNT_CODES = new Set(["sign_in_required", "context_changed", "identity_mismatch"]);
+function cloudFailure(error, fallbackMessage) {
+  if (error?.status === 401 || error?.status === 403 || ACCOUNT_CODES.has(error?.code)) {
+    return fail("The marketplace isn't available right now. Squad will retry; nothing was changed.", 503, "marketplace_unavailable");
+  }
+  return fail(error?.message || fallbackMessage, error.status, error.code);
+}
 const GROK_PAGE_BYTES = 1536 * 1024;
 const GROK_PER_MINUTE = 6;
 const GROK_CACHE_MS = 10 * 60_000;
@@ -66,7 +80,7 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
       }
       return { ...data, offline: false, fetchedAt: entry.fetchedAt };
     } catch (error) {
-      if (error?.status && error.status < 500 && error.status !== 429) throw fail(error.message, error.status, error.code);
+      if (error?.status && error.status < 500 && error.status !== 429 && error.status !== 401 && error.status !== 403 && !ACCOUNT_CODES.has(error?.code)) throw cloudFailure(error, offlineMessage);
       const entry = listCache.get(key) || (await persisted()).entries[key];
       if (entry) return { ...entry.data, offline: true, fetchedAt: entry.fetchedAt };
       throw fail(offlineMessage, 503, "marketplace_offline");
@@ -146,7 +160,7 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
     } catch (error) {
       if (error?.status === 404) throw fail("This agent is not in the marketplace any more.", 404, "listing_not_found");
       if (error?.status === 429) throw fail(error.message, 429, "rate_limited");
-      if (error?.status && error.status < 500) throw fail(error.message, error.status, error.code);
+      if (error?.status && error.status < 500) throw cloudFailure(error, "This agent could not be fetched.");
       throw fail("The marketplace could not be reached, so nothing was added. Retry when you are online.", 503, "marketplace_offline");
     }
     const template = validateAgentTemplate(data?.document);
@@ -215,7 +229,7 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
   function identity() {
     let current;
     try { current = ctx.mobileRelayIdentity?.(); } catch { current = null; }
-    if (!current?.token) throw fail("Sign in to Autohand to publish to the marketplace.", 401, "sign_in_required");
+    if (!current?.token) throw fail("Sign in to Autohand to publish to the marketplace.", 403, "marketplace_sign_in");
     return current;
   }
   async function sessionApi() {
@@ -247,7 +261,7 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
   async function publishContext() {
     let api;
     try { api = await sessionApi(); } catch (error) {
-      if (error.code === "sign_in_required") return { signedIn: false, owners: [] };
+      if (error.code === "marketplace_sign_in") return { signedIn: false, owners: [] };
       throw fail(error.message || offlineMessage, error.status || 503, error.code || "marketplace_offline");
     }
     const { owners } = await api.withIdentity("/v1/owners");

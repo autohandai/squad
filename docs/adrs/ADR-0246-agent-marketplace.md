@@ -169,3 +169,35 @@ email as `X-Marketplace-Admin`.
   with Squad closed and open before release.
 - Marketplace dialog and publish copy are English fallbacks, not yet in
   `src/locales.js` for other languages.
+
+## Amendment (2026-11-17): a squad:// link on a real install, and three bugs found
+
+The lane's browser check passed, but a link opened on the owner's installed
+app showed nothing. Traced in a headless browser against the live bridge:
+
+1. **The link never reached the app.** Account verification at start-up can
+   reload the page (`OwnershipBootstrap` `leave()` → `location.replace('/squad')`),
+   and that reload dropped the `/marketplace/agents/<id>` route before the app
+   mounted. The fixture bridge in the check never re-verifies, so it never
+   reloaded. Fix: the reload keeps a marketplace route, and the request is kept
+   in session storage for one minute so a second start-up pass still opens it.
+2. **Keeping the route turned a silent failure into a reload loop** (the page
+   cycled "Verifying your Squad…" about once a second). The deployed
+   squad.autohand.ai has no marketplace routes and answers 401
+   `sign_in_required` ("Sign in to Squad."). The bridge passed that through,
+   and `ownership-client.js` treats 401 + `sign_in_required` as "the Autohand
+   account changed", so it invalidated the Squad and reloaded. Before fix 1
+   the reload had simply dropped the link, which is why nothing showed.
+   Fix: no marketplace reply may carry an account code. The service maps cloud
+   401/403 and account codes to 503 `marketplace_unavailable`; the route
+   rewrites anything 401 or account-coded as a last guard; publishing without
+   an Autohand sign-in is 403 `marketplace_sign_in`.
+   `scripts/check-marketplace-account-codes.mjs` drives the real service and
+   route against a cloud answering 401 `sign_in_required`; it fails on the
+   previous code ("/api/marketplace/agents must not answer 401") and passes now.
+3. A stale DMG volume left mounted by an earlier failed build also registered
+   `squad:`; only `/Applications/Autohand Squad.app` should claim the scheme.
+
+With all three, opening `squad://app/v1/agent-template?id=<id>` on the
+installed app opens the Marketplace dialog within a second and keeps it open;
+until the marketplace is deployed it says the agent is unavailable.

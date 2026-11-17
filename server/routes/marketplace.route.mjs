@@ -28,9 +28,19 @@ const AGENT = /^\/api\/marketplace\/agents\/([a-z0-9]{12})$/;
 const REPORT = /^\/api\/marketplace\/agents\/([a-z0-9]{12})\/report$/;
 let service = null;
 
+// The browser reloads the whole app on 401/409 carrying an account code
+// (ownership-client.js). Nothing the marketplace says is about the Autohand
+// account or the selected Squad, so no marketplace reply may take that shape.
+const ACCOUNT_CODES = new Set(["sign_in_required", "context_changed", "identity_mismatch"]);
 function fail(ctx, res, error) {
-  const status = Number(error?.status) >= 400 && Number(error?.status) <= 599 ? Number(error.status) : 500;
-  ctx.json(res, status, { success: false, error: error?.message || "The marketplace could not finish that.", code: error?.code || "", ...(error?.details ? { details: error.details } : {}) });
+  let status = Number(error?.status) >= 400 && Number(error?.status) <= 599 ? Number(error.status) : 500;
+  let code = error?.code || "";
+  let message = error?.message || "The marketplace could not finish that.";
+  if (status === 401 || ACCOUNT_CODES.has(code)) {
+    status = 503; code = "marketplace_unavailable";
+    message = "The marketplace isn't available right now. Squad will retry; nothing was changed.";
+  }
+  ctx.json(res, status, { success: false, error: message, code, ...(error?.details ? { details: error.details } : {}) });
   return true;
 }
 function ok(ctx, res, data, status = 200) {
