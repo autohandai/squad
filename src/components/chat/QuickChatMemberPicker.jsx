@@ -81,7 +81,7 @@ export function QuickChatMemberPicker({ members = [], activeMemberId, onSelect, 
     // The member's drawn bird, as everywhere else (ADR-0240).
     const face = memberAvatar(member);
     // eslint-disable-next-line react/no-danger
-    if (face.kind === "blob") return <span data-slot="avatar" className="member-face inline-block size-9 shrink-0 overflow-hidden rounded-md bg-muted p-[8%]" dangerouslySetInnerHTML={{ __html: face.svg }} />;
+    if (face.kind === "blob") return <span data-slot="avatar" className="member-face inline-block size-9 shrink-0 overflow-hidden rounded-md bg-muted" dangerouslySetInnerHTML={{ __html: face.svg }} />;
     return <Avatar key={`${member.id}:${member.avatar || "placeholder"}`} className="size-9 rounded-md">
       {member.avatar ? <AvatarImage src={member.avatar} alt="" className="object-cover" /> : null}
       <AvatarFallback className="rounded-md"><CircleUserRound className="size-5" aria-hidden="true" /></AvatarFallback>

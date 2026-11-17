@@ -13842,7 +13842,7 @@ function AgentAvatar({ agent, large = false, className }) {
       <span
         data-slot="avatar"
         data-bird={face.bird}
-        className={cn("member-face inline-block shrink-0 overflow-hidden rounded-full bg-muted p-[8%]", large ? "size-24" : "size-8", className)}
+        className={cn("member-face inline-block shrink-0 overflow-hidden rounded-full bg-muted", large ? "size-24" : "size-8", className)}
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: face.svg || blobSvg({ ...face.blob, title: agent?.name || "" }) }}
       />
@@ -19692,7 +19692,7 @@ function RoleAvatar({ roleId, src, alt, size = "default" }) {
   if (birdFromAvatar(src)) {
     return (
       // eslint-disable-next-line react/no-danger
-      <span data-slot="avatar" className={cn("member-face inline-block shrink-0 overflow-hidden rounded-full bg-muted p-[8%]", sizes[size])} dangerouslySetInnerHTML={{ __html: birdFaceSvg(birdFromAvatar(src), { title: alt || "" }) }} />
+      <span data-slot="avatar" className={cn("member-face inline-block shrink-0 overflow-hidden rounded-full bg-muted", sizes[size])} dangerouslySetInnerHTML={{ __html: birdFaceSvg(birdFromAvatar(src), { title: alt || "" }) }} />
     );
   }
   if (src) {
@@ -19933,7 +19933,7 @@ function AvatarPicker({ value, onChange, options = builtInAvatarOptions }) {
                     onClick={() => onChange(option.src)}
                   >
                     {/* eslint-disable-next-line react/no-danger */}
-                    <span className="size-full overflow-hidden rounded-full bg-muted p-[8%]" dangerouslySetInnerHTML={{ __html: birdFaceSvg(bird) }} />
+                    <span className="member-face size-full overflow-hidden rounded-full bg-muted" dangerouslySetInnerHTML={{ __html: birdFaceSvg(bird) }} />
                     {selected ? (
                       <span className="absolute -bottom-0.5 -right-0.5 grid size-5 place-items-center rounded-full border border-background bg-primary text-primary-foreground">
                         <CheckCircle2 className="size-3" />

@@ -73,3 +73,14 @@ cartoon face, everywhere.
 - The faces are deliberately simple (one shape, two eyes, one or two hints).
   If the owner wants more character per bird, that is drawing work in
   `bird-faces.js`, not a new style.
+
+## Amendment (2026-11-17): the inset is sized from the tile
+
+The face was inset with `p-[8%]`. Percentage padding is measured against the
+*parent's* width, not the tile's, so the inset grew with the container: in the
+member profile sidebar (about 255px wide) it was 20.4px a side on a 40px tile
+and the SVG measured 0×0, an empty grey square (seen in a screenshot of
+Profile › Harness in the installed app). Smaller containers only shrank faces.
+`.member-face` now centres the SVG with grid and sizes it at 84% of the tile.
+The Minified browser check asserts every visible face fills more than 70% of
+its tile; on the previous code it failed at 23%.

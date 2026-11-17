@@ -46,6 +46,8 @@ list to the section for that version.
 
 ### Fixed
 
+- A member's bird no longer shows as an empty grey square in the member profile sidebar, and faces fill their circle everywhere else.
+
 - Squad remembers when each paired phone was last seen across restarts and updates, instead of showing "Not seen since Squad started" while your phone is connected.
 
 - In the Minified layout the chat header is back on the left, as it was before: the member's portrait at the left edge, the status line under the name, and the actions on the right.

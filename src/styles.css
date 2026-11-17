@@ -602,6 +602,18 @@ html[data-skin] [data-slot="avatar"] {
   border-radius: var(--skin-avatar-radius, 0.375rem);
 }
 
+/* A drawn bird face sits inset on its tile (ADR-0240). The inset is sized from
+   the tile itself: percentage padding is measured against the parent's width,
+   which in the wide profile sidebar left the face 0px wide. */
+.member-face {
+  display: inline-grid;
+  place-items: center;
+}
+.member-face > svg {
+  width: 84%;
+  height: 84%;
+}
+
 /* Reasoning effort slider (ADR-0114): the thumb and range slide, the level
    name fades up, the bolt pulses once, the active stop grows. */
 .effort-slider [data-slot="slider"] > span[style] { transition: left 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }

@@ -120,6 +120,11 @@ for (const [skin, theme] of [['default', 'light'], ['default', 'dark'], ['paper'
         return { inset: avatar.left - own.left, underName: Math.abs(meta.left - name.left), below: meta.top - name.top };
       });
       expect(place.inset).toBeLessThan(40);
+      // Every drawn face fills its tile, wherever it sits (ADR-0240): a
+      // percentage padding once collapsed the profile sidebar face to 0px.
+      const faces = await page.locator('.member-face').evaluateAll(tiles => tiles.filter(tile => tile.getBoundingClientRect().width > 0).map(tile => (tile.querySelector('svg')?.getBoundingClientRect().width || 0) / tile.getBoundingClientRect().width));
+      expect(faces.length).toBeGreaterThan(0);
+      for (const ratio of faces) expect(ratio).toBeGreaterThan(0.7);
       expect(place.underName).toBeLessThan(2);
       expect(place.below).toBeGreaterThan(0);
       await expect(header.locator('.chat-header-detail')).toBeHidden();
