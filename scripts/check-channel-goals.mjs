@@ -93,15 +93,19 @@ try {
   if(process.argv.includes('--browser')){
     const agent=memberFixture({id:'goal-guide',name:'Eva',workspace,projects:[{path:workspace}],skills:[],permissions:{},harness:{id:'autohand'}});
     await bridge.api(`/api/members/${agent.id}/channel-access`,'PUT',{agent,profile:''});
-    const storage={agents:[agent],removedAgents:initialAgents.map(member=>member.id),tasks:[],messages:{},channels:[],automations:[],onboarding:{version:1,status:'skipped',lastStep:'skipped'},sidebarCollapsed:false};
+    // Threads are opt-in (ADR-0238); this proof reads the goal work in its thread.
+    const storage={agents:[agent],removedAgents:initialAgents.map(member=>member.id),tasks:[],messages:{},channels:[],automations:[],onboarding:{version:1,status:'skipped',lastStep:'skipped'},sidebarCollapsed:false,chatSettings:{threadedReplies:true}};
+    // Account state is read only under the owner's storage prefix (owned-storage.js).
+    const {storageKey}=(await bridge.api('/api/ownership/context')).data;
+    const records=Object.fromEntries(Object.entries(storage).map(([key,value])=>[`autohandSquad.owner.v1.${storageKey}.${encodeURIComponent('autohandSquad.v1.'+key)}`,JSON.stringify(value)]));
     browser=await startBrowser();
-    await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`if(!localStorage.getItem('goalProof.seeded')){localStorage.clear();for(const[key,value]of Object.entries(${JSON.stringify(storage)}))localStorage.setItem('autohandSquad.v1.'+key,JSON.stringify(value));localStorage.setItem('goalProof.seeded','true');}`});
+    await browser.send('Page.addScriptToEvaluateOnNewDocument',{source:`if(!localStorage.getItem('goalProof.seeded')){localStorage.clear();for(const[key,value]of Object.entries(${JSON.stringify(records)}))localStorage.setItem(key,value);localStorage.setItem('goalProof.seeded','true');}`});
     await browser.navigate(bridge.origin+'/channels');
     await until(()=>browser.evaluate(`!!document.querySelector('button[aria-label="Create channel"]')`),'Create channel control',30000);
     await browser.click('Create channel');
     await until(()=>browser.evaluate(`!!document.querySelector('#channel-name')`),'new channel dialog');
     await browser.fill('#channel-name','mobile-release-proof');
-    await browser.evaluate(`document.querySelector('[role="dialog"] button[type="submit"]').click()`);
+    await browser.evaluate(`document.querySelector('[data-testid="channel-create-page"] button[type="submit"]').click()`);
     const room=await until(async()=>(await bridge.api('/api/channels')).data.channels.find(channel=>channel.name==='mobile-release-proof'),'channel created');
     await until(()=>browser.evaluate(`document.querySelector('[data-testid="channel-goal-setup"]')?.innerText.includes('What’s the goal')`),'new channel asks its goal');
     await browser.fill('textarea[placeholder*="goal"]','Build a mobile app and prepare its first release with UX and QA.');

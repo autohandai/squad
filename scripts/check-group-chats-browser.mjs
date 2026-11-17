@@ -21,7 +21,8 @@ try {
   const members = ['Eva', 'Noah'].map(name => ({ id: 'group-' + name.toLowerCase(), name, role: 'Reviewer', status: 'online', workspace: process.cwd(), projects: [{ path: process.cwd() }], harness: { id: 'codex' }, permissions: {} }));
   await seedOwnedBrowserFixture(bridge, browser, { members });
   await browser.navigate(bridge.origin + '/squad');
-  await until(() => browser.evaluate("document.body.textContent.includes('Eva') && document.body.textContent.includes('Noah')"), 'owned member directory', 30000);
+  // The names can render before the sidebar mounts; wait for the DM plus too.
+  await until(() => browser.evaluate("document.body.textContent.includes('Eva') && document.body.textContent.includes('Noah') && !!document.querySelector('button[aria-label=\"New message\"],button[aria-label=\"Add a member or team\"]')"), 'owned member directory and DM plus', 30000);
   await browser.evaluate("document.querySelector('button[aria-label=\"New message\"],button[aria-label=\"Add a member or team\"]').click()");
   await until(() => browser.evaluate("!!document.querySelector('[data-testid=conversation-composer]')"), 'DM plus opens the inline recipient composer');
   assert.equal(await browser.evaluate("!!document.querySelector('[role=dialog]')"), false);
