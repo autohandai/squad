@@ -63,3 +63,13 @@ including the Brazil and US casts, with no per-bird work.
   faces on one page resolve to the same definition, which browsers handle, at
   the cost of about 1.3 KB of markup per styled face.
 - `ADR-0235`'s "clay for Ember" is withdrawn: no skin chooses a style.
+
+## Follow-up decision (2026-11-17)
+
+Asked whether to pay for generated art now (treg, about $4.21 for 26 birds in
+two styles) or wait, the owner chose to wait for the free gpt-image bridge,
+available again from 23 Nov 07:50 NZDT. Until then 3D and Clay are these
+filters. The generated art will go to its own paths and replace the filters
+for the 3D and Clay styles; the flat files at `/avatars/birds/` stay as they
+are. The Mac has no local image model and about 18 GB free, so local
+generation was not an option.
