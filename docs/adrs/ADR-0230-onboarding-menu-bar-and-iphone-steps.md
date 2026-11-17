@@ -181,3 +181,20 @@ not see his phone in the sidebar's Local menu at all, only Pair iPhone….
 
 Still true: both phones are named "iPhone" because iOS gives apps only the
 model name. The pairing time in both lists is what tells them apart.
+
+## Addendum (2026-11-18): the new-install path is now proven in a browser
+
+The Consequences above left the Start with Chief of Staff → layout → iPhone
+path unproven because `check:onboarding:browser` and `check-fresh-install.mjs`
+were broken on `HEAD`. All three causes were stale checks, not product bugs:
+signed out, the ownership broker answers `/api/runtime` with 401
+`sign_in_required` (ADR-0193), so the check now asserts that refusal and reads
+the signed-in state from the public `/api/harnesses/login?id=autohand`;
+existing-squad and fresh-install state is owner-scoped, so the checks seed and
+read it under the owner prefix (the existing teammate goes through the
+registry, as a real one would); and ordinary folders are valid work folders
+(ADR-0186), so the check asserts a plain folder is accepted at its own root,
+gets no `.git`, and can be removed, with **Add folder** in place of **Add
+repository**. `bun run check:onboarding:browser` then passed all six stages,
+including the fresh-install run through the layout step, **Not now** and the
+rendered `#general` channel.

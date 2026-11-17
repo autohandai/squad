@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
@@ -24,10 +24,14 @@ await mkdir(join(web, 'src'));
 assert.deepEqual(initialAgents, [], 'no demo roster is shipped');
 assert.deepEqual(initialChannels, [], 'no demo channels are shipped');
 let bridge, browser, second;
-const saved = key => browser.evaluate(`(() => { const raw=localStorage.getItem('autohandSquad.v1.' + ${JSON.stringify(key)}); try { return JSON.parse(raw || 'null'); } catch { return raw; } })()`);
+// Account state is read under the owner's storage prefix; appearance is a
+// device preference and stays unprefixed (src/lib/owned-storage.js, ADR-0193).
+const devicePreferences = new Set(['theme', 'skin', 'layout', 'locale']);
+const storageKeyFor = async key => devicePreferences.has(key) ? `autohandSquad.v1.${key}` : `autohandSquad.owner.v1.${(await bridge.api('/api/ownership/context')).data.storageKey}.${encodeURIComponent(`autohandSquad.v1.${key}`)}`;
+const saved = async key => browser.evaluate(`(() => { const raw=localStorage.getItem(${JSON.stringify(await storageKeyFor(key))}); try { return JSON.parse(raw || 'null'); } catch { return raw; } })()`);
 const state = async () => (await bridge.api('/api/channels')).data;
 const startDisabled = () => browser.evaluate(`[...document.querySelectorAll('button')].find(item=>item.textContent==='Start with Chief of Staff')?.disabled`);
-const add = async path => { await until(() => browser.evaluate(`!!document.querySelector('#first-run-repository')`), 'repository input'); await browser.fill('#first-run-repository', path); await browser.click('Add repository'); };
+const add = async path => { await until(() => browser.evaluate(`!!document.querySelector('#first-run-repository')`), 'repository input'); await browser.fill('#first-run-repository', path); await browser.click('Add folder'); };
 const ready = () => until(async () => await startDisabled() === false, 'repository analysis and runtime readiness', 60000);
 const reload = async () => {
   await browser.evaluate('window.oldSetupDocument=true');
@@ -38,7 +42,12 @@ try {
   bridge = await startBridge({ ...(packaged ? { cwd:resolve(packaged), development:false } : {}), prepare: async () => ({ GIT_CEILING_DIRECTORIES: fixtures, ...(process.platform === 'darwin' ? { PATH: '/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin' } : {}) }) });
   assert.equal((await bridge.api('/api/setup')).data.status, 'new');
   assert.equal((await bridge.api('/api/setup/repositories', 'POST', { paths: [] })).status, 400);
-  assert.equal((await bridge.api('/api/setup/repositories', 'POST', { paths: [plain] })).status, 400);
+  // Ordinary folders are work folders too (ADR-0186): accepted at their own
+  // root, and analysis never initializes Git in them.
+  const ordinary = await bridge.api('/api/setup/repositories', 'POST', { paths: [plain] });
+  assert.equal(ordinary.status, 200);
+  assert.deepEqual(ordinary.data.repositories.map(item => item.path), [await realpath(plain)]);
+  assert.deepEqual(await readdir(plain), [], 'analysis does not initialize Git');
   const single = (await bridge.api('/api/setup/repositories', 'POST', { paths: [web, join(web, 'src')] })).data;
   assert.equal(single.repositories.length, 1, 'subfolders of one repo are deduplicated');
   assert.ok(single.recommendations.some(item => item.template.id === 'frontend-developer'));
@@ -48,7 +57,7 @@ try {
   for (const role of ['frontend-developer', 'backend-engineer', 'mobile-developer']) assert.ok(mixed.recommendations.some(item => item.template.id === role), role);
   assert.equal((await state()).channels.length, 0, 'analysis does not create channels');
   assert.deepEqual((await state()).agentChannelAccess, {}, 'analysis does not create members');
-  console.log('PASS actual repository analysis: single, multiple, canonical roots, differing stacks, invalid selection, no implicit creation');
+  console.log('PASS actual repository analysis: single, multiple, canonical roots, differing stacks, ordinary folders without Git, empty selection refused, no implicit creation');
 
   browser = await startBrowser();
   await browser.navigate(bridge.origin + '/');
@@ -66,10 +75,11 @@ try {
   await add(mobile); await ready();
   await reload(); await ready();
   assert.equal((await saved('onboarding')).selectedRepositories.length, 2, 'multiple choices survive reload');
-  await add(plain);
-  await until(() => browser.evaluate(`document.body.textContent.includes('is not a Git repository')`), 'invalid repository feedback');
-  assert.equal(await startDisabled(), true);
+  await add(plain); await ready();
+  assert.equal((await saved('onboarding')).selectedRepositories.length, 3, 'an ordinary folder is a valid choice');
+  assert.deepEqual(await readdir(plain), [], 'choosing a folder does not initialize Git');
   await browser.click('Remove ' + plain); await ready();
+  assert.equal((await saved('onboarding')).selectedRepositories.length, 2, 'removing a folder drops it');
   await browser.screenshot(join(evidence, 'repository-suggestions.png'));
   await browser.send('Emulation.setDeviceMetricsOverride', { width:390, height:844, deviceScaleFactor:1, mobile:true });
   assert.equal(await browser.evaluate(`document.documentElement.scrollWidth <= 391`),true,'setup fits a narrow screen');
@@ -127,13 +137,14 @@ try {
   assert.equal(snapshot.messages.length, 0);
   assert.equal(snapshot.threads.length, 0);
   await browser.screenshot(join(evidence, 'chief-and-general.png'));
-  console.log('PASS browser: required repositories, reload, invalid selection, neutral defaults, failed delivery, concurrent completion, one provisioned Chief and one channel');
+  console.log('PASS browser: required work folders, reload, ordinary folder add and remove, neutral defaults, failed delivery, concurrent completion, one provisioned Chief and one channel');
 
   // A new window with no local storage must hydrate the bridge-owned roster,
   // not synthesize any build-time defaults or re-run setup.
   second = await startBrowser(); await bridge.restart();
   await second.navigate(bridge.origin + '/');
-  await until(() => second.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.agents') || '[]').length===1 && location.pathname==='/squad'`), 'restore into new browser', 30000);
+  const agentsKey = JSON.stringify(await storageKeyFor('agents'));
+  await until(() => second.evaluate(`JSON.parse(localStorage.getItem(${agentsKey}) || '[]').length===1 && location.pathname==='/squad'`), 'restore into new browser', 30000);
   assert.equal((await bridge.api('/api/setup/complete', 'POST', { paths: [] })).data.memberId, completed.memberId, 'receipt retry is independent of stale client inputs');
   await second.close(); second=null;
 
