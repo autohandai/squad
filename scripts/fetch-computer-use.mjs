@@ -12,7 +12,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { COMPUTER_USE_ASSETS, COMPUTER_USE_VERSION } from './stage-computer-use.mjs';
 import { COMPUTER_USE_HOST, verifyComputerUseBranding } from './computer-use-host.mjs';
-import { signMacCode } from './lib/macos-signing.mjs';
+import { releaseSigningIdentity, signMacCode } from './lib/macos-signing.mjs';
 
 export const COMPUTER_USE_SOURCE = Object.freeze({
   commit: 'fc92b70417cdae941ba8b104a6e7b3b5b52a07e2',
@@ -139,7 +139,7 @@ async function buildHost({ root, vendorDir, host, arches, sourceArchive, log }) 
     // The upstream source is built as it is: no patch, no renamed bundle,
     // no Squad icon. What ships is Autohand Computer Use (ADR-0162).
     const app = join(publication, HOST_NAME);
-    const identity = process.env.AUTOHAND_CODESIGN_IDENTITY || process.env.APPLE_SIGNING_IDENTITY || '-';
+    const identity = releaseSigningIdentity(process.env);
     run('/bin/bash', [join(source, 'autohand/scripts/build-macos-host.sh'), '--output', app, '--version', COMPUTER_USE_VERSION], { env: { ...process.env, AUTOHAND_CODESIGN_IDENTITY: identity } });
     const binaries = [];
     for (const arch of arches) {

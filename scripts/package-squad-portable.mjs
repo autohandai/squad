@@ -84,6 +84,10 @@ export async function packageSquadPortable(options = {}) {
       await assertFile(source);
       await copyFile(source, join(bundleRoot, fileName));
     }
+    // Sign-in apps the release staged into the web runtime (ADR-0248). Optional:
+    // a build without them ships Connectors with sign-in "not set up".
+    const connectorClients = join(webRuntimeDir, 'CONNECTOR_CLIENTS.json');
+    if (await stat(connectorClients).then((info) => info.isFile(), () => false)) await copyFile(connectorClients, join(bundleRoot, 'CONNECTOR_CLIENTS.json'));
 
     const distSource = join(webRuntimeDir, 'dist');
     await assertDirectory(distSource);

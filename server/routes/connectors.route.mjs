@@ -109,17 +109,23 @@ export async function testConnector(ctx, id) {
   return { ...connector.lastTest, framing: result.framing, transport: result.transport, connector: await decorate(ctx, connector) };
 }
 
+// The Google client a release build staged, or the environment's (ADR-0248).
+// Only its id ever reaches the page.
+function buildGoogleClientId(ctx) {
+  return ctx.connectorBuildClients ? ctx.connectorBuildClients.google?.clientId || '' : String(process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID || '').trim();
+}
+
 async function decorate(ctx, connector, googleClientReady) {
-  const ready = googleClientReady ?? (Boolean(await Promise.resolve(ctx.connectors.googleClientPublic?.()).catch(() => null)) || Boolean(process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID));
+  const ready = googleClientReady ?? (Boolean(await Promise.resolve(ctx.connectors.googleClientPublic?.()).catch(() => null)) || Boolean(buildGoogleClientId(ctx)));
   const signingIn = ctx.connectorOAuth?.progress(connector.id)?.waiting === true;
   return { ...connector, health: connectorHealth(connector, { googleClientReady: ready, signingIn }) };
 }
 
 async function listAll(ctx) {
   const googleClient = await Promise.resolve(ctx.connectors.googleClientPublic?.()).catch(() => null);
-  const ready = Boolean(googleClient) || Boolean(process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID);
+  const ready = Boolean(googleClient) || Boolean(buildGoogleClientId(ctx));
   const list = await ctx.connectors.list();
-  return { connectors: [squadConnection(ctx), ...await Promise.all(list.map((item) => decorate(ctx, item, ready)))], googleClient: googleClient || (process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID ? { clientId: process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID, provided: 'build' } : null), runtimes: packageRuntimes() };
+  return { connectors: [squadConnection(ctx), ...await Promise.all(list.map((item) => decorate(ctx, item, ready)))], googleClient: googleClient || (buildGoogleClientId(ctx) ? { clientId: buildGoogleClientId(ctx), provided: 'build' } : null), runtimes: packageRuntimes() };
 }
 
 /** Test a newly saved connector and turn it on when it works (or needs only a sign-in). */
@@ -166,7 +172,7 @@ async function catalogue(ctx, url) {
   const cursor = String(url.searchParams.get('cursor') || '');
   const installed = await ctx.connectors.list();
   const runtimes = packageRuntimes();
-  const googleReady = Boolean(await Promise.resolve(ctx.connectors.googleClientPublic?.()).catch(() => null)) || Boolean(process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID);
+  const googleReady = Boolean(await Promise.resolve(ctx.connectors.googleClientPublic?.()).catch(() => null)) || Boolean(buildGoogleClientId(ctx));
   const google = !cursor ? GOOGLE_ENTRIES.filter((entry) => !search || `${entry.title} ${entry.description} google`.toLowerCase().includes(search.toLowerCase())).map((entry) => googleListing(entry, { installed, googleClientReady: googleReady })) : [];
   let page;
   try { page = await ctx.connectorRegistry.browse({ search, cursor, installed, runtimes }); }
@@ -342,7 +348,7 @@ export async function handle(req, res, url, ctx) {
     if (path === '/api/connectors/catalog/entry' && req.method === 'GET') {
       const google = googleEntry(String(url.searchParams.get('catalogId') || ''));
       const installed = await store.list();
-      if (google) { ok(googleListing(google, { installed, googleClientReady: Boolean(await store.googleClientPublic()) || Boolean(process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID) })); return true; }
+      if (google) { ok(googleListing(google, { installed, googleClientReady: Boolean(await store.googleClientPublic()) || Boolean(buildGoogleClientId(ctx)) })); return true; }
       const server = await ctx.connectorRegistry.lookup(String(url.searchParams.get('name') || ''));
       const row = listing(server, { installed, runtimes: packageRuntimes(), featured: FEATURED.find((entry) => entry.registryName === server.name) || null });
       if (!row) throw fail('Squad can\'t install this server: the registry lists no package or address it can run.', 422);

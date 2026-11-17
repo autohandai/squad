@@ -183,6 +183,46 @@ Public macOS releases require a Developer ID signature and Apple notarization. M
 
 The macOS preflight imports the certificate into a temporary keychain and authenticates to Apple before release builds. Each Mac build repeats that preparation, signs nested resource executables before the outer app, uses secure timestamps and the hardened runtime, and submits the actual bundle for notarization. The mounted-DMG smoke must pass strict signature verification, stapler validation and Gatekeeper assessment. Preparation alone does not establish Apple's acceptance. Temporary keychains and private key files are removed after use; credentials never enter logs.
 
+### Nested Autohand Computer Use host
+
+macOS keeps a Computer Use permission against the signer of
+`ai.autohand.computer-use`, so every copy Squad ships must carry the release
+team (ADR-0247, ADR-0248). The desktop job and the macOS legs of the
+runtime-artifacts job both import the Developer ID before building the host,
+and every staging script resolves the identity the same way
+(`AUTOHAND_CODESIGN_IDENTITY`, then `APPLE_SIGNING_IDENTITY`, else ad-hoc).
+The host is signed with the hardened runtime and a secure timestamp and no
+entitlements, as upstream and the CLI's copy are; staging refuses a release
+host without the requested team. The mounted-DMG and portable smoke steps run:
+
+```sh
+node scripts/verify-macos-signature.mjs "<Autohand Squad.app or portable dir>" --team "$APPLE_TEAM_ID"
+```
+
+To check a local or downloaded build by hand, add
+`--against ~/Applications/"Autohand Computer Use.app"` to confirm one macOS
+grant covers both copies. A local ad-hoc build fails unless `--allow-adhoc`.
+A local build gets the release team when built with `APPLE_SIGNING_IDENTITY`
+set (a certificate hash from `security find-identity -v -p codesigning`
+avoids ambiguity when several identical names exist).
+
+### Connector sign-in clients
+
+Squad's own Google connectors and GitHub device sign-in use installed-app
+clients that the build stages as `CONNECTOR_CLIENTS.json` beside `server.mjs`
+(ADR-0248). Values are never committed. Unset values ship Connectors as "not
+set up"; a malformed value fails the build.
+
+| Name | Kind | Value |
+| --- | --- | --- |
+| `AUTOHAND_SQUAD_GOOGLE_CLIENT_ID` | repository variable | Google OAuth client of type Desktop app (`…apps.googleusercontent.com`) |
+| `AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET` | repository secret | That client's secret (not confidential for Desktop apps; kept a secret so logs mask it) |
+| `AUTOHAND_SQUAD_GITHUB_CLIENT_ID` | repository variable | GitHub OAuth App client id, device flow enabled, no secret |
+
+At run time the bridge's own environment wins per provider, for development
+and overrides. `bun run check:connector-build-clients` proves staging, reading,
+the override and that no value reaches the page or the logs.
+
 The Windows job imports the PFX and exports `WINDOWS_CERTIFICATE_THUMBPRINT`; `WINDOWS_SIGN_COMMAND` can select an external signer. These optional Windows credentials do not relax the macOS publication gate.
 
 ## Release Channels

@@ -57,6 +57,62 @@ const desktopReleaseJob = releaseWorkflow.split('\n  desktop:\n')[1].split(/\n  
 if (desktopReleaseJob.indexOf('name: Prepare macOS code signing') > desktopReleaseJob.indexOf('name: Prepare pinned Computer Use component')) throw new Error('Prepare the macOS identity before building/staging the Computer Use host');
 assertIncludes(portablePackager, 'stageComputerUse', 'Portable archive stages the same verified Computer Use component');
 
+// ADR-0248: every macOS copy of the Autohand Computer Use host a release
+// ships (the DMG's and the portable archive's) is signed by the release team,
+// so macOS shares one privacy grant with the CLI's and Desktop's copies.
+execFileSync(process.execPath, [fileURLToPath(new URL('./check-nested-signing.mjs', import.meta.url))], { stdio: 'inherit' });
+const runtimeReleaseJob = releaseWorkflow.split('\n  runtime-artifacts:\n')[1].split(/\n  [\w-]+:\n/)[0];
+const stepOf = (job, name) => job.split(`- name: ${name}\n`)[1]?.split(/\n      - (?:name|uses): /)[0] || '';
+for (const [label, job] of [['runtime-artifacts', runtimeReleaseJob], ['desktop', desktopReleaseJob]]) {
+  const signing = stepOf(job, 'Prepare macOS code signing');
+  assertIncludes(signing, "if: matrix.os == 'darwin'", `${label} imports the Developer ID on macOS legs`);
+  assertIncludes(signing, 'node scripts/prepare-apple-signing.mjs', `${label} imports the identity through the verified preflight`);
+  assertIncludes(signing, 'APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}', `${label} reads the certificate from secrets`);
+  if (job.indexOf('name: Prepare macOS code signing') > job.indexOf('name: Prepare pinned Computer Use component')) throw new Error(`${label} must import the identity before building the Computer Use host`);
+  assertIncludes(stepOf(job, 'Prepare pinned Computer Use component'), 'AUTOHAND_CODESIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" bun run computer-use:fetch', `${label} builds the host with the release identity`);
+  const cleanup = stepOf(job, 'Remove temporary Apple credentials');
+  assertIncludes(cleanup, 'always()', `${label} removes the temporary keychain even after a failure`);
+  assertIncludes(cleanup, 'prepare-apple-signing.mjs --cleanup', `${label} removes the temporary keychain`);
+}
+assertIncludes(stepOf(runtimeReleaseJob, 'Package release assets'), 'AUTOHAND_CODESIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" bun run release:portable', 'The portable archive re-signs its staged host with the release identity');
+assertIncludes(stepOf(desktopReleaseJob, 'Stage runtime and sidecars'), 'AUTOHAND_CODESIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"', 'The desktop runtime re-signs its staged host with the release identity');
+assertIncludes(stepOf(runtimeReleaseJob, 'Smoke test portable application'), 'node scripts/verify-macos-signature.mjs "$bundle_root" --team "$APPLE_TEAM_ID"', 'The portable smoke proves the nested host carries the release team');
+const dmgSmoke = stepOf(desktopReleaseJob, 'Mount and smoke test the macOS app');
+assertIncludes(dmgSmoke, 'node scripts/verify-macos-signature.mjs "$app" --team "$APPLE_TEAM_ID"', 'The DMG smoke proves the nested host carries the release team');
+if (dmgSmoke.indexOf('verify-macos-signature.mjs') > dmgSmoke.indexOf('xcrun stapler validate')) throw new Error('Check the nested host before trusting the stapled outer app');
+const signingLibrary = readFileSync(new URL('./lib/macos-signing.mjs', import.meta.url), 'utf8');
+const hostStager = readFileSync(new URL('./stage-computer-use.mjs', import.meta.url), 'utf8');
+assertIncludes(signingLibrary, "env.APPLE_SIGNING_IDENTITY", 'One resolver honours the identity prepare-apple-signing exports');
+assertIncludes(hostStager, 'signIdentity = releaseSigningIdentity(process.env)', 'The host stager uses the shared identity resolver');
+assertIncludes(hostStager, 'assertReleaseSignature(readMacSignature(hostDestination', 'The host stager refuses a release host without the release team');
+for (const name of ['stage-desktop.mjs', 'fetch-computer-use.mjs']) {
+  const source = readFileSync(new URL(`./${name}`, import.meta.url), 'utf8');
+  assertIncludes(source, 'releaseSigningIdentity(process.env)', `${name} uses the shared identity resolver`);
+  assertNotIncludes(source, "process.env.AUTOHAND_CODESIGN_IDENTITY ||", `${name} does not resolve the identity on its own`);
+}
+
+// ADR-0248: installed-app sign-in clients ship as CONNECTOR_CLIENTS.json.
+// IDs are repository variables, the Google secret a repository secret; no
+// value is ever written into the workflow.
+const CONNECTOR_CLIENT_ENV = [
+  'AUTOHAND_SQUAD_GOOGLE_CLIENT_ID: ${{ vars.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID }}',
+  'AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET: ${{ secrets.AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET }}',
+  'AUTOHAND_SQUAD_GITHUB_CLIENT_ID: ${{ vars.AUTOHAND_SQUAD_GITHUB_CLIENT_ID }}',
+];
+const webPackaging = stepOf(webReleaseJob, 'Package web server bundle');
+const desktopStaging = stepOf(desktopReleaseJob, 'Stage runtime and sidecars');
+for (const line of CONNECTOR_CLIENT_ENV) {
+  assertIncludes(webPackaging, line, 'The web runtime (and the portable archive built from it) receives the sign-in clients');
+  assertIncludes(desktopStaging, line, 'The desktop runtime receives the sign-in clients');
+}
+assertIncludes(webPackaging, 'node scripts/stage-connector-clients.mjs release/web-staging', 'The web runtime stages CONNECTOR_CLIENTS.json');
+if (webPackaging.indexOf('stage-connector-clients.mjs') > webPackaging.indexOf('tar -czf')) throw new Error('Stage the sign-in clients before archiving the web runtime');
+assertIncludes(readFileSync(new URL('./stage-desktop.mjs', import.meta.url), 'utf8'), 'await stageConnectorClients({ runtimeDir', 'Desktop staging writes CONNECTOR_CLIENTS.json');
+assertIncludes(portablePackager, "'CONNECTOR_CLIENTS.json'", 'The portable archive carries the staged sign-in clients');
+for (const [label, workflow] of [['release', releaseWorkflow], ['ci', ciWorkflow], ['nightly', nightlyWorkflow]]) {
+  if (/apps\.googleusercontent\.com|GOCSPX-|\bOv23li[A-Za-z0-9]{14}\b|\bIv1\.[a-f0-9]{16}\b/.test(workflow)) throw new Error(`${label} workflow contains a literal sign-in client value`);
+}
+
 assertEqual(
   resolve({
     GITHUB_EVENT_NAME: 'pull_request',

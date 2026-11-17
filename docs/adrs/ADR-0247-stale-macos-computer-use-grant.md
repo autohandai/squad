@@ -127,6 +127,10 @@ files; neither touches the stored requirement.
   grant" holds only while Squad runs the CLI copy. Signing the bundled host
   with the Developer ID during the release build is left for the release
   lane.
+  *Amended by ADR-0248:* the copy observed here came from a local, ad-hoc
+  build of the whole app. The published DMG's host was already signed by the
+  release team; the macOS portable archive's was not, and is now. ADR-0248
+  adds checks that every release host carries the release team.
 - **Upstream.** `autohand computer status` reports `ready` without checking
   permissions, and `autohand computer install` (Repair) cannot clear a stale
   requirement. The component should, when `check_permissions` is false,

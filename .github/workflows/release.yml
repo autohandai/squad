@@ -201,10 +201,17 @@ jobs:
 
       - name: Package web server bundle
         shell: bash
+        env:
+          # Installed-app sign-in clients (ADR-0248). Public by the providers'
+          # definition; unset values ship Connectors as "not set up".
+          AUTOHAND_SQUAD_GOOGLE_CLIENT_ID: ${{ vars.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID }}
+          AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET: ${{ secrets.AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET }}
+          AUTOHAND_SQUAD_GITHUB_CLIENT_ID: ${{ vars.AUTOHAND_SQUAD_GITHUB_CLIENT_ID }}
         run: |
           mkdir -p release/web/runtime release/web-staging
           web_asset="autohand-squad-web-${{ needs.setup.outputs.version }}.tar.gz"
           cp -R dist server server.mjs package.json bun.lock README.md release/web-staging/
+          node scripts/stage-connector-clients.mjs release/web-staging
           # The bridge imports shared modules from src/lib (workflows, member
           # profiles); the portable and installer packagers require them.
           mkdir -p release/web-staging/src
@@ -295,8 +302,26 @@ jobs:
       - name: Fetch pinned Autohand Code CLI
         run: bun run cli:fetch
 
+      # The macOS portable archive carries the same Autohand Computer Use host
+      # as the DMG. Signed by the release team, a privacy grant given to the
+      # CLI's or Desktop's copy covers it too (ADR-0247, ADR-0248).
+      - name: Prepare macOS code signing
+        if: matrix.os == 'darwin'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: node scripts/prepare-apple-signing.mjs
+
       - name: Prepare pinned Computer Use component
-        run: bun run computer-use:fetch
+        shell: bash
+        run: AUTOHAND_CODESIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" bun run computer-use:fetch
 
       - name: Check Autohand SDK on native target
         run: bun run check:sdk
@@ -352,7 +377,7 @@ jobs:
         run: |
           node scripts/check-memory-library.mjs --release
           bun run release:package
-          bun run release:portable
+          AUTOHAND_CODESIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" bun run release:portable
 
       - name: Smoke test portable application
         shell: bash
@@ -387,7 +412,12 @@ jobs:
           fi
           if [[ "$RELEASE_OS" == "darwin" ]]; then
             test -f "$bundle_root/vendor/computer-use/Autohand Computer Use.app/Contents/MacOS/AutohandComputerUse"
+            node scripts/verify-macos-signature.mjs "$bundle_root" --team "$APPLE_TEAM_ID"
           fi
+
+      - name: Remove temporary Apple credentials
+        if: always() && matrix.os == 'darwin'
+        run: node scripts/prepare-apple-signing.mjs --cleanup
 
       - name: Upload runtime artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -548,6 +578,9 @@ jobs:
         shell: bash
         env:
           AUTOHAND_SQUAD_RELEASE_VERSION: ${{ needs.setup.outputs.version }}
+          AUTOHAND_SQUAD_GOOGLE_CLIENT_ID: ${{ vars.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID }}
+          AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET: ${{ secrets.AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET }}
+          AUTOHAND_SQUAD_GITHUB_CLIENT_ID: ${{ vars.AUTOHAND_SQUAD_GITHUB_CLIENT_ID }}
         run: AUTOHAND_CODESIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" NODE_RUNTIME_PATH="$(node -p 'process.execPath')" bun run desktop:stage
 
       - name: Build desktop bundles
@@ -609,6 +642,9 @@ jobs:
           test -f "$app/Contents/Resources/runtime/server/harness/index.mjs"
           test -f "$app/Contents/Resources/runtime/vendor/autohand-cli/BUILD_INFO.json"
           codesign --verify --deep --strict --verbose=2 "$app"
+          # The nested Autohand Computer Use host must carry the release team,
+          # or macOS treats it as a different app from the CLI's copy (ADR-0248).
+          node scripts/verify-macos-signature.mjs "$app" --team "$APPLE_TEAM_ID"
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=2 "$app"
           "$node_bin" --version

@@ -276,7 +276,9 @@ Open sign-in page and Cancel; the remove confirmation is inline.
 
 - Release builds don't yet pass `AUTOHAND_SQUAD_GOOGLE_CLIENT_*` or
   `AUTOHAND_SQUAD_GITHUB_CLIENT_ID` to the bridge; the desktop shell's
-  environment wiring was out of scope (no native build in this lane).
+  environment wiring was out of scope (no native build in this lane). *Done in
+  ADR-0248:* the release stages them as `CONNECTOR_CLIENTS.json` from
+  repository variables and a secret; the environment still wins.
 - The key-file fallback means a computer without a usable keychain still
   works, at the cost Codync refuses to pay: the key sits beside the user's
   data, protected by file permissions only.

@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative, sep } from 'node:path';
 import { COMPUTER_USE_HOST, verifyComputerUseBranding } from './computer-use-host.mjs';
-import { signMacCode } from './lib/macos-signing.mjs';
+import { assertReleaseSignature, readMacSignature, releaseSigningIdentity, signMacCode } from './lib/macos-signing.mjs';
 
 export const COMPUTER_USE_VERSION = '0.28.2';
 export const COMPUTER_USE_ASSETS = Object.freeze({
@@ -18,7 +18,7 @@ export const COMPUTER_USE_ASSETS = Object.freeze({
 const sha = async (filename) => createHash('sha256').update(await readFile(filename)).digest('hex');
 function run(command, args) { const result = spawnSync(command, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }); if (result.status !== 0) throw new Error(`${command} failed while staging Computer Use: ${result.error?.message || result.stderr?.trim() || result.status}`); return result.stdout; }
 
-export async function stageComputerUse({ rootDir, runtimeDir, platform = process.platform, arch = process.arch, sourceDir = process.env.AUTOHAND_SQUAD_COMPUTER_USE_DIR || join(rootDir, 'vendor', 'computer-use'), hostPath = process.env.AUTOHAND_SQUAD_COMPUTER_USE_HOST, hostSourceCommit = process.env.AUTOHAND_SQUAD_COMPUTER_USE_HOST_COMMIT, signIdentity = process.env.AUTOHAND_CODESIGN_IDENTITY || '-', runCommand = run, assets = COMPUTER_USE_ASSETS }) {
+export async function stageComputerUse({ rootDir, runtimeDir, platform = process.platform, arch = process.arch, sourceDir = process.env.AUTOHAND_SQUAD_COMPUTER_USE_DIR || join(rootDir, 'vendor', 'computer-use'), hostPath = process.env.AUTOHAND_SQUAD_COMPUTER_USE_HOST, hostSourceCommit = process.env.AUTOHAND_SQUAD_COMPUTER_USE_HOST_COMMIT, signIdentity = releaseSigningIdentity(process.env), runCommand = run, assets = COMPUTER_USE_ASSETS }) {
   const asset = assets[`${platform}/${arch}`];
   if (!asset) throw new Error(`Computer Use has no artifact for ${platform}/${arch}.`);
   const archive = resolve(sourceDir, asset.name);
@@ -73,6 +73,10 @@ export async function stageComputerUse({ rootDir, runtimeDir, platform = process
       // Re-sign only the staged copy, then record its final bytes below.
       signMacCode(join(hostDestination, 'Contents', 'MacOS', COMPUTER_USE_HOST.executable), { identity: signIdentity, runCommand });
       signMacCode(hostDestination, { identity: signIdentity, runCommand });
+      // macOS keeps a privacy grant against the signer, not the bundle id
+      // (ADR-0247). A release host must carry the release team so the grant a
+      // person gave the CLI's or Desktop's copy also covers this one (ADR-0248).
+      assertReleaseSignature(readMacSignature(hostDestination, runCommand === run ? {} : { runCommand }), signIdentity, 'The bundled Autohand Computer Use host');
       host = { bundleId: identifier, sourceCommit, branding: provenance.branding, path: `${COMPUTER_USE_HOST.bundleName}/Contents/MacOS/${COMPUTER_USE_HOST.executable}`, sha256: await sha(join(hostDestination, 'Contents', 'MacOS', COMPUTER_USE_HOST.executable)) };
     }
     const files = [];

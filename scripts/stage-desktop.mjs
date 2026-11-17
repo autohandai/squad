@@ -17,10 +17,11 @@ import { join, resolve } from 'node:path';
 import process from 'node:process';
 import { stageAppInfo } from './stage-app-info.mjs';
 import { stageProductTelemetry } from './stage-product-telemetry.mjs';
+import { stageConnectorClients } from './stage-connector-clients.mjs';
 import { stageComputerUse } from './stage-computer-use.mjs';
 import { stageClaudeSdk } from './stage-claude-sdk.mjs';
 import { stageRuntimeSources } from './lib/stage-runtime-sources.mjs';
-import { signMacCode } from './lib/macos-signing.mjs';
+import { releaseSigningIdentity, signMacCode } from './lib/macos-signing.mjs';
 import { cargoReleaseDirectory } from './lib/cargo-output.mjs';
 
 const rootDir = process.cwd();
@@ -112,7 +113,7 @@ async function stageRuntime() {
   await copyFile(cliSource, join(cliDestination, cliName));
   if (!isWindows) await chmod(join(cliDestination, cliName), 0o755);
   if (process.platform === 'darwin') {
-    const identity = process.env.AUTOHAND_CODESIGN_IDENTITY || process.env.APPLE_SIGNING_IDENTITY || '-';
+    const identity = releaseSigningIdentity(process.env);
     signMacCode(join(cliDestination, cliName), { identity, entitlements: join(tauriDir, 'entitlements.plist') });
     const signedDigest = createHash('sha256').update(await readFile(join(cliDestination, cliName))).digest('hex');
     info.upstreamSha256 = { ...info.sha256 };
@@ -128,6 +129,7 @@ async function stageRuntime() {
   await stageComputerUse({ rootDir, runtimeDir, hostPath: process.env.AUTOHAND_SQUAD_COMPUTER_USE_HOST || join(rootDir, 'vendor', 'computer-use', 'Autohand Computer Use.app') });
   await stageAppInfo({ rootDir, runtimeDir, nodeVersion: selectedNodeVersion });
   await stageProductTelemetry({ rootDir, runtimeDir });
+  await stageConnectorClients({ runtimeDir, envFile: join(rootDir, '.env') });
   console.log(`Staged runtime for ${triple} (CLI ${info.version}).`);
 }
 

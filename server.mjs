@@ -26,6 +26,7 @@ import { createComputerUse, preferredComputerClient } from "./server/computer-us
 import { createConnectorStore } from "./server/connectors/store.mjs";
 import { createRegistry } from "./server/connectors/registry.mjs";
 import { createConnectorOAuth, deviceAppsFromEnv, GOOGLE_ENDPOINTS } from "./server/connectors/oauth.mjs";
+import { describeConnectorBuildClients, deviceAppEnv, readConnectorBuildClients } from "./server/connectors/build-clients.mjs";
 import { createConnectorRuntime } from "./server/connectors/runtime.mjs";
 import { FEATURED as FEATURED_CONNECTORS } from "./server/connectors/catalog.mjs";
 import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
@@ -571,13 +572,18 @@ const firecrawlBaseUrl = String(process.env.FIRECRAWL_API_URL || "").trim();
 const connectorLog = (message) => logEvent(SEVERITY.INFO, message, { "event.name": "connectors" });
 const connectorRegistry = createRegistry({ registryUrl: process.env.AUTOHAND_SQUAD_MCP_REGISTRY_URL || undefined, stateDir: squadStateDir, rootDir, featured: FEATURED_CONNECTORS, log: connectorLog });
 const googleOAuthBase = String(process.env.AUTOHAND_SQUAD_GOOGLE_OAUTH_BASE || "").trim();
+// Sign-in apps a release build staged in CONNECTOR_CLIENTS.json, or the
+// environment's when it names them (ADR-0248). Kept out of process.env so
+// member engines never inherit them.
+const connectorBuildClients = readConnectorBuildClients(rootDir);
+connectorLog(`Connector sign-in apps: ${describeConnectorBuildClients(connectorBuildClients)}.`);
 const connectorOAuth = createConnectorOAuth({
   store: connectors,
   callbackUrl: () => new URL("/api/connectors/oauth/callback", privateOwnerContext.publicUrl).toString(),
   // A Google OAuth client saved in Settings wins over one a release build provides.
-  googleClient: async () => (await connectors.googleClient()) || (process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID ? { clientId: process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID, clientSecret: process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET || "" } : null),
+  googleClient: async () => (await connectors.googleClient()) || (connectorBuildClients.google ? { ...connectorBuildClients.google } : null),
   googleEndpoints: googleOAuthBase ? Object.fromEntries(Object.entries(GOOGLE_ENDPOINTS).map(([key, value]) => [key, `${googleOAuthBase.replace(/\/+$/, "")}${new URL(value).pathname}`])) : GOOGLE_ENDPOINTS,
-  deviceApps: deviceAppsFromEnv(),
+  deviceApps: deviceAppsFromEnv(deviceAppEnv(connectorBuildClients)),
   emit: (event) => emitBridgeEvent("connectors.changed", event),
   log: connectorLog,
 });
@@ -8811,6 +8817,7 @@ function routeContext() {
     connectors,
     connectorRegistry,
     connectorOAuth,
+    connectorBuildClients,
     connectorRuntime,
     log: connectorLog,
     firecrawlBaseUrl,

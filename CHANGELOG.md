@@ -68,6 +68,8 @@ list to the section for that version.
 
 ### Fixed
 
+- **Downloaded builds can sign in to Gmail, Google Drive, Google Calendar and GitHub with Squad's own sign-in apps.** Releases now carry them, so once Autohand has set them up these connectors no longer say sign-in is "not set up". A Google client you saved in Settings still wins.
+- **One macOS permission for Autohand Computer Use, whichever copy runs.** The copy inside the macOS download archive (.tar.gz) was signed differently from the one Autohand Code installs, so macOS treated them as two apps and the permission you gave one did not count for the other. Every copy Squad releases is now signed by Autohand, like the CLI's and Autohand Desktop's, and each release checks it before publishing.
 - Opening an Add to Squad link while Squad starts up now opens that agent, instead of losing the link; and a marketplace that can't be reached no longer makes Squad reload over and over.
 - **Computer Use said "Not allowed" while System Settings showed Autohand Computer Use switched on.** macOS had kept the permission for an older build of Autohand Computer Use and ignored it for the one installed now. The Permissions page now says so when it can tell, and **Reset macOS permission** clears that old permission and asks macOS again, so you allow it once for the current app. It no longer says you have already granted it when you have not.
 
