@@ -376,7 +376,7 @@ The footer rows, the submenu headings, Account, Services and Help have no
 image. Images belong only to rows about the squad and its headroom.
 Decorating actions with icons would compete with the comb.
 
-### 3.6 Status item and the attention dot (built, ADR-0248)
+### 3.6 Status item and the attention dot (built, ADR-0249)
 
 The menu-bar icon is the template `tray-template.png`. While anything needs
 you (exactly the items the needs-you row shows), the shell draws the same
@@ -451,7 +451,7 @@ are 5 member rows, and `All members (12) ▸` lists the rest.
 
 **Words carry everything.** VoiceOver reads the row's title (AXTitle) and,
 after a pause, its help (AXHelp). A menu item's image description is never
-exposed (measured, ADR-0248), so the drawings are silent. Every row has to
+exposed (measured, ADR-0249), so the drawings are silent. Every row has to
 make sense with no image at all:
 
 - `Squad · 2 working, 3 ready`, not a bare count.
@@ -462,7 +462,7 @@ make sense with no image at all:
 The images repeat what the words say, so nobody misses anything if they are
 hidden.
 
-**What VoiceOver reads (built, ADR-0248).**
+**What VoiceOver reads (built, ADR-0249).**
 
 - Row titles are read as sentences: ` · ` becomes a comma ("Noah, Working on
   checkout tests"), so no punctuation name is spoken at any verbosity.
@@ -519,7 +519,7 @@ reason for using a cut-out instead of a painted ring.
   (VO-Space, AXPress) opens this menu, because the tray crate gives the
   status item its menu and only intercepts mouse events. Quick chat is the
   menu's own row (⌘⇧K). The spec first assumed AXPress opened Quick Chat and
-  asked for `accessibilityPerformShowMenu`; that was not needed (ADR-0248).
+  asked for `accessibilityPerformShowMenu`; that was not needed (ADR-0249).
   Control-click and right-click open the menu too.
 
 **Motion.** None. Menus do not animate, and the pulsing "working" dot from

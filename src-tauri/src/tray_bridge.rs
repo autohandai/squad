@@ -65,7 +65,7 @@ fn get(
 /// The new needs-you list. A read that failed keeps what the last read saw
 /// of its kind: one slow answer from the bridge would otherwise take the row
 /// and the attention dot away for five seconds and bring them back, a blink
-/// with nothing behind it (ADR-0248). A read that succeeds, even empty, wins.
+/// with nothing behind it (ADR-0249). A read that succeeds, even empty, wins.
 fn merge_needs(
     previous: &[NeedsYouItem],
     questions: Option<Vec<NeedsYouItem>>,

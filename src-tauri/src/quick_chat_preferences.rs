@@ -17,7 +17,7 @@ pub(crate) struct Preferences {
     pub quick_chat_show_usage: bool,
     pub quick_chat_appearance: String,
     /// A dot on the Squad menu-bar icon (and a VoiceOver announcement) while
-    /// a question or approval waits. On by default (ADR-0248).
+    /// a question or approval waits. On by default (ADR-0249).
     pub menu_bar_attention_dot: bool,
 }
 impl Default for Preferences {
@@ -342,7 +342,7 @@ fn toggle_member_quick_chat(app: &AppHandle, shell: &Arc<Shell>, member_id: &str
     }
 }
 
-/// VoiceOver's press on a member's status item (ADR-0248): the same as a
+/// VoiceOver's press on a member's status item (ADR-0249): the same as a
 /// click, for a member whose icon this account still shows.
 #[cfg(target_os = "macos")]
 pub(crate) fn open_member_quick_chat(app: &AppHandle, shell: &Arc<Shell>, member_id: &str) {

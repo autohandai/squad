@@ -120,7 +120,7 @@ looked full.
   colour; the paused bars are 0.5 pt wide and read mainly as "not solid".
 - Not done here: the attention variant of the status-item template (spec
   §3.6, marked optional), and `accessibilityPerformShowMenu` on the status
-  button (spec §5). Both were taken up by ADR-0248, which built the dot and
+  button (spec §5). Both were taken up by ADR-0249, which built the dot and
   found the second unnecessary: VoiceOver's press already opens this menu.
 - The live menu was not opened (it takes over the pointer). Verified by:
   `cargo test` in `src-tauri` (46 passed) and `cargo test --lib` in `daemon`

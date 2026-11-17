@@ -432,7 +432,7 @@ fn needs_you_canvas() -> Canvas {
 }
 
 // ---------------------------------------------------------------------------
-// The attention dot on a status item (ADR-0248)
+// The attention dot on a status item (ADR-0249)
 // ---------------------------------------------------------------------------
 
 /// The Squad status item's template: a hexagon of cells, 72 px for 18 pt.
@@ -815,7 +815,7 @@ mod preview {
         }
         save(&dir, "needs-you", &needs_you_mark());
 
-        // The status item with and without the attention dot (ADR-0248), as
+        // The status item with and without the attention dot (ADR-0249), as
         // macOS draws a template: alpha only, in the bar's foreground. Light,
         // dark and a tinted bar, plus a portrait with the orange dot.
         let plain = squad_status_icon(false).unwrap();

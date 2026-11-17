@@ -1,4 +1,4 @@
-# ADR-0248: the menu bar speaks to VoiceOver, and a dot says something needs you
+# ADR-0249: the menu bar speaks to VoiceOver, and a dot says something needs you
 
 Status: accepted. Finishes the two items ADR-0236 left undone (VoiceOver on
 the status item, spec §5; the attention variant of the status icon, spec

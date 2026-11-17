@@ -1,4 +1,4 @@
-//! VoiceOver for the menu bar (ADR-0248): what each menu row, the Squad
+//! VoiceOver for the menu bar (ADR-0249): what each menu row, the Squad
 //! status item and each member's status item say to assistive technology,
 //! the announcement when something starts needing the person, and the
 //! press action that lets VoiceOver open a member's Quick Chat.

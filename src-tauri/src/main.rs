@@ -88,7 +88,7 @@ struct Shell {
     reset: Mutex<system_reset::ResetGuard>,
     /// A `squad://` link that arrived before the bridge was ready (ADR-0246).
     pending_link_route: Mutex<Option<String>>,
-    /// What the menu bar last showed and announced about needs-you (ADR-0248).
+    /// What the menu bar last showed and announced about needs-you (ADR-0249).
     attention: Mutex<Attention>,
 }
 
@@ -820,7 +820,7 @@ fn tray_menu(
     let refs: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(|item| item.as_ref()).collect();
     let native = Menu::with_items(app, &refs)?;
 
-    // Attention (ADR-0248): the dot and the announcement follow exactly the
+    // Attention (ADR-0249): the dot and the announcement follow exactly the
     // items the needs-you row shows, and only while the setting is on.
     let signal = preferences.menu_bar_attention_dot && menu::attention_count(&inputs) > 0;
     let announcement = {

@@ -55,7 +55,7 @@ try {
   await until(() => browser.evaluate(`document.querySelector('#quick-chat-enabled')?.getAttribute('data-state')==='unchecked'`), 'disabled preference survives reload');
   await clickReady('#quick-chat-enabled');
   await until(async () => (await bridge.api('/api/system/settings')).data.quickChatEnabled, 'Quick Chat re-enabled');
-  // ADR-0248: the attention dot is on by default and is its own switch.
+  // ADR-0249: the attention dot is on by default and is its own switch.
   await until(() => browser.evaluate(`document.querySelector('#menu-bar-attention-dot')?.getAttribute('data-state')==='checked'`), 'attention dot on by default');
   await clickReady('#menu-bar-attention-dot');
   await until(async () => (await bridge.api('/api/system/settings')).data.menuBarAttentionDot === false, 'attention dot switched off and persisted');

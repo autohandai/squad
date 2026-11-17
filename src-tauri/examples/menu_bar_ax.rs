@@ -1,4 +1,4 @@
-//! Accessibility check for the menu bar (ADR-0248), without the app.
+//! Accessibility check for the menu bar (ADR-0249), without the app.
 //!
 //! Runs the shell's own `menu_bar_access` module in a bare accessory process:
 //! plans the typical menu with the real planner, builds it as native items,

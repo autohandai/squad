@@ -1,4 +1,4 @@
-// Read-only accessibility check of Squad's menu bar (ADR-0248).
+// Read-only accessibility check of Squad's menu bar (ADR-0249).
 //
 //   swift scripts/menu-bar-ax-check.swift <pid> [--press <member label>] [--listen <seconds>]
 //

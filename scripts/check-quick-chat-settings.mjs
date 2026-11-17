@@ -9,7 +9,7 @@ try {
   assert.equal((await readSystemSettings(dir)).quickChatEnabled, true);
   assert.equal((await readSystemSettings(dir)).quickChatAppearance, 'glass');
   assert.equal((await readSystemSettings(dir)).quickChatMenuBarMode, 'single');
-  assert.equal((await readSystemSettings(dir)).menuBarAttentionDot, true, 'the attention dot is on by default (ADR-0248)');
+  assert.equal((await readSystemSettings(dir)).menuBarAttentionDot, true, 'the attention dot is on by default (ADR-0249)');
   await writeFile(join(dir, 'settings.json'), JSON.stringify({ autoDownloadUpdates: true, retained: 'keep' }));
   await Promise.all([writeSystemSettings(dir, { quickChatEnabled: false }), writeSystemSettings(dir, { quickChatMenuBarMode: 'active-agents', quickChatShowUsage: false, quickChatAppearance: 'solid' })]);
   const saved = await readSystemSettings(dir);
