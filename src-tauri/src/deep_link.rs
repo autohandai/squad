@@ -1,14 +1,17 @@
 // `squad://` links (ADR-0246).
 //
-// The only link Squad answers is
-//   squad://app/v1/agent-template?id=<12 a-z0-9>[&version=<n>][&sha256=<64 hex>]
-// and it becomes the app route `/marketplace/agents/<id>[?version=…][&sha256=…]`,
-// which opens the Marketplace dialog on that agent. Nothing is added by the
+// The only links Squad answers are
+//   squad://app/v1/agent-template?id=<12 a-z0-9>[&version=<n>][&sha256=<64 hex>][&attribution=<20 a-z0-9>]
+//   squad://app/v1/team-template?…the same parameters (ADR-0248)
+// and they become the app routes `/marketplace/agents/<id>` and
+// `/marketplace/teams/<id>` with the parameters kept, which open the
+// Marketplace dialog on that agent or team. Nothing is added by the
 // link itself. Parsing is exact and std-only so it can be checked with
 // `rustc --test src-tauri/src/deep_link.rs`; the web app parses the route
 // again with the same rules (src/lib/marketplace.js).
 
-const PREFIX: &str = "squad://app/v1/agent-template?";
+const AGENT_PREFIX: &str = "squad://app/v1/agent-template?";
+const TEAM_PREFIX: &str = "squad://app/v1/team-template?";
 const MAX_LINK: usize = 512;
 
 fn is_id(value: &str) -> bool {
@@ -17,6 +20,10 @@ fn is_id(value: &str) -> bool {
 
 fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_attribution(value: &str) -> bool {
+    value.len() == 20 && value.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
 }
 
 fn is_version(value: &str) -> bool {
@@ -29,21 +36,25 @@ pub fn route_for_link(link: &str) -> Option<String> {
     if link.len() > MAX_LINK || link.contains('#') {
         return None;
     }
-    let query = link.strip_prefix(PREFIX)?;
-    let (mut id, mut version, mut sha256) = (None, None, None);
+    let (kind, query) = match link.strip_prefix(AGENT_PREFIX) {
+        Some(query) => ("agents", query),
+        None => ("teams", link.strip_prefix(TEAM_PREFIX)?),
+    };
+    let (mut id, mut version, mut sha256, mut attribution) = (None, None, None, None);
     for pair in query.split('&') {
         let (key, value) = pair.split_once('=')?;
         let slot = match key {
             "id" if is_id(value) => &mut id,
             "version" if is_version(value) => &mut version,
             "sha256" if is_sha256(value) => &mut sha256,
+            "attribution" if is_attribution(value) => &mut attribution,
             _ => return None,
         };
         if slot.replace(value).is_some() {
             return None;
         }
     }
-    let mut route = format!("/marketplace/agents/{}", id?);
+    let mut route = format!("/marketplace/{}/{}", kind, id?);
     let mut separator = '?';
     if let Some(version) = version {
         route.push(separator);
@@ -55,6 +66,12 @@ pub fn route_for_link(link: &str) -> Option<String> {
         route.push(separator);
         route.push_str("sha256=");
         route.push_str(sha256);
+        separator = '&';
+    }
+    if let Some(attribution) = attribution {
+        route.push(separator);
+        route.push_str("attribution=");
+        route.push_str(attribution);
     }
     Some(route)
 }
@@ -73,7 +90,7 @@ where
 /// with the route appended. `None` when the bridge URL already carries a path
 /// or query, which a route must not overwrite.
 pub fn cold_start_url(bridge: &str, route: &str) -> Option<String> {
-    if bridge.contains('?') || bridge.contains('#') || !route.starts_with("/marketplace/agents/") {
+    if bridge.contains('?') || bridge.contains('#') || !(route.starts_with("/marketplace/agents/") || route.starts_with("/marketplace/teams/")) {
         return None;
     }
     let (scheme, rest) = bridge.split_once("://")?;
@@ -100,6 +117,29 @@ mod tests {
             route_for_link(&format!("squad://app/v1/agent-template?sha256={hash}&id=abcdefgh1234")).as_deref(),
             Some(format!("/marketplace/agents/abcdefgh1234?sha256={hash}").as_str())
         );
+    }
+
+    #[test]
+    fn accepts_team_links_and_attribution() {
+        assert_eq!(route_for_link("squad://app/v1/team-template?id=abcdefgh1234").as_deref(), Some("/marketplace/teams/abcdefgh1234"));
+        let hash = "b".repeat(64);
+        assert_eq!(
+            route_for_link(&format!("squad://app/v1/team-template?id=abcdefgh1234&version=2&sha256={hash}&attribution=abcdefghij0123456789")).as_deref(),
+            Some(format!("/marketplace/teams/abcdefgh1234?version=2&sha256={hash}&attribution=abcdefghij0123456789").as_str())
+        );
+        assert_eq!(
+            route_for_link("squad://app/v1/agent-template?attribution=abcdefghij0123456789&id=abcdefgh1234").as_deref(),
+            Some("/marketplace/agents/abcdefgh1234?attribution=abcdefghij0123456789")
+        );
+        for link in [
+            "squad://app/v1/team-template?id=abcdefgh1234&attribution=short",
+            "squad://app/v1/team-template?id=abcdefgh1234&attribution=ABCDEFGHIJ0123456789",
+            "squad://app/v1/team-template?id=abcdefgh1234&attribution=abcdefghij0123456789&attribution=abcdefghij0123456789",
+            "squad://app/v1/teams-template?id=abcdefgh1234",
+        ] {
+            assert_eq!(route_for_link(link), None, "{link}");
+        }
+        assert_eq!(cold_start_url("http://127.0.0.1:52145", "/marketplace/teams/abcdefgh1234").as_deref(), Some("http://127.0.0.1:52145/marketplace/teams/abcdefgh1234"));
     }
 
     #[test]

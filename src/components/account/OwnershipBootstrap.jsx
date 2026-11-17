@@ -38,7 +38,7 @@ export function OwnershipBootstrap({ children }) {
       // route through this reload, so the agent still opens after sign-in or
       // account verification; every other route returns to the directory.
       const route = window.location.pathname === '/quick-chat' ? '/quick-chat'
-        : /^\/marketplace\/agents\/[a-z0-9]{12}\/?$/.test(window.location.pathname) ? window.location.pathname + window.location.search
+        : /^\/marketplace\/(agents|teams)\/[a-z0-9]{12}\/?$/.test(window.location.pathname) ? window.location.pathname + window.location.search
         : '/squad';
       window.location.replace(route);
     };

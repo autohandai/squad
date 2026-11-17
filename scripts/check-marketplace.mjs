@@ -6,7 +6,7 @@
 
 import assert from "node:assert/strict";
 import {
-  APP_ROUTE_PREFIX, CATEGORIES, appRouteForRequest, buildDeepLink, canonicalJson, contentHash, grokTemplate, memberTemplateFindings, parseDeepLink,
+  APP_ROUTE_PREFIX, ATTRIBUTION_ID, CATEGORIES, TEAM_APP_ROUTE_PREFIX, listingSummary, newAttributionId, teamTemplateFindings, teamTemplateFromMembers, validateTeamTemplate, appRouteForRequest, buildDeepLink, canonicalJson, contentHash, grokTemplate, memberTemplateFindings, parseDeepLink,
   parseGrokBotPage, parseMarketplaceLink, requestFromAppRoute, seedListingId, templateFromMember, validateAgentTemplate, validateListingInput,
 } from "../src/lib/marketplace.js";
 import { validateTeamFile } from "../src/lib/teams.js";
@@ -80,9 +80,9 @@ const skill = { name: "release-checklist", description: "Checks a release.", tex
   const hash = "a".repeat(64);
   const link = buildDeepLink({ id: "abcdefgh1234", version: 3, sha256: hash });
   assert.equal(link, `squad://app/v1/agent-template?id=abcdefgh1234&version=3&sha256=${hash}`);
-  assert.deepEqual(parseDeepLink(link), { kind: "marketplace", id: "abcdefgh1234", version: 3, sha256: hash });
+  assert.deepEqual(parseDeepLink(link), { kind: "marketplace", listing: "agent", id: "abcdefgh1234", version: 3, sha256: hash });
   assert.equal(appRouteForRequest(parseDeepLink(link)), `${APP_ROUTE_PREFIX}abcdefgh1234?version=3&sha256=${hash}`);
-  assert.deepEqual(requestFromAppRoute("/marketplace/agents/abcdefgh1234", `?version=3&sha256=${hash}`), { kind: "marketplace", id: "abcdefgh1234", version: 3, sha256: hash });
+  assert.deepEqual(requestFromAppRoute("/marketplace/agents/abcdefgh1234", `?version=3&sha256=${hash}`), { kind: "marketplace", listing: "agent", id: "abcdefgh1234", version: 3, sha256: hash });
   for (const bad of [
     "squad://app/v1/agent-template?id=ABCDEFGH1234", "squad://app/v1/agent-template?id=abc", "squad://evil/v1/agent-template?id=abcdefgh1234",
     "squad://app/v1/agent-template/../x?id=abcdefgh1234", "squad://app/v2/agent-template?id=abcdefgh1234", "https://app/v1/agent-template?id=abcdefgh1234",
@@ -92,8 +92,8 @@ const skill = { name: "release-checklist", description: "Checks a release.", tex
   ]) assert.equal(parseDeepLink(bad), null, `refuses ${String(bad).slice(0, 80)}`);
   assert.equal(requestFromAppRoute("/marketplace/agents/abcdefgh1234", "?next=/settings"), null);
 
-  assert.deepEqual(parseMarketplaceLink("abcdefgh1234"), { kind: "marketplace", id: "abcdefgh1234" });
-  assert.deepEqual(parseMarketplaceLink("https://autohand.ai/squad/marketplace/abcdefgh1234/?utm_source=x"), { kind: "marketplace", id: "abcdefgh1234" });
+  assert.deepEqual(parseMarketplaceLink("abcdefgh1234"), { kind: "marketplace", listing: "agent", id: "abcdefgh1234" });
+  assert.deepEqual(parseMarketplaceLink("https://autohand.ai/squad/marketplace/abcdefgh1234/?utm_source=x"), { kind: "marketplace", listing: "agent", id: "abcdefgh1234" });
   assert.deepEqual(parseMarketplaceLink("https://x.ai/bot/pXNvc_U2cGyZmheYrUuF_"), { kind: "grok", id: "pXNvc_U2cGyZmheYrUuF_", url: "https://x.ai/bot/pXNvc_U2cGyZmheYrUuF_" });
   assert.deepEqual(parseMarketplaceLink("grokbot://app/v1/bot-template?id=pXNvc_U2cGyZmheYrUuF_"), { kind: "grok", id: "pXNvc_U2cGyZmheYrUuF_", url: "https://x.ai/bot/pXNvc_U2cGyZmheYrUuF_" });
   for (const bad of ["https://evil.example/squad/marketplace/abcdefgh1234", "http://x.ai/bot/pXNvc_U2cGyZmheYrUuF_", "https://x.ai/legal/terms", "https://x.ai.evil.example/bot/pXNvc_U2cGyZmheYrUuF_", "javascript:alert(1)", "file:///etc/passwd", "https://autohand.ai/pricing/"]) {
@@ -128,4 +128,51 @@ const skill = { name: "release-checklist", description: "Checks a release.", tex
   assert.match(pasted.document.members[0].instructions, /by Mere/);
 }
 
-console.log("check-marketplace: templates, listings, links and Grok pages OK");
+// --- team templates and attribution (ADR-0248) ------------------------------------
+{
+  const teammate = (name, bird, skillName) => ({ member: { ...member, key: name.toLowerCase(), name, look: { avatar: `/avatars/birds/${bird}.webp`, employeeType: "" }, skills: [skillName] }, skills: [{ ...skill, name: skillName, text: skill.text.replace("release-checklist", skillName) }] });
+  const members = [teammate("Quill", "tui", "release-checklist"), teammate("Rua", "kea", "triage-pass"), teammate("Mere", "kiwi", "notes-pass")];
+  const document = teamTemplateFromMembers({ name: "Release desk", tagline: "Three people for a release.", lead: "Rua", members, channels: [{ name: "release" }] });
+  const result = validateTeamTemplate(document);
+  assert.ok(result.ok, result.error);
+  assert.equal(result.document.team.lead, "Rua");
+  assert.equal(result.document.members.length, 3);
+  assert.deepEqual(result.document.channels.map((channel) => [channel.name, channel.members.length]), [["release", 3]]);
+  assert.ok(validateTeamFile(result.document).ok, "a team template is a team file Import team reads");
+  assert.equal(validateAgentTemplate(result.document).ok, false, "an agent-only reader refuses a team");
+  const summary = listingSummary("team", result.document);
+  assert.equal(summary.role, "Team of 3"); assert.equal(summary.bird, "kea", "the lead's face leads"); assert.deepEqual(summary.members.map((item) => item.lead), [false, true, false]);
+  const refuse = (value, pattern) => { const outcome = validateTeamTemplate(value); assert.equal(outcome.ok, false, String(pattern)); assert.match(outcome.error, pattern); return outcome; };
+  refuse({ ...result.document, members: result.document.members.slice(0, 1) }, /2 to 8 members/);
+  refuse({ ...result.document, members: Array.from({ length: 9 }, (_, index) => ({ ...result.document.members[0], key: `m${index}`, name: `M${index}` })) }, /2 to 8 members/);
+  refuse({ ...result.document, routines: [{ title: "Nightly", member: "Rua" }] }, /no place for routines/);
+  refuse({ ...result.document, connectors: [{ name: "x", kind: "url", url: "https://example.test" }] }, /no place for connectors/);
+  refuse({ ...result.document, workflows: [{ name: "w", channel: "release", steps: [] }] }, /no place for workflows/);
+  refuse({ ...result.document, channels: Array.from({ length: 4 }, (_, index) => ({ name: `c${index}`, members: [] })) }, /at most 3 channels/);
+  refuse({ ...result.document, skills: [...result.document.skills, { ...skill, name: "orphan-skill" }] }, /no member uses it/);
+  refuse({ ...result.document, members: [...result.document.members.slice(0, 2), { ...result.document.members[2], name: "Quill" }] }, /share a name/);
+  refuse({ ...result.document, members: [result.document.members[0], { ...result.document.members[1], look: { avatar: "/uploads/me.png" } }, result.document.members[2]] }, /Squad birds/);
+  const leaky = refuse({ ...result.document, members: [result.document.members[0], { ...result.document.members[1], notes: "password: hunter2-very-secret" }, result.document.members[2]] }, /members\[1\]\.notes/);
+  assert.equal(leaky.code, "template_secrets");
+  assert.deepEqual(teamTemplateFindings({ members: [members[0], { ...members[1], notes: "api_key=abcd1234efgh5678" }] }).map((finding) => finding.path), ["members[1].notes"]);
+  // Starter memory travels only where it was put.
+  assert.equal(validateTeamTemplate(teamTemplateFromMembers({ name: "T", members: [{ ...members[0], notes: "Prefers short notes." }, members[1]] })).document.members[0].notes, "Prefers short notes.");
+
+  const attribution = newAttributionId();
+  assert.match(attribution, ATTRIBUTION_ID); assert.notEqual(attribution, newAttributionId());
+  const hash = "c".repeat(64);
+  const teamLink = buildDeepLink({ id: "abcdefgh1234", version: 2, sha256: hash, attribution, listing: "team" });
+  assert.equal(teamLink, `squad://app/v1/team-template?id=abcdefgh1234&version=2&sha256=${hash}&attribution=${attribution}`);
+  const parsed = parseDeepLink(teamLink);
+  assert.deepEqual(parsed, { kind: "marketplace", listing: "team", id: "abcdefgh1234", version: 2, sha256: hash, attribution });
+  assert.equal(appRouteForRequest(parsed), `${TEAM_APP_ROUTE_PREFIX}abcdefgh1234?version=2&sha256=${hash}&attribution=${attribution}`);
+  assert.deepEqual(requestFromAppRoute("/marketplace/teams/abcdefgh1234", `?attribution=${attribution}`), { kind: "marketplace", listing: "team", id: "abcdefgh1234", attribution });
+  assert.equal(parseDeepLink(`squad://app/v1/agent-template?id=abcdefgh1234&attribution=${attribution}`).attribution, attribution);
+  for (const bad of ["squad://app/v1/team-template?id=abcdefgh1234&attribution=short", `squad://app/v1/team-template?id=abcdefgh1234&attribution=${attribution.toUpperCase()}`, "squad://app/v1/teams-template?id=abcdefgh1234", `squad://app/v1/team-template?id=abcdefgh1234&attribution=${attribution}&attribution=${attribution}`]) {
+    assert.equal(parseDeepLink(bad), null, bad);
+  }
+  assert.equal(buildDeepLink({ id: "abcdefgh1234", attribution: "not-valid" }), "squad://app/v1/agent-template?id=abcdefgh1234", "a bad attribution is left out, never passed on");
+  assert.deepEqual(parseMarketplaceLink("https://autohand.ai/squad/marketplace/teams/abcdefgh1234/"), { kind: "marketplace", listing: "team", id: "abcdefgh1234" });
+}
+
+console.log("check-marketplace: templates, team templates, listings, links, attribution and Grok pages OK");

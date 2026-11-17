@@ -40,6 +40,16 @@ export const CATEGORIES = Object.freeze([
 export const CATEGORY_IDS = Object.freeze(CATEGORIES.map((category) => category.id));
 export const CREATOR_KINDS = Object.freeze(["autohand", "user", "team"]);
 export const LISTING_STATUSES = Object.freeze(["published", "unpublished", "hidden", "removed"]);
+// A listing is one agent or a whole team (ADR-0248). Both are team files.
+export const LISTING_KINDS = Object.freeze(["agent", "team"]);
+export const TEAM_TEMPLATE_LIMITS = Object.freeze({
+  bytes: 768 * 1024,
+  minMembers: 2,
+  members: 8,
+  skills: 40,
+  skillsPerMember: 10,
+  channels: 3,
+});
 export const REPORT_REASONS = Object.freeze([
   { id: "spam", label: "Spam or misleading" },
   { id: "harmful", label: "Harmful or unsafe instructions" },
@@ -57,7 +67,12 @@ export const BIRD_AVATAR = /^\/avatars\/birds\/([a-z]{2,24})\.webp$/;
 export const DEEP_LINK_SCHEME = "squad:";
 export const DEEP_LINK_HOST = "app";
 export const DEEP_LINK_PATH = "/v1/agent-template";
+export const TEAM_DEEP_LINK_PATH = "/v1/team-template";
 export const APP_ROUTE_PREFIX = "/marketplace/agents/";
+export const TEAM_APP_ROUTE_PREFIX = "/marketplace/teams/";
+// A short-lived random id a website Add click carries into Squad, so the
+// install can be joined to the click (ADR-0248). It names a click, not a person.
+export const ATTRIBUTION_ID = /^[a-z0-9]{20}$/;
 export const WEB_ORIGINS = Object.freeze(["https://autohand.ai", "https://www.autohand.ai"]);
 export const WEB_PATH_PREFIX = "/squad/marketplace/";
 export const GROK_ORIGIN = "https://x.ai";
@@ -116,6 +131,11 @@ export async function seedListingId(slug) {
 
 export function randomListingId() {
   return idFromBytes(globalThis.crypto.getRandomValues(new Uint8Array(12)));
+}
+
+/** A fresh attribution id for one Add click: 20 characters a-z0-9. */
+export function newAttributionId() {
+  return Array.from(globalThis.crypto.getRandomValues(new Uint8Array(20)), (byte) => ID_ALPHABET[byte % ID_ALPHABET.length]).join("");
 }
 
 export function categoryLabel(id) {
@@ -245,6 +265,132 @@ export function templateSummary(document) {
 }
 
 /**
+ * Validate a team template: an ordinary team file with 2-8 members, their
+ * skills and up to three channels among them (ADR-0248). No workflows,
+ * routines, connectors or presets: a template is people and how they talk,
+ * never something that runs or reaches out on import. Starter memory per
+ * member is allowed only because the publisher switched it on, member by
+ * member, and saw the text. Returns the same shape as validateAgentTemplate.
+ */
+export function validateTeamTemplate(input) {
+  let source = input;
+  if (typeof input === "string") {
+    if (byteLength(input) > TEAM_TEMPLATE_LIMITS.bytes * 2) return { ok: false, code: "template_too_large", error: "This team template is larger than 768 KB." };
+    try {
+      source = JSON.parse(input);
+    } catch {
+      return { ok: false, code: "template_invalid", error: "This team template is not JSON." };
+    }
+  }
+  if (!isObject(source)) return { ok: false, code: "template_invalid", error: "This is not a team template." };
+  if (source.format !== TEAM_FORMAT || source.version !== TEAM_VERSION || source.kind !== "team") return { ok: false, code: "template_invalid", error: `A team template is a ${TEAM_FORMAT} version ${TEAM_VERSION} team document.` };
+  for (const key of ["workflows", "routines", "connectors", "presets"]) {
+    if (Array.isArray(source[key]) && source[key].length) return { ok: false, code: "template_invalid", error: `A team template carries members, skills and channels; it has no place for ${key}.` };
+  }
+  const members = Array.isArray(source.members) ? source.members : [];
+  if (members.length < TEAM_TEMPLATE_LIMITS.minMembers || members.length > TEAM_TEMPLATE_LIMITS.members) return { ok: false, code: "template_invalid", error: `A team template carries ${TEAM_TEMPLATE_LIMITS.minMembers} to ${TEAM_TEMPLATE_LIMITS.members} members.` };
+  if (Array.isArray(source.skills) && source.skills.length > TEAM_TEMPLATE_LIMITS.skills) return { ok: false, code: "template_invalid", error: `A team template carries at most ${TEAM_TEMPLATE_LIMITS.skills} skills.` };
+  if (Array.isArray(source.channels) && source.channels.length > TEAM_TEMPLATE_LIMITS.channels) return { ok: false, code: "template_invalid", error: `A team template carries at most ${TEAM_TEMPLATE_LIMITS.channels} channels.` };
+  for (const member of members) {
+    if (isObject(member) && Array.isArray(member.skills) && member.skills.length > TEAM_TEMPLATE_LIMITS.skillsPerMember) return { ok: false, code: "template_invalid", error: `Each member of a team template carries at most ${TEAM_TEMPLATE_LIMITS.skillsPerMember} skills.` };
+    if (isObject(member) && typeof member.notes === "string" && member.notes.length > TEMPLATE_LIMITS.notes) return { ok: false, code: "template_invalid", error: `Starter memory is limited to ${TEMPLATE_LIMITS.notes} characters per member.` };
+    const avatar = isObject(member?.look) ? String(member.look.avatar || "") : "";
+    if (avatar && !BIRD_AVATAR.test(avatar)) return { ok: false, code: "template_invalid", error: "A template's pictures are Squad birds." };
+  }
+  const findings = secretFindings(source);
+  if (findings.length) {
+    return { ok: false, code: "template_secrets", findings, error: `Something that looks like a ${findings[0].kinds.join(" or ")} is in ${findings[0].path}${findings.length > 1 ? ` and ${findings.length - 1} other place${findings.length > 2 ? "s" : ""}` : ""}. Remove it before sharing.` };
+  }
+  const result = validateTeamFile(source, { maxBytes: TEAM_TEMPLATE_LIMITS.bytes * 2 });
+  if (!result.ok) return { ok: false, code: "template_invalid", error: result.error };
+  const document = result.document;
+  if (document.members.length !== members.length) return { ok: false, code: "template_invalid", error: "Two members of this team template share a name." };
+  const names = new Set(document.members.map((member) => member.name.toLowerCase()));
+  if (names.size !== document.members.length) return { ok: false, code: "template_invalid", error: "Two members of this team template share a name." };
+  const carried = new Set(document.skills.map((skill) => skill.name));
+  for (const member of document.members) {
+    const missing = member.skills.filter((name) => !carried.has(name));
+    if (missing.length) return { ok: false, code: "template_invalid", error: `Skill ${missing[0]} is named by ${member.name} but its SKILL.md is not in the template.` };
+  }
+  const used = new Set(document.members.flatMap((member) => member.skills));
+  const loose = document.skills.find((skill) => !used.has(skill.name));
+  if (loose) return { ok: false, code: "template_invalid", error: `Skill ${loose.name} is in the template but no member uses it.` };
+  const lead = document.team.lead && names.has(document.team.lead.toLowerCase()) ? document.team.lead : document.members[0].name;
+  document.team = { ...document.team, lead, exportedAt: "", app: "" };
+  const bytes = byteLength(canonicalJson(document));
+  if (bytes > TEAM_TEMPLATE_LIMITS.bytes) return { ok: false, code: "template_too_large", error: "This team template is larger than 768 KB." };
+  return { ok: true, document, bytes };
+}
+
+/** The validator for a listing kind. */
+export function validateListingTemplate(kind, input) {
+  return kind === "team" ? validateTeamTemplate(input) : validateAgentTemplate(input);
+}
+
+/**
+ * A team template from members in the export record shape. `members` is
+ * `[{ member, skills, notes }]` (notes only where the publisher chose to
+ * share them); `channels` is `[{ name, members? }]`, every member by default.
+ */
+export function teamTemplateFromMembers({ name, tagline = "", lead = "", members = [], channels = [] } = {}) {
+  const records = members.map(({ member, notes = "" }) => ({ ...member, notes: notes || "" }));
+  const skills = members.flatMap(({ skills = [] }) => skills);
+  const everyone = records.map((member) => member.name);
+  const built = buildTeamFile({
+    kind: "team",
+    team: line(name, TEMPLATE_LIMITS.name),
+    description: line(tagline, TEMPLATE_LIMITS.tagline),
+    lead: line(lead || records[0]?.name, TEMPLATE_LIMITS.name),
+    members: records,
+    skills,
+    channels: channels.map((channel) => ({ name: channel.name, visibility: "public", section: "", members: Array.isArray(channel.members) && channel.members.length ? channel.members : everyone })),
+    exportedAt: "",
+    app: "",
+  });
+  return built.document;
+}
+
+/** Secret-scanner findings in what a team template would be built from. */
+export function teamTemplateFindings({ members = [], tagline = "", name = "" } = {}) {
+  return secretFindings({
+    team: { name, description: tagline },
+    members: members.map(({ member = {}, notes = "" }) => ({ ...member, notes })),
+    skills: members.flatMap(({ skills = [] }) => skills),
+  });
+}
+
+/** What a team listing shows that comes from its template. */
+export function teamTemplateSummary(document) {
+  const members = (document?.members || []).map((member) => ({
+    name: member.name || "",
+    role: member.role || "",
+    description: member.description || "",
+    bird: birdFromTemplateAvatar(member.look?.avatar),
+    skills: member.skills || [],
+    hasMemory: Boolean(member.notes),
+    lead: member.name === document?.team?.lead,
+  }));
+  return {
+    name: document?.team?.name || "",
+    role: `Team of ${members.length}`,
+    bird: members.find((member) => member.lead)?.bird || members[0]?.bird || "",
+    members,
+    skills: (document?.skills || []).map((skill) => ({ name: skill.name, description: skill.description })),
+    channels: (document?.channels || []).map((channel) => ({ name: channel.name, members: channel.members.length })),
+    hasMemory: members.some((member) => member.hasMemory),
+  };
+}
+
+/** templateSummary or teamTemplateSummary, by the document's shape. */
+export function listingSummary(kind, document) {
+  if (kind === "team") {
+    const summary = teamTemplateSummary(document);
+    return { ...summary, instructions: "", brainCard: {} };
+  }
+  return { ...templateSummary(document), members: [], channels: [] };
+}
+
+/**
  * The listing fields a publisher chooses. Returns `{ ok, listing }` or
  * `{ ok: false, error }`; text is single-spaced and trimmed.
  */
@@ -265,21 +411,27 @@ export function validateListingInput(input = {}) {
 
 // --- links -------------------------------------------------------------------
 
-/** `squad://app/v1/agent-template?id=…[&version=…][&sha256=…]` */
-export function buildDeepLink({ id, version, sha256 } = {}) {
+/**
+ * `squad://app/v1/agent-template?id=…[&version=…][&sha256=…][&attribution=…]`,
+ * or `team-template` for a team listing.
+ */
+export function buildDeepLink({ id, version, sha256, attribution, listing = "agent" } = {}) {
   if (!LISTING_ID.test(String(id || ""))) throw new Error("A marketplace link needs a listing id.");
   const params = new URLSearchParams({ id });
   if (Number.isInteger(version) && version > 0) params.set("version", String(version));
   if (SHA256_HEX.test(String(sha256 || ""))) params.set("sha256", sha256);
-  return `squad://app/v1/agent-template?${params}`;
+  if (ATTRIBUTION_ID.test(String(attribution || ""))) params.set("attribution", attribution);
+  return `squad://app${listing === "team" ? TEAM_DEEP_LINK_PATH : DEEP_LINK_PATH}?${params}`;
 }
 
-function marketplaceRequest(params, allowed = ["id", "version", "sha256"]) {
+const REQUEST_KEYS = ["id", "version", "sha256", "attribution"];
+
+function marketplaceRequest(params, allowed = REQUEST_KEYS, listing = "agent") {
   for (const key of params.keys()) if (!allowed.includes(key)) return null;
   for (const key of allowed) if (params.getAll(key).length > 1) return null;
   const id = params.get("id") || "";
   if (!LISTING_ID.test(id)) return null;
-  const out = { kind: "marketplace", id };
+  const out = { kind: "marketplace", listing, id };
   if (params.has("version")) {
     const version = Number(params.get("version"));
     if (!/^\d{1,7}$/.test(params.get("version")) || version < 1) return null;
@@ -288,6 +440,10 @@ function marketplaceRequest(params, allowed = ["id", "version", "sha256"]) {
   if (params.has("sha256")) {
     if (!SHA256_HEX.test(params.get("sha256"))) return null;
     out.sha256 = params.get("sha256");
+  }
+  if (params.has("attribution")) {
+    if (!ATTRIBUTION_ID.test(params.get("attribution"))) return null;
+    out.attribution = params.get("attribution");
   }
   return out;
 }
@@ -308,8 +464,8 @@ export function parseDeepLink(text) {
   }
   if (url.protocol !== DEEP_LINK_SCHEME || url.username || url.password || url.port || url.hash) return null;
   // WHATWG URL keeps a non-special scheme's authority in `host` and the rest in `pathname`.
-  if (url.host !== DEEP_LINK_HOST || url.pathname !== DEEP_LINK_PATH) return null;
-  return marketplaceRequest(url.searchParams);
+  if (url.host !== DEEP_LINK_HOST || (url.pathname !== DEEP_LINK_PATH && url.pathname !== TEAM_DEEP_LINK_PATH)) return null;
+  return marketplaceRequest(url.searchParams, REQUEST_KEYS, url.pathname === TEAM_DEEP_LINK_PATH ? "team" : "agent");
 }
 
 /** The app route a deep link opens: `/marketplace/agents/<id>?version=…&sha256=…`. */
@@ -318,17 +474,18 @@ export function appRouteForRequest(request) {
   const params = new URLSearchParams();
   if (request.version) params.set("version", String(request.version));
   if (request.sha256) params.set("sha256", request.sha256);
+  if (request.attribution) params.set("attribution", request.attribution);
   const query = params.toString();
-  return `${APP_ROUTE_PREFIX}${request.id}${query ? `?${query}` : ""}`;
+  return `${request.listing === "team" ? TEAM_APP_ROUTE_PREFIX : APP_ROUTE_PREFIX}${request.id}${query ? `?${query}` : ""}`;
 }
 
-/** The request behind an app route, or null. */
+/** The request behind an app route (`/marketplace/agents/<id>` or `/marketplace/teams/<id>`), or null. */
 export function requestFromAppRoute(pathname, search = "") {
-  const match = /^\/marketplace\/agents\/([a-z0-9]{12})\/?$/.exec(String(pathname || ""));
+  const match = /^\/marketplace\/(agents|teams)\/([a-z0-9]{12})\/?$/.exec(String(pathname || ""));
   if (!match) return null;
   const params = new URLSearchParams(String(search || ""));
-  params.set("id", match[1]);
-  return marketplaceRequest(params);
+  params.set("id", match[2]);
+  return marketplaceRequest(params, REQUEST_KEYS, match[1] === "teams" ? "team" : "agent");
 }
 
 /**
@@ -341,7 +498,7 @@ export function parseMarketplaceLink(text, { webOrigins = WEB_ORIGINS } = {}) {
   const value = String(text || "").trim();
   if (!value) return { kind: "invalid", error: "Paste a marketplace or Grok Bot link." };
   if (value.length > MAX_LINK) return { kind: "invalid", error: "That link is too long to be a marketplace link." };
-  if (LISTING_ID.test(value)) return { kind: "marketplace", id: value };
+  if (LISTING_ID.test(value)) return { kind: "marketplace", listing: "agent", id: value };
   const deep = parseDeepLink(value);
   if (deep) return deep;
   let url;
@@ -362,12 +519,12 @@ export function parseMarketplaceLink(text, { webOrigins = WEB_ORIGINS } = {}) {
     return { kind: "invalid", error: "That x.ai link is not a Grok Bot template page." };
   }
   if (webOrigins.includes(url.origin)) {
-    const match = /^\/squad\/marketplace\/([a-z0-9]{12})\/?$/.exec(url.pathname);
+    const match = /^\/squad\/marketplace\/(teams\/)?([a-z0-9]{12})\/?$/.exec(url.pathname);
     if (match) {
       const params = new URLSearchParams(url.search);
-      params.set("id", match[1]);
+      params.set("id", match[2]);
       for (const key of [...params.keys()]) if (!["id", "version", "sha256"].includes(key)) params.delete(key);
-      return marketplaceRequest(params) || { kind: "invalid", error: "That marketplace link is not complete." };
+      return marketplaceRequest(params, REQUEST_KEYS, match[1] ? "team" : "agent") || { kind: "invalid", error: "That marketplace link is not complete." };
     }
     return { kind: "invalid", error: "That page is not a marketplace agent." };
   }

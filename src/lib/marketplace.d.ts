@@ -7,7 +7,21 @@ export interface TeamDocument {
   channels: unknown[]; workflows: unknown[]; presets: unknown[]; routines: unknown[]; connectors: unknown[];
 }
 export interface ListingInput { tagline: string; description: string; category: string; tags: string[] }
-export type MarketplaceRequest = { kind: "marketplace"; id: string; version?: number; sha256?: string };
+export type ListingKind = "agent" | "team";
+export type MarketplaceRequest = { kind: "marketplace"; listing: ListingKind; id: string; version?: number; sha256?: string; attribution?: string };
+export interface TemplateMember { name: string; role: string; description: string; bird: string; skills: string[]; hasMemory: boolean; lead: boolean }
+export interface ListingSummary {
+  name: string; role: string; bird: string; skills: Array<{ name: string; description: string }>; hasMemory: boolean;
+  instructions: string; brainCard: Record<string, string>; members: TemplateMember[]; channels: Array<{ name: string; members: number }>;
+}
+type TemplateResult = { ok: true; document: TeamDocument; bytes: number } | { ok: false; code: string; error: string; findings?: Array<{ path: string; kinds: string[] }> };
+export const TEAM_TEMPLATE_LIMITS: Readonly<{ bytes: number; minMembers: number; members: number; skills: number; skillsPerMember: number; channels: number }>;
+export const LISTING_KINDS: ReadonlyArray<ListingKind>;
+export const ATTRIBUTION_ID: RegExp;
+export function newAttributionId(): string;
+export function validateTeamTemplate(input: unknown): TemplateResult;
+export function validateListingTemplate(kind: string, input: unknown): TemplateResult;
+export function listingSummary(kind: string, document: TeamDocument): ListingSummary;
 export const TEMPLATE_LIMITS: Readonly<{ bytes: number; skills: number; notes: number; tagline: number; description: number; tags: number; tag: number; name: number; note: number }>;
 export const CATEGORIES: ReadonlyArray<{ id: string; label: string }>;
 export const CATEGORY_IDS: ReadonlyArray<string>;
@@ -33,5 +47,5 @@ export function validateAgentTemplate(input: unknown):
   | { ok: false; code: string; error: string; findings?: Array<{ path: string; kinds: string[] }> };
 export function templateSummary(document: TeamDocument): { name: string; role: string; bird: string; skills: Array<{ name: string; description: string }>; hasMemory: boolean; instructions: string; brainCard: Record<string, string> };
 export function validateListingInput(input: unknown): { ok: true; listing: ListingInput } | { ok: false; error: string };
-export function buildDeepLink(request: { id: string; version?: number; sha256?: string }): string;
+export function buildDeepLink(request: { id: string; version?: number; sha256?: string; attribution?: string; listing?: ListingKind }): string;
 export function parseDeepLink(text: string): MarketplaceRequest | null;
