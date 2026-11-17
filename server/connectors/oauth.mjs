@@ -41,14 +41,37 @@ const text = (value) => (typeof value === 'string' && value.trim() ? value.trim(
 
 function isLoopback(hostname) { return ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(hostname); }
 
-/** Endpoints from metadata are untrusted: https only (http on loopback for fixtures). */
-export function safeEndpoint(value) {
+/** Loopback, private, link-local and similar internal addresses, by literal. */
+export function internalHost(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  return host === '::1' || host === '::' || /^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host) || host.startsWith('::ffff:');
+}
+
+/**
+ * Endpoints from metadata are untrusted: https only (http on loopback), and
+ * never an internal address unless the connector itself lives on one, so a
+ * hostile server can't point Squad's sign-in requests (and the refresh token
+ * they carry) at this computer or its network.
+ */
+export function safeEndpoint(value, base = '') {
   const raw = text(value);
   if (!raw) return '';
   try {
     const url = new URL(raw);
     if (url.username || url.password || url.hash) return '';
-    return url.protocol === 'https:' || (url.protocol === 'http:' && isLoopback(url.hostname)) ? url.toString() : '';
+    if (!(url.protocol === 'https:' || (url.protocol === 'http:' && isLoopback(url.hostname)))) return '';
+    if (internalHost(url.hostname)) {
+      let baseHost = '';
+      try { baseHost = base ? new URL(base).hostname : ''; } catch { baseHost = ''; }
+      if (!baseHost || !internalHost(baseHost)) return '';
+    }
+    return url.toString();
   } catch { return ''; }
 }
 
@@ -59,7 +82,7 @@ export function parseWwwAuthenticate(header) {
     const match = value.match(new RegExp(`${name}="([^"]*)"`, 'i')) || value.match(new RegExp(`${name}=([^,\\s]+)`, 'i'));
     return match ? match[1] : '';
   };
-  return { resourceMetadata: safeEndpoint(param('resource_metadata')), scope: param('scope').slice(0, 500), error: param('error').slice(0, 80) };
+  return { resourceMetadata: text(param('resource_metadata')).slice(0, 2048), scope: param('scope').slice(0, 500), error: param('error').slice(0, 80) };
 }
 
 /** `https://a.b/x/y/` → [`https://a.b`, `/x/y`]. */
@@ -144,7 +167,8 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
 
   async function resourceMetadata(url, hint = '') {
     const tries = [];
-    if (hint) tries.push(hint);
+    const checkedHint = safeEndpoint(hint, url);
+    if (checkedHint) tries.push(checkedHint);
     try {
       const [origin, path] = splitUrl(url);
       if (path) tries.push(`${origin}/.well-known/oauth-protected-resource${path}`);
@@ -159,7 +183,7 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
     return null;
   }
 
-  async function serverMetadata(issuer) {
+  async function serverMetadata(issuer, base = issuer) {
     const [origin, path] = splitUrl(issuer);
     const tries = [
       `${origin}/.well-known/oauth-authorization-server${path}`,
@@ -169,7 +193,7 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
     for (const candidate of tries) {
       try {
         const body = await getJson(candidate);
-        if (record(body) && safeEndpoint(body.authorization_endpoint || body.device_authorization_endpoint)) return body;
+        if (record(body) && safeEndpoint(body.authorization_endpoint || body.device_authorization_endpoint, base)) return body;
       } catch { /* try the next */ }
     }
     throw fail(`${origin} doesn't describe how to sign in.`, 502);
@@ -242,13 +266,13 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
     let challenge = {};
     try { challenge = (await probe(item.url, headers)).challenge; } catch { throw fail(`Can't reach ${new URL(item.url).host}. Check the address and this computer's connection.`, 502); }
     const resource = await resourceMetadata(item.url, challenge.resourceMetadata);
-    const issuer = safeEndpoint(Array.isArray(resource?.authorization_servers) ? resource.authorization_servers[0] : '') || splitUrl(item.url)[0];
-    const meta = await serverMetadata(issuer);
-    const tokenEndpoint = safeEndpoint(meta.token_endpoint);
+    const issuer = safeEndpoint(Array.isArray(resource?.authorization_servers) ? resource.authorization_servers[0] : '', item.url) || splitUrl(item.url)[0];
+    const meta = await serverMetadata(issuer, item.url);
+    const tokenEndpoint = safeEndpoint(meta.token_endpoint, item.url);
     if (!tokenEndpoint) throw fail(`${item.name}'s sign-in has no token endpoint.`, 502);
     const app = deviceAppFor(issuer, item.url);
     if (app) return startDevice(item, app, meta);
-    const authorization = safeEndpoint(meta.authorization_endpoint);
+    const authorization = safeEndpoint(meta.authorization_endpoint, item.url);
     if (!authorization) throw fail(`${item.name}'s sign-in has no authorization endpoint.`, 502);
     if (Array.isArray(meta.code_challenge_methods_supported) && meta.code_challenge_methods_supported.length && !meta.code_challenge_methods_supported.includes('S256')) {
       throw fail(`${item.name}'s sign-in doesn't support PKCE, which Squad requires.`, 502);
@@ -257,13 +281,13 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
       ? { clientId: oauth.clientId, clientSecret: (await store.oauthState(id)).tokens.clientSecret || '', authMethod: oauth.authMethod || 'none' }
       : null;
     if (!client) {
-      const endpoint = safeEndpoint(meta.registration_endpoint);
+      const endpoint = safeEndpoint(meta.registration_endpoint, item.url);
       if (!endpoint) throw fail(`${item.name} doesn't let new apps sign in by themselves. Add it with an access token in a header instead.`, 409);
       client = await register(endpoint, redirectUri);
     }
     const scope = challenge.scope || (Array.isArray(resource?.scopes_supported) ? resource.scopes_supported.filter((value) => typeof value === 'string').join(' ') : '');
     await store.setOAuth(id, { revision: item.authRevision, url: item.url }, (next, tokens) => {
-      Object.assign(next, { mode: 'dcr', issuer, clientId: client.clientId, authMethod: client.authMethod, redirectUris: [redirectUri], tokenEndpoint, revocationEndpoint: safeEndpoint(meta.revocation_endpoint), scopes: scope ? scope.split(' ').slice(0, 20) : [] });
+      Object.assign(next, { mode: 'dcr', issuer, clientId: client.clientId, authMethod: client.authMethod, redirectUris: [redirectUri], tokenEndpoint, revocationEndpoint: safeEndpoint(meta.revocation_endpoint, item.url), scopes: scope ? scope.split(' ').slice(0, 20) : [] });
       if (next.status !== 'signed-in') next.status = 'signed-out';
       if (client.clientSecret) tokens.clientSecret = client.clientSecret; else delete tokens.clientSecret;
     });
@@ -279,7 +303,7 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
     link.searchParams.set('resource', item.url);
     if (scope) link.searchParams.set('scope', scope);
     for (const [key, entry] of pending) if (entry.id === id) pending.delete(key);
-    pending.set(state, { id, verifier, redirectUri, resource: item.url, revision: item.authRevision, url: item.url, startedAt: now(), tokenEndpoint, revocationEndpoint: safeEndpoint(meta.revocation_endpoint), client, issuer });
+    pending.set(state, { id, verifier, redirectUri, resource: item.url, revision: item.authRevision, url: item.url, startedAt: now(), tokenEndpoint, revocationEndpoint: safeEndpoint(meta.revocation_endpoint, item.url), client, issuer });
     return { mode: 'browser', url: link.toString(), expiresInSeconds: PENDING_MS / 1000 };
   }
 
@@ -295,7 +319,7 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
     const { verifier, challenge } = pkce();
     const state = b64url(randomBytes(24));
     const link = new URL(googleEndpoints.authorization);
-    for (const [key, value] of Object.entries({ response_type: 'code', client_id: client.clientId, redirect_uri: redirectUri, scope: scopes.join(' '), code_challenge: challenge, code_challenge_method: 'S256', state, access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' })) link.searchParams.set(key, value);
+    for (const [key, value] of Object.entries({ response_type: 'code', client_id: client.clientId, redirect_uri: redirectUri, scope: scopes.join(' '), code_challenge: challenge, code_challenge_method: 'S256', state, access_type: 'offline', prompt: 'consent' })) link.searchParams.set(key, value);
     for (const [key, entry] of pending) if (entry.id === item.id) pending.delete(key);
     pending.set(state, { id: item.id, verifier, redirectUri, resource: '', revision: item.authRevision, url: undefined, startedAt: now(), tokenEndpoint: googleEndpoints.token, revocationEndpoint: googleEndpoints.revocation, client: { clientId: client.clientId, clientSecret: client.clientSecret, authMethod: client.clientSecret ? 'client_secret_post' : 'none' }, issuer: googleEndpoints.issuer, google: true });
     return { mode: 'browser', url: link.toString(), expiresInSeconds: PENDING_MS / 1000 };
@@ -353,11 +377,11 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
   }
 
   async function startDevice(item, app, meta) {
-    const endpoint = safeEndpoint(meta.device_authorization_endpoint) || app.deviceEndpoint;
-    const tokenEndpoint = safeEndpoint(meta.token_endpoint) || app.tokenEndpoint;
+    const endpoint = safeEndpoint(meta.device_authorization_endpoint, item.url) || app.deviceEndpoint;
+    const tokenEndpoint = safeEndpoint(meta.token_endpoint, item.url) || app.tokenEndpoint;
     const answer = await postForm(endpoint, { client_id: app.clientId, scope: app.scopes.join(' ') }).catch(() => null);
     const body = answer?.body || {};
-    if (!text(body.device_code) || !text(body.user_code) || !safeEndpoint(body.verification_uri)) throw fail(`${item.name} refused the sign-in${answer ? ` (HTTP ${answer.status})` : ''}.`, 502);
+    if (!text(body.device_code) || !text(body.user_code) || !safeEndpoint(body.verification_uri, item.url)) throw fail(`${item.name} refused the sign-in${answer ? ` (HTTP ${answer.status})` : ''}.`, 502);
     const expiresAt = now() + (Number(body.expires_in) > 0 ? Number(body.expires_in) : 900) * 1000;
     const job = { id: item.id, userCode: body.user_code, verificationUri: body.verification_uri, expiresAt, cancelled: false, error: '' };
     devices.get(item.id)?.cancel?.();
@@ -441,20 +465,35 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
     }
     const outcome = answer ? renewal(answer.status, answer.body) : 'retry';
     if (outcome === 'renewed') {
-      const result = await store.setOAuth(id, { revision: item.authRevision }, (next, nextTokens) => storeTokens(next, nextTokens, answer.body));
-      return { accessToken: result.tokens.accessToken, expiresAt: result.oauth.expiresAt || null };
+      try {
+        // Only onto the same grant: a sign-out or a new sign-in while this refresh
+        // was out wins, and these tokens are handed back instead.
+        const result = await store.setOAuth(id, { revision: item.authRevision }, (next, nextTokens) => {
+          if (next.status !== 'signed-in' || nextTokens.refreshToken !== tokens.refreshToken) throw fail('The sign-in changed while it was being renewed.', 409);
+          storeTokens(next, nextTokens, answer.body);
+        });
+        return { accessToken: result.tokens.accessToken, expiresAt: result.oauth.expiresAt || null };
+      } catch (error) {
+        if (error.status !== 409) throw error;
+        void revoke(oauth, { accessToken: answer.body.access_token, refreshToken: text(answer.body.refresh_token), clientSecret: tokens.clientSecret });
+        const current = await store.oauthState(id);
+        if (current.oauth?.status === 'signed-in' && current.tokens.accessToken) return { accessToken: current.tokens.accessToken, expiresAt: current.oauth.expiresAt || null };
+        throw fail(`Sign in to ${item.name} in Settings › Connectors.`, 401);
+      }
     }
     log(`connector ${id} token refresh ${outcome}${answer ? ` (HTTP ${answer.status} ${String(answer.body.error || '').slice(0, 40)})` : ''}`);
     if (outcome === 'retry') {
       if (stillValid()) return { accessToken: tokens.accessToken, expiresAt: oauth.expiresAt };
       throw fail(`Couldn't renew the sign-in to ${item.name}. Squad will try again on the next request; check this computer's connection.`, 503);
     }
-    await markEnded(id, item, 'expired', `${item.name} ended the sign-in. Sign in again in Settings › Connectors.`, outcome === 'unregistered');
+    await markEnded(id, item, 'expired', `${item.name} ended the sign-in. Sign in again in Settings › Connectors.`, outcome === 'unregistered', tokens.refreshToken);
     throw fail(`${item.name} ended the sign-in. Sign in again in Settings › Connectors.`, 401);
   }
 
-  async function markEnded(id, item, status, message, forgetClient = false) {
+  async function markEnded(id, item, status, message, forgetClient = false, usedRefreshToken = undefined) {
     await store.setOAuth(id, { revision: item.authRevision }, (next, tokens) => {
+      // A newer sign-in than the one that failed stays.
+      if (usedRefreshToken !== undefined && tokens.refreshToken !== usedRefreshToken) throw fail('The sign-in changed.', 409);
       next.status = status; next.lastError = message; next.expiresAt = null;
       delete tokens.accessToken; delete tokens.refreshToken;
       if (forgetClient) { delete next.clientId; delete next.redirectUris; delete tokens.clientSecret; }

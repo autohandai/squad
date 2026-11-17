@@ -61,7 +61,7 @@ function optionLabel(option) {
 function optionSentence(option, title) {
   if (option.kind === "remote") return `Connects to ${title}'s own server at ${option.detail}. Nothing to install.`;
   if (option.kind === "google" || option.kind === "composio") return option.detail;
-  return `Runs ${option.detail} on this computer with ${option.command}.`;
+  return `Runs ${option.detail} on this computer. Squad starts it with:`;
 }
 
 /**
@@ -155,7 +155,9 @@ export function InstallDialog({ api, entry, open, onOpenChange, onInstalled, goo
               </div>
             ) : null}
             {chosen ? <p className="text-sm leading-6 text-muted-foreground">{optionSentence(chosen, entry.title)}</p> : null}
-            {chosen && !chosen.available && chosen.needs && chosen.kind !== "google" ? (
+            {chosen?.preview ? <code className="block overflow-x-auto rounded-md border border-border/70 px-2.5 py-1.5 font-mono text-xs leading-5 whitespace-pre-wrap break-all text-muted-foreground" data-testid="install-command-preview">{chosen.preview}</code> : null}
+            {chosen?.blocked ? <p className="text-sm leading-6 text-destructive">{chosen.blocked}</p> : null}
+            {chosen && !chosen.available && chosen.needs && !chosen.blocked && chosen.kind !== "google" ? (
               <p className="text-sm leading-6 text-destructive">
                 {chosen.needs} isn't installed on this computer.{" "}
                 {RUNTIME_HELP[chosen.needs] ? <a className="underline underline-offset-2" href={RUNTIME_HELP[chosen.needs]} target="_blank" rel="noreferrer noopener">How to install it</a> : null}

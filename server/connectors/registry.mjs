@@ -12,6 +12,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readPersistentJson, writePersistentJson } from '../persistent-json.mjs';
+import { looksSecret } from './store.mjs';
 
 export const DEFAULT_REGISTRY_URL = 'https://registry.modelcontextprotocol.io/v0/servers';
 const PAGE_LIMIT = 60;
@@ -60,7 +61,8 @@ function sanitizeInput(entry, { nameRule = ENV_NAME, secretDefault = false } = {
     name,
     description: text(entry.description, 300),
     // Raw registry keys (isSecret) or an already checked copy (secret): the cache stores the latter.
-    secret: typeof entry.isSecret === 'boolean' ? entry.isSecret : typeof entry.secret === 'boolean' ? entry.secret : secretDefault,
+    // A value whose name looks like a key is sealed even when the registry forgot to say so.
+    secret: (typeof entry.isSecret === 'boolean' ? entry.isSecret : typeof entry.secret === 'boolean' ? entry.secret : secretDefault) || looksSecret(entry.name),
     required: entry.isRequired === true || entry.required === true,
     default: typeof entry.default === 'string' ? entry.default.slice(0, 512) : '',
     value: typeof entry.value === 'string' ? entry.value.slice(0, 512) : null,
@@ -78,7 +80,7 @@ function sanitizeArgument(entry) {
     type,
     name,
     description: text(entry.description, 300),
-    secret: entry.isSecret === true || entry.secret === true,
+    secret: entry.isSecret === true || entry.secret === true || looksSecret(entry.valueHint) || (type === 'named' && looksSecret(name)),
     required: entry.isRequired === true || entry.required === true,
     default: typeof entry.default === 'string' ? entry.default.slice(0, 512) : null,
     value: typeof entry.value === 'string' ? entry.value.slice(0, 1024) : null,
@@ -144,8 +146,10 @@ export function titleFromName(name) {
 export function packageReference(pkg) {
   const id = pkg.identifier;
   const unpinned = () => fail(`${id} has no pinned version in the MCP Registry, so Squad won't install it.`);
-  const pinned = (version) => Boolean(version) && version !== 'latest' && !/[\^~*\s<>=|]/.test(version);
+  // A version is a version: no ranges, tags, git or URL references that would float or fetch elsewhere.
+  const pinned = (version) => /^[0-9][0-9A-Za-z.+-]{0,63}$/.test(String(version || ''));
   if (pkg.registryType === 'oci') {
+    if (!/^[a-z0-9][a-z0-9._:/-]{0,255}$/.test(id.split('@')[0].replace(/:[^/:]*$/, ''))) throw fail(`${id.slice(0, 60)} isn't an image name Squad can run.`);
     const at = id.indexOf('@');
     if (at >= 0) {
       if (!/^sha256:[a-f0-9]{64}$/i.test(id.slice(at + 1))) throw unpinned();
@@ -160,6 +164,26 @@ export function packageReference(pkg) {
   if (!/^[@A-Za-z0-9][A-Za-z0-9@/._-]{0,213}$/.test(id)) throw fail(`${id.slice(0, 60)} isn't a package name Squad can run.`);
   if (!pinned(pkg.version)) throw unpinned();
   return pkg.registryType === 'pypi' ? `${id}==${pkg.version}` : `${id}@${pkg.version}`;
+}
+
+/** Flags npx and uvx themselves take; anything else is the server's. */
+const RUNNER_FLAGS = {
+  npx: /^(-y|--yes|--no|-p|--package|-c|--call|--registry|--cache|--prefer-offline|--prefer-online|--offline|--include|--omit|--workspace|-w|--node-options)$/,
+  uvx: /^(--from|--with|--with-editable|--with-requirements|-p|--python|--index|--index-url|--default-index|--extra-index-url|--find-links|-f|--isolated|--offline|--no-cache|--refresh|--upgrade|-U|--prerelease|--native-tls|--env-file)$/,
+};
+
+/** Docker run flags that reach outside the container. A catalogue entry asking for one is not installed by a click. */
+const RISKY_DOCKER = /^(--privileged|-v|--volume|--mount|--pid|--ipc|--uts|--userns|--cap-add|--device|--security-opt|--network|--net)(=|$)/;
+function riskyDockerFlag(argumentsList) {
+  for (const argument of argumentsList) {
+    const flag = argument.type === 'named' ? argument.name : String(argument.value || '');
+    if (!RISKY_DOCKER.test(flag)) continue;
+    const value = String(argument.value ?? argument.default ?? '');
+    // A network flag is fine unless it is the host's own network.
+    if (/^--net(work)?/.test(flag) && !/(^|=)host$/.test(flag.includes('=') ? flag : value)) continue;
+    return flag.split('=')[0];
+  }
+  return '';
 }
 
 /** The input an argument asks the person for, or null when the registry fixes it. */
@@ -209,7 +233,11 @@ export function installOptions(server, runtimes = {}) {
       }),
     ];
     const available = runtimes[command] !== false;
-    options.push({ id: `package:${index}`, kind: pkg.registryType, label: { npm: 'npm package', pypi: 'Python package', oci: 'Docker image', nuget: 'NuGet package' }[pkg.registryType], detail: reference, runs: 'local', command, available, needs: available ? '' : RUNTIME_LABELS[command], inputs });
+    const risky = command === 'docker' ? riskyDockerFlag(pkg.runtimeArguments) : '';
+    // What will run, shown before Add; inputs appear as <NAME>, secrets as placeholders.
+    let preview = '';
+    try { const built = buildDefinition(server, `package:${index}`, Object.fromEntries(inputs.map((input) => [input.key, `<${input.key}>`]))); preview = [built.command, ...built.args].join(' '); } catch { preview = `${command} ${reference}`; }
+    options.push({ id: `package:${index}`, kind: pkg.registryType, label: { npm: 'npm package', pypi: 'Python package', oci: 'Docker image', nuget: 'NuGet package' }[pkg.registryType], detail: reference, preview, runs: 'local', command, available: available && !risky, needs: available ? '' : RUNTIME_LABELS[command], blocked: risky ? `This image asks Docker for access to this computer (${risky}), so Squad won't add it from the catalogue. Add it as a custom connector if you trust it.` : '', inputs });
   });
   server.remotes.forEach((remote, index) => {
     if (!['streamable-http', 'sse'].includes(remote.type)) return;
@@ -287,7 +315,7 @@ function argumentGroups(list, input, { env, argSecrets, docker }) {
 
 /** `{prefix}` in a header template filled with the person's value, or the value as is. */
 function fillTemplate(template, value) {
-  if (template && template.includes('{') && template.includes('}')) return template.replace(/\{[^}]*\}/, value);
+  if (template && template.includes('{') && template.includes('}')) return template.replace(/\{[^}]*\}/, () => value);
   return value;
 }
 
@@ -310,6 +338,8 @@ export function buildDefinition(server, optionId, inputs = {}, { title = '' } = 
     if (!pkg) throw fail('That install option no longer exists. Reopen the connector and try again.');
     const command = PACKAGE_COMMANDS[pkg.registryType];
     if (!command || pkg.transport !== 'stdio') throw fail('This package type isn\'t supported.');
+    const risky = command === 'docker' ? riskyDockerFlag(pkg.runtimeArguments) : '';
+    if (risky) throw fail(`This image asks Docker for access to this computer (${risky}), so Squad won't add it from the catalogue. Add it as a custom connector if you trust it.`, 409);
     const reference = packageReference(pkg);
     const env = [];
     for (const entry of pkg.environmentVariables) {
@@ -323,8 +353,14 @@ export function buildDefinition(server, optionId, inputs = {}, { title = '' } = 
     const argSecrets = {};
     const docker = command === 'docker';
     const declaredEnv = env.map((pair) => pair.key);
-    const runtime = argumentGroups(pkg.runtimeArguments, input, { env, argSecrets, docker });
-    const packageArgs = argumentGroups(pkg.packageArguments, input, { env, argSecrets, docker });
+    // Some entries list the server's own flags as runtime arguments (Supabase's
+    // --project-ref, --read-only…). npx and uvx would read them as their own,
+    // so a runtime flag the runner doesn't have goes after the package instead.
+    const runnerFlag = RUNNER_FLAGS[command];
+    const runtimeList = runnerFlag ? pkg.runtimeArguments.filter((argument) => argument.type !== 'named' || runnerFlag.test(argument.name)) : pkg.runtimeArguments;
+    const moved = runnerFlag ? pkg.runtimeArguments.filter((argument) => !runtimeList.includes(argument)) : [];
+    const runtime = argumentGroups(runtimeList, input, { env, argSecrets, docker });
+    const packageArgs = argumentGroups([...moved, ...pkg.packageArguments], input, { env, argSecrets, docker });
     const args = command === 'npx' ? ['-y'] : docker ? ['run', '-i', '--rm', ...declaredEnv.flatMap((key) => ['-e', key])] : [];
     // Skip a bare flag Squad already passes (-y, -i, --rm); keep every flag-with-value group.
     for (const group of runtime) if (!(group.length === 1 && group[0].startsWith('-') && args.includes(group[0]))) args.push(...group);

@@ -280,10 +280,19 @@ Open sign-in page and Cancel; the remove confirmation is inline.
 - The key-file fallback means a computer without a usable keychain still
   works, at the cost Codync refuses to pay: the key sits beside the user's
   data, protected by file permissions only.
-- The per-member token is a capability: anything that can read a member's
-  config can launch that member's connectors while the bridge runs. It no
-  longer reveals the secrets themselves, and a bridge restart, a permission
-  change or turning a connector off revokes it.
+- The per-member token is a capability worth the secrets themselves: while
+  the bridge runs, anything that can read a member's config (that member's
+  own shell tool included) can ask the runtime endpoint for the definitions
+  of the connectors granted to that member, keys and fresh access tokens
+  included. What changed is that no secret rests in a member's files any
+  more, and the token dies with a bridge restart, with the next turn after
+  the member loses the MCP connectors permission (a warm session keeps it
+  until then), and per connector as soon as that connector is turned off or
+  removed. Single-use launch tokens would narrow this further; they were not
+  built because a launcher also renews tokens mid-session.
+- `{{secret:…}}` argument values are expanded into the child's argv, which
+  `ps` shows to the same user. Registry entries that need a secret argument
+  are rare; Docker's `-e NAME=value` already goes through the environment.
 - Secrets are decrypted in the bridge and passed to child processes in their
   environment; this is not a sandbox against code running as the same user.
 - No sign-in from the iPhone, no chat-driven connection requests, no
@@ -300,6 +309,46 @@ Open sign-in page and Cancel; the remove confirmation is inline.
   timer in the background.
 - The legacy SSE reconnect and 401 renewal in the launcher are implemented
   but not covered by a check.
+
+## Independent review
+
+A read-only review of the server code (17 Nov 2026) found nine issues; all
+were fixed in this change and each has a check:
+
+- the legacy SSE launcher posted credentials to whatever address the server's
+  `endpoint` event named: it now refuses another origin
+  (`check-connector-runtime.mjs`, "SSE origin check");
+- connection resets were retried, which could run a tool call twice: only
+  failures before the request left (refused, unknown host, unreachable,
+  connect timeout) are retried now;
+- endpoints taken from OAuth metadata could point at loopback, private or
+  link-local addresses: `safeEndpoint` refuses internal hosts unless the
+  connector itself is on one (by literal address; a public name that resolves
+  to a private address is not caught);
+- a registry entry that forgot `isSecret` on `API_KEY` would have stored it
+  in clear: key-like names are sealed regardless; header templates insert the
+  token literally (a `$&` in a token was being expanded);
+- registry input could put `-v /:/host`, `--privileged`, `--network host` and
+  similar into a Docker command, and `github:…` or URL "versions" passed the
+  pin check: such images are not offered (the dialog says why), versions must
+  be versions, image names are checked, and the dialog shows the exact
+  command before Add;
+- the launcher exited 50 ms after SIGTERM, before the SIGKILL fallback, and
+  ignored signals: it now waits up to 2 s for the child and handles SIGTERM,
+  SIGINT and SIGHUP;
+- `include_granted_scopes` let a Drive sign-in carry earlier Gmail scopes:
+  removed, so each Google connector holds only its own;
+- a refresh in flight during sign-out signed the person back in, and a late
+  failed refresh could clear a newer sign-in: both now apply only to the same
+  grant, and tokens from a lost race are revoked (`check-connector-oauth.mjs`,
+  "refresh race").
+
+The review also noted that the runtime token is worth the secrets, which this
+ADR first understated; the consequence above now says so.
+
+The registry also turned out to list Supabase's own flags (`--project-ref`,
+`--read-only`) as runtime arguments, which npx would read as its own: a
+runtime flag npx or uvx doesn't take now goes after the package.
 
 ## Evidence
 

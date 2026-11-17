@@ -30,6 +30,9 @@ const CALL_TIMEOUT_MS = 300_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const BRIDGE_TIMEOUT_MS = 15_000;
 const CONNECTION_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET']);
+// Only failures before the request reached the server are retried: after a
+// reset the server may already have acted, and a tool call must not run twice.
+const NEVER_SENT_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT']);
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -82,14 +85,17 @@ export async function runConnectorProxy({ input = process.stdin, output = proces
 
   let closing = false;
   const closers = [];
-  const shutdown = (code = 0) => {
+  const shutdown = async (code = 0) => {
     if (closing) return;
     closing = true;
-    for (const close of closers) { try { close(); } catch { /* already gone */ } }
-    setTimeout(() => exit(code), 50);
+    // Closers may return a promise (a child given time to exit); never wait past 2 s.
+    const closing_ = closers.map((close) => { try { return close(); } catch { return null; } });
+    await Promise.race([Promise.allSettled(closing_), sleep(2000)]);
+    exit(code);
   };
-  input.on('end', () => shutdown(0));
-  input.on('close', () => shutdown(0));
+  input.on('end', () => { void shutdown(0); });
+  input.on('close', () => { void shutdown(0); });
+  if (input === process.stdin) for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.once(signal, () => { void shutdown(0); });
 
   /** Until the connection works, answer every request with the reason. */
   function refuse(reason) {
@@ -199,7 +205,17 @@ export async function runConnectorProxy({ input = process.stdin, output = proces
       }
       forward(message);
     };
-    closers.push(() => { const current = child; child = null; current?.kill('SIGTERM'); setTimeout(() => current?.kill('SIGKILL'), 1500).unref?.(); });
+    closers.push(() => {
+      const current = child;
+      child = null;
+      if (!current || current.exitCode !== null || current.signalCode !== null) return null;
+      // SIGTERM, then SIGKILL after 1.5 s: a server that ignores the first is not left behind.
+      return new Promise((resolveExit) => {
+        const killer = setTimeout(() => { try { current.kill('SIGKILL'); } catch { /* gone */ } }, 1500);
+        current.once('exit', () => { clearTimeout(killer); resolveExit(); });
+        try { current.kill('SIGTERM'); } catch { clearTimeout(killer); resolveExit(); }
+      });
+    });
     start();
     early.splice(0).forEach(handler);
   }
@@ -230,7 +246,7 @@ export async function runConnectorProxy({ input = process.stdin, output = proces
             signal: AbortSignal.timeout(timeoutMs),
           });
         } catch (error) {
-          if (!CONNECTION_CODES.has(connectionCode(error)) || attempt >= CONNECT_RETRY_MS.length) throw error;
+          if (!NEVER_SENT_CODES.has(connectionCode(error)) || attempt >= CONNECT_RETRY_MS.length) throw error;
           await sleep(CONNECT_RETRY_MS[attempt++]);
         }
       }
@@ -363,6 +379,7 @@ export async function runConnectorProxy({ input = process.stdin, output = proces
     let initialize = null;
     let opened = null;
     let reconnects = 0;
+    let refusedEndpoint = '';
     const waiting = [];
 
     async function open(stale = false) {
@@ -375,7 +392,15 @@ export async function runConnectorProxy({ input = process.stdin, output = proces
       let announce;
       const announced = new Promise((resolveAnnounce) => { announce = resolveAnnounce; });
       const parser = createSseParser(({ event, data }) => {
-        if (event === 'endpoint') { messagesUrl = new URL(data, current.url).toString(); announce(); return; }
+        if (event === 'endpoint') {
+          // The stream names where to post; credentials go there, so only on the server's own origin.
+          let named = null;
+          try { named = new URL(data, current.url); } catch { named = null; }
+          if (named && named.origin === new URL(current.url).origin) messagesUrl = named.toString();
+          else refusedEndpoint = `${name} named a message address on another server; Squad refused to send it your credentials.`;
+          announce();
+          return;
+        }
         try { const parsed = JSON.parse(data); if (record(parsed) && !(typeof parsed.id === 'string' && parsed.id.startsWith('squad-'))) send(parsed); } catch { /* chatter */ }
       });
       const streamReader = response.body.getReader();
@@ -390,7 +415,7 @@ export async function runConnectorProxy({ input = process.stdin, output = proces
         opened = open(false).then(replay).catch((error) => { report('error', error.message); });
       })();
       await Promise.race([announced, sleep(REQUEST_TIMEOUT_MS)]);
-      if (!messagesUrl) throw new Error(`${name} never announced where to send messages.`);
+      if (!messagesUrl) throw new Error(refusedEndpoint || `${name} never announced where to send messages.`);
       reconnects = 0;
     }
     async function replay() {

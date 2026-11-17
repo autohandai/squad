@@ -133,7 +133,7 @@ try {
   throwsStatus(() => buildDefinition(supabase, 'package:0', {}), /SUPABASE_ACCESS_TOKEN is required/);
   const sbDef = buildDefinition(supabase, 'package:0', { SUPABASE_ACCESS_TOKEN: 'sbp_secret_token' });
   assert.deepEqual(sbDef.args, ['-y', '@supabase/mcp-server-supabase@0.17.0'], 'unfilled named arguments are left out, not passed as bare flags that swallow the package name');
-  assert.deepEqual(buildDefinition(supabase, 'package:0', { SUPABASE_ACCESS_TOKEN: 'sbp_secret_token', 'project-ref': 'abcd', 'read-only': 'true', features: 'database,docs' }).args, ['-y', '--project-ref', 'abcd', '--read-only', '--features', 'database,docs', '@supabase/mcp-server-supabase@0.17.0']);
+  assert.deepEqual(buildDefinition(supabase, 'package:0', { SUPABASE_ACCESS_TOKEN: 'sbp_secret_token', 'project-ref': 'abcd', 'read-only': 'true', features: 'database,docs' }).args, ['-y', '@supabase/mcp-server-supabase@0.17.0', '--project-ref', 'abcd', '--read-only', '--features', 'database,docs'], 'server flags listed as runtime arguments go after the package, where npx passes them on');
   assert.ok(!buildDefinition(supabase, 'package:0', { SUPABASE_ACCESS_TOKEN: 'x', 'read-only': 'false' }).args.includes('--read-only'), 'a boolean flag set to false is left out');
   // Docker: a secret -e NAME=value becomes -e NAME plus a sealed env entry.
   const ghDocker = buildDefinition(github, 'package:0', { token: 'ghp_docker_secret_123' });
@@ -361,6 +361,24 @@ try {
   assert.deepEqual([state.update, state.action], [{ latest: '0.18.0' }, { kind: 'update', label: 'Update to 0.18.0' }]);
   assert.equal(health({ lastTest: ok(), registry: { version: '0.17.0', latest: '0.17.0' } }).update, null);
   covered.push('health');
+
+  // Registry input that would reach outside what a click should allow (ADR-0244 review).
+  const risky = sanitizeServer({ name: 'io.example/risky', version: '1.0.0', packages: [{ registryType: 'oci', identifier: 'ghcr.io/example/risky:1.0.0', transport: { type: 'stdio' }, runtimeArguments: [{ type: 'named', name: '-v', value: '/:/host' }] }] });
+  const riskyOption = installOptions(risky, { docker: true })[0];
+  assert.equal(riskyOption.available, false); assert.match(riskyOption.blocked, /access to this computer \(-v\)/);
+  throwsStatus(() => buildDefinition(risky, 'package:0', {}), /access to this computer/, 409);
+  const hostNet = sanitizeServer({ name: 'io.example/net', version: '1.0.0', packages: [{ registryType: 'oci', identifier: 'ghcr.io/example/net:1.0.0', transport: { type: 'stdio' }, runtimeArguments: [{ type: 'named', name: '--network', value: 'host' }] }] });
+  assert.equal(installOptions(hostNet, { docker: true })[0].available, false, '--network host is refused');
+  const bridgeNet = sanitizeServer({ name: 'io.example/net2', version: '1.0.0', packages: [{ registryType: 'oci', identifier: 'ghcr.io/example/net:1.0.0', transport: { type: 'stdio' }, runtimeArguments: [{ type: 'named', name: '--network', value: 'bridge' }] }] });
+  assert.equal(installOptions(bridgeNet, { docker: true })[0].available, true, 'another network is fine');
+  for (const version of ['github:evil/x', 'https://evil.example/x.tgz', 'file:../x', 'git+ssh://x', 'latest', '']) throwsStatus(() => packageReference({ registryType: 'npm', identifier: 'pkg', version }), /no pinned version/);
+  throwsStatus(() => packageReference({ registryType: 'oci', identifier: '-evil:1.0.0' }), /isn't an image name/);
+  // A key-like env name is sealed even without isSecret; a header template keeps $ characters.
+  const forgetful = sanitizeServer({ name: 'io.example/forgetful', version: '1.0.0', packages: [{ registryType: 'npm', identifier: 'forgetful-mcp', version: '1.0.0', transport: { type: 'stdio' }, environmentVariables: [{ name: 'SERVICE_API_KEY', isRequired: true }, { name: 'REGION' }] }], remotes: [{ type: 'streamable-http', url: 'https://forgetful.example/mcp', headers: [{ name: 'X-Token', value: 'Token {token}', isSecret: true }] }] });
+  assert.deepEqual(installOptions(forgetful, { npx: true })[0].inputs.map((input) => [input.key, input.secret]), [['SERVICE_API_KEY', true], ['REGION', false]]);
+  assert.equal(buildDefinition(forgetful, 'remote:0', { 'X-Token': 'a$&b$$c' }).headers[0].value, 'Token a$&b$$c', 'a token is inserted literally');
+  assert.equal(installOptions(forgetful, { npx: true })[0].preview, 'npx -y forgetful-mcp@1.0.0', 'the command is shown before Add');
+  covered.push('review hardening');
 
   console.log(`check-connector-catalog passed: ${covered.join(', ')} (${snapshot.servers.length} snapshot servers, offline cache and snapshot fallbacks).`);
 } finally {

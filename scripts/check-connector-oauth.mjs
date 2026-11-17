@@ -12,7 +12,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createConnectorOAuth } from '../server/connectors/oauth.mjs';
+import { createConnectorOAuth, internalHost, safeEndpoint } from '../server/connectors/oauth.mjs';
 import { createConnectorStore } from '../server/connectors/store.mjs';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
@@ -414,6 +414,29 @@ try {
   assert.equal(gOut.revoked, true);
   assert.equal(gOut.connector.oauth.account, '', 'signing out forgets the account');
   covered.push('google');
+
+  // A refresh still out when the person signs out doesn't sign them back in.
+  const racer = await store.create({ name: 'Refresh racer', kind: 'url', url: `${origin}/mcp/hinted` });
+  await signIn(racer.id);
+  refreshDelayMs = 200;
+  const inFlight = oauth.fresh(racer.id, { stale: true });
+  await new Promise((r) => setTimeout(r, 50));
+  await oauth.signOut(racer.id);
+  await assert.rejects(inFlight, (error) => error.status === 401);
+  refreshDelayMs = 0;
+  assert.equal((await store.get(racer.id)).oauth.status, 'signed-out', 'sign-out wins over a refresh in flight');
+  assert.equal((await tokensOf(racer.id)).accessToken, undefined);
+  covered.push('refresh race');
+
+  // Endpoints from metadata can't point a public connector at this computer or its network.
+  assert.equal(safeEndpoint('https://auth.example.com/token', 'https://mcp.example.com/mcp'), 'https://auth.example.com/token');
+  for (const target of ['http://127.0.0.1:9/token', 'https://127.0.0.1/token', 'https://10.0.0.5/token', 'https://192.168.1.2/token', 'https://169.254.169.254/latest', 'https://[::1]/x', 'https://[fd00::1]/x', 'https://router.local/x', 'https://metadata.internal/x']) {
+    assert.equal(safeEndpoint(target, 'https://mcp.example.com/mcp'), '', `${target} refused for a public connector`);
+  }
+  assert.equal(safeEndpoint('http://127.0.0.1:9/token', 'http://127.0.0.1:8/mcp'), 'http://127.0.0.1:9/token', 'a local connector may use local endpoints');
+  assert.equal(safeEndpoint('http://auth.example.com/token', 'https://mcp.example.com/mcp'), '', 'plain http only on loopback');
+  assert.ok(internalHost('172.20.0.1') && !internalHost('172.32.0.1') && internalHost('100.100.1.1') && !internalHost('8.8.8.8'));
+  covered.push('endpoint checks');
 
   // Nothing the fixture issued ever reached connectors.json in clear.
   text = await fileText();
