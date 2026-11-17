@@ -15,15 +15,14 @@ import {
   blobForMember,
   blobSvg,
 } from "../src/lib/blob-avatar.js";
-import { BIRD_IDS, INSTALLED_ART, birdForMember, birdFromAvatar, untakenBird } from "../src/lib/bird-cast.js";
+import { BIRDS, BIRD_IDS, BIRD_REGIONS, INSTALLED_ART, birdForMember, birdFromAvatar, untakenBird } from "../src/lib/bird-cast.js";
 import { BIRD_FACE_IDS, birdFaceSvg } from "../src/lib/bird-faces.js";
-import { birdAvatarForRole } from "../src/data.js";
+import { birdAvatarForRole, builtInAvatarOptions, roleTemplates } from "../src/data.js";
 import {
   DEFAULT_SKIN_ID,
   SKINS,
   SKIN_VAR_DEFAULTS,
   isSkinId,
-  SOFT_PORTRAIT_SLUGS,
   memberAvatar,
   skinById,
   tokensForSkin,
@@ -99,7 +98,8 @@ assert.equal(skinById(undefined).id, DEFAULT_SKIN_ID);
 // Avatars: every skin returns something drawable for every member, including a
 // member with a custom role that has no artwork on disk.
 const member = { id: "asq_kai_devops", name: "Kai", employeeType: "devops-engineer", avatar: "/avatars/devops-engineer.jpg" };
-const custom = { id: "asq_custom", name: "Zed", employeeType: "", avatar: "/avatars/custom.jpg" };
+const upload = "data:image/png;base64,iVBORw0KGgo=";
+const custom = { id: "asq_custom", name: "Zed", employeeType: "", avatar: upload };
 for (const skin of SKINS) {
   for (const subject of [member, custom]) {
     const face = memberAvatar(subject, skin);
@@ -111,12 +111,14 @@ for (const skin of SKINS) {
 // One face per member in every skin (ADR-0240): a picked or uploaded picture
 // is shown as it is everywhere; skins no longer swap in role portraits.
 for (const skin of SKINS) {
-  assert.equal(memberAvatar(custom, skin).src, "/avatars/custom.jpg", `${skin.id} keeps an uploaded picture`);
-  assert.equal(memberAvatar(member, skin).src, "/avatars/devops-engineer.jpg", `${skin.id} keeps a picked portrait`);
+  assert.equal(memberAvatar(custom, skin).src, upload, `${skin.id} keeps an uploaded picture`);
+  assert.equal(memberAvatar(member, skin).kind, "blob", `${skin.id} draws the bird for a removed portrait`);
 }
-for (const slug of SOFT_PORTRAIT_SLUGS) {
-  assert.ok(existsSync(`public/avatars/soft/${slug}.jpg`), `SOFT_PORTRAIT_SLUGS lists ${slug} but public/avatars/soft/${slug}.jpg is missing`);
-}
+// Only birds are built in (ADR-0240): no other built-in portrait may surface.
+for (const removed of ["soft", "nz-riso-set-1-01.webp", "devops-engineer.jpg"]) assert.ok(!existsSync(`public/avatars/${removed}`), `removed avatar ${removed} is back`);
+assert.ok(builtInAvatarOptions.every(option => birdFromAvatar(option.src)), "the picker offers only birds");
+assert.ok(roleTemplates.every(role => birdFromAvatar(role.avatar)), "every role template starts as a bird");
+assert.equal(memberAvatar({ id: "x", name: "Old", avatar: "/avatars/devops-engineer.jpg" }, SKINS[0]).kind, "blob", "a saved old portrait draws the bird");
 
 // The bird cast (ADR-0235). Grut draws the member's own bird as a shapeless
 // face; a custom picture still gets a bird, always the same one.
@@ -134,7 +136,7 @@ for (const skin of SKINS) {
 assert.ok(memberAvatar(kiwiMember, skinById("grut")).svg.includes("<title>Eva</title>"));
 assert.equal(birdForMember(custom), birdForMember({ ...custom }), "a custom picture maps to a stable bird");
 assert.equal(birdFromAvatar("/avatars/birds/tui.webp"), "tui");
-assert.equal(birdFromAvatar("/avatars/birds/robin.webp"), "", "only cast birds count");
+assert.equal(birdFromAvatar("/avatars/birds/wren.webp"), "", "only cast birds count");
 assert.equal(birdFromAvatar("/avatars/nz-riso-set-1-01.webp"), "");
 assert.deepEqual([...BIRD_FACE_IDS].sort(), [...BIRD_IDS].sort(), "every cast bird has a shapeless face");
 for (const bird of BIRD_IDS) {
@@ -144,16 +146,22 @@ for (const bird of BIRD_IDS) {
   assert.ok(svg.includes('fill-rule="evenodd"'), `${bird} must punch its eyes out`);
   assert.ok(svg.length < 1600, `${bird} face is ${svg.length} bytes`);
 }
-assert.equal(new Set(BIRD_IDS.map((bird) => birdFaceSvg(bird))).size, BIRD_IDS.length, "ten distinct faces");
+assert.equal(new Set(BIRD_IDS.map((bird) => birdFaceSvg(bird))).size, BIRD_IDS.length, "every bird has its own face");
+
 // Ember shows clay only for birds whose clay file is installed: Radix drops an
 // image that 404s, so pointing at missing art would turn a bird into an initial.
 for (const bird of INSTALLED_ART.clay) assert.ok(existsSync(`public/avatars/clay/${bird}.webp`), `INSTALLED_ART lists clay ${bird} but the file is missing`);
 // New members: a known role keeps its bird; anyone else gets an untaken one.
 assert.equal(birdAvatarForRole("common-qa-engineer", "", "x", ["/avatars/birds/kiwi.webp"]), "/avatars/birds/kiwi.webp");
 const roster10 = [];
-for (let index = 0; index < BIRD_IDS.length; index += 1) roster10.push(birdAvatarForRole("", "Generalist", `member-${index}`, roster10));
-assert.equal(new Set(roster10).size, BIRD_IDS.length, `ten unknown-role members get ten birds: ${roster10.join(", ")}`);
-assert.ok(BIRD_IDS.includes(birdFromAvatar(birdAvatarForRole("", "Generalist", "eleventh", roster10))), "an eleventh member still gets a bird");
+for (let index = 0; index < 10; index += 1) roster10.push(birdAvatarForRole("", "Generalist", `member-${index}`, roster10));
+assert.equal(new Set(roster10).size, 10, `ten unknown-role members get ten birds: ${roster10.join(", ")}`);
+// Brazil and US birds (ADR-0241) never move an existing member: assignment
+// still hashes over New Zealand, and they come only once NZ is full.
+assert.ok(roster10.every(src => BIRDS.find(bird => bird.id === birdFromAvatar(src))?.region === "nz"), "the first ten members get New Zealand birds");
+assert.equal(BIRDS.find(bird => bird.id === birdFromAvatar(birdAvatarForRole("", "Generalist", "eleventh", roster10))).region, "br", "the eleventh gets a Brazilian bird");
+assert.deepEqual(BIRD_REGIONS.map(region => [region.id, BIRDS.filter(bird => bird.region === region.id).length]), [["nz", 10], ["br", 8], ["us", 8]]);
+
 assert.equal(untakenBird("same-seed"), untakenBird("same-seed"));
 
 // Blobs: stable, complete, and spread over the whole set.

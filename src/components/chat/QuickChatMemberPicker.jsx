@@ -7,6 +7,7 @@ import { Carousel, CarouselContent, CarouselItem } from "@/components/ui/carouse
 import { PresenceDot } from "@/components/members/PresenceDot";
 import { isOnBreak } from "@/lib/member-availability";
 import { presenceDescription, presenceFor } from "@/lib/presence-states";
+import { memberAvatar } from "@/lib/skins";
 
 function visibleMembers(members) {
   return (Array.isArray(members) ? members : []).filter((member) => member?.id && member?.name);
@@ -76,7 +77,12 @@ export function QuickChatMemberPicker({ members = [], activeMemberId, onSelect, 
 
   if (!selected) return <p className="px-3 py-3 text-sm text-muted-foreground">Add a squad member to start a conversation.</p>;
   function avatar(member) {
-    return renderAvatar ? renderAvatar(member, "size-9") : <Avatar key={`${member.id}:${member.avatar || "placeholder"}`} className="size-9 rounded-md">
+    if (renderAvatar) return renderAvatar(member, "size-9");
+    // The member's drawn bird, as everywhere else (ADR-0240).
+    const face = memberAvatar(member);
+    // eslint-disable-next-line react/no-danger
+    if (face.kind === "blob") return <span data-slot="avatar" className="member-face inline-block size-9 shrink-0 overflow-hidden rounded-md bg-muted p-[8%]" dangerouslySetInnerHTML={{ __html: face.svg }} />;
+    return <Avatar key={`${member.id}:${member.avatar || "placeholder"}`} className="size-9 rounded-md">
       {member.avatar ? <AvatarImage src={member.avatar} alt="" className="object-cover" /> : null}
       <AvatarFallback className="rounded-md"><CircleUserRound className="size-5" aria-hidden="true" /></AvatarFallback>
     </Avatar>;

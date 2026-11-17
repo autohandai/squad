@@ -244,7 +244,7 @@ const roleTemplateRows = [
     title: "Frontend Developer",
     label: "Frontend",
     accent: "green",
-    avatar: "/avatars/frontend-developer.jpg",
+    avatar: "/avatars/birds/kea.webp",
     description:
       "Focused on frontend interface design and implementation, with strengths in component architecture, visual language craftsmanship, responsive adaptation, accessibility optimization, and performance tuning.",
     starter:
@@ -257,7 +257,7 @@ const roleTemplateRows = [
     title: "Backend Engineer",
     label: "Backend",
     accent: "green",
-    avatar: "/avatars/backend-engineer.jpg",
+    avatar: "/avatars/birds/takahe.webp",
     description:
       "Backend engineering focused on API development, data modeling, migrations, service reliability, and integration boundaries.",
     starter:
@@ -270,7 +270,7 @@ const roleTemplateRows = [
     title: "Full Stack Developer",
     label: "Full stack",
     accent: "blue",
-    avatar: "/avatars/full-stack-developer.jpg",
+    avatar: "/avatars/birds/kea.webp",
     description:
       "End-to-end software delivery across interface, API, data, and integration work, focused on shipping coherent product slices.",
     starter:
@@ -283,7 +283,7 @@ const roleTemplateRows = [
     title: "Mobile Developer",
     label: "Mobile",
     accent: "blue",
-    avatar: "/avatars/mobile-developer.jpg",
+    avatar: "/avatars/birds/kotare.webp",
     description:
       "Mobile application engineering for native and cross-platform products, focused on device behavior, offline states, performance, and release readiness.",
     starter:
@@ -296,7 +296,7 @@ const roleTemplateRows = [
     title: "UX/UI Designer",
     label: "Design",
     accent: "pink",
-    avatar: "/avatars/ux-ui-designer.jpg",
+    avatar: "/avatars/birds/kereru.webp",
     description:
       "Product design role for user journeys, interaction quality, information architecture, accessibility, and high-fidelity interface direction.",
     starter:
@@ -309,7 +309,7 @@ const roleTemplateRows = [
     title: "Solution Architect",
     label: "Architecture",
     accent: "blue",
-    avatar: "/avatars/solution-architect.jpg",
+    avatar: "/avatars/birds/kakapo.webp",
     description:
       "Architecture role for system boundaries, integration maps, technical decisions, migration paths, and long-term maintainability.",
     starter:
@@ -322,7 +322,7 @@ const roleTemplateRows = [
     title: "DevOps Engineer",
     label: "DevOps",
     accent: "amber",
-    avatar: "/avatars/devops-engineer.jpg",
+    avatar: "/avatars/birds/fantail.webp",
     description:
       "Delivery infrastructure role for CI/CD, deployment automation, environment configuration, observability, and release operations.",
     starter:
@@ -335,7 +335,7 @@ const roleTemplateRows = [
     title: "Platform Engineer",
     label: "Platform",
     accent: "green",
-    avatar: "/avatars/platform-engineer.jpg",
+    avatar: "/avatars/birds/takahe.webp",
     description:
       "Internal platform role for developer experience, shared tooling, reusable service templates, runtime standards, and operational consistency.",
     starter:
@@ -348,7 +348,7 @@ const roleTemplateRows = [
     title: "Security Engineer",
     label: "Security",
     accent: "amber",
-    avatar: "/avatars/security-engineer.jpg",
+    avatar: "/avatars/birds/ruru.webp",
     description:
       "Application security role for threat modeling, secure code review, secrets hygiene, dependency risk, and compliance-minded delivery.",
     starter:
@@ -366,7 +366,7 @@ const roleTemplateRows = [
     title: "AI Engineer",
     label: "AI",
     accent: "blue",
-    avatar: "/avatars/ai-engineer.jpg",
+    avatar: "/avatars/birds/kakapo.webp",
     description:
       "AI product engineering role for model integration, prompt systems, evaluation harnesses, tool orchestration, and agentic workflows.",
     starter:
@@ -379,7 +379,7 @@ const roleTemplateRows = [
     title: "Scrum Master",
     label: "Delivery",
     accent: "green",
-    avatar: "/avatars/scrum-master.jpg",
+    avatar: "/avatars/birds/kiwi.webp",
     description:
       "Delivery facilitation role for sprint health, ceremonies, dependency tracking, blocker removal, and continuous improvement.",
     starter:
@@ -392,7 +392,7 @@ const roleTemplateRows = [
     title: "Technical Writer",
     label: "Docs",
     accent: "amber",
-    avatar: "/avatars/technical-writer.jpg",
+    avatar: "/avatars/birds/kereru.webp",
     description:
       "Documentation role for developer guides, API references, runbooks, release notes, onboarding content, and knowledge base quality.",
     starter:
@@ -405,7 +405,7 @@ const roleTemplateRows = [
     title: "QA Engineer",
     label: "QA",
     accent: "green",
-    avatar: "/avatars/common-qa-engineer.jpg",
+    avatar: "/avatars/birds/kiwi.webp",
     description:
       "A quality assurance role for general command-line tools and Web products, focused on test plan documentation, end-to-end testing, defect reproduction, and evidence-based reporting.",
     starter:
@@ -418,7 +418,7 @@ const roleTemplateRows = [
     title: "Product Manager",
     label: "PM",
     accent: "green",
-    avatar: "/avatars/product-manager.jpg",
+    avatar: "/avatars/birds/takahe.webp",
     description:
       "AI-native product management for software products, focused on user problems, requirements quality, prioritization, and launch clarity.",
     starter:
@@ -431,7 +431,7 @@ const roleTemplateRows = [
     title: "Data Analyst",
     label: "Data",
     accent: "blue",
-    avatar: "/avatars/data-analyst.jpg",
+    avatar: "/avatars/birds/pukeko.webp",
     description:
       "AI-native data analyst for problem framing, metric alignment, diagnostics, reporting, and insight synthesis.",
     starter:
@@ -444,7 +444,7 @@ const roleTemplateRows = [
     title: "Content Operations Specialist",
     label: "Content",
     accent: "amber",
-    avatar: "/avatars/content-operations-specialist.jpg",
+    avatar: "/avatars/birds/kereru.webp",
     description:
       "AI-native content operations role for account positioning, trend analysis, editorial systems, and workflow consistency.",
     starter:

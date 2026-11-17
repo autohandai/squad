@@ -46,7 +46,7 @@ import { DEFAULT_SKIN_ID, SKINS, SKIN_VAR_DEFAULTS, isSkinId, memberAvatar, skin
 import { LAYOUTS, LAYOUT_STORAGE_KEY, isLayoutId, resolveLayoutId } from "@/lib/layouts";
 import { LayoutGlyph } from "@/components/onboarding/LayoutStep";
 import { blobForMember, blobSvg } from "@/lib/blob-avatar";
-import { birdFromAvatar } from "@/lib/bird-cast";
+import { BIRD_REGIONS, birdFromAvatar } from "@/lib/bird-cast";
 import { birdFaceSvg } from "@/lib/bird-faces";
 import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
@@ -2941,7 +2941,7 @@ function formatBrainCardForPrompt(agent) {
   ].join("\n\n");
 }
 
-const AVATAR_VERSION = 2;
+const AVATAR_VERSION = 3;
 
 function normalizeAgentCopy(agent) {
   if (!agent || typeof agent !== "object") return agent;
@@ -2958,9 +2958,10 @@ function normalizeAgentCopy(agent) {
     // a choice and stays: without the version it was swapped on every load.
     // A member saved with no picture at all (made before the cast, or
     // restored from an older Squad) is a bird too, not a letter (ADR-0235).
-    avatar: !String(agent.avatar || "").trim()
-      ? birdAvatarForRole(agent.employeeType, agent.role, agent.id)
-      : agent.avatarVersion !== AVATAR_VERSION && /^\/avatars\/[a-z0-9-]+\.(jpg|jpeg|webp)$/i.test(String(agent.avatar || ""))
+    // Only birds are built in (ADR-0240): any other built-in picture (role
+    // portraits, riso prints, skin portraits) was removed, so it becomes the
+    // member's bird. An uploaded picture (a data: URI) is kept.
+    avatar: !String(agent.avatar || "").trim() || (String(agent.avatar).startsWith("/avatars/") && !birdFromAvatar(agent.avatar))
       ? birdAvatarForRole(agent.employeeType, agent.role, agent.id)
       : agent.avatar,
     avatarVersion: AVATAR_VERSION,
@@ -19207,8 +19208,10 @@ function AgentPhotoCard({ agent, className, compact = false }) {
         className
       )}
     >
-      <div className={cn("rounded-sm bg-[#dcd2ff] p-2", compact ? "w-[136px]" : "w-[164px]")}>
-        <AgentAvatar agent={agent} large className={cn("rounded-sm border-0", compact ? "size-[120px]" : "size-[148px]")} />
+      {/* No coloured mat: the face sits on its own skin-adaptive tile
+          (ADR-0240); a lilac mat belonged to the old portraits. */}
+      <div className={cn(compact ? "w-[136px]" : "w-[164px]")}>
+        <AgentAvatar agent={agent} large className={cn("rounded-sm border-0", compact ? "size-[136px]" : "size-[164px]")} />
       </div>
       <div className="mt-2 text-center font-mono text-xs text-muted-foreground">ID: {agent.staffId}</div>
     </div>
@@ -19686,6 +19689,12 @@ function RoleAvatar({ roleId, src, alt, size = "default" }) {
     large: "size-9",
   };
 
+  if (birdFromAvatar(src)) {
+    return (
+      // eslint-disable-next-line react/no-danger
+      <span data-slot="avatar" className={cn("member-face inline-block shrink-0 overflow-hidden rounded-full bg-muted p-[8%]", sizes[size])} dangerouslySetInnerHTML={{ __html: birdFaceSvg(birdFromAvatar(src), { title: alt || "" }) }} />
+    );
+  }
   if (src) {
     return (
       <Avatar className={cn("rounded-full border border-border/70 bg-muted", sizes[size])}>
@@ -19892,60 +19901,50 @@ function refreshedProfileFilesForAgent(agent) {
 }
 
 function AvatarPicker({ value, onChange, options = builtInAvatarOptions }) {
-  const selectedOption = options.find((option) => option.src === value);
-  const orderedOptions = [];
-  const seenSources = new Set();
-
-  for (const option of [
-    selectedOption,
-    // The drawn bird faces lead: they are every member's default (ADR-0240).
-    ...options.filter((item) => birdFromAvatar(item.src)),
-    ...options.filter((item) => item.id.startsWith("nz-riso-set")),
-    ...options,
-  ]) {
-    if (!option || seenSources.has(option.src)) continue;
-    seenSources.add(option.src);
-    orderedOptions.push(option);
-  }
+  // Only drawn birds are built in (ADR-0240), grouped by country (ADR-0241).
+  // An uploaded picture is not listed here; it stays the member's until changed.
+  const groups = BIRD_REGIONS
+    .map((region) => ({ ...region, options: options.filter((option) => birdFromAvatar(option.src) && (option.region || "nz") === region.id) }))
+    .filter((group) => group.options.length);
 
   return (
     <div className="rounded-md border bg-card/70 p-3">
-      <div
-        role="radiogroup"
-        aria-label="Built-in avatars"
-        className="grid max-h-56 gap-2 overflow-y-auto pr-1"
-        style={{ gridTemplateColumns: "repeat(auto-fill, minmax(48px, 1fr))" }}
-      >
-        {orderedOptions.map((option) => {
-          const selected = value === option.src;
-          return (
-            <button
-              key={`${option.id}-${option.src}`}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              aria-label={`Use ${option.label}`}
-              className={cn(
-                "relative grid size-12 place-items-center rounded-full border bg-muted/40 p-0 transition-[border-color,box-shadow,transform]",
-                "hover:-translate-y-0.5 hover:border-foreground/70 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/35",
-                selected && "border-primary shadow-[0_0_0_2px_var(--primary)]"
-              )}
-              onClick={() => onChange(option.src)}
-            >
-              {birdFromAvatar(option.src) ? (
-                // eslint-disable-next-line react/no-danger
-                <span className="size-full overflow-hidden rounded-full bg-muted p-[8%]" dangerouslySetInnerHTML={{ __html: birdFaceSvg(birdFromAvatar(option.src)) }} />
-              ) : (
-                <img src={option.src} alt="" loading="lazy" className="size-full rounded-full object-cover" />
-              )}
-              {selected ? (
-                <span className="absolute -bottom-0.5 -right-0.5 grid size-5 place-items-center rounded-full border border-background bg-primary text-primary-foreground">
-                  <CheckCircle2 className="size-3" />
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
+      <div role="radiogroup" aria-label="Built-in avatars" className="flex max-h-72 flex-col gap-3 overflow-y-auto pr-1">
+        {groups.map((group) => (
+          <div key={group.id} role="group" aria-label={group.label}>
+            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{group.label}</p>
+            <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(48px, 1fr))" }}>
+              {group.options.map((option) => {
+                const selected = value === option.src;
+                const bird = birdFromAvatar(option.src);
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={`Use ${option.label}`}
+                    title={option.label}
+                    className={cn(
+                      "relative grid size-12 place-items-center rounded-full border border-transparent p-0 transition-[border-color,box-shadow,transform]",
+                      "hover:-translate-y-0.5 hover:border-foreground/40 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/35",
+                      selected && "border-primary shadow-[0_0_0_2px_var(--primary)]"
+                    )}
+                    onClick={() => onChange(option.src)}
+                  >
+                    {/* eslint-disable-next-line react/no-danger */}
+                    <span className="size-full overflow-hidden rounded-full bg-muted p-[8%]" dangerouslySetInnerHTML={{ __html: birdFaceSvg(bird) }} />
+                    {selected ? (
+                      <span className="absolute -bottom-0.5 -right-0.5 grid size-5 place-items-center rounded-full border border-background bg-primary text-primary-foreground">
+                        <CheckCircle2 className="size-3" />
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+
+// A 16px JPEG, inline: the role portrait this used to read was removed (ADR-0240).
+export const fixtureJpeg = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAQABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABv/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AJsApHX/2Q==", "base64");
 
 export const fixturePng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV2sAAAAASUVORK5CYII=", "base64");
 
@@ -50,7 +52,7 @@ export async function attachmentFixtures() {
   });
   return [
     { name: "screenshot.png", mime: "image/png", bytes: fixturePng },
-    { name: "portrait.jpeg", mime: "image/jpeg", bytes: await readFile(new URL("../../public/avatars/backend-engineer.jpg", import.meta.url)) },
+    { name: "portrait.jpeg", mime: "image/jpeg", bytes: fixtureJpeg },
     { name: "diagram.svg", mime: "image/svg+xml", bytes: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="48"><rect width="64" height="48" fill="red"/></svg>') },
     { name: "spec.pdf", mime: "application/pdf", bytes: pdf() },
     { name: "word.doc", mime: "application/msword", bytes: Buffer.from('{\\rtf1\\ansi SQUAD_DOC_42}') },

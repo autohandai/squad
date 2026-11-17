@@ -1,38 +1,9 @@
 import { AUTOHAND_SKILLS_REGISTRY_URL, roleTemplates } from "./lib/member-profiles.js";
-import { birdAvatarSrc, untakenBird } from "./lib/bird-cast.js";
+import { BIRDS, birdAvatarSrc, untakenBird } from "./lib/bird-cast.js";
 export { AUTOHAND_SKILLS_REGISTRY_URL, roleTemplates };
 
 export { brainCardFields } from "./lib/brain-card.js";
 
-const generatedAvatarOptions = [
-  { id: "nz-riso-set-1-01", label: "Riso 01", src: "/avatars/nz-riso-set-1-01.webp" },
-  { id: "nz-riso-set-1-02", label: "Riso 02", src: "/avatars/nz-riso-set-1-02.webp" },
-  { id: "nz-riso-set-1-03", label: "Riso 03", src: "/avatars/nz-riso-set-1-03.webp" },
-  { id: "nz-riso-set-1-04", label: "Riso 04", src: "/avatars/nz-riso-set-1-04.webp" },
-  { id: "nz-riso-set-1-05", label: "Riso 05", src: "/avatars/nz-riso-set-1-05.webp" },
-  { id: "nz-riso-set-1-06", label: "Riso 06", src: "/avatars/nz-riso-set-1-06.webp" },
-  { id: "nz-riso-set-1-07", label: "Riso 07", src: "/avatars/nz-riso-set-1-07.webp" },
-  { id: "nz-riso-set-1-08", label: "Riso 08", src: "/avatars/nz-riso-set-1-08.webp" },
-  { id: "nz-riso-set-1-09", label: "Riso 09", src: "/avatars/nz-riso-set-1-09.webp" },
-  { id: "nz-riso-set-1-10", label: "Riso 10", src: "/avatars/nz-riso-set-1-10.webp" },
-  { id: "nz-riso-set-1-11", label: "Riso 11", src: "/avatars/nz-riso-set-1-11.webp" },
-  { id: "nz-riso-set-2-01", label: "Riso 12", src: "/avatars/nz-riso-set-2-01.webp" },
-  { id: "nz-riso-set-2-02", label: "Riso 13", src: "/avatars/nz-riso-set-2-02.webp" },
-  { id: "nz-riso-set-2-03", label: "Riso 14", src: "/avatars/nz-riso-set-2-03.webp" },
-  { id: "nz-riso-set-2-04", label: "Riso 15", src: "/avatars/nz-riso-set-2-04.webp" },
-  { id: "nz-riso-set-2-05", label: "Riso 16", src: "/avatars/nz-riso-set-2-05.webp" },
-  { id: "nz-riso-set-2-06", label: "Riso 17", src: "/avatars/nz-riso-set-2-06.webp" },
-  { id: "nz-riso-set-2-07", label: "Riso 18", src: "/avatars/nz-riso-set-2-07.webp" },
-  { id: "nz-riso-set-2-08", label: "Riso 19", src: "/avatars/nz-riso-set-2-08.webp" },
-  { id: "nz-riso-set-2-09", label: "Riso 20", src: "/avatars/nz-riso-set-2-09.webp" },
-  { id: "nz-riso-set-2-10", label: "Riso 21", src: "/avatars/nz-riso-set-2-10.webp" },
-  { id: "nz-riso-set-2-11", label: "Riso 22", src: "/avatars/nz-riso-set-2-11.webp" },
-  { id: "nz-riso-set-2-12", label: "Riso 23", src: "/avatars/nz-riso-set-2-12.webp" },
-  { id: "nz-riso-set-2-13", label: "Riso 24", src: "/avatars/nz-riso-set-2-13.webp" },
-  { id: "nz-riso-set-2-14", label: "Riso 25", src: "/avatars/nz-riso-set-2-14.webp" },
-  { id: "nz-riso-set-2-15", label: "Riso 26", src: "/avatars/nz-riso-set-2-15.webp" },
-  { id: "nz-riso-set-2-16", label: "Riso 27", src: "/avatars/nz-riso-set-2-16.webp" },
-];
 
 // New Zealand bird portraits: the default avatar set. Each bird carries a
 // subtle role hint, so members read as a team at a glance.
@@ -47,7 +18,9 @@ export const birdAvatarOptions = [
   { id: "bird-takahe", label: "Takahē", src: "/avatars/birds/takahe.webp", roles: ["platform-engineer", "backend-engineer", "backend", "platform"] },
   { id: "bird-kereru", label: "Kererū", src: "/avatars/birds/kereru.webp", roles: ["ux-ui-designer", "content-operations-specialist", "designer", "design", "content"] },
   { id: "bird-kotare", label: "Kōtare", src: "/avatars/birds/kotare.webp", roles: ["mobile-developer", "mobile", "ios", "android"] },
-];
+  // Brazil and the United States (ADR-0241): picked by hand, no role hints.
+  ...BIRDS.filter((bird) => bird.region !== "nz").map((bird) => ({ id: `bird-${bird.id}`, label: bird.label, src: birdAvatarSrc(bird.id), roles: [], region: bird.region })),
+].map((option) => ({ region: "nz", ...option }));
 
 /**
  * Pick the bird for a role id or free-text role. A known role keeps its bird,
@@ -62,15 +35,9 @@ export function birdAvatarForRole(employeeType = "", roleText = "", seed = "", t
   return birdAvatarSrc(untakenBird(seed || haystack, taken));
 }
 
-export const builtInAvatarOptions = [
-  ...birdAvatarOptions.map(({ id, label, src }) => ({ id, label, src })),
-  ...roleTemplates.map((role) => ({
-    id: role.id,
-    label: role.title,
-    src: role.avatar,
-  })),
-  ...generatedAvatarOptions,
-];
+// Only the drawn birds are built in (ADR-0240). Role portraits, riso prints
+// and skin portraits were removed and must not come back.
+export const builtInAvatarOptions = birdAvatarOptions.map(({ id, label, src, region }) => ({ id, label, src, region }));
 
 // Members are provisioned after repository selection; no demo roster ships.
 export const initialAgents = [];

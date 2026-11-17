@@ -71,14 +71,6 @@ export function skinById(id) { return BY_ID.get(String(id || '')) || BY_ID.get(D
 export function isSkinId(id) { return BY_ID.has(String(id || '')); }
 export function tokensForSkin(design, surface) { return design?.tokens?.[surface] || null; }
 
-// Roles with installed artwork. Custom roles keep their member's own photo.
-export const SOFT_PORTRAIT_SLUGS = [
-  'ai-engineer', 'backend-engineer', 'common-qa-engineer', 'content-operations-specialist',
-  'data-analyst', 'devops-engineer', 'frontend-developer', 'full-stack-developer', 'mobile-developer',
-  'platform-engineer', 'product-manager', 'scrum-master', 'security-engineer', 'solution-architect',
-  'technical-writer', 'ux-ui-designer',
-];
-export function roleSlug(member) { return String(member?.employeeType || '').trim().toLowerCase(); }
 /**
  * A member's face, the same in every skin (ADR-0240). A member whose picture
  * is a cast bird, or who has none, is that bird's drawn face; the skin and
@@ -90,7 +82,8 @@ export function roleSlug(member) { return String(member?.employeeType || '').tri
 export function memberAvatar(member, design) {
   const own = String(member?.avatar || '').trim();
   const cast = birdFromAvatar(own);
-  if (cast || !own) {
+  // Any other built-in path is a removed portrait: draw the bird instead.
+  if (cast || !own || own.startsWith('/avatars/')) {
     const bird = cast || birdForMember(member);
     return { kind: 'blob', bird, blob: blobForMember(member), svg: birdFaceSvg(bird, { title: member?.name || '' }) };
   }

@@ -12,6 +12,8 @@ list to the section for that version.
 
 ### Added
 
+- Sixteen more birds in the same drawn style: from Brazil the tucano, arara-azul, bem-te-vi, sabiá, beija-flor, quero-quero, harpia and joão-de-barro; from the United States the bald eagle, cardinal, blue jay, robin, roadrunner, puffin, flamingo and chickadee. Pick them in Edit Profile, where birds are grouped by country. New Zealand birds stay the default.
+
 - Settings › Chat › **Reply in threads**, off by default. Off, members' replies in groups and channels appear in order in the conversation; on, they gather under the message they answer, as before.
 - The Local menu at the top of the sidebar now lists your paired phones, each with whether it is reaching this computer right now and when it was paired, and lets you unpair one (Unpair, then Confirm).
 
@@ -27,6 +29,8 @@ list to the section for that version.
 - Reach your Squad agents from an approved iPhone away from home through an encrypted relay. Enable “Reach from anywhere” in Computers settings, scan the code and approve the matching six digits. Your computer keeps message keys and needs to stay awake with Squad running.
 - Your phone now works at home and away without pairing again. Computers settings lets Same Wi-Fi and From anywhere (Autohand’s relay) run at the same time, alongside your own tunnel. A phone paired on one of them learns the others from your computer and switches by itself: the same network when it can, the relay everywhere else.
 ### Changed
+
+- Birds are now the only built-in avatars. The role portraits, riso prints and skin portraits are gone; a member that had one shows its bird. Pictures you uploaded stay. The member card no longer frames the face in lilac.
 
 - Team Squads are now turned on per person by Autohand. Until they are on for your account, Squad opens your Personal Squad, Settings › Squads lists only that, and the account menu has no Switch Squad…. If you were in a team Squad when they are turned off, Squad moves you to your Personal Squad; your team's data stays where it is and your team choice comes back when they are on again. When they are turned on, your teams appear in Settings › Squads without restarting.
 - Switching between your personal Squad and a team Squad now happens in Settings › Squads, which lists every Squad you belong to, marks the current one and says what switching does. The “Personal Squad ⌄” menu is gone from the sidebar. If you belong to more than one Squad, the account menu names the one you are in and offers Switch Squad….

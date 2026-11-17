@@ -22,6 +22,30 @@ export const BIRDS = [
   { id: 'takahe', label: 'Takahē', line: 'The heavy lifter. Indigo and teal, big red beak, built to carry.' },
   { id: 'kakapo', label: 'Kākāpō', line: 'The thinker. Moss-green night parrot with a soft whiskered face.' },
   { id: 'kotare', label: 'Kōtare', line: 'The precise one. Turquoise kingfisher with a long straight beak.' },
+  // Brazil and the United States (ADR-0241). New Zealand stays the default
+  // cast; these join the picker and are assigned once all ten NZ birds are taken.
+  { id: 'tucano', region: 'br', label: 'Tucano', line: 'Black with a white throat and a huge orange beak.' },
+  { id: 'araraazul', region: 'br', label: 'Arara-azul', line: 'Hyacinth macaw: cobalt blue with yellow eye rings.' },
+  { id: 'bemtevi', region: 'br', label: 'Bem-te-vi', line: 'Brown, a white brow under a black cap, a yellow belly.' },
+  { id: 'sabia', region: 'br', label: 'Sabiá', line: 'Rufous-bellied thrush with yellow eye rings.' },
+  { id: 'beijaflor', region: 'br', label: 'Beija-flor', line: 'Green hummingbird with a long fine beak and a ruby throat.' },
+  { id: 'queroquero', region: 'br', label: 'Quero-quero', line: 'Grey lapwing with a thin crest and a black chest.' },
+  { id: 'harpia', region: 'br', label: 'Harpia', line: 'Harpy eagle: grey head, double crest, black breast band.' },
+  { id: 'joaodebarro', region: 'br', label: 'João-de-barro', line: 'Rufous hornero, the mud-nest builder.' },
+  { id: 'baldeagle', region: 'us', label: 'Bald eagle', line: 'White head, brown shoulders, a big yellow beak.' },
+  { id: 'cardinal', region: 'us', label: 'Cardinal', line: 'Red, crested, with a black mask round an orange beak.' },
+  { id: 'bluejay', region: 'us', label: 'Blue jay', line: 'Blue crest, white face and a black necklace.' },
+  { id: 'robin', region: 'us', label: 'Robin', line: 'American robin: dark head, orange breast, white eye arcs.' },
+  { id: 'roadrunner', region: 'us', label: 'Roadrunner', line: 'Streaked and crested, with a long straight beak.' },
+  { id: 'puffin', region: 'us', label: 'Puffin', line: 'Black cap, white face and a bright orange beak.' },
+  { id: 'flamingo', region: 'us', label: 'Flamingo', line: 'Pink, with a bent black-tipped beak.' },
+  { id: 'chickadee', region: 'us', label: 'Chickadee', line: 'Black cap and bib, white cheeks, grey body.' },
+].map(bird => ({ region: 'nz', ...bird }));
+
+export const BIRD_REGIONS = [
+  { id: 'nz', label: 'New Zealand' },
+  { id: 'br', label: 'Brazil' },
+  { id: 'us', label: 'United States' },
 ];
 
 export const BIRD_IDS = BIRDS.map(bird => bird.id);
@@ -57,8 +81,11 @@ function hash(seed) {
 }
 
 /** The bird a seed lands on when nothing else decides. */
+// Assignment hashes over the New Zealand cast only, so adding birds from
+// other countries never moves a member who already has a bird (ADR-0241).
+const DEFAULT_CAST = BIRDS.filter(bird => bird.region === 'nz').map(bird => bird.id);
 export function birdForSeed(seed) {
-  return BIRD_IDS[hash(seed || 'squad') % BIRD_IDS.length];
+  return DEFAULT_CAST[hash(seed || 'squad') % DEFAULT_CAST.length];
 }
 
 /**
@@ -76,12 +103,14 @@ export function birdForMember(member) {
  */
 export function untakenBird(seed, taken = []) {
   const used = new Set([...taken].map(birdFromAvatar).filter(Boolean));
-  const start = BIRD_IDS.indexOf(birdForSeed(seed));
-  for (let step = 0; step < BIRD_IDS.length; step += 1) {
-    const bird = BIRD_IDS[(start + step) % BIRD_IDS.length];
+  const start = DEFAULT_CAST.indexOf(birdForSeed(seed));
+  for (let step = 0; step < DEFAULT_CAST.length; step += 1) {
+    const bird = DEFAULT_CAST[(start + step) % DEFAULT_CAST.length];
     if (!used.has(bird)) return bird;
   }
-  return BIRD_IDS[start];
+  // All ten NZ birds are taken: Brazil, then the United States, in cast order.
+  const next = BIRD_IDS.find(bird => !DEFAULT_CAST.includes(bird) && !used.has(bird));
+  return next || DEFAULT_CAST[start];
 }
 
 export function birdAvatarSrc(bird) { return `/avatars/birds/${bird}.webp`; }
