@@ -127,3 +127,20 @@ and update this ADR with the sizes.
   bird. Only blank and imported members avoid duplicates.
 - No static SVG files are published for the shapeless cast. The iPhone and
   the menu bar keep showing the 3D file, because neither has a Grut skin.
+
+## Amendment (2026-11-17): members with no picture
+
+The owner went back to the Squad he had been building (Chief of Staff and
+Tatiana) and both showed a letter, not a bird. Their saved profiles carry no
+`avatar` at all (checked in the dataset's `app/agents/*/profile.json`): they
+were made before the cast. `normalizeAgentCopy` only moved members with an
+old role portrait onto a bird, so an empty avatar passed through and Radix
+drew the initial.
+
+An empty avatar now gets `birdAvatarForRole(employeeType, role, id)` on load,
+the same rule a role portrait follows. A known role keeps its bird (checked
+with `bun` against `src/data.js`: Chief of Staff matches no role and hashes
+from its id to the pūkeko; Staff Product Designer matches "designer" and gets
+the kererū). Two such members can land on the same bird, because load does
+not see the roster's other picks; we accepted that rather than make load order
+decide who gets which bird. A custom picture is still never replaced.

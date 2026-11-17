@@ -136,3 +136,13 @@ Screenshots were inspected by eye at each iteration; see the change report.
     `check:onboarding-live`) were updated to press Continue on the new step but
     were not run here: they need a signed-in runtime.
   - The native macOS app and Squad for iPhone were not rebuilt or checked.
+
+## Amendment (2026-11-17): the header chip lines up
+
+The centred chat header centred each of its two lines on its own: the
+avatar-and-name row, then the status line. With a 36px avatar beside a 20px
+name, the status line floated loose under the avatar instead of under the
+name (owner's screenshot, Iris · Code Reviewer). The chip is still centred as
+one block, but inside it the avatar sits left and the status line starts
+under the name, exactly as the Full header lays out (`-mt-4 ml-12`). Only the
+alignment changed; nothing moved in or out of the chip.

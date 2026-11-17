@@ -38,6 +38,9 @@ list to the section for that version.
 
 ### Fixed
 
+- In the Minified layout the chat header lines up again: the status line sits under the member's name instead of floating under the portrait.
+- Members saved without a picture, such as ones made before the bird cast, now show their bird instead of a letter.
+
 - A brief outage of the Autohand account service no longer throws you out of a team Squad. Squad keeps your team open for up to two minutes while it can't check your access, and if it does have to stop, it tries again by itself instead of waiting for Retry.
 - A read-only team page now has an Open Personal Squad button, so you can get back to your own Squad in one click.
 - Old Squads with a long history (a saved conversations file over 8 MB) can be recovered and restored again; the recovery used to refuse them.

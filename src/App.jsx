@@ -2951,7 +2951,11 @@ function normalizeAgentCopy(agent) {
     // Members saved before bird avatars carried a role portrait; they move to
     // a bird once. A portrait picked since (New member still offers them) is
     // a choice and stays: without the version it was swapped on every load.
-    avatar: agent.avatarVersion !== AVATAR_VERSION && /^\/avatars\/[a-z0-9-]+\.(jpg|jpeg|webp)$/i.test(String(agent.avatar || ""))
+    // A member saved with no picture at all (made before the cast, or
+    // restored from an older Squad) is a bird too, not a letter (ADR-0235).
+    avatar: !String(agent.avatar || "").trim()
+      ? birdAvatarForRole(agent.employeeType, agent.role, agent.id)
+      : agent.avatarVersion !== AVATAR_VERSION && /^\/avatars\/[a-z0-9-]+\.(jpg|jpeg|webp)$/i.test(String(agent.avatar || ""))
       ? birdAvatarForRole(agent.employeeType, agent.role, agent.id)
       : agent.avatar,
     avatarVersion: AVATAR_VERSION,
