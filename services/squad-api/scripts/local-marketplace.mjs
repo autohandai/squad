@@ -49,7 +49,7 @@ async function applyMigrations(db, folder) {
 export async function startLocalMarketplace({ port: listen = port, persist = join(root, ".cloudflare", "local-marketplace"), seed = true } = {}) {
   const bundle = await build({ entryPoints: [join(root, "src/index.ts")], bundle: true, write: false, format: "esm", platform: "browser", target: "es2024", external: ["cloudflare:workers"] });
   const runtime = new Miniflare(convertV4MiniflareOptions({
-    host: "127.0.0.1", port: listen, d1Persist: join(persist, "d1"), r2Persist: join(persist, "r2"),
+    host: "127.0.0.1", port: listen, resourcePersistencePath: persist,
     workers: [{ name: "squad-api", modules: true, script: bundle.outputFiles[0].text, compatibilityDate: "2026-10-27",
       d1Databases: ["DB", "MARKETPLACE"], r2Buckets: ["MEMORY", "RELEASES"],
       bindings: { IDENTITY_ORIGIN: "https://api.autohand.ai", WEB_ORIGIN: "http://127.0.0.1:5173", RELEASE_PUBLISHER_TOKEN: "local-only-release-publisher-credential-000", MARKETPLACE_ADMIN_TOKEN: LOCAL_ADMIN_TOKEN },

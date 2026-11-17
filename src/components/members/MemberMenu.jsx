@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bird, CalendarClock, CircleUserRound, Copy, Download, Ellipsis, EllipsisVertical, Eye, EyeOff, Mail, MailOpen, MessageSquareText, PauseCircle, Pin, PinOff, Play, Share2, Trash2 } from "lucide-react";
+import { Bird, CalendarClock, CircleUserRound, Copy, Download, Ellipsis, EllipsisVertical, Eye, EyeOff, Mail, MailOpen, MessageSquareText, PauseCircle, Pin, PinOff, Play, Share2, Store, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 
 /**
  * The one member menu, on a directory row, a sidebar row and the chat header
- * (ADR-0106). Change avatar opens the bird picker (ADR-0243). Pin, Mark unread, Duplicate, Share as preset, Hide and Remove
+ * (ADR-0106). Change avatar opens the bird picker (ADR-0243). Pin, Mark unread, Duplicate, Share as preset, Publish to
+ * marketplace (ADR-0246), Hide and Remove
  * keep the same order everywhere; an item is shown only when its handler is
  * given, so the chat header can leave out "Open chat". Built from the
  * popover primitive like the other menus here; Remove keeps the caller's
@@ -36,6 +37,7 @@ export function MemberMenu({
   onMarkRead,
   onDuplicate,
   onSharePreset,
+  onPublishAgent,
   onExportConversation,
   hidden = false,
   onHide,
@@ -66,6 +68,7 @@ export function MemberMenu({
     onExportConversation ? { icon: Download, label: copy.exportConversation || "Export conversation", action: onExportConversation } : null,
     onDuplicate ? { icon: Copy, label: copy.duplicateMember || "Duplicate", action: onDuplicate } : null,
     onSharePreset ? { icon: Share2, label: copy.shareAsPreset || "Share as preset…", action: onSharePreset } : null,
+    onPublishAgent ? { icon: Store, label: copy.publishToMarketplace || "Publish to marketplace…", action: onPublishAgent } : null,
   ].filter(Boolean);
   const visibility = [
     onHide ? { icon: hidden ? Eye : EyeOff, label: hidden ? copy.showMember || "Show" : copy.hideMember || "Hide", action: onHide } : null,

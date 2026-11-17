@@ -335,6 +335,9 @@ import { ShareTeamDialog } from "@/components/teams/ShareTeamDialog";
 import { ImportTeamDialog } from "@/components/teams/ImportTeamDialog";
 import { NewTeamDialog } from "@/components/teams/NewTeamDialog";
 import { TemplatesDialog } from "@/components/teams/TemplatesDialog";
+import { MarketplaceDialog } from "@/components/marketplace/MarketplaceDialog";
+import { PublishAgentDialog } from "@/components/marketplace/PublishAgentDialog";
+import { requestFromAppRoute } from "@/lib/marketplace";
 import { TeamBuildRows } from "@/components/teams/TeamBuildRows";
 import { builtInTeamTemplates } from "@/data/team-templates";
 import { TEAM_BUILDS_STORAGE_KEY, buildFinishedEvent, buildMemberDraft, createTeamBuild, patchBuild as patchTeamBuildRecord, patchBuildMember as patchTeamBuildMember, pendingBuildMembers, resumeBuilds, teamDocumentFromProposal } from "@/lib/team-builder";
@@ -5553,6 +5556,36 @@ function App() {
   }, [refreshTeamPresets]);
   const presetTemplates = useMemo(() => teamPresets.map((entry) => presetTemplate(entry.preset)).filter(Boolean), [teamPresets]);
 
+  // The agent marketplace (ADR-0246). A squad://app/v1/agent-template link
+  // arrives as the route /marketplace/agents/<id>: it opens the dialog on that
+  // agent and the directory behind it; nothing is added until Add to squad.
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  const [marketplaceRequest, setMarketplaceRequest] = useState(null);
+  const [publishMember, setPublishMember] = useState(null);
+  useEffect(() => {
+    const [path, query = ""] = route.split("?");
+    if (!path.startsWith("/marketplace/agents/")) return;
+    const request = requestFromAppRoute(path, query);
+    window.history.replaceState({ squadOwnership: currentOwnership()?.storageKey }, "", SQUAD_DIRECTORY_ROUTE);
+    setRoute(SQUAD_DIRECTORY_ROUTE);
+    if (!request) return;
+    setMarketplaceRequest(request);
+    setMarketplaceOpen(true);
+  }, [route]);
+  async function addFromMarketplace({ document, receipt }) {
+    const build = await addTeam(document, { trusted: false, source: receipt.source === "grok" ? "grok-bot" : "marketplace" });
+    const memberId = build?.members?.[0]?.id;
+    if (!memberId) throw new Error("This agent could not be added. Nothing was changed.");
+    await api("/api/marketplace/imports", { method: "POST", body: JSON.stringify({ ...receipt, memberId, action: "add" }) }).catch(() => {});
+  }
+  async function updateFromMarketplace({ document, receipt }) {
+    const record = document.members[0];
+    const saved = await updateAgent(receipt.memberId, { role: record.role, description: record.description, instructions: record.instructions, brainCard: { ...record.brainCard } });
+    if (saved?.error) throw new Error(saved.error);
+    if (document.skills?.length) await api("/api/marketplace/skills", { method: "POST", body: JSON.stringify({ skills: document.skills }) });
+    await api("/api/marketplace/imports", { method: "POST", body: JSON.stringify(receipt) }).catch(() => {});
+  }
+
   // Teams from an objective or a template (ADR-0118). A build is the record
   // of one team being added: its members are prepared one at a time in the
   // background through the same `createAgent` New member uses, then one
@@ -6787,6 +6820,7 @@ function App() {
         onMarkRead={context === "chat" ? undefined : () => markMemberRead(agent.id)}
         onDuplicate={() => duplicateMember(agent)}
         onSharePreset={() => setSharePreset(agent)}
+        onPublishAgent={() => setPublishMember(agent)}
         onExportConversation={context === "chat" ? () => exportConversation(agent) : undefined}
         hidden={agent.hidden === true}
         onHide={() => hideMember(agent)}
@@ -10121,6 +10155,28 @@ function App() {
         copy={localeCopy}
         onAddTeam={addTeamFromProposal}
       />
+      <MarketplaceDialog
+        open={marketplaceOpen}
+        onOpenChange={(open) => {
+          setMarketplaceOpen(open);
+          if (!open) setMarketplaceRequest(null);
+        }}
+        api={api}
+        agents={agents}
+        copy={localeCopy}
+        avatarStyle={avatarStyle}
+        request={marketplaceRequest}
+        onAdd={addFromMarketplace}
+        onUpdate={updateFromMarketplace}
+        onOpenMember={(id) => navigate(memberChatPath(id))}
+      />
+      <PublishAgentDialog
+        open={Boolean(publishMember)}
+        onOpenChange={(open) => { if (!open) setPublishMember(null); }}
+        member={publishMember}
+        api={api}
+        copy={localeCopy}
+      />
       <TemplatesDialog
         open={templatesOpen}
         onOpenChange={setTemplatesOpen}
@@ -10281,6 +10337,8 @@ function App() {
                 canMarkUnread={(agent) => Boolean(markUnreadReadAt(messagesByAgent[agent.id] || []))}
                 onDuplicate={duplicateMember}
                 onSharePreset={setSharePreset}
+                onPublishAgent={setPublishMember}
+                onMarketplace={() => { setMarketplaceRequest(null); setMarketplaceOpen(true); }}
                 onShareTeam={() => setShareTeamOpen(true)}
                 onImportTeam={() => setImportTeamOpen(true)}
                 onNewTeam={() => setNewTeamOpen(true)}
@@ -17108,6 +17166,8 @@ function SquadDirectoryPage({
   canMarkUnread,
   onDuplicate,
   onSharePreset,
+  onPublishAgent,
+  onMarketplace,
   onShareTeam,
   onImportTeam,
   onNewTeam,
@@ -17250,7 +17310,7 @@ function SquadDirectoryPage({
                 {copy.newTeam || "New team"}
               </Button>
             ) : null}
-            <TeamMenu copy={copy} onTemplates={onTemplates} onShare={onShareTeam} onImport={onImportTeam} />
+            <TeamMenu copy={copy} onMarketplace={onMarketplace} onTemplates={onTemplates} onShare={onShareTeam} onImport={onImportTeam} />
           </div>
         </header>
 
@@ -17341,6 +17401,7 @@ function SquadDirectoryPage({
                   onMarkRead={onMarkRead ? () => onMarkRead(agent.id) : undefined}
                   onDuplicate={onDuplicate ? () => onDuplicate(agent) : undefined}
                   onSharePreset={onSharePreset ? () => onSharePreset(agent) : undefined}
+                  onPublishAgent={onPublishAgent ? () => onPublishAgent(agent) : undefined}
                 />
               ))}
             </ul>
@@ -17471,6 +17532,7 @@ function SquadMemberRow({
   onMarkRead,
   onDuplicate,
   onSharePreset,
+  onPublishAgent,
 }) {
   const workspace = getAgentWorkspace(agent, runtime, workspaces);
   const changeAvatar = useContext(AvatarChangeContext);
@@ -17579,6 +17641,7 @@ function SquadMemberRow({
           onMarkRead={onMarkRead}
           onDuplicate={onDuplicate}
           onSharePreset={onSharePreset}
+          onPublishAgent={onPublishAgent}
           hidden={agent.hidden === true}
           onHide={onHide}
           onRemove={onRequestDelete}

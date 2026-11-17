@@ -135,7 +135,9 @@ try {
   const noTemplate = await call("/api/marketplace/fetch", "POST", { id: phoebe.id });
   assert.equal(noTemplate.status, 503); assert.match(noTemplate.error, /nothing was added/);
   api = await startLocalMarketplace({ port: apiPort, persist, seed: false });
-  assert.equal((await call("/api/marketplace/agents?q=payroll")).data.offline, false, "back online");
+  const online = await call("/api/marketplace/agents?q=payroll");
+  assert.equal(online.data.offline, false, "back online");
+  assert.ok(online.data.agents.some((agent) => agent.name === "Phoebe"), "the local API's D1 survives a restart");
   console.log("check-marketplace-bridge: browsing, verified fetches, offline, receipts, Grok previews and publishing OK");
 } finally {
   await bridge.close().catch(() => {});
