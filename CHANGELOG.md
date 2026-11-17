@@ -12,6 +12,8 @@ list to the section for that version.
 
 ### Added
 
+- Settings › Appearance › Avatars: draw every member's bird Flat (the default), in 3D as a soft glossy toy, or in matte Clay. Same bird and same face in every skin and theme; only the material changes.
+
 - Sixteen more birds in the same drawn style: from Brazil the tucano, arara-azul, bem-te-vi, sabiá, beija-flor, quero-quero, harpia and joão-de-barro; from the United States the bald eagle, cardinal, blue jay, robin, roadrunner, puffin, flamingo and chickadee. Pick them in Edit Profile, where birds are grouped by country. New Zealand birds stay the default.
 
 - Settings › Chat › **Reply in threads**, off by default. Off, members' replies in groups and channels appear in order in the conversation; on, they gather under the message they answer, as before.

@@ -557,7 +557,7 @@ const UI_COPY_BY_LANGUAGE = {
     workDetailsHidden: "Hidden",
     skin: "Skin",
     skinDescription:
-      "Colour, type, shape, spacing and member portraits. Every skin follows your mode and works in either layout.",
+      "Colour, type, shape and spacing. Every skin follows your mode and works in either layout.",
     setUpReactionFlow: "Make a reaction do something\u2026",
     reactionFlowTitle: "When someone reacts",
     reactionFlowDetail: "Pick an emoji and what it should set off. It runs whenever anyone reacts with it in this channel.",

@@ -47,7 +47,7 @@ import { LAYOUTS, LAYOUT_STORAGE_KEY, isLayoutId, resolveLayoutId } from "@/lib/
 import { LayoutGlyph } from "@/components/onboarding/LayoutStep";
 import { blobForMember, blobSvg } from "@/lib/blob-avatar";
 import { BIRD_REGIONS, birdFromAvatar } from "@/lib/bird-cast";
-import { birdFaceSvg } from "@/lib/bird-faces";
+import { AVATAR_STYLES, DEFAULT_AVATAR_STYLE, birdFaceSvg, isAvatarStyle } from "@/lib/bird-faces";
 import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
 import { channelTranscript } from "@/lib/channel-transcript";
@@ -586,6 +586,8 @@ const PresenceContext = createContext({ presenceMap: {}, bridgeReachable: true, 
 const SkinContext = createContext(skinById(DEFAULT_SKIN_ID));
 // Full or Minified (ADR-0233). Independent of the skin; Quick Chat ignores it.
 const LayoutContext = createContext("full");
+// Flat, 3D or clay: how every bird face is drawn (ADR-0242). A device choice.
+const AvatarStyleContext = createContext(DEFAULT_AVATAR_STYLE);
 
 const RemoteMembersContext = createContext({ remoteByMember: {}, refreshRemoteMembers: async () => {} });
 function useRemoteMembers() {
@@ -4595,6 +4597,14 @@ function App() {
   const [themePreference, setThemePreference] = useState(readThemePreference);
   const [skinId, setSkinId] = useState(readSkinId);
   const [layoutId, setLayoutId] = useState(readLayoutId);
+  const [avatarStyle, setAvatarStyle] = useState(() => {
+    try { const stored = ownedLocalStorage.getItem(STORAGE_KEYS.avatarStyle); return isAvatarStyle(stored) ? stored : DEFAULT_AVATAR_STYLE; } catch { return DEFAULT_AVATAR_STYLE; }
+  });
+  const changeAvatarStyle = useCallback((next) => {
+    if (!isAvatarStyle(next)) return;
+    setAvatarStyle(next);
+    try { ownedLocalStorage.setItem(STORAGE_KEYS.avatarStyle, next); } catch { /* storage may be off */ }
+  }, []);
   useEffect(() => {
     function readSharedAppearance() {
       const preference = readThemePreference();
@@ -9952,6 +9962,7 @@ function App() {
     return (
       <AccountContext.Provider value={accountContextValue}>
       <SkinContext.Provider value={activeSkin}>
+      <AvatarStyleContext.Provider value={avatarStyle}>
       <PresenceContext.Provider value={presenceContextValue}>
       <RemoteMembersContext.Provider value={remoteMembersContextValue}>
       <TooltipProvider>
@@ -9979,6 +9990,7 @@ function App() {
       </TooltipProvider>
       </RemoteMembersContext.Provider>
       </PresenceContext.Provider>
+      </AvatarStyleContext.Provider>
       </SkinContext.Provider>
       </AccountContext.Provider>
     );
@@ -9987,6 +9999,7 @@ function App() {
   return (
     <AccountContext.Provider value={accountContextValue}>
     <SkinContext.Provider value={activeSkin}>
+    <AvatarStyleContext.Provider value={avatarStyle}>
     <LayoutContext.Provider value={layoutId}>
     <PresenceContext.Provider value={presenceContextValue}>
     <RemoteMembersContext.Provider value={remoteMembersContextValue}>
@@ -10357,6 +10370,8 @@ function App() {
                 onSkinChange={setSkinId}
                 layoutId={layoutId}
                 onLayoutChange={changeLayout}
+                avatarStyle={avatarStyle}
+                onAvatarStyleChange={changeAvatarStyle}
                 setThemePreference={setThemePreference}
                 handoffSettings={handoffSettings}
                 setHandoffSettings={setHandoffSettings}
@@ -10639,6 +10654,7 @@ function App() {
     </RemoteMembersContext.Provider>
     </PresenceContext.Provider>
     </LayoutContext.Provider>
+    </AvatarStyleContext.Provider>
     </SkinContext.Provider>
     </AccountContext.Provider>
   );
@@ -13832,6 +13848,7 @@ function CanvasWorkspace({ ownerType, ownerId, canvases = [], activeCanvasId = "
 
 function AgentAvatar({ agent, large = false, className }) {
   const skin = useContext(SkinContext);
+  const avatarStyle = useContext(AvatarStyleContext);
   const face = memberAvatar(agent, skin);
   // A bird face is drawn, not fetched, and is the same in every skin
   // (ADR-0240). What adapts is the tile: the skin's muted surface and avatar
@@ -13844,7 +13861,7 @@ function AgentAvatar({ agent, large = false, className }) {
         data-bird={face.bird}
         className={cn("member-face inline-block shrink-0 overflow-hidden rounded-full bg-muted", large ? "size-24" : "size-8", className)}
         // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: face.svg || blobSvg({ ...face.blob, title: agent?.name || "" }) }}
+        dangerouslySetInnerHTML={{ __html: face.bird ? birdFaceSvg(face.bird, { title: agent?.name || "", style: avatarStyle }) : face.svg || blobSvg({ ...face.blob, title: agent?.name || "" }) }}
       />
     );
   }
@@ -19678,6 +19695,7 @@ const RoleChoiceRow = React.memo(function RoleChoiceRow({ role, selected, onTogg
 });
 
 function RoleAvatar({ roleId, src, alt, size = "default" }) {
+  const avatarStyle = useContext(AvatarStyleContext);
   const visual = roleVisuals[roleId] || roleVisuals["custom-role"];
   const Icon = visual.icon;
   const sizes = {
@@ -19692,7 +19710,7 @@ function RoleAvatar({ roleId, src, alt, size = "default" }) {
   if (birdFromAvatar(src)) {
     return (
       // eslint-disable-next-line react/no-danger
-      <span data-slot="avatar" className={cn("member-face inline-block shrink-0 overflow-hidden rounded-full bg-muted", sizes[size])} dangerouslySetInnerHTML={{ __html: birdFaceSvg(birdFromAvatar(src), { title: alt || "" }) }} />
+      <span data-slot="avatar" className={cn("member-face inline-block shrink-0 overflow-hidden rounded-full bg-muted", sizes[size])} dangerouslySetInnerHTML={{ __html: birdFaceSvg(birdFromAvatar(src), { title: alt || "", style: avatarStyle }) }} />
     );
   }
   if (src) {
@@ -19901,6 +19919,7 @@ function refreshedProfileFilesForAgent(agent) {
 }
 
 function AvatarPicker({ value, onChange, options = builtInAvatarOptions }) {
+  const avatarStyle = useContext(AvatarStyleContext);
   // Only drawn birds are built in (ADR-0240), grouped by country (ADR-0241).
   // An uploaded picture is not listed here; it stays the member's until changed.
   const groups = BIRD_REGIONS
@@ -19933,7 +19952,7 @@ function AvatarPicker({ value, onChange, options = builtInAvatarOptions }) {
                     onClick={() => onChange(option.src)}
                   >
                     {/* eslint-disable-next-line react/no-danger */}
-                    <span className="member-face size-full overflow-hidden rounded-full bg-muted" dangerouslySetInnerHTML={{ __html: birdFaceSvg(bird) }} />
+                    <span className="member-face size-full overflow-hidden rounded-full bg-muted" dangerouslySetInnerHTML={{ __html: birdFaceSvg(bird, { style: avatarStyle }) }} />
                     {selected ? (
                       <span className="absolute -bottom-0.5 -right-0.5 grid size-5 place-items-center rounded-full border border-background bg-primary text-primary-foreground">
                         <CheckCircle2 className="size-3" />
@@ -24988,6 +25007,8 @@ function SettingsPage({
   onSkinChange,
   layoutId = "full",
   onLayoutChange,
+  avatarStyle = DEFAULT_AVATAR_STYLE,
+  onAvatarStyleChange,
   setThemePreference,
   handoffSettings,
   setHandoffSettings,
@@ -25254,9 +25275,40 @@ function SettingsPage({
 
           <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
             <div className="min-w-0">
+              <h4 id="avatar-style-title" className="text-sm font-medium">{copy.avatarStyle || "Avatars"}</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {copy.avatarStyleDescription || "How every member's bird is drawn. The same face in every skin, light or dark."}
+              </p>
+            </div>
+            <ToggleGroup type="single" orientation="vertical" role="radiogroup" aria-labelledby="avatar-style-title" value={avatarStyle} onValueChange={(value) => value && onAvatarStyleChange?.(value)} className="flex w-full flex-col items-stretch rounded-none border-t border-border/60">
+              {AVATAR_STYLES.map((option) => {
+                const selected = option.id === avatarStyle;
+                return (
+                  <ToggleGroupItem
+                    key={option.id}
+                    value={option.id}
+                    aria-label={option.label}
+                    data-avatar-style-option={option.id}
+                    className="flex h-auto w-full items-center justify-start gap-3 whitespace-normal rounded-none border-b border-border/60 px-2 py-3 text-left text-foreground transition-colors hover:bg-muted/30 hover:text-foreground focus-visible:bg-muted/40 data-[state=on]:bg-transparent data-[state=on]:text-foreground data-[spacing=0]:first:rounded-none data-[spacing=0]:last:rounded-none"
+                  >
+                    {/* eslint-disable-next-line react/no-danger */}
+                    <span className="member-face size-9 shrink-0 overflow-hidden rounded-full bg-muted" aria-hidden="true" dangerouslySetInnerHTML={{ __html: birdFaceSvg("kiwi", { style: option.id }) }} />
+                    <span className="min-w-0 flex-1">
+                      <span className={cn("block text-sm", selected ? "font-semibold" : "font-medium")}>{option.label}</span>
+                      <span className="block text-xs text-muted-foreground">{option.description}</span>
+                    </span>
+                    {selected ? <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : null}
+                  </ToggleGroupItem>
+                );
+              })}
+            </ToggleGroup>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+            <div className="min-w-0">
               <h4 id="skin-title" className="text-sm font-medium">{copy.skin || "Skin"}</h4>
               <p className="mt-1 text-sm text-muted-foreground">
-                {copy.skinDescription || "Colour, type, shape, spacing and member portraits. Every skin follows your mode and works in either layout."}
+                {copy.skinDescription || "Colour, type, shape and spacing. Every skin follows your mode and works in either layout."}
               </p>
             </div>
             <ToggleGroup type="single" orientation="vertical" role="radiogroup" aria-labelledby="skin-title" value={activeSkin.id} onValueChange={(value) => value && onSkinChange?.(value)} className="flex w-full flex-col items-stretch rounded-none border-t border-border/60">

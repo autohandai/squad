@@ -16,7 +16,7 @@ import {
   blobSvg,
 } from "../src/lib/blob-avatar.js";
 import { BIRDS, BIRD_IDS, BIRD_REGIONS, INSTALLED_ART, birdForMember, birdFromAvatar, untakenBird } from "../src/lib/bird-cast.js";
-import { BIRD_FACE_IDS, birdFaceSvg } from "../src/lib/bird-faces.js";
+import { AVATAR_STYLES, BIRD_FACE_IDS, DEFAULT_AVATAR_STYLE, birdFaceSvg } from "../src/lib/bird-faces.js";
 import { birdAvatarForRole, builtInAvatarOptions, roleTemplates } from "../src/data.js";
 import {
   DEFAULT_SKIN_ID,
@@ -266,3 +266,18 @@ const css2 = readFileSync("src/styles.css", "utf8");
 assert.ok(!/data-skin="grut"\][^{]*chat-(user-bubble|agent-answer)/.test(css2), "bubbles belong to the Minified layout, not the Grut skin");
 
 console.log(`check-skins: ok (${SKINS.length} skins, ${BLOB_SHAPES.length * BLOB_EXPRESSIONS.length * BLOB_COLOURS.length} blobs)`);
+
+// Avatar styles (ADR-0242): flat by default; 3D and clay are filters over the
+// same face, so the bird and its shapes never change with the style.
+assert.deepEqual(AVATAR_STYLES.map(style => style.id), ["flat", "3d", "clay"]);
+assert.equal(DEFAULT_AVATAR_STYLE, "flat");
+for (const bird of BIRD_IDS) {
+  const flat = birdFaceSvg(bird);
+  assert.equal(birdFaceSvg(bird, { style: "flat" }), flat, "flat is the default drawing");
+  for (const style of ["3d", "clay"]) {
+    const styled = birdFaceSvg(bird, { style });
+    assert.ok(styled.includes(`filter="url(#squad-bird-${style})"`) && styled.includes(`<filter id="squad-bird-${style}"`), `${bird} ${style} carries its filter`);
+    for (const path of flat.match(/<path [^>]*>/g)) assert.ok(styled.includes(path), `${bird} ${style} keeps the flat face's shapes`);
+  }
+}
+console.log(`check-skins: avatar styles ok (${AVATAR_STYLES.length} styles x ${BIRD_IDS.length} birds)`);

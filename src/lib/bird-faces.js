@@ -255,8 +255,42 @@ function escapeXml(value) {
   return String(value).replace(/[<>&"']/g, character => `&#${character.charCodeAt(0)};`);
 }
 
+// Avatar styles (ADR-0242): the same face, drawn flat (the default), as a soft
+// glossy 3D toy, or as matte clay. Both are SVG lighting filters over the flat
+// face, so a style never changes which bird or which face, only the material,
+// and needs no image file. The eye holes become shallow pits under the light.
+export const AVATAR_STYLES = [
+  { id: 'flat', label: 'Flat', description: 'Drawn cartoon faces. The default.' },
+  { id: '3d', label: '3D', description: 'The same faces as soft, glossy toys.' },
+  { id: 'clay', label: 'Clay', description: 'The same faces in handmade matte clay.' },
+];
+export const DEFAULT_AVATAR_STYLE = 'flat';
+export function isAvatarStyle(value) { return AVATAR_STYLES.some(style => style.id === value); }
+
+const SHADOW = (blur, dy, alpha) => `<feGaussianBlur in="SourceAlpha" stdDeviation="${blur}" result="sh"/><feOffset dy="${dy}" in="sh" result="sho"/><feComponentTransfer in="sho" result="shadow"><feFuncA type="linear" slope="${alpha}"/></feComponentTransfer>`;
+const FILTERS = {
+  '3d': `<filter id="squad-bird-3d" x="-15%" y="-15%" width="130%" height="135%" color-interpolation-filters="sRGB">` +
+    `<feGaussianBlur in="SourceAlpha" stdDeviation="3.2" result="blur"/>` +
+    `<feSpecularLighting in="blur" surfaceScale="5" specularConstant="0.7" specularExponent="22" lighting-color="#fff" result="spec"><fePointLight x="28" y="10" z="70"/></feSpecularLighting>` +
+    `<feComposite in="spec" in2="SourceAlpha" operator="in" result="specIn"/>` +
+    `<feDiffuseLighting in="blur" surfaceScale="4" diffuseConstant="1" lighting-color="#fff" result="diff"><feDistantLight azimuth="235" elevation="55"/></feDiffuseLighting>` +
+    `<feComposite in="SourceGraphic" in2="diff" operator="arithmetic" k1="1.06" k2="0" k3="0" k4="0" result="lit"/>` +
+    `<feComposite in="lit" in2="SourceAlpha" operator="in" result="litIn"/>` +
+    `<feComposite in="specIn" in2="litIn" operator="arithmetic" k1="0" k2="0.5" k3="1" k4="0" result="shaded"/>` +
+    SHADOW(2.4, 2.6, 0.35) + `<feMerge><feMergeNode in="shadow"/><feMergeNode in="shaded"/></feMerge></filter>`,
+  clay: `<filter id="squad-bird-clay" x="-15%" y="-15%" width="130%" height="135%" color-interpolation-filters="sRGB">` +
+    `<feTurbulence type="fractalNoise" baseFrequency="0.07" numOctaves="3" seed="7" result="noise"/>` +
+    `<feDisplacementMap in="SourceGraphic" in2="noise" scale="1.2" xChannelSelector="R" yChannelSelector="G" result="wob"/>` +
+    `<feGaussianBlur in="SourceAlpha" stdDeviation="2.4" result="blur"/>` +
+    `<feComposite in="blur" in2="noise" operator="arithmetic" k1="0" k2="1" k3="0.3" k4="0" result="bump"/>` +
+    `<feDiffuseLighting in="bump" surfaceScale="3.4" diffuseConstant="1.04" lighting-color="#fff" result="diff"><feDistantLight azimuth="235" elevation="48"/></feDiffuseLighting>` +
+    `<feComposite in="wob" in2="diff" operator="arithmetic" k1="1.08" k2="0" k3="0" k4="0" result="lit"/>` +
+    `<feComposite in="lit" in2="SourceAlpha" operator="in" result="litIn"/>` +
+    SHADOW(1.6, 1.8, 0.3) + `<feMerge><feMergeNode in="shadow"/><feMergeNode in="litIn"/></feMerge></filter>`,
+};
+
 /** The bird's face as SVG markup; an unknown bird draws the kiwi. */
-export function birdFaceSvg(bird, { title = '' } = {}) {
+export function birdFaceSvg(bird, { title = '', style = DEFAULT_AVATAR_STYLE } = {}) {
   const face = FACES[bird] || FACES.kiwi;
   const eyes = face.eyes.map(point => mark(point, face.eye || [2.6, 5])).join('');
   const label = title ? `<title>${escapeXml(title)}</title>` : '';
@@ -266,8 +300,9 @@ export function birdFaceSvg(bird, { title = '' } = {}) {
     const stroke = layer.stroke ? ` stroke="${layer.stroke}" stroke-width="${layer.width}" stroke-linecap="round" stroke-linejoin="round"` : '';
     return `<path ${fill}${stroke} d="${d}"/>`;
   }).join('');
+  const filter = FILTERS[style];
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img"${title ? '' : ' aria-hidden="true"'}>` +
-    label + paths + `</svg>`
+    label + (filter ? `<defs>${filter}</defs><g filter="url(#squad-bird-${style})">${paths}</g>` : paths) + `</svg>`
   );
 }
