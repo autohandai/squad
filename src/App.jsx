@@ -6160,6 +6160,7 @@ function App() {
         onConnectRelay={() => navigate(`/settings?section=relay`)}
         onPairPhone={() => setPairPhoneOpen(true)}
         loadPhones={loadPairedPhones}
+        onUnpairPhone={(device) => api(`/api/mobile/devices/${encodeURIComponent(device.id)}`, { method: "DELETE" })}
         copy={localeCopy}
       />
       <SquadSyncNotice />

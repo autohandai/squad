@@ -172,9 +172,12 @@ not see his phone in the sidebar's Local menu at all, only Pair iPhone….
   up to a minute of staleness on disk, never a write per request.
   `scripts/check-mobile.mjs` reopens the service and asserts the time and
   route survive; that assertion fails on the previous code.
-- The Local menu lists paired phones under Phones (name and presence line),
-  read each time the menu opens. Disconnect stays in Settings › Computers.
+- The Local menu lists paired phones under Phones (name, presence, pairing
+  date and time), read each time the menu opens, with Unpair that needs a
+  second click to confirm. The owner asked for it after the first version
+  listed phones without a way to remove one. `check-pair-phone-menu-browser`
+  stubs the phone list in the page (a real pairing needs the iPhone) and
+  asserts the order, the confirm step and the DELETE.
 
 Still true: both phones are named "iPhone" because iOS gives apps only the
-model name. The Local menu does not show the pairing date that tells them
-apart; Settings › Computers does.
+model name. The pairing time in both lists is what tells them apart.

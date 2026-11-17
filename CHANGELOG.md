@@ -13,7 +13,7 @@ list to the section for that version.
 ### Added
 
 - Settings › Chat › **Reply in threads**, off by default. Off, members' replies in groups and channels appear in order in the conversation; on, they gather under the message they answer, as before.
-- The Local menu at the top of the sidebar now lists your paired phones, each with whether it is reaching this computer right now.
+- The Local menu at the top of the sidebar now lists your paired phones, each with whether it is reaching this computer right now and when it was paired, and lets you unpair one (Unpair, then Confirm).
 
 - Every Squad member is now one of ten New Zealand birds, led by the kiwi. In the Grut skin each bird has its own simple face: one soft shape and two eye marks, with a hint of the bird (the kiwi's long beak, the tūī's white tuft, the kea's orange flash). New members get a bird nobody on the team has yet, unless their role already has one.
 - See which phones are paired and whether each one is reaching your computer right now, on Wi-Fi or from anywhere, in the pairing window and in Settings › Computers. Disconnect an old one right there.

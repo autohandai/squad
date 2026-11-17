@@ -6,6 +6,9 @@ import { cn } from "@/lib/utils";
 import { currentWorkspace } from "@/lib/workspaces";
 import { phonePresence } from "@/components/settings/PairedPhones";
 
+// iOS names every phone "iPhone"; the pairing time is what tells two apart.
+const pairedOn = (value) => { const at = Date.parse(value || ""); return Number.isFinite(at) ? new Date(at).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : ""; };
+
 function StatusDot({ workspace }) {
   // A transparent placeholder rather than nothing, so every row's name
   // starts at the same x.
@@ -20,17 +23,33 @@ function StatusDot({ workspace }) {
  * relay workspace when one is configured. Purely presentational; the list
  * comes from `buildWorkspaceList` in src/lib/workspaces.js.
  */
-export function WorkspaceSwitcher({ workspaces = [], selectedId, onSelect, onConnectRelay, onPairPhone, loadPhones, copy = {}, className }) {
+export function WorkspaceSwitcher({ workspaces = [], selectedId, onSelect, onConnectRelay, onPairPhone, loadPhones, onUnpairPhone, copy = {}, className }) {
   const [open, setOpen] = useState(false);
   // The phones that reach this computer, read each time the menu opens so
   // presence is current. A failed read leaves the last list in place.
   const [phones, setPhones] = useState([]);
+  // Unpair asks once: the first click arms the row, the second removes it.
+  const [confirming, setConfirming] = useState("");
+  const [unpairing, setUnpairing] = useState("");
+  const [phoneError, setPhoneError] = useState("");
   useEffect(() => {
     if (!open || !loadPhones) return undefined;
     let active = true;
+    setConfirming(""); setPhoneError("");
     loadPhones().then((devices) => { if (active && Array.isArray(devices)) setPhones(devices); }, () => {});
     return () => { active = false; };
   }, [open, loadPhones]);
+  async function unpair(device) {
+    if (confirming !== device.id) { setConfirming(device.id); return; }
+    setUnpairing(device.id); setPhoneError("");
+    try {
+      await onUnpairPhone(device);
+      setPhones((current) => current.filter((item) => item.id !== device.id));
+      setConfirming("");
+    } catch (failure) {
+      setPhoneError(failure?.message || "This phone could not be unpaired.");
+    } finally { setUnpairing(""); }
+  }
   const current = currentWorkspace(workspaces, selectedId);
   if (!current) return null;
   const relayConfigured = workspaces.some((item) => item.kind === "relay");
@@ -51,7 +70,7 @@ export function WorkspaceSwitcher({ workspaces = [], selectedId, onSelect, onCon
           <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-1">
+      <PopoverContent align="start" className="w-72 p-1">
         <p className="px-2 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{copy.workspaces || "Workspaces"}</p>
         <ul className="flex flex-col" role="listbox" aria-label={copy.workspaces || "Workspaces"}>
           {workspaces.map((workspace) => {
@@ -99,12 +118,25 @@ export function WorkspaceSwitcher({ workspaces = [], selectedId, onSelect, onCon
                     </span>
                     <span className="flex min-w-0 flex-1 flex-col">
                       <span className="truncate text-foreground/85">{device.name || "iPhone"}</span>
-                      <span className="truncate text-xs text-muted-foreground">{presence.text}</span>
+                      <span className="text-xs leading-4 text-muted-foreground">{presence.text}{pairedOn(device.pairedAt) ? ` · paired ${pairedOn(device.pairedAt)}` : ""}</span>
                     </span>
+                    {onUnpairPhone ? (
+                      <button
+                        type="button"
+                        disabled={Boolean(unpairing)}
+                        className={cn("shrink-0 rounded-md px-1.5 py-0.5 text-xs transition-colors disabled:opacity-50", confirming === device.id ? "text-destructive hover:bg-destructive/10" : "text-muted-foreground hover:bg-muted/55 hover:text-foreground")}
+                        aria-label={confirming === device.id ? `Confirm unpairing ${device.name || "iPhone"}` : `Unpair ${device.name || "iPhone"}`}
+                        data-testid="switcher-unpair"
+                        onClick={() => unpair(device)}
+                      >
+                        {unpairing === device.id ? "Unpairing…" : confirming === device.id ? "Confirm" : "Unpair"}
+                      </button>
+                    ) : null}
                   </li>
                 );
               })}
             </ul>
+            {phoneError ? <p className="px-2 pb-1 text-xs text-destructive" role="alert">{phoneError}</p> : null}
           </>
         ) : null}
         {onPairPhone || onConnectRelay ? <div className="my-1 border-t border-border/65" /> : null}
