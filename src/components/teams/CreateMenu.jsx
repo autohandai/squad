@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LayoutTemplate, MessageSquarePlus, Plus, UserPlus, Users } from "lucide-react";
+import { LayoutTemplate, MessageSquarePlus, Plus, Store, UserPlus, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -12,7 +12,7 @@ const ROW = "flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left t
  * like every menu here; the trigger is whatever the caller already had (the
  * sidebar's small plus).
  */
-export function CreateMenu({ copy = {}, onChatNewMember, onNewMember, onNewTeam, onTemplates, trigger, align = "end" }) {
+export function CreateMenu({ copy = {}, onChatNewMember, onNewMember, onNewTeam, onTemplates, onMarketplace, trigger, align = "end" }) {
   const [open, setOpen] = useState(false);
   function run(action) {
     setOpen(false);
@@ -48,6 +48,12 @@ export function CreateMenu({ copy = {}, onChatNewMember, onNewMember, onNewTeam,
           <button type="button" className={ROW} onClick={() => run(onTemplates)}>
             <LayoutTemplate className="size-4 shrink-0" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">{copy.templatesMenu || "Templates…"}</span>
+          </button>
+        ) : null}
+        {onMarketplace ? (
+          <button type="button" className={ROW} onClick={() => run(onMarketplace)} data-testid="create-menu-marketplace">
+            <Store className="size-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">{copy.marketplaceMenu || "Marketplace…"}</span>
           </button>
         ) : null}
       </PopoverContent>

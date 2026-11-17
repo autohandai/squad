@@ -96,6 +96,29 @@ squad offers Update (instructions, brain card, role, description; name,
 picture, memory and conversations stay) or Add another, recorded in
 `marketplace-imports.json`.
 
+**6a. Where the Marketplace lives in the app.** It is one dialog, opened
+over whatever page is showing, from four places: the Squad directory's
+overflow (beside Templates…, Share team… and Import team…), Minified's More
+menu (beside New member, New team… and Templates…), ⌘K ("Marketplace"), and
+the route `/marketplace`, which the deep links and any future native menu use.
+Considered and not chosen:
+- A top-level sidebar destination. The sidebar is the person's own squad
+  (Needs you, Squad, Memory, channels, conversations), visited every day. The
+  marketplace is visited when adding someone, so it sits with the other ways
+  of adding members, as Templates does (ADR-0118).
+- The New member form. That form is for writing one member; folding a
+  catalogue of 200 into it would bury both.
+- A full page. A dialog keeps the person's place, closes back to where they
+  were, and is the same component in Full and Minified and in every skin.
+
+The sidebar's "+" create menu (`CreateMenu`) also gains Marketplace…, but in
+today's Full sidebar that "+" opens New message (ADR-0203), so the directory
+overflow and ⌘K are Full's real entry points. Each row says what this squad
+already has, from the import receipts: "Added as <name>" when a member from
+that listing exists at the listed version, "Update available" when it exists at
+an older one. Opening an agent from an Update available row offers Update
+<name>.
+
 **7. Grok Bot import uses only the public page.** One request per pasted link,
 with an honest user agent, a 10-second timeout, a 1.5 MB cap, redirects off,
 six a minute and a ten-minute cache. It maps name and description to a

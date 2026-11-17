@@ -83,7 +83,7 @@
     "check:relay": "node scripts/check-relay.mjs",
     "check:remote-access": "node scripts/check-remote-access.mjs",
     "check:marketplace": "node scripts/check-marketplace.mjs && node scripts/check-marketplace-bridge.mjs",
-    "check:marketplace:browser": "node scripts/check-marketplace-browser.mjs",
+    "check:marketplace:browser": "node scripts/check-marketplace-browser.mjs && node scripts/check-marketplace-in-app-browser.mjs",
     "check:connectors": "node scripts/check-connectors.mjs",
     "check:member-availability": "node scripts/check-member-availability.mjs",
     "check:member-briefing": "node scripts/check-member-briefing.mjs",

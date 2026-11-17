@@ -5589,8 +5589,20 @@ function App() {
   const [marketplaceRequest, setMarketplaceRequest] = useState(() => pendingMarketplaceLink.request);
   const [marketplaceOpen, setMarketplaceOpen] = useState(() => Boolean(pendingMarketplaceLink.request));
   const [publishMember, setPublishMember] = useState(null);
+  // Browsing opens the same dialog over whatever page is showing, so the
+  // person keeps their place (ADR-0246, entry points).
+  function openMarketplace() {
+    setMarketplaceRequest(null);
+    setMarketplaceOpen(true);
+  }
   useEffect(() => {
     const [path, query = ""] = route.split("?");
+    if (path === "/marketplace" || path === "/marketplace/") {
+      window.history.replaceState({ squadOwnership: currentOwnership()?.storageKey }, "", SQUAD_DIRECTORY_ROUTE);
+      setRoute(SQUAD_DIRECTORY_ROUTE);
+      openMarketplace();
+      return;
+    }
     if (!path.startsWith("/marketplace/agents/")) return;
     const request = requestFromAppRoute(path, query);
     window.history.replaceState({ squadOwnership: currentOwnership()?.storageKey }, "", SQUAD_DIRECTORY_ROUTE);
@@ -10266,6 +10278,7 @@ function App() {
             renderMemberMenu={renderMemberMenu}
             onCreateTeam={() => setNewTeamOpen(true)}
             onTemplates={() => setTemplatesOpen(true)}
+            onMarketplace={openMarketplace}
             onChatNewMember={() => void startBlankMember()}
             onCollapsedChange={setDesktopSidebarCollapsed}
           />}
@@ -10366,7 +10379,7 @@ function App() {
                 onDuplicate={duplicateMember}
                 onSharePreset={setSharePreset}
                 onPublishAgent={setPublishMember}
-                onMarketplace={() => { setMarketplaceRequest(null); setMarketplaceOpen(true); }}
+                onMarketplace={openMarketplace}
                 onShareTeam={() => setShareTeamOpen(true)}
                 onImportTeam={() => setImportTeamOpen(true)}
                 onNewTeam={() => setNewTeamOpen(true)}
@@ -10706,6 +10719,7 @@ function App() {
             channel: (channelId) => navigate(channelsPath(channelId)),
             member: (memberId) => navigate(memberChatPath(memberId)),
             route: (path) => navigate(path),
+            marketplace: openMarketplace,
           }}
         />
 
@@ -10766,6 +10780,10 @@ function App() {
               onTemplates={() => {
                 setMobileSidebarOpen(false);
                 setTemplatesOpen(true);
+              }}
+              onMarketplace={() => {
+                setMobileSidebarOpen(false);
+                openMarketplace();
               }}
             />
           </SheetContent>
@@ -13396,6 +13414,7 @@ function SidebarContent({
   onCreateTeam,
   onChatNewMember,
   onTemplates,
+  onMarketplace,
   onMarkChannelsRead,
   draftAgentIds = new Set(),
 }) {
@@ -13497,6 +13516,7 @@ function SidebarContent({
         chatNewMember: onChatNewMember,
         newMessage: () => navigate("/messages/new"),
         templates: onTemplates,
+        marketplace: onMarketplace,
         missionControl: onMissionControl,
       }}
       footer={

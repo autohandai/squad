@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Inbox, Settings } from "lucide-react";
+import { Bot, Inbox, Settings, Store } from "lucide-react";
 
 import { CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { SearchResults } from "@/components/search/SearchResults";
@@ -176,7 +176,8 @@ export function SearchCommand({
     { id: "work", label: copy.needsYou || "Needs you", icon: Inbox, value: "page needs you inbox work mission control squad board attention activity", go: onNavigate.missionControl },
     { id: "agents", label: copy.squad || "Squad", icon: Bot, value: "page squad agents directory members team", go: onNavigate.agents },
     { id: "settings", label: copy.settings || "Settings", icon: Settings, value: "page settings", go: onNavigate.settings },
-  ];
+    onNavigate.marketplace ? { id: "marketplace", label: copy.marketplaceTitle || "Marketplace", icon: Store, value: "page marketplace agents browse add install publish grok templates", go: onNavigate.marketplace } : null,
+  ].filter(Boolean);
   const pageMatches = searching ? pages.filter((page) => `${page.label} ${page.value}`.toLowerCase().includes(trimmed.toLowerCase())) : pages;
 
   function go(action) {

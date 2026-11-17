@@ -1,6 +1,6 @@
 import { ownedLocalStorage } from "@/lib/owned-storage";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Bot, Brain, CheckCheck, ChevronDown, ChevronRight, Ellipsis, Hash, Inbox, LayoutTemplate, Lock, PanelLeft, Pencil, Pin, Plus, Search, UserPlus, Users } from "lucide-react";
+import { Bot, Brain, CheckCheck, ChevronDown, ChevronRight, Ellipsis, Hash, Inbox, LayoutTemplate, Lock, PanelLeft, Pencil, Pin, Plus, Search, UserPlus, Users, Store } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -137,6 +137,7 @@ function MoreMenu({ copy = {}, onNavigate = {} }) {
     [UserPlus, copy.newMember || 'New member', onNavigate.createMember],
     [Users, copy.newTeamMenu || 'New team…', onNavigate.createTeam],
     [LayoutTemplate, copy.templatesMenu || 'Templates…', onNavigate.templates],
+    [Store, copy.marketplaceMenu || 'Marketplace…', onNavigate.marketplace],
   ].filter(item => item === null || item[2]);
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -431,6 +432,7 @@ export function WorkspaceSidebar({
                 onNewMember={onNavigate.createMember}
                 onNewTeam={onNavigate.createTeam}
                 onTemplates={onNavigate.templates}
+                onMarketplace={onNavigate.marketplace}
                 trigger={
                   <Button variant="ghost" size="icon-sm" className="size-6" aria-label={copy.addMemberLabel || "Add a member or team"}>
                     <Plus className="size-3.5" />

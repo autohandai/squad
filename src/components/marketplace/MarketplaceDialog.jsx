@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ExternalLink, Flag, Link2, RotateCw, Search } from "lucide-react";
+import { Check, ChevronLeft, ExternalLink, Flag, Link2, RotateCw, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -45,6 +45,7 @@ export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy =
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState("");
   const [selected, setSelected] = useState(null);
+  const [receipts, setReceipts] = useState([]);
   const listRequest = useRef(0);
 
   const load = useCallback(async ({ append = false, cursor = "" } = {}) => {
@@ -76,6 +77,19 @@ export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy =
     setTab("explore");
     setSelected(request ? { kind: "marketplace", id: request.id, version: request.version, sha256: request.sha256 } : null);
   }, [open, request]);
+
+  // What this squad already has from the marketplace, read whenever the list
+  // is in view so a row says Added or Update available as it is now.
+  useEffect(() => {
+    if (!open || selected) return;
+    api("/api/marketplace/imports").then((data) => setReceipts(data.imports || [])).catch(() => setReceipts([]));
+  }, [open, selected, api, agents]);
+  const stateById = useMemo(() => {
+    const live = new Set(agents.map((agent) => agent.id));
+    const out = new Map();
+    for (const receipt of receipts) if (receipt.listingId && live.has(receipt.memberId)) out.set(receipt.listingId, receipt);
+    return out;
+  }, [receipts, agents]);
 
   useEffect(() => {
     if (!open || tab !== "explore") return undefined;
@@ -155,7 +169,7 @@ export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy =
                   {list.agents.length ? (
                     <ul className="flex flex-col border-t border-border/60" data-testid="marketplace-list">
                       {list.agents.map((agent) => (
-                        <AgentRow key={agent.id} agent={agent} copy={copy} avatarStyle={avatarStyle} onOpen={() => setSelected({ kind: "marketplace", id: agent.id, listing: agent })} />
+                        <AgentRow key={agent.id} agent={agent} copy={copy} avatarStyle={avatarStyle} receipt={stateById.get(agent.id)} onOpen={() => setSelected({ kind: "marketplace", id: agent.id, listing: agent })} />
                       ))}
                     </ul>
                   ) : !loading && !listError ? (
@@ -181,9 +195,10 @@ export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy =
   );
 }
 
-function AgentRow({ agent, copy, avatarStyle, onOpen }) {
+function AgentRow({ agent, copy, avatarStyle, receipt, onOpen }) {
+  const state = !receipt ? "" : receipt.contentHash && receipt.contentHash !== agent.contentHash ? "update" : "added";
   return (
-    <li className="flex items-start gap-3 border-b border-border/60 py-2.5">
+    <li className="flex items-start gap-3 border-b border-border/60 py-2.5" data-state={state || "new"}>
       <BirdFace bird={agent.bird} style={avatarStyle} size="size-8 mt-0.5" />
       <div className="min-w-0 flex-1">
         <button type="button" onClick={onOpen} className="block max-w-full truncate text-left underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline">
@@ -192,6 +207,12 @@ function AgentRow({ agent, copy, avatarStyle, onOpen }) {
         </button>
         <p className="truncate text-xs text-muted-foreground">{agent.tagline}</p>
         <p className="text-xs text-muted-foreground/80">{agent.role} · {agent.categoryLabel} · {(copy.addedOn || "Added {date}").replace("{date}", addedDate(agent.createdAt))}</p>
+        {state ? (
+          <p className={cn("flex min-w-0 items-center gap-1 pt-0.5 text-xs", state === "update" ? "text-foreground" : "text-muted-foreground")} data-testid="marketplace-row-state">
+            {state === "update" ? <RotateCw className="size-3 shrink-0" aria-hidden="true" /> : <Check className="size-3 shrink-0" aria-hidden="true" />}
+            <span className="truncate">{state === "update" ? copy.updateAvailable || "Update available" : (copy.inYourSquad || "Added as {name}").replace("{name}", receipt.memberName || "")}</span>
+          </p>
+        ) : null}
       </div>
       <Button variant="ghost" size="sm" className="h-7 shrink-0 text-xs text-muted-foreground hover:text-foreground" onClick={onOpen} aria-label={`${copy.view || "View"} ${agent.name}`}>
         {copy.view || "View"}
