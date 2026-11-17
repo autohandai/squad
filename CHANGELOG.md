@@ -78,6 +78,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Quitting Squad no longer takes ten seconds and force-stops it when a folder such as Desktop is waiting on a macOS permission prompt or on iCloud Drive. Squad also no longer looks inside Desktop, Documents and Downloads when it lists your projects; add a project kept there with Add folder.
 - **Downloaded builds can sign in to Gmail, Google Drive, Google Calendar and GitHub with Squad's own sign-in apps.** Releases now carry them, so once Autohand has set them up these connectors no longer say sign-in is "not set up". A Google client you saved in Settings still wins.
 - **One macOS permission for Autohand Computer Use, whichever copy runs.** The copy inside the macOS download archive (.tar.gz) was signed differently from the one Autohand Code installs, so macOS treated them as two apps and the permission you gave one did not count for the other. Every copy Squad releases is now signed by Autohand, like the CLI's and Autohand Desktop's, and each release checks it before publishing.
 - A member whose name has an "&" (such as "R&D Scout") lost it in the menu-bar menu and showed as "RD Scout".

@@ -56,7 +56,7 @@ import { isRemoteTransport } from "./server/remote/auth.mjs";
 import { StringDecoder } from "node:string_decoder";
 import { constants as fsConstants, createReadStream, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { FolderReadStalled, readFolderWithin, sharedScan } from "./server/workspace-scan.mjs";
+import { FolderReadStalled, isProtectedHomeFolder, parkedFolderReads, readFolderWithin, sharedScan } from "./server/workspace-scan.mjs";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { clientClosedReason, stopMessage } from "./server/harness/stop-reason.mjs";
@@ -1877,7 +1877,7 @@ async function scanWorkspaces() {
     }
 
     const dirs = entries
-      .filter((entry) => entry.isDirectory() && !shouldSkipWorkspaceDir(entry.name))
+      .filter((entry) => entry.isDirectory() && !shouldSkipWorkspaceDir(entry.name) && !isProtectedHomeFolder(current.depth, entry.name))
       .sort((a, b) => {
         const priorityDelta =
           Number(priorityWorkspaceDirs.has(b.name)) - Number(priorityWorkspaceDirs.has(a.name));
@@ -9865,6 +9865,9 @@ async function stopAndExitFromSignal(signal) {
   await cloud.close();
   await stopManagedRuns(`web server received ${signal}`);
   await drainOwnedEngines();
+  // Everything is saved. A folder read still parked in the kernel would hold
+  // process.exit() forever (it joins every file thread), so end at once.
+  if (parkedFolderReads() > 0) process.kill(process.pid, "SIGKILL");
   process.exit(0);
 }
 

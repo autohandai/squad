@@ -66,3 +66,79 @@ starts and finishes, so a CI failure carries its own evidence.
 - This explains the local failures under load. Whether it is also what failed
   on GitHub's Linux runner is not proven: the runner has no iCloud, and its
   failure dump did not include bridge state. The dump does now.
+
+## Addendum, 18 November 2026: a parked read also stopped the bridge from exiting
+
+**What was seen.** After the checks lane merged, `check:team:browser`,
+`check:natural-automations:browser` and `check:onboarding:browser` failed on
+this Mac every time, alone, with nothing else running: the restarted bridge
+refused to start with "A previous private Squad process has not finished".
+The same checks had passed in the lane hours earlier.
+
+**What it was, step by step, with what showed each step.**
+
+1. Timing `stop()` in `scripts/lib/reliability-browser.mjs` showed the broker
+   took 10,055 ms to exit after SIGTERM, which is the broker's
+   `terminationGraceMs`, so it was waiting for its worker. The check gives a
+   bridge 2 s and then SIGKILLs the broker, which orphaned the worker; the next
+   broker found the orphan in its worker ledger and correctly refused to start.
+2. Timestamps in the worker's `stopAndExitFromSignal` showed every step
+   (memory, cloud, runs, engines) done in under 1 ms and the `exit` event
+   firing the same millisecond SIGTERM arrived. Yet the process stayed.
+3. `sample` of the stuck worker: the main thread was in
+   `node::DefaultProcessExitHandlerInternal → uv__threadpool_cleanup →
+   uv_thread_join`, and the one busy libuv worker was in
+   `uv__fs_work → scandir → __opendir2 → open`. `process.exit()` joins every
+   file thread, and one was parked in the kernel opening a folder.
+4. A scan of the home folder with a 2 s limit stalled on
+   `/Users/igorcosta/Desktop` after three folders, and `ls ~/Desktop` from a
+   shell also hung. The owner had just signed in to their Apple account; a
+   few minutes later `ls ~/Desktop` answered (279 entries) and all three
+   checks passed unchanged. Whether it was a pending privacy prompt or
+   iCloud Drive syncing Desktop was not established.
+
+So the decision above was incomplete: "a stalled folder can hold at most one
+thread" is true, but one parked thread is enough to keep the process from
+ever exiting. The shipped app has the same hang: quitting Squad waits the
+broker's 10 s and then force-kills the worker.
+
+**Decision.**
+
+- The home scan does not open `Desktop`, `Documents` or `Downloads` at the
+  top of the home folder (`isProtectedHomeFolder`). These are the folders
+  macOS guards with a privacy prompt and iCloud Drive may sync, so a read can
+  wait with no limit. Folders with those names deeper down are still read.
+- `readFolderWithin` counts reads that outlived their wait and are still in
+  flight (`parkedFolderReads`). The worker's shutdown, after every save and
+  drain has finished, ends itself with SIGKILL while that count is above
+  zero, instead of calling a `process.exit()` that cannot return.
+- Check bridges keep the real `HOME`. Giving `startBridge` an empty `HOME`
+  was tried and reverted: `check:team:browser`,
+  `check:natural-automations:browser` and `check:onboarding:browser` use the
+  repository as a workspace, and the bridge only accepts workspaces inside the
+  user directory ("workspace must be a folder inside the user directory"), so
+  all three failed. With the two rules above the bridge no longer opens the
+  protected folders and exits even with a parked read, which is what the
+  checks needed.
+
+`scripts/check-workspace-scan.mjs` (part of `check:server`) now proves the
+counter, the protected folders, and the exit rule against a real kernel
+block: a FIFO with no writer parks `open()` the same way. Plain
+`process.exit()` in that state is shown to hang (killed after 3 s), and with
+the rule the process ends at once.
+
+**Consequences.**
+
+- Projects kept directly in `~/Desktop`, `~/Documents` or `~/Downloads` no
+  longer appear in the workspace picker by themselves; they are added with
+  Add folder (ADR-0186). `Documents` stays in the priority list, which now
+  only matters for a `Documents` folder below the top level.
+- A worker that exits with a parked read ends with SIGKILL, not exit code 0.
+  The broker treats both as exited; nothing is unsaved at that point, but a
+  log reader sees a killed process.
+- Other places that read folders (`server.mjs` workspace walk under a chosen
+  folder, project observers) are not covered by the counter. A parked read
+  there can still hold the exit until the broker's 10 s.
+- Check bridges still scan the person's home folder (outside the protected
+  folders). Isolating it needs the workspace rule to accept a fixture
+  directory first.

@@ -20,12 +20,27 @@ export class FolderReadStalled extends Error {
   constructor(path) { super(`Folder read did not answer in time: ${path}`); this.name = 'FolderReadStalled'; this.path = path; }
 }
 
+// Reads that outlived their wait and are still parked in the kernel. Node
+// cannot cancel them, and process.exit() joins every file thread, so a
+// process holding one never finishes exiting (ADR-0165 addendum, 18 Nov 2026).
+let parkedReads = 0;
+export function parkedFolderReads() { return parkedReads; }
+
 /** Read a folder, or throw FolderReadStalled when it takes longer than `ms`. */
 export function readFolderWithin(readDirectory, path, ms = WORKSPACE_FOLDER_READ_MS) {
-  let timer;
-  const stalled = new Promise((_, reject) => { timer = setTimeout(() => reject(new FolderReadStalled(path)), ms); });
-  return Promise.race([readDirectory(path, { withFileTypes: true }), stalled]).finally(() => clearTimeout(timer));
+  let timer, parked = false;
+  const read = Promise.resolve().then(() => readDirectory(path, { withFileTypes: true }));
+  read.then(() => {}, () => {}).finally(() => { if (parked) parkedReads -= 1; });
+  const stalled = new Promise((_, reject) => { timer = setTimeout(() => { parked = true; parkedReads += 1; reject(new FolderReadStalled(path)); }, ms); });
+  return Promise.race([read, stalled]).finally(() => clearTimeout(timer));
 }
+
+// Folders macOS guards with a privacy prompt and iCloud Drive may sync. A read
+// of one can wait for a permission answer or a download with no time limit
+// (on 18 Nov 2026 even `ls ~/Desktop` hung), so the home scan does not open
+// them. Projects kept there are added by hand with Add folder.
+export const PROTECTED_HOME_FOLDERS = new Set(['Desktop', 'Documents', 'Downloads']);
+export function isProtectedHomeFolder(depth, name) { return depth === 0 && PROTECTED_HOME_FOLDERS.has(name); }
 
 /** One scan in flight at a time; its result is reused for `ttlMs`. */
 export function sharedScan(scan, { ttlMs = WORKSPACE_SCAN_TTL_MS, now = () => Date.now() } = {}) {
