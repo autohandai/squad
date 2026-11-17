@@ -38,3 +38,25 @@ export function evidenceForMessage(message, sessions = []) {
   return computerUseAttachments([...(Array.isArray(identity.files) ? identity.files : []), ...(Array.isArray(stored?.files) ? stored.files : [])]);
 }
 import { currentOwnership } from "../../lib/ownership-client.js";
+
+/**
+ * The one readiness sentence on the Permissions page. When macOS holds the
+ * grant for another build of Autohand Computer Use (ADR-0247), System
+ * Settings shows the switch on, so "allow it in System Settings" asks for a
+ * step the person has already taken; name the real state and the reset.
+ */
+export function computerUsePermissionMessage({ native, current, ready }) {
+  if (!native) return "Open this member’s Permissions page in the Squad desktop app to allow Computer Use.";
+  if (!current) return "Checking readiness…";
+  if (current.readinessError) return current.readinessError;
+  if (!current.available) return "Computer Use readiness could not be confirmed. Install Autohand Computer Use with the button below, or check that this Squad build includes the engine and macOS permission host.";
+  if (ready) return "macOS permissions are ready.";
+  const product = current.host?.product || "Computer Use";
+  const diagnosis = current.grantDiagnosis;
+  if (diagnosis?.checked && diagnosis.stale) {
+    return `System Settings shows ${product} as allowed, but macOS gave that permission to ${diagnosis.grantedTo || "another build"} of it, not the copy installed now, so macOS ignores it. Reset the macOS permission and allow ${product} again when macOS asks.`;
+  }
+  const missing = [current.accessibility ? "" : "Accessibility", current.screenRecording ? "" : "Screen Recording"].filter(Boolean).join(" and ") || "Accessibility and Screen Recording";
+  const steps = `Allow ${product} in System Settings → Privacy & Security → ${missing}, then check again.`;
+  return current.canResetMacGrant ? `${steps} If it is already switched on there, macOS is holding the permission for an older build: reset the macOS permission and allow it again.` : steps;
+}

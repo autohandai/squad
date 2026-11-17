@@ -7,6 +7,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os, { release } from 'node:os';
 import { readPersistentJson, writePersistentJson } from './persistent-json.mjs';
+import { diagnoseMacGrant, hostAppPath, resetMacGrant } from './computer-use-tcc.mjs';
 
 const OBSERVE = new Set(['list_apps', 'list_windows', 'get_window_state', 'get_desktop_state', 'get_screen_size', 'get_cursor_position', 'verify_state', 'get_session_state', 'start_recording', 'stop_recording', 'get_recording_state']);
 const CONTROL = new Set(['launch_app', 'bring_to_front', 'set_window_frame', 'invoke_menu', 'click', 'double_click', 'right_click', 'drag', 'type_text', 'press_key', 'hotkey', 'set_value', 'scroll', 'move_cursor']);
@@ -181,7 +182,7 @@ export class NativeComputerClient {
   close() { this.child?.kill(); this.fail(error('Computer Use stopped.', 503)); }
 }
 
-export function createComputerUse({ stateDir, rootDir, bridgeUrl, nativeClient, grantActorKey = '', emit = () => {}, now = () => Date.now() }) {
+export function createComputerUse({ stateDir, rootDir, bridgeUrl, nativeClient, grantActorKey = '', emit = () => {}, now = () => Date.now(), platform = process.platform, macGrant = { diagnose: diagnoseMacGrant, reset: resetMacGrant } }) {
   if (grantActorKey && !/^[a-f0-9]{64}$/.test(grantActorKey)) throw error('Computer Use requires a verified account identity.');
   const grantsFile = join(stateDir, grantActorKey ? `computer-use-grants-${grantActorKey}.json` : 'computer-use-grants.json');
   const evidenceRoot = join(stateDir, 'computer-use-evidence');
@@ -203,7 +204,26 @@ export function createComputerUse({ stateDir, rootDir, bridgeUrl, nativeClient, 
     const stored = await grants();
     let os; let readinessError = null;
     try { os = await serial(permission); } catch (failure) { os = { available: false, accessibility: false, screenRecording: false }; readinessError = String(failure.message || 'Could not confirm Computer Use readiness.').slice(0, 240); }
-    return { ...os, bundled: Boolean(nativeClient), host: nativeClient?.identity ? { product: nativeClient.identity.product, bundleId: nativeClient.identity.bundleId, source: nativeClient.identity.source, ...(nativeClient.identity.fallbackReason ? { fallbackReason: nativeClient.identity.fallbackReason } : {}) } : null, readinessError, memberId: memberId || null, grant: memberId ? memberGrant(stored, memberId) : null, sessions: [...sessions.values()].filter((session) => !memberId || session.memberId === memberId).map(publicSession) };
+    // macOS can show the switch on while the grant belongs to another build
+    // of the same app (ADR-0247); say so instead of asking for a step the
+    // person has already taken.
+    let grantDiagnosis = null;
+    if (os.available && (!os.accessibility || !os.screenRecording) && platform === 'darwin' && hostApp()) {
+      grantDiagnosis = await macGrant.diagnose({ hostApp: hostApp(), bundleId: AUTOHAND_COMPUTER_USE_BUNDLE_ID }).catch(() => ({ checked: false }));
+    }
+    return { ...os, grantDiagnosis, canResetMacGrant: platform === 'darwin' && Boolean(hostApp()), bundled: Boolean(nativeClient), host: nativeClient?.identity ? { product: nativeClient.identity.product, bundleId: nativeClient.identity.bundleId, source: nativeClient.identity.source, ...(nativeClient.identity.fallbackReason ? { fallbackReason: nativeClient.identity.fallbackReason } : {}) } : null, readinessError, memberId: memberId || null, grant: memberId ? memberGrant(stored, memberId) : null, sessions: [...sessions.values()].filter((session) => !memberId || session.memberId === memberId).map(publicSession) };
+  }
+  function hostApp() { return nativeClient?.identity?.bundleId === AUTOHAND_COMPUTER_USE_BUNDLE_ID ? hostAppPath(nativeClient.identity.host) : ''; }
+  async function resetMacPermission() {
+    if (platform !== 'darwin' || !hostApp()) throw error('Resetting the macOS permission is available on macOS with Autohand Computer Use.', 409);
+    return serial(async () => {
+      const outcome = await macGrant.reset({ hostApp: hostApp(), bundleId: AUTOHAND_COMPUTER_USE_BUNDLE_ID });
+      // The running host read its permission state at launch; start it again
+      // on the next request so the new grant is the one checked.
+      nativeClient.close?.();
+      emit('computer-use.macos-permission-reset', { bundleId: AUTOHAND_COMPUTER_USE_BUNDLE_ID });
+      return { ...outcome, hostApp: hostApp() };
+    });
   }
   async function setGrant(memberId, scope) {
     memberId = id(memberId);
@@ -335,7 +355,7 @@ export function createComputerUse({ stateDir, rootDir, bridgeUrl, nativeClient, 
     if (files.length) emit('computer-use.evidence', { memberId: session.memberId, runId: session.runId, sessionId: session.id, files });
     // Keep evidence readable after work finishes; only the live credential expires.
   }
-  return { status, getGrant, setGrant, createSession, dispatch, evidence, listEvidence, readEvidence, closeSession, close: () => { byToken.clear(); nativeClient?.close(); } };
+  return { status, resetMacPermission, getGrant, setGrant, createSession, dispatch, evidence, listEvidence, readEvidence, closeSession, close: () => { byToken.clear(); nativeClient?.close(); } };
 }
 
 /** SDK-facing stdio proxy. Accept both conventional MCP framing formats. */

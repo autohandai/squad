@@ -111,6 +111,7 @@ jobs:
           bun run check:project-observer-bridge
           bun run check:computer-use
           bun run check:computer-use-ui
+          bun run check:computer-use-tcc
           bun run check:computer-use-bridge
 
       - name: Check OpenTelemetry log format

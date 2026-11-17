@@ -69,6 +69,7 @@ list to the section for that version.
 ### Fixed
 
 - Opening an Add to Squad link while Squad starts up now opens that agent, instead of losing the link; and a marketplace that can't be reached no longer makes Squad reload over and over.
+- **Computer Use said "Not allowed" while System Settings showed Autohand Computer Use switched on.** macOS had kept the permission for an older build of Autohand Computer Use and ignored it for the one installed now. The Permissions page now says so when it can tell, and **Reset macOS permission** clears that old permission and asks macOS again, so you allow it once for the current app. It no longer says you have already granted it when you have not.
 
 - A picture chosen for a member in Edit Profile went back to the member's default bird the next time Squad opened. The chosen bird now stays.
 - The start-up and sign-in screens follow your light theme: the light start-up screen no longer shows the dark mark, and sign-in no longer opens dark right after a light start-up screen.

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field";
-import { getComputerUseConsentClient } from "./model";
+import { computerUsePermissionMessage, getComputerUseConsentClient } from "./model";
 
 export function ComputerUsePermissions({ member, api, compact = false, onOpenPermissions }) {
   const native = useMemo(() => getComputerUseConsentClient(), []);
@@ -72,6 +73,22 @@ export function ComputerUsePermissions({ member, api, compact = false, onOpenPer
     } catch (reason) { setError(reason.message || "Autohand Computer Use could not be installed."); }
     finally { setInstalling(false); }
   }
+  // macOS keeps the grant for the build that was allowed; a newer build of
+  // the same app reads "not granted" while System Settings shows the switch
+  // on (ADR-0247). Reset removes that grant and asks macOS again.
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  async function resetMacPermission() {
+    if (resetting) return;
+    setResetting(true); setError("");
+    try {
+      const result = await api("/api/computer-use/reset-macos-permission", { method: "POST", body: JSON.stringify({ confirm: "reset-macos-permission" }) });
+      if (result?.reset !== true) throw new Error("macOS permission could not be reset.");
+      setResetOpen(false); setSetupOpened(true);
+      await refresh();
+    } catch (reason) { setError(reason.message || "macOS permission could not be reset."); }
+    finally { setResetting(false); }
+  }
   const toggle = <Field orientation="horizontal" className="items-center justify-between gap-5 py-4">
     <FieldContent>
       <FieldLabel htmlFor={`computer-use-${member.id}`}>Use the computer</FieldLabel>
@@ -102,12 +119,12 @@ export function ComputerUsePermissions({ member, api, compact = false, onOpenPer
           step the browser cannot take, right above "open the desktop app".
           One instruction: the one that can be followed from here. */}
       <p className="mt-3 text-sm text-muted-foreground" role="status">
-        {!native ? "Open this member’s Permissions page in the Squad desktop app to allow Computer Use." : !current ? "Checking readiness…" : current.readinessError ? current.readinessError : !current.available ? "Computer Use readiness could not be confirmed. Install Autohand Computer Use with the button below, or check that this Squad build includes the engine and macOS permission host." : ready ? "macOS permissions are ready." : `Allow ${current.host?.product || "Computer Use"} in System Settings → Privacy & Security → Accessibility and Screen Recording, then check again.`}
+        {computerUsePermissionMessage({ native: Boolean(native), current, ready })}
       </p>
       {current?.host ? (
         <p className="mt-1 text-xs text-muted-foreground" data-testid="computer-use-host">
           {usingAutohand
-            ? "Using Autohand Computer Use, the same component Autohand Code installs and that you have already granted."
+            ? `Using Autohand Computer Use, the same component Autohand Code installs${ready ? " and that you have already granted" : ""}.`
             : current.host.fallbackReason
               ? `Using the copy of Autohand Computer Use bundled with Squad: ${current.host.fallbackReason}`
               : "Using the copy of Autohand Computer Use bundled with Squad. Install it with Autohand Code to share one grant across the CLI, Squad and Autohand Desktop."}
@@ -117,12 +134,25 @@ export function ComputerUsePermissions({ member, api, compact = false, onOpenPer
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {(current?.bundled === true || current?.available) && !ready && native && !usingAutohand ? <Button size="sm" variant="outline" disabled={busy} onClick={setup}>Set up macOS permissions</Button> : null}
         {current && (!usingAutohand || !ready) ? <Button size="sm" variant="outline" disabled={busy || installing} onClick={installAutohand}>{installing ? "Installing…" : usingAutohand ? "Repair Autohand Computer Use" : "Install Autohand Computer Use"}</Button> : null}
+        {native && current?.available && !ready && current.canResetMacGrant ? <Button size="sm" variant={current.grantDiagnosis?.stale ? "default" : "outline"} disabled={busy || resetting} onClick={() => setResetOpen(true)}>Reset macOS permission</Button> : null}
         <Button size="sm" variant="outline" disabled={!native || !ready || busy || scope === "observe"} onClick={() => change("observe")}>Allow observe</Button>
         <Button size="sm" variant="outline" disabled={!native || !ready || busy || scope === "control"} onClick={() => change("control")}>Allow control</Button>
         {scope !== "none" ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => change("none")}>Revoke access</Button> : null}
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => refresh().catch((reason) => setError(reason.message))}>Check again</Button>
       </div>
       {error ? <p className="mt-2 text-sm text-destructive" role="alert">{error}</p> : null}
+      <Dialog open={resetOpen} onOpenChange={(open) => { if (!resetting) setResetOpen(open); }}>
+        <DialogContent className="sm:max-w-md" data-testid="computer-use-reset-dialog">
+          <DialogHeader>
+            <DialogTitle>Reset macOS permission?</DialogTitle>
+            <DialogDescription className="text-left">macOS removes Autohand Computer Use from Accessibility and Screen Recording, then asks you to allow it again. The CLI, Squad and Autohand Desktop share this one permission, so allow it when macOS asks. Member access in Squad stays as it is.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" disabled={resetting} onClick={() => setResetOpen(false)}>Cancel</Button>
+            <Button disabled={resetting} onClick={() => void resetMacPermission()}>{resetting ? "Resetting…" : "Reset and ask again"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

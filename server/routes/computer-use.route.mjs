@@ -35,6 +35,16 @@ export async function handle(req, res, url, ctx) {
       ctx.json(res, 200, { success: true, data: await service.status(url.searchParams.get('memberId')) });
       return true;
     }
+    if (url.pathname === '/api/computer-use/reset-macos-permission' && req.method === 'POST') {
+      // Removes macOS's grant rows for Autohand Computer Use and asks again
+      // (ADR-0247). The body names the action so a stray POST cannot do it.
+      const body = await ctx.readBody(req);
+      if (body?.confirm !== 'reset-macos-permission') throw Object.assign(new Error('Confirm resetting the macOS permission.'), { status: 400 });
+      const data = await service.resetMacPermission();
+      ctx.logEvent?.(ctx.SEVERITY?.INFO, 'Autohand Computer Use macOS permission reset; asking again', { 'event.name': 'computer-use.macos-permission-reset' });
+      ctx.json(res, 200, { success: true, data });
+      return true;
+    }
     if (url.pathname === '/api/computer-use/evidence' && req.method === 'GET') {
       ctx.json(res, 200, { success: true, data: await service.listEvidence(url.searchParams.get('memberId')) });
       return true;
