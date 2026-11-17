@@ -69,7 +69,13 @@ try {
   assert.equal(created.success, true);
   storage.channels = [created.data];
   browser = await startBrowser();
-  await browser.send("Page.addScriptToEvaluateOnNewDocument", { source: `if (!localStorage.getItem('teamProof.seeded')) { localStorage.clear(); for (const [key,value] of Object.entries(${JSON.stringify(storage)})) localStorage.setItem('autohandSquad.v1.'+key,JSON.stringify(value)); localStorage.setItem('teamProof.seeded','true'); }` });
+  // Browser state is owner-scoped (src/lib/owned-storage.js): unprefixed keys
+  // are never read, so the threaded-replies opt-in has to land under the
+  // signed-in owner's prefix. Device preferences stay unprefixed.
+  const { storageKey } = (await bridge.api("/api/ownership/context")).data;
+  const deviceKeys = new Set(["theme", "skin", "layout", "locale"]);
+  const records = Object.fromEntries(Object.entries(storage).map(([key, value]) => [deviceKeys.has(key) ? `autohandSquad.v1.${key}` : `autohandSquad.owner.v1.${storageKey}.${encodeURIComponent(`autohandSquad.v1.${key}`)}`, JSON.stringify(value)]));
+  await browser.send("Page.addScriptToEvaluateOnNewDocument", { source: `if (!localStorage.getItem('teamProof.seeded')) { localStorage.clear(); for (const [key,value] of Object.entries(${JSON.stringify(records)})) localStorage.setItem(key,value); localStorage.setItem('teamProof.seeded','true'); }` });
   await browser.navigate(bridge.origin + "/squad");
   await until(() => browser.evaluate(`!!document.querySelector('aside button[aria-label*="Eva"]')`), "Eva in sidebar", 30000);
   await browser.evaluate(`document.querySelector('aside button[aria-label*="Eva"]').click()`);
@@ -78,7 +84,7 @@ try {
   await browser.evaluate(`document.querySelector('textarea[placeholder*="Eva"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}));`);
   await until(() => browser.evaluate(`!!document.querySelector('textarea[placeholder*="Viggas"]') && !!document.querySelector('aside button[aria-label*="Viggas"]') && document.querySelector('main')?.innerText.includes('I changed my saved Squad profile to Viggas.')`), "MCP rename in header, sidebar, composer and delivered reply", 30000);
   assert.equal(await browser.evaluate(`document.querySelector('main header')?.innerText.includes('Viggas')`), true);
-  const profile = JSON.parse(await readFile(join(fixtureDirectory, "app/agents/proof-eva/profile.json"), "utf8"));
+  const profile = JSON.parse(await readFile(join(bridge.appRoot, "agents/proof-eva/profile.json"), "utf8"));
   assert.equal(profile.name, "Viggas");
   assert.equal(profile.description, "Owns release QA.");
   assert.ok(profile.profileRevision > 0);
