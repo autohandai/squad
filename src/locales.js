@@ -670,7 +670,7 @@ const UI_COPY_BY_LANGUAGE = {
     usageByModel: "By model",
     usageByDay: "By day",
     connectors: "Connectors",
-    connectorsDescription: "MCP servers every member can reach. A member uses them only when its MCP connectors permission is set to Allow.",
+    connectorsDescription: "Tools from other apps for your members, through MCP. Connectors come from the official MCP Registry and run on this computer.",
     connectorsOff: "Off",
     connectorsOn: "{count} on",
     relay: "Relay",

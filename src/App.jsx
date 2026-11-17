@@ -25757,17 +25757,9 @@ function SettingsPage({
       <>
         <SettingsSectionHeader
           title={copy.connectors || "Connectors"}
-          description={copy.connectorsDescription || "MCP servers available to your members. Squad manages its built-in connection; added connectors follow each member’s MCP connectors permission."}
+          description={copy.connectorsDescription || "Tools from other apps for your members, through MCP. Connectors come from the official MCP Registry and run on this computer."}
         />
-        <ConnectorsSettings
-          connectors={connectors}
-          onCreate={connectorActions?.create}
-          onUpdate={connectorActions?.update}
-          onDelete={connectorActions?.remove}
-          onTest={connectorActions?.test}
-          onToggle={connectorActions?.toggle}
-          copy={copy}
-        />
+        <ConnectorsSettings api={api} />
       </>
     ),
     updates: () => (
