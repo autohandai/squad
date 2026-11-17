@@ -24,7 +24,10 @@ export async function createMobileService({ directory, computerName, assertCurre
   const serial = fn => { const result = chain.then(fn); chain = result.catch(() => {}); return result; };
   async function save(next) { await writePersistentJson(file, next); state = next; }
 
-  async function handle(input) {
+  // When each phone last reached this computer and how. Kept in memory: it
+  // answers "is my phone connected?" without a disk write per request.
+  const lastSeen = new Map();
+  async function handle(input, via) {
     const packet = packetSchema.parse(input);
     if (packet.computerID !== state.computerID) throw deny();
     const device = packet.kind === 'device' ? state.devices[packet.peerID] : null;
@@ -34,6 +37,7 @@ export async function createMobileService({ directory, computerName, assertCurre
     if (!key) throw deny();
     let command;
     try { command = commandSchema.parse(openPacket(packet, key)); } catch { throw deny(); }
+    if (device) lastSeen.set(packet.peerID, { at: new Date(now()).toISOString(), via: via === 'relay' ? 'relay' : 'local' });
     const respond = body => sealPacket(body, key, { kind: packet.kind, computerID: packet.computerID, peerID: packet.peerID, requestID: packet.requestID });
     try {
       if (Math.abs(now() / 1000 - command.issuedAt) > 120) throw Error('Your phone’s clock is out of sync. Set its time automatically and retry.');
@@ -50,7 +54,7 @@ export async function createMobileService({ directory, computerName, assertCurre
         return respond({ ok: true, data: { state: approved ? 'approved' : rejected ? 'rejected' : 'pending' } });
       }
       if (command.command === 'device.disconnect') {
-        const next = structuredClone(state); delete next.devices[packet.peerID]; await save(next);
+        const next = structuredClone(state); delete next.devices[packet.peerID]; await save(next); lastSeen.delete(packet.peerID);
         await afterRevoke(packet.peerID);
         return respond({ ok: true, data: { removed: true } });
       }
@@ -83,7 +87,7 @@ export async function createMobileService({ directory, computerName, assertCurre
 
   return {
     computerID: state.computerID,
-    status: () => ({ computerID: state.computerID, computerName, devices: Object.entries(state.devices).map(([id, device]) => ({ id, name: device.name, pairedAt: device.pairedAt })),
+    status: () => ({ computerID: state.computerID, computerName, devices: Object.entries(state.devices).map(([id, device]) => ({ id, name: device.name, pairedAt: device.pairedAt, ...(lastSeen.has(id) ? { lastSeenAt: lastSeen.get(id).at, lastSeenVia: lastSeen.get(id).via } : {}) })),
       pending: freshOffer() && claim && !approved && !rejected ? { pairingID: offer.pairingID, deviceName: claim.deviceName, code: confirmationCode(offer, claim.deviceID, claim.deviceKey), expiresAt: offer.expiresAt } : null }),
     createOffer: endpoint => serial(async () => {
       await assertCurrent();
@@ -119,15 +123,15 @@ export async function createMobileService({ directory, computerName, assertCurre
     }),
     revoke: deviceID => serial(async () => {
       await assertCurrent();
-      const next = structuredClone(state); delete next.devices[deviceID]; await save(next);
+      const next = structuredClone(state); delete next.devices[deviceID]; await save(next); lastSeen.delete(deviceID);
       await afterRevoke(deviceID);
       if (claim?.deviceID === deviceID) { offer = null; claim = null; }
       return { removed: true };
     }),
-    packet: input => {
+    packet: (input, via = 'local') => {
       if (waiting >= 16) return Promise.reject(Object.assign(Error('Try again in a moment.'), { status: 429 }));
       waiting++;
-      return serial(() => handle(input)).finally(() => waiting--);
+      return serial(() => handle(input, via)).finally(() => waiting--);
     },
   };
 }

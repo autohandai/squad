@@ -3,6 +3,7 @@ import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PresenceDot } from "@/components/members/PresenceDot";
 import { PairingCode } from "@/components/settings/ComputersSettings";
+import { PairedPhones } from "@/components/settings/PairedPhones";
 
 /**
  * A phone outline with one member answering, as a hint of what pairing gives.
@@ -137,8 +138,16 @@ export function PhoneStep({ api, member, onBack, onSkip, onPaired, onFinish, inD
             <li className="flex gap-3"><Check className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />Approve, redirect or stop work while you’re away.</li>
             <li className="flex gap-3"><Check className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />Nothing connects until you approve a matching code here.</li>
             {phase === "expired" ? <li className="pt-1 text-muted-foreground" role="status">That code expired. Show a new one when your phone is ready.</li> : null}
-            {devices.length ? <li className="pt-1 text-muted-foreground">Already paired: {devices.map(device => device.name).join(", ")}.</li> : null}
           </ul>}
+        {devices.length && phase !== "offer" && !pending ? <div className="mt-6" data-testid="phone-step-paired">
+          <p className="text-xs font-medium text-muted-foreground">Paired with this computer</p>
+          <PairedPhones devices={devices} busy={busy} onDisconnect={async device => {
+            setBusy(true); setError("");
+            try { await api(`/api/mobile/devices/${encodeURIComponent(device.id)}`, { method: "DELETE" }); const next = await api("/api/mobile/status"); if (mounted.current) setStatus(next); }
+            catch (failure) { if (mounted.current) setError(failure.message || "The phone could not be disconnected."); }
+            finally { if (mounted.current) setBusy(false); }
+          }} />
+        </div> : null}
         {error ? <p role="alert" className="mt-4 text-sm text-destructive">{error}</p> : null}
       </div>
       <div className="order-1 sm:order-2">

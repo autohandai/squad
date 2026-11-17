@@ -464,13 +464,66 @@ pub(crate) fn placeholder_icon() -> tauri::image::Image<'static> {
     tauri::image::Image::new_owned(rgba, 22, 22)
 }
 
+/// Status-item icons (22 px circles) and menu portraits (36×36 squares,
+/// cover-cropped, for `tray_art::member_avatar`). Only members with a readable
+/// portrait get a menu portrait; the menu draws its own placeholder.
+#[cfg(target_os = "macos")]
+pub(crate) struct MemberPortraits {
+    pub icons: std::collections::HashMap<String, tauri::image::Image<'static>>,
+    pub menu: std::collections::HashMap<String, std::sync::Arc<Vec<u8>>>,
+}
+
+/// Decoded portraits by member id, keyed by a hash of the avatar source, so
+/// the 5 s menu refresh decodes a picture only when it changes.
+pub(crate) type PortraitCache = std::collections::HashMap<
+    String,
+    (u64, Option<(tauri::image::Image<'static>, std::sync::Arc<Vec<u8>>)>),
+>;
+
 #[cfg(target_os = "macos")]
 pub(crate) fn member_icons(
     app: &AppHandle,
     shell: &Shell,
     context: &autohand_squad_runtime::ownership::OwnedContext,
-) -> std::collections::HashMap<String, tauri::image::Image<'static>> {
+) -> MemberPortraits {
+    let mut portraits = MemberPortraits {
+        icons: std::collections::HashMap::new(),
+        menu: std::collections::HashMap::new(),
+    };
+    let decoded = member_icon_map(app, shell, context);
+    for (id, entry) in decoded {
+        match entry {
+            Some((icon, menu)) => {
+                portraits.icons.insert(id.clone(), icon);
+                portraits.menu.insert(id, menu);
+            }
+            None => {
+                portraits.icons.insert(id, placeholder_icon());
+            }
+        }
+    }
+    if crate::native_scope_current(Some(context)) {
+        portraits
+    } else {
+        MemberPortraits {
+            icons: std::collections::HashMap::new(),
+            menu: std::collections::HashMap::new(),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[allow(clippy::type_complexity)]
+fn member_icon_map(
+    app: &AppHandle,
+    shell: &Shell,
+    context: &autohand_squad_runtime::ownership::OwnedContext,
+) -> std::collections::HashMap<
+    String,
+    Option<(tauri::image::Image<'static>, std::sync::Arc<Vec<u8>>)>,
+> {
     use base64::Engine;
+    use std::hash::{Hash, Hasher};
     use std::io::{Cursor, Read};
     let mut icons = std::collections::HashMap::new();
     let Some(bridge) = lock(&shell.app_url).clone() else {
@@ -523,10 +576,21 @@ pub(crate) fn member_icons(
         }
         // A removed or unreadable portrait must replace an earlier photo.
         // Only a failed roster read leaves the entire map empty.
-        icons.insert(id.to_string(), placeholder_icon());
+        icons.insert(id.to_string(), None);
         let Some(avatar) = member.get("avatar").and_then(|value| value.as_str()) else {
             continue;
         };
+        let stamp = {
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            avatar.hash(&mut hash);
+            hash.finish()
+        };
+        if let Some((cached, entry)) = lock(&shell.portrait_cache).get(id) {
+            if *cached == stamp {
+                icons.insert(id.to_string(), entry.clone());
+                continue;
+            }
+        }
         let data = if let Some(relative) = avatar.strip_prefix("/avatars/") {
             let path = std::path::Path::new(relative);
             if path
@@ -569,7 +633,15 @@ pub(crate) fn member_icons(
         let Ok(image) = decoder.decode() else {
             continue;
         };
-        let mut rgba = image
+        // Cover-crop to a centred square so faces keep their proportions.
+        let side = image.width().min(image.height());
+        let square = image.crop_imm(
+            (image.width() - side) / 2,
+            (image.height() - side) / 2,
+            side,
+            side,
+        );
+        let mut rgba = square
             .resize_exact(22, 22, image::imageops::FilterType::Triangle)
             .to_rgba8();
         // A small round avatar, retaining the same member portrait as the app.
@@ -578,16 +650,22 @@ pub(crate) fn member_icons(
                 pixel[3] = 0;
             }
         }
-        icons.insert(
-            id.to_owned(),
+        let menu = square
+            .resize_exact(
+                crate::tray_art::PORTRAIT,
+                crate::tray_art::PORTRAIT,
+                image::imageops::FilterType::Lanczos3,
+            )
+            .to_rgba8()
+            .into_raw();
+        let entry = Some((
             tauri::image::Image::new_owned(rgba.into_raw(), 22, 22),
-        );
+            std::sync::Arc::new(menu),
+        ));
+        lock(&shell.portrait_cache).insert(id.to_owned(), (stamp, entry.clone()));
+        icons.insert(id.to_owned(), entry);
     }
-    if crate::native_scope_current(Some(context)) {
-        icons
-    } else {
-        std::collections::HashMap::new()
-    }
+    icons
 }
 
 #[cfg(test)]

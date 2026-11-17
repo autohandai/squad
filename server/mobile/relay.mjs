@@ -98,7 +98,7 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
               clearTimeout(timer); next.off('close', fail); resolve(); return;
             }
             const input = incomingSchema.parse(parsed);
-            void service.packet(input.packet).then(packet => {
+            void service.packet(input.packet, 'relay').then(packet => {
               if (!stopped && socket === next && next.open) next.send({ type: 'packet.reply', id: input.id, packet });
             }).catch(failure => {
               if (!stopped && socket === next && next.open) next.send({ type: 'packet.error', id: input.id, status: [400, 401, 403, 409, 429].includes(failure.status) ? failure.status : 503 });

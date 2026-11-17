@@ -141,3 +141,18 @@ offer from the real bridge, Close). The check moves the bridge's phone port to
 a free one first, because an installed Squad already hosting a phone holds
 29323; with that collision the dialog shows the raw `EADDRINUSE` error, which
 is left as is for now.
+
+## Addendum (2026-11-17): which phones are paired, and are they reaching me
+
+The pairing dialog said only "Already paired: iPhone, iPhone." — two identical
+names (iOS gives apps the model name only) and no sign of whether either phone
+was working. The phone host now remembers, in memory, when each paired phone
+last made a verified request and whether it came over the local network or
+the relay (`lastSeenAt`, `lastSeenVia` in `/api/mobile/status`; not persisted,
+so it reads "Not seen since Squad started" after a restart until the phone
+next connects). `PairedPhones` lists them newest first with "Active now on
+this Wi-Fi" / "Last seen 2 h ago from anywhere", the pairing date to tell
+identical names apart, and Disconnect, in both the pairing dialog and
+Settings › Computers. Verified by `bun run check:mobile` (new last-seen and
+relay assertions), `check:mobile:browser`, `check:setup-guide:browser` and
+`scripts/check-pair-phone-menu-browser.mjs`.

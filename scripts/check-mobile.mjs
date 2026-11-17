@@ -38,6 +38,13 @@ try {
   const responses = await Promise.all([request('device', deviceID, key, 'message', { text: 'Hello' }, id), request('device', deviceID, key, 'message', { text: 'Hello' }, id)]);
   assert.deepEqual(responses[0], responses[1]); assert.equal(executions, 1);
   assert.equal((await request('device', deviceID, key, 'message', { text: 'Different' }, id)).ok, false);
+  // The computer shows whether each phone is reaching it, and how.
+  const seen = service.status().devices.find(device => device.id === deviceID);
+  assert.ok(Date.parse(seen.lastSeenAt) > Date.now() - 60000, 'a verified request records when the phone was last seen');
+  assert.equal(seen.lastSeenVia, 'local');
+  const viaRelay = sealPacket({ issuedAt: Date.now() / 1000, command: 'snapshot', parameters: {} }, key, { kind: 'device', peerID: deviceID, computerID: offer.computerID, requestID: randomUUID() }, 'request');
+  await service.packet(viaRelay, 'relay');
+  assert.equal(service.status().devices.find(device => device.id === deviceID).lastSeenVia, 'relay', 'relay requests are marked as reaching it from anywhere');
   current = false;
   assert.equal((await request('device', deviceID, key, 'snapshot')).ok, false);
   current = true;

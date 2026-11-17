@@ -1,10 +1,13 @@
 //! Model for the desktop app's tray menu: account, plan usage, squad status,
-//! members, and which actions apply. The Tauri shell maps this to native menu
-//! items; everything here is plain data so it can be unit-tested and reused by
-//! any other controller.
+//! members, and which actions apply. The Tauri shell enriches it with what
+//! only the bridge knows (engines, needs-you items) and turns it into rows
+//! with `menu::plan_menu`; everything here is plain data so it can be
+//! unit-tested and reused by any other controller.
+
+pub mod menu;
 
 use crate::account_usage::{
-    fetch_account_usage_blocking, now_unix, usage_detail, usage_line, window_title, AccountUsage,
+    fetch_account_usage_blocking, parse_rfc3339_unix, AccountUsage,
 };
 use crate::cli::{local_json_request_for_context, stack_daemon_config, web_port_for};
 use crate::config::{read_autohand_user_auth, resolve_config, ConfigOverrides, SquadConfig};
@@ -41,41 +44,36 @@ pub fn account_session(_config: &SquadConfig) -> AccountSession {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TrayMember {
     pub id: String,
     pub name: String,
+    /// "Eva · Frontend · working": the tooltip of a member's own status item.
     pub label: String,
     pub status: String,
     pub working: bool,
-}
-
-/// One metered window, drawn natively as a bar beside `title · detail`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TrayUsageBar {
-    pub title: String,
-    /// None when the window has no ceiling; the bar is then left empty.
-    pub percent: Option<u8>,
-    pub detail: String,
+    /// Title of the job the member is running now, when the squad reports one.
+    pub task: Option<String>,
+    pub queued: usize,
+    /// Unix seconds of the member's last activity, for ordering rows.
+    pub last_activity: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DesktopTrayModel {
+    /// False for the placeholder model shown before the first read (and while
+    /// an account switch is verified): the menu then says "connecting…".
+    pub loaded: bool,
     pub signed_in: bool,
-    /// "Signed in as …" or "Not signed in".
-    pub account_label: String,
-    /// Plan name, e.g. "Autohand Code Max"; None when usage is unknown.
-    pub plan_label: Option<String>,
-    /// One line per metered window (see `account_usage::usage_line`).
-    pub usage_lines: Vec<String>,
-    /// The same windows as structured bars, for menus that can draw them.
-    pub usage_bars: Vec<TrayUsageBar>,
-    /// Why usage is missing, shown as one quiet line.
-    pub usage_note: Option<String>,
+    pub email: Option<String>,
+    /// The Autohand Code plan and its metered windows, once fetched.
+    pub usage: Option<AccountUsage>,
+    /// Why the plan usage could not be fetched (first line only).
+    pub usage_error: Option<String>,
     pub daemon_running: bool,
+    /// Unix seconds the daemon started, for "Running since …".
+    pub running_since: Option<u64>,
     pub launch_at_login: bool,
-    /// "3 online · 1 working · 2 queued" while the squad is running.
-    pub squad_line: Option<String>,
     pub members: Vec<TrayMember>,
 }
 
@@ -189,7 +187,6 @@ pub fn load_desktop_tray_model(
         live.as_ref().map(|snapshot| snapshot.members.as_slice()),
         usage.filter(|_| matching_usage),
         usage_error.filter(|_| matching_usage),
-        now_unix(),
     );
     if context
         .as_ref()
@@ -202,7 +199,6 @@ pub fn load_desktop_tray_model(
             None,
             None,
             None,
-            now_unix(),
         );
     }
     model
@@ -215,64 +211,33 @@ pub fn build_model(
     live_members: Option<&[LiveStatusMember]>,
     usage: Option<&AccountUsage>,
     usage_error: Option<&str>,
-    now: u64,
 ) -> DesktopTrayModel {
     let daemon_email = status
         .and_then(|status| status.account.email.clone())
         .filter(|email| !email.trim().is_empty());
     let signed_in = session.signed_in() || daemon_email.is_some();
     let email = daemon_email.or_else(|| session.email.clone());
-    let account_label = match (&signed_in, email) {
-        (true, Some(email)) => format!("Signed in as {email}"),
-        (true, None) => "Signed in".to_string(),
-        (false, _) => "Not signed in".to_string(),
-    };
-
-    let (plan_label, usage_lines, usage_bars, usage_note) = match (signed_in, usage) {
-        (false, _) => (None, Vec::new(), Vec::new(), None),
-        (true, Some(usage)) => {
-            let windows = usage.windows();
-            let lines = windows
-                .iter()
-                .map(|(label, window)| usage_line(label, window, now))
-                .collect::<Vec<_>>();
-            let bars = windows
-                .iter()
-                .map(|(label, window)| TrayUsageBar {
-                    title: window_title(label).to_string(),
-                    percent: window.percent_used(),
-                    detail: usage_detail(window, now),
-                })
-                .collect::<Vec<_>>();
-            let note = if lines.is_empty() {
-                Some("No metered usage windows on this plan".to_string())
-            } else {
-                None
-            };
-            (Some(usage.display_name.clone()), lines, bars, note)
-        }
-        (true, None) => (
-            None,
-            Vec::new(),
-            Vec::new(),
-            Some(match usage_error {
-                Some(error) => format!("Usage unavailable: {}", first_line(error)),
-                None => "Loading usage…".to_string(),
-            }),
-        ),
+    let (usage, usage_error) = if signed_in {
+        (
+            usage.cloned(),
+            usage
+                .is_none()
+                .then(|| usage_error.map(first_line))
+                .flatten(),
+        )
+    } else {
+        (None, None)
     };
 
     let daemon_running = status.is_some();
+    let running_since = status
+        .and_then(|status| status.daemon.as_ref())
+        .and_then(|daemon| parse_rfc3339_unix(&daemon.started_at));
     let launch_at_login = status
         .map(|status| status.launch_at_login_policy.as_str())
         .unwrap_or(config.launch_at_login_policy.as_str())
         == "forced";
-    let squad_line = status.map(|status| {
-        format!(
-            "{} online · {} working · {} queued",
-            status.online_members, status.working_agents, status.queued_jobs
-        )
-    });
+    let jobs = status.map(|status| status.jobs.as_slice()).unwrap_or(&[]);
     let members = status
         .map(|status| status.members.as_slice())
         .or(live_members)
@@ -285,19 +250,38 @@ pub fn build_model(
             label: member_label(member),
             status: member.status.clone(),
             working: member.working,
+            task: member
+                .working
+                .then(|| {
+                    jobs.iter()
+                        .filter(|job| job.agent_id.as_deref() == Some(member.id.as_str()))
+                        .filter(|job| {
+                            matches!(
+                                job.status.as_str(),
+                                "running" | "launching" | "in-progress" | "in_progress" | "working"
+                            )
+                        })
+                        .map(|job| job.title.trim().to_string())
+                        .find(|title| !title.is_empty())
+                })
+                .flatten(),
+            queued: member.queued_jobs,
+            last_activity: member
+                .last_activity_at
+                .as_deref()
+                .and_then(parse_rfc3339_unix),
         })
         .collect();
 
     DesktopTrayModel {
+        loaded: true,
         signed_in,
-        account_label,
-        plan_label,
-        usage_lines,
-        usage_bars,
-        usage_note,
+        email,
+        usage,
+        usage_error,
         daemon_running,
+        running_since,
         launch_at_login,
-        squad_line,
         members,
     }
 }
@@ -322,7 +306,7 @@ fn member_label(member: &LiveStatusMember) -> String {
     }
 }
 
-fn first_line(text: &str) -> String {
+pub(crate) fn first_line(text: &str) -> String {
     let line = text.lines().next().unwrap_or("").trim();
     if line.len() > 72 {
         format!(
@@ -354,12 +338,6 @@ mod tests {
                 limit: Some(1000),
                 reset_at: Some("2026-09-22T02:00:17Z".to_string()),
             },
-            week: UsageWindow {
-                used: 443,
-                remaining: Some(9557),
-                limit: Some(10000),
-                reset_at: Some("2026-09-26T20:46:24Z".to_string()),
-            },
             ..Default::default()
         }
     }
@@ -372,61 +350,44 @@ mod tests {
             email: Some("me@example.com".to_string()),
             name: None,
         };
-        let now = crate::account_usage::parse_rfc3339_unix("2026-09-21T21:08:00Z").unwrap();
-        let model = build_model(&config, &session, None, None, Some(&usage()), None, now);
+        let model = build_model(&config, &session, None, None, Some(&usage()), None);
+        assert!(model.loaded);
         assert!(model.signed_in);
-        assert_eq!(model.account_label, "Signed in as me@example.com");
-        assert_eq!(model.plan_label.as_deref(), Some("Autohand Code Max"));
-        assert_eq!(model.usage_lines.len(), 2);
-        assert!(model.usage_lines[0].starts_with("5 h "));
-        assert!(model.usage_lines[1].contains("resets in 4d 23h"));
-        assert_eq!(model.usage_bars.len(), 2);
-        assert_eq!(model.usage_bars[0].title, "5-hour");
-        assert!(model.usage_bars[1].detail.ends_with("resets in 4d 23h"));
+        assert_eq!(model.email.as_deref(), Some("me@example.com"));
+        assert_eq!(
+            model.usage.as_ref().map(|usage| usage.display_name.as_str()),
+            Some("Autohand Code Max")
+        );
         assert!(!model.daemon_running);
-        assert!(model.squad_line.is_none());
+        assert!(model.running_since.is_none());
     }
 
     #[test]
-    fn signed_out_hides_usage_and_reports_state() {
+    fn signed_out_hides_usage_and_its_error() {
         let config = SquadConfig::defaults();
         let model = build_model(
             &config,
             &AccountSession::default(),
             None,
             None,
-            None,
+            Some(&usage()),
             Some("boom"),
-            0,
         );
         assert!(!model.signed_in);
-        assert_eq!(model.account_label, "Not signed in");
-        assert!(model.plan_label.is_none());
-        assert!(model.usage_note.is_none());
+        assert!(model.usage.is_none());
+        assert!(model.usage_error.is_none());
     }
 
     #[test]
-    fn usage_errors_become_one_quiet_line() {
+    fn usage_errors_keep_only_their_first_line() {
         let config = SquadConfig::defaults();
         let session = AccountSession {
             token: Some("tok".to_string()),
             email: None,
             name: None,
         };
-        let model = build_model(
-            &config,
-            &session,
-            None,
-            None,
-            None,
-            Some("HTTP 503\nmore"),
-            0,
-        );
-        assert_eq!(model.account_label, "Signed in");
-        assert_eq!(
-            model.usage_note.as_deref(),
-            Some("Usage unavailable: HTTP 503")
-        );
+        let model = build_model(&config, &session, None, None, None, Some("HTTP 503\nmore"));
+        assert_eq!(model.usage_error.as_deref(), Some("HTTP 503"));
     }
 
     #[test]
@@ -438,9 +399,9 @@ mod tests {
             role: Some("Frontend".to_string()),
             status: "online".to_string(),
             working: true,
-            queued_jobs: 0,
+            queued_jobs: 2,
             scheduled_jobs: 0,
-            last_activity_at: None,
+            last_activity_at: Some("2026-09-21T21:08:00Z".to_string()),
         }];
         let model = build_model(
             &config,
@@ -449,9 +410,14 @@ mod tests {
             Some(&members),
             None,
             None,
-            0,
         );
         assert_eq!(model.members.len(), 1);
         assert_eq!(model.members[0].label, "Eva · Frontend · working");
+        assert_eq!(model.members[0].queued, 2);
+        assert_eq!(model.members[0].task, None, "no daemon, no jobs");
+        assert_eq!(
+            model.members[0].last_activity,
+            parse_rfc3339_unix("2026-09-21T21:08:00Z")
+        );
     }
 }

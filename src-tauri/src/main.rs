@@ -41,6 +41,7 @@ mod quick_chat_appearance;
 mod quick_chat_preferences;
 mod system_reset;
 mod tray_art;
+mod tray_bridge;
 mod update_swap;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
@@ -69,7 +70,13 @@ struct Shell {
     popup_anchor: Mutex<Option<String>>,
     member_portraits: Mutex<std::collections::HashMap<String, u64>>,
     quick_chat_material: Mutex<Option<quick_chat_appearance::Material>>,
-    harness_usage: Mutex<Vec<quick_chat_preferences::HarnessUsage>>,
+    /// Claude Code and Codex readings; None until the first read finishes.
+    harness_usage: Mutex<Option<Vec<quick_chat_preferences::HarnessUsage>>>,
+    /// Needs-you items, breaks, engines and the phone, read from the bridge.
+    tray_extras: Mutex<tray_bridge::TrayExtras>,
+    portrait_cache: Mutex<quick_chat::PortraitCache>,
+    /// When usage was last fetched, so a right-click refresh stays cheap.
+    usage_fetched_at: Mutex<Option<std::time::Instant>>,
     usage_refreshing: std::sync::atomic::AtomicBool,
     usage_refresh_requested: std::sync::atomic::AtomicBool,
     tray_refreshing: std::sync::atomic::AtomicBool,
@@ -118,7 +125,10 @@ fn main() {
                 popup_anchor: Mutex::new(None),
                 member_portraits: Mutex::new(std::collections::HashMap::new()),
                 quick_chat_material: Mutex::new(None),
-                harness_usage: Mutex::new(Vec::new()),
+                harness_usage: Mutex::new(None),
+                tray_extras: Mutex::new(tray_bridge::TrayExtras::default()),
+                portrait_cache: Mutex::new(std::collections::HashMap::new()),
+                usage_fetched_at: Mutex::new(None),
                 usage_refreshing: std::sync::atomic::AtomicBool::new(false),
                 usage_refresh_requested: std::sync::atomic::AtomicBool::new(false),
                 tray_refreshing: std::sync::atomic::AtomicBool::new(false),
@@ -558,10 +568,7 @@ fn dispatch_menu_action(app: &AppHandle, action: &str) {
 // ---------------------------------------------------------------------------
 
 fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
-    let starting = DesktopTrayModel {
-        account_label: "Starting…".to_string(),
-        ..Default::default()
-    };
+    let starting = DesktopTrayModel::default();
     let menu = tray_menu(app, &starting, &std::collections::HashMap::new(), None)?;
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
@@ -585,6 +592,19 @@ fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
                     }
                 ) {
                     quick_chat::open_quick_chat_picker(tray.app_handle(), quick_shell.clone());
+                } else if matches!(
+                    event,
+                    tauri::tray::TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Right,
+                        button_state: tauri::tray::MouseButtonState::Down,
+                        ..
+                    }
+                ) {
+                    // Opening the menu starts a refresh so the next opening is
+                    // current; usage itself at most once a minute (ADR-0236).
+                    let stale = lock(&quick_shell.usage_fetched_at)
+                        .is_none_or(|at| at.elapsed() >= Duration::from_secs(60));
+                    refresh_tray(tray.app_handle().clone(), quick_shell.clone(), stale);
                 }
             });
         match tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png")) {
@@ -608,217 +628,141 @@ fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
     Ok(())
 }
 
-/// The tray menu: account and plan usage at a glance (quiet, disabled lines),
-/// then the actions. Rebuilt from a fresh model on every refresh.
+/// The menu-bar menu (docs/design/menu-bar-menu.md, ADR-0236): the squad
+/// first, what waits on the person, then headroom, then the footer. The rows
+/// come from `desktop_tray::menu::plan_menu`; this maps them to native items
+/// and, on macOS, draws their images. Rebuilt from a fresh model on every
+/// refresh.
 fn tray_menu(
     app: &AppHandle,
     model: &DesktopTrayModel,
-    icons: &std::collections::HashMap<String, tauri::image::Image<'static>>,
+    portraits: &std::collections::HashMap<String, Arc<Vec<u8>>>,
     generation: Option<&str>,
 ) -> tauri::Result<Menu<Wry>> {
-    let info = |id: &str, label: &str| MenuItem::with_id(app, id, label, false, None::<&str>);
-    let action = |id: &str, label: &str, enabled: bool| {
-        MenuItem::with_id(app, id, label, enabled, None::<&str>)
-    };
-    let mut owned: Vec<Box<dyn IsMenuItem<Wry>>> = Vec::new();
-
-    owned.push(Box::new(info("account", &model.account_label)?));
+    use autohand_squad_runtime::desktop_tray::menu::{self, MenuInputs, QuickChat};
+    let shell = app.state::<Arc<Shell>>().inner().clone();
     let preferences = quick_chat_preferences::read();
-    // macOS draws each window as a coloured bar image beside its words, under
-    // a heading with the provider's mark. Rows stay enabled so they read at full
-    // contrast; choosing one opens Settings.
+    let harnesses: Option<Vec<menu::EngineUsage>> = lock(&shell.harness_usage).as_ref().map(|list| {
+        list.iter()
+            .map(quick_chat_preferences::engine_usage)
+            .collect()
+    });
+    let (needs, on_break, engines, engines_known, phone) = {
+        let extras = lock(&shell.tray_extras);
+        if generation.is_some() && extras.generation.as_deref() == generation {
+            (
+                extras.needs.clone(),
+                extras.on_break.clone(),
+                extras.engines.clone(),
+                extras.engines_known,
+                extras.phone.clone(),
+            )
+        } else {
+            Default::default()
+        }
+    };
     #[cfg(target_os = "macos")]
-    {
-        let row = |id: &str, label: &str, icon: Option<tauri::image::Image<'static>>| {
-            tauri::menu::IconMenuItem::with_id(app, id, label, true, icon, None::<&str>)
-        };
-        let bar_row =
-            |id: &str, bar: &autohand_squad_runtime::desktop_tray::TrayUsageBar, provider: &str| {
-                row(
-                    id,
-                    &format!("{} · {}", bar.title, bar.detail),
-                    Some(tray_art::usage_bar(
-                        bar.percent,
-                        tray_art::provider_colour(provider),
-                    )),
-                )
-            };
-        if let Some(plan) = &model.plan_label {
-            owned.push(Box::new(row(
-                "usage-plan",
-                plan,
-                tray_art::autohand_mark(),
-            )?));
-        }
-        if preferences.quick_chat_show_usage {
-            for (index, bar) in model.usage_bars.iter().enumerate() {
-                owned.push(Box::new(bar_row(
-                    &format!("usage-{index}"),
-                    bar,
-                    "autohand",
-                )?));
-            }
-            if let Some(note) = &model.usage_note {
-                owned.push(Box::new(info("usage-note", note)?));
-            }
-            let harness_usage = lock(&app.state::<Arc<Shell>>().harness_usage).clone();
-            for harness in &harness_usage {
-                owned.push(Box::new(PredefinedMenuItem::separator(app)?));
-                owned.push(Box::new(row(
-                    &format!("usage-harness-{}", harness.id),
-                    &harness.label,
-                    Some(tray_art::provider_mark(&harness.id)),
-                )?));
-                let bars = quick_chat_preferences::usage_bars(harness);
-                if bars.is_empty() {
-                    owned.push(Box::new(info(
-                        &format!("harness-{}-none", harness.id),
-                        "Usage unavailable for this connection",
-                    )?));
-                }
-                for (index, bar) in bars.iter().enumerate() {
-                    owned.push(Box::new(bar_row(
-                        &format!("usage-harness-{}-{index}", harness.id),
-                        bar,
-                        &harness.id,
-                    )?));
-                }
-            }
-        }
-    }
+    let (look, hour12) = (tray_art::system_look(), tray_art::system_hour12());
     #[cfg(not(target_os = "macos"))]
-    {
-        if let Some(plan) = &model.plan_label {
-            owned.push(Box::new(info("plan", plan)?));
-        }
-        for (index, line) in model
-            .usage_lines
-            .iter()
-            .filter(|_| preferences.quick_chat_show_usage)
-            .enumerate()
-        {
-            owned.push(Box::new(info(&format!("usage-{index}"), line)?));
-        }
-        if let Some(note) = model
-            .usage_note
-            .as_ref()
-            .filter(|_| preferences.quick_chat_show_usage)
-        {
-            owned.push(Box::new(info("usage-note", note)?));
-        }
-        if preferences.quick_chat_show_usage {
-            let harness_usage = lock(&app.state::<Arc<Shell>>().harness_usage).clone();
-            for harness in &harness_usage {
-                owned.push(Box::new(PredefinedMenuItem::separator(app)?));
-                owned.push(Box::new(info(
-                    &format!("harness-{}", harness.id),
-                    &harness.label,
-                )?));
-                for (index, line) in quick_chat_preferences::usage_lines(harness)
-                    .iter()
-                    .enumerate()
-                {
-                    owned.push(Box::new(info(
-                        &format!("harness-{}-{index}", harness.id),
-                        line,
-                    )?));
-                }
-            }
-        }
-    }
-    if let Some(squad) = &model.squad_line {
-        owned.push(Box::new(info("squad", squad)?));
-    }
-    owned.push(Box::new(PredefinedMenuItem::separator(app)?));
-
-    owned.push(Box::new(action("open", "Open Autohand Squad", true)?));
-    owned.push(Box::new(action("mission-control", "Needs you", true)?));
-    if !model.members.is_empty() {
-        let members = model
-            .members
-            .iter()
-            .map(|member| {
-                #[cfg(target_os = "macos")]
-                {
-                    tauri::menu::IconMenuItem::with_id(
-                        app,
-                        format!("member:{}:{}", generation.unwrap_or("locked"), member.id),
-                        &member.label,
-                        true,
-                        Some(
-                            icons
-                                .get(&member.id)
-                                .cloned()
-                                .unwrap_or_else(quick_chat::placeholder_icon),
-                        ),
-                        None::<&str>,
-                    )
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    action(
-                        &format!("member:{}:{}", generation.unwrap_or("locked"), member.id),
-                        &member.label,
-                        true,
-                    )
-                }
-            })
-            .collect::<tauri::Result<Vec<_>>>()?;
-        let refs: Vec<&dyn IsMenuItem<Wry>> = members
-            .iter()
-            .map(|item| item as &dyn IsMenuItem<Wry>)
-            .collect();
-        owned.push(Box::new(Submenu::with_items(app, "Members", true, &refs)?));
-    }
-    owned.push(Box::new(action(
-        "refresh",
-        "Refresh usage",
-        preferences.quick_chat_show_usage,
-    )?));
-    owned.push(Box::new(PredefinedMenuItem::separator(app)?));
-
-    if model.signed_in {
-        owned.push(Box::new(action("logout", "Sign out", true)?));
-    } else {
-        owned.push(Box::new(action("login", "Sign in…", true)?));
-    }
-    owned.push(Box::new(action("update", "Check for upgrades…", true)?));
-    owned.push(Box::new(CheckMenuItem::with_id(
-        app,
-        "launch-at-login",
-        "Launch at Login",
-        model.daemon_running,
-        model.launch_at_login,
-        None::<&str>,
-    )?));
-    owned.push(Box::new(PredefinedMenuItem::separator(app)?));
-
-    owned.push(Box::new(action(
-        "start",
-        "Start services",
-        !model.daemon_running,
-    )?));
-    owned.push(Box::new(action(
-        "stop",
-        "Stop services",
-        model.daemon_running,
-    )?));
-    owned.push(Box::new(action(
-        "restart",
-        "Restart services",
-        model.daemon_running,
-    )?));
-    owned.push(Box::new(action("logs", "Open logs folder", true)?));
-    owned.push(Box::new(action("settings", "Settings…", true)?));
-    owned.push(Box::new(action("report-bug", "Report a bug", true)?));
-    owned.push(Box::new(action("give-feedback", "Give feedback", true)?));
-    owned.push(Box::new(action("about", "About", true)?));
-    owned.push(Box::new(PredefinedMenuItem::separator(app)?));
-    owned.push(Box::new(action("quit", "Quit", true)?));
-
-    let refs: Vec<&dyn IsMenuItem<Wry>> = owned.iter().map(|item| item.as_ref()).collect();
+    let (look, hour12) = (tray_art::Look::default(), true);
+    let inputs = MenuInputs {
+        model,
+        engines: &engines,
+        engines_known,
+        needs: &needs,
+        on_break: &on_break,
+        show_usage: preferences.quick_chat_show_usage,
+        harnesses: harnesses.as_deref(),
+        phone,
+        quick_chat: if !cfg!(target_os = "macos") {
+            QuickChat::Absent
+        } else if preferences.quick_chat_enabled {
+            QuickChat::Enabled
+        } else {
+            QuickChat::Disabled
+        },
+        generation: generation.unwrap_or("locked"),
+        clock: menu::Clock::system(hour12),
+    };
+    let rows = menu::plan_menu(&inputs);
+    let items = rows
+        .iter()
+        .map(|row| tray_item(app, row, portraits, look))
+        .collect::<tauri::Result<Vec<_>>>()?;
+    let refs: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(|item| item.as_ref()).collect();
     Menu::with_items(app, &refs)
 }
+
+/// One planned row as a native item. Images are drawn on macOS only; Windows
+/// and Linux show the same words without them.
+fn tray_item(
+    app: &AppHandle,
+    row: &autohand_squad_runtime::desktop_tray::menu::Row,
+    portraits: &std::collections::HashMap<String, Arc<Vec<u8>>>,
+    look: tray_art::Look,
+) -> tauri::Result<Box<dyn IsMenuItem<Wry>>> {
+    use autohand_squad_runtime::desktop_tray::menu::{Art, RowKind};
+    #[cfg(target_os = "macos")]
+    let image = row.art.as_ref().map(|art| match art {
+        Art::Comb(cells) => tray_art::comb(cells, look),
+        Art::Headroom(left) => tray_art::headroom_mark(*left, look),
+        Art::Avatar { member_id, badge } => tray_art::member_avatar(
+            portraits.get(member_id).map(|pixels| pixels.as_slice()),
+            *badge,
+            look,
+        ),
+        Art::NeedsYou => tray_art::needs_you_mark(),
+    });
+    #[cfg(not(target_os = "macos"))]
+    let image: Option<tauri::image::Image<'static>> = {
+        let _ = (portraits, look, &row.art as &Option<Art>);
+        None
+    };
+    Ok(match &row.kind {
+        RowKind::Separator => Box::new(PredefinedMenuItem::separator(app)?),
+        RowKind::Check(checked) => Box::new(CheckMenuItem::with_id(
+            app,
+            &row.id,
+            &row.text,
+            row.enabled,
+            *checked,
+            row.shortcut,
+        )?),
+        RowKind::Submenu(children) => {
+            let items = children
+                .iter()
+                .map(|child| tray_item(app, child, portraits, look))
+                .collect::<tauri::Result<Vec<_>>>()?;
+            let refs: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(|item| item.as_ref()).collect();
+            let submenu = Submenu::with_id_and_items(app, &row.id, &row.text, row.enabled, &refs)?;
+            if image.is_some() {
+                submenu.set_icon(image)?;
+            }
+            Box::new(submenu)
+        }
+        RowKind::Item => match image {
+            Some(image) => Box::new(tauri::menu::IconMenuItem::with_id(
+                app,
+                &row.id,
+                &row.text,
+                row.enabled,
+                Some(image),
+                row.shortcut,
+            )?),
+            None => Box::new(MenuItem::with_id(
+                app,
+                &row.id,
+                &row.text,
+                row.enabled,
+                row.shortcut,
+            )?),
+        },
+    })
+}
+
+/// The plan page; `autohand.ai/pricing` redirects here (HTTP 301 → 200,
+/// checked 2026-11-17). Squad has no in-app plan page.
+const PLAN_URL: &str = "https://autohand.ai/code/pricing/";
 
 fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
     if system_reset::blocked(handle) {
@@ -828,8 +772,23 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
     let paths = default_paths();
     match id {
         "open" => focus_main_window(handle),
-        "mission-control" => navigate_app(handle, &shell, "/work"),
+        "needs-you" => navigate_app(handle, &shell, "/work"),
         "settings" => navigate_app(handle, &shell, "/settings"),
+        "usage-settings" => navigate_app(handle, &shell, "/settings/quick-chat"),
+        window if window.starts_with("usage-window:") => {
+            navigate_app(handle, &shell, "/settings/quick-chat")
+        }
+        "add-member" => {
+            focus_main_window(handle);
+            dispatch_menu_action(handle, "new-agent");
+        }
+        "quick-chat" => {
+            #[cfg(target_os = "macos")]
+            quick_chat::open_quick_chat_picker(handle, shell);
+        }
+        "upgrade-plan" | "manage-plan" => {
+            let _ = tauri_plugin_opener::open_url(PLAN_URL, None::<&str>);
+        }
         "report-bug" => navigate_app(handle, &shell, &feedback_route_for_paths(&paths, "bug")),
         "give-feedback" => navigate_app(
             handle,
@@ -849,7 +808,6 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
             );
         }
         "refresh" => refresh_tray(handle.clone(), shell, true),
-        usage if usage.starts_with("usage-") => navigate_app(handle, &shell, "/settings"),
         "login" | "logout" | "start" | "stop" | "restart" | "launch-at-login" => {
             let action = match id {
                 "login" => TrayAction::Login,
@@ -895,51 +853,45 @@ fn handle_tray_event(handle: &AppHandle, shell: Arc<Shell>, id: &str) {
             });
         }
         other => {
-            if let Some((generation, member_id)) = other
-                .strip_prefix("member:")
-                .and_then(|value| value.split_once(':'))
+            // `member:<generation>:<id>` opens Quick Chat with that member;
+            // `needs:<generation>:<id>` opens the member's chat in the main
+            // window, where the question or approval waits.
+            let (needs, rest) = match other.strip_prefix("needs:") {
+                Some(rest) => (true, rest),
+                None => match other.strip_prefix("member:") {
+                    Some(rest) => (false, rest),
+                    None => return,
+                },
+            };
+            let Some((generation, member_id)) = rest.split_once(':') else {
+                return;
+            };
+            if autohand_squad_runtime::ownership::read_active_context(&default_paths())
+                .ok()
+                .flatten()
+                .is_none_or(|context| context.generation != generation)
+                || !quick_chat::valid_member_id(member_id)
             {
-                if autohand_squad_runtime::ownership::read_active_context(&default_paths())
-                    .ok()
-                    .flatten()
-                    .is_none_or(|context| context.generation != generation)
-                {
-                    return;
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    *lock(&shell.popup_anchor) = None;
-                    if quick_chat_preferences::read().quick_chat_enabled {
-                        if let Err(error) = quick_chat::open_quick_chat(handle, &shell, member_id) {
-                            eprintln!("quick chat failed: {error}");
-                        }
-                    } else if quick_chat::valid_member_id(member_id) {
-                        navigate_app(
-                            handle,
-                            &shell,
-                            &format!("/conversations/new?member={member_id}"),
-                        );
+                return;
+            }
+            let chat_route = format!("/conversations/new?member={member_id}");
+            if needs {
+                navigate_app(handle, &shell, &chat_route);
+                return;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                *lock(&shell.popup_anchor) = None;
+                if quick_chat_preferences::read().quick_chat_enabled {
+                    if let Err(error) = quick_chat::open_quick_chat(handle, &shell, member_id) {
+                        eprintln!("quick chat failed: {error}");
                     }
-                    return;
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    let encoded: String = member_id
-                        .bytes()
-                        .map(|byte| match byte {
-                            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                                (byte as char).to_string()
-                            }
-                            _ => format!("%{byte:02X}"),
-                        })
-                        .collect();
-                    navigate_app(
-                        handle,
-                        &shell,
-                        &format!("/conversations/new?member={encoded}"),
-                    );
+                } else {
+                    navigate_app(handle, &shell, &chat_route);
                 }
             }
+            #[cfg(not(target_os = "macos"))]
+            navigate_app(handle, &shell, &chat_route);
         }
     }
 }
@@ -974,16 +926,16 @@ fn clear_private_native_ui(app: &AppHandle, shell: &Arc<Shell>) {
     }
     lock(&shell.member_trays).clear();
     lock(&shell.member_portraits).clear();
+    lock(&shell.portrait_cache).clear();
+    *lock(&shell.tray_extras) = tray_bridge::TrayExtras::default();
     *lock(&shell.popup_anchor) = None;
     if let Some(window) = app.get_webview_window(quick_chat::QUICK_CHAT_WINDOW) {
         let _ = window.destroy();
     }
+    // Not loaded: the menu says "connecting…" while the account is verified.
     if let Ok(menu) = tray_menu(
         app,
-        &DesktopTrayModel {
-            account_label: "Verifying account…".into(),
-            ..Default::default()
-        },
+        &DesktopTrayModel::default(),
         &std::collections::HashMap::new(),
         None,
     ) {
@@ -1015,7 +967,7 @@ fn start_tray_refresh(handle: AppHandle, shell: Arc<Shell>) {
             if changed {
                 observed = generation;
                 *lock(&shell.usage) = UsageCache::default();
-                lock(&shell.harness_usage).clear();
+                *lock(&shell.harness_usage) = None;
                 let app = handle.clone();
                 let state = shell.clone();
                 let _ = handle.run_on_main_thread(move || {
@@ -1123,7 +1075,9 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
         };
         if changed {
             *lock(&shell.usage) = UsageCache::default();
-            lock(&shell.harness_usage).clear();
+            *lock(&shell.harness_usage) = None;
+            *lock(&shell.tray_extras) = tray_bridge::TrayExtras::default();
+            lock(&shell.portrait_cache).clear();
             lock(&shell.member_portraits).clear();
             *lock(&shell.popup_anchor) = None;
             let clear_handle = handle.clone();
@@ -1196,12 +1150,13 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
                     if let (Some(base), Some(context)) = (base, owned.as_ref()) {
                         let windows = quick_chat_preferences::fetch_usage(&base, context);
                         if native_scope_current(Some(context)) {
-                            *lock(&usage_shell.harness_usage) = windows;
+                            *lock(&usage_shell.harness_usage) = Some(windows);
                         }
                     }
                 } else {
-                    lock(&usage_shell.harness_usage).clear();
+                    *lock(&usage_shell.harness_usage) = None;
                 }
+                *lock(&usage_shell.usage_fetched_at) = Some(std::time::Instant::now());
                 usage_shell
                     .usage_refreshing
                     .store(false, std::sync::atomic::Ordering::Release);
@@ -1223,19 +1178,35 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
             error.as_deref(),
             usage_generation.as_deref(),
         );
+        // What only the bridge knows: needs-you items, breaks, engines, phone.
+        if let (Some(base), Some(context)) = (lock(&shell.app_url).clone(), owned.as_ref()) {
+            if model.daemon_running {
+                let roster: Vec<String> =
+                    model.members.iter().map(|member| member.id.clone()).collect();
+                let mut extras = std::mem::take(&mut *lock(&shell.tray_extras));
+                tray_bridge::refresh(&mut extras, &base, context, &roster);
+                if native_scope_current(Some(context)) {
+                    *lock(&shell.tray_extras) = extras;
+                }
+            }
+        }
+        // Portraits for menu rows and, in Agent avatars mode, status items.
         #[cfg(target_os = "macos")]
-        let icons = if !quick_chat_preferences::visible_ids(&model, &quick_chat_preferences::read())
-            .is_empty()
-        {
-            owned
-                .as_ref()
-                .map(|context| quick_chat::member_icons(&handle, &shell, context))
-                .unwrap_or_default()
-        } else {
-            std::collections::HashMap::new()
+        let quick_chat::MemberPortraits {
+            icons,
+            menu: portraits,
+        } = match owned.as_ref() {
+            Some(context) => quick_chat::member_icons(&handle, &shell, context),
+            None => quick_chat::MemberPortraits {
+                icons: std::collections::HashMap::new(),
+                menu: std::collections::HashMap::new(),
+            },
         };
         #[cfg(not(target_os = "macos"))]
-        let icons = std::collections::HashMap::new();
+        let (icons, portraits) = (
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        );
         let apply_handle = handle.clone();
         let apply_shell = shell.clone();
         let _ = handle.run_on_main_thread(move || {
@@ -1249,7 +1220,7 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
                 &icons,
                 owned.as_ref(),
             );
-            match tray_menu(&apply_handle, &model, &icons, generation.as_deref()) {
+            match tray_menu(&apply_handle, &model, &portraits, generation.as_deref()) {
                 Ok(menu) => {
                     if let Some(tray) = lock(&apply_shell.tray).clone() {
                         if let Err(error) = tray.set_menu(Some(menu)) {

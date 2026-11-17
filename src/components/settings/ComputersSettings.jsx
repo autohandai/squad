@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
+import { PairedPhones } from "./PairedPhones";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -96,7 +97,7 @@ export function ComputersSettings({ api }) {
       {offer ? <div className="space-y-3"><PairingCode offer={offer} /><p className="text-xs text-muted-foreground">Scan with Squad for iOS. This private code expires in ten minutes.</p><Button variant="ghost" onClick={async () => { try { await navigator.clipboard.writeText(offer.link); } catch { setError('The link could not be copied. Try scanning the QR code.'); } }}>Copy pairing link</Button></div> : null}
       {status.pending ? <div className="space-y-3" role="status"><p className="text-sm">{status.pending.deviceName} wants to connect.</p><p className="font-mono text-2xl tracking-[0.3em]">{status.pending.code}</p><p className="text-xs text-muted-foreground">Approve only if this code matches the one on your phone.</p><div className="flex gap-2"><Button disabled={busy} onClick={() => change('/api/mobile/approve', 'POST', { pairingID: status.pending.pairingID, code: status.pending.code })}>Approve connection</Button><Button variant="ghost" disabled={busy} onClick={() => change('/api/mobile/reject', 'POST')}>Decline</Button></div></div> : null}
     </div>
-    <div className="py-5"><h3 className="text-sm font-medium">Paired phones</h3>{status.devices.length ? <ul className="mt-3 divide-y divide-border/60">{status.devices.map(device => <li key={device.id} className="flex items-center justify-between gap-3 py-3"><span className="text-sm">{device.name}</span><Button variant="ghost" disabled={busy} onClick={() => change(`/api/mobile/devices/${device.id}`, 'DELETE')}>Disconnect</Button></li>)}</ul> : <p className="mt-2 text-xs text-muted-foreground">No phones connected yet.</p>}</div>
+    <div className="py-5"><h3 className="text-sm font-medium">Paired phones</h3>{status.devices.length ? <div className="mt-2"><PairedPhones devices={status.devices} busy={busy} onDisconnect={device => change(`/api/mobile/devices/${device.id}`, 'DELETE')} /></div> : <p className="mt-2 text-xs text-muted-foreground">No phones connected yet.</p>}</div>
     {error || readError || status.error ? <p role="alert" className="py-3 text-sm text-destructive">{error || readError || status.error}</p> : null}
   </div>;
 }

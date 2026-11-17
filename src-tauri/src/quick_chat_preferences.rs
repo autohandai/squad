@@ -1,6 +1,7 @@
 use crate::{default_paths, lock, quick_chat, Shell, MAIN_WINDOW};
-use autohand_squad_runtime::account_usage::{now_unix, time_until, usage_gauge};
-use autohand_squad_runtime::desktop_tray::{DesktopTrayModel, TrayUsageBar};
+use autohand_squad_runtime::account_usage::parse_rfc3339_unix;
+use autohand_squad_runtime::desktop_tray::menu::{window_label, EngineUsage, EngineWindow};
+use autohand_squad_runtime::desktop_tray::DesktopTrayModel;
 use serde::Deserialize;
 #[cfg(target_os = "macos")]
 use std::collections::HashSet;
@@ -57,6 +58,9 @@ pub(crate) struct HarnessUsage {
     pub label: String,
     #[serde(default)]
     pub windows: Vec<UsageWindow>,
+    /// Why there are no windows, when the bridge says.
+    #[serde(default)]
+    pub message: Option<String>,
 }
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -71,68 +75,42 @@ fn clean_label(text: &str) -> String {
         .take(80)
         .collect()
 }
-#[cfg_attr(target_os = "macos", allow(dead_code))] // Windows and Linux text gauges.
-pub(crate) fn usage_lines(harness: &HarnessUsage) -> Vec<String> {
-    if harness.windows.is_empty() {
-        return vec!["Usage unavailable for this connection".into()];
-    }
-    harness
+/// A harness reading as menu headroom: percent *left*, absolute reset
+/// instants, and the reason when the harness reported no windows.
+pub(crate) fn engine_usage(harness: &HarnessUsage) -> EngineUsage {
+    let name = match harness.id.as_str() {
+        "claude" => "Claude Code".to_string(),
+        "codex" => "Codex".to_string(),
+        _ => clean_label(&harness.label),
+    };
+    let windows: Vec<EngineWindow> = harness
         .windows
         .iter()
         .take(8)
-        .map(|window| {
-            let percent = window
-                .used_percent
-                .filter(|value| value.is_finite() && (0.0..=100.0).contains(value));
-            let mut line = match percent {
-                Some(value) => format!(
-                    "{}  {}  {}% used",
-                    clean_label(&window.label),
-                    usage_gauge(value.round() as u8, 8),
-                    value
-                ),
-                None => format!("{} · Not reported", clean_label(&window.label)),
-            };
-            if let Some(reset) = window
-                .resets_at
-                .as_deref()
-                .and_then(|at| time_until(at, now_unix()))
-            {
-                line.push_str(&format!(" · resets in {reset}"));
-            }
-            line
-        })
-        .collect()
-}
-/// Each harness window as a drawable bar: `Weekly`, 8, `8% used · resets in 5d 8h`.
-pub(crate) fn usage_bars(harness: &HarnessUsage) -> Vec<TrayUsageBar> {
-    harness
-        .windows
-        .iter()
-        .take(8)
-        .map(|window| {
-            let percent = window
+        .map(|window| EngineWindow {
+            label: window_label(&clean_label(&window.label)),
+            left: window
                 .used_percent
                 .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
-                .map(|value| value.round() as u8);
-            let mut detail = match percent {
-                Some(value) => format!("{value}% used"),
-                None => "Not reported".to_string(),
-            };
-            if let Some(reset) = window
-                .resets_at
-                .as_deref()
-                .and_then(|at| time_until(at, now_unix()))
-            {
-                detail.push_str(&format!(" · resets in {reset}"));
-            }
-            TrayUsageBar {
-                title: clean_label(&window.label),
-                percent,
-                detail,
-            }
+                .map(|used| 100 - used.round() as u8),
+            resets_at: window.resets_at.as_deref().and_then(parse_rfc3339_unix),
         })
-        .collect()
+        .collect();
+    let error = windows.is_empty().then(|| {
+        harness
+            .message
+            .as_deref()
+            .map(clean_label)
+            .filter(|message| !message.trim().is_empty())
+            .unwrap_or_else(|| "usage is not reported".to_string())
+    });
+    EngineUsage {
+        id: harness.id.clone(),
+        heading: name.clone(),
+        name,
+        windows,
+        error,
+    }
 }
 pub(crate) fn fetch_usage(
     base: &str,
@@ -442,6 +420,7 @@ mod tests {
                 label: "Eva · Online".into(),
                 status: "online".into(),
                 working: false,
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -478,6 +457,7 @@ mod tests {
                 label: "Agent".into(),
                 status: status.to_string(),
                 working: i >= 5,
+                ..Default::default()
             })
             .collect();
         members.push(TrayMember {
@@ -486,6 +466,7 @@ mod tests {
             label: "Agent".into(),
             status: "online".into(),
             working: true,
+            ..Default::default()
         });
         let model = DesktopTrayModel {
             members,
@@ -511,6 +492,7 @@ mod tests {
                     label: "Agent".into(),
                     status: "online".into(),
                     working: id != 0,
+                    ..Default::default()
                 })
                 .collect(),
             ..Default::default()
@@ -546,12 +528,18 @@ mod tests {
         ));
     }
     #[test]
-    fn zero_usage_is_not_unknown() {
+    fn zero_usage_is_not_unknown_and_reads_as_all_left() {
         let item = HarnessUsage {
+            id: "codex".into(),
             windows: vec![
                 UsageWindow {
                     label: "Weekly".into(),
                     used_percent: Some(0.0),
+                    resets_at: Some("2026-11-22T18:50:18.000Z".into()),
+                },
+                UsageWindow {
+                    label: "Fable".into(),
+                    used_percent: Some(88.4),
                     ..Default::default()
                 },
                 UsageWindow {
@@ -561,13 +549,22 @@ mod tests {
             ],
             ..Default::default()
         };
-        let lines = usage_lines(&item);
-        assert!(lines[0].contains("0% used"));
-        assert!(lines[1].contains("Not reported"));
-        let bars = usage_bars(&item);
-        assert_eq!(bars[0].percent, Some(0));
-        assert_eq!(bars[0].detail, "0% used");
-        assert_eq!(bars[1].percent, None);
-        assert_eq!(bars[1].detail, "Not reported");
+        let engine = engine_usage(&item);
+        assert_eq!(engine.name, "Codex");
+        assert_eq!(engine.windows[0].label, "This week");
+        assert_eq!(engine.windows[0].left, Some(100));
+        assert_eq!(
+            engine.windows[0].resets_at,
+            parse_rfc3339_unix("2026-11-22T18:50:18Z")
+        );
+        assert_eq!(engine.windows[1].left, Some(12));
+        assert_eq!(engine.windows[2].left, None);
+        assert!(engine.error.is_none());
+        let silent = engine_usage(&HarnessUsage {
+            id: "claude".into(),
+            message: Some("Usage is unavailable.".into()),
+            ..Default::default()
+        });
+        assert_eq!(silent.error.as_deref(), Some("Usage is unavailable."));
     }
 }

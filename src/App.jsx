@@ -9079,7 +9079,7 @@ function App() {
       if (!workspace) { navigate(`${MEMBER_ROUTE_PREFIX}/new?start=chat`); return; }
       const existingNames = [...membersRef.current.map((agent) => agent.name), ...pendingTeamMemberNames];
       const draft = blankMemberDraft({ existingNames, workspace, harness: normalizeHarnessAssignmentCopy(null) });
-      await createAgent({ ...draft, harnessSelection: 'auto', avatar: birdAvatarForRole("", "", draft.name) });
+      await createAgent({ ...draft, harnessSelection: 'auto', avatar: birdAvatarForRole("", "", draft.name, membersRef.current.map((agent) => agent.avatar)) });
     } catch (error) {
       setChannelOperationError(`Could not start a new member: ${error.message}`);
     } finally {
@@ -10029,7 +10029,7 @@ function App() {
           createAgent(
             {
               ...draft,
-              avatar: draft.avatar || birdAvatarForRole("", draft.role, draft.name),
+              avatar: draft.avatar || birdAvatarForRole("", draft.role, draft.name, agents.map((agent) => agent.avatar)),
               // Starter notes go through the ordinary profile writer as MEMORY.md.
               profileFiles: draft.notes ? [{ section: "memory", fileName: "MEMORY.md", content: draft.notes, source: "manual" }] : [],
             },
@@ -13822,7 +13822,7 @@ function AgentAvatar({ agent, large = false, className }) {
       <span
         className={cn("inline-block shrink-0 overflow-hidden", large ? "size-24" : "size-8", className)}
         // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: blobSvg({ ...face.blob, title: agent?.name || "" }) }}
+        dangerouslySetInnerHTML={{ __html: face.svg || blobSvg({ ...face.blob, title: agent?.name || "" }) }}
       />
     );
   }
@@ -22291,6 +22291,7 @@ function SquadMemberSectionPage({
         onRefreshHarnesses={onRefreshHarnesses}
         navigate={navigate}
         updateAgent={updateAgent}
+        providerSettings={providerSettings}
         copy={copy}
       />
     );
@@ -24159,7 +24160,7 @@ function ProfileHarnessSummary({ agent, harnesses = [], navigate }) {
   );
 }
 
-function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onRefreshHarnesses, navigate, updateAgent, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onRefreshHarnesses, navigate, updateAgent, providerSettings, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   const { remoteByMember, refreshRemoteMembers } = useRemoteMembers();
   const remote = remoteByMember?.[agent.id] || null;
   const remotePath = `/api/remote/members/${encodeURIComponent(agent.id)}`;
@@ -24195,7 +24196,7 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
         <div>
           <h2 className="text-lg font-semibold">Runs with</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {agent.name} keeps the same brain card, model assignment, and permission ladder whichever engine executes it. A harness that is not ready blocks launches for this member only; nothing falls back silently.
+            {agent.name} keeps the same brain card, model assignment, and permission ladder whichever engine executes it. If this engine runs out of usage or can’t start, the fallbacks below carry on in the same chat; with none, the work waits.
           </p>
         </div>
         <HarnessSelect
@@ -24227,6 +24228,10 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
           {/* "Close" beside Save went to Home: on a page, not a dialog, there
               was nothing to close and it read as Cancel. The sidebar has Home. */}
         </div>
+        {/* Fallbacks belong with the engine they stand in for: the chat
+            header's engine menu and the Model page already show them, and the
+            owner looked for them here first (ADR-0231). */}
+        <MemberFallbacks agent={agent} api={api} providerSettings={providerSettings} updateAgent={updateAgent} />
         <Separator />
         <div>
           <h2 className="text-lg font-semibold">{copy.runsOn || "Runs on"}</h2>

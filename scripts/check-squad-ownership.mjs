@@ -25,7 +25,7 @@ const provider = createServer((req, res) => {
 await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
 const issuer = `http://127.0.0.1:${provider.address().port}`;
 const identity = createIdentityService({ serviceRoot, configPath, origin: issuer });
-const broker = createOwnershipBroker({ rootDir, serviceRoot, configPath, identity, port: 0, workerEntry: join(rootDir, 'scripts/fixtures/ownership-worker.mjs') });
+const broker = createOwnershipBroker({ rootDir, serviceRoot, configPath, identity, port: 0, workerEntry: join(rootDir, 'scripts/fixtures/ownership-worker.mjs'), teamOutageGraceMs: 1500, outageRetryMs: 200 });
 const origin = await broker.listen();
 const context = async () => (await (await fetch(`${origin}/api/ownership/context`)).json()).data;
 async function waitFor(predicate) {
@@ -88,8 +88,20 @@ try {
   assert.equal((await api('/api/ownership/select', restored, 'POST', { owner: teamOwner, expectedGeneration: restored.generation })).response.status, 200);
   const team = await waitFor(value => value.state === 'ready' && value.owner.kind === 'team');
   assert.equal((await api('/api/members', team, 'POST', { id: 'team-eva', name: 'Team member' })).response.status, 200);
+  // A brief account-service outage (api.autohand.ai answered 500s, 2026-11-17)
+  // keeps a recently verified team usable instead of blocking it on one check.
+  unavailable = true;
+  assert.equal((await api('/api/members', team)).response.status, 200, 'an outage inside the grace window does not block a verified team');
+  assert.equal((await context()).state, 'ready');
+  // Past the grace window it blocks, then recovers by itself once the service answers.
+  await new Promise(resolve => setTimeout(resolve, 1600));
+  assert.notEqual((await api('/api/members', team)).response.status, 200, 'a long outage no longer vouches for team access');
+  await waitFor(value => value.state === 'blocked');
+  unavailable = false;
+  const recovered = await waitFor(value => value.state === 'ready' && value.owner.kind === 'team');
+  assert.equal((await api('/api/members', recovered)).value.data.records[0].name, 'Team member', 'an outage block retries without a Retry press');
   readOnly = true;
-  assert.equal((await api('/api/members', team, 'POST', { id: 'forbidden' })).response.status, 409, 'permission changes fence the old execution context');
+  assert.equal((await api('/api/members', recovered, 'POST', { id: 'forbidden' })).response.status, 409, 'permission changes fence the old execution context');
   const reader = await waitFor(value => value.state === 'ready' && value.canWrite === false);
   assert.equal((await api('/api/members', reader)).value.data.records[0].name, 'Team member');
   assert.equal((await api('/api/members', reader, 'POST', { id: 'forbidden' })).response.status, 403);

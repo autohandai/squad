@@ -15,6 +15,9 @@ import {
   blobForMember,
   blobSvg,
 } from "../src/lib/blob-avatar.js";
+import { BIRD_IDS, INSTALLED_ART, birdForMember, birdFromAvatar, untakenBird } from "../src/lib/bird-cast.js";
+import { BIRD_FACE_IDS, birdFaceSvg } from "../src/lib/bird-faces.js";
+import { birdAvatarForRole } from "../src/data.js";
 import {
   DEFAULT_SKIN_ID,
   SKINS,
@@ -63,7 +66,7 @@ for (const skin of SKINS) {
   for (const varName of Object.keys(skin.vars || {})) {
     assert.ok(varName in SKIN_VAR_DEFAULTS, `${skin.id} sets --${varName}, which the app never applies`);
   }
-  assert.ok(["photo", "portrait", "blob"].includes(skin.avatars), `${skin.id} avatars: ${skin.avatars}`);
+  assert.ok(["photo", "portrait", "blob", "clay"].includes(skin.avatars), `${skin.id} avatars: ${skin.avatars}`);
 }
 
 // Only Autohand inherits colour presets. Every custom skin draws both modes.
@@ -121,6 +124,40 @@ if (SOFT_PORTRAIT_SLUGS.includes("devops-engineer")) {
 } else {
   assert.equal(memberAvatar(member, skinById("soft")).src, "/avatars/devops-engineer.jpg", "an undrawn role keeps its photo");
 }
+
+// The bird cast (ADR-0235). Grut draws the member's own bird as a shapeless
+// face; a custom picture still gets a bird, always the same one.
+const kiwiMember = { id: "asq_eva_qa", name: "Eva", employeeType: "common-qa-engineer", avatar: "/avatars/birds/kiwi.webp" };
+const grutFace = memberAvatar(kiwiMember, skinById("grut"));
+assert.equal(grutFace.bird, "kiwi", "Grut draws the bird the member already has");
+assert.ok(grutFace.svg.includes("<title>Eva</title>"));
+assert.equal(memberAvatar(custom, skinById("grut")).bird, birdForMember(custom));
+assert.equal(birdForMember(custom), birdForMember({ ...custom }), "a custom picture maps to a stable bird");
+assert.equal(birdFromAvatar("/avatars/birds/tui.webp"), "tui");
+assert.equal(birdFromAvatar("/avatars/birds/robin.webp"), "", "only cast birds count");
+assert.equal(birdFromAvatar("/avatars/nz-riso-set-1-01.webp"), "");
+assert.deepEqual([...BIRD_FACE_IDS].sort(), [...BIRD_IDS].sort(), "every cast bird has a shapeless face");
+for (const bird of BIRD_IDS) {
+  assert.ok(existsSync(`public/avatars/birds/${bird}.webp`), `the default art for ${bird} is served`);
+  const svg = birdFaceSvg(bird);
+  assert.ok(svg.startsWith("<svg") && svg.endsWith("</svg>"), `${bird} is not an svg`);
+  assert.ok(svg.includes('fill-rule="evenodd"'), `${bird} must punch its eyes out`);
+  assert.ok(svg.length < 1600, `${bird} face is ${svg.length} bytes`);
+}
+assert.equal(new Set(BIRD_IDS.map((bird) => birdFaceSvg(bird))).size, BIRD_IDS.length, "ten distinct faces");
+// Ember shows clay only for birds whose clay file is installed: Radix drops an
+// image that 404s, so pointing at missing art would turn a bird into an initial.
+for (const bird of INSTALLED_ART.clay) assert.ok(existsSync(`public/avatars/clay/${bird}.webp`), `INSTALLED_ART lists clay ${bird} but the file is missing`);
+const emberFace = memberAvatar(kiwiMember, skinById("ember"));
+assert.equal(emberFace.src, INSTALLED_ART.clay.includes("kiwi") ? "/avatars/clay/kiwi.webp" : "/avatars/birds/kiwi.webp");
+assert.equal(memberAvatar(custom, skinById("ember")).src, "/avatars/custom.jpg", "clay never replaces a custom picture");
+// New members: a known role keeps its bird; anyone else gets an untaken one.
+assert.equal(birdAvatarForRole("common-qa-engineer", "", "x", ["/avatars/birds/kiwi.webp"]), "/avatars/birds/kiwi.webp");
+const roster10 = [];
+for (let index = 0; index < BIRD_IDS.length; index += 1) roster10.push(birdAvatarForRole("", "Generalist", `member-${index}`, roster10));
+assert.equal(new Set(roster10).size, BIRD_IDS.length, `ten unknown-role members get ten birds: ${roster10.join(", ")}`);
+assert.ok(BIRD_IDS.includes(birdFromAvatar(birdAvatarForRole("", "Generalist", "eleventh", roster10))), "an eleventh member still gets a bird");
+assert.equal(untakenBird("same-seed"), untakenBird("same-seed"));
 
 // Blobs: stable, complete, and spread over the whole set.
 assert.deepEqual(blobFor("asq_kai_devops"), blobFor("asq_kai_devops"), "the same member gets the same blob");

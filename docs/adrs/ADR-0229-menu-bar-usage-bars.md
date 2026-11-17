@@ -1,6 +1,8 @@
 # ADR-0229: menu-bar usage drawn as bars
 
-Status: accepted. Amends the tray status block in DESIGN.md (Desktop Shell).
+Status: superseded by ADR-0236 (the look: capsule bars and provider dot glyphs
+were rejected as a copy of Codync). The macOS 27 image-visibility finding
+and `tray_art::keep_menu_images_visible` stand.
 
 ## Context and evidence
 

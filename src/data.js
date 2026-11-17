@@ -1,4 +1,5 @@
 import { AUTOHAND_SKILLS_REGISTRY_URL, roleTemplates } from "./lib/member-profiles.js";
+import { birdAvatarSrc, untakenBird } from "./lib/bird-cast.js";
 export { AUTOHAND_SKILLS_REGISTRY_URL, roleTemplates };
 
 export { brainCardFields } from "./lib/brain-card.js";
@@ -48,14 +49,17 @@ export const birdAvatarOptions = [
   { id: "bird-kotare", label: "Kōtare", src: "/avatars/birds/kotare.webp", roles: ["mobile-developer", "mobile", "ios", "android"] },
 ];
 
-/** Pick the bird for a role id or free-text role; unknown roles rotate through the set. */
-export function birdAvatarForRole(employeeType = "", roleText = "", seed = "") {
+/**
+ * Pick the bird for a role id or free-text role. A known role keeps its bird,
+ * because the role hint is the point of the set. Any other member gets a bird
+ * nobody in `taken` (avatar URLs already on the roster) has yet, starting from
+ * one derived from the seed (ADR-0235).
+ */
+export function birdAvatarForRole(employeeType = "", roleText = "", seed = "", taken = []) {
   const haystack = `${employeeType} ${roleText}`.toLowerCase();
   const match = birdAvatarOptions.find((bird) => bird.roles.some((role) => haystack.includes(role)));
   if (match) return match.src;
-  let hash = 0;
-  for (const char of String(seed || haystack)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  return birdAvatarOptions[hash % birdAvatarOptions.length].src;
+  return birdAvatarSrc(untakenBird(seed || haystack, taken));
 }
 
 export const builtInAvatarOptions = [

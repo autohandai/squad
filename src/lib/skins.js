@@ -3,6 +3,8 @@
 // How the app is arranged is the separate Layout choice (src/lib/layouts.js,
 // ADR-0233), so every skin works in Full and Minified alike.
 import { blobForMember } from './blob-avatar.js';
+import { birdForMember, clayAvatarSrc } from './bird-cast.js';
+import { birdFaceSvg } from './bird-faces.js';
 import { SKIN_PALETTES } from './skin-palettes.js';
 
 export const DEFAULT_SKIN_ID = 'default';
@@ -61,7 +63,7 @@ export const SKINS = [
     description: 'Warm ink, rust accents and generous studio spacing.',
     vars: { radius: '0.375rem', 'skin-density': '1.03', 'skin-avatar-radius': '0.375rem',
       'skin-font-stretch': '95%', 'skin-elevation-strong': '0 2px 4px rgba(40, 20, 12, 0.08), 0 12px 28px rgba(40, 20, 12, 0.12)' },
-    avatars: 'photo', swatches: ['#fff7ee', '#a14626', '#f4b183', '#251b18'] }),
+    avatars: 'clay', swatches: ['#fff7ee', '#a14626', '#f4b183', '#251b18'] }),
 ];
 
 const BY_ID = new Map(SKINS.map(design => [design.id, design]));
@@ -78,7 +80,18 @@ export const SOFT_PORTRAIT_SLUGS = [
 ];
 export function roleSlug(member) { return String(member?.employeeType || '').trim().toLowerCase(); }
 export function memberAvatar(member, design) {
-  if (design?.avatars === 'blob') return { kind: 'blob', blob: blobForMember(member) };
+  // Grut draws each member's bird as a shapeless face (ADR-0235); `blob` stays
+  // for anything that still reads the generic blob's shape and colour.
+  if (design?.avatars === 'blob') {
+    const bird = birdForMember(member);
+    return { kind: 'blob', bird, blob: blobForMember(member), svg: birdFaceSvg(bird, { title: member?.name || '' }) };
+  }
+  // Clay replaces a cast bird only once its clay file is installed; a custom
+  // picture, or a bird still waiting for art, keeps the member's own image.
+  if (design?.avatars === 'clay') {
+    const clay = clayAvatarSrc(member);
+    if (clay) return { kind: 'image', src: clay, fallbackSrc: member?.avatar || '' };
+  }
   if (design?.avatars === 'portrait') {
     const role = roleSlug(member);
     if (SOFT_PORTRAIT_SLUGS.includes(role)) return { kind: 'image', src: `/avatars/soft/${role}.jpg`, fallbackSrc: member?.avatar || '' };

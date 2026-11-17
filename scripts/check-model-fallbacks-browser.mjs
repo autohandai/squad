@@ -139,6 +139,9 @@ try{
   await until(()=>browser.evaluate("document.querySelector('[role=dialog]')?.textContent.includes('fallback via Codex · codex-second')"),'fallback engine and model displayed in the reply thread',25000);
   await browser.screenshot(artifact+'/fallback-thread.png');
   assert.equal((await bridge.api('/api/members/'+member.id+'/threads/'+thread.id)).data.messages.find(message=>message.role==='agent').routing.used.model,'codex-second');
+  // ADR-0231: profile › Harness lists the same fallbacks as the Model page.
+  await browser.navigate(bridge.origin+'/squad-members/'+member.id+'/harness');
+  await until(()=>browser.evaluate("Boolean(document.querySelector('section[aria-label=Fallbacks]'))&&Boolean(document.querySelector('[data-fallback-row=\"0\"]'))"),'Harness page lists the fallbacks',20000);
   assert.deepEqual(browser.errors,[]);
   console.log('PASS catalog IDs/names, failed save/refresh recovery, connected engine/model selection, ordered edits, optional member tools, reload persistence, native failover identity and partial-answer replacement in one chat.');
 }catch(error){

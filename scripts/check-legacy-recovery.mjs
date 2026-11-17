@@ -17,7 +17,7 @@ try {
   const captured={context,assertCurrent(){if(!active)throw Object.assign(Error('Context changed.'),{code:'context_changed'});}};
   const project=join(workspaceRoot,'eva-project'),profile={id:'eva',name:'Legacy Eva',role:'QA',workspace:project,projects:[{path:project}],memory:[{text:'Old profile knowledge.'}],harness:{id:'claude'},token:'do-not-export'};
   const attachment='abcdefghijklmnop',artifact='artifact_1234abcd-1234-4abc-8def-0123456789ab',hash='a'.repeat(64);
-  await seed(join(stateRoot,'channels.json'),{version:1,channels:[{id:'old-channel',name:'Old channel',memberIds:['eva'],visibility:'private'}],threads:[],messages:[],agentChannelAccess:{eva:{agent:profile},deleted:{agent:{id:'deleted',name:'Deleted'},removed:true}}});
+  await seed(join(stateRoot,'channels.json'),{version:1,channels:[{id:'old-channel',name:'Old channel',memberIds:['eva'],visibility:'private'}],threads:[],messages:Array.from({length:9000},(_,index)=>({id:`history-${index}`,channelId:'old-channel',role:'user',body:'A long-running squad keeps a lot of channel history. '.repeat(19)})),agentChannelAccess:{eva:{agent:profile},deleted:{agent:{id:'deleted',name:'Deleted'},removed:true}}});
   await seed(join(stateRoot,'browser-state.json'),{version:1,messagesByAgent:{eva:[{id:'old-message',role:'user',body:'Disk conversation.',attachments:[{id:attachment}]}]}});
   await seed(join(stateRoot,'team.json'),{version:1,memory:[{id:'team-memory',scope:'team',text:'Old shared knowledge.'}]});
   await seed(join(stateRoot,'attachments',`${attachment}.json`),{id:attachment,name:'evidence.txt',ext:'txt',mime:'text/plain',size:5});await seed(join(stateRoot,'attachments',`${attachment}.txt`),'exact');

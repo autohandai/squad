@@ -166,5 +166,7 @@ async function readPrivateBytes(path, maximum) {
   try { const info = await file.stat(); if (!info.isFile() || info.nlink !== 1 || info.size > maximum) throw fail('A recovery record is unsafe or exceeds its limit.'); const bytes = await file.readFile(); if (bytes.length > maximum) throw fail('A recovery record exceeds its limit.'); return bytes; } finally { await file.close(); }
 }
 async function readPrivateJson(path, fallback) {
-  try { const value = JSON.parse((await readPrivateBytes(path, 8 * 1024 * 1024)).toString('utf8')); checkStructure(value, 200_000); return value; } catch (error) { if (error.code === 'ENOENT') return fallback; throw error; }
+  // Staged copies were already admitted under MAX_FILE_BYTES; an 8 MiB cap here
+  // refused a real 8.4 MiB channels.json with years of history (2026-11-17).
+  try { const value = JSON.parse((await readPrivateBytes(path, MAX_FILE_BYTES)).toString('utf8')); checkStructure(value, 200_000); return value; } catch (error) { if (error.code === 'ENOENT') return fallback; throw error; }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { SquadOwnerSwitcher } from "./SquadOwnerSwitcher";
+import { SquadOwnerSwitcher, squadOwnerKey, switchSquadOwner, useSquadOwners } from "./SquadOwnerSwitcher";
 import { ownershipFetch, ownershipUrl } from "@/lib/ownership-client";
 import { CloudBackupSettings } from "@/components/settings/CloudBackupSettings";
 
@@ -11,6 +11,14 @@ async function request(path, init) {
 }
 export function OwnedSquadView({ context }) {
   const [members, setMembers] = useState([]), [member, setMember] = useState(null), [error, setError] = useState(''), [receipt, setReceipt] = useState(null), [busy, setBusy] = useState(false);
+  // The way out is a button, not only the quiet switcher line: people landed
+  // here, read "Read only" and could not find their own Squad again (ADR-0237).
+  const { owners } = useSquadOwners(context);
+  const writable = owners.find(item => item.canWrite && squadOwnerKey(item.owner) !== squadOwnerKey(context.owner));
+  async function leave() {
+    setBusy(true); setError('');
+    try { await switchSquadOwner(context, writable); } catch (failure) { setError(failure.message); setBusy(false); }
+  }
   useEffect(() => {
     let active = true;
     request('/api/owned/members').then(value => { if (active) setMembers(value.members); }, failure => { if (active) setError(failure.message); });
@@ -23,7 +31,7 @@ export function OwnedSquadView({ context }) {
   }
   return <main className="mx-auto max-w-5xl space-y-8 px-6 py-10 text-foreground">
     <header className="space-y-2"><SquadOwnerSwitcher context={context} alwaysShow className="-ml-1.5" /><h1 className="text-2xl font-semibold">{context.ownerLabel}</h1><p className="text-sm text-muted-foreground">This team is read-only. Your saved members, memories, conversations and managed files remain available. Automated work stays paused.</p></header>
-    <div className="flex flex-wrap items-center gap-2"><Button variant="outline" disabled={busy} onClick={() => backup('json')}>Export {member ? member.profile.name || 'member' : 'Squad'} as JSON</Button><Button variant="ghost" disabled={busy} onClick={() => backup('yaml')}>YAML</Button><Button variant="ghost" onClick={() => request('/api/account/logout', { method: 'POST' }).catch(failure => setError(failure.message))}>Sign out</Button></div>
+    <div className="flex flex-wrap items-center gap-2">{writable ? <Button disabled={busy} onClick={leave} data-testid="owned-view-leave">Open {writable.label}</Button> : null}<Button variant="outline" disabled={busy} onClick={() => backup('json')}>Export {member ? member.profile.name || 'member' : 'Squad'} as JSON</Button><Button variant="ghost" disabled={busy} onClick={() => backup('yaml')}>YAML</Button><Button variant="ghost" onClick={() => request('/api/account/logout', { method: 'POST' }).catch(failure => setError(failure.message))}>Sign out</Button></div>
     {busy ? <p className="text-sm text-muted-foreground" role="status">Checking and saving managed files…</p> : null}
     {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
     {receipt ? <div className="space-y-2 text-sm"><a className="underline underline-offset-4" href={ownershipUrl(receipt.downloadUrl)} target="_blank" rel="noreferrer">Download verified {receipt.format.toUpperCase()} backup</a><p className="text-muted-foreground">{receipt.memberCount} members · {receipt.bytes.toLocaleString()} bytes. Credentials and external folders are excluded.</p>{receipt.omissions.length ? <details><summary>{receipt.omissions.length} exclusions</summary><ul className="mt-2 space-y-1">{receipt.omissions.map((item, index) => <li key={index}><span className="font-medium">{item.path}</span> — {item.reason}</li>)}</ul></details> : null}</div> : null}

@@ -48,7 +48,7 @@ async function readUpload(req) {
   return Buffer.concat(chunks,size);
 }
 
-export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host = '127.0.0.1', port = 19821, dev = false, hmrPort, identity, workerEntry = join(rootDir, 'server.mjs'), startupTimeoutMs = 45_000, terminationGraceMs = 10_000,ownedCloudBaseUrl,ownedCloudFetch }) {
+export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host = '127.0.0.1', port = 19821, dev = false, hmrPort, identity, workerEntry = join(rootDir, 'server.mjs'), startupTimeoutMs = 45_000, terminationGraceMs = 10_000,ownedCloudBaseUrl,ownedCloudFetch, teamOutageGraceMs = 120_000, outageRetryMs = 15_000 }) {
   if(hmrPort!==undefined)z.number().int().min(1).max(65535).parse(hmrPort);
   serviceRoot = resolve(serviceRoot);
   identity ||= createIdentityService({ serviceRoot, configPath });
@@ -62,6 +62,22 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
   let phase = 'verifying', generation = randomUUID(), verified = null, access = null, dataset = null, error = '', worker = null;
   let pendingOperation=null;
   let observedFingerprint, transition = Promise.resolve(), closing = false, teamCheckedAt = 0, workerStarting, startingChild;
+  // api.autohand.ai answered /v1/accounts with intermittent 500s (2026-11-17):
+  // one failed 15-second recheck blocked a team Squad until Retry, and leaving
+  // it raced the next failure. An outage now keeps the access verified within
+  // TEAM_OUTAGE_GRACE_MS; a definite answer (401/403, changed role) still
+  // blocks at once, and an outage block retries itself (ADR-0237).
+  let teamVerifiedAt = 0, blockedByOutage = false, outageRetryAt = 0;
+  const TEAM_OUTAGE_GRACE_MS = teamOutageGraceMs, OUTAGE_RETRY_MS = outageRetryMs;
+  const outage = failure => failure?.code === 'identity_transport_unavailable';
+  async function recheckTeam() {
+    const owner = access.owner, held = access;
+    try { const fresh = await identity.authorize(verified, owner); teamVerifiedAt = Date.now(); return fresh; }
+    catch (failure) {
+      if (outage(failure) && access === held && Date.now() - teamVerifiedAt < TEAM_OUTAGE_GRACE_MS) return held;
+      throw failure;
+    }
+  }
   let closingDrain, closingListener;
   const connections = new Set(), subscribers = new Set();
   const cloudControllers=new Set(),brokerActivities=new Set();
@@ -146,8 +162,9 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
     await native.resume(nativeHold.captured, nativeHold.operationId);
     nativeHold = null;
   }
-  async function block(message, reason = 'The ownership context is unavailable.') {
+  async function block(message, reason = 'The ownership context is unavailable.', fromOutage = false) {
     phase = verified ? 'blocked' : 'error'; error = message; revoke();
+    blockedByOutage = fromOutage && phase === 'blocked'; outageRetryAt = Date.now() + OUTAGE_RETRY_MS;
     await publishReceipt();
     await quiesce(reason);
   }
@@ -263,11 +280,11 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
       access = await identity.authorize(next, ownerSchema.parse(selected));
       dataset = await ensureDataset(serviceRoot, ownerKey(access.owner));
       if (identity.credential()?.fingerprint !== current.fingerprint) { verified = null; access = null; return; }
-      await recoverOperations();error = ''; teamCheckedAt = Date.now();
+      await recoverOperations();error = ''; teamCheckedAt = teamVerifiedAt = Date.now(); blockedByOutage = false;
       await publishReceipt();
       if(phase==='ready')await resumeNative();
     } catch (failure) {
-      await block(failure.message || 'The signed-in owner could not be verified.');
+      await block(failure.message || 'The signed-in owner could not be verified.', undefined, outage(failure));
     }
   }
   function checkCredential() {
@@ -294,8 +311,8 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
     // initialize schedulers, even if no private API request has happened yet.
     if (phase === 'ready') {
       let fresh;
-      try { fresh = await identity.authorize(verified, access.owner); }
-      catch (failure) { if (expected === generation) await schedule(() => block(failure.message)); throw failure; }
+      try { fresh = await recheckTeam(); }
+      catch (failure) { if (expected === generation) await schedule(() => block(failure.message, undefined, outage(failure))); throw failure; }
       if (expected !== generation || identity.credential()?.fingerprint !== verified?.fingerprint) throw fail('The account changed before runtime startup.');
       if (fresh.canWrite !== access.canWrite || fresh.role !== access.role) { await schedule(() => block('Team permissions changed. Select this Squad again.')); throw fail('Team permissions changed.'); }
     }
@@ -539,7 +556,7 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
             if (identity.credential()?.fingerprint !== verified?.fingerprint) throw fail('The account changed.');
             const selections = await readPersistentJson(selectionFile, { version: 1, owners: {} });
             selections.owners[actorKey(verified.actor)] = selected.owner; await writePersistentJson(selectionFile, selections);
-            access = fresh;await recoverOperations();error = ''; teamCheckedAt = Date.now(); await publishReceipt();if(phase==='ready')await resumeNative();
+            access = fresh;await recoverOperations();error = ''; teamCheckedAt = teamVerifiedAt = Date.now(); blockedByOutage = false; await publishReceipt();if(phase==='ready')await resumeNative();
           });
           json(res, 200, { success: true, data: publicContext() }); return;
         }
@@ -570,13 +587,13 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
         const write = !['GET', 'HEAD'].includes(req.method) && !readOnlyPosts.has(url.pathname);
         const captured = generation;
         try {
-          const fresh = await identity.authorize(verified, access.owner);
+          const fresh = await recheckTeam();
           checkCredential();
           if (captured !== generation) throw fail('The account changed while access was checked.');
           if (fresh.canWrite !== access.canWrite || fresh.role !== access.role) { await schedule(() => activate(identity.credential())); throw fail('Team permissions changed. Reopen this Squad.'); }
           if (write && !fresh.canWrite) throw fail('This team is read-only. Retrieval and backup remain available.', 403, 'owner_read_only');
         } catch (failure) {
-          if (failure.status !== 403 && failure.code !== 'context_changed') await schedule(() => block(failure.message, 'Current team access could not be verified.'));
+          if (failure.status !== 403 && failure.code !== 'context_changed') await schedule(() => block(failure.message, 'Current team access could not be verified.', outage(failure)));
           throw failure;
         }
       }
@@ -596,12 +613,16 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
     checkCredential();
     if (phase === 'ready' && access?.owner.kind === 'team' && Date.now() - teamCheckedAt > 15_000) {
       teamCheckedAt = Date.now(); const captured = generation;
-      void identity.authorize(verified, access.owner).then(async fresh => {
+      void recheckTeam().then(async fresh => {
         if (captured !== generation) return;
         if (fresh.canWrite !== access.canWrite || fresh.role !== access.role) void schedule(() => activate(identity.credential()));
         else { teamCheckedAt = Date.now(); await publishReceipt(); }
       })
-        .catch(failure => { if (captured === generation) void schedule(() => block(failure.message)); });
+        .catch(failure => { if (captured === generation) void schedule(() => block(failure.message, undefined, outage(failure))); });
+    }
+    if (phase === 'blocked' && blockedByOutage && Date.now() >= outageRetryAt) {
+      outageRetryAt = Date.now() + OUTAGE_RETRY_MS;
+      void schedule(() => activate(identity.credential()));
     }
   }, 250); timer.unref();
   async function listen() {

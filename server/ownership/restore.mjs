@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { open } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
-import { decodeFile, inventory, validateBackup } from '@autohand/squad-portable';
+import { decodeFile, inventory, MAX_FILE_BYTES, validateBackup } from '@autohand/squad-portable';
 import { datasetPaths, ownedDirectory } from './datasets.mjs';
 import { ownerKey } from './identity.mjs';
 import { stampOwnedProfile } from './profile.mjs';
@@ -108,7 +108,8 @@ export function planRestore(input, { owner, staged }) {
     for(let part=dirname(normalized);part!=='.';part=dirname(part)) {if(targets.has(part))throw fail('A restored file conflicts with a directory.');directories.add(part);}
     targets.add(normalized);return path;
   };
-  function json(path,value,limit=8*1024*1024,deferred=false) {
+  // Writes stay within what the owned repository reads back (MAX_FILE_BYTES).
+  function json(path,value,limit=MAX_FILE_BYTES,deferred=false) {
     const bytes=Buffer.from(`${JSON.stringify(value)}\n`);
     if(bytes.length>limit)throw fail('A saved record exceeds this Squad version’s read limit. Split the source backup before restoring; no data was changed.');
     writes.set(checkedPath(path),{bytes,...(deferred?{deferred:true,value,limit}:{})});
@@ -263,7 +264,7 @@ export function planRestore(input, { owner, staged }) {
   portable.sourceLibrary=shared.library||{};
   for(const meta of Object.values(obj(portable.sourceLibrary.metadata)))curation(meta);
   if(team.length>TEAM_MEMORY_LIMIT)throw fail('The imported team memory exceeds this Squad version’s 200-entry shared store limit. No memory was discarded.');
-  json(join(staged.dataRoot,'channels.json'),{version:1,revision:1,channels:restoredChannels,threads:restoredThreads,messages:restoredMessages,agentChannelAccess:access,agentChannelActions:[],deletedChannelIds:[],updatedAt:now},8*1024*1024,true);
+  json(join(staged.dataRoot,'channels.json'),{version:1,revision:1,channels:restoredChannels,threads:restoredThreads,messages:restoredMessages,agentChannelAccess:access,agentChannelActions:[],deletedChannelIds:[],updatedAt:now},MAX_FILE_BYTES,true);
   json(join(staged.dataRoot,'routines.json'),{version:1,routines,proposals:[],updatedAt:now});
   json(join(staged.dataRoot,'member-threads.json'),{version:1,threads:memberThreads,deleted:[]});
   json(join(staged.dataRoot,'browser-state.json'),{version:1,revision:1,messagesByAgent:current,savedAt:now});

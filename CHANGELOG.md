@@ -12,6 +12,8 @@ list to the section for that version.
 
 ### Added
 
+- Every Squad member is now one of ten New Zealand birds, led by the kiwi. In the Grut skin each bird has its own simple face: one soft shape and two eye marks, with a hint of the bird (the kiwi's long beak, the tūī's white tuft, the kea's orange flash). New members get a bird nobody on the team has yet, unless their role already has one.
+- See which phones are paired and whether each one is reaching your computer right now, on Wi-Fi or from anywhere, in the pairing window and in Settings › Computers. Disconnect an old one right there.
 - Choose a layout: **Full** (everything in the sidebar, as before) or **Minified**, a calm, chat-first Squad. Minified puts your pinned teammates up top as large portraits, then one list of conversations with previews, and shows replies as bubbles with a slim centred header. Squad, Memory, new channels and new members are under More (…) and ⌘K. It works with every skin, in light and dark. Pick it during onboarding or any time in Settings › Appearance.
 - Onboarding has a new step, Choose your layout, right after work folders, with a small preview of each layout. Your choice is saved straight away.
 - Pair your iPhone from anywhere: the Local menu at the top of the sidebar now has Pair iPhone…, which shows the QR code and six-digit approval in a window.
@@ -25,7 +27,7 @@ list to the section for that version.
 
 - Switching between your personal Squad and a team Squad now happens in Settings › Squads, which lists every Squad you belong to, marks the current one and says what switching does. The “Personal Squad ⌄” menu is gone from the sidebar. If you belong to more than one Squad, the account menu names the one you are in and offers Switch Squad….
 - The Setup guide is now called Onboarding, in Settings and on its own screen, and Run onboarding again walks through every step with quiet progress (Step 2 of 3) and Back. Saving work folders moves on to the next step instead of leaving onboarding.
-- The menu-bar menu now draws usage as coloured bars beside each limit, under Claude Code, Codex and your Autohand plan, each with its own mark. Bars turn red from 90% used, and choosing a row opens Settings.
+- The menu-bar menu now shows your squad first: a header with one small hexagon per member, anything waiting on you (a question or an approval, which opens that chat), and up to five members with their portrait and what they are doing ("Noah · Working on checkout tests", "On Codex until Claude Code resets 4:10 pm"). Click a member to open Quick Chat with them. One headroom line says the limit that matters most in words ("Claude Code low · 12% left, resets Fri 9:00 am"); its submenu lists each engine with the members it powers. Account, services and help moved into short submenus. The coloured usage bars and provider marks are gone.
 - Turning on “From anywhere” no longer turns off the local network connection, so a phone paired on your Wi-Fi keeps working. Existing settings upgrade automatically: a computer that used the local network or the relay now keeps both on; a computer set up with your own tunnel stays as it was.
 - Fallbacks now read like Codync's: the Model page says which engine is answering ("Using Codex while Claude Code has reached its usage limit") with Switch back, rows are compact with an In use badge and a … menu, and changes save as you make them. Squad for iPhone shows the same line in that member's chat.
 - The bundled Autohand Code CLI is updated to 0.9.11.
@@ -36,6 +38,10 @@ list to the section for that version.
 
 ### Fixed
 
+- A brief outage of the Autohand account service no longer throws you out of a team Squad. Squad keeps your team open for up to two minutes while it can't check your access, and if it does have to stop, it tries again by itself instead of waiting for Retry.
+- A read-only team page now has an Open Personal Squad button, so you can get back to your own Squad in one click.
+- Old Squads with a long history (a saved conversations file over 8 MB) can be recovered and restored again; the recovery used to refuse them.
+- A member’s profile › Harness page now shows their fallbacks too, and no longer says nothing falls back.
 - Quick Chat opens ready to type: the cursor is already in the message box.
 - Quick Chat’s usage is now one quiet line naming the tightest limit, such as “Codex at its limit · resets in 6d 17h”; open it to see every limit.
 - While a fallback is answering, the chat header now says so, for example “Claude Code · fallback” with its model, instead of naming the engine that ran out.

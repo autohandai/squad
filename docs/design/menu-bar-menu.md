@@ -1,6 +1,8 @@
 # Menu-bar menu: the comb
 
-Status: proposal, 2026-11-16. Design spec only; no code has changed.
+Status: built, 2026-11-17 (ADR-0236). Deviations from this text are listed in
+ADR-0236 §5: the comb is a seven-slot honeycomb in 18×18 pt, ready and you
+colours are darker, unlit headroom cells are small dots.
 Replaces the provider-section layout recorded in ADR-0229 (capsule bars and
 dot-matrix provider marks), which the owner rejected as a copy of Codync.
 Implementing this needs a new ADR that supersedes ADR-0229, plus edits to

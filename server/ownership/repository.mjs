@@ -56,7 +56,9 @@ export class OwnedAgentRepository {
     let opened;
     try {
       opened = await this.openFile(root, path);
-      if (opened.info.size > 8 * 1024 * 1024) throw Error('A saved Squad record exceeds its read limit.');
+      // A restored channels.json with years of history is 8.4 MiB (2026-11-17); the
+      // same limit the recovery staging admits keeps restore and read consistent.
+      if (opened.info.size > MAX_FILE_BYTES) throw Error('A saved Squad record exceeds its read limit.');
       const value = JSON.parse(await opened.file.readFile('utf8'));
       checkStructure(value, 200_000); this.assertCurrent(); return value;
     } catch (error) { if (error.code === 'ENOENT') return fallback; throw error; }

@@ -1,6 +1,6 @@
 //! Account plan and usage windows from the Autohand console API
-//! (`GET /v1/console/summary`, `quota` block), plus the plain-text formatting
-//! the tray uses to show them. Network access is one blocking call; the
+//! (`GET /v1/console/summary`, `quota` block), plus the time arithmetic the
+//! tray uses to show them. Network access is one blocking call; the
 //! formatting is pure and unit-tested.
 
 use anyhow::{bail, Context, Result};
@@ -181,18 +181,6 @@ pub fn fetch_account_usage_blocking(api_base_url: &str, token: &str) -> Result<A
     Ok(AccountUsage::from_quota(quota, now_unix()))
 }
 
-/// A ten-cell text gauge, e.g. `▰▰▱▱▱▱▱▱▱▱`.
-pub fn usage_gauge(percent: u8, cells: usize) -> String {
-    // Any use at all shows one cell, so 2% does not read as untouched.
-    let filled = ((percent as usize * cells) + 50) / 100;
-    let filled = if percent > 0 { filled.max(1) } else { 0 }.min(cells);
-    let mut gauge = String::with_capacity(cells * 3);
-    for index in 0..cells {
-        gauge.push(if index < filled { '▰' } else { '▱' });
-    }
-    gauge
-}
-
 /// Days/hours/minutes until `reset_at` (RFC 3339, UTC), e.g. `4h 52m`, `5d 10h`.
 pub fn time_until(reset_at: &str, now_unix: u64) -> Option<String> {
     let target = parse_rfc3339_unix(reset_at)?;
@@ -210,54 +198,6 @@ pub fn time_until(reset_at: &str, now_unix: u64) -> Option<String> {
     } else {
         format!("{}m", minutes.max(1))
     })
-}
-
-/// The words beside a drawn usage bar: `8% used · resets in 5d 8h`, or
-/// `7 used` for a window without a ceiling.
-pub fn usage_detail(window: &UsageWindow, now_unix: u64) -> String {
-    let mut detail = match window.percent_used() {
-        Some(percent) => format!("{percent}% used"),
-        None => format!("{} used", window.used),
-    };
-    if let Some(until) = window
-        .reset_at
-        .as_deref()
-        .and_then(|reset_at| time_until(reset_at, now_unix))
-    {
-        detail.push_str(&format!(" · resets in {until}"));
-    }
-    detail
-}
-
-/// Menu wording for an account window: `5 h` reads as `5-hour`, `Week` as `Weekly`.
-pub fn window_title(label: &str) -> &str {
-    match label {
-        "5 h" => "5-hour",
-        "24 h" => "Daily",
-        "Week" => "Weekly",
-        "Month" => "Monthly",
-        other => other,
-    }
-}
-
-/// One tray line for a usage window: `5 h    ▰▰▱▱▱▱▱▱▱▱   2% · resets in 4h 52m`.
-pub fn usage_line(label: &str, window: &UsageWindow, now_unix: u64) -> String {
-    let mut line = format!("{label:<5}");
-    match window.percent_used() {
-        Some(percent) => {
-            line.push_str(&usage_gauge(percent, 10));
-            line.push_str(&format!("  {percent:>3}%"));
-        }
-        None => line.push_str(&format!("{} used", window.used)),
-    }
-    if let Some(until) = window
-        .reset_at
-        .as_deref()
-        .and_then(|reset_at| time_until(reset_at, now_unix))
-    {
-        line.push_str(&format!(" · resets in {until}"));
-    }
-    line
 }
 
 /// Minimal RFC 3339 (`YYYY-MM-DDTHH:MM:SS[.fff]Z` or with `±HH:MM`) to Unix seconds.
@@ -356,35 +296,6 @@ mod tests {
             time_until("2026-09-21T20:00:00Z", now).as_deref(),
             Some("now")
         );
-    }
-
-    #[test]
-    fn formats_usage_lines_and_gauges() {
-        assert_eq!(usage_gauge(0, 10), "▱▱▱▱▱▱▱▱▱▱");
-        assert_eq!(usage_gauge(65, 10), "▰▰▰▰▰▰▰▱▱▱");
-        assert_eq!(usage_gauge(100, 10), "▰▰▰▰▰▰▰▰▰▰");
-        let now = parse_rfc3339_unix("2026-09-21T21:08:00Z").unwrap();
-        let window = UsageWindow {
-            used: 22,
-            remaining: Some(978),
-            limit: Some(1000),
-            reset_at: Some("2026-09-22T02:00:17Z".to_string()),
-        };
-        assert_eq!(window.percent_used(), Some(2));
-        assert_eq!(usage_gauge(2, 10), "▰▱▱▱▱▱▱▱▱▱");
-        assert_eq!(
-            usage_line("5 h", &window, now),
-            "5 h  ▰▱▱▱▱▱▱▱▱▱    2% · resets in 4h 52m"
-        );
-        let unmetered = UsageWindow {
-            used: 7,
-            ..Default::default()
-        };
-        assert_eq!(unmetered.percent_used(), None);
-        assert_eq!(usage_line("24 h", &unmetered, now), "24 h 7 used");
-        assert_eq!(usage_detail(&window, now), "2% used · resets in 4h 52m");
-        assert_eq!(usage_detail(&unmetered, now), "7 used");
-        assert_eq!(window_title("Week"), "Weekly");
     }
 
     #[test]

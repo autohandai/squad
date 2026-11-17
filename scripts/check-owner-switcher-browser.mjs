@@ -24,7 +24,7 @@ const personal = { kind: 'user', issuer, id: 'alice' }, team = { kind: 'team', i
 const token = 'fixture-no-provider-credential', fingerprint = createHash('sha256').update(token).digest('hex');
 const seed = async (path, value) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, JSON.stringify(value)); };
 
-async function scenario(name, owners) {
+async function scenario(name, owners, { teamWritable = true } = {}) {
   const directory = await mkdtemp(join(tmpdir(), `squad-owner-switcher-${name}-`)), serviceRoot = join(directory, 'squad');
   const configPath = join(directory, 'config.json'), home = join(directory, 'home'), saved = {};
   const env = { HOME: home, AUTOHAND_HOME: join(home, '.autohand'), AUTOHAND_USER_CONFIG_PATH: configPath, NODE_OPTIONS: `--import=${fileURLToPath(new URL('./fixtures/ownership-browser-guard.mjs', import.meta.url))}` };
@@ -41,7 +41,7 @@ async function scenario(name, owners) {
       const teamMember = { ...profile, id: 'tom', name: 'Tom', role: 'Designer', ownership: team };
       await seed(join(teamPaths.dataRoot, 'channels.json'), { version: 1, revision: 1, channels: [], threads: [], messages: [], agentChannelAccess: { tom: { agent: teamMember, mode: 'ask', workspaceModes: {}, removed: false } } });
     }
-    const list = owners.map(owner => ({ owner, label: owner.kind === 'team' ? 'Acme' : 'Personal Squad', role: 'owner', canWrite: true }));
+    const list = owners.map(owner => ({ owner, label: owner.kind === 'team' ? 'Acme' : 'Personal Squad', role: 'owner', canWrite: owner.kind === 'team' ? teamWritable : true }));
     const identity = { credential: () => ({ token, fingerprint }), verify: async () => ({ actor, fingerprint, expiresAt: Date.now() + 3600_000 }),
       personal: () => list[0], authorize: async (_actor, selected) => list.find(item => item.owner.id === selected.id) || list[0], owners: async () => list };
     broker = createOwnershipBroker({ rootDir, serviceRoot, configPath, identity, port: 0 });
@@ -72,6 +72,21 @@ async function scenario(name, owners) {
       await new Promise(resolve => setTimeout(resolve, 800));   // owners list resolves
     };
     await openApp();
+    if (!teamWritable) {
+      // A read-only team page offers the writable Squad as a plain button; the
+      // quiet switcher line alone left people stuck there (ADR-0237).
+      const before = broker.context();
+      const selected = await fetch(`${origin}/api/ownership/select`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-squad-context': before.generation }, body: JSON.stringify({ owner: team, expectedGeneration: before.generation }) });
+      assert.equal(selected.status, 200);
+      await until(() => browser.evaluate(`!!document.querySelector('[data-testid=owned-view-leave]')`), 'the read-only team page shows its way out', 30_000);
+      assert.equal(await browser.evaluate(`document.querySelector('[data-testid=owned-view-leave]').innerText.trim()`), 'Open Personal Squad');
+      await shot('read-only-team');
+      await pointerClick(await centre(`document.querySelector('[data-testid=owned-view-leave]')`));
+      await until(() => broker.context().owner?.kind === 'user' && broker.context().state === 'ready', 'the broker returns to the personal Squad', 30_000);
+      await until(() => browser.evaluate("document.body.innerText.includes('Eva') && !!document.querySelector('button[aria-label=\"Open account menu\"]')"), 'the personal Squad renders again', 30_000);
+      assert.deepEqual(browser.errors, [], `${name}: no JS errors`);
+      return;
+    }
     await setTheme('light'); await openApp();
     assert.equal(await browser.evaluate(`document.documentElement.classList.contains('dark')`), false, 'light theme for the first screenshots');
     // Nothing ownership-related in the top 64px, where the traffic lights sit,
@@ -139,4 +154,5 @@ async function scenario(name, owners) {
 
 await scenario('personal-only', [personal]);
 await scenario('with-team', [personal, team]);
+await scenario('read-only-team', [personal, team], { teamWritable: false });
 console.log('Squads: no switcher in the sidebar or under the window controls; personal-only has no Switch Squad… and Settings › Squads lists one current Squad; with a team, the account menu names the current Squad, Switch Squad… opens Settings › Squads, and Switch moves the broker to the team and reloads into it. Isolated broker and fixture identity; installed app and real data untouched.');
