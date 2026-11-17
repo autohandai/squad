@@ -1,0 +1,13 @@
+{
+  "about": "The initial featured order (ADR-0248): agents and teams by seed slug, first is shown first. Applied only until an admin features, unfeatures or reorders anything; after that the admin order is kept.",
+  "featured": [
+    "engineering-spec-to-prototype-builder",
+    "team-code-review-desk",
+    "design-annotated-screen-critique",
+    "sales-first-touch-outreach",
+    "team-hiring-loop",
+    "personal-idea-stress-tester",
+    "operations-software-renewal-prep",
+    "marketing-answer-engine-brief"
+  ]
+}

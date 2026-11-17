@@ -1,0 +1,528 @@
+[
+  {
+    "slug": "team-code-review-desk",
+    "name": "Code review desk",
+    "category": "engineering",
+    "tagline": "Four reviewers who read every change for bugs, security, accessibility and missing tests before it merges.",
+    "description": "A review desk for a repository. Alder leads and writes the verdict; Boris checks the change for security faults, Anika for accessibility in UI code, and Basil for the tests the change should have brought with it. They share one #reviews channel, so a pull request gets one combined answer instead of four threads.",
+    "tags": [
+      "code-review",
+      "security",
+      "testing"
+    ],
+    "lead": "engineering-pull-request-reviewer",
+    "members": [
+      "engineering-pull-request-reviewer",
+      "engineering-application-security-reviewer",
+      "engineering-accessibility-code-auditor",
+      "engineering-test-strategy-planner"
+    ],
+    "channels": [
+      {
+        "name": "reviews"
+      }
+    ]
+  },
+  {
+    "slug": "team-release-crew",
+    "name": "Release crew",
+    "category": "engineering",
+    "tagline": "Plans the release, checks the candidate, writes the notes and hands over on-call, from branch cut to the morning after.",
+    "description": "Celia runs the release. Delphine turns merged changes into notes people read, Anouk holds the performance budget against the candidate, and Anselm writes the on-call handover so the first night after a release is not a guess. Channels #release for the plan and #on-call for the handover.",
+    "tags": [
+      "release",
+      "on-call",
+      "release-notes"
+    ],
+    "lead": "engineering-mobile-release-captain",
+    "members": [
+      "engineering-mobile-release-captain",
+      "engineering-release-notes-writer",
+      "engineering-performance-budget-guard",
+      "engineering-on-call-handover-writer"
+    ],
+    "channels": [
+      {
+        "name": "release"
+      },
+      {
+        "name": "on-call",
+        "members": [
+          "Celia",
+          "Anselm"
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "team-production-health",
+    "name": "Production health team",
+    "category": "engineering",
+    "tagline": "Finds what is slow, noisy, costly or failing in production and turns it into a short list of fixes.",
+    "description": "Bram profiles the slow paths, Aurel finds the gaps in logs, metrics and traces, Balthazar puts a cost on each endpoint, and Dorian keeps the incident notes. Together they produce one weekly list: what hurts users, what hurts the bill, and what you would not see if it broke tonight.",
+    "tags": [
+      "performance",
+      "observability",
+      "cloud-cost"
+    ],
+    "lead": "engineering-performance-profiler",
+    "members": [
+      "engineering-performance-profiler",
+      "engineering-observability-designer",
+      "engineering-cloud-cost-per-endpoint",
+      "engineering-incident-response-aide"
+    ],
+    "channels": [
+      {
+        "name": "production"
+      }
+    ]
+  },
+  {
+    "slug": "team-discovery-squad",
+    "name": "Discovery squad",
+    "category": "product",
+    "tagline": "Plans interviews, synthesises what customers said, stress-tests the idea and writes the spec only when it survives.",
+    "description": "Amara leads discovery. Desmond plans the interviews, Aditi maps the jobs people are trying to get done, Adaeze runs the pre-mortem with kill criteria, and Calla writes the spec once the idea has earned one. A small loop from question to decision, with every step written down in #discovery.",
+    "tags": [
+      "discovery",
+      "research",
+      "specs"
+    ],
+    "lead": "product-discovery-lead",
+    "members": [
+      "product-discovery-lead",
+      "product-user-interview-planner",
+      "product-jobs-to-be-done-researcher",
+      "product-idea-pre-mortem-facilitator",
+      "product-spec-writer"
+    ],
+    "channels": [
+      {
+        "name": "discovery"
+      }
+    ]
+  },
+  {
+    "slug": "team-launch-room",
+    "name": "Launch room",
+    "category": "product",
+    "tagline": "Takes a feature from 'nearly done' to launched: scope cut, readiness review, launch plan and the update to stakeholders.",
+    "description": "Bodhi coordinates the launch, Briar cuts scope to what can ship well, Alonzo reviews readiness against a checklist, and Bellamy writes the update stakeholders read. One #launch channel holds the plan and the decisions.",
+    "tags": [
+      "launch",
+      "scope",
+      "stakeholders"
+    ],
+    "lead": "product-launch-coordinator",
+    "members": [
+      "product-launch-coordinator",
+      "product-scope-cutter",
+      "product-launch-readiness-reviewer",
+      "product-stakeholder-update-writer"
+    ],
+    "channels": [
+      {
+        "name": "launch"
+      }
+    ]
+  },
+  {
+    "slug": "team-design-review-board",
+    "name": "Design review board",
+    "category": "design",
+    "tagline": "A standing critique: annotated screen review, accessibility, dark mode and responsive checks on every design before handoff.",
+    "description": "Jonah facilitates; Callum writes the numbered critique of each screen, Elin checks accessibility, Colette checks dark mode and Conrad checks breakpoints. Designers post a link in #design-review and get one ranked list back, not five opinions.",
+    "tags": [
+      "critique",
+      "accessibility",
+      "design-review"
+    ],
+    "lead": "design-design-critique-facilitator",
+    "members": [
+      "design-design-critique-facilitator",
+      "design-annotated-screen-critique",
+      "design-accessibility-auditor",
+      "design-dark-mode-auditor",
+      "design-responsive-breakpoint-review"
+    ],
+    "channels": [
+      {
+        "name": "design-review"
+      }
+    ]
+  },
+  {
+    "slug": "team-prototype-studio",
+    "name": "Prototype studio",
+    "category": "design",
+    "tagline": "From a requirement to a clickable prototype people can test: flows, wireframes, a prototype and a usability plan.",
+    "description": "Declan maps the user flow, Delwyn writes the wireframes from the requirement, Carys builds the clickable prototype and Flora plans the usability test that tells you whether it works. #prototype carries each step.",
+    "tags": [
+      "prototyping",
+      "user-flows",
+      "usability"
+    ],
+    "lead": "design-user-flow-mapper",
+    "members": [
+      "design-user-flow-mapper",
+      "design-requirements-to-wireframes",
+      "design-sketch-to-clickable-prototype",
+      "design-usability-test-planner"
+    ],
+    "channels": [
+      {
+        "name": "prototype"
+      }
+    ]
+  },
+  {
+    "slug": "team-content-engine",
+    "name": "Content engine",
+    "category": "marketing",
+    "tagline": "Answer-engine briefs, a calendar, drafts in the brand voice and a fact check on every claim before anything goes out.",
+    "description": "Felix owns the calendar. Caleb writes search and answer-engine briefs with the questions people ask, Fiona drafts posts, Dominic checks each draft against the voice guide and Elodie checks every claim against a source. Drafts only; you publish.",
+    "tags": [
+      "content",
+      "seo",
+      "brand-voice"
+    ],
+    "lead": "marketing-content-calendar-planner",
+    "members": [
+      "marketing-content-calendar-planner",
+      "marketing-answer-engine-brief",
+      "marketing-social-post-drafter",
+      "marketing-brand-voice-checker",
+      "marketing-claims-fact-checker"
+    ],
+    "channels": [
+      {
+        "name": "content"
+      }
+    ]
+  },
+  {
+    "slug": "team-launch-campaign",
+    "name": "Launch campaign team",
+    "category": "marketing",
+    "tagline": "Positioning, a launch plan, the email sequence and the landing page message test for one product launch.",
+    "description": "Elliot sets the positioning, Emery plans the launch, Dulcie drafts the launch emails and Chloe designs the landing page message test. One #launch-campaign channel; nothing is sent without you.",
+    "tags": [
+      "launch",
+      "positioning",
+      "email"
+    ],
+    "lead": "marketing-positioning-strategist",
+    "members": [
+      "marketing-positioning-strategist",
+      "marketing-launch-planner",
+      "marketing-launch-email-sequence",
+      "marketing-message-test-designer"
+    ],
+    "channels": [
+      {
+        "name": "launch-campaign"
+      }
+    ]
+  },
+  {
+    "slug": "team-outbound-pod",
+    "name": "Outbound pod",
+    "category": "sales",
+    "tagline": "Builds the list, researches each account, drafts first touches and reviews them before the rep sends.",
+    "description": "Lachlan builds the prospect list from your ideal customer, Kendra researches each account, Farah drafts the first touch and Leona reviews it for anything that would get ignored. Finn watches for trigger events worth a second note. The rep sends every message.",
+    "tags": [
+      "prospecting",
+      "outbound",
+      "research"
+    ],
+    "lead": "sales-prospect-list-builder",
+    "members": [
+      "sales-prospect-list-builder",
+      "sales-account-research-brief",
+      "sales-first-touch-outreach",
+      "sales-cold-outreach-review",
+      "sales-trigger-event-watch"
+    ],
+    "channels": [
+      {
+        "name": "outbound"
+      }
+    ]
+  },
+  {
+    "slug": "team-deal-desk",
+    "name": "Deal desk",
+    "category": "sales",
+    "tagline": "Discovery prep, call scoring, a mutual action plan and negotiation prep for the deals that matter this quarter.",
+    "description": "Marlo prepares discovery calls, Fergus scores the recordings against your rubric, Orrin keeps the mutual action plan and Gaspard prepares the negotiation. A #deals channel per team; nothing reaches a buyer without the rep.",
+    "tags": [
+      "deals",
+      "coaching",
+      "negotiation"
+    ],
+    "lead": "sales-discovery-call-prep",
+    "members": [
+      "sales-discovery-call-prep",
+      "sales-call-scorer",
+      "sales-mutual-action-plan",
+      "sales-negotiation-prep"
+    ],
+    "channels": [
+      {
+        "name": "deals"
+      }
+    ]
+  },
+  {
+    "slug": "team-support-desk",
+    "name": "Support desk",
+    "category": "support",
+    "tagline": "Triage, replies from the macro library, escalations with a clean brief and a shift handover at the end of the day.",
+    "description": "Kalani triages, Lysander and Gail keep replies consistent through the macro library, Opal writes escalations engineering can act on and Kaia writes the shift handover. #support for the queue, #escalations for engineering.",
+    "tags": [
+      "triage",
+      "macros",
+      "escalation"
+    ],
+    "lead": "support-ticket-triage",
+    "members": [
+      "support-ticket-triage",
+      "support-macro-writer",
+      "support-macro-library-gardener",
+      "support-escalation-summary",
+      "support-shift-handover"
+    ],
+    "channels": [
+      {
+        "name": "support"
+      },
+      {
+        "name": "escalations",
+        "members": [
+          "Kalani",
+          "Opal"
+        ]
+      }
+    ]
+  },
+  {
+    "slug": "team-quality-and-insight",
+    "name": "Support quality and insight",
+    "category": "support",
+    "tagline": "Scores conversations, finds repeat contacts and turns ticket themes into a monthly report product will read.",
+    "description": "Kofi scores conversations against your rubric, Gita finds why customers contact you twice, Kemal mines CSAT comments and Huxley turns feature requests into a digest product reads. #support-insight carries the monthly report.",
+    "tags": [
+      "quality",
+      "csat",
+      "insight"
+    ],
+    "lead": "support-qa-scoring",
+    "members": [
+      "support-qa-scoring",
+      "support-repeat-contact-analysis",
+      "support-csat-feedback-themes",
+      "support-feature-request-digest"
+    ],
+    "channels": [
+      {
+        "name": "support-insight"
+      }
+    ]
+  },
+  {
+    "slug": "team-spend-and-vendors",
+    "name": "Spend and vendors team",
+    "category": "operations",
+    "tagline": "Finds the software you pay for and do not use, prepares each renewal and onboards new vendors properly.",
+    "description": "Petra compares vendors, Imani prepares renewals with usage evidence and a drafted counter-offer you send, Magnus plans consolidating tools that overlap and Kit runs new vendor onboarding. #vendors holds the renewal calendar.",
+    "tags": [
+      "vendors",
+      "renewals",
+      "software-spend"
+    ],
+    "lead": "operations-vendor-comparison",
+    "members": [
+      "operations-vendor-comparison",
+      "operations-software-renewal-prep",
+      "operations-tool-consolidation-migration",
+      "operations-vendor-onboarding"
+    ],
+    "channels": [
+      {
+        "name": "vendors"
+      }
+    ]
+  },
+  {
+    "slug": "team-operating-rhythm",
+    "name": "Operating rhythm",
+    "category": "operations",
+    "tagline": "Weekly business review, decision log, quarterly planning and meeting actions, so the company runs on written decisions.",
+    "description": "Sabine builds the weekly review pack, Rhea turns meetings into actions, Jonas keeps the decision log and Ida facilitates quarterly planning. #operating-rhythm is where the week starts.",
+    "tags": [
+      "planning",
+      "decisions",
+      "meetings"
+    ],
+    "lead": "operations-weekly-business-review",
+    "members": [
+      "operations-weekly-business-review",
+      "operations-meeting-actions",
+      "operations-decision-log",
+      "operations-quarterly-planning"
+    ],
+    "channels": [
+      {
+        "name": "operating-rhythm"
+      }
+    ]
+  },
+  {
+    "slug": "team-close-team",
+    "name": "Month-end close team",
+    "category": "finance",
+    "tagline": "Runs the close checklist, matches invoices, reconciles the bank and explains the variances before the pack goes out.",
+    "description": "Penelope runs the close, Ravi matches invoices, Reuben reconciles bank and ledger, Quinn keeps accruals and prepayments, and Selma explains budget against actual. #close tracks each day of the close.",
+    "tags": [
+      "month-end",
+      "reconciliation",
+      "variance"
+    ],
+    "lead": "finance-month-end-close",
+    "members": [
+      "finance-month-end-close",
+      "finance-invoice-matching",
+      "finance-bank-reconciliation",
+      "finance-accruals-prepayments",
+      "finance-budget-variance"
+    ],
+    "channels": [
+      {
+        "name": "close"
+      }
+    ]
+  },
+  {
+    "slug": "team-runway-room",
+    "name": "Runway room",
+    "category": "finance",
+    "tagline": "Cash forecast, runway scenarios, subscription savings and the investor update, for a founder who needs the numbers straight.",
+    "description": "Preston keeps the 13-week cash forecast, Joaquin models runway scenarios, Ignacio prepares subscription renegotiations you send, and Pippa drafts the investor update. Not licensed advice: every number shows its arithmetic.",
+    "tags": [
+      "cash",
+      "runway",
+      "investors"
+    ],
+    "lead": "finance-cash-flow-forecast",
+    "members": [
+      "finance-cash-flow-forecast",
+      "finance-runway-scenarios",
+      "finance-subscription-negotiator",
+      "finance-investor-update"
+    ],
+    "channels": [
+      {
+        "name": "runway"
+      }
+    ]
+  },
+  {
+    "slug": "team-hiring-loop",
+    "name": "Hiring loop",
+    "category": "people",
+    "tagline": "Intake, job description, structured interviews, scorecards and a fair debrief for one role, with candidates updated on time.",
+    "description": "Wynne runs the intake with the hiring manager, Tamsin writes the job description, Ulla builds the interview kit, Vera the scorecard, Xenia synthesises the debrief and Tova drafts candidate updates the recruiter sends. People decide; the team keeps it fair and written down.",
+    "tags": [
+      "hiring",
+      "interviews",
+      "scorecards"
+    ],
+    "lead": "people-hiring-intake-facilitator",
+    "members": [
+      "people-hiring-intake-facilitator",
+      "people-job-description-writer",
+      "people-structured-interview-kit",
+      "people-hiring-scorecard",
+      "people-interview-debrief-synthesis",
+      "people-candidate-update-drafter"
+    ],
+    "channels": [
+      {
+        "name": "hiring"
+      }
+    ]
+  },
+  {
+    "slug": "team-new-manager-support",
+    "name": "New manager support",
+    "category": "people",
+    "tagline": "A first-90-days coach, 1:1 agendas, feedback practice and review drafting for someone managing people for the first time.",
+    "description": "Pilar coaches the first 90 days, Tobias keeps 1:1 agendas and follow-ups, Wendell rehearses the hard feedback conversation and Ursula helps draft reviews from evidence. #manager-notes is private to you and them.",
+    "tags": [
+      "management",
+      "feedback",
+      "one-on-ones"
+    ],
+    "lead": "people-new-manager-first-ninety-days",
+    "members": [
+      "people-new-manager-first-ninety-days",
+      "people-one-on-one-agenda",
+      "people-manager-feedback-coach",
+      "people-performance-review-helper"
+    ],
+    "channels": [
+      {
+        "name": "manager-notes"
+      }
+    ]
+  },
+  {
+    "slug": "team-life-admin-crew",
+    "name": "Life admin crew",
+    "category": "personal",
+    "tagline": "Weekly plan, household budget, subscription audit and paperwork, kept in order by four helpers who only draft.",
+    "description": "Tilda plans the week, Yolanda keeps the household budget, Romy audits subscriptions and writes the cancellation scripts you use, and Una sorts the paperwork. Nothing is paid or cancelled without you.",
+    "tags": [
+      "planning",
+      "budget",
+      "paperwork"
+    ],
+    "lead": "personal-weekly-planner",
+    "members": [
+      "personal-weekly-planner",
+      "personal-household-budget",
+      "personal-subscription-audit",
+      "personal-life-admin-organiser"
+    ],
+    "channels": [
+      {
+        "name": "home"
+      }
+    ]
+  },
+  {
+    "slug": "team-creator-studio",
+    "name": "Creator studio",
+    "category": "personal",
+    "tagline": "Stress-tests the idea, directs the video, writes the script and turns notes into slides for a personal channel.",
+    "description": "Noemi stress-tests the idea before you film, Otto directs the video with a shot list and edit notes, Ulric coaches the writing and Paz turns your notes into slides. #studio holds the plan for each episode.",
+    "tags": [
+      "video",
+      "creator",
+      "writing"
+    ],
+    "lead": "personal-idea-stress-tester",
+    "members": [
+      "personal-idea-stress-tester",
+      "personal-channel-video-director",
+      "personal-writing-coach",
+      "personal-recap-to-slide-outline"
+    ],
+    "channels": [
+      {
+        "name": "studio"
+      }
+    ]
+  }
+]

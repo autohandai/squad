@@ -1,0 +1,9 @@
+{
+  "about": "Agents added to each category on 2026-11-17 (ADR-0248). Counts drawn once from mulberry32(20261117), 13 + floor(r * 6) per category in the order below; scripts/check-marketplace-seeds.mjs recomputes them and fails if a file holds a different number.",
+  "seed": 20261117,
+  "min": 13,
+  "max": 18,
+  "order": ["engineering", "product", "design", "marketing", "sales", "support", "operations", "finance", "people", "personal"],
+  "counts": { "engineering": 18, "product": 13, "design": 18, "marketing": 13, "sales": 14, "support": 13, "operations": 16, "finance": 16, "people": 13, "personal": 16 },
+  "total": 150
+}
