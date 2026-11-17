@@ -100,6 +100,7 @@ export async function packageSquadPortable(options = {}) {
     await assertFile(join(bundleRoot, 'server', 'harness', 'index.mjs'));
     await assertFile(join(bundleRoot, 'server', 'control-plane', 'mcp-server.mjs'));
     await assertFile(join(bundleRoot, 'server', 'connectors', 'web-research-mcp.mjs'));
+    for (const name of ['runtime-proxy.mjs', 'google-workspace-mcp.mjs', 'catalog-snapshot.json']) await assertFile(join(bundleRoot, 'server', 'connectors', name));
     await assertFile(join(bundleRoot, 'server', 'vault', 'mcp-server.mjs'));
     const sharedRuntime = join(webRuntimeDir, 'src', 'lib');
     await assertDirectory(sharedRuntime);

@@ -63,6 +63,9 @@ async function stageRuntime() {
   // The built-in Web research connector is a child process the bridge spawns
   // by path (ADR-0107); the runtime must carry it.
   await assertFile(join(runtimeDir, 'server', 'connectors', 'web-research-mcp.mjs'));
+  // Every connector launches through the runtime proxy; Squad's Google
+  // connectors and the offline catalogue ship beside it (ADR-0244).
+  for (const name of ['runtime-proxy.mjs', 'google-workspace-mcp.mjs', 'catalog-snapshot.json']) await assertFile(join(runtimeDir, 'server', 'connectors', name));
   // The vault's managed MCP server is spawned by path at runtime (ADR-0104).
   await assertFile(join(runtimeDir, 'server', 'vault', 'mcp-server.mjs'));
   // Every engine launches the first-party Squad tools by path (ADR-0134).

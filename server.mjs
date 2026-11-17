@@ -24,6 +24,10 @@ import { autoCheckUpdatesEnabled, readSystemSettings } from "./server/system/set
 import { readAppInfo } from "./server/app-info.mjs";
 import { createComputerUse, preferredComputerClient } from "./server/computer-use.mjs";
 import { createConnectorStore } from "./server/connectors/store.mjs";
+import { createRegistry } from "./server/connectors/registry.mjs";
+import { createConnectorOAuth, deviceAppsFromEnv, GOOGLE_ENDPOINTS } from "./server/connectors/oauth.mjs";
+import { createConnectorRuntime } from "./server/connectors/runtime.mjs";
+import { FEATURED as FEATURED_CONNECTORS } from "./server/connectors/catalog.mjs";
 import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
 import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
 import { AUTOHAND_TEAM_WAIT_SECONDS, TEAM_MCP_SERVER_NAME, createTeamService, teamMessagePrompt } from "./server/team/service.mjs";
@@ -560,8 +564,24 @@ const computerUse = createComputerUse({ stateDir: squadStateDir, rootDir, bridge
 const computerWorkRuntimes = new Map();
 // Connectors (ADR-0107): MCP servers the person added plus the built-in Web
 // research server, injected through the same managed seam as Computer Use.
-const connectors = createConnectorStore({ stateDir: squadStateDir, rootDir, nodePath: process.execPath });
+const connectors = createConnectorStore({ stateDir: squadStateDir, rootDir, homeDir, nodePath: process.execPath });
 const firecrawlBaseUrl = String(process.env.FIRECRAWL_API_URL || "").trim();
+// The catalogue, sign-in and launches (ADR-0244). The registry and Google
+// addresses are overridable only so checks can point them at fixtures.
+const connectorLog = (message) => logEvent(SEVERITY.INFO, message, { "event.name": "connectors" });
+const connectorRegistry = createRegistry({ registryUrl: process.env.AUTOHAND_SQUAD_MCP_REGISTRY_URL || undefined, stateDir: squadStateDir, rootDir, featured: FEATURED_CONNECTORS, log: connectorLog });
+const googleOAuthBase = String(process.env.AUTOHAND_SQUAD_GOOGLE_OAUTH_BASE || "").trim();
+const connectorOAuth = createConnectorOAuth({
+  store: connectors,
+  callbackUrl: () => new URL("/api/connectors/oauth/callback", privateOwnerContext.publicUrl).toString(),
+  // A Google OAuth client saved in Settings wins over one a release build provides.
+  googleClient: async () => (await connectors.googleClient()) || (process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID ? { clientId: process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID, clientSecret: process.env.AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET || "" } : null),
+  googleEndpoints: googleOAuthBase ? Object.fromEntries(Object.entries(GOOGLE_ENDPOINTS).map(([key, value]) => [key, `${googleOAuthBase.replace(/\/+$/, "")}${new URL(value).pathname}`])) : GOOGLE_ENDPOINTS,
+  deviceApps: deviceAppsFromEnv(),
+  emit: (event) => emitBridgeEvent("connectors.changed", event),
+  log: connectorLog,
+});
+const connectorRuntime = createConnectorRuntime({ store: connectors, oauth: connectorOAuth, bridgeUrl: privateOwnerContext.publicUrl, rootDir, firecrawlBaseUrl });
 // The person's vault (ADR-0104): members reach it only through a managed MCP
 // server injected per piece of work, scoped by a per-member credential.
 const vault = createVaultService({ stateDir: squadStateDir, rootDir, homeDir, bridgeUrl: privateOwnerContext.publicUrl, emit: emitBridgeEvent });
@@ -3347,7 +3367,11 @@ async function ensureAgentRuntimeInner(input, workspace) {
 
   // Enabled connectors reach a member only when its mcp.connectors policy
   // is "allow" (ADR-0107); the person's own MCP entries are always kept.
-  const connectorSpecs = !isUtilityAgent(agentId) && connectorsAllowed(agent) ? await connectors.enabledSpecs({ firecrawlBaseUrl }) : [];
+  // Each entry is a launcher (server/connectors/runtime-proxy.mjs) holding a
+  // per-member token, never the connector's secrets (ADR-0244).
+  const connectorAllowed = !isUtilityAgent(agentId) && connectorsAllowed(agent);
+  const connectorSpecs = connectorAllowed ? connectorRuntime.launchers(agentId, await connectors.enabledSummaries()) : [];
+  if (!connectorAllowed && !isUtilityAgent(agentId)) connectorRuntime.revokeMember(agentId);
   try {
     const permissionSettings = permissionSettingsFromAgent(agent, { connectors: connectorSpecs.filter((spec) => spec.builtin).map((spec) => spec.serverName) });
     const normalizedPermissions = normalizeAgentPermissions(agent);
@@ -8785,6 +8809,10 @@ function routeContext() {
     cloud,
     authorizeComputerUseGrant,
     connectors,
+    connectorRegistry,
+    connectorOAuth,
+    connectorRuntime,
+    log: connectorLog,
     firecrawlBaseUrl,
     stopChats,
     runSummary,

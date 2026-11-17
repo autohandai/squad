@@ -3,6 +3,8 @@ import { join } from 'node:path';
 
 const serverData = new Set([
   'acp/bundled-registry.json',
+  // The featured connectors' registry entries, so the catalogue works offline (ADR-0244).
+  'connectors/catalog-snapshot.json',
   ...['competitor-watch', 'engineering-team', 'inbox-follow-up', 'lead-research-team', 'marketing-campaign-team', 'seo-growth-team'].map(name => `teams/templates/${name}.squad-team.json`),
 ]);
 /** Copy runtime source, never working state, credentials, caches or symlinks.

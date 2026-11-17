@@ -38,7 +38,7 @@ async function api(path, body, method = body === undefined ? 'GET' : 'POST') {
 }
 async function until(operation) { const end = Date.now() + 15000; while (Date.now() < end) { const value = await operation().catch(() => null); if (value) return value; await new Promise((r) => setTimeout(r, 40)); } throw Error(`Bridge fixture timed out: ${logs.slice(-1500)}`); }
 function start() {
-  bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], { cwd: root, env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: '', AUTOHAND_SQUAD_HOME: serviceRoot, AUTOHAND_SQUAD_APP_STATE_DIR: appRoot, AUTOHAND_HOME: join(directory, 'home'), AUTOHAND_USER_CONFIG_PATH: config, FIRECRAWL_API_URL: `http://127.0.0.1:${fixturePort}`, CODEX_HOME: join(directory, 'codex-home'), OPENAI_API_KEY: 'fixture-no-provider', ANTHROPIC_API_KEY: 'fixture-no-provider' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  bridge = spawn(process.execPath, ['server.mjs', '--host', '127.0.0.1', '--port', String(port)], { cwd: root, env: { ...process.env, ...ownership.env, AUTOHAND_SQUAD_NATIVE_GRANT_TOKEN: '', AUTOHAND_SQUAD_VAULT_KEY_SOURCE: 'file', AUTOHAND_SQUAD_VAULT_KEY_FILE: join(directory, 'vault.key'), AUTOHAND_SQUAD_MCP_REGISTRY_URL: `http://127.0.0.1:${fixturePort}/registry/v0/servers`, AUTOHAND_SQUAD_HOME: serviceRoot, AUTOHAND_SQUAD_APP_STATE_DIR: appRoot, AUTOHAND_HOME: join(directory, 'home'), AUTOHAND_USER_CONFIG_PATH: config, FIRECRAWL_API_URL: `http://127.0.0.1:${fixturePort}`, CODEX_HOME: join(directory, 'codex-home'), OPENAI_API_KEY: 'fixture-no-provider', ANTHROPIC_API_KEY: 'fixture-no-provider' }, stdio: ['ignore', 'pipe', 'pipe'] });
   bridge.stdout.on('data', (b) => { logs += b; }); bridge.stderr.on('data', (b) => { logs += b; });
 }
 async function stop() { if (!bridge || bridge.exitCode !== null) return; const closed = new Promise((r) => bridge.once('close', r)); bridge.kill('SIGTERM'); await closed; }
@@ -253,13 +253,38 @@ console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture clau
   const names = (cfg) => (cfg.mcp?.servers || []).map((entry) => entry.name);
   assert.deepEqual(names(allowed), ['user-sentinel', 'squad-connector-web-research', `squad-connector-${newline.id}`, `squad-connector-${http.id}`], 'the person\'s entry first, then the built-in, then added connectors in order');
   assert.equal(allowed.mcp.enabled, true);
+  // Every entry is the launcher with a per-member token; no connector secret is in the member's config (ADR-0244).
+  const proxyPath = join(root, 'server', 'connectors', 'runtime-proxy.mjs');
   const managed = allowed.mcp.servers.find((entry) => entry.name === `squad-connector-${newline.id}`);
-  assert.equal(managed.transport, 'stdio'); assert.equal(managed.stdioFraming, 'newline'); assert.equal(managed.env.API_TOKEN, SECRETS.envToken); assert.equal(managed.autoConnect, true);
+  assert.equal(managed.transport, 'stdio'); assert.equal(managed.command, process.execPath); assert.deepEqual(managed.args, [proxyPath]); assert.equal(managed.autoConnect, true);
+  assert.equal(managed.env.AUTOHAND_SQUAD_CONNECTOR_ID, newline.id); assert.match(managed.env.AUTOHAND_SQUAD_CONNECTOR_TOKEN, /^[a-f0-9]{64}$/); assert.equal(managed.env.AUTOHAND_SQUAD_CONNECTOR_URL, `${origin}/api/connectors/runtime`);
   const research = allowed.mcp.servers.find((entry) => entry.name === 'squad-connector-web-research');
-  assert.equal(research.command, process.execPath); assert.equal(research.args[0], serverPath); assert.equal(research.env.FIRECRAWL_API_KEY, SECRETS.firecrawl); assert.equal(research.env.FIRECRAWL_API_URL, `http://127.0.0.1:${fixturePort}`);
   const remote = allowed.mcp.servers.find((entry) => entry.name === `squad-connector-${http.id}`);
-  assert.equal(remote.transport, 'http'); assert.equal(remote.headers.Authorization, SECRETS.header);
-  assert.equal((await stat(join(app, 'agents', 'allow-member', 'config.json'))).mode & 0o777, 0o600, 'the member config holding connector secrets is private');
+  assert.equal(research.env.AUTOHAND_SQUAD_CONNECTOR_TOKEN, managed.env.AUTOHAND_SQUAD_CONNECTOR_TOKEN, 'one token per member');
+  const memberConfigText = await readFile(join(app, 'agents', 'allow-member', 'config.json'), 'utf8');
+  for (const [label, secret] of Object.entries(SECRETS)) assert.ok(!memberConfigText.includes(secret), `the member config carries no ${label} secret`);
+  const storeText = await readFile(join(state, 'connectors.json'), 'utf8');
+  for (const [label, secret] of Object.entries(SECRETS)) assert.ok(!storeText.includes(secret), `connectors.json keeps the ${label} secret sealed`);
+  assert.ok(storeText.includes('"sealed"'), 'secrets are sealed in the store');
+  assert.equal((await stat(join(app, 'agents', 'allow-member', 'config.json'))).mode & 0o777, 0o600, 'the member config is private');
+  // The launcher really works: through the broker it fetches the definition and talks to each server.
+  for (const [entry, expected] of [[managed, ['echo', 'time']], [research, ['web_search', 'web_fetch']], [remote, ['echo', 'time']]]) {
+    for (const framing of ['header', 'newline']) {
+      await rpcSession(entry.command, entry.args, entry.env, framing, async (request, notify) => {
+        const init = await request(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'check', version: '1' } });
+        assert.ok(init.message.result, `${entry.name} initialize: ${JSON.stringify(init.message.error || {})}`); assert.equal(init.framing, framing, 'the launcher answers in the engine\'s framing');
+        notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
+        const tools = await request(2, 'tools/list', {});
+        assert.deepEqual(tools.message.result.tools.map((tool) => tool.name), expected, `${entry.name} tools through the launcher`);
+      });
+    }
+  }
+  assert.ok((await readFile(calls, 'utf8')).includes(SECRETS.envToken), 'the sealed env value reached the child through the launcher');
+  // A forged token and a connector the member was not given are refused.
+  const forged = await rpcSession(managed.command, managed.args, { ...managed.env, AUTOHAND_SQUAD_CONNECTOR_TOKEN: 'f'.repeat(64) }, 'newline', (request) => request(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'check', version: '1' } }));
+  assert.match(forged.message.error.message, /session ended/);
+  const other = await rpcSession(managed.command, managed.args, { ...managed.env, AUTOHAND_SQUAD_CONNECTOR_ID: failing.id }, 'newline', (request) => request(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'check', version: '1' } }));
+  assert.match(other.message.error.message, /isn't allowed/);
   const blocked = await provision(member('block-member', 'block'));
   assert.deepEqual(names(blocked), ['user-sentinel']);
   const asked = await provision(member('ask-member', 'ask'));
@@ -289,7 +314,7 @@ console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture clau
   const harnessSeen = (await readFile(harnessCalls, 'utf8')).trim().split('\n').map(JSON.parse);
   const codexSeen = harnessSeen.find((entry) => entry.harness === 'codex');
   assert.ok(codexSeen.overrides.includes(`mcp_servers.squad-connector-${newline.id}.command=${JSON.stringify(process.execPath)}`), JSON.stringify(codexSeen.overrides));
-  assert.ok(codexSeen.overrides.some((value) => value.startsWith('mcp_servers.squad-connector-web-research.env=') && value.includes(SECRETS.firecrawl)));
+  assert.ok(codexSeen.overrides.some((value) => value.startsWith('mcp_servers.squad-connector-web-research.env=') && value.includes('AUTOHAND_SQUAD_CONNECTOR_TOKEN') && !value.includes(SECRETS.firecrawl)), 'Codex gets the launcher, not the key');
   const claudeSeen = harnessSeen.filter((entry) => entry.harness === 'claude');
   assert.equal(claudeSeen.length, 2);
   // Other managed servers (Computer Use, the vault, ADR-0104) travel in their own
@@ -298,7 +323,8 @@ console.log(JSON.stringify({type:'result',subtype:'success',result:'fixture clau
   const connectorConfig = claudeSeen[0].contents.find(isConnectorConfig);
   assert.ok(connectorConfig, 'connectors travel to Claude in a --mcp-config file');
   assert.deepEqual(Object.keys(connectorConfig.mcpServers), ['squad-connector-web-research', `squad-connector-${newline.id}`]);
-  assert.equal(connectorConfig.mcpServers['squad-connector-web-research'].env.FIRECRAWL_API_KEY, SECRETS.firecrawl);
+  assert.equal(connectorConfig.mcpServers['squad-connector-web-research'].env.FIRECRAWL_API_KEY, undefined, 'Claude gets the launcher, not the key');
+  assert.equal(connectorConfig.mcpServers['squad-connector-web-research'].env.AUTOHAND_SQUAD_CONNECTOR_ID, 'web-research');
   assert.ok(!claudeSeen[1].contents.some(isConnectorConfig), 'a blocked member gets no connectors --mcp-config');
   assert.equal((await stat(claudeSeen[0].configs[0])).mode & 0o777, 0o600);
   assert.deepEqual(claudeMcpConfig([{ serverName: 'squad-connector-x', kind: 'url', transport: 'sse', url: 'https://x.example/sse', headers: { Authorization: 'Bearer t' } }]), { mcpServers: { 'squad-connector-x': { type: 'sse', url: 'https://x.example/sse', headers: { Authorization: 'Bearer t' } } } });

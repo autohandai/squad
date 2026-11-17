@@ -1,0 +1,746 @@
+{
+  "takenAt": "2026-11-17",
+  "source": "https://registry.modelcontextprotocol.io/v0/servers",
+  "servers": [
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+      "name": "io.github.ComposioHQ/composio",
+      "description": "Connect AI agents to 1000+ apps with managed authentication and tool-calling.",
+      "title": "Composio",
+      "repository": {
+        "url": "https://github.com/ComposioHQ/GHMCP",
+        "source": "github"
+      },
+      "version": "1.0.5",
+      "websiteUrl": "https://composio.dev",
+      "icons": [
+        {
+          "src": "https://brand.composio.dev/logos/Logomark-Black.svg",
+          "mimeType": "image/svg+xml",
+          "theme": "light"
+        },
+        {
+          "src": "https://brand.composio.dev/logos/Logomark-White.svg",
+          "mimeType": "image/svg+xml",
+          "theme": "dark"
+        }
+      ],
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://connect.composio.dev/mcp"
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+      "name": "io.github.github/github-mcp-server",
+      "description": "Connect AI assistants to GitHub - manage repos, issues, PRs, and workflows through natural language.",
+      "title": "GitHub",
+      "repository": {
+        "url": "https://github.com/github/github-mcp-server",
+        "source": "github"
+      },
+      "version": "2.2.0",
+      "packages": [
+        {
+          "registryType": "oci",
+          "identifier": "ghcr.io/github/github-mcp-server:2.2.0",
+          "transport": {
+            "type": "stdio"
+          },
+          "runtimeArguments": [
+            {
+              "description": "Publish the OAuth callback port to loopback so the in-container login callback is reachable",
+              "type": "named",
+              "name": "-p",
+              "value": "127.0.0.1:8085:8085"
+            },
+            {
+              "description": "Fixed OAuth callback port, matching the published port above",
+              "type": "named",
+              "name": "-e",
+              "value": "GITHUB_OAUTH_CALLBACK_PORT=8085"
+            },
+            {
+              "description": "Optional GitHub Personal Access Token. Omit to log in with OAuth on first use.",
+              "variables": {
+                "token": {
+                  "format": "string",
+                  "isSecret": true
+                }
+              },
+              "type": "named",
+              "name": "-e",
+              "value": "GITHUB_PERSONAL_ACCESS_TOKEN={token}"
+            }
+          ]
+        }
+      ],
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://api.githubcopilot.com/mcp/",
+          "headers": [
+            {
+              "description": "Authorization header with authentication token (PAT or App token)",
+              "isSecret": true,
+              "name": "Authorization"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+      "name": "app.linear/linear",
+      "description": "Find and manage issues, projects, and documents in your Linear workspace.",
+      "title": "Linear",
+      "version": "1.0.2",
+      "websiteUrl": "https://linear.app",
+      "icons": [
+        {
+          "src": "https://static.linear.app/integrations/mcp/icon.svg",
+          "mimeType": "image/svg+xml",
+          "sizes": [
+            "any"
+          ]
+        },
+        {
+          "src": "https://static.linear.app/integrations/mcp/icon-256.png",
+          "mimeType": "image/png",
+          "sizes": [
+            "256x256"
+          ]
+        }
+      ],
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.linear.app/mcp"
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.linear.app/mcp/readonly"
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+      "name": "com.notion/mcp",
+      "description": "Official Notion MCP server",
+      "repository": {},
+      "version": "1.0.1",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.notion.com/mcp"
+        },
+        {
+          "type": "sse",
+          "url": "https://mcp.notion.com/sse"
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+      "name": "com.figma.mcp/mcp",
+      "description": "The Figma MCP server brings Figma design context directly into your AI workflow.",
+      "title": "Figma MCP Server",
+      "repository": {
+        "url": "https://github.com/figma/mcp-server-guide",
+        "source": "github"
+      },
+      "version": "1.0.3",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.figma.com/mcp"
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+      "name": "com.stripe/mcp",
+      "description": "MCP server integrating with Stripe - tools for customers, products, payments, and more.",
+      "repository": {
+        "url": "https://github.com/stripe/agent-toolkit",
+        "source": "github"
+      },
+      "version": "0.2.4",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.stripe.com"
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+      "name": "com.vercel/vercel-mcp",
+      "description": "An MCP server for Vercel",
+      "repository": {
+        "url": "https://github.com/vercel/vercel-mcp-overview",
+        "source": "github"
+      },
+      "version": "0.0.3",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.vercel.com"
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+      "name": "com.supabase/mcp",
+      "description": "MCP server for interacting with the Supabase platform",
+      "title": "Supabase",
+      "repository": {
+        "url": "https://github.com/supabase/mcp",
+        "source": "github",
+        "subfolder": "packages/mcp-server-supabase"
+      },
+      "version": "0.17.0",
+      "websiteUrl": "https://supabase.com/mcp",
+      "icons": [
+        {
+          "src": "https://supabase.com/favicon/favicon-16x16.png",
+          "mimeType": "image/png",
+          "sizes": [
+            "16x16"
+          ]
+        },
+        {
+          "src": "https://supabase.com/favicon/favicon-32x32.png",
+          "mimeType": "image/png",
+          "sizes": [
+            "32x32"
+          ]
+        },
+        {
+          "src": "https://supabase.com/favicon/favicon-48x48.png",
+          "mimeType": "image/png",
+          "sizes": [
+            "48x48"
+          ]
+        },
+        {
+          "src": "https://supabase.com/favicon/favicon-96x96.png",
+          "mimeType": "image/png",
+          "sizes": [
+            "96x96"
+          ]
+        },
+        {
+          "src": "https://supabase.com/favicon/favicon-128.png",
+          "mimeType": "image/png",
+          "sizes": [
+            "128x128"
+          ]
+        },
+        {
+          "src": "https://supabase.com/favicon/favicon-180x180.png",
+          "mimeType": "image/png",
+          "sizes": [
+            "180x180"
+          ]
+        },
+        {
+          "src": "https://supabase.com/favicon/favicon-196x196.png",
+          "mimeType": "image/png",
+          "sizes": [
+            "196x196"
+          ]
+        }
+      ],
+      "packages": [
+        {
+          "registryType": "npm",
+          "registryBaseUrl": "https://registry.npmjs.org",
+          "identifier": "@supabase/mcp-server-supabase",
+          "version": "0.17.0",
+          "runtimeHint": "npx",
+          "transport": {
+            "type": "stdio"
+          },
+          "runtimeArguments": [
+            {
+              "description": "Supabase project reference ID",
+              "format": "string",
+              "type": "named",
+              "name": "--project-ref"
+            },
+            {
+              "description": "Enable read-only mode",
+              "format": "boolean",
+              "type": "named",
+              "name": "--read-only"
+            },
+            {
+              "description": "Comma-separated list of features to enable",
+              "format": "string",
+              "type": "named",
+              "name": "--features"
+            },
+            {
+              "description": "Custom API URL",
+              "format": "string",
+              "type": "named",
+              "name": "--api-url"
+            }
+          ],
+          "environmentVariables": [
+            {
+              "description": "Personal access token for Supabase API",
+              "isRequired": true,
+              "format": "string",
+              "isSecret": true,
+              "name": "SUPABASE_ACCESS_TOKEN"
+            }
+          ]
+        }
+      ],
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.supabase.com/mcp"
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+      "name": "com.cloudflare.mcp/mcp",
+      "description": "Cloudflare MCP servers",
+      "repository": {
+        "url": "https://github.com/cloudflare/mcp-server-cloudflare",
+        "source": "github"
+      },
+      "version": "1.0.0",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://docs.mcp.cloudflare.com/mcp"
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://observability.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://bindings.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://builds.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://radar.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://containers.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://browser.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://logs.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://ai-gateway.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://autorag.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://auditlogs.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://dns-analytics.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://dex.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://casb.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://graphql.mcp.cloudflare.com/mcp",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://docs.mcp.cloudflare.com/sse"
+        },
+        {
+          "type": "sse",
+          "url": "https://observability.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://bindings.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://builds.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://radar.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://containers.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://browser.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://logs.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://ai-gateway.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://autorag.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://auditlogs.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://dns-analytics.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://dex.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://casb.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        },
+        {
+          "type": "sse",
+          "url": "https://graphql.mcp.cloudflare.com/sse",
+          "headers": [
+            {
+              "description": "Optional Cloudflare API key for authentication if not using OAuth. Can use User or Account owned tokens as a Bearer token.",
+              "isSecret": true,
+              "name": "Authentication"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+      "name": "com.atlassian/atlassian-mcp-server",
+      "description": "Connect to Atlassian Jira, Confluence, Loom, and more to search, create, and manage your work.",
+      "title": "Atlassian Rovo MCP Server",
+      "repository": {
+        "url": "https://github.com/atlassian/atlassian-mcp-server",
+        "source": "github"
+      },
+      "version": "2.0.0",
+      "websiteUrl": "https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/",
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.atlassian.com/v2/mcp"
+        },
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.atlassian.com/v1/mcp/authv2"
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+      "name": "io.github.upstash/context7",
+      "description": "Up-to-date docs for AI agents",
+      "title": "Context7",
+      "repository": {
+        "url": "https://github.com/upstash/context7",
+        "source": "github"
+      },
+      "version": "4.7.1",
+      "websiteUrl": "https://context7.com",
+      "icons": [
+        {
+          "src": "https://raw.githubusercontent.com/upstash/context7/master/public/icon.png",
+          "mimeType": "image/png"
+        }
+      ],
+      "packages": [
+        {
+          "registryType": "npm",
+          "identifier": "@upstash/context7-mcp",
+          "version": "4.7.1",
+          "transport": {
+            "type": "stdio"
+          },
+          "environmentVariables": [
+            {
+              "description": "API key for authentication",
+              "isSecret": true,
+              "name": "CONTEXT7_API_KEY"
+            }
+          ]
+        },
+        {
+          "registryType": "mcpb",
+          "identifier": "https://github.com/upstash/context7/releases/download/mcpb-v4.7.1/context7.mcpb",
+          "version": "4.7.1",
+          "fileSha256": "ef9cc2fe8fec31f11c86ca3cdc1e02b8713f8537b1b270fdff358227502ee790",
+          "transport": {
+            "type": "stdio"
+          },
+          "environmentVariables": [
+            {
+              "description": "API key for authentication",
+              "isSecret": true,
+              "name": "CONTEXT7_API_KEY"
+            }
+          ]
+        }
+      ],
+      "remotes": [
+        {
+          "type": "streamable-http",
+          "url": "https://mcp.context7.com/mcp",
+          "headers": [
+            {
+              "description": "API key for authentication. Accepts \"Bearer <key>\" or the raw key.",
+              "isSecret": true,
+              "name": "Authorization"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+      "name": "io.github.microsoft/playwright-mcp",
+      "description": "Playwright Tools for MCP",
+      "repository": {
+        "url": "https://github.com/microsoft/playwright-mcp",
+        "source": "github"
+      },
+      "version": "0.0.85",
+      "packages": [
+        {
+          "registryType": "npm",
+          "identifier": "@playwright/mcp",
+          "version": "0.0.85",
+          "transport": {
+            "type": "stdio"
+          }
+        }
+      ]
+    }
+  ]
+}

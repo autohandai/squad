@@ -417,7 +417,12 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
   function managedRequest(req, path) {
     return (path.startsWith('/api/team/') && req.headers['x-squad-team-token'])
       || (path.startsWith('/api/vault/') && req.headers['x-squad-vault-token'])
-      || (path.startsWith('/api/computer-use/') && req.headers['x-squad-computer-token']);
+      || (path.startsWith('/api/computer-use/') && req.headers['x-squad-computer-token'])
+      // A member engine's connector launcher (ADR-0244); the worker checks the token.
+      || ((path === '/api/connectors/runtime' || path === '/api/connectors/runtime/report') && req.headers['x-squad-connector-token'])
+      // The sign-in page redirects the person's browser here; the single-use
+      // state in the query is what the worker checks (ADR-0244).
+      || (path === '/api/connectors/oauth/callback' && req.method === 'GET' && new URL(req.url, 'http://local').searchParams.has('state'));
   }
   async function proxy(req, res, target, expected = generation, body) {
     if (expected !== generation || target.generation !== expected) throw fail('The account changed before the request started.');

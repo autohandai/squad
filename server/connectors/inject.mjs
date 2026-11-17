@@ -92,10 +92,17 @@ export function codexConfigArgs(specs) {
 }
 
 /** A short instruction so the member knows which connectors it has. */
+const GOOGLE_HINTS = {
+  gmail: 'gmail_search and gmail_read find and read mail; gmail_create_draft writes a draft; gmail_send sends, so only send when the person asked you to.',
+  drive: 'drive_search, drive_recent and drive_read find and read Drive files as text.',
+  calendar: 'calendar_list_events reads the calendar; calendar_create_event adds an event without notifying attendees unless asked.',
+};
 export function connectorInstructions(specs) {
   if (!specs?.length) return '';
-  const lines = specs.map((spec) => (spec.builtin
-    ? `- ${spec.name} (MCP server ${spec.serverName}): web_search finds pages, web_fetch reads one as markdown. Cite the source URLs these tools return.`
-    : `- ${spec.name} (MCP server ${spec.serverName}).`));
-  return `Connectors enabled for this member through Squad-managed MCP servers:\n${lines.join('\n')}\nUse them through their MCP tools; do not assume any connector that is not listed here.`;
+  const lines = specs.map((spec) => {
+    if (spec.builtin) return `- ${spec.name} (MCP server ${spec.serverName}): web_search finds pages, web_fetch reads one as markdown. Cite the source URLs these tools return.`;
+    if (spec.google) return `- ${spec.name} (MCP server ${spec.serverName}): ${GOOGLE_HINTS[spec.google] || ''}`.trimEnd();
+    return `- ${spec.name} (MCP server ${spec.serverName}).`;
+  });
+  return `Connectors enabled for this member through Squad-managed MCP servers:\n${lines.join('\n')}\nUse them through their MCP tools; do not assume any connector that is not listed here. If a connector answers that it needs a sign-in, tell the person to open Settings › Connectors; never ask them to paste a password or token into the chat.`;
 }
