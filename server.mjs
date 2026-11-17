@@ -1441,8 +1441,17 @@ function authEmail(auth) {
 function readRuntimeAccount() {
   if (privateOwnerContext) {
     let actor = null;
-    try { if (ownershipActive && readOwnerCredential(userConfigPath)?.fingerprint === privateOwnerContext.credentialFingerprint) actor = privateOwnerContext.actor; } catch { /* Unverified account state stays hidden. */ }
-    return { signedIn: Boolean(actor), email: actor?.email || '', name: actor?.name || '', userId: actor?.id || '', avatar: '', source: actor ? 'verified-ownership' : 'none', owner: privateOwnerContext.owner, generation: privateOwnerContext.generation };
+    let avatar = '';
+    try {
+      if (ownershipActive && readOwnerCredential(userConfigPath)?.fingerprint === privateOwnerContext.credentialFingerprint) {
+        actor = privateOwnerContext.actor;
+        // The photo comes from the same verified sign-in record that holds the
+        // credential; the identity profile carries no photo (ADR-0193 addendum).
+        const user = readAutohandAuth(userConfigPath)?.user;
+        avatar = user && typeof user === 'object' ? String(user.avatar || '').trim() : '';
+      }
+    } catch { /* Unverified account state stays hidden. */ }
+    return { signedIn: Boolean(actor), email: actor?.email || '', name: actor?.name || '', userId: actor?.id || '', avatar: actor ? avatar : '', source: actor ? 'verified-ownership' : 'none', owner: privateOwnerContext.owner, generation: privateOwnerContext.generation };
   }
   const squadConfig = readJsonFileSync(squadConfigPath);
   const userAuth = readAutohandAuth(userConfigPath);

@@ -180,3 +180,27 @@ this change has not yet deployed the hosted API or its migration.
 The real owned Backups browser check reproduced an indefinite Loading screen when a quota error was raised inside the async hydration callback. A second argument to `.then` handled request rejection but missed errors thrown by that callback. The fulfillment chain now ends in `.catch`, fences stale ownership generations, clears the hydration latch and presents a local-storage error with Retry. Canonical data stays in the owner dataset; no cache is silently discarded.
 
 The browser regression injects a quota failure at the actual owned messages write, verifies that Retry is offered without an unhandled rejection or a canonical conversation change, then removes the fault and retries through a new broker realm. Existing backup export/restore and two-window conflict checks run after recovery. This favors an explicit recoverable error over mounting private state after incomplete hydration.
+
+## Addendum (2026-11-18): the account photo
+
+`check:natural-automations:browser` failed on "signed-in photo in account
+footer". The cause was not the check: the owned branch of `readRuntimeAccount`
+in `server.mjs` returned `avatar: ''` unconditionally, so every owned Squad
+showed initials in place of the photo that shipped earlier (CHANGELOG: "Your
+signed-in photo appears in the account footer and menu"). The verified
+identity (`/v1/profile`, via `identity.mjs`) carries id, email and name, but
+no photo.
+
+Decision: take the photo from the local sign-in record (`config.json`
+`auth.user.avatar`), and only after `readAutohandAuth` has matched that
+record's token fingerprint to the verified credential, so it is the same
+person's record. Name and email stay with the verified identity. As a result,
+initials come from the verified name, not from the record's display name, and
+the check now expects them that way.
+
+Left undone: the photo is not verified by the identity service, and a record
+written by an older CLI without `user.avatar` still shows initials. Teaching
+the identity profile to return a photo would remove the dependency on the
+local record; that is a hosted API change and was not made here. Evidence:
+the check failed at that step before the change and passed afterwards,
+including the broken-photo and missing-photo fallbacks.

@@ -111,12 +111,14 @@ try {
     await browser.navigate(`${bridge.origin}/conversations/new?member=${agent.id}`);
     await until(()=>browser.evaluate(`document.querySelector('main')?.innerText.includes('Hi Igor, this is your scheduled reminder.')`),'actual reminder delivered after restart',30000);
     assert.equal((await bridge.api(`/api/routines/${routines[0].id}`)).data.enabled,false);
+    // Initials follow the verified identity's name ('Reliability fixture'),
+    // not the local sign-in record's display name (ADR-0193).
     const assertFallback=async label=>{
-      await until(()=>browser.evaluate(`document.querySelector('aside [data-testid="account-avatar"]')?.innerText==='RP' && !document.querySelector('aside [data-testid="account-avatar"] img')`),`${label} in the footer`);
+      await until(()=>browser.evaluate(`document.querySelector('aside [data-testid="account-avatar"]')?.innerText==='RF' && !document.querySelector('aside [data-testid="account-avatar"] img')`),`${label} in the footer`);
       const point=await browser.evaluate(`(() => {const r=document.querySelector('button[aria-label="Open account menu"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
       await browser.send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
       await browser.send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
-      await until(()=>browser.evaluate(`document.querySelector('[role="menu"] [data-testid="account-avatar"]')?.innerText==='RP' && !document.querySelector('[role="menu"] [data-testid="account-avatar"] img')`),`${label} in the account menu`);
+      await until(()=>browser.evaluate(`document.querySelector('[role="menu"] [data-testid="account-avatar"]')?.innerText==='RF' && !document.querySelector('[role="menu"] [data-testid="account-avatar"] img')`),`${label} in the account menu`);
     };
     await assertFallback('broken-photo fallback');
     await browser.screenshot(join(process.cwd(),'.codex-artifacts/natural-workflows/account-photo-fallback.png'));
