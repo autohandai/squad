@@ -24,9 +24,30 @@ export async function createMobileService({ directory, computerName, assertCurre
   const serial = fn => { const result = chain.then(fn); chain = result.catch(() => {}); return result; };
   async function save(next) { await writePersistentJson(file, next); state = next; }
 
-  // When each phone last reached this computer and how. Kept in memory: it
-  // answers "is my phone connected?" without a disk write per request.
+  // When each phone last reached this computer and how. Held in memory and
+  // written to its own small file at most once a minute per phone, so a
+  // restart (an update, a reinstall) does not reset every phone to "not
+  // seen" while it is in fact connected.
+  const presenceFile = join(directory, 'mobile-presence.json');
+  const PRESENCE_WRITE_MS = 60_000;
   const lastSeen = new Map();
+  const persisted = new Map();
+  const savedPresence = await readPersistentJson(presenceFile, {}).catch(() => ({}));
+  for (const [id, seen] of Object.entries(savedPresence && typeof savedPresence === 'object' ? savedPresence : {})) {
+    if (state.devices[id] && typeof seen?.at === 'string' && Number.isFinite(Date.parse(seen.at))) {
+      const entry = { at: seen.at, via: seen.via === 'relay' ? 'relay' : 'local' };
+      lastSeen.set(id, entry); persisted.set(id, entry);
+    }
+  }
+  function notePresence(id, via) {
+    const entry = { at: new Date(now()).toISOString(), via: via === 'relay' ? 'relay' : 'local' };
+    lastSeen.set(id, entry);
+    const before = persisted.get(id);
+    if (before && before.via === entry.via && Date.parse(entry.at) - Date.parse(before.at) < PRESENCE_WRITE_MS) return;
+    persisted.set(id, entry);
+    const snapshot = Object.fromEntries([...lastSeen].filter(([key]) => state.devices[key]));
+    serial(() => writePersistentJson(presenceFile, snapshot)).catch(() => {});
+  }
   async function handle(input, via) {
     const packet = packetSchema.parse(input);
     if (packet.computerID !== state.computerID) throw deny();
@@ -37,7 +58,7 @@ export async function createMobileService({ directory, computerName, assertCurre
     if (!key) throw deny();
     let command;
     try { command = commandSchema.parse(openPacket(packet, key)); } catch { throw deny(); }
-    if (device) lastSeen.set(packet.peerID, { at: new Date(now()).toISOString(), via: via === 'relay' ? 'relay' : 'local' });
+    if (device) notePresence(packet.peerID, via);
     const respond = body => sealPacket(body, key, { kind: packet.kind, computerID: packet.computerID, peerID: packet.peerID, requestID: packet.requestID });
     try {
       if (Math.abs(now() / 1000 - command.issuedAt) > 120) throw Error('Your phone’s clock is out of sync. Set its time automatically and retry.');

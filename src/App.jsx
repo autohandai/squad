@@ -2639,6 +2639,7 @@ const DEFAULT_CHAT_SETTINGS = {
   displayCliOutput: false,
   squadSuggestions: true,
   workDetails: "collapsed",
+  threadedReplies: false,
 };
 
 function normalizeChatSettings(settings) {
@@ -2648,6 +2649,8 @@ function normalizeChatSettings(settings) {
     // Squad recruiting (ADR-0015) is on unless explicitly switched off.
     squadSuggestions: source.squadSuggestions !== false,
     workDetails: WORK_DETAIL_MODES.includes(source.workDetails) ? source.workDetails : "collapsed",
+    // Replies in groups and channels read in order unless threads are chosen.
+    threadedReplies: source.threadedReplies === true,
   };
 }
 
@@ -3725,6 +3728,11 @@ async function bridgeFetch(path, init) {
     if (error?.name === "AbortError") throw error;
     throw Object.assign(new Error(BRIDGE_UNREACHABLE_MESSAGE), { code: "bridge-unreachable", cause: error });
   }
+}
+
+/** The phones paired with this computer, for the sidebar's Local menu. */
+function loadPairedPhones() {
+  return api("/api/mobile/status").then((status) => status?.devices || []);
 }
 
 async function api(path, options = {}) {
@@ -6151,6 +6159,7 @@ function App() {
         onSelect={(id) => setWorkspaceSelection((current) => selectWorkspace(current, relayWorkspaces, id))}
         onConnectRelay={() => navigate(`/settings?section=relay`)}
         onPairPhone={() => setPairPhoneOpen(true)}
+        loadPhones={loadPairedPhones}
         copy={localeCopy}
       />
       <SquadSyncNotice />
@@ -11491,6 +11500,7 @@ function ChannelsPage({
               </div> : null}
               <ChannelStream
                 channel={channel}
+                threadedReplies={chatSettings.threadedReplies === true}
                 copy={copy}
                 onTeamProposal={(message, decision) => onTeamProposal?.(channel.id, message, decision)}
                 messages={streamWithGitEvents}
@@ -25370,6 +25380,18 @@ function SettingsPage({
               checked={normalizedChatSettings.squadSuggestions !== false}
               onCheckedChange={(checked) => updateChatSetting("squadSuggestions", checked)}
               aria-label={copy.squadSuggestions || "Squad suggestions"}
+            />
+          </Field>
+          <Field orientation="horizontal" className="items-center justify-between gap-6 py-4">
+            <FieldContent className="gap-1">
+              <FieldTitle>{copy.threadedReplies || "Reply in threads"}</FieldTitle>
+              <FieldDescription>{copy.threadedRepliesDetail || "In groups and channels, gather members' replies under the message they answer. Off shows every reply in order in the conversation."}</FieldDescription>
+            </FieldContent>
+            <Switch
+              checked={normalizedChatSettings.threadedReplies === true}
+              onCheckedChange={(checked) => updateChatSetting("threadedReplies", checked)}
+              aria-label={copy.threadedReplies || "Reply in threads"}
+              data-testid="threaded-replies-switch"
             />
           </Field>
         </div>

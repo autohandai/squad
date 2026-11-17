@@ -60,6 +60,8 @@ const storage = {
   channelMessages: {}, channelThreads: {}, channelReads: Object.fromEntries(initialChannels.map(channel => [channel.id, new Date().toISOString()])),
   agentReads: {}, messages: {}, automations: [], onboarding: { version: 1, status: "skipped", lastStep: "skipped" },
   theme: { mode: "light", lightTheme: "autohand-light", darkTheme: "autohand-dark" }, sidebarCollapsed: false,
+  // Threads are opt-in (Settings › Chat); this check proves the threaded view.
+  chatSettings: { threadedReplies: true },
 };
 try {
   for (const agent of agents) assert.equal((await bridge.api(`/api/members/${agent.id}/channel-access`, "PUT", { agent, profile: "" })).success, true);

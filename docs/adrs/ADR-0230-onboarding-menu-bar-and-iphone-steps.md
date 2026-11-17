@@ -156,3 +156,25 @@ identical names apart, and Disconnect, in both the pairing dialog and
 Settings › Computers. Verified by `bun run check:mobile` (new last-seen and
 relay assertions), `check:mobile:browser`, `check:setup-guide:browser` and
 `scripts/check-pair-phone-menu-browser.mjs`.
+
+## Amendment (2026-11-17): presence survives a restart, and the Local menu lists phones
+
+"Last seen" was kept only in memory to avoid a disk write per phone request.
+In practice the app restarts often (updates, reinstalls), and every restart
+reset both of the owner's paired iPhones to "Not seen since Squad started"
+while his phone was connected (`/api/mobile/status` after a reinstall:
+two devices, no `lastSeenAt`, both routes `connected: true`). He also could
+not see his phone in the sidebar's Local menu at all, only Pair iPhone….
+
+- `server/mobile/service.mjs` now writes `mobile-presence.json` beside the
+  device store, at most once a minute per phone or when the route changes,
+  and reads it back at start for devices still paired. The trade-off we kept:
+  up to a minute of staleness on disk, never a write per request.
+  `scripts/check-mobile.mjs` reopens the service and asserts the time and
+  route survive; that assertion fails on the previous code.
+- The Local menu lists paired phones under Phones (name and presence line),
+  read each time the menu opens. Disconnect stays in Settings › Computers.
+
+Still true: both phones are named "iPhone" because iOS gives apps only the
+model name. The Local menu does not show the pairing date that tells them
+apart; Settings › Computers does.

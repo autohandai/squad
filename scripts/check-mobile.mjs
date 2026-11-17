@@ -45,6 +45,12 @@ try {
   const viaRelay = sealPacket({ issuedAt: Date.now() / 1000, command: 'snapshot', parameters: {} }, key, { kind: 'device', peerID: deviceID, computerID: offer.computerID, requestID: randomUUID() }, 'request');
   await service.packet(viaRelay, 'relay');
   assert.equal(service.status().devices.find(device => device.id === deviceID).lastSeenVia, 'relay', 'relay requests are marked as reaching it from anywhere');
+  // A restart (update, reinstall) keeps when each phone was last seen.
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const reopened = await createMobileService({ directory, computerName: 'Fixture Mac', assertCurrent: async () => {}, execute: async () => ({}) });
+  const remembered = reopened.status().devices.find(device => device.id === deviceID);
+  assert.ok(remembered?.lastSeenAt && Date.parse(remembered.lastSeenAt) > Date.now() - 60000, 'last seen survives a restart');
+  assert.equal(remembered.lastSeenVia, 'relay', 'the route it was last seen on survives a restart');
   current = false;
   assert.equal((await request('device', deviceID, key, 'snapshot')).ok, false);
   current = true;

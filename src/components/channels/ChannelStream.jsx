@@ -288,10 +288,13 @@ export function ChannelStream({
   renderActions,
   noTextLabel = "No reply text. Work details shows what ran.",
   threadView = false,
+  threadedReplies = false,
 }) {
   const ordered = useMemo(() => sortChannelMessages(messages), [messages]);
   const replyIndex = useMemo(() => channelReplyIndex(ordered), [ordered]);
-  const threaded = !threadView && normalizeChannelReplyMode(channel?.replyMode) === "thread";
+  // Threads are a preference (Settings › Chat, off by default); when on, each
+  // channel's own reply mode still decides.
+  const threaded = !threadView && threadedReplies && normalizeChannelReplyMode(channel?.replyMode) === "thread";
   const visible = threaded ? ordered.filter(message => replyIndex.roots.get(message.id) === message.id) : ordered;
   const [openThreads, setOpenThreads] = useState({});
   const endRef = useRef(null);
@@ -412,7 +415,7 @@ export function ChannelStream({
                   onSetUpFlow={onSetUpReactionFlow ? () => onSetUpReactionFlow(message) : null}
                   setUpLabel={setUpFlowLabel}
                 />
-                {!threadView && message.role === "user" ? (
+                {threaded && message.role === "user" ? (
                   <RepliedFaces agents={repliers} renderMemberAvatar={renderMemberAvatar} label={repliedLabel} />
                 ) : null}
                 {threaded && group?.messages.length ? (

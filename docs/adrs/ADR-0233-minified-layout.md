@@ -137,12 +137,20 @@ Screenshots were inspected by eye at each iteration; see the change report.
     were not run here: they need a signed-in runtime.
   - The native macOS app and Squad for iPhone were not rebuilt or checked.
 
-## Amendment (2026-11-17): the header chip lines up
+## Amendment (2026-11-17): the header goes back to the left
 
-The centred chat header centred each of its two lines on its own: the
-avatar-and-name row, then the status line. With a 36px avatar beside a 20px
-name, the status line floated loose under the avatar instead of under the
-name (owner's screenshot, Iris · Code Reviewer). The chip is still centred as
-one block, but inside it the avatar sits left and the status line starts
-under the name, exactly as the Full header lays out (`-mt-4 ml-12`). Only the
-alignment changed; nothing moved in or out of the chip.
+The centred chat header was wrong, and the first fix for it was wrong too.
+The owner's screenshot (Iris · Code Reviewer) showed the status line loose
+under the avatar. I read that as an alignment bug inside the chip and kept
+the chip centred while lining its lines up. His next screenshot of that build
+said "it shouldn't be aligned like this": the complaint was the centring
+itself. Asked to choose between the Full header's left alignment, a centred
+stack and a one-line centred chip, he chose the left alignment "as before".
+
+The Minified header now keeps the Full header's layout exactly: portrait on
+the left edge, the status line under the name, actions on the right. Minified
+still hides workspace, model and context in it. The Minified browser check
+asserts the left inset and the status line under the name, replacing the
+centring assertion. What was given up: the calm, symmetrical look the centred
+chip was for. A wide window now has the identity on the far left and the
+actions on the far right, with empty space between them.

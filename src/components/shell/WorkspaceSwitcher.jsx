@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, ChevronDown, Plug, Smartphone } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { currentWorkspace } from "@/lib/workspaces";
+import { phonePresence } from "@/components/settings/PairedPhones";
 
 function StatusDot({ workspace }) {
   // A transparent placeholder rather than nothing, so every row's name
@@ -19,8 +20,17 @@ function StatusDot({ workspace }) {
  * relay workspace when one is configured. Purely presentational; the list
  * comes from `buildWorkspaceList` in src/lib/workspaces.js.
  */
-export function WorkspaceSwitcher({ workspaces = [], selectedId, onSelect, onConnectRelay, onPairPhone, copy = {}, className }) {
+export function WorkspaceSwitcher({ workspaces = [], selectedId, onSelect, onConnectRelay, onPairPhone, loadPhones, copy = {}, className }) {
   const [open, setOpen] = useState(false);
+  // The phones that reach this computer, read each time the menu opens so
+  // presence is current. A failed read leaves the last list in place.
+  const [phones, setPhones] = useState([]);
+  useEffect(() => {
+    if (!open || !loadPhones) return undefined;
+    let active = true;
+    loadPhones().then((devices) => { if (active && Array.isArray(devices)) setPhones(devices); }, () => {});
+    return () => { active = false; };
+  }, [open, loadPhones]);
   const current = currentWorkspace(workspaces, selectedId);
   if (!current) return null;
   const relayConfigured = workspaces.some((item) => item.kind === "relay");
@@ -74,6 +84,29 @@ export function WorkspaceSwitcher({ workspaces = [], selectedId, onSelect, onCon
             );
           })}
         </ul>
+        {phones.length ? (
+          <>
+            <div className="my-1 border-t border-border/65" />
+            <p className="px-2 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{copy.pairedPhones || "Phones"}</p>
+            <ul className="flex flex-col" aria-label={copy.pairedPhones || "Phones"} data-testid="switcher-phones">
+              {[...phones].sort((a, b) => String(b.pairedAt || "").localeCompare(String(a.pairedAt || ""))).map((device) => {
+                const presence = phonePresence(device);
+                return (
+                  <li key={device.id} className="flex items-start gap-2 px-2 py-1.5 text-sm">
+                    <span className="relative mt-0.5 inline-flex shrink-0">
+                      <Smartphone className="size-4 text-muted-foreground" aria-hidden="true" />
+                      {presence.active ? <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full border border-popover bg-emerald-500" aria-hidden="true" /> : null}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-foreground/85">{device.name || "iPhone"}</span>
+                      <span className="truncate text-xs text-muted-foreground">{presence.text}</span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        ) : null}
         {onPairPhone || onConnectRelay ? <div className="my-1 border-t border-border/65" /> : null}
         {/* Pairing a phone is a way to reach this computer, so it sits with
             the other connections, one click from anywhere in the app. */}

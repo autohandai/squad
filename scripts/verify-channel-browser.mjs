@@ -143,6 +143,8 @@ function injectedChannelHarness() {
       "autohandSquad.v1.channelMessages": JSON.stringify({}),
       "autohandSquad.v1.onboarding": JSON.stringify({ version: 1, status: "skipped", lastStep: "skipped" }),
       "autohandSquad.v1.sidebarCollapsed": "false",
+      // Threads are opt-in (Settings › Chat); this check proves the threaded view.
+      "autohandSquad.v1.chatSettings": JSON.stringify({ threadedReplies: true }),
     };
     for (const [key, value] of Object.entries(storage)) {
       window.localStorage.setItem(key, value);

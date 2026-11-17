@@ -579,33 +579,12 @@ html[data-layout="minified"] .app-main .chat-user-bubble a {
   color: inherit;
   text-decoration: underline;
 }
-/* The conversation header is one centred chip: who you are talking to and
-   whether they are here. Workspace, model and context stay on the profile
-   popover and the engine chip; on a phone the header keeps its own contract
-   (ADR-0161). */
+/* The conversation header keeps the Full layout's alignment: the member on
+   the left, actions on the right (owner's choice, 2026-11-17; a centred chip
+   was tried and rejected). Minified only drops workspace, model and context,
+   which stay on the profile popover and the engine chip; on a phone the
+   header keeps its own contract (ADR-0161). */
 @media (min-width: 48rem) {
-  html[data-layout="minified"] .app-main .chat-header {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  }
-  /* The block is centred; inside it the avatar sits left and the status line
-     starts under the name, as in the standard header. Centring each line on
-     its own left the status floating loose under the avatar. */
-  html[data-layout="minified"] .app-main .chat-header > .chat-header-identity {
-    grid-column: 2;
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    max-width: 28rem;
-  }
-  html[data-layout="minified"] .app-main .chat-header > .chat-header-actions {
-    grid-column: 3;
-    justify-self: end;
-  }
-  html[data-layout="minified"] .app-main .chat-header .chat-header-meta {
-    justify-content: flex-start;
-  }
   html[data-layout="minified"] .app-main .chat-header .chat-header-detail {
     display: none;
   }

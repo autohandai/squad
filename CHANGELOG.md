@@ -12,9 +12,12 @@ list to the section for that version.
 
 ### Added
 
+- Settings › Chat › **Reply in threads**, off by default. Off, members' replies in groups and channels appear in order in the conversation; on, they gather under the message they answer, as before.
+- The Local menu at the top of the sidebar now lists your paired phones, each with whether it is reaching this computer right now.
+
 - Every Squad member is now one of ten New Zealand birds, led by the kiwi. In the Grut skin each bird has its own simple face: one soft shape and two eye marks, with a hint of the bird (the kiwi's long beak, the tūī's white tuft, the kea's orange flash). New members get a bird nobody on the team has yet, unless their role already has one.
 - See which phones are paired and whether each one is reaching your computer right now, on Wi-Fi or from anywhere, in the pairing window and in Settings › Computers. Disconnect an old one right there.
-- Choose a layout: **Full** (everything in the sidebar, as before) or **Minified**, a calm, chat-first Squad. Minified puts your pinned teammates up top as large portraits, then one list of conversations with previews, and shows replies as bubbles with a slim centred header. Squad, Memory, new channels and new members are under More (…) and ⌘K. It works with every skin, in light and dark. Pick it during onboarding or any time in Settings › Appearance.
+- Choose a layout: **Full** (everything in the sidebar, as before) or **Minified**, a calm, chat-first Squad. Minified puts your pinned teammates up top as large portraits, then one list of conversations with previews, and shows replies as bubbles. Squad, Memory, new channels and new members are under More (…) and ⌘K. It works with every skin, in light and dark. Pick it during onboarding or any time in Settings › Appearance.
 - Onboarding has a new step, Choose your layout, right after work folders, with a small preview of each layout. Your choice is saved straight away.
 - Pair your iPhone from anywhere: the Local menu at the top of the sidebar now has Pair iPhone…, which shows the QR code and six-digit approval in a window.
 - Onboarding now asks how Squad shows in your menu bar on the Mac: pick One Squad icon or Agent avatars while a small preview shows the menu bar and Quick Chat opening from it. Your choice is saved straight to Settings › Quick Chat.
@@ -38,7 +41,9 @@ list to the section for that version.
 
 ### Fixed
 
-- In the Minified layout the chat header lines up again: the status line sits under the member's name instead of floating under the portrait.
+- Squad remembers when each paired phone was last seen across restarts and updates, instead of showing "Not seen since Squad started" while your phone is connected.
+
+- In the Minified layout the chat header is back on the left, as it was before: the member's portrait at the left edge, the status line under the name, and the actions on the right.
 - Members saved without a picture, such as ones made before the bird cast, now show their bird instead of a letter.
 
 - A brief outage of the Autohand account service no longer throws you out of a team Squad. Squad keeps your team open for up to two minutes while it can't check your access, and if it does have to stop, it tries again by itself instead of waiting for Retry.

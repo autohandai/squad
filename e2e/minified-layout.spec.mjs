@@ -97,7 +97,7 @@ for (const [skin, theme] of [['default', 'light'], ['default', 'dark'], ['paper'
     await page.keyboard.press('Escape');
     if (phone) await page.getByRole('dialog', { name: 'Navigation', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
 
-    // The conversation: bubbles in every skin, a centred header on a wide window.
+    // The conversation: bubbles in every skin; the header keeps the Full layout's left alignment.
     const answer = page.locator('main .chat-agent-answer').filter({ hasText: 'The checklist is ready.' });
     await expect(answer).toBeVisible();
     const bubble = await answer.evaluate(element => ({ fill: getComputedStyle(element).backgroundColor, page: getComputedStyle(document.body).backgroundColor }));
@@ -113,11 +113,15 @@ for (const [skin, theme] of [['default', 'light'], ['default', 'dark'], ['paper'
     expect(contrast).toBeGreaterThanOrEqual(4.5);
     const header = page.locator('main .chat-header');
     if (!phone) {
-      const centre = await header.evaluate(element => {
-        const identity = element.querySelector('.chat-header-identity').getBoundingClientRect(), own = element.getBoundingClientRect();
-        return Math.abs((identity.left + identity.width / 2) - (own.left + own.width / 2));
+      // Member on the left edge, status line starting under the name (owner, 2026-11-17).
+      const place = await header.evaluate(element => {
+        const own = element.getBoundingClientRect(), avatar = element.querySelector('.chat-header-identity button > :first-child').getBoundingClientRect();
+        const name = element.querySelector('.chat-header-identity .truncate').getBoundingClientRect(), meta = element.querySelector('.chat-header-meta').getBoundingClientRect();
+        return { inset: avatar.left - own.left, underName: Math.abs(meta.left - name.left), below: meta.top - name.top };
       });
-      expect(centre).toBeLessThan(4);
+      expect(place.inset).toBeLessThan(40);
+      expect(place.underName).toBeLessThan(2);
+      expect(place.below).toBeGreaterThan(0);
       await expect(header.locator('.chat-header-detail')).toBeHidden();
       await expect(header.getByTestId('chat-engine-label')).toBeVisible();
     }
