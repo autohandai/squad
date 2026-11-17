@@ -8,6 +8,7 @@ import { initialAgents } from '../src/data.js';
 import { SKINS } from '../src/lib/skins.js';
 import { BLOB_SHAPES, BLOB_EXPRESSIONS, blobSvg } from '../src/lib/blob-avatar.js';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
+import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 
 const repro = process.argv.find(value => value.startsWith('--repro='))?.slice(8);
 const desktop = process.argv.includes('--desktop');
@@ -27,9 +28,11 @@ try {
     { id: 'appearance-question', role: 'user', body: 'Can you review the release checklist before we ship?', status: 'complete', time: '9:41 AM' },
     { id: 'appearance-answer', role: 'agent', body: 'The release checklist is ready.\n\n## Ready for review\n\n- The onboarding flow keeps your workspace and member details.\n- Quick Chat follows your appearance settings.\n- The team can resume queued work after restarting.\n\nI recommend one final look at the download page before publishing.', status: 'complete', time: '9:42 AM' },
   ];
-  const storage = { agents: members, removedAgents: initialAgents.map(agent => agent.id), tasks: [], channels: [], messages: { [member.id]: messages }, automations: [],
-    onboarding: { version: 1, status: 'skipped', lastStep: 'skipped' }, skin: 'grut', theme: { mode: 'dark', lightTheme: 'autohand-light', darkTheme: 'autohand-dark' } };
-  await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `if(!localStorage.getItem('appearanceProof.seeded')){localStorage.clear();for(const [key,value]of Object.entries(${JSON.stringify(storage)}))localStorage.setItem('autohandSquad.v1.'+key,key==='skin'?value:JSON.stringify(value));localStorage.setItem('appearanceProof.seeded','true');}` });
+  // Members and conversations come from the owner's registry and browser-state
+  // record; skin and theme are device preferences, kept unprefixed (ADR-0193).
+  await seedOwnedBrowserFixture(bridge, browser, { members, messages: { [member.id]: messages } });
+  const device = { skin: 'grut', theme: { mode: 'dark', lightTheme: 'autohand-light', darkTheme: 'autohand-dark' } };
+  await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `if(!localStorage.getItem('appearanceProof.seeded')){for(const [key,value]of Object.entries(${JSON.stringify(device)}))localStorage.setItem('autohandSquad.v1.'+key,key==='skin'?value:JSON.stringify(value));localStorage.setItem('appearanceProof.seeded','true');}` });
   await browser.navigate(bridge.origin + '/settings/appearance');
   await until(() => browser.evaluate(`!!document.querySelector('#skin-title') && document.documentElement.dataset.skin==='grut'`), 'Appearance ready', 30000);
   if (repro !== 'presets') {
