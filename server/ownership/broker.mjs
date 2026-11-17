@@ -579,7 +579,7 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
       if ((login || logout) && !sameContext(req, url)) throw fail('The sign-in context changed. Refresh before continuing.');
       if (login) {
         if (url.pathname === '/api/harnesses/login' && req.method === 'POST') {
-          const input = z.object({ id: z.literal('autohand') }).strict().parse(await readBody(req, 4096));
+          const input = z.object({ id: z.literal('autohand'), provider: z.literal('apple').optional() }).strict().parse(await readBody(req, 4096));
           body = Buffer.from(JSON.stringify(input));
         } else if (url.searchParams.get('id') !== 'autohand') throw fail('Choose Autohand sign-in.', 400, 'invalid_login');
       }

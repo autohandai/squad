@@ -7,7 +7,7 @@ const bridge = await startBridge({ signedIn: false, prepare: async directory => 
   const fixtureBin = join(directory, 'bin');
   await mkdir(fixtureBin);
   const login = join(fixtureBin, 'squad');
-  await writeFile(login, `#!${process.execPath}\nimport fs from 'node:fs';\nconst counter = ${JSON.stringify(join(directory, 'count'))};\nconst n = Number(fs.existsSync(counter) ? fs.readFileSync(counter, 'utf8') : 0) + 1;\nfs.writeFileSync(counter, String(n));\nconsole.log('Open https://autohand.ai/signin?user_code=TEST-000' + n);\nconsole.log('Enter code TEST-000' + n);\nsetInterval(() => {}, 1000);\n`);
+  await writeFile(login, `#!${process.execPath}\nimport fs from 'node:fs';\nconst counter = ${JSON.stringify(join(directory, 'count'))};\nconst n = Number(fs.existsSync(counter) ? fs.readFileSync(counter, 'utf8') : 0) + 1;\nfs.writeFileSync(counter, String(n));\nconst hint = process.env.AUTOHAND_SQUAD_LOGIN_PROVIDER && !fs.existsSync(${JSON.stringify(join(directory, 'old-cli'))}) ? '&provider=' + process.env.AUTOHAND_SQUAD_LOGIN_PROVIDER : '';\nconsole.log('Open https://autohand.ai/signin?user_code=TEST-000' + n + hint);\nconsole.log('Enter code TEST-000' + n);\nsetInterval(() => {}, 1000);\n`);
   await chmod(login, 0o755);
   const opener = process.platform === 'darwin' ? 'open' : 'xdg-open';
   await writeFile(join(fixtureBin, opener), `#!/bin/sh\n[ -e '${join(directory, 'fail-open')}' ] && exit 7\nprintf '%s\\n' "$*" >> '${join(directory, 'opened')}'\n`);
@@ -59,6 +59,26 @@ try {
   await browser.evaluate("window.dispatchEvent(new Event('squad:sign-in-reset')); window.__releaseLogin();");
   await freshGate();
   assert.notEqual((await status()).state, 'running', 'reset runs after a delayed start, so no orphaned login survives');
+  // Continue with Apple (ADR-0245): the hint reaches the CLI, the page says
+  // what to do in the browser, and an older CLI that ignores the hint still
+  // gets it from the bridge's opener.
+  await freshGate();
+  await browser.click('Continue with Apple');
+  await until(async () => { const flow = await status(); return flow.provider === 'apple' && flow.url.includes('provider=apple'); }, 'Apple hint reaches the CLI');
+  await until(() => browser.evaluate(`document.body.textContent.includes('Continue with Apple on autohand.ai')`), 'Apple waiting copy');
+  await browser.click('Cancel sign-in');
+  await until(async () => (await status()).state === 'cancelled', 'cancel Apple sign-in');
+  await until(() => browser.evaluate(`document.body.textContent.includes('Sign-in was cancelled')`), 'cancelled state is stated');
+  await writeFile(join(bridge.directory, 'old-cli'), 'fixture');
+  await freshGate();
+  await browser.click('Continue with Apple');
+  await until(async () => { const flow = await status(); return flow.provider === 'apple' && flow.url && !flow.url.includes('provider='); }, 'older CLI ignores the hint');
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid="sign-in-url"]')`), 'link shown for the older CLI');
+  await browser.click('Open the sign-in page');
+  await until(async () => /user_code=TEST-\d+&provider=apple/.test(await readFile(join(bridge.directory, 'opened'), 'utf8')), 'bridge opener adds the Apple hint');
+  await rm(join(bridge.directory, 'old-cli'));
+  await browser.click('Cancel sign-in');
+  await until(async () => (await status()).state === 'cancelled', 'cancel older-CLI Apple sign-in');
   await bridge.restart();
   await browser.navigate(bridge.origin);
   await until(() => browser.evaluate(`!!document.querySelector('[data-testid="sign-in-gate"]')`), 'fresh screen after bridge restart');
@@ -66,5 +86,5 @@ try {
   assert.equal((await bridge.api('/api/harnesses/login/open?id=autohand', 'POST')).status, 409);
   assert.deepEqual(browser.errors, []);
   await browser.screenshot('.codex-artifacts/sign-in-recovery.png');
-  console.log('PASS device URL opener, copy URL/code, cancel, start over, webview relaunch, bridge restart; no browser exceptions');
+  console.log('PASS Continue with Apple hint through the CLI and the bridge opener, cancelled state; device URL opener, copy URL/code, cancel, start over, webview relaunch, bridge restart; no browser exceptions');
 } finally { await browser?.close(); await bridge.close(); }

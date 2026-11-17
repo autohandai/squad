@@ -58,15 +58,30 @@
       /* The theme chosen in Settings wins over the system's (set below). */
       #boot[data-mode="light"] { background: #ffffff; color: #171717; }
       #boot[data-mode="dark"] { background: #0a0a0a; color: #fafafa; }
-      #boot-mark { border-radius: 14px; animation: boot-breathe 2.4s ease-in-out infinite; }
+      #boot-mark { border-radius: 14px; }
       #boot-name { margin: 2px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
       #boot-status { margin: 0; font-size: 12px; opacity: 0.62; }
-      @keyframes boot-breathe {
-        0%, 100% { transform: scale(1); opacity: 0.92; }
-        50% { transform: scale(1.04); opacity: 1; }
+      /* Three birds of the squad on a hairline perch (ADR-0245): they land,
+         then a hop passes along them while the bundle loads. The mark stays
+         still. vite.config.js draws the faces in at build time. */
+      #boot-flock { position: relative; display: flex; gap: 10px; margin: 14px 0 6px; padding-bottom: 5px; }
+      #boot-flock::after { content: ""; position: absolute; left: -6px; right: -6px; bottom: 4px; height: 1px; background: currentColor; opacity: 0.16; }
+      #boot-flock > span { display: block; width: 26px; height: 26px; transform-origin: 50% 100%; animation: boot-land 520ms cubic-bezier(0.3, 1.35, 0.5, 1) both, boot-hop 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+      #boot-flock > span:nth-child(2) { animation-delay: 80ms, 650ms; }
+      #boot-flock > span:nth-child(3) { animation-delay: 160ms, 780ms; }
+      #boot-flock > span:first-child { animation-delay: 0ms, 520ms; }
+      #boot-flock svg { display: block; width: 100%; height: 100%; }
+      @keyframes boot-land {
+        0% { opacity: 0; transform: translateY(-14px); }
+        100% { opacity: 1; transform: none; }
+      }
+      @keyframes boot-hop {
+        0%, 36%, 100% { transform: none; }
+        12% { transform: translateY(-7px) scale(0.97, 1.05); }
+        24% { transform: translateY(0) scale(1.06, 0.93); }
       }
       @media (prefers-reduced-motion: reduce) {
-        #boot-mark { animation: none; }
+        #boot-flock > span { animation: none; }
       }
     </style>
   </head>
@@ -77,6 +92,7 @@
     <div id="boot" data-boot>
       <img id="boot-mark" src="/brand/autohand-squad/autohand-squad-mark-dark.webp" alt="" width="56" height="56" decoding="async" />
       <p id="boot-name">Autohand Squad</p>
+      <div id="boot-flock" aria-hidden="true"><!-- squad:boot-flock --></div>
       <p id="boot-status">Waking the squad…</p>
     </div>
     <div id="root"></div>
@@ -87,11 +103,19 @@
         var mode = JSON.parse(localStorage.getItem("autohandSquad.v1.theme") || "{}").mode;
         if (mode === "light" || mode === "dark") document.getElementById("boot").dataset.mode = mode;
       } catch (error) {}
+      // The dark mark was painted on the light splash too, nearly invisible.
+      try {
+        var bootMode = document.getElementById("boot").dataset.mode;
+        if (bootMode ? bootMode === "light" : matchMedia("(prefers-color-scheme: light)").matches) {
+          document.getElementById("boot-mark").src = "/brand/autohand-squad/autohand-squad-mark-light.webp";
+        }
+      } catch (error) {}
       // The menu-bar popover attaches to an existing Squad runtime. It does
       // not launch a second squad or repeat the main-window startup surface.
       if (location.pathname === "/quick-chat") {
         document.getElementById("boot-mark").remove();
         document.getElementById("boot-name").remove();
+        document.getElementById("boot-flock").remove();
         document.getElementById("boot-status").textContent = "Connecting to Squad…";
         document.getElementById("boot").dataset.compact = "true";
       }

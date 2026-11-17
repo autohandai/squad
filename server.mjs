@@ -11,7 +11,7 @@ import { conversationReplay } from "./server/chats/replay.mjs";
 import { createConversationChanges } from "./server/chats/admission.mjs";
 import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
-import { openSignInUrl } from "./server/harness/open-login.mjs";
+import { openSignInUrl, signInUrlWithProvider } from "./server/harness/open-login.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { profileWorkspace } from "./server/workspace-profile.mjs";
 import { updateDaemonAdmission } from "./server/mac-update.mjs";
@@ -8987,6 +8987,7 @@ async function handleApi(req, res, url) {
       let args;
       let env = {};
       let opensBrowser;
+      let provider = "";
       if (id === "autohand") {
         // `autohand login` needs a terminal (it asks for the code). The Squad
         // CLI (`squad login`, bundled with the desktop app) or the launcher's
@@ -9003,13 +9004,16 @@ async function handleApi(req, res, url) {
         if (!executable) {
           throw new Error("Neither the Squad CLI nor the launcher binary was found, so browser sign-in cannot start. Run `autohand login` in a terminal instead.");
         }
-        env = { AUTOHAND_SQUAD_HOME: squadStateDir };
+        // "Continue with Apple" (ADR-0245): the Squad CLI appends the hint
+        // to the URL it opens; an older CLI ignores the variable.
+        provider = payload.provider === "apple" ? "apple" : "";
+        env = { AUTOHAND_SQUAD_HOME: squadStateDir, AUTOHAND_SQUAD_LOGIN_PROVIDER: provider };
         opensBrowser = true;
       } else {
         const readiness = await detectHarness(id, { refresh: false, context: harnessContextFor(id) });
         executable = readiness.executablePath || "";
       }
-      const flow = harnessLogins.start(id, { executable, args, env, cwd: rootDir, opensBrowser });
+      const flow = harnessLogins.start(id, { executable, args, env, cwd: rootDir, opensBrowser, provider });
       logEvent(SEVERITY.INFO, `harness sign-in started: ${id}`, { "event.name": "harness.login.started", "autohand.harness": id });
       json(res, 200, { success: true, data: flow });
     } catch (error) {
@@ -9045,7 +9049,7 @@ async function handleApi(req, res, url) {
       return true;
     }
     try {
-      await openSignInUrl(flow.url);
+      await openSignInUrl(signInUrlWithProvider(flow.url, flow.provider));
       json(res, 200, { success: true, data: { opened: true } });
     } catch (error) {
       json(res, 502, { success: false, error: error.message });

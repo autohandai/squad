@@ -1,5 +1,21 @@
 import { spawn } from 'node:child_process';
 
+// Providers Squad can ask the Autohand sign-in page to go straight to. The
+// page decides what a hint does; one it does not know is ignored and the
+// person sees the ordinary sign-in page, so a hint can never strand sign-in.
+export const SIGN_IN_PROVIDERS = new Set(['apple']);
+
+/** The device-login URL with a provider hint, if the provider is known. */
+export function signInUrlWithProvider(value, provider = '') {
+  if (!SIGN_IN_PROVIDERS.has(provider)) return value;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.searchParams.has('provider')) return value;
+    url.searchParams.set('provider', provider);
+    return url.href;
+  } catch { return value; }
+}
+
 // The caller supplies the URL held by a running login process, never a URL
 // from the browser request body. Keep the opener outside the webview.
 export async function openSignInUrl(value, { platform = process.platform, spawnImpl = spawn } = {}) {

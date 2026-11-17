@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { openSignInUrl } from '../server/harness/open-login.mjs';
+import { openSignInUrl, signInUrlWithProvider } from '../server/harness/open-login.mjs';
 const url = 'https://autohand.ai/signin?user_code=TEST-0001&client=squad';
 for (const [platform, expected] of [['darwin', 'open'], ['linux', 'xdg-open'], ['win32', 'explorer.exe']]) {
   let unreferenced = false;
@@ -21,4 +21,12 @@ for (const event of ['error', 'close']) {
     return child;
   } }), /fixture missing opener|Copy the link instead/);
 }
+const device = 'https://autohand.ai/cli-auth?code=ABC-123&source=squad';
+assert.equal(signInUrlWithProvider(device, 'apple'), `${device}&provider=apple`);
+assert.equal(signInUrlWithProvider(`${device}&provider=apple`, 'apple'), `${device}&provider=apple`, 'a hint the CLI already added is not repeated');
+assert.equal(signInUrlWithProvider(device, 'evil'), device, 'unknown providers are dropped');
+assert.equal(signInUrlWithProvider(device, ''), device);
+assert.equal(signInUrlWithProvider('http://autohand.ai/cli-auth?code=A', 'apple'), 'http://autohand.ai/cli-auth?code=A', 'no hint on a non-https page');
+assert.equal(signInUrlWithProvider('not a url', 'apple'), 'not a url');
+console.log('PASS Apple provider hint only for known providers on https sign-in pages');
 console.log('PASS fixed platform openers, no shell, Explorer delegation, invalid URLs and launch failures');

@@ -12,6 +12,9 @@ list to the section for that version.
 
 ### Added
 
+- **Continue with Apple** on the sign-in screen. Squad asks autohand.ai to go straight to Sign in with Apple; until the website honours that, the autohand.ai page still gets you there: Sign In to Continue, then Continue with Apple.
+- Install and restart now shows an **Updating Squad** screen while Squad gets ready, installs and reopens, with a few of the squad's birds waiting on a perch. It says what the install stops and what it keeps, and if the install doesn't finish it offers Try again, Back to Squad and Download the latest version.
+
 - Settings › Appearance › Avatars: draw every member's bird Flat (the default), in 3D as a soft glossy toy, or in matte Clay. Same bird and same face in every skin and theme; only the material changes.
 
 - Sixteen more birds in the same drawn style: from Brazil the tucano, arara-azul, bem-te-vi, sabiá, beija-flor, quero-quero, harpia and joão-de-barro; from the United States the bald eagle, cardinal, blue jay, robin, roadrunner, puffin, flamingo and chickadee. Pick them in Edit Profile, where birds are grouped by country. New Zealand birds stay the default.
@@ -32,6 +35,10 @@ list to the section for that version.
 - Your phone now works at home and away without pairing again. Computers settings lets Same Wi-Fi and From anywhere (Autohand’s relay) run at the same time, alongside your own tunnel. A phone paired on one of them learns the others from your computer and switches by itself: the same network when it can, the relay everywhere else.
 ### Changed
 
+- A new sign-in screen: the Squad mark and name, one line, a perch of the squad's birds that land, glance and hop (and pass a hop along while your browser is open), Continue with Autohand account or Continue with Apple, and the terms at the foot. The terminal hint is gone: signing in to Squad also signs in the Autohand CLI it comes with.
+- Settings › Updates shows the download on the perch: the kiwi walks along it to the other birds as the real percentage climbs, and the page says your squad keeps working while it downloads.
+- The start-up screen shows three birds on a perch while Squad loads; the mark no longer pulses.
+
 - Birds are now the only built-in avatars. The role portraits, riso prints and skin portraits are gone; a member that had one shows its bird. Pictures you uploaded stay. The member card no longer frames the face in lilac.
 
 - Team Squads are now turned on per person by Autohand. Until they are on for your account, Squad opens your Personal Squad, Settings › Squads lists only that, and the account menu has no Switch Squad…. If you were in a team Squad when they are turned off, Squad moves you to your Personal Squad; your team's data stays where it is and your team choice comes back when they are on again. When they are turned on, your teams appear in Settings › Squads without restarting.
@@ -47,6 +54,8 @@ list to the section for that version.
 - Phone connections keep their computer identity and delivery receipts after a restart. Disconnecting a phone locally also removes its relay access when the computer reconnects.
 
 ### Fixed
+
+- The start-up and sign-in screens follow your light theme: the light start-up screen no longer shows the dark mark, and sign-in no longer opens dark right after a light start-up screen.
 
 - A member's bird no longer shows as an empty grey square in the member profile sidebar, and faces fill their circle everywhere else.
 

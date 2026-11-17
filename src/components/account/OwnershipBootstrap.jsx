@@ -146,7 +146,7 @@ export function OwnershipBootstrap({ children }) {
   if (context?.state === 'ready') return <SquadOwnershipContext.Provider value={context}>{context.canWrite ? children : <OwnedSquadView context={context} />}</SquadOwnershipContext.Provider>;
   if (context?.state === 'expired_native') return <main className="flex min-h-[100svh] items-center justify-center bg-background p-6 text-sm text-muted-foreground">The selected Squad changed. Reopen Quick Chat from the menu bar.</main>;
   if (context?.state === 'signed_out') return <SignInGate account={{ signedIn: false }}
-    startLogin={() => request('/api/harnesses/login', current.current, { method: 'POST', body: JSON.stringify({ id: 'autohand' }) })}
+    startLogin={(options) => request('/api/harnesses/login', current.current, { method: 'POST', body: JSON.stringify({ id: 'autohand', ...(options?.provider ? { provider: options.provider } : {}) }) })}
     loginStatus={() => request('/api/harnesses/login?id=autohand', current.current)}
     openLoginPage={() => request('/api/harnesses/login/open?id=autohand', current.current, { method: 'POST' })}
     cancelLogin={() => request('/api/harnesses/login?id=autohand', current.current, { method: 'DELETE' })}

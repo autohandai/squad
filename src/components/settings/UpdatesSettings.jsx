@@ -2,6 +2,7 @@ import { ArrowDownToLine, RefreshCw, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { UpdateProgress } from "@/components/account/UpdateProgress";
+import { SquadFlock } from "@/components/brand/SquadFlock";
 import { UpdatePreferences } from "./UpdatePreferences";
 import { checkedTime, updateView, updateInstallAction } from "@/lib/update-status";
 export function UpdatesSettings({
@@ -33,6 +34,7 @@ export function UpdatesSettings({
       data-testid="software-update"
     >
       <div className="flex flex-col gap-3">
+        {view.busy ? <UpdatePerch view={view} /> : null}
         <h3
           className="text-xl font-semibold tracking-tight"
           role="status"
@@ -43,6 +45,8 @@ export function UpdatesSettings({
         <p className="text-sm text-muted-foreground">
           {view.phase === "ready"
             ? "The download is verified. Installing stops any running work first, and paused goals can be resumed afterwards."
+            : ["downloading", "verifying"].includes(view.phase)
+              ? "Your squad keeps working while this downloads. Installing waits until you choose it."
             : view.phase === "complete"
               ? "Your members, conversations, and settings are here."
               : view.phase === "installer-open"
@@ -57,7 +61,7 @@ export function UpdatesSettings({
                         ? "Start the Squad service, then try again."
                         : "New releases appear here automatically when checks are enabled."}
         </p>
-        <UpdateProgress operation={visibleOperation} />
+        <UpdateProgress operation={visibleOperation} bar={false} />
         {view.failure ? (
           <p role="alert" className="text-sm text-destructive" data-selectable>
             {view.failure}
@@ -144,5 +148,23 @@ export function UpdatesSettings({
       ) : null}
       {api ? <UpdatePreferences api={api} onChange={onPreferencesChange} /> : null}
     </section>
+  );
+}
+
+// The perch while the updater works (ADR-0245). With a measured download it is
+// the progress bar itself, so it carries the progressbar role; any other busy
+// step only shows the waiting hop, never a bar that measures nothing.
+function UpdatePerch({ view }) {
+  const measured = view.phase === "downloading" && view.percent !== null;
+  return (
+    <div
+      className="py-1"
+      data-testid="update-perch"
+      {...(measured
+        ? { role: "progressbar", "aria-label": "Update download", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": view.percent, "aria-valuetext": `${view.percent}%` }
+        : {})}
+    >
+      <SquadFlock mood={measured ? "progress" : "waiting"} progress={view.percent} count={4} size={28} gap={10} track={measured ? 320 : 0} className="mx-0 max-w-full" />
+    </div>
   );
 }

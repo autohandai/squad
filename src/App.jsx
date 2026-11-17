@@ -402,6 +402,7 @@ import { FollowUpQueue } from "@/components/chat/FollowUpQueue";
 import { ContextGaugeMeta, ContextWarningLine } from "@/components/chat/ContextGauge";
 import { taskProgressFromMessage } from "@/lib/task-progress";
 import { SidebarUpdateNotice } from "@/components/account/SidebarUpdateNotice";
+import { UpdateScreen } from "@/components/account/UpdateScreen";
 import { UpdateConsentNotice } from "@/components/account/UpdateConsentNotice";
 import { SquadAnnouncements } from "@/components/account/SquadAnnouncements";
 import { UpdatesSettings } from "@/components/settings/UpdatesSettings";
@@ -4696,11 +4697,16 @@ function App() {
     await updateAction("upgrade");
   }
   const cancelUpdate = () => updateAction("cancel");
+  // Install and restart owns the window until Squad closes (ADR-0245).
+  const [updateScreen, setUpdateScreen] = useState({ open: false, pending: false });
   async function installUpdate(options = {}) {
     const contextGeneration = currentOwnership()?.generation || '';
     const invoke = window.__TAURI_INTERNALS__?.invoke;
     const native = /^AutohandSquadDesktop\//.test(navigator.userAgent) && typeof invoke === "function";
-    const data = await updateAction("install", { mode: options.mode === "installer" ? "installer" : native ? "restart" : "installer" });
+    const restart = options.mode !== "installer" && native;
+    if (restart) setUpdateScreen({ open: true, pending: true });
+    const data = await updateAction("install", { mode: restart ? "restart" : "installer" });
+    if (restart) setUpdateScreen({ open: true, pending: false });
     if (data?.phase === "installing" && data.installMode === "restart") {
       try { await invoke("squad_quit_for_update", { contextGeneration }); }
       catch (error) { setUpdatesError(typeof error === "string" ? error : error?.message || "Squad could not close. Keep it open and try again when the update stops."); }
@@ -9919,7 +9925,7 @@ function App() {
       <SignInGate
         account={runtime.account}
         bridgeUnavailable={runtime.bridgeUnavailable === true}
-        startLogin={() => { recordSignInStarted(); return api("/api/harnesses/login", { method: "POST", body: JSON.stringify({ id: "autohand" }) }); }}
+        startLogin={(options) => { recordSignInStarted(); return api("/api/harnesses/login", { method: "POST", body: JSON.stringify({ id: "autohand", ...(options?.provider ? { provider: options.provider } : {}) }) }); }}
         loginStatus={() => api("/api/harnesses/login?id=autohand")}
         openLoginPage={() => api("/api/harnesses/login/open?id=autohand", { method: "POST" })}
         cancelLogin={() => api("/api/harnesses/login?id=autohand", { method: "DELETE" })}
@@ -10154,6 +10160,7 @@ function App() {
           <main className="app-main min-w-0">
             <SquadAnnouncements key={runtime?.account?.email || "signed-out"} api={api} enabled={!isOnboarding && runtime?.account?.signedIn === true} busy={agents.some(agent => entryFor(agent).state === "working")} showErrors={routePath === "/settings/updates"} />
             <UpdateConsentNotice updates={updates} operation={updatesUpgradeResult} onReview={() => openSettings("updates")} hidden={isOnboarding || routePath === "/settings/updates"} />
+            {updateScreen.open ? <UpdateScreen updates={updates} operation={updatesUpgradeResult} error={updatesError} requested={updateScreen.pending} onRetry={() => void installUpdate()} onOpenReleases={openReleasePage} onClose={() => { setUpdateScreen({ open: false, pending: false }); setUpdatesError(""); }} /> : null}
             {bridgeLine ? <div role="status" aria-live="polite" data-testid="bridge-status" className="px-6 py-2 text-xs text-muted-foreground">{bridgeLine}</div> : null}
             {exportNotice ? <div role={exportNotice.error ? "alert" : "status"} className={`flex items-start gap-3 px-6 py-2 text-sm ${exportNotice.error ? "text-destructive" : "text-muted-foreground"}`} data-testid="text-export-status">
               <span className="min-w-0 flex-1">{exportNotice.message}</span>

@@ -132,6 +132,10 @@ pub async fn run_browser_device_login(config: &SquadConfig, source: &str) -> Res
         &user_code,
         source,
     )?;
+    let authorization_url = with_provider_hint(
+        authorization_url,
+        std::env::var("AUTOHAND_SQUAD_LOGIN_PROVIDER").ok().as_deref(),
+    );
     let timeout = Duration::from_secs(init_body.expires_in.unwrap_or(DEFAULT_AUTH_TIMEOUT_SECS));
     let poll_interval = Duration::from_secs(
         init_body
@@ -253,6 +257,20 @@ fn authorization_url(
     ))
 }
 
+/// The bridge asks for a sign-in provider (Squad's "Continue with Apple")
+/// through `AUTOHAND_SQUAD_LOGIN_PROVIDER`. Only known providers pass; the
+/// web page decides what the hint does and ignores it when it does not know
+/// it, so an unsupported hint costs nothing but the plain sign-in page.
+fn with_provider_hint(url: String, provider: Option<&str>) -> String {
+    match provider.map(str::trim) {
+        Some(provider @ "apple") if !url.contains("provider=") => {
+            let separator = if url.contains('?') { '&' } else { '?' };
+            format!("{url}{separator}provider={provider}")
+        }
+        _ => url,
+    }
+}
+
 fn required_field(value: Option<String>, label: &str) -> Result<String> {
     let Some(value) = value.and_then(non_empty) else {
         bail!("browser login response missing {label}");
@@ -337,6 +355,21 @@ mod tests {
             )
             .unwrap(),
             "https://autohand.ai/cli-auth?code=ABC-123&source=squad"
+        );
+    }
+
+    #[test]
+    fn adds_only_known_provider_hints() {
+        let base = "https://autohand.ai/cli-auth?code=ABC-123&source=squad".to_string();
+        assert_eq!(
+            with_provider_hint(base.clone(), Some("apple")),
+            "https://autohand.ai/cli-auth?code=ABC-123&source=squad&provider=apple"
+        );
+        assert_eq!(with_provider_hint(base.clone(), Some("evil&x=1")), base);
+        assert_eq!(with_provider_hint(base.clone(), None), base);
+        assert_eq!(
+            with_provider_hint("https://autohand.ai/cli-auth".to_string(), Some("apple")),
+            "https://autohand.ai/cli-auth?provider=apple"
         );
     }
 }

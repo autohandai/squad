@@ -25,7 +25,7 @@ export class HarnessLoginManager {
   }
 
   /** Start (or return the running) login flow for a harness. */
-  start(id, { executable, args, env = {}, cwd, opensBrowser } = {}) {
+  start(id, { executable, args, env = {}, cwd, opensBrowser, provider = "" } = {}) {
     const preset = LOGIN_COMMANDS[id];
     if (!preset) throw new Error(`No sign-in flow for harness "${id}".`);
     if (!executable) throw new Error(`The ${id} CLI is not installed, so it cannot sign in.`);
@@ -45,6 +45,9 @@ export class HarnessLoginManager {
       error: "",
       process: null,
       opened: false,
+      // A sign-in provider hint ("apple") the page may honour; see
+      // signInUrlWithProvider in open-login.mjs.
+      provider,
     };
     this.flows.set(id, flow);
 
@@ -135,6 +138,7 @@ export class HarnessLoginManager {
       finishedAt: flow.finishedAt,
       url: flow.url,
       code: flow.code,
+      provider: flow.provider || "",
       error: flow.error,
       exitCode: flow.exitCode,
       outputTail: flow.output.slice(-600),
