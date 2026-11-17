@@ -5,8 +5,9 @@ export { AUTOHAND_SKILLS_REGISTRY_URL, roleTemplates };
 export { brainCardFields } from "./lib/brain-card.js";
 
 
-// New Zealand bird portraits: the default avatar set. Each bird carries a
-// subtle role hint, so members read as a team at a glance.
+// The bird cast (ADR-0235, ADR-0243): 300 birds. The ten New Zealand birds
+// carry a subtle role hint, so members read as a team at a glance; the rest
+// are picked by hand. The picker lists them by name, never by country.
 export const birdAvatarOptions = [
   { id: "bird-kiwi", label: "Kiwi", src: "/avatars/birds/kiwi.webp", roles: ["common-qa-engineer", "qa"] },
   { id: "bird-kea", label: "Kea", src: "/avatars/birds/kea.webp", roles: ["frontend-developer", "full-stack-developer", "frontend"] },
@@ -18,9 +19,9 @@ export const birdAvatarOptions = [
   { id: "bird-takahe", label: "Takahē", src: "/avatars/birds/takahe.webp", roles: ["platform-engineer", "backend-engineer", "backend", "platform"] },
   { id: "bird-kereru", label: "Kererū", src: "/avatars/birds/kereru.webp", roles: ["ux-ui-designer", "content-operations-specialist", "designer", "design", "content"] },
   { id: "bird-kotare", label: "Kōtare", src: "/avatars/birds/kotare.webp", roles: ["mobile-developer", "mobile", "ios", "android"] },
-  // Brazil and the United States (ADR-0241): picked by hand, no role hints.
-  ...BIRDS.filter((bird) => bird.region !== "nz").map((bird) => ({ id: `bird-${bird.id}`, label: bird.label, src: birdAvatarSrc(bird.id), roles: [], region: bird.region })),
-].map((option) => ({ region: "nz", ...option }));
+  // Everyone else in the cast: picked by hand, no role hints.
+  ...BIRDS.filter((bird) => bird.region !== "nz").map((bird) => ({ id: `bird-${bird.id}`, label: bird.label, src: birdAvatarSrc(bird.id), roles: [] })),
+];
 
 /**
  * Pick the bird for a role id or free-text role. A known role keeps its bird,
@@ -37,7 +38,7 @@ export function birdAvatarForRole(employeeType = "", roleText = "", seed = "", t
 
 // Only the drawn birds are built in (ADR-0240). Role portraits, riso prints
 // and skin portraits were removed and must not come back.
-export const builtInAvatarOptions = birdAvatarOptions.map(({ id, label, src, region }) => ({ id, label, src, region }));
+export const builtInAvatarOptions = birdAvatarOptions.map(({ id, label, src }) => ({ id, label, src }));
 
 // Members are provisioned after repository selection; no demo roster ships.
 export const initialAgents = [];

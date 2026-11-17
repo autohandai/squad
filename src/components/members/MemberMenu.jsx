@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CalendarClock, CircleUserRound, Copy, Download, Ellipsis, EllipsisVertical, Eye, EyeOff, Mail, MailOpen, MessageSquareText, PauseCircle, Pin, PinOff, Play, Share2, Trash2 } from "lucide-react";
+import { Bird, CalendarClock, CircleUserRound, Copy, Download, Ellipsis, EllipsisVertical, Eye, EyeOff, Mail, MailOpen, MessageSquareText, PauseCircle, Pin, PinOff, Play, Share2, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * The one member menu, on a directory row, a sidebar row and the chat header
- * (ADR-0106). Pin, Mark unread, Duplicate, Share as preset, Hide and Remove
+ * (ADR-0106). Change avatar opens the bird picker (ADR-0243). Pin, Mark unread, Duplicate, Share as preset, Hide and Remove
  * keep the same order everywhere; an item is shown only when its handler is
  * given, so the chat header can leave out "Open chat". Built from the
  * popover primitive like the other menus here; Remove keeps the caller's
@@ -23,6 +23,7 @@ export function MemberMenu({
   className,
   onChat,
   onProfile,
+  onChangeAvatar,
   onAutomations,
   resting = false,
   toggleStateLabel = "",
@@ -49,6 +50,7 @@ export function MemberMenu({
   const navigation = [
     onChat ? { icon: MessageSquareText, label: copy.openChat || "Open chat", action: onChat } : null,
     onProfile ? { icon: CircleUserRound, label: copy.viewProfile || "View profile", action: onProfile } : null,
+    onChangeAvatar ? { icon: Bird, label: copy.changeAvatar || "Change avatar…", action: onChangeAvatar } : null,
     onAutomations ? { icon: CalendarClock, label: copy.automations || "Automations", action: onAutomations } : null,
   ].filter(Boolean);
   const unreadItem = unread > 0 && onMarkRead

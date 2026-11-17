@@ -47,7 +47,7 @@ export function hiddenMembers(agents = []) {
   return Array.isArray(agents) ? agents.filter((agent) => agent && isHidden(agent)) : [];
 }
 
-/** Restore device view choices only for members in the verified owned roster.
+/** Restore device view choices (and a picture kept only on this device) only for members in the verified owned roster.
  * Cached identity, profile, permissions and extra rows never become authority.
  */
 export function withCachedMemberViews(members = [], cached = []) {
@@ -62,6 +62,10 @@ export function withCachedMemberViews(members = [], cached = []) {
       const at = view[`${key}At`];
       patch[`${key}At`] = view[key] && typeof at === "string" && Number.isFinite(Date.parse(at)) ? at : "";
     }
+    // The bridge copy carries a member's bird (ADR-0243). A picture uploaded
+    // on this device, or a pick from before the bird was sent to the bridge,
+    // lives only in this cache: keep it while the bridge names no bird.
+    if (!member.avatar && typeof view.avatar === "string" && view.avatar && (view.avatar.startsWith("/avatars/") || /^data:image\/(png|jpeg|webp);base64,/.test(view.avatar))) patch.avatar = view.avatar;
     return { ...member, ...patch };
   });
 }

@@ -15,7 +15,9 @@ import {
   blobForMember,
   blobSvg,
 } from "../src/lib/blob-avatar.js";
-import { BIRDS, BIRD_IDS, BIRD_REGIONS, INSTALLED_ART, birdForMember, birdFromAvatar, untakenBird } from "../src/lib/bird-cast.js";
+import { BIRDS, BIRD_IDS, INSTALLED_ART, birdById, birdForMember, birdFromAvatar, searchBirds, untakenBird } from "../src/lib/bird-cast.js";
+import { COMPOSED_BIRDS } from "../src/lib/bird-species.js";
+import { createHash } from "node:crypto";
 import { AVATAR_STYLES, BIRD_FACE_IDS, DEFAULT_AVATAR_STYLE, birdFaceSvg } from "../src/lib/bird-faces.js";
 import { birdAvatarForRole, builtInAvatarOptions, roleTemplates } from "../src/data.js";
 import {
@@ -136,7 +138,7 @@ for (const skin of SKINS) {
 assert.ok(memberAvatar(kiwiMember, skinById("grut")).svg.includes("<title>Eva</title>"));
 assert.equal(birdForMember(custom), birdForMember({ ...custom }), "a custom picture maps to a stable bird");
 assert.equal(birdFromAvatar("/avatars/birds/tui.webp"), "tui");
-assert.equal(birdFromAvatar("/avatars/birds/wren.webp"), "", "only cast birds count");
+assert.equal(birdFromAvatar("/avatars/birds/dodo.webp"), "", "only cast birds count");
 assert.equal(birdFromAvatar("/avatars/nz-riso-set-1-01.webp"), "");
 assert.deepEqual([...BIRD_FACE_IDS].sort(), [...BIRD_IDS].sort(), "every cast bird has a shapeless face");
 for (const bird of BIRD_IDS) {
@@ -145,6 +147,7 @@ for (const bird of BIRD_IDS) {
   assert.ok(svg.startsWith("<svg") && svg.endsWith("</svg>"), `${bird} is not an svg`);
   assert.ok(svg.includes('fill-rule="evenodd"'), `${bird} must punch its eyes out`);
   assert.ok(svg.length < 1600, `${bird} face is ${svg.length} bytes`);
+  assert.ok(!svg.includes("NaN") && !svg.includes("undefined"), `${bird} face has a broken number`);
 }
 assert.equal(new Set(BIRD_IDS.map((bird) => birdFaceSvg(bird))).size, BIRD_IDS.length, "every bird has its own face");
 
@@ -159,8 +162,35 @@ assert.equal(new Set(roster10).size, 10, `ten unknown-role members get ten birds
 // Brazil and US birds (ADR-0241) never move an existing member: assignment
 // still hashes over New Zealand, and they come only once NZ is full.
 assert.ok(roster10.every(src => BIRDS.find(bird => bird.id === birdFromAvatar(src))?.region === "nz"), "the first ten members get New Zealand birds");
-assert.equal(BIRDS.find(bird => bird.id === birdFromAvatar(birdAvatarForRole("", "Generalist", "eleventh", roster10))).region, "br", "the eleventh gets a Brazilian bird");
-assert.deepEqual(BIRD_REGIONS.map(region => [region.id, BIRDS.filter(bird => bird.region === region.id).length]), [["nz", 10], ["br", 8], ["us", 8]]);
+assert.equal(BIRDS.find(bird => bird.id === birdFromAvatar(birdAvatarForRole("", "Generalist", "eleventh", roster10))).region, "br", "the eleventh gets the next bird in cast order");
+
+// 300 birds (ADR-0243): the 26 drawn faces unchanged, 274 composed from one
+// line per species, no country grouping. Assignment still hashes over the
+// ten New Zealand birds, so no member's bird moved when the cast grew.
+assert.equal(BIRDS.length, 300, "the cast has 300 birds");
+assert.equal(COMPOSED_BIRDS.length, 274, "274 composed birds");
+assert.deepEqual(BIRDS.filter(bird => bird.region === "nz").map(bird => bird.id), ["kiwi", "tui", "kea", "kereru", "pukeko", "ruru", "fantail", "takahe", "kakapo", "kotare"]);
+assert.ok(BIRD_IDS.every(id => /^[a-z]+$/.test(id)), "bird ids are lowercase letters (birdFromAvatar reads them from the URL)");
+assert.equal(new Set(BIRD_IDS).size, 300, "bird ids are unique");
+for (const id of BIRD_IDS) assert.equal(birdFromAvatar(`/avatars/birds/${id}.webp`), id, `${id} round-trips through its URL`);
+assert.equal(createHash("sha256").update(BIRD_IDS.slice(0, 26).map(id => birdFaceSvg(id)).join("")).digest("hex"), "4cd1225793251d32a69a04d768cf563062a45a01d08a9eec0dcb0d2f37f0cfb9", "the 26 drawn faces are byte-identical to ADR-0241's");
+assert.deepEqual(searchBirds("tui").map(bird => bird.id), ["tui"]);
+assert.ok(searchBirds("owl").every(bird => !["peafowl", "guineafowl"].includes(bird.id)) && searchBirds("owl").some(bird => bird.id === "barnowl"), "search matches the start of a word");
+assert.ok(searchBirds("silvereye").some(bird => bird.id === "silvereye") && searchBirds("kingfisher").some(bird => bird.id === "kotare"), "search knows English names for Māori and Portuguese labels");
+assert.equal(birdById("TUI")?.label, "Tūī");
+// Distinct by eye, not only by markup: two composed birds with the same head,
+// beak, crest and marks must differ clearly in some colour.
+{
+  const rgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  const signature = spec => [spec.shape, spec.beak[0], spec.crest?.[0] || "", spec.tail ? "tail" : "", ...spec.marks.map(([kind]) => kind).sort()].join(",");
+  const colours = spec => [spec.body, spec.beak[1], spec.crest?.[1], spec.tail, ...[...spec.marks].sort(([a], [b]) => a.localeCompare(b)).map(([, colour]) => colour)].filter(Boolean);
+  for (let i = 0; i < COMPOSED_BIRDS.length; i += 1) for (let j = i + 1; j < COMPOSED_BIRDS.length; j += 1) {
+    const [a, b] = [COMPOSED_BIRDS[i], COMPOSED_BIRDS[j]];
+    if (signature(a.spec) !== signature(b.spec)) continue;
+    const gap = Math.max(...colours(a.spec).map((colour, k) => Math.hypot(...rgb(colour).map((value, c) => value - rgb(colours(b.spec)[k])[c]))));
+    assert.ok(gap >= 60, `${a.id} and ${b.id} are the same face in nearly the same colours`);
+  }
+}
 
 assert.equal(untakenBird("same-seed"), untakenBird("same-seed"));
 

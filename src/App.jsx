@@ -46,7 +46,7 @@ import { DEFAULT_SKIN_ID, SKINS, SKIN_VAR_DEFAULTS, isSkinId, memberAvatar, skin
 import { LAYOUTS, LAYOUT_STORAGE_KEY, isLayoutId, resolveLayoutId } from "@/lib/layouts";
 import { LayoutGlyph } from "@/components/onboarding/LayoutStep";
 import { blobForMember, blobSvg } from "@/lib/blob-avatar";
-import { BIRD_REGIONS, birdFromAvatar } from "@/lib/bird-cast";
+import { birdFromAvatar } from "@/lib/bird-cast";
 import { AVATAR_STYLES, DEFAULT_AVATAR_STYLE, birdFaceSvg, isAvatarStyle } from "@/lib/bird-faces";
 import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
@@ -163,7 +163,6 @@ import {
   CHANNEL_VISIBILITY_PUBLIC,
   brainCardFields,
   birdAvatarForRole,
-  builtInAvatarOptions,
   initialMessages,
   roleTemplates,
 } from "./data.js";
@@ -329,6 +328,7 @@ import { continuationPrompt, folderNeedsYouRows, foldersNeedingAccess, mentioned
 import { archivePayload, conversationHasWork, conversationContextMessages, restoreConversationEvent } from "@/lib/chat-sessions";
 import { RunsOnSettings } from "@/components/members/RunsOnSettings";
 import { MemberMenu } from "@/components/members/MemberMenu";
+import { BirdPicker, MemberAvatarDialog } from "@/components/members/BirdPicker";
 import { HiddenMembersGroup } from "@/components/members/HiddenMembersGroup";
 import { TeamMenu } from "@/components/teams/TeamMenu";
 import { ShareTeamDialog } from "@/components/teams/ShareTeamDialog";
@@ -589,6 +589,9 @@ const SkinContext = createContext(skinById(DEFAULT_SKIN_ID));
 const LayoutContext = createContext("full");
 // Flat, 3D or clay: how every bird face is drawn (ADR-0242). A device choice.
 const AvatarStyleContext = createContext(DEFAULT_AVATAR_STYLE);
+// Opens the bird picker for a member from wherever it is shown (ADR-0243).
+// Null outside the main window (Quick Chat), where faces are not buttons.
+const AvatarChangeContext = createContext(null);
 
 const RemoteMembersContext = createContext({ remoteByMember: {}, refreshRemoteMembers: async () => {} });
 function useRemoteMembers() {
@@ -5748,6 +5751,15 @@ function App() {
     />
   );
 
+  // A changed avatar reaches the menu bar now, not at the next 15 s post
+  // (ADR-0243): the tray reads member avatars from this snapshot.
+  const postStatusSnapshotRef = useRef(null);
+  const avatarSignature = useMemo(() => agents.map((agent) => `${agent.id}:${String(agent.avatar || "").length}:${String(agent.avatar || "").slice(-48)}`).join("|"), [agents]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => postStatusSnapshotRef.current?.(), 250);
+    return () => window.clearTimeout(timer);
+  }, [avatarSignature]);
+
   useEffect(() => {
     // The payload is read from a ref so the 15 s cadence survives the run
     // poller replacing `runs` every 1.8 s.
@@ -5764,8 +5776,10 @@ function App() {
     };
     const timer = window.setTimeout(postStatusSnapshot, 150);
     const interval = window.setInterval(postStatusSnapshot, 15_000);
+    postStatusSnapshotRef.current = postStatusSnapshot;
 
     return () => {
+      postStatusSnapshotRef.current = null;
       controller.abort();
       window.clearTimeout(timer);
       window.clearInterval(interval);
@@ -6747,6 +6761,11 @@ function App() {
     ]);
     recordFeatureUsed("conversation", "export");
   }
+  // The bird picker for one member (ADR-0243), opened from the profile card,
+  // the chat header's profile popover and every member menu.
+  const [avatarTargetId, setAvatarTargetId] = useState("");
+  const avatarTarget = avatarTargetId ? agents.find((agent) => agent.id === avatarTargetId) || null : null;
+  const openAvatarPicker = useCallback((agentId) => setAvatarTargetId(String(agentId || "")), []);
   const renderMemberMenu = useCallback(
     (agent, context = "sidebar") => (
       <MemberMenu
@@ -6756,6 +6775,7 @@ function App() {
         side={context === "sidebar" ? "right" : undefined}
         onChat={context === "chat" ? undefined : () => navigate(memberChatPath(agent.id))}
         onProfile={() => navigate(memberProfilePath(agent.id, "home"))}
+        onChangeAvatar={() => setAvatarTargetId(agent.id)}
         resting={isOnBreak(agent)}
         toggleStateLabel={isOnBreak(agent) ? localeCopy.endBreak || "End break" : localeCopy.takeABreak || "Take a break"}
         onToggleState={() => void toggleMemberBreak(agent)}
@@ -7063,7 +7083,7 @@ function App() {
         return { ...agent, ...patch };
       }));
     };
-    const accessChanged = ["permissions", "projects", "workspace", "name", "description", "instructions", "brainCard", "harness", "skills", "modelAssignment", "modelRouting", "role", "memory", "profileFiles"].some(key => key in patch);
+    const accessChanged = ["permissions", "projects", "workspace", "name", "description", "instructions", "brainCard", "harness", "skills", "modelAssignment", "modelRouting", "role", "memory", "profileFiles", "avatar"].some(key => key in patch);
     if (!accessChanged) { publish(); return Promise.resolve(); }
     const previous = memberAccessWritesRef.current.get(agentId);
     const entry = { member: previous?.member, promise: null };
@@ -10006,10 +10026,18 @@ function App() {
     <AccountContext.Provider value={accountContextValue}>
     <SkinContext.Provider value={activeSkin}>
     <AvatarStyleContext.Provider value={avatarStyle}>
+    <AvatarChangeContext.Provider value={openAvatarPicker}>
     <LayoutContext.Provider value={layoutId}>
     <PresenceContext.Provider value={presenceContextValue}>
     <RemoteMembersContext.Provider value={remoteMembersContextValue}>
     <TooltipProvider>
+      <MemberAvatarDialog
+        agent={avatarTarget}
+        open={Boolean(avatarTarget)}
+        onOpenChange={(open) => { if (!open) setAvatarTargetId(""); }}
+        onSave={(avatar) => { if (avatarTarget) void updateAgent(avatarTarget.id, { avatar }); }}
+        avatarStyle={avatarStyle}
+      />
       <Dialog open={Boolean(pendingMemberDelete)} onOpenChange={(open) => (open ? null : setPendingMemberDelete(null))}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -10661,6 +10689,7 @@ function App() {
     </RemoteMembersContext.Provider>
     </PresenceContext.Provider>
     </LayoutContext.Provider>
+    </AvatarChangeContext.Provider>
     </AvatarStyleContext.Provider>
     </SkinContext.Provider>
     </AccountContext.Provider>
@@ -12586,6 +12615,11 @@ function buildTeammateContext(agent, agents = [], { hop = 0 } = {}) {
 function channelActionMember(agent, workspace = agent.workspace) {
   return {
     ...agentLaunchPayload(agent, workspace),
+    // The bridge copy is the roster every launch starts from
+    // (OwnershipBootstrap), so the member's bird travels with it (ADR-0243).
+    // An uploaded picture stays on this device: "" tells the bridge the
+    // member is not a cast bird, and the device's cache keeps the picture.
+    avatar: birdFromAvatar(agent?.avatar) ? agent.avatar : "",
     squadProfile: buildAgentProfile(agent, workspace),
     channelPoliciesByWorkspace: Object.fromEntries(normalizeAgentProjects(agent.projects, agent.workspace).map(project => [project.path, resolveAgentPermissionsForWorkspace(agent, project.path).builtInPolicies.squad_create_channel || "ask"])),
   };
@@ -17439,6 +17473,7 @@ function SquadMemberRow({
   onSharePreset,
 }) {
   const workspace = getAgentWorkspace(agent, runtime, workspaces);
+  const changeAvatar = useContext(AvatarChangeContext);
   const role = localizedRole(agent, copy) || agent.role;
   // With a relay connected, say which machine a member runs on. One quiet
   // phrase, never a badge, and nothing at all for a member that runs here:
@@ -17531,6 +17566,7 @@ function SquadMemberRow({
           copy={copy}
           onChat={() => navigate(memberChatPath(agent.id))}
           onProfile={() => navigate(memberProfilePath(agent.id, "home"))}
+          onChangeAvatar={changeAvatar ? () => changeAvatar(agent.id) : undefined}
           onAutomations={() => navigate(automationListPath(agent.id))}
           resting={isResting}
           toggleStateLabel={isResting ? copy.setActive || "Set active" : copy.pauseMember || "Pause member"}
@@ -19224,6 +19260,8 @@ function handoffContextText(handoff, task, sourceAgent, targetAgent) {
 
 
 function AgentPhotoCard({ agent, className, compact = false }) {
+  const changeAvatar = useContext(AvatarChangeContext);
+  const face = <AgentAvatar agent={agent} large className={cn("rounded-sm border-0", compact ? "size-[136px]" : "size-[164px]")} />;
   return (
     <div
       className={cn(
@@ -19235,7 +19273,22 @@ function AgentPhotoCard({ agent, className, compact = false }) {
       {/* No coloured mat: the face sits on its own skin-adaptive tile
           (ADR-0240); a lilac mat belonged to the old portraits. */}
       <div className={cn(compact ? "w-[136px]" : "w-[164px]")}>
-        <AgentAvatar agent={agent} large className={cn("rounded-sm border-0", compact ? "size-[136px]" : "size-[164px]")} />
+        {/* The face is the way to change it (ADR-0243). */}
+        {changeAvatar ? (
+          <button
+            type="button"
+            className="group relative block rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/60"
+            aria-label={`Change ${agent.name}’s avatar`}
+            title="Change avatar"
+            data-testid="profile-avatar-button"
+            onClick={() => changeAvatar(agent.id)}
+          >
+            {face}
+            <span className="pointer-events-none absolute inset-x-0 bottom-0 rounded-b-sm bg-background/85 py-1 text-center text-xs font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+              Change avatar
+            </span>
+          </button>
+        ) : face}
       </div>
       <div className="mt-2 text-center font-mono text-xs text-muted-foreground">ID: {agent.staffId}</div>
     </div>
@@ -19246,6 +19299,7 @@ function AgentPhotoCard({ agent, className, compact = false }) {
 function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, model, onViewProfile, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   const description = agent.description || brainCardForAgent(agent).purpose;
   const headingId = `member-preview-${agent.id}`;
+  const changeAvatar = useContext(AvatarChangeContext);
 
   return (
     <PopoverContent
@@ -19255,7 +19309,13 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
       className="max-h-[min(32rem,calc(100svh-4rem))] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto p-4"
     >
       <div className="flex items-start gap-3">
-        <AgentAvatar agent={agent} className="size-12 shrink-0" />
+        {changeAvatar ? (
+          <button type="button" className="shrink-0 rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/60" aria-label={`Change ${agent.name}’s avatar`} title="Change avatar" onClick={() => changeAvatar(agent.id)}>
+            <AgentAvatar agent={agent} className="size-12" />
+          </button>
+        ) : (
+          <AgentAvatar agent={agent} className="size-12 shrink-0" />
+        )}
         <div className="min-w-0">
           <h2 id={headingId} className="truncate text-base font-semibold">{agent.name}</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">{localizedRole(agent, copy)}</p>
@@ -19284,8 +19344,13 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
           </div>
         ))}
       </dl>
-      <div className="mt-3 border-t border-border/60 pt-3">
-        <Button type="button" variant="outline" size="sm" className="w-full" onClick={onViewProfile}>
+      <div className="mt-3 flex gap-2 border-t border-border/60 pt-3">
+        {changeAvatar ? (
+          <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => changeAvatar(agent.id)}>
+            Change avatar
+          </Button>
+        ) : null}
+        <Button type="button" variant="outline" size="sm" className="min-w-0 flex-1" onClick={onViewProfile}>
           View profile
           <ArrowRight data-icon="inline-end" />
         </Button>
@@ -19925,55 +19990,12 @@ function refreshedProfileFilesForAgent(agent) {
   );
 }
 
-function AvatarPicker({ value, onChange, options = builtInAvatarOptions }) {
+function AvatarPicker({ value, onChange }) {
   const avatarStyle = useContext(AvatarStyleContext);
-  // Only drawn birds are built in (ADR-0240), grouped by country (ADR-0241).
-  // An uploaded picture is not listed here; it stays the member's until changed.
-  const groups = BIRD_REGIONS
-    .map((region) => ({ ...region, options: options.filter((option) => birdFromAvatar(option.src) && (option.region || "nz") === region.id) }))
-    .filter((group) => group.options.length);
-
-  return (
-    <div className="rounded-md border bg-card/70 p-3">
-      <div role="radiogroup" aria-label="Built-in avatars" className="flex max-h-72 flex-col gap-3 overflow-y-auto pr-1">
-        {groups.map((group) => (
-          <div key={group.id} role="group" aria-label={group.label}>
-            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{group.label}</p>
-            <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(48px, 1fr))" }}>
-              {group.options.map((option) => {
-                const selected = value === option.src;
-                const bird = birdFromAvatar(option.src);
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    aria-label={`Use ${option.label}`}
-                    title={option.label}
-                    className={cn(
-                      "relative grid size-12 place-items-center rounded-full border border-transparent p-0 transition-[border-color,box-shadow,transform]",
-                      "hover:-translate-y-0.5 hover:border-foreground/40 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/35",
-                      selected && "border-primary shadow-[0_0_0_2px_var(--primary)]"
-                    )}
-                    onClick={() => onChange(option.src)}
-                  >
-                    {/* eslint-disable-next-line react/no-danger */}
-                    <span className="member-face size-full overflow-hidden rounded-full bg-muted" dangerouslySetInnerHTML={{ __html: birdFaceSvg(bird, { style: avatarStyle }) }} />
-                    {selected ? (
-                      <span className="absolute -bottom-0.5 -right-0.5 grid size-5 place-items-center rounded-full border border-background bg-primary text-primary-foreground">
-                        <CheckCircle2 className="size-3" />
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  // Only drawn birds are built in (ADR-0240): 300 of them, searchable by
+  // name and never grouped by country (ADR-0243). An uploaded picture is not
+  // listed here; it stays the member's until changed.
+  return <BirdPicker value={value} onChange={onChange} avatarStyle={avatarStyle} label="Built-in avatars" />;
 }
 
 function buildCustomRoleInstructions(templateDraft) {

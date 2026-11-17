@@ -11,6 +11,9 @@
 // marks entirely: the marks are even-odd subpaths of that layer, and a subpath
 // outside its layer would fill instead of cut.
 
+import { composeFace } from './bird-composer.js';
+import { COMPOSED_BIRDS } from './bird-species.js';
+
 const ink = { cream: '#f4f1e8' };
 
 const FACES = {
@@ -241,6 +244,13 @@ const FACES = {
     ],
   },
 };
+
+// The rest of the cast is composed from a line per species (ADR-0243). The
+// 26 drawn above are never recomposed: their faces stay exactly as drawn.
+for (const { id, spec } of COMPOSED_BIRDS) {
+  if (FACES[id]) throw new Error(`bird ${id} is both drawn and composed`);
+  FACES[id] = composeFace(spec);
+}
 
 export const BIRD_FACE_IDS = Object.keys(FACES);
 

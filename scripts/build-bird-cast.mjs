@@ -4,7 +4,7 @@
 //   node scripts/build-bird-cast.mjs prompt <3d|clay> <bird>     print the prompt
 //   node scripts/build-bird-cast.mjs generate <3d|clay> [bird…]  masters via gpt-image-bridge
 //   node scripts/build-bird-cast.mjs install <3d|clay>           masters -> served WebP
-//   node scripts/build-bird-cast.mjs faces                       drawn faces -> /avatars/birds WebP (the default, ADR-0240)
+//   node scripts/build-bird-cast.mjs faces [--all]               drawn faces -> /avatars/birds WebP (missing ones; --all redraws every file)
 //
 // Masters are 1024px PNGs in assets/characters/<style>/<bird>.png (kept, not
 // served). `install` writes 512px and 256px WebP:
@@ -107,28 +107,39 @@ function install(style) {
 // menu bar reads /avatars/birds/<bird>.webp from the bundle and the iPhone and
 // Quick Chat fetch it, so the same face is rendered into those files: a
 // transparent tile (eyes stay holes), the face inset 8% like the in-app tile.
-function faces() {
-  let total = 0;
+// Chrome draws the SVG exactly as the app does; ImageMagick's renderer drops
+// stroked paths (the kiwi's beak, the tūī's stripe). One browser renders the
+// whole cast (ADR-0243: 300 birds); only missing files are rendered unless
+// --all is passed, so files already shipped do not churn.
+async function faces(all = false) {
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome' });
+  const page = await browser.newPage({ viewport: { width: 1024, height: 1024 }, deviceScaleFactor: 1 });
   const work = join(tmpdir(), `bird-faces-${process.pid}`);
   mkdirSync(work, { recursive: true });
-  for (const bird of BIRD_IDS) {
-    // Chrome draws the SVG exactly as the app does; ImageMagick's renderer
-    // drops stroked paths (the kiwi's beak, the tūī's stripe).
-    const page = join(work, `${bird}.html`), png = join(work, `${bird}.png`);
-    writeFileSync(page, `<html><body style="margin:0;background:transparent"><div style="width:1024px;height:1024px;padding:82px;box-sizing:border-box">${birdFaceSvg(bird).replace('class="size-full"', 'width="860" height="860"')}</div></body></html>`);
-    execFileSync(CHROME, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--default-background-color=00000000', `--screenshot=${png}`, '--window-size=1024,1024', `file://${page}`], { stdio: 'ignore' });
-    for (const size of [512, 256]) {
-      const target = served('3d', bird, size);
-      mkdirSync(join(target, '..'), { recursive: true });
-      execFileSync('magick', [png, '-resize', `${size}x${size}`, '-strip', '-define', 'webp:lossless=true', target]);
-      total += statSync(target).size;
+  let total = 0, rendered = 0;
+  try {
+    for (const bird of BIRD_IDS) {
+      if (!all && [512, 256].every(size => existsSync(served('3d', bird, size)))) continue;
+      const png = join(work, `${bird}.png`);
+      await page.setContent(`<html><body style="margin:0;background:transparent"><div style="width:1024px;height:1024px;padding:82px;box-sizing:border-box">${birdFaceSvg(bird).replace('class="size-full"', 'width="860" height="860"')}</div></body></html>`);
+      await page.screenshot({ path: png, omitBackground: true, clip: { x: 0, y: 0, width: 1024, height: 1024 } });
+      for (const size of [512, 256]) {
+        const target = served('3d', bird, size);
+        mkdirSync(join(target, '..'), { recursive: true });
+        execFileSync('magick', [png, '-resize', `${size}x${size}`, '-strip', '-define', 'webp:lossless=true', target]);
+        total += statSync(target).size;
+      }
+      rendered += 1;
     }
+  } finally {
+    await browser.close();
   }
-  console.log(`rendered ${BIRD_IDS.length} drawn faces, ${total} bytes of WebP`);
+  console.log(`rendered ${rendered} of ${BIRD_IDS.length} drawn faces, ${total} bytes of WebP`);
 }
 
 const [command, style, ...birds] = process.argv.slice(2);
-if (command === 'faces') { faces(); process.exit(0); }
+if (command === 'faces') { await faces(style === '--all'); process.exit(0); }
 if (!STYLES.includes(style)) { console.error('style must be 3d or clay'); process.exit(1); }
 if (command === 'prompt') console.log(promptFor(style, birds[0] || 'kiwi'));
 else if (command === 'generate') generate(style, birds.length ? birds : BIRD_IDS);

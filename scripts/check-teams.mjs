@@ -180,6 +180,12 @@ const built = buildTeamFile({
   assert.deepEqual(orderMembers(restoredViews).map(member => member.id), ['a']);
   assert.deepEqual(hiddenMembers(restoredViews).map(member => member.id), ['b']);
   assert.deepEqual(withCachedMemberViews(canonical, { broken: true }), canonical, 'malformed cached view data is ignored');
+  // ADR-0243: the bridge copy carries the member's bird and wins; a picture
+  // kept only on this device survives while the bridge names no bird.
+  const upload = 'data:image/png;base64,AAAA';
+  assert.equal(withCachedMemberViews([{ id: 'a', avatar: '/avatars/birds/kea.webp' }], [{ id: 'a', avatar: upload }])[0].avatar, '/avatars/birds/kea.webp', 'the bridge bird wins over the cache');
+  assert.equal(withCachedMemberViews([{ id: 'a', avatar: '' }], [{ id: 'a', avatar: upload }])[0].avatar, upload, 'a device-only upload survives a launch');
+  assert.equal(withCachedMemberViews([{ id: 'a' }], [{ id: 'a', avatar: 'https://example.com/x.png' }])[0].avatar, undefined, 'a cached URL never becomes an avatar');
   assert.equal(orderMembers([{ ...agents[1], ...pinPatch(null, false) }, agents[0]]).map((agent) => agent.id).join(","), "b,a", "unpinning keeps list order");
   const messages = [
     { id: "u1", role: "user", body: "hi", createdAt: "2026-10-13T10:00:00Z" },
