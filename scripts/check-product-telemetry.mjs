@@ -77,6 +77,22 @@ const anonymous = createProductTelemetry({ config: { key: "public-test-key", hos
 assert.equal((await anonymous.capture({ event: "sign_in_started" })).accepted, true);
 assert.equal((await anonymous.capture({ event: "member_created" })).accepted, false);
 
+// The marketplace funnel (ADR-0248): bounded properties only, anonymous allowed.
+assert.deepEqual(sanitizeSquadEvent("marketplace_opened", { entry: "command", query: "secret search" }), { event: "marketplace_opened", properties: { entry: "command" } });
+assert.deepEqual(sanitizeSquadEvent("marketplace_opened", { entry: "/Users/private" }), { event: "marketplace_opened", properties: { entry: "directory" } });
+assert.deepEqual(sanitizeSquadEvent("marketplace_add_succeeded", { listing_id: "abcdefgh1234", listing_kind: "team", version: 2, source: "website-link", attribution_id: "abcdefghij0123456789", action: "add", members: 4, name: "Alder", instructions: "secret" }),
+  { event: "marketplace_add_succeeded", properties: { via: "website-link", listing_id: "abcdefgh1234", listing_kind: "team", version: 2, attribution_id: "abcdefghij0123456789", action: "add", members: 4 } });
+assert.deepEqual(sanitizeSquadEvent("marketplace_add_failed", { listing_id: "abcdefgh1234", reason: "ENOSPC /private/tmp", attribution_id: "short" }), { event: "marketplace_add_failed", properties: { via: "in-app", listing_id: "abcdefgh1234", listing_kind: "agent", reason: "failed" } });
+assert.equal(sanitizeSquadEvent("marketplace_listing_viewed", { listing_id: "../../etc" }), null, "a listing event needs a listing id");
+assert.deepEqual(sanitizeSquadEvent("marketplace_add_started", { source: "grok", listing_id: "ignored-for-grok" }), { event: "marketplace_add_started", properties: { via: "grok", listing_kind: "agent" } });
+const marketplaceSent = [];
+const anonymousMarketplace = createProductTelemetry({ config: { key: "public-test-key", host: "https://us.i.posthog.com" }, account: () => ({ signedIn: false }), fetchImpl: async (_url, options) => { marketplaceSent.push(JSON.parse(options.body)); return new Response(null); } });
+assert.equal((await anonymousMarketplace.capture({ event: "marketplace_add_succeeded", properties: { listing_id: "abcdefgh1234", source: "in-app" } })).accepted, true, "marketplace events count without a sign-in");
+assert.equal(marketplaceSent[0].properties.$process_person_profile, false); assert.equal(marketplaceSent[0].properties.via, "in-app"); assert.equal(marketplaceSent[0].properties.source, "squad"); assert.match(marketplaceSent[0].properties.distinct_id, /^squad-anonymous:/);
+assert.equal((await anonymousMarketplace.capture({ event: "marketplace_add_succeeded", properties: { listing_id: "abcdefgh1234" } }, { dnt: true })).accepted, false, "DNT or GPC sends nothing");
+const consentOff = createSquadTelemetryClient({ navigatorImpl: { globalPrivacyControl: true }, fetchImpl: () => { throw new Error("GPC must skip marketplace events"); } });
+consentOff.marketplace("marketplace_opened", { entry: "directory" });
+
 const temp = await mkdtemp(join(tmpdir(), "squad-product-telemetry-"));
 try {
   await writeFile(join(temp, ".env"), "NEXT_PUBLIC_POSTHOG_KEY='public-test-key'\nNEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com\nAPPLICATION_SECRET=DO-NOT-COPY\n");
@@ -87,4 +103,4 @@ try {
   await stageProductTelemetry({ rootDir: temp, runtimeDir: temp, env: {}, envFile: join(temp, "missing.env") });
   assert.equal(readProductTelemetryConfig(temp, {}).key, "");
 } finally { await rm(temp, { recursive: true, force: true }); }
-console.log("Squad product telemetry: schema, privacy, trusted identity, session dedup, DNT, staging and failure isolation passed (mock ingestion only).");
+console.log("Squad product telemetry: schema, privacy, trusted identity, session dedup, DNT, staging, the marketplace funnel and failure isolation passed (mock ingestion only).");

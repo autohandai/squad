@@ -1,7 +1,11 @@
 #!/usr/bin/env node
-// The Marketplace inside Squad (ADR-0246), in both layouts and three skins,
-// against a real bridge and the local Squad API (workerd, D1, the 200 seeds):
-// browse a category, search by creator and by name, open an agent, Add it,
+// The Marketplace inside Squad (ADR-0246, ADR-0248), in both layouts and three
+// skins, against a real bridge and the local Squad API (workerd, D1, the 350
+// seed agents and 21 teams): the first screen (Featured, Teams, a section per
+// category with View all), a team added whole from a website link with its
+// attribution id joined to the install, the marketplace product events (and
+// none under Global Privacy Control), browse a category, search by creator
+// and by name, open an agent, Add it,
 // see the row say Added; publish a new version and see Update available,
 // then Update the member in place; reach it from the directory overflow,
 // Minified's More, ⌘K and the /marketplace route; and the offline list.
@@ -14,7 +18,8 @@ import { join } from "node:path";
 
 import { startBridge, startBrowser, until } from "./lib/reliability-browser.mjs";
 import { seedOwnedBrowserFixture } from "./lib/owned-bridge-fixture.mjs";
-import { startLocalMarketplace } from "../services/squad-api/scripts/local-marketplace.mjs";
+import { LOCAL_ADMIN_TOKEN, startLocalMarketplace } from "../services/squad-api/scripts/local-marketplace.mjs";
+import { newAttributionId } from "../src/lib/marketplace.js";
 
 const artifact = ".codex-artifacts/marketplace-in-app";
 await mkdir(artifact, { recursive: true });
@@ -38,6 +43,7 @@ async function press(selector, label = "") {
   for (const type of ["mousePressed", "mouseReleased"]) await browser.send("Input.dispatchMouseEvent", { type, x: box.x, y: box.y, button: "left", clickCount: 1 });
 }
 const dialogOpen = () => until(() => browser.evaluate(`!!document.querySelector('[data-testid=marketplace-dialog]')`), "the Marketplace dialog");
+const homeShows = () => until(() => browser.evaluate(`document.querySelectorAll('[data-testid=marketplace-featured] li').length >= 4 && document.querySelectorAll('[data-testid^=marketplace-section-]').length === 11`), "the first screen: Featured, Teams and ten categories", 20000);
 const listShows = (count) => until(() => browser.evaluate(`document.querySelectorAll('[data-testid=marketplace-list] li').length === ${count}`), `${count} rows`, 20000);
 async function closeDialog() {
   await browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-dialog] button')].filter((button) => button.innerText.trim() === 'Close').at(-1).click()`);
@@ -46,7 +52,7 @@ async function closeDialog() {
 // Waits for the row the search should find, not just for any list: the
 // previous result can still be on screen while the debounced search runs.
 async function search(text, expect = "") {
-  await browser.fill('[aria-label="Search by agent or creator"]', text);
+  await browser.fill('[data-testid=marketplace-search]', text);
   if (expect) await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].length === 1 && document.querySelector('[data-testid=marketplace-list] li').innerText.includes(${JSON.stringify(expect)})`), `search ${text}`, 20000);
 }
 // A category word with whatever count it carries now ("All201" after a publish).
@@ -70,6 +76,18 @@ try {
   const quill = { id: "asq_quill_in_app", name: "Quill", role: "Release notes writer", description: "Writes release notes.", instructions: "Act as a release notes writer. Read merged changes and write notes people read.", workspace: process.cwd(), projects: [{ path: process.cwd() }], harness: { id: "autohand" }, permissions: {}, skills: [], avatar: "/avatars/birds/tui.webp" };
   browser = await startBrowser();
   await seedOwnedBrowserFixture(bridge, browser, { members: [quill] });
+  await browser.send("Network.enable");
+  // What the app sends to the bridge's product-telemetry endpoint (ADR-0248).
+  // Bodies are read once and kept: a navigation drops the page's request data.
+  const seenBodies = new Map();
+  const telemetry = async () => {
+    for (const [requestId, request] of browser.requests) {
+      if (!request.url.endsWith("/api/product-telemetry") || seenBodies.has(requestId)) continue;
+      const body = await browser.send("Network.getRequestPostData", { requestId }).catch(() => null);
+      if (body?.postData) seenBodies.set(requestId, JSON.parse(body.postData));
+    }
+    return [...seenBodies.values()].filter((event) => event.event.startsWith("marketplace_"));
+  };
 
   // 1. Full layout, Autohand skin, light: directory overflow → browse → search → detail → Add.
   await viewport(1280, "light", "full", "default");
@@ -79,12 +97,21 @@ try {
   await until(() => browser.evaluate(`!!document.querySelector('[data-testid=open-marketplace]')`), "Marketplace… in the overflow");
   await browser.evaluate(`document.querySelector('[data-testid=open-marketplace]').click()`);
   await dialogOpen();
-  await listShows(24);
-  await pill("Design");
-  await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].length === 20 && [...document.querySelectorAll('[data-testid=marketplace-list] li')].every((row) => row.innerText.includes('Design'))`), "Design category");
+  await homeShows();
+  const featured = await browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-featured] li')].map((item) => item.innerText.split('\\n')[0])`);
+  assert.deepEqual(featured.slice(0, 4), ["Abner", "Code review desk", "Callum", "Farah"], "the admins' featured order");
+  assert.match(await browser.evaluate(`document.querySelector('[data-testid=marketplace-section-teams]').innerText`), /Code review desk[\s\S]*Team · 4 members/);
+  assert.equal(await browser.evaluate(`document.querySelectorAll('[data-testid=marketplace-section-design] li').length`), 4);
+  await new Promise((resolve) => setTimeout(resolve, 500)); // past the dialog's open animation
+  await browser.screenshot(`${artifact}/full-default-light-home.png`);
+  await browser.evaluate(`document.querySelector('[data-testid=marketplace-view-all-design]').click()`);
+  await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].length === 24 && [...document.querySelectorAll('[data-testid=marketplace-list] li')].every((row) => row.innerText.includes('Design'))`), "View all: the Design list");
+  await pill("Teams");
+  await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].length === 21 && [...document.querySelectorAll('[data-testid=marketplace-list] li')].every((row) => row.dataset.kind === 'team')`), "Teams list");
   await pill("All");
+  await homeShows();
   await search("autohand squad team");
-  await until(() => browser.evaluate(`/Autohand Squad team/.test(document.querySelector('[data-testid=marketplace-list] li')?.innerText || '') && document.querySelector('[data-testid=marketplace-dialog]').innerText.includes('200')`), "search by creator");
+  await until(() => browser.evaluate(`/Autohand Squad team/.test(document.querySelector('[data-testid=marketplace-list] li')?.innerText || '') && document.querySelector('[data-testid=marketplace-dialog]').innerText.includes('371')`), "search by creator finds agents and teams");
   await search("phoebe", "Phoebe by Autohand Squad team");
   const row = await browser.evaluate(`document.querySelector('[data-testid=marketplace-list] li').innerText`);
   assert.match(row, /Phoebe by Autohand Squad team/); assert.match(row, /Added \d{1,2} \w{3} 20\d\d/);
@@ -95,6 +122,13 @@ try {
   await browser.screenshot(`${artifact}/full-default-light-detail.png`);
   await browser.evaluate(`document.querySelector('[data-testid=marketplace-add]').click()`);
   await until(async () => (await receipts()).some((entry) => entry.memberName === "Phoebe"), "Phoebe added", 60000);
+  await until(async () => (await telemetry()).some((event) => event.event === "marketplace_add_succeeded"), "add succeeded is captured");
+  const phoebeEvents = await telemetry();
+  assert.deepEqual(phoebeEvents.map((event) => event.event), ["marketplace_opened", "marketplace_listing_viewed", "marketplace_add_started", "marketplace_add_succeeded"]);
+  assert.deepEqual(phoebeEvents[0].properties, { entry: "directory" });
+  const succeeded = phoebeEvents.at(-1).properties;
+  assert.equal(succeeded.via, "in-app"); assert.equal(succeeded.listing_kind, "agent"); assert.match(succeeded.listing_id, /^[a-z0-9]{12}$/); assert.equal(succeeded.action, "add"); assert.equal(succeeded.members, 1);
+  assert.ok(!JSON.stringify(phoebeEvents).includes("Phoebe") && !JSON.stringify(phoebeEvents).includes("payroll"), "no names or content in product events");
 
   // Reopen through ⌘K: the row now says Added.
   await viaCommand();
@@ -136,6 +170,52 @@ try {
   await until(() => browser.evaluate(`document.querySelector('[data-testid=marketplace-list] li')?.dataset.state === 'added'`), "after Update the row says Added", 20000);
   await closeDialog();
 
+  // 2b. A whole team from a website link: squad://app/v1/team-template?…&attribution=… arrives as a route.
+  const apiOrigin = `http://127.0.0.1:${apiPort}`;
+  const desk = (await bridge.api("/api/marketplace/agents?kind=team&q=code%20review%20desk")).data.agents[0];
+  const attribution = newAttributionId();
+  assert.equal((await fetch(`${apiOrigin}/v1/marketplace/agents/${desk.id}/events`, { method: "POST", headers: { "content-type": "application/json", origin: "http://127.0.0.1:5173" }, body: JSON.stringify({ type: "add_click", source: "website", attribution }) })).status, 202);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const before = (await telemetry()).length;
+  await browser.navigate(`${bridge.origin}/marketplace/teams/${desk.id}?sha256=${desk.contentHash}&attribution=${attribution}`);
+  await dialogOpen();
+  await until(() => browser.evaluate(`document.querySelectorAll('[data-testid=marketplace-team-members] li').length === 4`), "the team's four members", 20000);
+  assert.match(await browser.evaluate(`document.querySelector('[data-testid=marketplace-add]').innerText`), /Add team to squad/);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await browser.screenshot(`${artifact}/full-default-light-team.png`);
+  await browser.evaluate(`document.querySelector('[data-testid=marketplace-add]').click()`);
+  await until(async () => (await receipts()).some((entry) => entry.listingId === desk.id && entry.memberIds?.length === 4), "the whole team added, four members on one receipt", 90000);
+  const teamReceipt = (await receipts()).find((entry) => entry.listingId === desk.id);
+  assert.equal(teamReceipt.kind, "team"); assert.equal(teamReceipt.memberName, "Alder", "the receipt is named for the lead");
+  // Members are prepared one at a time in the background; the channel comes last (ADR-0118).
+  await until(async () => {
+    const state = (await bridge.api("/api/channels")).data || {};
+    const list = Array.isArray(state.channels) ? state.channels : Object.values(state.channels || {});
+    return list.some((channel) => String(channel?.name || "").replace(/^#/, "") === "reviews");
+  }, "the team's #reviews channel is created", 120000);
+  const adminStats = async () => (await (await fetch(`${apiOrigin}/v1/marketplace/admin/agents?kind=team&q=code%20review%20desk`, { headers: { authorization: `Bearer ${LOCAL_ADMIN_TOKEN}`, "x-marketplace-admin": "check@autohand.example" } })).json()).data.agents.find((item) => item.id === desk.id).stats;
+  await until(async () => (await adminStats()).attributedInstalls === 1, "the install is joined to the website click", 20000);
+  await until(async () => (await telemetry()).slice(before).some((event) => event.event === "marketplace_add_succeeded"), "the team's add is captured");
+  const teamEvents = (await telemetry()).slice(before);
+  assert.deepEqual(teamEvents.map((event) => event.event), ["marketplace_opened", "marketplace_listing_viewed", "marketplace_add_started", "marketplace_add_succeeded"]);
+  assert.deepEqual(teamEvents[0].properties, { entry: "link" });
+  assert.deepEqual(teamEvents.at(-1).properties, { via: "website-link", listing_id: desk.id, listing_kind: "team", version: 1, attribution_id: attribution, action: "add", members: 4 });
+
+  // 2c. Global Privacy Control: the same dialog sends no product events.
+  await telemetry();
+  await browser.send("Page.addScriptToEvaluateOnNewDocument", { source: "Object.defineProperty(Navigator.prototype, 'globalPrivacyControl', { get: () => true });" });
+  await browser.navigate(`${bridge.origin}/squad`);
+  await until(() => browser.evaluate(`navigator.globalPrivacyControl === true && !!document.querySelector('[aria-label="Team actions"]')`), "directory under GPC", 30000);
+  const quiet = (await telemetry()).length;
+  await viaCommand();
+  await homeShows();
+  await browser.evaluate(`document.querySelector('[data-testid=marketplace-featured] button').click()`);
+  await until(() => has("[data-testid=marketplace-detail]", "Abner"), "Abner's page under GPC");
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.equal((await telemetry()).length, quiet, "no marketplace events under Global Privacy Control");
+  await browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-dialog] button')].find((button) => button.innerText.trim() === 'Back').click()`);
+  await closeDialog();
+
   // 3. Minified layout, Grut skin, dark: More → Marketplace… → a category → detail.
   await viewport(1280, "dark", "minified", "grut");
   await browser.navigate(`${bridge.origin}/squad`);
@@ -144,9 +224,11 @@ try {
   await until(() => has("[data-testid=minified-more] button", "Marketplace…"), "Marketplace… under More");
   await clickText("[data-testid=minified-more] button", "Marketplace…");
   await dialogOpen();
-  await listShows(24);
+  await homeShows();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await browser.screenshot(`${artifact}/minified-grut-dark-home.png`);
   await pill("Finance");
-  await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].length === 20`), "Finance category");
+  await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].length === 24`), "Finance category");
   await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].some((row) => row.dataset.state === 'added')`), "Phoebe shows Added in Finance");
   await browser.screenshot(`${artifact}/minified-grut-dark-browse.png`);
   await browser.evaluate(`document.querySelector('[aria-label="View Penelope"]').click()`);
@@ -158,13 +240,17 @@ try {
   await viewport(390, "light", "minified", "paper");
   await browser.navigate(`${bridge.origin}/marketplace`);
   await dialogOpen();
-  await listShows(24);
+  await homeShows();
   assert.equal(await browser.evaluate("location.pathname"), "/squad");
   assert.equal(await browser.evaluate("document.documentElement.scrollWidth <= innerWidth"), true, "no sideways scroll on a phone");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await browser.screenshot(`${artifact}/minified-paper-phone-home.png`);
+  await pill("Finance");
+  await listShows(24);
   await browser.screenshot(`${artifact}/minified-paper-phone-browse.png`);
   await api.dispose();
   await pill("Personal");
-  await pill("All");
+  await pill("Finance");
   await until(() => browser.evaluate(`!!document.querySelector('[data-testid=marketplace-offline]') && document.querySelectorAll('[data-testid=marketplace-list] li').length === 24`), "offline: the last list, with Retry", 30000);
   assert.match(await browser.evaluate(`document.querySelector('[data-testid=marketplace-offline]').innerText`), /Offline · showing the list from \d{2}:\d{2}\.\s+Retry/);
   await browser.screenshot(`${artifact}/minified-paper-phone-offline.png`);
@@ -173,7 +259,7 @@ try {
   await until(() => browser.evaluate(`!document.querySelector('[data-testid=marketplace-offline]')`), "Retry brings it back online", 20000);
 
   assert.deepEqual(browser.errors, []);
-  console.log("PASS: in-app Marketplace: browse, search by creator and name, detail, Add, Added and Update available with Update in place, from the overflow, ⌘K, Minified More and /marketplace, in Full and Minified across three skins, and offline with Retry.");
+  console.log("PASS: in-app Marketplace: the first screen (Featured, Teams, sections, View all), a whole team from a website link joined to its click, product events (none under GPC), browse, search by creator and name, detail, Add, Added and Update available with Update in place, from the overflow, ⌘K, Minified More and /marketplace, in Full and Minified across three skins, and offline with Retry.");
 } catch (error) {
   await browser?.screenshot(`${artifact}/failure.png`).catch(() => {});
   console.error(await browser?.evaluate("document.body.innerText.slice(0, 2500)").catch(() => ""));

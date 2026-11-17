@@ -38,8 +38,11 @@ export function createProductTelemetry({ config, account = () => null, fetchImpl
     let currentAccount;
     try { currentAccount = account(); } catch { return { accepted: false }; }
     const identity = squadAnalyticsIdentity(currentAccount);
-    // Sign-in starts can be counted without a stable anonymous machine profile.
-    if (!identity && clean.event !== "sign_in_started") return { accepted: false };
+    // Sign-in starts and the marketplace funnel (ADR-0248) can be counted
+    // without a stable anonymous machine profile: each event gets a fresh
+    // random id and no person profile. The marketplace's attribution id, not
+    // the person, is what joins a website click to the install.
+    if (!identity && clean.event !== "sign_in_started" && !clean.event.startsWith("marketplace_")) return { accepted: false };
     const properties = { ...clean.properties, distinct_id: identity?.distinctId || `squad-anonymous:${randomUUID()}`, $process_person_profile: Boolean(identity),
       $geoip_disable: true, source: "squad", product: "autohand_squad", app_version: version, platform };
     if ((clean.event === "member_created" || clean.event === "member_used") && typeof input.memberId === "string" && /^[\w-]{1,256}$/.test(input.memberId)) {

@@ -5591,7 +5591,11 @@ function App() {
   const [publishMember, setPublishMember] = useState(null);
   // Browsing opens the same dialog over whatever page is showing, so the
   // person keeps their place (ADR-0246, entry points).
-  function openMarketplace() {
+  // Where it was opened from goes to product telemetry (ADR-0248): a string
+  // from ⌘K or the route, the directory otherwise (menus pass click events).
+  const [marketplaceEntry, setMarketplaceEntry] = useState(() => (pendingMarketplaceLink.request ? "link" : "directory"));
+  function openMarketplace(entry) {
+    setMarketplaceEntry(typeof entry === "string" ? entry : "directory");
     setMarketplaceRequest(null);
     setMarketplaceOpen(true);
   }
@@ -5600,23 +5604,33 @@ function App() {
     if (path === "/marketplace" || path === "/marketplace/") {
       window.history.replaceState({ squadOwnership: currentOwnership()?.storageKey }, "", SQUAD_DIRECTORY_ROUTE);
       setRoute(SQUAD_DIRECTORY_ROUTE);
-      openMarketplace();
+      openMarketplace("route");
       return;
     }
-    if (!path.startsWith("/marketplace/agents/")) return;
+    if (!path.startsWith("/marketplace/agents/") && !path.startsWith("/marketplace/teams/")) return;
     const request = requestFromAppRoute(path, query);
     window.history.replaceState({ squadOwnership: currentOwnership()?.storageKey }, "", SQUAD_DIRECTORY_ROUTE);
     setRoute(SQUAD_DIRECTORY_ROUTE);
     if (!request) return;
     pendingMarketplaceLink.request = request;
+    setMarketplaceEntry("link");
     setMarketplaceRequest(request);
     setMarketplaceOpen(true);
   }, [route]);
+  // A team template goes through the same addTeam as Import team: every
+  // member untrusted, the channels created among them (ADR-0248). The
+  // receipt names the lead and every member, and the bridge then counts one
+  // install with the attribution id a website link carried.
   async function addFromMarketplace({ document, receipt }) {
     const build = await addTeam(document, { trusted: false, source: receipt.source === "grok" ? "grok-bot" : "marketplace" });
-    const memberId = build?.members?.[0]?.id;
-    if (!memberId) throw new Error("This agent could not be added. Nothing was changed.");
-    await api("/api/marketplace/imports", { method: "POST", body: JSON.stringify({ ...receipt, memberId, action: "add" }) }).catch(() => {});
+    const members = Array.isArray(build?.members) ? build.members : [];
+    const leadKey = (document.members || []).find((member) => member.name === document.team?.lead)?.key;
+    const lead = members.find((member) => member.key === leadKey) || members[0];
+    const memberId = lead?.id || Object.values(build?.memberIds || {})[0];
+    if (!memberId) throw new Error(receipt.kind === "team" ? "This team could not be added. Nothing was changed." : "This agent could not be added. Nothing was changed.");
+    const memberIds = members.map((member) => member.id).filter(Boolean);
+    await api("/api/marketplace/imports", { method: "POST", body: JSON.stringify({ ...receipt, memberId, memberIds: memberIds.length ? memberIds : Object.values(build?.memberIds || {}), action: "add" }) }).catch(() => {});
+    return { memberId, members: memberIds.length || 1 };
   }
   async function updateFromMarketplace({ document, receipt }) {
     const record = document.members[0];
@@ -10206,6 +10220,7 @@ function App() {
         copy={localeCopy}
         avatarStyle={avatarStyle}
         request={marketplaceRequest}
+        entry={marketplaceEntry}
         onAdd={addFromMarketplace}
         onUpdate={updateFromMarketplace}
         onOpenMember={(id) => navigate(memberChatPath(id))}
@@ -10719,7 +10734,7 @@ function App() {
             channel: (channelId) => navigate(channelsPath(channelId)),
             member: (memberId) => navigate(memberChatPath(memberId)),
             route: (path) => navigate(path),
-            marketplace: openMarketplace,
+            marketplace: () => openMarketplace("command"),
           }}
         />
 

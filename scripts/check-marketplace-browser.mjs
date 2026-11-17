@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The agent marketplace in the app (ADR-0246), against a real bridge, the
-// local Squad API (workerd, D1, 200 seeds) and a loopback stand-in for x.ai:
+// local Squad API (workerd, D1, the 350 seed agents and 21 teams) and a loopback stand-in for x.ai:
 // Explore by category and search, an agent's page, Add to squad, the
 // squad://-style route with its checksum, Add another, a refused checksum, a
 // Grok Bot link, Publish to marketplace from the member menu, and the
@@ -60,14 +60,15 @@ try {
   await press('[aria-label="Team actions"]');
   await until(() => browser.evaluate(`!!document.querySelector('[data-testid=open-marketplace]')`), "Marketplace… in the overflow");
   await browser.evaluate(`document.querySelector('[data-testid=open-marketplace]').click()`);
-  await until(() => browser.evaluate(`document.querySelectorAll('[data-testid=marketplace-list] li').length === 24`), "first page of agents", 20000);
-  assert.match(await text("[data-testid=marketplace-dialog]"), /All\s*200/);
-  assert.match(await text("[data-testid=marketplace-list] li"), /by Autohand Squad team/);
+  await until(() => browser.evaluate(`document.querySelectorAll('[data-testid=marketplace-featured] li').length >= 4`), "the first screen with Featured", 20000);
+  assert.match(await text("[data-testid=marketplace-dialog]"), /All\s*371/);
+  assert.match(await text("[data-testid=marketplace-section-engineering] li"), /by Autohand Squad team/);
+  await new Promise((resolve) => setTimeout(resolve, 500));
   await browser.screenshot(`${artifact}/explore.png`);
-  await clickIn("[data-testid=marketplace-dialog]", "Finance20");
-  await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].length === 20 && document.querySelector('[data-testid=marketplace-list]').innerText.includes('Finance')`), "Finance category");
-  await browser.fill('[aria-label="Search by agent or creator"]', "payroll");
-  await until(() => browser.evaluate(`document.querySelectorAll('[data-testid=marketplace-list] li').length === 1 && document.querySelector('[data-testid=marketplace-list]').innerText.includes('Phoebe')`), "search finds Phoebe");
+  await clickIn("[data-testid=marketplace-dialog]", "Finance36");
+  await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].length === 24 && document.querySelector('[data-testid=marketplace-list]').innerText.includes('Finance')`), "Finance category");
+  await browser.fill('[data-testid=marketplace-search]', "payroll");
+  await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].some((row) => row.innerText.includes('Phoebe by Autohand Squad team')) && [...document.querySelectorAll('[data-testid=marketplace-list] li')].every((row) => /payroll/i.test(row.innerText) || row.dataset.kind === 'agent')`), "search finds Phoebe");
   await browser.screenshot(`${artifact}/search.png`);
 
   // An agent's page, then Add to squad ------------------------------------------------
@@ -83,7 +84,7 @@ try {
   await browser.screenshot(`${artifact}/added.png`);
 
   // The deep-link route, with the listing's checksum: already here, so Add another ---------
-  const phoebe = (await bridge.api("/api/marketplace/agents?q=payroll")).data.agents[0];
+  const phoebe = (await bridge.api("/api/marketplace/agents?q=payroll")).data.agents.find((agent) => agent.name === "Phoebe");
   await browser.navigate(`${bridge.origin}/marketplace/agents/${phoebe.id}?sha256=${phoebe.contentHash}`);
   await until(() => browser.evaluate(`document.querySelector('[data-testid=marketplace-existing]')?.innerText.includes('Already in your squad as Phoebe, at this version')`), "the link opens Phoebe and knows she is here", 30000);
   assert.equal(await browser.evaluate("location.pathname"), "/squad", "the route hands over to the directory");
@@ -146,7 +147,7 @@ try {
   await press('[aria-label="Team actions"]');
   await until(() => browser.evaluate(`!!document.querySelector('[data-testid=open-marketplace]')`), "overflow offline");
   await browser.evaluate(`document.querySelector('[data-testid=open-marketplace]').click()`);
-  await until(() => browser.evaluate(`!!document.querySelector('[data-testid=marketplace-offline]') && document.querySelectorAll('[data-testid=marketplace-list] li').length > 0`), "offline list", 30000);
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid=marketplace-offline]') && document.querySelectorAll('[data-testid=marketplace-featured] li').length > 0`), "offline: the last first screen", 30000);
   await browser.screenshot(`${artifact}/offline.png`);
 
   // The same at phone width, dark --------------------------------------------------------------
@@ -154,7 +155,7 @@ try {
   await browser.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
   await browser.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }] });
   await clickIn("[data-testid=marketplace-dialog]", "Retry");
-  await until(() => browser.evaluate(`!document.querySelector('[data-testid=marketplace-offline]') && document.querySelectorAll('[data-testid=marketplace-list] li').length === 24`), "online again");
+  await until(() => browser.evaluate(`!document.querySelector('[data-testid=marketplace-offline]') && document.querySelectorAll('[data-testid=marketplace-featured] li').length >= 4`), "online again", 20000);
   assert.equal(await browser.evaluate("document.documentElement.scrollWidth <= innerWidth"), true, "no sideways scroll at phone width");
   await browser.screenshot(`${artifact}/explore-phone.png`);
 

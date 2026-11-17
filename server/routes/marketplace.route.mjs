@@ -2,6 +2,7 @@
 //
 //   GET    /api/marketplace/agents            browse (q, category, creator, cursor, limit)
 //   GET    /api/marketplace/categories        counts per category
+//   GET    /api/marketplace/home              featured, teams and each category's first agents
 //   GET    /api/marketplace/agents/:id        listing, preview and versions
 //   POST   /api/marketplace/agents/:id/report report abuse
 //   POST   /api/marketplace/fetch             {id, version?, sha256?} → verified template
@@ -55,6 +56,7 @@ export async function handle(req, res, url, ctx) {
     service ||= ctx.marketplace || createMarketplace(ctx);
     if (path === "/api/marketplace/agents" && req.method === "GET") return ok(ctx, res, await service.list(Object.fromEntries(url.searchParams)));
     if (path === "/api/marketplace/categories" && req.method === "GET") return ok(ctx, res, await service.categories());
+    if (path === "/api/marketplace/home" && req.method === "GET") return ok(ctx, res, await service.home());
     const agent = path.match(AGENT);
     if (agent && req.method === "GET") return ok(ctx, res, await service.detail(agent[1]));
     if (agent && req.method === "DELETE") return ok(ctx, res, await service.unpublish(agent[1]));

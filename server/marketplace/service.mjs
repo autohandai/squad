@@ -13,8 +13,8 @@ import { join } from "node:path";
 import { createSquadApi, squadApiUrl } from "../squad-cloud/client.mjs";
 import { readMemberNotes, readMemberSkills, writeImportedSkills } from "../teams/package.mjs";
 import {
-  GROK_ID, GROK_ORIGIN, LISTING_ID, SHA256_HEX, TEMPLATE_LIMITS, contentHash, grokCreatorName, grokTemplate, memberTemplateFindings, parseGrokBotPage,
-  parseMarketplaceLink, secretFindings, templateFromMember, validateAgentTemplate, validateListingInput,
+  ATTRIBUTION_ID, GROK_ID, GROK_ORIGIN, LISTING_ID, SHA256_HEX, TEMPLATE_LIMITS, contentHash, grokCreatorName, grokTemplate, memberTemplateFindings, parseGrokBotPage,
+  parseMarketplaceLink, secretFindings, templateFromMember, validateAgentTemplate, validateListingInput, validateListingTemplate,
 } from "../../src/lib/marketplace.js";
 import { memberExportRecord, skillExportRecord } from "../../src/lib/teams.js";
 
@@ -71,7 +71,7 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
       listCache.delete(key); listCache.set(key, entry);
       while (listCache.size > LIST_CACHE_ENTRIES) listCache.delete(listCache.keys().next().value);
       // The first page and the categories survive a restart; deeper pages do not need to.
-      if (key === "categories" || key === "agents:" || key.startsWith("agent:")) {
+      if (key === "categories" || key === "home" || key === "agents:" || key.startsWith("agent:")) {
         const store = await persisted();
         store.entries[key] = entry;
         const keys = Object.keys(store.entries).filter((item) => item.startsWith("agent:"));
@@ -92,6 +92,7 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
     if (typeof query.q === "string" && query.q.trim()) params.set("q", query.q.trim().slice(0, 200));
     if (typeof query.category === "string" && /^[a-z]{2,20}$/.test(query.category)) params.set("category", query.category);
     if (["autohand", "user", "team"].includes(query.creator)) params.set("creator", query.creator);
+    if (["agent", "team", "all"].includes(query.kind)) params.set("kind", query.kind);
     if (typeof query.cursor === "string" && /^[A-Za-z0-9_-]{1,400}$/.test(query.cursor)) params.set("cursor", query.cursor);
     const limit = Number(query.limit);
     if (Number.isInteger(limit) && limit >= 1 && limit <= 50) params.set("limit", String(limit));
@@ -103,6 +104,8 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
     return cachedRead(`agents:${params}`, `/v1/marketplace/agents${params ? `?${params}` : ""}`);
   }
   const categories = () => cachedRead("categories", "/v1/marketplace/categories");
+  /** The first screen in one read: featured, teams and each category's first agents. */
+  const home = () => cachedRead("home", "/v1/marketplace/home?per=6");
   async function detail(id) {
     if (!LISTING_ID.test(String(id || ""))) throw fail("That is not a marketplace agent.", 404, "listing_not_found");
     return cachedRead(`agent:${id}`, `/v1/marketplace/agents/${id}`);
@@ -122,12 +125,14 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
     const members = await liveMembers();
     return (Array.isArray(store?.imports) ? store.imports : [])
       .filter((entry) => entry && typeof entry.memberId === "string" && members.has(entry.memberId))
-      .map((entry) => ({ ...entry, memberName: members.get(entry.memberId) }));
+      .map((entry) => ({ ...entry, kind: entry.kind === "team" ? "team" : "agent", memberName: members.get(entry.memberId), memberIds: (Array.isArray(entry.memberIds) ? entry.memberIds : [entry.memberId]).filter((id) => members.has(id)) }));
   }
   async function recordImport(input = {}) {
     const source = input.source === "grok" ? "grok" : "marketplace";
     const memberId = String(input.memberId || "").trim();
     if (!/^[A-Za-z0-9._:-]{1,160}$/.test(memberId)) throw fail("Say which member was added.");
+    // A team import records every member it created; memberId is its lead.
+    const memberIds = [...new Set([memberId, ...(Array.isArray(input.memberIds) ? input.memberIds : [])].map(String).filter((id) => /^[A-Za-z0-9._:-]{1,160}$/.test(id)))].slice(0, 50);
     const entry = {
       source,
       listingId: source === "marketplace" && LISTING_ID.test(String(input.listingId || "")) ? input.listingId : "",
@@ -135,8 +140,11 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
       version: Number.isInteger(input.version) && input.version > 0 ? input.version : 0,
       contentHash: SHA256_HEX.test(String(input.contentHash || "")) ? input.contentHash : "",
       creator: String(input.creator || "").replace(/\s+/g, " ").trim().slice(0, 80),
+      kind: input.kind === "team" ? "team" : "agent",
       memberId,
+      memberIds,
       action: input.action === "update" ? "update" : "add",
+      via: ["website-link", "in-app", "link"].includes(input.via) ? input.via : "in-app",
       at: new Date(now()).toISOString(),
     };
     if (source === "marketplace" && !entry.listingId) throw fail("Say which marketplace agent was added.");
@@ -145,7 +153,26 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
     const members = await liveMembers();
     const kept = (Array.isArray(store.imports) ? store.imports : []).filter((item) => members.has(item?.memberId) && !(item.memberId === memberId && item.listingId === entry.listingId && item.grokId === entry.grokId));
     await ctx.writeJsonFile(importsPath(), { version: 1, imports: [...kept, entry].slice(-1000) });
+    // A confirmed install is counted by the marketplace, anonymously, with the
+    // attribution id a website link carried (ADR-0248). Updates are not installs.
+    if (source === "marketplace" && entry.action === "add") {
+      void reportInstall({ id: entry.listingId, version: entry.version, via: entry.via, attribution: input.attribution });
+    }
     return entry;
+  }
+
+  /** Tell the marketplace an install happened. Never fails the import. */
+  async function reportInstall({ id, version, via, attribution } = {}) {
+    if (!LISTING_ID.test(String(id || ""))) return { sent: false };
+    const body = { type: "install", source: ["website-link", "in-app", "link"].includes(via) ? via : "in-app" };
+    if (ATTRIBUTION_ID.test(String(attribution || ""))) body.attribution = attribution;
+    if (Number.isInteger(version) && version > 0) body.version = version;
+    try {
+      await publicApi.request(`/v1/marketplace/agents/${id}/events`, { method: "POST", body, signal: AbortSignal.timeout(5000) });
+      return { sent: true };
+    } catch {
+      return { sent: false };
+    }
   }
 
   // --- templates ------------------------------------------------------------
@@ -163,13 +190,14 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
       if (error?.status && error.status < 500) throw cloudFailure(error, "This agent could not be fetched.");
       throw fail("The marketplace could not be reached, so nothing was added. Retry when you are online.", 503, "marketplace_offline");
     }
-    const template = validateAgentTemplate(data?.document);
-    if (!template.ok) throw fail(`This agent's template was refused: ${template.error}`, 422, "template_invalid");
+    const kind = data?.agent?.kind === "team" ? "team" : "agent";
+    const template = validateListingTemplate(kind, data?.document);
+    if (!template.ok) throw fail(`This ${kind === "team" ? "team" : "agent"}'s template was refused: ${template.error}`, 422, "template_invalid");
     const hash = await contentHash(template.document);
     const expected = [data.contentHash, data.version === data.agent?.version ? data.agent?.contentHash : data.contentHash, sha256 || hash];
     if (expected.some((value) => value !== hash)) throw fail("This agent's template does not match its checksum, so nothing was added. It may have changed on the way.", 409, "template_mismatch");
     const existing = (await imports()).filter((entry) => entry.listingId === id);
-    return { agent: data.agent, version: data.version, contentHash: hash, document: template.document, existing };
+    return { agent: data.agent, kind, version: data.version, contentHash: hash, document: template.document, existing };
   }
 
   // --- Grok Bot templates ----------------------------------------------------
@@ -341,5 +369,5 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
     return writeImportedSkills(ctx, clean);
   }
 
-  return { list, categories, detail, fetchTemplate, imports, recordImport, grokPreview, publishContext, preview, publish, mine, unpublish, report, saveSkills };
+  return { list, categories, home, reportInstall, detail, fetchTemplate, imports, recordImport, grokPreview, publishContext, preview, publish, mine, unpublish, report, saveSkills };
 }
