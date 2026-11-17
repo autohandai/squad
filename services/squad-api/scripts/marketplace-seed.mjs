@@ -17,7 +17,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AUTOHAND_CREATOR_NAME, CATEGORY_IDS, contentHash, seedListingId, templateFromMember, templateSummary, validateAgentTemplate, validateListingInput } from "../../../src/lib/marketplace.js";
+import { AUTOHAND_CREATOR_NAME, CATEGORY_IDS, contentHash, memberTemplateFindings, seedListingId, templateFromMember, templateSummary, validateAgentTemplate, validateListingInput } from "../../../src/lib/marketplace.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 export const AUTOHAND_PUBLISHER = Object.freeze({ id: "autohand-squad-team", kind: "autohand", issuer: "https://autohand.ai", subject: "autohand-squad-team", displayName: AUTOHAND_CREATOR_NAME });
@@ -32,6 +32,9 @@ export async function seedTemplates(seeds) {
   const ids = new Set();
   for (const seed of seeds) {
     if (!CATEGORY_IDS.includes(seed.category)) throw new Error(`${seed.slug}: unknown category ${seed.category}`);
+    const member = { key: seed.slug, name: seed.name, role: seed.role, description: seed.tagline, instructions: seed.instructions, brainCard: seed.brainCard };
+    const findings = memberTemplateFindings({ member, skills: seed.skills, notes: seed.notes || "", tagline: seed.tagline });
+    if (findings.length) throw new Error(`${seed.slug}: secret scanner hit in ${findings[0].path}`);
     const document = templateFromMember({
       member: { key: seed.slug, name: seed.name, role: seed.role, description: seed.tagline, instructions: seed.instructions, brainCard: seed.brainCard, look: { avatar: `/avatars/birds/${seed.bird}.webp`, employeeType: "" }, skills: seed.skills.map((skill) => skill.name), harness: { id: "autohand" } },
       skills: seed.skills,

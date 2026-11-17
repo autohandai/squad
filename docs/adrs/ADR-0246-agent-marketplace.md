@@ -117,6 +117,15 @@ email as `X-Marketplace-Admin`.
 
 ## What was learnt on the way
 
+- The first publish preview missed a key in a member's instructions.
+  `buildTeamFile` redacts everything the scanner finds while it builds, so a
+  validator run on the built document saw "[removed: looked like a
+  secret]" and passed it. The bridge check caught it (`api_key=…` in the
+  instructions published as redacted text). `memberTemplateFindings` now
+  scans the raw member, skills, memory and tagline before building, in the
+  bridge, the seed builder and the Grok paste field; the Worker already
+  scanned the posted document before rebuilding it.
+
 - `cf dev` in this package runs the Vite plugin and rejects `--local` and
   `--persist-to`; `cf d1 query` has no local mode. The README's local steps
   were stale. `scripts/local-marketplace.mjs` runs the Worker in workerd with

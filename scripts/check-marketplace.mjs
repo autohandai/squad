@@ -6,7 +6,7 @@
 
 import assert from "node:assert/strict";
 import {
-  APP_ROUTE_PREFIX, CATEGORIES, appRouteForRequest, buildDeepLink, canonicalJson, contentHash, grokTemplate, parseDeepLink,
+  APP_ROUTE_PREFIX, CATEGORIES, appRouteForRequest, buildDeepLink, canonicalJson, contentHash, grokTemplate, memberTemplateFindings, parseDeepLink,
   parseGrokBotPage, parseMarketplaceLink, requestFromAppRoute, seedListingId, templateFromMember, validateAgentTemplate, validateListingInput,
 } from "../src/lib/marketplace.js";
 import { validateTeamFile } from "../src/lib/teams.js";
@@ -50,6 +50,13 @@ const skill = { name: "release-checklist", description: "Checks a release.", tex
   big.members[0].instructions = "y ".repeat(9000);
   big.skills.push(...Array.from({ length: 4 }, (_, index) => ({ name: `bulk-${index}`, description: "", text: "z ".repeat(30000) })));
   refuse(big, /256 KB/);
+  // Building a team file redacts silently, so the raw inputs are scanned first.
+  const leaky = { ...member, instructions: "Deploy with api_key=abcd1234efgh5678." };
+  assert.ok(validateAgentTemplate(templateFromMember({ member: leaky, skills: [skill] })).ok, "the built document no longer shows the key");
+  assert.deepEqual(memberTemplateFindings({ member: leaky, skills: [skill] }).map((finding) => finding.path), ["members[0].instructions"]);
+  assert.deepEqual(memberTemplateFindings({ member, skills: [{ ...skill, text: `${skill.text}\nghp_${"a".repeat(36)}` }] }).map((finding) => finding.path), ["skills[0].text"]);
+  assert.deepEqual(memberTemplateFindings({ member, skills: [skill], notes: "password: hunter2-very-secret" }).map((finding) => finding.path), ["members[0].notes"]);
+  assert.deepEqual(memberTemplateFindings({ member, skills: [skill] }), []);
   // Unknown fields cannot ride along: the allowlist rebuilds the member.
   const extra = validateAgentTemplate({ ...result.document, members: [{ ...result.document.members[0], permissions: { level: "full" }, workspace: "/private/x" }] });
   assert.ok(extra.ok); assert.equal(extra.document.members[0].permissions, undefined); assert.equal(extra.document.members[0].workspace, undefined);

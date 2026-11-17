@@ -201,6 +201,16 @@ export function validateAgentTemplate(input) {
 }
 
 /**
+ * Secret-scanner findings in what a template would be built from, at the
+ * paths the template will have. Building a team file redacts what the
+ * scanner finds, so this runs first: a public template is refused, never
+ * published with "[removed]" in it.
+ */
+export function memberTemplateFindings({ member = {}, skills = [], notes = "", tagline = "" } = {}) {
+  return secretFindings({ team: { description: tagline }, members: [{ ...member, notes }], skills });
+}
+
+/**
  * The template for one member: `member` is the export record shape
  * (name, role, description, instructions, brainCard, look, skills),
  * `skills` the SKILL.md texts, `notes` the starter memory or "".
