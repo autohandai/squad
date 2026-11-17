@@ -279,7 +279,7 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
     link.searchParams.set('resource', item.url);
     if (scope) link.searchParams.set('scope', scope);
     for (const [key, entry] of pending) if (entry.id === id) pending.delete(key);
-    pending.set(state, { id, verifier, redirectUri, resource: item.url, revision: item.authRevision, url: item.url, startedAt: now(), tokenEndpoint, client, issuer });
+    pending.set(state, { id, verifier, redirectUri, resource: item.url, revision: item.authRevision, url: item.url, startedAt: now(), tokenEndpoint, revocationEndpoint: safeEndpoint(meta.revocation_endpoint), client, issuer });
     return { mode: 'browser', url: link.toString(), expiresInSeconds: PENDING_MS / 1000 };
   }
 
@@ -297,7 +297,7 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
     const link = new URL(googleEndpoints.authorization);
     for (const [key, value] of Object.entries({ response_type: 'code', client_id: client.clientId, redirect_uri: redirectUri, scope: scopes.join(' '), code_challenge: challenge, code_challenge_method: 'S256', state, access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' })) link.searchParams.set(key, value);
     for (const [key, entry] of pending) if (entry.id === item.id) pending.delete(key);
-    pending.set(state, { id: item.id, verifier, redirectUri, resource: '', revision: item.authRevision, url: undefined, startedAt: now(), tokenEndpoint: googleEndpoints.token, client: { clientId: client.clientId, clientSecret: client.clientSecret, authMethod: client.clientSecret ? 'client_secret_post' : 'none' }, issuer: googleEndpoints.issuer, google: true });
+    pending.set(state, { id: item.id, verifier, redirectUri, resource: '', revision: item.authRevision, url: undefined, startedAt: now(), tokenEndpoint: googleEndpoints.token, revocationEndpoint: googleEndpoints.revocation, client: { clientId: client.clientId, clientSecret: client.clientSecret, authMethod: client.clientSecret ? 'client_secret_post' : 'none' }, issuer: googleEndpoints.issuer, google: true });
     return { mode: 'browser', url: link.toString(), expiresInSeconds: PENDING_MS / 1000 };
   }
 
@@ -338,7 +338,16 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
       emit({ id: entry.id, outcome: 'failed' });
       throw fail(reason.slice(0, 300), 502);
     }
-    const result = await store.setOAuth(entry.id, { revision: entry.revision, ...(entry.url !== undefined ? { url: entry.url } : {}) }, (next, tokens) => storeTokens(next, tokens, answer.body));
+    let result;
+    try {
+      result = await store.setOAuth(entry.id, { revision: entry.revision, ...(entry.url !== undefined ? { url: entry.url } : {}) }, (next, tokens) => storeTokens(next, tokens, answer.body));
+    } catch (failure) {
+      // The connector changed (or went) while the person was signing in: these
+      // tokens were granted for the old server, so hand them back.
+      const meta = { revocationEndpoint: entry.revocationEndpoint, clientId: entry.client.clientId, authMethod: entry.client.authMethod, mode: entry.google ? 'google' : 'dcr' };
+      void revoke(meta, { accessToken: answer.body.access_token, refreshToken: text(answer.body.refresh_token), clientSecret: entry.client.clientSecret });
+      throw failure;
+    }
     emit({ id: entry.id, outcome: 'signed-in' });
     return result.connector;
   }
@@ -424,9 +433,11 @@ export function createConnectorOAuth({ store, fetchRequest = fetch, now = () => 
     const client = oauth.mode === 'google' ? await googleClient().then((value) => ({ clientId: value?.clientId || oauth.clientId, clientSecret: value?.clientSecret || '', authMethod: value?.clientSecret ? 'client_secret_post' : 'none' })) : { clientId: oauth.clientId, clientSecret: tokens.clientSecret || '', authMethod: oauth.authMethod || 'none' };
     const { form, basic } = clientForm(client);
     let answer = null;
-    for (let attempt = 0; attempt < 2 && !answer; attempt += 1) {
+    // One more try after a network failure or a busy server (5xx, 429): those say nothing about the grant.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       answer = await postForm(oauth.tokenEndpoint, { grant_type: 'refresh_token', refresh_token: tokens.refreshToken, ...(item.kind === 'url' ? { resource: item.url } : {}), ...form }, { basic }).catch(() => null);
-      if (!answer && attempt === 0) await sleep(1000);
+      if (answer && renewal(answer.status, answer.body) !== 'retry') break;
+      if (attempt === 0) await sleep(1000);
     }
     const outcome = answer ? renewal(answer.status, answer.body) : 'retry';
     if (outcome === 'renewed') {

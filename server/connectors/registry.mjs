@@ -83,6 +83,7 @@ function sanitizeArgument(entry) {
     default: typeof entry.default === 'string' ? entry.default.slice(0, 512) : null,
     value: typeof entry.value === 'string' ? entry.value.slice(0, 1024) : null,
     valueHint: text(entry.valueHint, 80),
+    format: text(entry.format, 20),
     // `{name}` parts of a fixed value the person fills in (e.g. -e TOKEN={token}).
     variables: (Array.isArray(entry.variables) ? entry.variables.map((item) => [item?.name, item]) : Object.entries(record(entry.variables) ? entry.variables : {})).slice(0, 8)
       .map(([key, item]) => (record(item) ? sanitizeInput({ ...item, name: key }, { nameRule: /^[A-Za-z0-9_.-]{1,64}$/ }) : null)).filter(Boolean),
@@ -165,7 +166,9 @@ export function packageReference(pkg) {
 function argumentInput(argument) {
   if (argument.value !== null) return null;
   if (argument.variables?.length) return null;
-  if (argument.type === 'named') return argument.valueHint || argument.default !== null ? argument.name.replace(/^-+/, '') : null;
+  // A named argument without a value is asked for (and left out when empty);
+  // only a required boolean one is a fixed bare flag.
+  if (argument.type === 'named') return argument.format === 'boolean' && argument.required ? null : argument.name.replace(/^-+/, '');
   return argument.valueHint || argument.name || 'value';
 }
 
@@ -202,7 +205,7 @@ export function installOptions(server, runtimes = {}) {
           return argument.variables.map((variable) => describeInput({ ...variable, description: variable.description || argument.description, name: '' }, { key: variable.name, target: 'arg', secret: variable.secret }));
         }
         const key = argumentInput(argument);
-        return key ? [describeInput({ ...argument, name: '' }, { key, target: 'arg', secret: argument.secret })] : [];
+        return key ? [describeInput({ ...argument, name: '', choices: argument.format === 'boolean' ? ['true', 'false'] : [] }, { key, target: 'arg', secret: argument.secret })] : [];
       }),
     ];
     const available = runtimes[command] !== false;
@@ -254,6 +257,11 @@ function argumentGroups(list, input, { env, argSecrets, docker }) {
       value = input(key) ?? argument.default ?? null;
       if (value === null) {
         if (argument.required) throw fail(`${key} is required.`);
+        continue;
+      }
+      if (argument.type === 'named' && argument.format === 'boolean') {
+        // A boolean flag is passed bare when on and left out when off.
+        if (/^(true|yes|on|1)$/i.test(String(value))) groups.push([argument.name]);
         continue;
       }
       secretKey = key;
@@ -371,17 +379,34 @@ export function listing(server, { installed = [], runtimes = {}, featured = null
   };
 }
 
-/** Major.minor.patch comparison that tolerates pre-release suffixes; >0 when a is newer. */
+/**
+ * Semver-style comparison; >0 when a is newer. A pre-release sorts before its
+ * release (2.0.0-rc.1 < 2.0.0) and build metadata (+…) is ignored.
+ */
 export function compareVersions(a, b) {
-  const parse = (value) => String(value || '').split(/[.+-]/).map((part) => (/^\d+$/.test(part) ? Number(part) : part));
+  const part = (value) => (/^\d+$/.test(value) ? Number(value) : value);
+  const parse = (value) => {
+    const [core, ...pre] = String(value || '').split('+')[0].split('-');
+    return { core: core.split('.').map(part), pre: pre.length ? pre.join('-').split('.').map(part) : [] };
+  };
+  const compare = (left, right, missing) => {
+    for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+      const x = left[index] ?? missing, y = right[index] ?? missing;
+      if (x === y) continue;
+      if (x === undefined) return -1;
+      if (y === undefined) return 1;
+      if (typeof x === 'number' && typeof y === 'number') return x - y;
+      if (typeof x === 'number') return -1;
+      if (typeof y === 'number') return 1;
+      return String(x).localeCompare(String(y));
+    }
+    return 0;
+  };
   const left = parse(a), right = parse(b);
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const x = left[index] ?? 0, y = right[index] ?? 0;
-    if (x === y) continue;
-    if (typeof x === 'number' && typeof y === 'number') return x - y;
-    return String(x).localeCompare(String(y));
-  }
-  return 0;
+  const core = compare(left.core, right.core, 0);
+  if (core) return core;
+  if (!left.pre.length || !right.pre.length) return right.pre.length - left.pre.length;
+  return compare(left.pre, right.pre, undefined);
 }
 
 /**

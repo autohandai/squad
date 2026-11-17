@@ -152,7 +152,7 @@ export async function runConnectorProxy({ input = process.stdin, output = proces
       current.stdout.on('data', (chunk) => { try { childReader.feed(chunk); } catch { /* oversized frame from the server */ } });
       current.on('exit', (code, signal) => {
         if (child !== current || closing || failedToStart) return;
-        died(`${definition.name || 'The connector'} stopped unexpectedly (${signal || `exit code ${code}`}).${stderrTail ? ` ${stderrTail.slice(-160)}` : ''}`, false);
+        died(`${definition.name || 'The connector'} stopped unexpectedly (${signal || `exit code ${code}`}).${stderrTail.trim() ? ` ${stderrTail.slice(-160).trim()}` : ''}`, false);
       });
       report('started');
       if (initialize) {

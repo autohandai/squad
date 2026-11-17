@@ -366,7 +366,10 @@ export async function handle(req, res, url, ctx) {
     }
     if (!action && req.method === 'GET') { ok(await decorate(ctx, await store.get(id))); return true; }
     if (!action && req.method === 'PUT') {
+      const before = await store.oauthState(id).catch(() => null);
       const updated = await store.update(id, await ctx.readBody(req));
+      // A new address drops the old sign-in; hand its tokens back to the old server.
+      if (before?.tokens?.accessToken && before.item.url !== updated.url) void ctx.connectorOAuth.revoke(before.oauth, before.tokens);
       ctx.emit?.('connectors.changed', { id });
       ok(await decorate(ctx, updated));
       return true;
