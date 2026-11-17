@@ -448,6 +448,17 @@ const REPORTS = /^\/v1\/marketplace\/agents\/([a-z0-9]{12})\/reports$/;
 const ADMIN_AGENT = /^\/v1\/marketplace\/admin\/agents\/([a-z0-9]{12})$/;
 const ADMIN_REPORT = /^\/v1\/marketplace\/admin\/reports\/([a-f0-9-]{36})$/;
 
+/** The website's pages, which may send reports from the visitor's browser. */
+export const MARKETPLACE_SITE_ORIGINS = ["https://autohand.ai", "https://www.autohand.ai"];
+/**
+ * A report sent from an agent's page on the website. It goes straight from
+ * the visitor's browser so the network bucket is the visitor's own, not the
+ * website's egress shared by everyone.
+ */
+export function isSiteReport(method: string, path: string, origin: string | null): boolean {
+  return Boolean(origin && MARKETPLACE_SITE_ORIGINS.includes(origin)) && (method === "POST" || method === "OPTIONS") && REPORTS.test(path);
+}
+
 /** GETs anyone may read, from any origin. */
 export function isPublicMarketplaceRead(method: string, path: string): boolean {
   return method === "GET" && (path === "/v1/marketplace/agents" || path === "/v1/marketplace/categories" || AGENT.test(path) || TEMPLATE.test(path));

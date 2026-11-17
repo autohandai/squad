@@ -106,6 +106,13 @@ test("public reads are cacheable, cross-origin readable and revalidate with ETag
   assert.equal((await call("/v1/marketplace/agents/../me")).status, 401, "a dot-segment path reaches no public route");
   // A browser on another origin may read, never write.
   assert.equal((await call("/v1/marketplace/agents", { method: "POST", value: {}, headers: { origin: "https://evil.example" } })).status, 403);
+  assert.equal((await call(`/v1/marketplace/agents/${id}/reports`, { method: "POST", value: { reason: "spam" }, headers: { origin: "https://evil.example" } })).status, 403);
+  // The website's agent pages send reports from the visitor's own browser.
+  const preflight = await call(`/v1/marketplace/agents/${id}/reports`, { method: "OPTIONS", headers: { origin: "https://autohand.ai" } });
+  assert.equal(preflight.status, 204); assert.equal(preflight.headers.get("access-control-allow-origin"), "https://autohand.ai");
+  const fromSite = await call(`/v1/marketplace/agents/${id}/reports`, { method: "POST", value: { reason: "broken", details: "From the site." }, headers: { origin: "https://autohand.ai" }, ip: "198.18.0.9" });
+  assert.equal(fromSite.status, 202); assert.equal(fromSite.headers.get("access-control-allow-origin"), "https://autohand.ai");
+  assert.equal((await call("/v1/marketplace/agents", { method: "POST", value: {}, headers: { origin: "https://autohand.ai" } })).status, 403, "the site origin may only report");
 });
 
 test("a template downloads with a hash that recomputes, counts one add per network and is rate limited", async () => {

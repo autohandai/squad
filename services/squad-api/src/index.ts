@@ -10,7 +10,7 @@ import { agentRoutes } from "./agents.js";
 import { availableOwners } from "./owners.js";
 import { backupJsonSchema } from "@autohand/squad-portable";
 import { mobileRelayRoutes, publicMobileRelay } from "./mobile-relay.js";
-import { cleanMarketplace, isPublicMarketplaceRead, publicMarketplaceRoutes, publisherMarketplaceRoutes } from "./marketplace.js";
+import { cleanMarketplace, isPublicMarketplaceRead, isSiteReport, publicMarketplaceRoutes, publisherMarketplaceRoutes } from "./marketplace.js";
 export { MobileRelay } from "./mobile-relay.js";
 
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
@@ -60,9 +60,10 @@ export default {
     const requestId = crypto.randomUUID(); const url = new URL(request.url);
     const origin = request.headers.get("origin");
     const publicRelease = request.method === "GET" && (/^\/v1\/releases\/(stable|nightly)\/manifest$/.test(url.pathname) || url.pathname === "/schemas/squad-backup-v1.json" || isPublicMarketplaceRead(request.method, url.pathname));
+    const siteReport = isSiteReport(request.method, url.pathname, origin);
     let response: Response;
     try {
-      requireValue(!origin || origin === env.WEB_ORIGIN || publicRelease, 403, "origin_denied", "This browser origin is not allowed.");
+      requireValue(!origin || origin === env.WEB_ORIGIN || publicRelease || siteReport, 403, "origin_denied", "This browser origin is not allowed.");
       response = request.method === "OPTIONS"
         ? new Response(null, { status: 204 })
         : await route(request, env, url, ctx);
@@ -77,7 +78,7 @@ export default {
     response.headers.set("x-content-type-options", "nosniff");
     response.headers.set("referrer-policy", "no-referrer");
     if (!response.headers.has("cache-control")) response.headers.set("cache-control", "no-store");
-    if (origin === env.WEB_ORIGIN || publicRelease) {
+    if (origin === env.WEB_ORIGIN || publicRelease || siteReport) {
       response.headers.set("access-control-allow-origin", publicRelease ? "*" : origin || env.WEB_ORIGIN);
       response.headers.set("vary", "Origin");
       response.headers.set("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");

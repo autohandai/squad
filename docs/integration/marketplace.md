@@ -78,7 +78,10 @@ All responses use the Squad API envelope (`{success,data}` /
 | POST | `/v1/marketplace/agents/:id/reports` | `{reason,details}`; reasons `spam`, `harmful`, `impersonation`, `secrets`, `broken`, `other`; 10 per network per hour; five distinct reporters hide the listing until an admin reviews it |
 
 Public GETs are `Cache-Control: public, max-age=60, s-maxage=300` with
-`Access-Control-Allow-Origin: *`. The network bucket is a SHA-256 of the
+`Access-Control-Allow-Origin: *`. Reports also accept browser requests from
+`https://autohand.ai` (and `www.`), and only reports: an agent's page sends
+them from the visitor's own browser so the network bucket is the visitor's,
+not the website's shared egress. The network bucket is a SHA-256 of the
 connecting IP and the time window; no IP address is stored.
 
 ### Publisher (Squad session; teams also send `X-Autohand-Identity`)
