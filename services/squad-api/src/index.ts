@@ -10,6 +10,7 @@ import { agentRoutes } from "./agents.js";
 import { availableOwners } from "./owners.js";
 import { backupJsonSchema } from "@autohand/squad-portable";
 import { mobileRelayRoutes, publicMobileRelay } from "./mobile-relay.js";
+import { cleanMarketplace, isPublicMarketplaceRead, publicMarketplaceRoutes, publisherMarketplaceRoutes } from "./marketplace.js";
 export { MobileRelay } from "./mobile-relay.js";
 
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
@@ -18,7 +19,9 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   const release = await releaseRoutes(request, env, url); if (release) return release;
   if (url.pathname === "/v1/auth/exchange" && request.method === "POST") return exchangeIdentity(request, env);
   const phone = await publicMobileRelay(request, env, url, ctx); if (phone) return phone;
+  const marketplace = await publicMarketplaceRoutes(request, env, url); if (marketplace) return marketplace;
   const user = await authenticate(request, env);
+  const publishing = await publisherMarketplaceRoutes(request, env, user, url); if (publishing) return publishing;
   const relay = await mobileRelayRoutes(request, env, user, url, ctx); if (relay) return relay;
   if (url.pathname === "/v1/owners" && request.method === "GET") return ok({ owners: await availableOwners(request, env, user) });
   const agents = await agentRoutes(request, env, user, url); if (agents) return agents;
@@ -56,7 +59,7 @@ export default {
   async fetch(request, env, ctx): Promise<Response> {
     const requestId = crypto.randomUUID(); const url = new URL(request.url);
     const origin = request.headers.get("origin");
-    const publicRelease = request.method === "GET" && (/^\/v1\/releases\/(stable|nightly)\/manifest$/.test(url.pathname) || url.pathname === "/schemas/squad-backup-v1.json");
+    const publicRelease = request.method === "GET" && (/^\/v1\/releases\/(stable|nightly)\/manifest$/.test(url.pathname) || url.pathname === "/schemas/squad-backup-v1.json" || isPublicMarketplaceRead(request.method, url.pathname));
     let response: Response;
     try {
       requireValue(!origin || origin === env.WEB_ORIGIN || publicRelease, 403, "origin_denied", "This browser origin is not allowed.");
@@ -91,5 +94,6 @@ export default {
       env.DB.prepare("DELETE FROM invitations WHERE expires_at<?").bind(now),
       env.DB.prepare("DELETE FROM owned_exports WHERE expires_at<? AND retained_at IS NULL").bind(now),
     ]);
+    await cleanMarketplace(env);
   },
 } satisfies ExportedHandler<Env>;

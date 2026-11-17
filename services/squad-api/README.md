@@ -38,6 +38,16 @@ node_modules/.bin/cf dev --local --persist-to .cloudflare/local-state --port 878
 ```
 
 Point a desktop bridge at `AUTOHAND_SQUAD_API_URL=http://127.0.0.1:8787`.
+
+`cf dev` runs the Vite plugin, which does not take `--local` or
+`--persist-to`, and `cf d1 query` has no local mode. For the marketplace, run
+the Worker in workerd with persistent D1, both migration folders, the 200
+seeds and the identity fixture (`identity-<name>` signs in; `alice` owns
+"Kahu Studio"):
+
+```sh
+node scripts/local-marketplace.mjs --port 8797
+```
 Cloud sync remains off until Settings → Cloud sync → Enable sync. Opening the
 section or discovering workspaces does not upload memories.
 
@@ -142,12 +152,29 @@ retry. A deletion uses the current base revision and `content: null`. Text is
 limited to 500 characters; initial workspace capacity includes 2,000 entries
 and tombstones. Changes are paged with the returned cursor and `hasMore`.
 
+## Agent marketplace
+
+Public agent templates live in a second database, `squad-marketplace`, bound
+as `MARKETPLACE` ([ADR-0246](../../docs/adrs/ADR-0246-agent-marketplace.md),
+[contract](../../docs/integration/marketplace.md)). Browsing, detail and
+template download need no account; publishing needs a Squad session (teams:
+owner or admin with full write access); moderation needs
+`MARKETPLACE_ADMIN_TOKEN` (≥ 32 characters), held only by the website's admin
+functions. Migrations are in `marketplace-migrations/`; the 200 Autohand
+Squad team agents are `marketplace-seeds/agents.json`:
+
+```sh
+node scripts/marketplace-seed.mjs --check                 # validate every seed
+node scripts/marketplace-seed.mjs --batches <folder>      # cf d1 query --batch files
+```
+
 ## Deployment and release publication
 
 The target account must own `autohand.ai`. Create **new Squad-owned resources**:
-`squad-control-plane` (D1), `squad-memory` and `squad-releases` (private R2).
-Set `SQUAD_API_DATABASE_ID` to that database's real ID, apply `migrations/`, then
-deploy. Never point the binding at the general API database.
+`squad-control-plane` and `squad-marketplace` (D1), `squad-memory` and
+`squad-releases` (private R2). Set `SQUAD_API_DATABASE_ID` and
+`SQUAD_MARKETPLACE_DATABASE_ID` to the databases' real IDs, apply
+`migrations/` and `marketplace-migrations/` to each, then deploy. Never point the binding at the general API database.
 
 Keep `global_fetch_strictly_public` enabled: identity and current team checks
 call a public Cloudflare Worker. Local outbound-service fixtures cannot verify
