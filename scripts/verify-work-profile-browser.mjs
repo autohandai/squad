@@ -38,8 +38,24 @@ const channelMessages = { [channels[0].id]: [{ id: "verify-channel-message", cha
 const workflows = { [channels[0].id]: [{ id: "verify-workflow", name: "Browser fixture approval", steps: [{ id: "verify-approval-step", memberId: agents[0].id }], runs: [{ id: "verify-workflow-run", status: "waiting_approval", startedAt: now, pendingApproval: { stepId: "verify-approval-step", requestedAt: now } }] }] };
 const fixtures = { agents, tasks, memory, channels, channelMessages, workflows, seedChannelIds: initialChannels.map((channel) => channel.id), removedAgents: initialAgents.map((agent) => agent.id), root, now };
 
+// A fixed, ready ownership context. Squad reads account state under the
+// owner's storage prefix and only after /api/ownership/context reports ready
+// (ADR-0193; src/lib/owned-storage.js, OwnershipBootstrap.jsx).
+const ownership = { state: "ready", generation: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b", storageKey: "work-profile-fixture", actor: { kind: "user", id: "fixture-owner" }, owner: { kind: "user", id: "fixture-owner" }, ownerLabel: "Browser fixture", role: "owner", canWrite: true, teamSquads: false, offline: false, error: "", pendingOperation: null };
+fixtures.ownership = ownership;
+
 function installFixtures(data) {
-  const store = (key, value) => localStorage.setItem(`autohandSquad.v1.${key}`, JSON.stringify(value));
+  const ownedKey = key => `autohandSquad.owner.v1.${data.ownership.storageKey}.${encodeURIComponent(`autohandSquad.v1.${key}`)}`;
+  window.__ownedKey = ownedKey;
+  const store = (key, value) => localStorage.setItem(ownedKey(key), JSON.stringify(value));
+  // The fixture has no broker, so its ownership event stream stays silent
+  // rather than erroring (an error makes a mounted Squad leave and reload).
+  const NativeEventSource = window.EventSource;
+  window.EventSource = function EventSource(url, options) {
+    if (new URL(url, location.origin).pathname === "/api/ownership/events") return { close() {}, addEventListener() {}, removeEventListener() {}, readyState: 1 };
+    return new NativeEventSource(url, options);
+  };
+  const fixtureMessages = Object.fromEntries(data.agents.map((agent) => [agent.id, [{ id: `reply-${agent.id}`, role: "agent", body: `Browser fixture reply from ${agent.name}`, status: "complete", createdAt: data.now }]]));
   if (!localStorage.getItem("workProfileVerify.initialized")) {
     localStorage.clear();
     store("agents", data.agents);
@@ -51,10 +67,10 @@ function installFixtures(data) {
     store("channelThreads", {});
     store("channelReads", Object.fromEntries(data.seedChannelIds.map((id) => [id, data.now])));
     store("agentReads", {});
-    store("messages", Object.fromEntries(data.agents.map((agent) => [agent.id, [{ id: `reply-${agent.id}`, role: "agent", body: `Browser fixture reply from ${agent.name}`, status: "complete", createdAt: data.now }]])));
+    store("messages", fixtureMessages);
     store("automations", []);
     store("onboarding", { version: 1, status: "skipped", lastStep: "skipped" });
-    localStorage.setItem("autohandSquad.v1.sidebarCollapsed", "false");
+    localStorage.setItem(ownedKey("sidebarCollapsed"), "false");
     localStorage.setItem("workProfileVerify.initialized", "true");
   }
   window.__verifyRequests = [];
@@ -152,7 +168,14 @@ function installFixtures(data) {
     if (url.pathname === "/api/members/presence") return response({ presence: window.__verifyPresence });
     if (url.pathname === "/api/runs") return response([]);
     if (url.pathname === "/api/memory-inbox") return response({ items: data.memory });
-    if (url.pathname === "/api/channels") return response({ channels: data.channels, threads: [] });
+    if (url.pathname === "/api/ownership/context") return response(data.ownership);
+    if (url.pathname === "/api/owned/browser-state") {
+      window.__browserRevision ||= 0;
+      if ((options.method || "GET") === "PUT") return response({ revision: ++window.__browserRevision });
+      return response({ revision: window.__browserRevision, messagesByAgent: fixtureMessages });
+    }
+    // The roster is the owner's registry on the channel snapshot.
+    if (url.pathname === "/api/channels") return response({ channels: data.channels, threads: [], agentChannelAccess: Object.fromEntries(data.agents.map((agent) => [agent.id, { agent }])) });
     if (url.pathname === "/api/workflows") return response({ channels: data.workflows });
     if (url.pathname === "/api/workflows/pending") return response({ pending: [] });
     if (url.pathname === "/api/notifications") return response({ items: [] });
@@ -281,7 +304,7 @@ async function main() {
     report.collapsedNormalLogo = await geometry();
     assert.equal(report.collapsedNormalLogo.y, report.collapsedProfileLogo.y, "Collapsed profile/normal logo alignment");
     assert.equal(report.collapsedNormalLogo.paddingTop, report.collapsedProfileLogo.paddingTop, "Collapsed native inset");
-    await cdp.evaluate("localStorage.setItem('autohandSquad.v1.sidebarCollapsed', 'false'); localStorage.setItem('autohandSquad.v1.agentReads', '{}'); localStorage.setItem('autohandSquad.v1.channelReads', JSON.stringify(Object.fromEntries(JSON.parse(localStorage.getItem('autohandSquad.v1.channels')).filter(channel => channel.id !== 'channel-browser-verify').map(channel => [channel.id, new Date().toISOString()]))))");
+    await cdp.evaluate("localStorage.setItem(__ownedKey('sidebarCollapsed'), 'false'); localStorage.setItem(__ownedKey('agentReads'), '{}'); localStorage.setItem(__ownedKey('channelReads'), JSON.stringify(Object.fromEntries(JSON.parse(localStorage.getItem(__ownedKey('channels'))).filter(channel => channel.id !== 'channel-browser-verify').map(channel => [channel.id, new Date().toISOString()]))))");
     await navigate("/work");
     await waitFor(() => cdp.evaluate("Boolean(document.querySelector('[data-testid=needs-you-list]'))"), "combined Needs you");
     // Remaining combined-view assertions are deliberately DOM based; filters,
