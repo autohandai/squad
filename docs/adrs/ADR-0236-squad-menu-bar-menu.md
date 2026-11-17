@@ -118,11 +118,10 @@ looked full.
   engine is installed, unlike the chat header's `engineInUse`.
 - At 2.75 pt per cell the comb shows state by fill and outline more than by
   colour; the paused bars are 0.5 pt wide and read mainly as "not solid".
-- Not done: the attention variant of the status-item template (spec §3.6,
-  marked optional), and `accessibilityPerformShowMenu` on the status button so
-  VoiceOver users can open this menu while a left click opens Quick Chat
-  (spec §5). That needs a method on the tray crate's button class and was left
-  for a separate change; Control-click and right-click still open the menu.
+- Not done here: the attention variant of the status-item template (spec
+  §3.6, marked optional), and `accessibilityPerformShowMenu` on the status
+  button (spec §5). Both were taken up by ADR-0248, which built the dot and
+  found the second unnecessary: VoiceOver's press already opens this menu.
 - The live menu was not opened (it takes over the pointer). Verified by:
   `cargo test` in `src-tauri` (46 passed) and `cargo test --lib` in `daemon`
   (122 passed with `--test-threads=2`; at full parallelism different daemon

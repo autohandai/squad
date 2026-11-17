@@ -34,6 +34,8 @@ use info_windows::{info_navigation_handler, open_info_window, InfoPage};
 mod computer_use_grant;
 mod computer_use_setup;
 mod dock_badge;
+#[cfg(target_os = "macos")]
+mod menu_bar_access;
 mod native_notifications;
 #[cfg(all(test, target_os = "macos"))]
 mod ownership_test_support;
@@ -86,6 +88,21 @@ struct Shell {
     reset: Mutex<system_reset::ResetGuard>,
     /// A `squad://` link that arrived before the bridge was ready (ADR-0246).
     pending_link_route: Mutex<Option<String>>,
+    /// What the menu bar last showed and announced about needs-you (ADR-0248).
+    attention: Mutex<Attention>,
+}
+
+/// Needs-you as the menu bar last showed it, so the dot is only redrawn when
+/// it changes and VoiceOver only hears about items it has not heard about.
+#[derive(Default)]
+struct Attention {
+    generation: Option<String>,
+    /// Keys of the items present at the last bridge read; None until the
+    /// first read for this account, so what already waited at launch is not
+    /// announced as new.
+    seen: Option<std::collections::HashSet<String>>,
+    /// Whether the Squad icon now carries the dot; None before the first set.
+    dot: Option<bool>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -145,6 +162,7 @@ fn main() {
                 ownership_generation: Mutex::new(None),
                 reset: Mutex::new(system_reset::ResetGuard::default()),
                 pending_link_route: Mutex::new(None),
+                attention: Mutex::new(Attention::default()),
             });
             app.manage(shell.clone());
             install_deep_links(app);
@@ -586,7 +604,7 @@ fn dispatch_menu_action(app: &AppHandle, action: &str) {
 
 fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
     let starting = DesktopTrayModel::default();
-    let menu = tray_menu(app, &starting, &std::collections::HashMap::new(), None)?;
+    let (menu, facts) = tray_menu(app, &starting, &std::collections::HashMap::new(), None)?;
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
         .tooltip("Autohand Squad")
@@ -641,8 +659,100 @@ fn build_tray(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
             handle_tray_event(handle, events_shell.clone(), event.id().as_ref());
         })
         .build(app)?;
-    *lock(&shell.tray) = Some(tray);
+    *lock(&shell.tray) = Some(tray.clone());
+    #[cfg(target_os = "macos")]
+    {
+        // The builder set the plain template.
+        lock(&shell.attention).dot = Some(false);
+        let press_app = app.clone();
+        let press_shell = shell.clone();
+        menu_bar_access::on_member_press(move |member_id| {
+            quick_chat_preferences::open_member_quick_chat(&press_app, &press_shell, member_id);
+        });
+    }
+    menu_bar_shown(&shell, &tray, &facts);
     Ok(())
+}
+
+/// What the rest of the menu bar takes from the same plan as the menu.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+struct TrayFacts {
+    rows: Vec<autohand_squad_runtime::desktop_tray::menu::Row>,
+    status: autohand_squad_runtime::desktop_tray::menu::StatusSpeech,
+    /// Member id → what their own status item says (Agent avatars).
+    members: std::collections::HashMap<String, autohand_squad_runtime::desktop_tray::menu::StatusSpeech>,
+    /// Members with a question or approval waiting, when the dot is on.
+    waiting: std::collections::HashSet<String>,
+    /// The Squad icon should carry the attention dot.
+    dot: bool,
+    /// What VoiceOver should hear, if something new needs the person.
+    announcement: Option<String>,
+}
+
+/// After a menu is set on the Squad status item: images, VoiceOver words for
+/// every row and both kinds of status item, the attention dot, and the
+/// announcement. Main thread.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+fn menu_bar_shown(shell: &Arc<Shell>, tray: &TrayIcon<Wry>, facts: &TrayFacts) {
+    #[cfg(target_os = "macos")]
+    {
+        tray_art::keep_menu_images_visible(tray);
+        let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
+            return;
+        };
+        // The tray crate wants an owned, sendable closure; it runs it here,
+        // on the main thread.
+        let (rows, status) = (facts.rows.clone(), facts.status.clone());
+        let _ = tray.with_inner_tray_icon(move |inner| {
+            let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
+                return;
+            };
+            if let Some(item) = inner.ns_status_item() {
+                if let Some(menu) = item.menu(mtm) {
+                    menu_bar_access::describe_menu(&menu, &rows);
+                }
+                menu_bar_access::describe_status_item(&item, &status, mtm);
+            }
+        });
+        let redraw = {
+            let mut attention = lock(&shell.attention);
+            let redraw = attention.dot != Some(facts.dot);
+            attention.dot = Some(facts.dot);
+            redraw
+        };
+        if redraw {
+            // Swapped in one main-thread turn, so the bar never draws the
+            // icon between the two calls; only on change, so no flicker.
+            if let Some(icon) = tray_art::squad_status_icon(facts.dot) {
+                let _ = tray.set_icon(Some(icon));
+                let _ = tray.set_icon_as_template(true);
+            }
+        }
+        let members: Vec<(String, TrayIcon<Wry>)> = lock(&shell.member_trays)
+            .iter()
+            .map(|(id, tray)| (id.clone(), tray.clone()))
+            .collect();
+        for (id, member_tray) in &members {
+            let (id, speech) = (id.clone(), facts.members.get(id).cloned());
+            let _ = member_tray.with_inner_tray_icon(move |inner| {
+                let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
+                    return;
+                };
+                if let Some(item) = inner.ns_status_item() {
+                    if let Some(speech) = &speech {
+                        menu_bar_access::describe_status_item(&item, speech, mtm);
+                    }
+                    menu_bar_access::make_pressable(&item, &id, mtm);
+                }
+            });
+        }
+        menu_bar_access::retain_pressable(|id| members.iter().any(|(member, _)| member == id));
+        if let Some(text) = &facts.announcement {
+            if menu_bar_access::voiceover_running() {
+                menu_bar_access::announce(text, mtm);
+            }
+        }
+    }
 }
 
 /// The menu-bar menu (docs/design/menu-bar-menu.md, ADR-0236): the squad
@@ -655,7 +765,7 @@ fn tray_menu(
     model: &DesktopTrayModel,
     portraits: &std::collections::HashMap<String, Arc<Vec<u8>>>,
     generation: Option<&str>,
-) -> tauri::Result<Menu<Wry>> {
+) -> tauri::Result<(Menu<Wry>, TrayFacts)> {
     use autohand_squad_runtime::desktop_tray::menu::{self, MenuInputs, QuickChat};
     let shell = app.state::<Arc<Shell>>().inner().clone();
     let preferences = quick_chat_preferences::read();
@@ -664,7 +774,7 @@ fn tray_menu(
             .map(quick_chat_preferences::engine_usage)
             .collect()
     });
-    let (needs, on_break, engines, engines_known, phone) = {
+    let (needs, on_break, engines, engines_known, phone, read) = {
         let extras = lock(&shell.tray_extras);
         if generation.is_some() && extras.generation.as_deref() == generation {
             (
@@ -673,6 +783,7 @@ fn tray_menu(
                 extras.engines.clone(),
                 extras.engines_known,
                 extras.phone.clone(),
+                true,
             )
         } else {
             Default::default()
@@ -707,7 +818,45 @@ fn tray_menu(
         .map(|row| tray_item(app, row, portraits, look))
         .collect::<tauri::Result<Vec<_>>>()?;
     let refs: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(|item| item.as_ref()).collect();
-    Menu::with_items(app, &refs)
+    let native = Menu::with_items(app, &refs)?;
+
+    // Attention (ADR-0248): the dot and the announcement follow exactly the
+    // items the needs-you row shows, and only while the setting is on.
+    let signal = preferences.menu_bar_attention_dot && menu::attention_count(&inputs) > 0;
+    let announcement = {
+        let mut attention = lock(&shell.attention);
+        if attention.generation.as_deref() != generation {
+            attention.generation = generation.map(str::to_string);
+            attention.seen = None;
+        }
+        let announcement = match (&attention.seen, read && signal) {
+            (Some(seen), true) => menu::announcement(seen, &inputs),
+            _ => None,
+        };
+        if read {
+            attention.seen = Some(needs.iter().map(menu::needs_key).collect());
+        }
+        announcement
+    };
+    let facts = TrayFacts {
+        status: menu::status_item_speech(&inputs, &rows),
+        members: model
+            .members
+            .iter()
+            .filter_map(|member| {
+                menu::member_item_speech(&inputs, &member.id).map(|speech| (member.id.clone(), speech))
+            })
+            .collect(),
+        waiting: if signal {
+            needs.iter().map(|item| item.member_id.clone()).collect()
+        } else {
+            Default::default()
+        },
+        dot: signal,
+        announcement,
+        rows,
+    };
+    Ok((native, facts))
 }
 
 /// One planned row as a native item. Images are drawn on macOS only; Windows
@@ -735,12 +884,16 @@ fn tray_item(
         let _ = (portraits, look, &row.art as &Option<Art>);
         None
     };
+    // muda reads `&` as a mnemonic marker and drops it, so "R&D" showed as
+    // "RD". Doubled, it comes back as one `&`, and the native title equals
+    // the row's words, which `menu_bar_access::describe_menu` relies on.
+    let text = &muda_text(&row.text);
     Ok(match &row.kind {
         RowKind::Separator => Box::new(PredefinedMenuItem::separator(app)?),
         RowKind::Check(checked) => Box::new(CheckMenuItem::with_id(
             app,
             &row.id,
-            &row.text,
+            text,
             row.enabled,
             *checked,
             row.shortcut,
@@ -751,7 +904,7 @@ fn tray_item(
                 .map(|child| tray_item(app, child, portraits, look))
                 .collect::<tauri::Result<Vec<_>>>()?;
             let refs: Vec<&dyn IsMenuItem<Wry>> = items.iter().map(|item| item.as_ref()).collect();
-            let submenu = Submenu::with_id_and_items(app, &row.id, &row.text, row.enabled, &refs)?;
+            let submenu = Submenu::with_id_and_items(app, &row.id, text, row.enabled, &refs)?;
             if image.is_some() {
                 submenu.set_icon(image)?;
             }
@@ -761,7 +914,7 @@ fn tray_item(
             Some(image) => Box::new(tauri::menu::IconMenuItem::with_id(
                 app,
                 &row.id,
-                &row.text,
+                text,
                 row.enabled,
                 Some(image),
                 row.shortcut,
@@ -769,12 +922,32 @@ fn tray_item(
             None => Box::new(MenuItem::with_id(
                 app,
                 &row.id,
-                &row.text,
+                text,
                 row.enabled,
                 row.shortcut,
             )?),
         },
     })
+}
+
+/// Words for muda: every `&` doubled so its mnemonic stripping keeps them.
+fn muda_text(text: &str) -> String {
+    text.replace('&', "&&")
+}
+
+#[cfg(test)]
+mod muda_text_tests {
+    /// muda 0.19.3 `strip_mnemonic`, copied: what the native title becomes.
+    fn strip_mnemonic(text: &str) -> String {
+        text.replace("&&", "[~~]").replace('&', "").replace("[~~]", "&")
+    }
+
+    #[test]
+    fn ampersands_survive_mnemonic_stripping() {
+        for text in ["R&D · Ready", "Q&&A", "Plain", "&lead"] {
+            assert_eq!(strip_mnemonic(&super::muda_text(text)), text);
+        }
+    }
 }
 
 /// The plan page; `autohand.ai/pricing` redirects here (HTTP 301 → 200,
@@ -950,7 +1123,7 @@ fn clear_private_native_ui(app: &AppHandle, shell: &Arc<Shell>) {
         let _ = window.destroy();
     }
     // Not loaded: the menu says "connecting…" while the account is verified.
-    if let Ok(menu) = tray_menu(
+    if let Ok((menu, facts)) = tray_menu(
         app,
         &DesktopTrayModel::default(),
         &std::collections::HashMap::new(),
@@ -958,8 +1131,7 @@ fn clear_private_native_ui(app: &AppHandle, shell: &Arc<Shell>) {
     ) {
         if let Some(tray) = lock(&shell.tray).clone() {
             let _ = tray.set_menu(Some(menu));
-            #[cfg(target_os = "macos")]
-            tray_art::keep_menu_images_visible(&tray);
+            menu_bar_shown(shell, &tray, &facts);
         }
     }
 }
@@ -1230,24 +1402,47 @@ fn refresh_tray(handle: AppHandle, shell: Arc<Shell>, refresh_usage: bool) {
             if !native_scope_current(owned.as_ref()) {
                 return;
             }
-            quick_chat_preferences::apply(
-                &apply_handle,
-                &apply_shell,
-                &model,
-                &icons,
-                owned.as_ref(),
-            );
             match tray_menu(&apply_handle, &model, &portraits, generation.as_deref()) {
-                Ok(menu) => {
+                Ok((menu, facts)) => {
+                    // In Agent avatars mode the member who is waiting carries
+                    // the dot on their own icon too.
+                    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+                    let mut icons = icons;
+                    #[cfg(target_os = "macos")]
+                    for id in &facts.waiting {
+                        if let Some(icon) = icons.get_mut(id) {
+                            let (width, height) = (icon.width(), icon.height());
+                            *icon = tauri::image::Image::new_owned(
+                                tray_art::with_attention_dot(icon.rgba(), width, height, tray_art::YOU),
+                                width,
+                                height,
+                            );
+                        }
+                    }
+                    quick_chat_preferences::apply(
+                        &apply_handle,
+                        &apply_shell,
+                        &model,
+                        &icons,
+                        owned.as_ref(),
+                    );
                     if let Some(tray) = lock(&apply_shell.tray).clone() {
                         if let Err(error) = tray.set_menu(Some(menu)) {
                             eprintln!("tray menu update failed: {error}");
                         }
-                        #[cfg(target_os = "macos")]
-                        tray_art::keep_menu_images_visible(&tray);
+                        menu_bar_shown(&apply_shell, &tray, &facts);
                     }
                 }
-                Err(error) => eprintln!("tray menu build failed: {error}"),
+                Err(error) => {
+                    eprintln!("tray menu build failed: {error}");
+                    quick_chat_preferences::apply(
+                        &apply_handle,
+                        &apply_shell,
+                        &model,
+                        &icons,
+                        owned.as_ref(),
+                    );
+                }
             }
         });
         shell

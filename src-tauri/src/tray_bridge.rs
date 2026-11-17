@@ -62,6 +62,23 @@ fn get(
         .flatten()
 }
 
+/// The new needs-you list. A read that failed keeps what the last read saw
+/// of its kind: one slow answer from the bridge would otherwise take the row
+/// and the attention dot away for five seconds and bring them back, a blink
+/// with nothing behind it (ADR-0248). A read that succeeds, even empty, wins.
+fn merge_needs(
+    previous: &[NeedsYouItem],
+    questions: Option<Vec<NeedsYouItem>>,
+    approvals: Option<Vec<NeedsYouItem>>,
+) -> Vec<NeedsYouItem> {
+    let kept = |kind: NeedsKind| -> Vec<NeedsYouItem> {
+        previous.iter().filter(|item| item.kind == kind).cloned().collect()
+    };
+    let mut needs = questions.unwrap_or_else(|| kept(NeedsKind::Question));
+    needs.extend(approvals.unwrap_or_else(|| kept(NeedsKind::Approval)));
+    needs
+}
+
 /// Refresh `extras` in place. Needs-you, breaks and the phone are read every
 /// call; engines once a minute or when the roster changes.
 pub(crate) fn refresh(extras: &mut TrayExtras, base: &str, context: &OwnedContext, members: &[String]) {
@@ -74,14 +91,11 @@ pub(crate) fn refresh(extras: &mut TrayExtras, base: &str, context: &OwnedContex
     let Some(client) = client() else {
         return;
     };
-    let mut needs = Vec::new();
-    if let Some(data) = get(&client, base, context, "/api/chat/questions") {
-        needs.extend(needs_items(&data, NeedsKind::Question));
-    }
-    if let Some(data) = get(&client, base, context, "/api/chat/permissions") {
-        needs.extend(needs_items(&data, NeedsKind::Approval));
-    }
-    extras.needs = needs;
+    let questions = get(&client, base, context, "/api/chat/questions")
+        .map(|data| needs_items(&data, NeedsKind::Question));
+    let approvals = get(&client, base, context, "/api/chat/permissions")
+        .map(|data| needs_items(&data, NeedsKind::Approval));
+    extras.needs = merge_needs(&extras.needs, questions, approvals);
     extras.on_break = get(&client, base, context, "/api/members/breaks")
         .map(|data| breaks(&data))
         .unwrap_or_default();
@@ -266,6 +280,25 @@ fn member_engines(profile: &Value, health: &Value, now_ms: u64) -> MemberEngines
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_failed_read_keeps_the_last_items_of_its_kind() {
+        let item = |member: &str, kind| NeedsYouItem {
+            member_id: member.into(),
+            kind,
+            subject: "s".into(),
+            at: "2026-11-17T00:00:00Z".into(),
+        };
+        let before = vec![item("eva", NeedsKind::Question), item("noah", NeedsKind::Approval)];
+        // Questions timed out, approvals answered with nothing: Eva's
+        // question stays, Noah's approval was handled.
+        let after = merge_needs(&before, None, Some(Vec::new()));
+        assert_eq!(after, vec![item("eva", NeedsKind::Question)]);
+        // Both answered: the bridge is the truth.
+        assert!(merge_needs(&before, Some(Vec::new()), Some(Vec::new())).is_empty());
+        // Neither answered: nothing changes.
+        assert_eq!(merge_needs(&before, None, None), before);
+    }
 
     #[test]
     fn engines_follow_the_router_health() {

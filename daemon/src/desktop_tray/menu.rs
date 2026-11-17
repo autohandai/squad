@@ -20,6 +20,8 @@ pub const COMB_SLOTS: usize = 7;
 const NEEDS_YOU_LIMIT: usize = 8;
 const SUBJECT_CHARS: usize = 40;
 const TASK_CHARS: usize = 32;
+/// What VoiceOver may read of a question or task the row cuts short.
+const SPOKEN_CHARS: usize = 160;
 
 /// What a member is doing, as the menu groups it. Online and idle are both
 /// Ready: in the menu both mean "can take work now".
@@ -83,6 +85,12 @@ pub struct Row {
     /// Accelerator in muda's syntax, e.g. `CmdOrCtrl+Shift+K`.
     pub shortcut: Option<&'static str>,
     pub kind: RowKind,
+    /// What VoiceOver reads when it differs from the words on screen beyond
+    /// punctuation: the whole question or task a row cuts short, or the
+    /// number a mark shows. None reads `spoken(text)`.
+    pub speech: Option<String>,
+    /// What choosing the row does, read by VoiceOver after a pause (AXHelp).
+    pub help: Option<String>,
 }
 
 impl Row {
@@ -94,6 +102,8 @@ impl Row {
             enabled: true,
             shortcut: None,
             kind: RowKind::Item,
+            speech: None,
+            help: None,
         }
     }
     fn label(id: impl Into<String>, text: impl Into<String>) -> Self {
@@ -125,6 +135,19 @@ impl Row {
     fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
+    }
+    fn speech(mut self, speech: Option<String>) -> Self {
+        self.speech = speech.filter(|speech| *speech != spoken(&self.text));
+        self
+    }
+    fn help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
+        self
+    }
+    /// The row's accessibility title: the words on screen, read as a
+    /// sentence, unless the row says more to VoiceOver than it shows.
+    pub fn spoken_title(&self) -> String {
+        self.speech.clone().unwrap_or_else(|| spoken(&self.text))
     }
 }
 
@@ -268,6 +291,8 @@ pub struct MemberRow {
     pub cell: Cell,
     pub badge: Badge,
     pub text: String,
+    /// The text with nothing cut, when `text` shortens a task title.
+    pub speech: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -302,12 +327,13 @@ pub fn plan_menu(inputs: &MenuInputs<'_>) -> Vec<Row> {
     rows.push(
         Row::item("open", header)
             .art(Art::Comb(comb))
-            .shortcut("CmdOrCtrl+O"),
+            .shortcut("CmdOrCtrl+O")
+            .help("Opens the Squad window."),
     );
 
     let squad_visible = model.loaded && model.signed_in && model.daemon_running;
     if model.loaded && model.signed_in && !model.daemon_running {
-        rows.push(Row::item("start", "Start services"));
+        rows.push(Row::item("start", "Start services").help("Starts your squad again."));
     }
     if squad_visible {
         // 2. Needs you.
@@ -350,7 +376,8 @@ pub fn plan_menu(inputs: &MenuInputs<'_>) -> Vec<Row> {
         state => rows.push(
             Row::item("quick-chat", "Quick chat")
                 .shortcut("CmdOrCtrl+Shift+K")
-                .enabled(state == QuickChat::Enabled),
+                .enabled(state == QuickChat::Enabled)
+                .help("Opens Quick Chat with the member you last talked to."),
         ),
     }
     rows.push(Row::item("settings", "Settings…").shortcut("CmdOrCtrl+,"));
@@ -411,6 +438,11 @@ pub fn comb_cells(cells: &[Cell]) -> Vec<Cell> {
 }
 
 fn member_row(inputs: &MenuInputs<'_>, member: &MemberRow) -> Row {
+    let help = if inputs.quick_chat == QuickChat::Enabled {
+        format!("Opens Quick Chat with {}.", member.name)
+    } else {
+        format!("Opens a chat with {} in Squad.", member.name)
+    };
     Row::item(
         format!("member:{}:{}", inputs.generation, member.id),
         format!("{} · {}", member.name, member.text),
@@ -419,6 +451,13 @@ fn member_row(inputs: &MenuInputs<'_>, member: &MemberRow) -> Row {
         member_id: member.id.clone(),
         badge: member.badge,
     })
+    .speech(
+        member
+            .speech
+            .as_ref()
+            .map(|speech| spoken(&format!("{} · {speech}", member.name))),
+    )
+    .help(help)
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +512,7 @@ pub fn member_rows(inputs: &MenuInputs<'_>) -> Vec<MemberRow> {
                 cell: Cell::NeedsYou,
                 badge: Badge::NeedsYou,
                 text: "Waiting for you".to_string(),
+                speech: None,
             }
         } else {
             describe_member(member, base, engines, inputs)
@@ -501,6 +541,7 @@ fn describe_member(
         cell,
         badge,
         text,
+        speech: None,
     };
     let active = matches!(base, Presence::Working | Presence::Ready);
     if let Some(engines) = engines.filter(|engines| active && engines.stopped()) {
@@ -541,17 +582,22 @@ fn describe_member(
                 };
                 return row(Presence::Working, Cell::Working, Badge::Fallback, text);
             }
-            let mut text = match &member.task {
-                Some(task) => format!("Working on {}", cut(task, TASK_CHARS)),
-                None => "Working".to_string(),
+            let queued = if member.queued > 0 {
+                format!(" · {} more queued", member.queued)
+            } else {
+                String::new()
             };
-            if member.queued > 0 {
-                text.push_str(&format!(
-                    " · {} more queued",
-                    member.queued
-                ));
+            let (text, speech) = match &member.task {
+                Some(task) => (
+                    format!("Working on {}{queued}", cut(task, TASK_CHARS)),
+                    Some(format!("Working on {}{queued}", cut(task, SPOKEN_CHARS))),
+                ),
+                None => (format!("Working{queued}"), None),
+            };
+            MemberRow {
+                speech: speech.filter(|speech| *speech != text),
+                ..row(Presence::Working, Cell::Working, Badge::Working, text)
             }
-            row(Presence::Working, Cell::Working, Badge::Working, text)
         }
         Presence::Ready => {
             let text = if member.queued > 0 {
@@ -619,18 +665,20 @@ fn needs_you_rows(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Vec<Row> {
     };
     let row = |item: &NeedsYouItem| {
         let name = name_of(&item.member_id);
-        let text = match item.kind {
-            NeedsKind::Question => format!("{name} is asking: {}", cut(&item.subject, SUBJECT_CHARS)),
-            NeedsKind::Approval => {
-                format!("{name} needs approval: {}", cut(&item.subject, SUBJECT_CHARS))
-            }
+        let help = match item.kind {
+            NeedsKind::Question => format!("Opens {name}'s chat in Squad to answer."),
+            NeedsKind::Approval => format!("Opens {name}'s chat in Squad to approve or decline."),
         };
-        Row::item(format!("needs:{}:{}", inputs.generation, item.member_id), text).art(
-            Art::Avatar {
-                member_id: item.member_id.clone(),
-                badge: Badge::NeedsYou,
-            },
+        Row::item(
+            format!("needs:{}:{}", inputs.generation, item.member_id),
+            needs_sentence(&name, item, SUBJECT_CHARS),
         )
+        .art(Art::Avatar {
+            member_id: item.member_id.clone(),
+            badge: Badge::NeedsYou,
+        })
+        .speech(Some(needs_sentence(&name, item, SPOKEN_CHARS)))
+        .help(help)
     };
     match items.len() {
         0 => Vec::new(),
@@ -638,9 +686,21 @@ fn needs_you_rows(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Vec<Row> {
         count => {
             let mut sub: Vec<Row> = items.iter().take(NEEDS_YOU_LIMIT).map(|item| row(item)).collect();
             sub.push(Row::separator());
-            sub.push(Row::item("needs-you", "Open Needs you").shortcut("CmdOrCtrl+1"));
+            sub.push(
+                Row::item("needs-you", "Open Needs you")
+                    .shortcut("CmdOrCtrl+1")
+                    .help("Opens everything waiting on you in Squad."),
+            );
             vec![Row::submenu("needs-you-list", format!("{count} things need you"), sub).art(Art::NeedsYou)]
         }
+    }
+}
+
+/// "Eva is asking: …" or "Eva needs approval: …", the subject cut at `limit`.
+fn needs_sentence(name: &str, item: &NeedsYouItem, limit: usize) -> String {
+    match item.kind {
+        NeedsKind::Question => format!("{name} is asking: {}", cut(&item.subject, limit)),
+        NeedsKind::Approval => format!("{name} needs approval: {}", cut(&item.subject, limit)),
     }
 }
 
@@ -959,6 +1019,7 @@ fn headroom_row(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Option<Row> {
         .copied()
         .filter(|(engine, _)| is_out(engine))
         .collect();
+    let mut speech = None;
     let (text, mark) = match out.as_slice() {
         [] => {
             let tightest = considered
@@ -972,7 +1033,15 @@ fn headroom_row(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Option<Row> {
                 .min_by_key(|(_, window, left)| (*left, window.resets_at.unwrap_or(u64::MAX)));
             match tightest {
                 None => ("Plenty of headroom".to_string(), Some(100)),
-                Some((_, _, left)) if left > 50 => ("Plenty of headroom".to_string(), Some(left)),
+                Some((engine, window, left)) if left > 50 => {
+                    // The mark shows roughly how much is left; say the number.
+                    speech = Some(format!(
+                        "Plenty of headroom, tightest is {} {left}% left {}",
+                        engine.name,
+                        sentence_window(&window.label)
+                    ));
+                    ("Plenty of headroom".to_string(), Some(left))
+                }
                 Some((engine, window, left)) if left > 20 => (
                     format!(
                         "Headroom · {} {left}% left {}",
@@ -1031,7 +1100,11 @@ fn headroom_row(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Option<Row> {
             )
         }
     };
-    Some(Row::submenu("headroom", text, sub).art(Art::Headroom(mark)))
+    Some(
+        Row::submenu("headroom", text, sub)
+            .art(Art::Headroom(mark))
+            .speech(speech),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1218,6 +1291,124 @@ fn time_until_text(at: u64, now: u64) -> String {
         Some(text) if text == "now" => "now".to_string(),
         Some(text) => format!("in {text}"),
         None => "soon".to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Accessibility: the status item, attention, announcements
+// ---------------------------------------------------------------------------
+
+/// A row's words as VoiceOver should read them. The visual separator ` · `
+/// is spoken as a pause (a comma) instead of a punctuation name, whatever
+/// the person's punctuation verbosity.
+pub fn spoken(text: &str) -> String {
+    text.replace(" · ", ", ")
+}
+
+/// What VoiceOver reads for a status item: its name (AXDescription), its
+/// state (AXValue) and what pressing it does (AXHelp).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusSpeech {
+    pub label: String,
+    pub value: String,
+    pub help: String,
+}
+
+fn squad_visible(model: &DesktopTrayModel) -> bool {
+    model.loaded && model.signed_in && model.daemon_running
+}
+
+/// How many questions and approvals wait on the person, counted exactly as
+/// the needs-you row counts them: none unless the squad is visible. The
+/// attention dot and the announcement follow this number, so the dot never
+/// shows without a row to open.
+pub fn attention_count(inputs: &MenuInputs<'_>) -> usize {
+    if squad_visible(inputs.model) {
+        inputs.needs.len()
+    } else {
+        0
+    }
+}
+
+fn things_need_you(count: usize) -> String {
+    match count {
+        1 => "1 thing needs you".to_string(),
+        count => format!("{count} things need you"),
+    }
+}
+
+/// The Squad status item. The name stays "Autohand Squad" and gains the
+/// attention count, so the one thing worth acting on is in the part
+/// VoiceOver always reads; the header sentence is the value.
+/// `rows` is the planned menu; its first row is the header.
+pub fn status_item_speech(inputs: &MenuInputs<'_>, rows: &[Row]) -> StatusSpeech {
+    let count = attention_count(inputs);
+    let label = if count == 0 {
+        "Autohand Squad".to_string()
+    } else {
+        format!("Autohand Squad, {}", things_need_you(count))
+    };
+    let header = rows.first().map(|row| row.text.as_str()).unwrap_or_default();
+    let value = match header.strip_prefix("Squad · ") {
+        Some(state) => spoken(state),
+        None if header == "Squad is stopped" => "Stopped".to_string(),
+        None => spoken(header),
+    };
+    StatusSpeech {
+        label,
+        value,
+        help: "Opens the Squad menu: your squad, what needs you, and Quick chat.".to_string(),
+    }
+}
+
+/// A member's own status item in Agent avatars mode: their name, what they
+/// are doing in the menu's words, and that pressing opens Quick Chat.
+pub fn member_item_speech(inputs: &MenuInputs<'_>, member_id: &str) -> Option<StatusSpeech> {
+    let member = member_rows(inputs)
+        .into_iter()
+        .find(|member| member.id == member_id)?;
+    Some(StatusSpeech {
+        value: spoken(member.speech.as_deref().unwrap_or(&member.text)),
+        help: format!("Opens Quick Chat with {}.", member.name),
+        label: member.name,
+    })
+}
+
+/// Identifies one waiting item across refreshes.
+pub fn needs_key(item: &NeedsYouItem) -> String {
+    let kind = match item.kind {
+        NeedsKind::Question => "q",
+        NeedsKind::Approval => "a",
+    };
+    format!("{kind}:{}:{}:{}", item.member_id, item.at, item.subject)
+}
+
+/// What VoiceOver announces when something new starts needing the person:
+/// the item's own sentence when one arrived, a count when several did, and
+/// nothing when nothing is new. `seen` holds the keys of items already
+/// present at the previous refresh.
+pub fn announcement(seen: &HashSet<String>, inputs: &MenuInputs<'_>) -> Option<String> {
+    if attention_count(inputs) == 0 {
+        return None;
+    }
+    let fresh: Vec<&NeedsYouItem> = inputs
+        .needs
+        .iter()
+        .filter(|item| !seen.contains(&needs_key(item)))
+        .collect();
+    match fresh.as_slice() {
+        [] => None,
+        [item] => {
+            let name = inputs
+                .model
+                .members
+                .iter()
+                .find(|member| member.id == item.member_id)
+                .map(|member| member.name.as_str())
+                .unwrap_or("A member");
+            Some(format!("Squad: {}", needs_sentence(name, item, SPOKEN_CHARS)))
+        }
+        several => Some(format!("Squad: {}", things_need_you(several.len()))),
     }
 }
 
@@ -1672,5 +1863,160 @@ mod tests {
         assert_eq!(comb.len(), 7);
         assert_eq!(comb[6], Cell::Overflow);
         assert_eq!(comb_cells(&cells[..7]).len(), 7);
+    }
+
+    fn titles(rows: &[Row]) -> Vec<String> {
+        rows.iter()
+            .filter(|row| row.kind != RowKind::Separator)
+            .map(Row::spoken_title)
+            .collect()
+    }
+
+    #[test]
+    fn voiceover_reads_each_row_as_a_sentence() {
+        let mut fixture = Fixture::typical();
+        fixture.needs[0].subject =
+            "push the release branch to main and tag it v0.1.23 for the store".into();
+        let rows = plan_menu(&fixture.inputs());
+        assert_eq!(
+            titles(&rows),
+            vec![
+                "Squad, 2 working, 2 ready",
+                // The row cuts the subject at 40; VoiceOver gets all of it.
+                "Eva needs approval: push the release branch to main and tag it v0.1.23 for the store",
+                "Eva, Waiting for you",
+                "Noah, Working on Checkout tests for the new payment flow",
+                "Chief of Staff, Ready",
+                "Mia, Ready",
+                "Leo, Paused",
+                "All members (9)",
+                "Claude Code low, 12% left, resets Sat 9:00 am",
+                "Quick chat",
+                "Settings…",
+                "Account",
+                "Services",
+                "Help",
+                "Quit Autohand Squad",
+            ]
+        );
+        // The screen keeps the cut versions.
+        assert_eq!(rows[1].text, "Eva needs approval: push the release branch to main and tag…");
+        assert!(titles(&rows).iter().all(|title| !title.contains('·')));
+        assert_eq!(rows[0].help.as_deref(), Some("Opens the Squad window."));
+        assert_eq!(
+            rows[1].help.as_deref(),
+            Some("Opens Eva's chat in Squad to approve or decline.")
+        );
+        assert_eq!(rows[3].help.as_deref(), Some("Opens Quick Chat with Noah."));
+        // A row whose words are already the sentence carries no override.
+        assert_eq!(rows[4].speech, None);
+        let mut off = Fixture::typical();
+        off.needs.clear();
+        let quiet = off.inputs();
+        let quiet = MenuInputs {
+            quick_chat: QuickChat::Disabled,
+            ..quiet
+        };
+        let rows = plan_menu(&quiet);
+        assert_eq!(
+            find(&rows, "member:gen:noah").help.as_deref(),
+            Some("Opens a chat with Noah in Squad.")
+        );
+    }
+
+    #[test]
+    fn plenty_of_headroom_says_the_number_the_mark_shows() {
+        let mut fixture = Fixture::typical();
+        fixture.harnesses = vec![harness(
+            "codex",
+            "Codex",
+            vec![("This week", Some(82), "2026-11-21T05:00:00Z")],
+        )];
+        fixture.model.usage = None;
+        let rows = plan_menu(&fixture.inputs());
+        let headroom = find(&rows, "headroom");
+        assert_eq!(headroom.text, "Plenty of headroom");
+        assert_eq!(
+            headroom.spoken_title(),
+            "Plenty of headroom, tightest is Codex 82% left this week"
+        );
+    }
+
+    #[test]
+    fn the_status_item_names_squad_and_what_needs_you() {
+        let fixture = Fixture::typical();
+        let inputs = fixture.inputs();
+        let rows = plan_menu(&inputs);
+        let speech = status_item_speech(&inputs, &rows);
+        assert_eq!(speech.label, "Autohand Squad, 1 thing needs you");
+        assert_eq!(speech.value, "2 working, 2 ready");
+        assert!(speech.help.contains("Quick chat"));
+
+        let mut calm = Fixture::typical();
+        calm.needs.clear();
+        let inputs = calm.inputs();
+        let speech = status_item_speech(&inputs, &plan_menu(&inputs));
+        assert_eq!(speech.label, "Autohand Squad");
+
+        // Stopped: the needs-you row is gone, so the name drops the count.
+        let mut stopped = Fixture::typical();
+        stopped.model.daemon_running = false;
+        let inputs = stopped.inputs();
+        assert_eq!(attention_count(&inputs), 0);
+        let speech = status_item_speech(&inputs, &plan_menu(&inputs));
+        assert_eq!(speech.label, "Autohand Squad");
+        assert_eq!(speech.value, "Stopped");
+
+        let mut away = Fixture::typical();
+        away.model.signed_in = false;
+        let inputs = away.inputs();
+        assert_eq!(status_item_speech(&inputs, &plan_menu(&inputs)).value, "signed out");
+    }
+
+    #[test]
+    fn a_members_own_icon_reads_like_their_row() {
+        let fixture = Fixture::typical();
+        let inputs = fixture.inputs();
+        let noah = member_item_speech(&inputs, "noah").unwrap();
+        assert_eq!(noah.label, "Noah");
+        assert_eq!(noah.value, "Working on Checkout tests for the new payment flow");
+        assert_eq!(noah.help, "Opens Quick Chat with Noah.");
+        assert_eq!(member_item_speech(&inputs, "eva").unwrap().value, "Waiting for you");
+        assert!(member_item_speech(&inputs, "nobody").is_none());
+    }
+
+    #[test]
+    fn only_new_waiting_items_are_announced() {
+        let mut fixture = Fixture::typical();
+        let seen = HashSet::new();
+        assert_eq!(
+            announcement(&seen, &fixture.inputs()).as_deref(),
+            Some("Squad: Eva needs approval: push to main")
+        );
+        let seen: HashSet<String> = fixture.needs.iter().map(needs_key).collect();
+        assert_eq!(announcement(&seen, &fixture.inputs()), None);
+        fixture.needs.push(NeedsYouItem {
+            member_id: "noah".into(),
+            kind: NeedsKind::Question,
+            subject: "which card should the checkout test use?".into(),
+            at: "2026-11-17T01:00:00Z".into(),
+        });
+        assert_eq!(
+            announcement(&seen, &fixture.inputs()).as_deref(),
+            Some("Squad: Noah is asking: which card should the checkout test use?")
+        );
+        fixture.needs.push(NeedsYouItem {
+            member_id: "mia".into(),
+            kind: NeedsKind::Approval,
+            subject: "delete the staging database".into(),
+            at: "2026-11-17T01:00:01Z".into(),
+        });
+        assert_eq!(
+            announcement(&seen, &fixture.inputs()).as_deref(),
+            Some("Squad: 2 things need you")
+        );
+        // Stopped services show no needs-you row, so nothing is announced.
+        fixture.model.daemon_running = false;
+        assert_eq!(announcement(&HashSet::new(), &fixture.inputs()), None);
     }
 }

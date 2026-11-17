@@ -16,6 +16,9 @@ pub(crate) struct Preferences {
     pub quick_chat_menu_bar_mode: String,
     pub quick_chat_show_usage: bool,
     pub quick_chat_appearance: String,
+    /// A dot on the Squad menu-bar icon (and a VoiceOver announcement) while
+    /// a question or approval waits. On by default (ADR-0248).
+    pub menu_bar_attention_dot: bool,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -24,6 +27,7 @@ impl Default for Preferences {
             quick_chat_menu_bar_mode: "single".into(),
             quick_chat_show_usage: true,
             quick_chat_appearance: "glass".into(),
+            menu_bar_attention_dot: true,
         }
     }
 }
@@ -283,28 +287,7 @@ pub(crate) fn apply(
                                 ..
                             }
                         ) {
-                            if let Some(window) = tray
-                                .app_handle()
-                                .get_webview_window(quick_chat::QUICK_CHAT_WINDOW)
-                            {
-                                let same_member = window.url().ok().is_some_and(|url| {
-                                    url.query_pairs()
-                                        .any(|(key, value)| key == "member" && value == member_id)
-                                });
-                                if same_member && window.is_visible().unwrap_or(false) {
-                                    let _ = window.hide();
-                                    return;
-                                }
-                            }
-                            *lock(&events_shell.popup_anchor) =
-                                Some(format!("member-tray:{member_id}"));
-                            if let Err(error) = quick_chat::open_quick_chat(
-                                tray.app_handle(),
-                                &events_shell,
-                                &member_id,
-                            ) {
-                                eprintln!("quick chat: {error}");
-                            }
+                            toggle_member_quick_chat(tray.app_handle(), &events_shell, &member_id);
                         }
                     })
                     .build(app);
@@ -337,6 +320,42 @@ pub(crate) fn apply(
             }
         }
     }
+}
+
+/// A click on a member's status item: open their Quick Chat under the icon,
+/// or close it when it is already open for them.
+#[cfg(target_os = "macos")]
+fn toggle_member_quick_chat(app: &AppHandle, shell: &Arc<Shell>, member_id: &str) {
+    if let Some(window) = app.get_webview_window(quick_chat::QUICK_CHAT_WINDOW) {
+        let same_member = window.url().ok().is_some_and(|url| {
+            url.query_pairs()
+                .any(|(key, value)| key == "member" && value == member_id)
+        });
+        if same_member && window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+            return;
+        }
+    }
+    *lock(&shell.popup_anchor) = Some(format!("member-tray:{member_id}"));
+    if let Err(error) = quick_chat::open_quick_chat(app, shell, member_id) {
+        eprintln!("quick chat: {error}");
+    }
+}
+
+/// VoiceOver's press on a member's status item (ADR-0248): the same as a
+/// click, for a member whose icon this account still shows.
+#[cfg(target_os = "macos")]
+pub(crate) fn open_member_quick_chat(app: &AppHandle, shell: &Arc<Shell>, member_id: &str) {
+    let current = autohand_squad_runtime::ownership::read_active_context(&default_paths())
+        .ok()
+        .flatten();
+    if !crate::native_scope_current(current.as_ref())
+        || !read().quick_chat_enabled
+        || !lock(&shell.member_trays).contains_key(member_id)
+    {
+        return;
+    }
+    toggle_member_quick_chat(app, shell, member_id);
 }
 
 pub(crate) fn authorized(

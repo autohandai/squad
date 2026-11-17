@@ -432,6 +432,65 @@ fn needs_you_canvas() -> Canvas {
 }
 
 // ---------------------------------------------------------------------------
+// The attention dot on a status item (ADR-0248)
+// ---------------------------------------------------------------------------
+
+/// The Squad status item's template: a hexagon of cells, 72 px for 18 pt.
+pub(crate) const SQUAD_TEMPLATE: &[u8] = include_bytes!("../icons/tray-template.png");
+
+/// The dot, in points of an 18 pt tall status icon: a 5 pt disc in the lower
+/// right, the spec's size (§3.6), with a 1.25 pt clear gap cut around it so it
+/// reads as a mark on the icon rather than a blob attached to it.
+const DOT_CENTRE: f64 = 18.0 - 3.0;
+const DOT_RADIUS: f64 = 2.5;
+const DOT_GAP: f64 = 1.25;
+
+/// `rgba` (straight alpha, `width` × `height`) with the attention dot. The
+/// pixels under the dot and its gap are replaced, everything else is kept.
+///
+/// On the Squad icon the colour is black and the image stays a template, so
+/// macOS draws the dot in the menu bar's own foreground: right on light, dark
+/// and tinted menu bars, with no colour to clash. On a member's portrait
+/// (Agent avatars) it is `YOU`, the menu's "you may want to act" orange, and
+/// the gap shows the menu bar between dot and portrait.
+pub(crate) fn with_attention_dot(rgba: &[u8], width: u32, height: u32, colour: [u8; 3]) -> Vec<u8> {
+    let mut out = rgba.to_vec();
+    let scale = height as f64 / 18.0;
+    let cx = width as f64 - (18.0 - DOT_CENTRE) * scale;
+    let cy = DOT_CENTRE * scale;
+    let dot = DOT_RADIUS * scale;
+    let clear = (DOT_RADIUS + DOT_GAP) * scale;
+    for y in 0..height {
+        for x in 0..width {
+            let cleared = Canvas::coverage(x, y, &|px, py| in_disc(px, py, cx, cy, clear));
+            if cleared == 0.0 {
+                continue;
+            }
+            let index = ((y * width + x) * 4) as usize;
+            let pixel = &mut out[index..index + 4];
+            pixel[3] = (pixel[3] as f64 * (1.0 - cleared)).round() as u8;
+            let cover = Canvas::coverage(x, y, &|px, py| in_disc(px, py, cx, cy, dot));
+            blend(pixel, colour, cover);
+        }
+    }
+    out
+}
+
+/// The Squad status icon as RGBA, with or without the attention dot.
+pub(crate) fn squad_status_icon(attention: bool) -> Option<Image<'static>> {
+    let base = Image::from_bytes(SQUAD_TEMPLATE).ok()?;
+    if !attention {
+        return Some(base.to_owned());
+    }
+    let (width, height) = (base.width(), base.height());
+    Some(Image::new_owned(
+        with_attention_dot(base.rgba(), width, height, [0, 0, 0]),
+        width,
+        height,
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // macOS
 // ---------------------------------------------------------------------------
 
@@ -578,6 +637,50 @@ mod tests {
     }
 
     #[test]
+    fn the_attention_dot_is_cut_into_the_corner() {
+        let size = 72;
+        let solid = [10u8, 20, 30, 255].repeat((size * size) as usize);
+        let dotted = with_attention_dot(&solid, size, size, [0, 0, 0]);
+        let at = |x: u32, y: u32| {
+            let index = ((y * size + x) * 4) as usize;
+            [
+                dotted[index],
+                dotted[index + 1],
+                dotted[index + 2],
+                dotted[index + 3],
+            ]
+        };
+        // 4 px per point: centre (60, 60), dot radius 10, gap to radius 15.
+        assert_eq!(at(60, 60), [0, 0, 0, 255], "the dot is solid");
+        assert_eq!(at(60, 47)[3], 0, "a clear gap rings the dot");
+        assert_eq!(
+            at(20, 20),
+            [10, 20, 30, 255],
+            "the rest of the icon is untouched"
+        );
+        assert_eq!(at(71, 60)[3], 0, "the gap runs to the icon's right edge");
+        // A 22 px portrait keeps the same geometry in points.
+        let portrait = [200u8, 200, 200, 255].repeat(22 * 22);
+        let badge = with_attention_dot(&portrait, 22, 22, YOU);
+        let centre = ((18 * 22 + 18) * 4) as usize;
+        assert_eq!(&badge[centre..centre + 4], &[YOU[0], YOU[1], YOU[2], 255]);
+        assert_eq!(&badge[..4], &[200, 200, 200, 255]);
+    }
+
+    #[test]
+    fn the_squad_icon_keeps_its_size_with_the_dot() {
+        let plain = squad_status_icon(false).unwrap();
+        let dotted = squad_status_icon(true).unwrap();
+        assert_eq!(
+            (plain.width(), plain.height()),
+            (dotted.width(), dotted.height())
+        );
+        assert_ne!(plain.rgba(), dotted.rgba());
+        let index = ((60 * plain.width() + 60) * 4 + 3) as usize;
+        assert_eq!(dotted.rgba()[index], 255);
+    }
+
+    #[test]
     fn needs_you_knocks_the_mark_out() {
         let mark = needs_you_canvas();
         assert_eq!(pixel(&mark, 18, 15)[3], 0, "the stem is clear");
@@ -711,6 +814,58 @@ mod preview {
             save(&dir, &format!("avatar-{name}-missing"), &member_avatar(None, badge, look));
         }
         save(&dir, "needs-you", &needs_you_mark());
+
+        // The status item with and without the attention dot (ADR-0248), as
+        // macOS draws a template: alpha only, in the bar's foreground. Light,
+        // dark and a tinted bar, plus a portrait with the orange dot.
+        let plain = squad_status_icon(false).unwrap();
+        let dotted = squad_status_icon(true).unwrap();
+        let photo22 = image::imageops::resize(
+            &image::RgbaImage::from_raw(PORTRAIT, PORTRAIT, portrait(20)).unwrap(),
+            22,
+            22,
+            image::imageops::FilterType::Triangle,
+        );
+        let avatar = with_attention_dot(photo22.as_raw(), 22, 22, YOU);
+        let avatar = image::imageops::resize(
+            &image::RgbaImage::from_raw(22, 22, avatar).unwrap(),
+            72,
+            72,
+            image::imageops::FilterType::Triangle,
+        );
+        let bars: [([u8; 3], [u8; 3]); 3] = [
+            ([0xF2, 0xF2, 0xF2], [0x1D, 0x1D, 0x1F]),
+            ([0x1E, 0x1E, 0x20], [0xFF, 0xFF, 0xFF]),
+            ([0x3A, 0x6E, 0xA5], [0xFF, 0xFF, 0xFF]),
+        ];
+        let mut mock = image::RgbaImage::new(3 * 96 + 24, bars.len() as u32 * 96);
+        for (row, (bar, ink)) in bars.iter().enumerate() {
+            for x in 0..mock.width() {
+                for y in 0..96 {
+                    mock.put_pixel(
+                        x,
+                        row as u32 * 96 + y,
+                        image::Rgba([bar[0], bar[1], bar[2], 255]),
+                    );
+                }
+            }
+            for (column, icon) in [&plain, &dotted].iter().enumerate() {
+                for y in 0..72 {
+                    for x in 0..72 {
+                        let alpha = icon.rgba()[((y * 72 + x) * 4 + 3) as usize] as f64 / 255.0;
+                        let target = mock
+                            .get_pixel_mut(12 + column as u32 * 96 + x, row as u32 * 96 + 12 + y);
+                        for channel in 0..3 {
+                            target[channel] = (ink[channel] as f64 * alpha
+                                + target[channel] as f64 * (1.0 - alpha))
+                                .round() as u8;
+                        }
+                    }
+                }
+            }
+            image::imageops::overlay(&mut mock, &avatar, 12 + 2 * 96, row as i64 * 96 + 12);
+        }
+        mock.save(format!("{dir}/status-item-attention.png")).unwrap();
 
         // A typical menu (spec §2), rows as JSON beside their images.
         let member = |id: &str, name: &str, status: &str, working: bool, task: Option<&str>, minutes: u64| TrayMember {

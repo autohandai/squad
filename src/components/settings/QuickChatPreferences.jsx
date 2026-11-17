@@ -67,6 +67,10 @@ export function QuickChatPreferences({ api }) {
       <FieldContent><FieldTitle><label htmlFor="quick-chat-usage">Show harness usage and limits</label></FieldTitle><FieldDescription>Show connected harnesses’ reported usage, reset times and unavailable states. Usage checks do not send agent prompts.</FieldDescription></FieldContent>
       <Switch id="quick-chat-usage" checked={settings?.quickChatShowUsage !== false} disabled={!settings || busy} onCheckedChange={value => change("quickChatShowUsage", value)} />
     </Field>
+    <Field orientation="horizontal" className="items-center justify-between py-4">
+      <FieldContent><FieldTitle><label htmlFor="menu-bar-attention-dot">Show when something needs you</label></FieldTitle><FieldDescription>Adds a small dot to the Squad icon in the menu bar while a question or approval is waiting, and VoiceOver announces it. The dot goes when you answer.</FieldDescription></FieldContent>
+      <Switch id="menu-bar-attention-dot" checked={settings?.menuBarAttentionDot !== false} disabled={!settings || busy} onCheckedChange={value => change("menuBarAttentionDot", value)} />
+    </Field>
     {error ? <div className="py-3 text-sm" role="alert"><p className="text-destructive">{error}</p>{!settings ? <Button variant="ghost" size="sm" onClick={() => setAttempt(value => value + 1)}>Retry</Button> : null}</div> : null}
     {notice ? <p className="py-3 text-sm text-muted-foreground" role="status">{notice}</p> : null}
     <p className="py-4 text-xs text-muted-foreground">Menu bar behavior is available in the macOS desktop app. Preferences are saved on this computer.</p>

@@ -13,6 +13,7 @@ export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
   quickChatMenuBarMode: "single",
   quickChatShowUsage: true,
   quickChatAppearance: "glass",
+  menuBarAttentionDot: true,
   autoCheckUpdates: true,
   autoDownloadUpdates: false,
 });
@@ -29,6 +30,7 @@ export function normalizeSystemSettings(input) {
     quickChatMenuBarMode: source.quickChatMenuBarMode === "active-agents" ? "active-agents" : "single",
     quickChatShowUsage: source.quickChatShowUsage !== false,
     quickChatAppearance: source.quickChatAppearance === "solid" ? "solid" : "glass",
+    menuBarAttentionDot: source.menuBarAttentionDot !== false,
     autoCheckUpdates: typeof source.autoCheckUpdates === "boolean" ? source.autoCheckUpdates : DEFAULT_SYSTEM_SETTINGS.autoCheckUpdates,
     autoDownloadUpdates: source.autoDownloadUpdates === true,
   };
@@ -37,7 +39,7 @@ export function normalizeSystemSettings(input) {
 /** The public shape: known keys only. */
 export function publicSystemSettings(settings) {
   const normalized = normalizeSystemSettings(settings);
-  return { quickChatAppearance: normalized.quickChatAppearance, quickChatEnabled: normalized.quickChatEnabled, quickChatMenuBarMode: normalized.quickChatMenuBarMode, quickChatShowUsage: normalized.quickChatShowUsage, autoCheckUpdates: normalized.autoCheckUpdates, autoDownloadUpdates: normalized.autoDownloadUpdates };
+  return { quickChatAppearance: normalized.quickChatAppearance, quickChatEnabled: normalized.quickChatEnabled, quickChatMenuBarMode: normalized.quickChatMenuBarMode, quickChatShowUsage: normalized.quickChatShowUsage, menuBarAttentionDot: normalized.menuBarAttentionDot, autoCheckUpdates: normalized.autoCheckUpdates, autoDownloadUpdates: normalized.autoDownloadUpdates };
 }
 
 export async function readSystemSettings(squadStateDir) {
@@ -61,7 +63,7 @@ async function saveSystemSettings(squadStateDir, patch) {
   const current = await readSystemSettings(squadStateDir);
   const next = { ...current };
   if (patch && typeof patch === "object") {
-    for (const key of ["quickChatEnabled", "quickChatShowUsage"]) if (typeof patch[key] === "boolean") next[key] = patch[key];
+    for (const key of ["quickChatEnabled", "quickChatShowUsage", "menuBarAttentionDot"]) if (typeof patch[key] === "boolean") next[key] = patch[key];
     if (["glass", "solid"].includes(patch.quickChatAppearance)) next.quickChatAppearance = patch.quickChatAppearance;
     if (["single", "active-agents"].includes(patch.quickChatMenuBarMode)) next.quickChatMenuBarMode = patch.quickChatMenuBarMode;
     if (typeof patch.autoCheckUpdates === "boolean") next.autoCheckUpdates = patch.autoCheckUpdates;

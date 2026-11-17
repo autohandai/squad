@@ -89,7 +89,7 @@ test("new release is discovered, preferences persist, and install waits for cons
   await page.reload();
   await expect(autoCheck).not.toBeChecked(); await expect(autoDownload).toBeChecked();
   const saved = (await bridge.api("/api/system/settings")).data;
-  expect(saved).toEqual({ autoCheckUpdates: false, autoDownloadUpdates: true, quickChatEnabled: true, quickChatMenuBarMode: "single", quickChatShowUsage: true, quickChatAppearance: "glass" });
+  expect(saved).toEqual({ autoCheckUpdates: false, autoDownloadUpdates: true, quickChatEnabled: true, quickChatMenuBarMode: "single", quickChatShowUsage: true, quickChatAppearance: "glass", menuBarAttentionDot: true });
   const disabledBefore = checks;
   await update.getByRole("button", { name: "Check for updates", exact: true }).click();
   await expect.poll(() => checks).toBeGreaterThan(disabledBefore);

@@ -376,13 +376,19 @@ The footer rows, the submenu headings, Account, Services and Help have no
 image. Images belong only to rows about the squad and its headroom.
 Decorating actions with icons would compete with the comb.
 
-### 3.6 Status item (optional, separate change)
+### 3.6 Status item and the attention dot (built, ADR-0248)
 
-The menu-bar icon stays the template `tray-template.png`. Suggested follow-up:
-a second template, `tray-template-attention.png`, that cuts a 5 pt dot out of
-the lower-right of the hexagon while anything needs you. A template image
-cannot carry colour, so the dot works through shape alone, and macOS still
-tints it correctly in both modes and with a tinted menu bar.
+The menu-bar icon is the template `tray-template.png`. While anything needs
+you (exactly the items the needs-you row shows), the shell draws the same
+template with a 5 pt dot in the lower right, centred 3 pt in from the right
+and bottom edges, and a 1.25 pt clear gap around it
+(`tray_art::with_attention_dot`). It stays a template, so the dot works
+through shape alone and macOS paints it in the bar's foreground on light,
+dark and tinted menu bars. In Agent avatars mode the waiting member's
+portrait gets the same dot in `you` orange. The icon is replaced only when
+the dot's state changes. Settings › Quick Chat › "Show when something needs
+you" turns it off, together with the VoiceOver announcement (§5); it is on
+by default.
 
 ---
 
@@ -395,8 +401,9 @@ needs-you row; `[headroom: 7–10 grey cells] Plenty of headroom ▸`.
 
 **Something needs you.** The needs-you row sits directly under the header
 (2.1), the member's comb cell turns solid orange, and that member moves to
-the first member row with `Waiting for you`. With the optional icon change,
-the status item gains its attention dot.
+the first member row with `Waiting for you`. The status item gains its
+attention dot (3.6), its VoiceOver name becomes "Autohand Squad, 1 thing
+needs you", and VoiceOver announces the new item (5).
 
 **A limit nearly reached** (Claude Code at 88% used). `[headroom: 2 orange
 cells, orange outline] Claude Code low · 12% left, resets Fri 9:00 am ▸`.
@@ -442,8 +449,10 @@ are 5 member rows, and `All members (12) ▸` lists the rest.
 
 ## 5. Accessibility
 
-**Words carry everything.** VoiceOver reads the row title only. Every row
-has to make sense with no image at all:
+**Words carry everything.** VoiceOver reads the row's title (AXTitle) and,
+after a pause, its help (AXHelp). A menu item's image description is never
+exposed (measured, ADR-0248), so the drawings are silent. Every row has to
+make sense with no image at all:
 
 - `Squad · 2 working, 3 ready`, not a bare count.
 - `Noah · On Codex until Claude Code resets 4:10 pm`, not "Noah ⚠".
@@ -451,7 +460,33 @@ has to make sense with no image at all:
   the number and the consequence.
 
 The images repeat what the words say, so nobody misses anything if they are
-hidden. This matters on macOS 27, which hides menu images unless
+hidden.
+
+**What VoiceOver reads (built, ADR-0248).**
+
+- Row titles are read as sentences: ` · ` becomes a comma ("Noah, Working on
+  checkout tests"), so no punctuation name is spoken at any verbosity.
+- Where the screen cuts words, VoiceOver gets them whole: the full question
+  or approval (up to 160 characters) and the full task title. "Plenty of
+  headroom" adds the number its mark shows: "Plenty of headroom, tightest is
+  Codex 82% left this week".
+- Rows that act say what they do: header "Opens the Squad window.", needs
+  you "Opens Eva's chat in Squad to answer." / "… to approve or decline.",
+  member "Opens Quick Chat with Noah.", Quick chat, Open Needs you, Start
+  services.
+- The Squad status item: label "Autohand Squad" (", 1 thing needs you" while
+  something waits), value the header ("2 working, 3 ready", "Stopped"), help
+  "Opens the Squad menu: your squad, what needs you, and Quick chat."
+- A member's own status item (Agent avatars): label the name, value their
+  row's state, help "Opens Quick Chat with {name}.", and VoiceOver's press
+  opens their Quick Chat like a click.
+- When a question or approval appears that was not there at the last read,
+  VoiceOver announces "Squad: Eva needs approval: …" ("Squad: 2 things need
+  you" for several) at medium priority. Not at launch, and not when
+  Settings › Quick Chat › "Show when something needs you" is off.
+
+Check it with `swift scripts/menu-bar-ax-check.swift <pid>` (read-only) or
+against `cargo run --example menu_bar_ax` in `src-tauri`. This matters on macOS 27, which hides menu images unless
 `preferredImageVisibility` is set, and for anyone with images turned off.
 
 **Not by colour alone.** Every state differs in shape or fill as well as
@@ -480,11 +515,12 @@ reason for using a cut-out instead of a painted ring.
   ⌘2 would point at a different person from one hour to the next.
 - Arrow keys and type-to-select work natively. Type-to-select lands on the
   first word of each row, which is why member rows start with the name.
-- Reaching the menu: left-click and AXPress open Quick Chat, so the status
-  button must also implement `accessibilityPerformShowMenu` to pop this menu.
-  VoiceOver users trigger it with VO-Shift-M, and Control-click works too.
-  Without it, keyboard and VoiceOver users cannot reach the menu. This is a
-  small native addition on the status button, not a custom view.
+- Reaching the menu: a left click opens Quick Chat, but VoiceOver's press
+  (VO-Space, AXPress) opens this menu, because the tray crate gives the
+  status item its menu and only intercepts mouse events. Quick chat is the
+  menu's own row (⌘⇧K). The spec first assumed AXPress opened Quick Chat and
+  asked for `accessibilityPerformShowMenu`; that was not needed (ADR-0248).
+  Control-click and right-click open the menu too.
 
 **Motion.** None. Menus do not animate, and the pulsing "working" dot from
 the app is deliberately not copied.

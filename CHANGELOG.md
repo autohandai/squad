@@ -12,6 +12,9 @@ list to the section for that version.
 
 ### Added
 
+- **A dot on the Squad menu-bar icon when something needs you.** While a member is waiting on a question or an approval, the Squad icon shows a small dot; it goes when you answer. With Agent avatars, the member who is waiting gets the dot on their own icon too. On by default; turn it off in Settings › Quick Chat › Show when something needs you.
+- **The menu bar works with VoiceOver.** The Squad icon says its name and how many things need you, every row reads as a plain sentence (with the whole question or task, even where the menu cuts it short) and says what choosing it does, and VoiceOver announces a new question or approval as it arrives. With Agent avatars, pressing a member's icon in VoiceOver opens their Quick Chat, as a click does.
+
 - **300 birds** to choose from for your squad, from around the world, all in the same drawn style as the kiwi: owls, parrots, penguins, kingfishers, hummingbirds, ducks and many more. The New Zealand birds are still the ones new members get first.
 - **Change a member's avatar from where you see them.** Click the face on their profile card, use Change avatar in the chat header's profile card, or pick **Change avatar…** from any member menu. Search the birds by name ("owl", "penguin", "tui"), use the arrow keys, and Save: the new face shows everywhere at once, including the menu bar, and stays after Squad restarts.
 - **Members can change their own avatar.** Ask one to "pick an owl for yourself" and it can choose any of the 300 birds through Squad's team tools; the change shows everywhere without a reload, with a line under the reply saying what it chose. You can turn this off per member in Permissions (squad_set_avatar).
@@ -70,6 +73,8 @@ list to the section for that version.
 
 - **Downloaded builds can sign in to Gmail, Google Drive, Google Calendar and GitHub with Squad's own sign-in apps.** Releases now carry them, so once Autohand has set them up these connectors no longer say sign-in is "not set up". A Google client you saved in Settings still wins.
 - **One macOS permission for Autohand Computer Use, whichever copy runs.** The copy inside the macOS download archive (.tar.gz) was signed differently from the one Autohand Code installs, so macOS treated them as two apps and the permission you gave one did not count for the other. Every copy Squad releases is now signed by Autohand, like the CLI's and Autohand Desktop's, and each release checks it before publishing.
+- A member whose name has an "&" (such as "R&D Scout") lost it in the menu-bar menu and showed as "RD Scout".
+- The menu bar's needs-you row no longer blinks off for a refresh when the bridge is slow to answer.
 - Opening an Add to Squad link while Squad starts up now opens that agent, instead of losing the link; and a marketplace that can't be reached no longer makes Squad reload over and over.
 - **Computer Use said "Not allowed" while System Settings showed Autohand Computer Use switched on.** macOS had kept the permission for an older build of Autohand Computer Use and ignored it for the one installed now. The Permissions page now says so when it can tell, and **Reset macOS permission** clears that old permission and asks macOS again, so you allow it once for the current app. It no longer says you have already granted it when you have not.
 
