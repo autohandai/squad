@@ -90,7 +90,7 @@ test('Grut in the Minified layout keeps real previews and existing group actions
   await expect(groupUser.locator('.chat-user-bubble')).toContainText('Review this together.');
   const groupPosition = await groupUser.evaluate(element => ({ left: element.getBoundingClientRect().left, parent: element.parentElement.getBoundingClientRect().left }));
   expect(groupPosition.left).toBeGreaterThan(groupPosition.parent);
-  await groupUser.getByRole('button', { name: /^Thread:/ }).click();
+  // Replies read in order by default (ADR-0238): no thread to open first.
   const groupAnswer = page.locator('main [data-channel-message-id="grut-group-answer"]');
   await expect(groupAnswer.locator('.chat-agent-answer')).toContainText('The group review is ready.');
   expect(await groupAnswer.locator('.chat-reply-avatar').evaluate(element => getComputedStyle(element).display)).toBe('none');

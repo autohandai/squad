@@ -46,6 +46,8 @@ import { DEFAULT_SKIN_ID, SKINS, SKIN_VAR_DEFAULTS, isSkinId, memberAvatar, skin
 import { LAYOUTS, LAYOUT_STORAGE_KEY, isLayoutId, resolveLayoutId } from "@/lib/layouts";
 import { LayoutGlyph } from "@/components/onboarding/LayoutStep";
 import { blobForMember, blobSvg } from "@/lib/blob-avatar";
+import { birdFromAvatar } from "@/lib/bird-cast";
+import { birdFaceSvg } from "@/lib/bird-faces";
 import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
 import { channelTranscript } from "@/lib/channel-transcript";
@@ -13830,12 +13832,16 @@ function CanvasWorkspace({ ownerType, ownerId, canvases = [], activeCanvasId = "
 function AgentAvatar({ agent, large = false, className }) {
   const skin = useContext(SkinContext);
   const face = memberAvatar(agent, skin);
-  // A blob is drawn, not fetched: no border and no fill behind it, because the
-  // eyes are holes and whatever is behind the avatar shows through them.
+  // A bird face is drawn, not fetched, and is the same in every skin
+  // (ADR-0240). What adapts is the tile: the skin's muted surface and avatar
+  // corner (data-slot="avatar" picks up --skin-avatar-radius), light or dark.
+  // The eyes are holes, so they take the tile's colour in either theme.
   if (face.kind === "blob") {
     return (
       <span
-        className={cn("inline-block shrink-0 overflow-hidden", large ? "size-24" : "size-8", className)}
+        data-slot="avatar"
+        data-bird={face.bird}
+        className={cn("member-face inline-block shrink-0 overflow-hidden rounded-full bg-muted p-[8%]", large ? "size-24" : "size-8", className)}
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: face.svg || blobSvg({ ...face.blob, title: agent?.name || "" }) }}
       />
@@ -19892,6 +19898,8 @@ function AvatarPicker({ value, onChange, options = builtInAvatarOptions }) {
 
   for (const option of [
     selectedOption,
+    // The drawn bird faces lead: they are every member's default (ADR-0240).
+    ...options.filter((item) => birdFromAvatar(item.src)),
     ...options.filter((item) => item.id.startsWith("nz-riso-set")),
     ...options,
   ]) {
@@ -19924,7 +19932,12 @@ function AvatarPicker({ value, onChange, options = builtInAvatarOptions }) {
               )}
               onClick={() => onChange(option.src)}
             >
-              <img src={option.src} alt="" loading="lazy" className="size-full rounded-full object-cover" />
+              {birdFromAvatar(option.src) ? (
+                // eslint-disable-next-line react/no-danger
+                <span className="size-full overflow-hidden rounded-full bg-muted p-[8%]" dangerouslySetInnerHTML={{ __html: birdFaceSvg(birdFromAvatar(option.src)) }} />
+              ) : (
+                <img src={option.src} alt="" loading="lazy" className="size-full rounded-full object-cover" />
+              )}
               {selected ? (
                 <span className="absolute -bottom-0.5 -right-0.5 grid size-5 place-items-center rounded-full border border-background bg-primary text-primary-foreground">
                   <CheckCircle2 className="size-3" />

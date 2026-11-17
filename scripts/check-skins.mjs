@@ -108,30 +108,30 @@ for (const skin of SKINS) {
     else assert.ok(face.blob.shape && face.blob.expression && face.blob.colour, `${skin.id} gave an incomplete blob`);
   }
 }
-assert.equal(memberAvatar(custom, skinById("soft")).src, "/avatars/custom.jpg", "a custom role uses its own picture");
-assert.equal(memberAvatar(member, skinById("default")).src, "/avatars/devops-engineer.jpg");
-
-// Portraits are opt-in by slug because Radix unmounts an image that 404s: a
-// skin pointing at art that is not installed shows an initial, not a photo.
-// So every listed slug must have a file, and a slug that is not listed must
-// fall back to the member's own picture.
+// One face per member in every skin (ADR-0240): a picked or uploaded picture
+// is shown as it is everywhere; skins no longer swap in role portraits.
+for (const skin of SKINS) {
+  assert.equal(memberAvatar(custom, skin).src, "/avatars/custom.jpg", `${skin.id} keeps an uploaded picture`);
+  assert.equal(memberAvatar(member, skin).src, "/avatars/devops-engineer.jpg", `${skin.id} keeps a picked portrait`);
+}
 for (const slug of SOFT_PORTRAIT_SLUGS) {
   assert.ok(existsSync(`public/avatars/soft/${slug}.jpg`), `SOFT_PORTRAIT_SLUGS lists ${slug} but public/avatars/soft/${slug}.jpg is missing`);
-}
-if (SOFT_PORTRAIT_SLUGS.includes("devops-engineer")) {
-  assert.equal(memberAvatar(member, skinById("soft")).src, "/avatars/soft/devops-engineer.jpg");
-  assert.equal(memberAvatar(member, skinById("soft")).fallbackSrc, "/avatars/devops-engineer.jpg");
-} else {
-  assert.equal(memberAvatar(member, skinById("soft")).src, "/avatars/devops-engineer.jpg", "an undrawn role keeps its photo");
 }
 
 // The bird cast (ADR-0235). Grut draws the member's own bird as a shapeless
 // face; a custom picture still gets a bird, always the same one.
 const kiwiMember = { id: "asq_eva_qa", name: "Eva", employeeType: "common-qa-engineer", avatar: "/avatars/birds/kiwi.webp" };
-const grutFace = memberAvatar(kiwiMember, skinById("grut"));
-assert.equal(grutFace.bird, "kiwi", "Grut draws the bird the member already has");
-assert.ok(grutFace.svg.includes("<title>Eva</title>"));
-assert.equal(memberAvatar(custom, skinById("grut")).bird, birdForMember(custom));
+// A cast bird, or no picture at all, is that bird's drawn face, identical in
+// every skin; only the tile behind it follows the skin (AgentAvatar).
+for (const skin of SKINS) {
+  const face = memberAvatar(kiwiMember, skin);
+  assert.equal(face.kind, "blob", `${skin.id} draws the bird`);
+  assert.equal(face.bird, "kiwi", `${skin.id} draws the member's own bird`);
+  assert.equal(face.svg, memberAvatar(kiwiMember, SKINS[0]).svg, `${skin.id} draws the same face as every other skin`);
+  const bare = memberAvatar({ id: "asq_bare", name: "Bare", avatar: "" }, skin);
+  assert.equal(bare.kind, "blob", `${skin.id}: a member with no picture gets a bird, not an initial`);
+}
+assert.ok(memberAvatar(kiwiMember, skinById("grut")).svg.includes("<title>Eva</title>"));
 assert.equal(birdForMember(custom), birdForMember({ ...custom }), "a custom picture maps to a stable bird");
 assert.equal(birdFromAvatar("/avatars/birds/tui.webp"), "tui");
 assert.equal(birdFromAvatar("/avatars/birds/robin.webp"), "", "only cast birds count");
@@ -148,9 +148,6 @@ assert.equal(new Set(BIRD_IDS.map((bird) => birdFaceSvg(bird))).size, BIRD_IDS.l
 // Ember shows clay only for birds whose clay file is installed: Radix drops an
 // image that 404s, so pointing at missing art would turn a bird into an initial.
 for (const bird of INSTALLED_ART.clay) assert.ok(existsSync(`public/avatars/clay/${bird}.webp`), `INSTALLED_ART lists clay ${bird} but the file is missing`);
-const emberFace = memberAvatar(kiwiMember, skinById("ember"));
-assert.equal(emberFace.src, INSTALLED_ART.clay.includes("kiwi") ? "/avatars/clay/kiwi.webp" : "/avatars/birds/kiwi.webp");
-assert.equal(memberAvatar(custom, skinById("ember")).src, "/avatars/custom.jpg", "clay never replaces a custom picture");
 // New members: a known role keeps its bird; anyone else gets an untaken one.
 assert.equal(birdAvatarForRole("common-qa-engineer", "", "x", ["/avatars/birds/kiwi.webp"]), "/avatars/birds/kiwi.webp");
 const roster10 = [];

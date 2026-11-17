@@ -3,7 +3,7 @@
 // How the app is arranged is the separate Layout choice (src/lib/layouts.js,
 // ADR-0233), so every skin works in Full and Minified alike.
 import { blobForMember } from './blob-avatar.js';
-import { birdForMember, clayAvatarSrc } from './bird-cast.js';
+import { birdForMember, birdFromAvatar } from './bird-cast.js';
 import { birdFaceSvg } from './bird-faces.js';
 import { SKIN_PALETTES } from './skin-palettes.js';
 
@@ -79,22 +79,20 @@ export const SOFT_PORTRAIT_SLUGS = [
   'technical-writer', 'ux-ui-designer',
 ];
 export function roleSlug(member) { return String(member?.employeeType || '').trim().toLowerCase(); }
+/**
+ * A member's face, the same in every skin (ADR-0240). A member whose picture
+ * is a cast bird, or who has none, is that bird's drawn face; the skin and
+ * theme only change the tile behind it (see AgentAvatar), never the face. A
+ * picture the person uploaded or picked is shown as it is, in every skin.
+ * `design` is accepted for callers that still pass it.
+ */
+// eslint-disable-next-line no-unused-vars
 export function memberAvatar(member, design) {
-  // Grut draws each member's bird as a shapeless face (ADR-0235); `blob` stays
-  // for anything that still reads the generic blob's shape and colour.
-  if (design?.avatars === 'blob') {
-    const bird = birdForMember(member);
+  const own = String(member?.avatar || '').trim();
+  const cast = birdFromAvatar(own);
+  if (cast || !own) {
+    const bird = cast || birdForMember(member);
     return { kind: 'blob', bird, blob: blobForMember(member), svg: birdFaceSvg(bird, { title: member?.name || '' }) };
   }
-  // Clay replaces a cast bird only once its clay file is installed; a custom
-  // picture, or a bird still waiting for art, keeps the member's own image.
-  if (design?.avatars === 'clay') {
-    const clay = clayAvatarSrc(member);
-    if (clay) return { kind: 'image', src: clay, fallbackSrc: member?.avatar || '' };
-  }
-  if (design?.avatars === 'portrait') {
-    const role = roleSlug(member);
-    if (SOFT_PORTRAIT_SLUGS.includes(role)) return { kind: 'image', src: `/avatars/soft/${role}.jpg`, fallbackSrc: member?.avatar || '' };
-  }
-  return { kind: 'image', src: member?.avatar || '', fallbackSrc: '' };
+  return { kind: 'image', src: own, fallbackSrc: '' };
 }
