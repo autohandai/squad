@@ -176,3 +176,41 @@ Update (new version from the member as it is now) and Unpublish.
 - Not signed in: Explore and Add work; Publish asks to sign in.
 - Hash mismatch, invalid template, removed listing, rate limit: one sentence,
   nothing created.
+
+## Production rollout (needs approval; nothing below has been run)
+
+Squad API (`services/squad-api`, Cloudflare account that owns `autohand.ai`):
+
+1. Create the database: `node_modules/.bin/cf d1 create` with name
+   `squad-marketplace` (or the dashboard). Note its ID.
+2. Apply the schema:
+   `SQUAD_MARKETPLACE_DATABASE_ID=<id> node_modules/.bin/cf d1 migrations apply <id> --dir marketplace-migrations`
+3. Secret, at least 32 random characters, set without echoing it:
+   `MARKETPLACE_ADMIN_TOKEN` on the `squad-api` Worker. Keep the value for the
+   website's Pages secret of the same name.
+4. Deploy with both IDs exported (`SQUAD_API_DATABASE_ID`,
+   `SQUAD_MARKETPLACE_DATABASE_ID`): `npm run typecheck && npm test && npm run build && npm run deploy`.
+   Add `SQUAD_MARKETPLACE_DATABASE_ID` to the CI deploy variables in
+   `.github/workflows/squad-api.yml` before enabling automatic deploys.
+5. Seed the 200 agents (idempotent; `createdAt` is the time you run it):
+   `node scripts/marketplace-seed.mjs --batches .cloudflare/marketplace-seed`, then
+   for each file `node_modules/.bin/cf d1 query <id> --batch @<file>`.
+   Check: `curl -s https://squad.autohand.ai/v1/marketplace/categories` reports
+   `total: 200` and 20 per category.
+6. Smoke: `GET /v1/marketplace/agents?q=payroll`, one `/template` whose
+   `contentHash` matches the listing, and an admin call with the token and
+   `X-Marketplace-Admin` that returns `agents`.
+
+Website (`dark-web-cli`, branch `lane/squad-marketplace`): follow its
+`runbooks/squad-marketplace.md` (Pages secret, permission and flag migrations,
+deploy, private check with the flag, then `SQUAD_MARKETPLACE_PUBLIC=true`).
+
+Desktop: the `squad://` scheme ships with the next signed build (Cargo adds
+`tauri-plugin-deep-link`; `tauri.conf.json` declares the scheme, so the bundle
+writes `CFBundleURLTypes` on macOS, the NSIS registry keys on Windows and the
+`.desktop` handler on Linux). Verify after building: `open 'squad://app/v1/agent-template?id=<seed id>'`
+with Squad closed and with it open.
+
+Rollback: Worker routes are additive; redeploying the previous Worker removes
+them without touching `squad-control-plane`. The marketplace database can be
+restored with D1 Time Travel on its own.

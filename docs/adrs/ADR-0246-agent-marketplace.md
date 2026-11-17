@@ -132,6 +132,19 @@ email as `X-Marketplace-Admin`.
   persistent D1, migrations, seeds and the identity fixture instead.
 - Splitting a migration on `;` (as the test harness does) breaks on a
   semicolon inside a `--` comment. The first draft of the migration had one.
+- The first local runner passed `d1Persist` to Miniflare 5, which silently
+  ignores it: the database was empty after every restart. The app's offline
+  screenshot showed "All 200" above an empty list, which is how it was found.
+  Miniflare 5 takes one `resourcePersistencePath`; the bridge check now
+  asserts the seeds survive a restart.
+- Reports were first planned through a website function. Every visitor would
+  then have shared the website's egress as their network bucket, so ten
+  reports an hour for the whole site and one "reporter" for the five-reporter
+  rule. Reports now go from the visitor's browser straight to the API, which
+  allows `https://autohand.ai` as an origin for that one route only.
+- On the built website (not in Vite's dev server) the bird faces were blank:
+  the page function for `/squad/marketplace/*` also caught
+  `/squad/marketplace/birds/*.svg`. It now hands those to the static assets.
 
 ## Consequences
 
@@ -149,3 +162,10 @@ email as `X-Marketplace-Admin`.
   Grok's bot-sharing terms were not readable to automated clients and need a
   human read before the feature is announced.
 - Autohand-authored listings cannot be changed through the publisher routes.
+- The desktop's `squad://` handling was compiled and tested only as the
+  std-only parser (`rustc --test src-tauri/src/deep_link.rs`, 4 tests); the
+  Tauri glue was checked against the plugin's source signatures but not built,
+  per this lane's no-native-build rule. The first signed build must be tried
+  with Squad closed and open before release.
+- Marketplace dialog and publish copy are English fallbacks, not yet in
+  `src/locales.js` for other languages.
