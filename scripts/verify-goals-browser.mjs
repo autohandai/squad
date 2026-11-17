@@ -30,10 +30,22 @@ const task = (id, title, status, extra = {}) => ({ id, title, status, agentId: a
 const tasks = initialTasks.map((item) => ({ ...item, status: "completed", handoffs: [], assignments: [] }));
 const memory = initialMemoryInbox.map((item) => ({ ...item, status: "rejected" }));
 const channels = [{ id: "channel-browser-goal", name: "browser-goal", memberIds: agents.map((agent) => agent.id), createdAt: now, updatedAt: now }];
-const fixtures = { agents, tasks, memory, channels, seedChannelIds: initialChannels.map((channel) => channel.id), removedAgents: initialAgents.map((agent) => agent.id), root, now, recoveryOnly, observerOnly };
+// A fixed, ready ownership context: Squad reads account state under the
+// owner's storage prefix once /api/ownership/context is ready (ADR-0193).
+const ownership = { state: "ready", generation: "0d7c9a3e-5b1f-4c2d-9e8a-7f6b5c4d3e2f", storageKey: "goals-fixture", actor: { kind: "user", id: "fixture-owner" }, owner: { kind: "user", id: "fixture-owner" }, ownerLabel: "Browser fixture", role: "owner", canWrite: true, teamSquads: false, offline: false, error: "", pendingOperation: null };
+const fixtures = { ownership, agents, tasks, memory, channels, seedChannelIds: initialChannels.map((channel) => channel.id), removedAgents: initialAgents.map((agent) => agent.id), root, now, recoveryOnly, observerOnly };
 
 function installFixtures(data) {
-  const store = (key, value) => localStorage.setItem(`autohandSquad.v1.${key}`, JSON.stringify(value));
+  const ownedKey = key => `autohandSquad.owner.v1.${data.ownership.storageKey}.${encodeURIComponent(key)}`;
+  window.__ownedKey = ownedKey;
+  const store = (key, value) => localStorage.setItem(ownedKey(`autohandSquad.v1.${key}`), JSON.stringify(value));
+  // No broker here: keep the ownership event stream silent (its error makes a
+  // mounted Squad leave and reload).
+  const NativeEventSource = window.EventSource;
+  window.EventSource = function EventSource(url, options) {
+    if (new URL(url, location.origin).pathname === "/api/ownership/events") return { close() {}, addEventListener() {}, removeEventListener() {}, readyState: 1 };
+    return new NativeEventSource(url, options);
+  };
   const persist = () => localStorage.setItem("goalsVerify.server", JSON.stringify(window.__goalServer));
   if (!localStorage.getItem("goalsVerify.initialized")) {
     localStorage.clear();
@@ -56,7 +68,7 @@ function installFixtures(data) {
     store("channelReads", Object.fromEntries(data.seedChannelIds.map((id) => [id, data.now])));
     store("automations", []);
     store("onboarding", { version: 1, status: "skipped", lastStep: "skipped" });
-    localStorage.setItem("autohandSquad.v1.sidebarCollapsed", "false");
+    localStorage.setItem(ownedKey("autohandSquad.v1.sidebarCollapsed"), "false");
     localStorage.setItem("goalsVerify.initialized", "true");
   }
   window.__verifyRequests = [];
@@ -64,7 +76,12 @@ function installFixtures(data) {
   window.__goalVerify = { observerFixture: data.observerOnly, reply: "Browser fixture ordinary answer.", events: null, ...JSON.parse(localStorage.getItem("goalsVerify.scenario") || "{}") };
   if (window.__goalVerify.badgeFixture) {
     const at = new Date().toISOString();
-    store('messages', Object.fromEntries(data.agents.map(agent => [agent.id, [{ id: 'badge-unread-' + agent.id, role: 'agent', body: 'Badge fixture unread ' + agent.name + ' update', status: 'complete', createdAt: at }]])));
+    const badgeMessages = Object.fromEntries(data.agents.map(agent => [agent.id, [{ id: 'badge-unread-' + agent.id, role: 'agent', body: 'Badge fixture unread ' + agent.name + ' update', status: 'complete', createdAt: at }]]));
+    store('messages', badgeMessages);
+    // Conversations are canonical on the bridge in an owned Squad, so the
+    // fixture's bridge holds the same unread replies.
+    const savedState = JSON.parse(localStorage.getItem('goalsVerify.browserState') || '{"revision":0}');
+    localStorage.setItem('goalsVerify.browserState', JSON.stringify({ ...savedState, messagesByAgent: badgeMessages }));
     store('agentReads', {});
     store('channelReads', Object.fromEntries([...data.seedChannelIds, ...data.channels.map(channel => channel.id), 'channel-6eb6c6df-afc4-48c4-bac5-b3ceb9fe3e55'].map(id => [id, at])));
   }
@@ -172,8 +189,19 @@ function installFixtures(data) {
     if (url.pathname === "/api/workspaces") return response([{ name: "autohandSWE", label: "autohandSWE", path: data.root, kind: "project", launchable: true }]);
     if (url.pathname === "/api/members/presence") return response({ presence: Object.fromEntries(data.agents.map((agent) => [agent.id, { state: "idle" }])) });
     if (url.pathname === "/api/runs") return response([]);
-    if (url.pathname === "/api/memory-inbox") return response({ items: window.__goalVerify.badgeFixture ? JSON.parse(localStorage.getItem("autohandSquad.v1.memoryInbox")) : data.memory });
-    if (url.pathname === "/api/channels") return response({ channels: data.channels, threads: [] });
+    if (url.pathname === "/api/memory-inbox") return response({ items: window.__goalVerify.badgeFixture ? JSON.parse(localStorage.getItem(__ownedKey("autohandSquad.v1.memoryInbox"))) : data.memory });
+    if (url.pathname === "/api/ownership/context") return response(data.ownership);
+    // The owner's canonical conversations and roster, as a bridge that saved
+    // this window's writes would return them.
+    if (url.pathname === "/api/owned/browser-state") {
+      const saved = JSON.parse(localStorage.getItem("goalsVerify.browserState") || "null") || { revision: 0, messagesByAgent: JSON.parse(localStorage.getItem(ownedKey("autohandSquad.v1.messages")) || "{}") };
+      if (method === "PUT") { saved.revision += 1; saved.messagesByAgent = body.messagesByAgent; localStorage.setItem("goalsVerify.browserState", JSON.stringify(saved)); return response({ revision: saved.revision }); }
+      return response(saved);
+    }
+    if (url.pathname === "/api/channels") {
+      const roster = JSON.parse(localStorage.getItem(ownedKey("autohandSquad.v1.agents")) || "null") || data.agents;
+      return response({ channels: data.channels, threads: [], agentChannelAccess: Object.fromEntries(roster.map((agent) => [agent.id, { agent }])) });
+    }
     if (url.pathname === "/api/workflows") return response({ channels: window.__goalVerify.badgeFixture ? { [data.channels[0].id]: [{ id: 'badge-workflow', name: 'Badge fixture approval', steps: [{ id: 'badge-approval-step', memberId: data.agents[0].id }], runs: [{ id: 'badge-approval-run', status: 'waiting_approval', startedAt: data.now, pendingApproval: { stepId: 'badge-approval-step', requestedAt: data.now } }] }] } : {} });
     if (url.pathname === "/api/workflows/pending") return response({ pending: [] });
     if (url.pathname === "/api/notifications") return response({ items: [] });
@@ -287,13 +315,13 @@ async function main() {
       const registration = await cdp.evaluate("window.__verifyRequests.find(request => request.path === '/api/project-observer' && request.method === 'PUT')?.body");
       assert.equal(registration.members.length, 2);
       assert(registration.members.every(member => member.projects.some(project => project.path === root) && typeof member.profile === 'string' && member.profile.includes(member.name) && member.profile.includes(root)), 'Observer registration preserves assigned project, role profile and member identities');
-      const noticeCount = () => cdp.evaluate(`(JSON.parse(localStorage.getItem('autohandSquad.v1.messages'))[${JSON.stringify(agents[0].id)}] || []).filter(message => message.id === 'observation-browser-fixture').length`);
+      const noticeCount = () => cdp.evaluate(`(JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.messages')))[${JSON.stringify(agents[0].id)}] || []).filter(message => message.id === 'observation-browser-fixture').length`);
       await waitFor(async () => await noticeCount() === 1 && (await bodyText()).includes('Evidence: src/ObserverFixture.jsx:12'), 'one evidence-backed opportunity appears in its member DM');
       assert.equal(await cdp.evaluate("document.querySelectorAll('article[data-message-id=observation-browser-fixture]').length"), 1);
       await screenshot('observer-evidence-backed-dm');
       await navigate('/work'); await navigate(dmPath(agents[0]));
       await waitFor(async () => await noticeCount() === 1 && await cdp.evaluate("document.querySelectorAll('article[data-message-id=observation-browser-fixture]').length === 1"), 'durable notice remains deduplicated after full navigation reload');
-      const notice = await cdp.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.messages'))[${JSON.stringify(agents[0].id)}].find(message => message.id === 'observation-browser-fixture')`);
+      const notice = await cdp.evaluate(`JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.messages')))[${JSON.stringify(agents[0].id)}].find(message => message.id === 'observation-browser-fixture')`);
       assert(notice.projectObservation === true && notice.status === 'complete' && notice.body.includes('Review the proposed change'), 'Observation stays a suggestion rather than claiming work was applied');
       assert(!(await requests()).some(request => request.path === '/api/chat/stream' || request.path === '/api/runs' && request.method === 'POST'), 'Rendering durable observation never launches provider work');
       await navigate('/settings?section=improvement');
@@ -309,8 +337,8 @@ async function main() {
       return;
     }
     if (recoveryOnly) {
-      await waitFor(() => cdp.evaluate(`(JSON.parse(localStorage.getItem('autohandSquad.v1.messages'))[${JSON.stringify(agents[0].id)}] || []).find(message => message.id === 'recovery-stale')?.interrupted === true`), "stale ordinary request recovers on bridge restart");
-      const messages = await cdp.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.messages'))[${JSON.stringify(agents[0].id)}]`);
+      await waitFor(() => cdp.evaluate(`(JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.messages')))[${JSON.stringify(agents[0].id)}] || []).find(message => message.id === 'recovery-stale')?.interrupted === true`), "stale ordinary request recovers on bridge restart");
+      const messages = await cdp.evaluate(`JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.messages')))[${JSON.stringify(agents[0].id)}]`);
       const byId = Object.fromEntries(messages.map((message) => [message.id, message]));
       assert.equal(byId["recovery-stale"].status, "error");
       assert.equal(byId["recovery-stale"].progress.outcome, "interrupted");
@@ -336,7 +364,7 @@ async function main() {
     for (const harness of ["autohand", "codex", "claude"]) {
       if (harness !== "autohand") {
         await submit(`/harness ${harness}`);
-        await waitFor(() => cdp.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.agents')).find(agent => agent.id === ${JSON.stringify(agents[0].id)}).harness.id === ${JSON.stringify(harness)}`), `${harness} selection`);
+        await waitFor(() => cdp.evaluate(`JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.agents'))).find(agent => agent.id === ${JSON.stringify(agents[0].id)}).harness.id === ${JSON.stringify(harness)}`), `${harness} selection`);
       }
       const objective = `Browser fixture ${harness}: repair the demo and verify it`;
       await submit(`/goal ${objective}`);
@@ -390,7 +418,7 @@ async function main() {
     await screenshot("break-pauses-goal");
     await submit("/break off");
     await waitFor(() => cdp.evaluate(`window.__goalServer.breaks[${JSON.stringify(agents[0].id)}]?.onBreak === false`), "goal member returns from break");
-    await waitFor(() => cdp.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.agents')).find(agent => agent.id === ${JSON.stringify(agents[0].id)}).status !== 'paused'`), "returned member persisted locally");
+    await waitFor(() => cdp.evaluate(`JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.agents'))).find(agent => agent.id === ${JSON.stringify(agents[0].id)}).status !== 'paused'`), "returned member persisted locally");
     assert.equal(await cdp.evaluate("window.__goalServer.goals.at(-1).status"), "paused", "Ending a break cannot silently resume persistent work");
     report.breakPausesGoalWithoutAutoResume = true;
     await navigate(dmPath(agents[1]));
@@ -401,15 +429,15 @@ async function main() {
     assert(!(await requests()).some((request) => request.path === "/api/chat/stream" && request.body.agentId === agents[1].id), "On-break DM refusal starts no harness");
     await screenshot("break-refuses-dm");
     await navigate(dmPath(agents[0]));
-    const tasksBefore = await cdp.evaluate("JSON.parse(localStorage.getItem('autohandSquad.v1.tasks'))");
+    const tasksBefore = await cdp.evaluate("JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.tasks')))");
     await cdp.evaluate("window.__goalVerify.reply = 'Browser fixture source completed its ordinary work.'");
     await submit("@Noah Please review this browser fixture handoff");
     await waitFor(async () => (await bodyText()).includes("Browser fixture source completed"), "source reply after declined mention");
-    await waitFor(() => cdp.evaluate(`(JSON.parse(localStorage.getItem('autohandSquad.v1.messages'))[${JSON.stringify(agents[0].id)}] || []).some(message => message.id.startsWith('handoff-declined-') && message.authorName === 'Noah' && message.body.includes("I'm on my break"))`), "receiver refusal is visible to the source");
+    await waitFor(() => cdp.evaluate(`(JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.messages')))[${JSON.stringify(agents[0].id)}] || []).some(message => message.id.startsWith('handoff-declined-') && message.authorName === 'Noah' && message.body.includes("I'm on my break"))`), "receiver refusal is visible to the source");
     await delay(350);
     const afterRequests = await requests();
     assert(!afterRequests.some((request) => request.path === "/api/chat/stream" && request.body.agentId === agents[1].id), "Mention refuses before receiver runtime dispatch");
-    const tasksAfter = await cdp.evaluate("JSON.parse(localStorage.getItem('autohandSquad.v1.tasks'))");
+    const tasksAfter = await cdp.evaluate("JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.tasks')))");
     assert(!tasksAfter.some((task) => task.currentOwnerId === agents[1].id && !tasksBefore.some((prior) => prior.id === task.id && prior.currentOwnerId === agents[1].id)), "Declined handoff cannot transfer ownership");
     assert(!tasksAfter.some((task) => (task.handoffs || []).some((handoff) => handoff.toAgentId === agents[1].id && ["accepted", "completed"].includes(handoff.status))), "Refusal cannot become accepted/completed handoff");
     await screenshot("break-refuses-handoff");
@@ -417,7 +445,7 @@ async function main() {
     assert.equal(await cdp.evaluate(`window.__goalServer.breaks[${JSON.stringify(agents[1].id)}].onBreak`), true, "Break is durable across navigation");
     await submit("/break off");
     await waitFor(() => cdp.evaluate(`window.__goalServer.breaks[${JSON.stringify(agents[1].id)}]?.onBreak === false`), "return from break");
-    await waitFor(() => cdp.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.agents')).find(agent => agent.id === ${JSON.stringify(agents[1].id)}).status !== 'paused'`), "returned receiver persisted locally");
+    await waitFor(() => cdp.evaluate(`JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.agents'))).find(agent => agent.id === ${JSON.stringify(agents[1].id)}).status !== 'paused'`), "returned receiver persisted locally");
     await submit("Browser fixture back to ordinary work");
     await waitFor(() => cdp.evaluate(`window.__verifyRequests.some(request => request.path === '/api/chat/stream' && request.body.agentId === ${JSON.stringify(agents[1].id)})`), "work resumes only after break off");
     await waitFor(async () => (await bodyText()).includes("Browser fixture ordinary answer"), "ordinary reply complete");
@@ -437,15 +465,17 @@ async function main() {
     await cdp.evaluate("localStorage.setItem('goalsVerify.scenario', JSON.stringify({ updateStatus: 'available' }))");
     await navigate(dmPath(agents[0]));
     await waitFor(() => cdp.evaluate("Boolean(document.querySelector('[data-testid=sidebar-update-notice]'))"), "available update banner");
-    report.banner = await cdp.evaluate("(() => { const notice = document.querySelector('[data-testid=sidebar-update-notice]'); const rect = notice.getBoundingClientRect(); const account = Array.from(document.querySelectorAll('.app-sidebar button')).find(button => button.getAttribute('aria-haspopup') === 'menu'); return { text: notice.innerText, bottom: rect.bottom, accountY: account?.getBoundingClientRect().y }; })()");
+    report.banner = await cdp.evaluate("(() => { const notice = document.querySelector('[data-testid=sidebar-update-notice]'); const rect = notice.getBoundingClientRect(); const account = document.querySelector('.app-sidebar button[aria-label=\"Open account menu\"]'); return { text: notice.innerText, bottom: rect.bottom, accountY: account?.getBoundingClientRect().y }; })()");
     assert(report.banner.bottom <= report.banner.accountY, "Update notice belongs above the account");
     assert(!await cdp.evaluate("Array.from(document.querySelectorAll('.app-sidebar button')).some(button => button.textContent.trim() === 'Check for upgrades')"), "Sidebar uses the contextual download notice");
     await screenshot("sidebar-update-available");
-    await clickButton("Download Squad update");
+    // The notice's action is "Download" inside the "Squad update" section (52256dd).
+    await waitFor(() => cdp.evaluate("Array.from(document.querySelectorAll('[data-testid=sidebar-update-notice] button')).some(node => !node.disabled && node.textContent.trim() === 'Download')"), "enabled Download in the update notice");
+    await cdp.evaluate("Array.from(document.querySelectorAll('[data-testid=sidebar-update-notice] button')).find(node => !node.disabled && node.textContent.trim() === 'Download').click()");
     await waitFor(() => cdp.evaluate("window.__verifyRequests.some(request => request.path === '/api/updates/upgrade' && request.method === 'POST')"), "mock verified download endpoint");
     report.contextualUpdateBanner = true;
     }
-    await cdp.evaluate(`(() => { localStorage.setItem('goalsVerify.scenario', JSON.stringify({ runtimeDelayMs: 1200, nativeNotifications: true, windowLabel: 'quick-chat' })); const members = JSON.parse(localStorage.getItem('autohandSquad.v1.agents')); members.find(member => member.id === ${JSON.stringify(agents[1].id)}).avatar = ''; for (let index = 1; index <= 6; index++) members.push({ ...members[0], id: 'asq_verify_extra_' + index, name: 'Guest ' + index, role: 'Browser tester' }); localStorage.setItem('autohandSquad.v1.agents', JSON.stringify(members)); })()`);
+    await cdp.evaluate(`(() => { localStorage.setItem('goalsVerify.scenario', JSON.stringify({ runtimeDelayMs: 1200, nativeNotifications: true, windowLabel: 'quick-chat' })); const members = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.agents'))); members.find(member => member.id === ${JSON.stringify(agents[1].id)}).avatar = ''; for (let index = 1; index <= 6; index++) members.push({ ...members[0], id: 'asq_verify_extra_' + index, name: 'Guest ' + index, role: 'Browser tester' }); localStorage.setItem(__ownedKey('autohandSquad.v1.agents'), JSON.stringify(members)); })()`);
     await cdp.send("Network.setUserAgentOverride", { userAgent: "AutohandSquadQuickChat/0.1.5 (macos; aarch64)", platform: "MacIntel" });
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 380, height: 520, deviceScaleFactor: 1, mobile: false });
     await cdp.send("Page.navigate", { url: `${baseUrl}/quick-chat?member=${agents[1].id}` });
@@ -461,7 +491,8 @@ async function main() {
     await waitFor(() => cdp.evaluate("Boolean(document.querySelector('[data-testid=mac-quick-chat] textarea'))"), "quick chat plain composer");
     const selectedPortrait = '[data-testid=quick-chat-member-carousel] button[data-member-id][aria-pressed=true]';
     const selectedMember = () => cdp.evaluate(`document.querySelector(${JSON.stringify(selectedPortrait)})?.dataset.memberId`);
-    const visiblePlaceholder = () => cdp.evaluate(`(() => { const svg = document.querySelector(${JSON.stringify(selectedPortrait + ' svg.lucide-circle-user-round')}); const rect = svg?.getBoundingClientRect(); const style = svg && getComputedStyle(svg); return Boolean(rect?.width > 0 && rect?.height > 0 && style.visibility === 'visible' && style.opacity !== '0'); })()`);
+    // An avatarless member is drawn as its bird face, not a CircleUser (ADR-0240).
+    const visiblePlaceholder = () => cdp.evaluate(`(() => { const svg = document.querySelector(${JSON.stringify(selectedPortrait + ' [data-slot=avatar][data-bird] svg, ' + selectedPortrait + ' .member-face svg')}); const rect = svg?.getBoundingClientRect(); const style = svg && getComputedStyle(svg); return Boolean(rect?.width > 0 && rect?.height > 0 && style.visibility === 'visible' && style.opacity !== '0'); })()`);
     const chooseMember = async (memberId, viaAvatar = false) => {
       await delay(450);
       await waitFor(async () => (await visibleMemberIds()).includes(memberId), "portrait settles inside clipped carousel viewport before clicking");
@@ -476,10 +507,12 @@ async function main() {
     };
     const visibleMemberIds = () => cdp.evaluate("(() => { const viewport = document.querySelector('[data-testid=quick-chat-member-carousel] [data-slot=carousel-content]').getBoundingClientRect(); return Array.from(document.querySelectorAll('[data-testid=quick-chat-member-carousel] button[data-member-id]')).filter(button => { const rect = button.getBoundingClientRect(); return rect.left >= viewport.left - 1 && rect.right <= viewport.right + 1; }).map(button => button.dataset.memberId); })()");
     assert.equal(await selectedMember(), agents[1].id);
-    await waitFor(visiblePlaceholder, "avatarless member uses a painted CircleUser placeholder");
+    await waitFor(visiblePlaceholder, "avatarless member is painted as its drawn bird");
     assert(await cdp.evaluate("document.querySelectorAll('[data-testid=quick-chat-selected-member]').length === 1 && !document.querySelector('[data-testid=quick-chat-member-trigger]')"), "One selected-member line accompanies the visible portrait carousel");
     assert(await cdp.evaluate("Boolean(document.querySelector('[data-testid=quick-chat-composer] textarea[data-slot=input-group-control]')) && document.querySelector('#quick-chat-composer-hint')?.innerText.includes('Enter')"), "Quick composer uses the registry InputGroup and a concise Enter hint");
-    assert(await cdp.evaluate("!document.querySelector('header') && !document.querySelector('button[aria-label^=Preview]') && document.querySelector('form').querySelectorAll('button').length === 1"), "Compact chat has no second profile header or composer auxiliary controls");
+    // Quick Chat has its own toolbar and, since ADR-0154 and ADR-0101, attach
+    // and dictate beside Send; it still has no member profile header.
+    assert(await cdp.evaluate("!document.querySelector('header.chat-header') && !document.querySelector('button[aria-label^=Preview]') && JSON.stringify([...document.querySelector('form').querySelectorAll('button')].map(button => button.getAttribute('aria-label'))) === JSON.stringify(['Attach files','Dictate','Send chat message'])"), "Compact chat has no second profile header and only attach, dictate and send in its composer");
     report.carousel = await cdp.evaluate("Array.from(document.querySelectorAll('[data-testid=quick-chat-member-carousel] button[data-member-id]')).map(button => { const dot = button.querySelector('[data-presence]'); const rect = dot?.getBoundingClientRect(); return { id: button.dataset.memberId, label: button.getAttribute('aria-label'), selected: button.getAttribute('aria-pressed'), dot: dot?.dataset.presence, dotPainted: rect?.width > 0 && rect?.height > 0 && getComputedStyle(dot).opacity !== '0' }; })");
     assert.equal(report.carousel.length, 8, "Overflow fixture includes eight members");
     assert(report.carousel.every(choice => choice.label.includes(choice.id === agents[0].id ? 'QA Engineer' : choice.id === agents[1].id ? 'Frontend engineer' : 'Browser tester') && choice.dotPainted), "Every portrait exposes role and an always-painted presence dot");
@@ -535,9 +568,9 @@ async function main() {
     await waitFor(async () => (await bodyText()).includes("Browser fixture ordinary answer"), "quick ordinary answer");
     await submit("/goal Browser fixture quick checklist");
     await waitFor(() => cdp.evaluate("window.__goalServer.goals.at(-1)?.prompt.includes('quick checklist') && document.querySelector('[data-testid=agent-goal-progress]')?.dataset.goalId === window.__goalServer.goals.at(-1)?.id"), "quick goal uses current shared controls");
-    const currentGoalArticle = `(() => { const goal = window.__goalServer.goals.at(-1); const message = (JSON.parse(localStorage.getItem('autohandSquad.v1.messages'))[goal.agentId] || []).find(item => item.goalId === goal.id); return message && Array.from(document.querySelectorAll('article[data-message-id]')).find(article => article.dataset.messageId === message.id); })()`;
+    const currentGoalArticle = `(() => { const goal = window.__goalServer.goals.at(-1); const message = (JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.messages')))[goal.agentId] || []).find(item => item.goalId === goal.id); return message && Array.from(document.querySelectorAll('article[data-message-id]')).find(article => article.dataset.messageId === message.id); })()`;
     await waitFor(() => cdp.evaluate(`Boolean((${currentGoalArticle})?.querySelector('[data-testid=agent-task-checklist]'))`), "current quick goal checklist rendered");
-    const quickChronology = await cdp.evaluate(`(() => { const goal = window.__goalServer.goals.at(-1); const messages = JSON.parse(localStorage.getItem('autohandSquad.v1.messages'))[goal.agentId] || []; const user = messages.find(message => message.role === 'user' && message.body.includes('Browser fixture quick checklist')); const userArticle = user && Array.from(document.querySelectorAll('article[data-message-id]')).find(article => article.dataset.messageId === user.id); const agentArticle = (${currentGoalArticle}); return { userBeforeReply: Boolean(userArticle && agentArticle && (userArticle.compareDocumentPosition(agentArticle) & Node.DOCUMENT_POSITION_FOLLOWING)), limit: document.querySelector('[data-testid=agent-goal-progress]')?.innerText }; })()`);
+    const quickChronology = await cdp.evaluate(`(() => { const goal = window.__goalServer.goals.at(-1); const messages = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.messages')))[goal.agentId] || []; const user = messages.find(message => message.role === 'user' && message.body.includes('Browser fixture quick checklist')); const userArticle = user && Array.from(document.querySelectorAll('article[data-message-id]')).find(article => article.dataset.messageId === user.id); const agentArticle = (${currentGoalArticle}); return { userBeforeReply: Boolean(userArticle && agentArticle && (userArticle.compareDocumentPosition(agentArticle) & Node.DOCUMENT_POSITION_FOLLOWING)), limit: document.querySelector('[data-testid=agent-goal-progress]')?.innerText }; })()`);
     assert(quickChronology.userBeforeReply, "The user's goal prompt must appear before its corresponding agent checklist/reply");
     assert(quickChronology.limit.includes("10m limit"), "A ten-minute goal cap must display 10m, never 0h");
     await cdp.evaluate(`(${currentGoalArticle}).scrollIntoView({ block: 'start', behavior: 'instant' })`);
@@ -561,21 +594,21 @@ async function main() {
     assert(await cdp.evaluate("document.querySelector('[data-testid=quick-chat-member-carousel] button[aria-pressed=true] [data-presence]')?.dataset.presence === 'offline'"), "On-break selected portrait has the grey presence state");
     await screenshot("quick-chat-on-break-380x520");
     await submit("/break off");
-    await waitFor(() => cdp.evaluate(`JSON.parse(localStorage.getItem('autohandSquad.v1.agents')).find(agent => agent.id === ${JSON.stringify(agents[1].id)}).status !== 'paused'`), "quick member returns without resuming goal");
+    await waitFor(() => cdp.evaluate(`JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.agents'))).find(agent => agent.id === ${JSON.stringify(agents[1].id)}).status !== 'paused'`), "quick member returns without resuming goal");
     assert(!await cdp.evaluate("window.__verifyInvokes.some(call => call.command === 'squad_set_attention_badge')"), "Exact QuickChat native UA never overwrites main Dock badge");
     report.quickNoBadgeWrites = true;
-    await cdp.evaluate(`(() => { const all = JSON.parse(localStorage.getItem('autohandSquad.v1.messages')); all[${JSON.stringify(agents[1].id)}].push({ id: 'quick-interrupted-user', role: 'user', status: 'complete', body: 'Browser fixture compact interrupted request', startedAt: new Date(Date.parse(${JSON.stringify(now)}) - 60000).toISOString() }, { id: 'quick-interrupted-reply', role: 'agent', status: 'loading', body: 'Noah is thinking...', startedAt: new Date(Date.parse(${JSON.stringify(now)}) - 60000).toISOString() }); localStorage.setItem('autohandSquad.v1.messages', JSON.stringify(all)); localStorage.setItem('goalsVerify.scenario', '{}'); })()`);
+    await cdp.evaluate(`(() => { const all = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.messages'))); all[${JSON.stringify(agents[1].id)}].push({ id: 'quick-interrupted-user', role: 'user', status: 'complete', body: 'Browser fixture compact interrupted request', startedAt: new Date(Date.parse(${JSON.stringify(now)}) - 60000).toISOString() }, { id: 'quick-interrupted-reply', role: 'agent', status: 'loading', body: 'Noah is thinking...', startedAt: new Date(Date.parse(${JSON.stringify(now)}) - 60000).toISOString() }); localStorage.setItem(__ownedKey('autohandSquad.v1.messages'), JSON.stringify(all)); localStorage.setItem('goalsVerify.scenario', '{}'); })()`);
     await cdp.send("Page.navigate", { url: `${baseUrl}/quick-chat?member=${agents[1].id}` });
     await waitFor(() => cdp.evaluate("document.querySelector('article[data-message-id=quick-interrupted-reply]')?.innerText.includes('Retry')"), "compact interrupted request has inline retry");
     await cdp.evaluate("document.querySelector('article[data-message-id=quick-interrupted-reply]').scrollIntoView({ block: 'end', behavior: 'instant' })");
-    report.quickInterrupted = await cdp.evaluate("(() => { const article = document.querySelector('article[data-message-id=quick-interrupted-reply]'); return { text: article.innerText, spinners: article.querySelectorAll('.animate-spin').length, tintedAlert: Boolean(article.querySelector('[role=alert].bg-muted, [role=alert].bg-destructive')), status: JSON.parse(localStorage.getItem('autohandSquad.v1.messages')).asq_verify_noah.find(item => item.id === 'quick-interrupted-reply').status }; })()");
+    report.quickInterrupted = await cdp.evaluate("(() => { const article = document.querySelector('article[data-message-id=quick-interrupted-reply]'); return { text: article.innerText, spinners: article.querySelectorAll('.animate-spin').length, tintedAlert: Boolean(article.querySelector('[role=alert].bg-muted, [role=alert].bg-destructive')), status: JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.messages'))).asq_verify_noah.find(item => item.id === 'quick-interrupted-reply').status }; })()");
     assert.equal(report.quickInterrupted.status, 'error');
     assert(!report.quickInterrupted.text.includes('Noah is thinking...') && report.quickInterrupted.spinners === 0 && !report.quickInterrupted.tintedAlert, "Interrupted quick chat has no stale thinking placeholder, spinner, or oversized alert card");
     await screenshot("quick-chat-interrupted-380x520");
     assert(!await cdp.evaluate("window.__verifyInvokes.some(call => call.command === 'squad_set_attention_badge')"), "Quick-chat window cannot overwrite the main Dock badge");
     await cdp.send("Network.setUserAgentOverride", { userAgent: "AutohandSquadDesktop/0.1.5 (macos; aarch64)", platform: "MacIntel" });
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
-    await cdp.evaluate(`(() => { const at = new Date().toISOString(); localStorage.setItem('goalsVerify.scenario', JSON.stringify({ nativeNotifications: true, badgeFixture: true })); localStorage.setItem('autohandSquad.v1.messages', JSON.stringify({ [${JSON.stringify(agents[0].id)}]: [{ id: 'badge-eva-unread', role: 'agent', body: 'Badge fixture unread Eva update', status: 'complete', createdAt: at }], [${JSON.stringify(agents[1].id)}]: [{ id: 'badge-noah-unread', role: 'agent', body: 'Badge fixture unread Noah update', status: 'complete', createdAt: at }] })); localStorage.setItem('autohandSquad.v1.agentReads', '{}'); localStorage.setItem('autohandSquad.v1.memoryInbox', JSON.stringify([{ id: 'badge-memory', agentId: ${JSON.stringify(agents[0].id)}, ownerAgentId: ${JSON.stringify(agents[0].id)}, status: 'pending', scope: 'project', projectKey: ${JSON.stringify(root)}, projectLabel: 'Badge fixture memory decision', content: 'Preserve unresolved decisions after reading updates.', createdAt: at, updatedAt: at }])); const tasks = JSON.parse(localStorage.getItem('autohandSquad.v1.tasks')); tasks.push({ id: 'badge-blocked-work', title: 'Badge fixture blocked work', status: 'blocked', agentId: ${JSON.stringify(agents[0].id)}, currentOwnerId: ${JSON.stringify(agents[0].id)}, project: ${JSON.stringify(root)}, summary: 'Needs a human decision', createdAt: at, updatedAt: at }); localStorage.setItem('autohandSquad.v1.tasks', JSON.stringify(tasks)); })()`);
+    await cdp.evaluate(`(() => { const at = new Date().toISOString(); localStorage.setItem('goalsVerify.scenario', JSON.stringify({ nativeNotifications: true, badgeFixture: true })); localStorage.setItem(__ownedKey('autohandSquad.v1.messages'), JSON.stringify({ [${JSON.stringify(agents[0].id)}]: [{ id: 'badge-eva-unread', role: 'agent', body: 'Badge fixture unread Eva update', status: 'complete', createdAt: at }], [${JSON.stringify(agents[1].id)}]: [{ id: 'badge-noah-unread', role: 'agent', body: 'Badge fixture unread Noah update', status: 'complete', createdAt: at }] })); localStorage.setItem(__ownedKey('autohandSquad.v1.agentReads'), '{}'); localStorage.setItem(__ownedKey('autohandSquad.v1.memoryInbox'), JSON.stringify([{ id: 'badge-memory', agentId: ${JSON.stringify(agents[0].id)}, ownerAgentId: ${JSON.stringify(agents[0].id)}, status: 'pending', scope: 'project', projectKey: ${JSON.stringify(root)}, projectLabel: 'Badge fixture memory decision', content: 'Preserve unresolved decisions after reading updates.', createdAt: at, updatedAt: at }])); const tasks = JSON.parse(localStorage.getItem(__ownedKey('autohandSquad.v1.tasks'))); tasks.push({ id: 'badge-blocked-work', title: 'Badge fixture blocked work', status: 'blocked', agentId: ${JSON.stringify(agents[0].id)}, currentOwnerId: ${JSON.stringify(agents[0].id)}, project: ${JSON.stringify(root)}, summary: 'Needs a human decision', createdAt: at, updatedAt: at }); localStorage.setItem(__ownedKey('autohandSquad.v1.tasks'), JSON.stringify(tasks)); })()`);
     await navigate('/work?view=needs-you');
     const sidebarAttention = () => cdp.evaluate("(() => { const button = Array.from(document.querySelectorAll('.app-sidebar button')).find(item => /^Needs you/.test(item.innerText.trim())); return Number(button?.querySelector('[aria-label$=\" unread\"]')?.getAttribute('aria-label').split(' ')[0] || 0); })()");
     const nativeBadge = () => cdp.evaluate("window.__verifyInvokes.filter(call => call.command === 'squad_set_attention_badge').at(-1)?.args.count");
