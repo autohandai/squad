@@ -58,19 +58,34 @@
       /* The theme chosen in Settings wins over the system's (set below). */
       #boot[data-mode="light"] { background: #ffffff; color: #171717; }
       #boot[data-mode="dark"] { background: #0a0a0a; color: #fafafa; }
-      #boot-mark { border-radius: 14px; animation: boot-breathe 2.4s ease-in-out infinite; }
+      #boot-mark { border-radius: 14px; }
       #boot-name { margin: 2px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
       #boot-status { margin: 0; font-size: 12px; opacity: 0.62; }
-      @keyframes boot-breathe {
-        0%, 100% { transform: scale(1); opacity: 0.92; }
-        50% { transform: scale(1.04); opacity: 1; }
+      /* Three birds of the squad on a hairline perch (ADR-0245): they land,
+         then a hop passes along them while the bundle loads. The mark stays
+         still. vite.config.js draws the faces in at build time. */
+      #boot-flock { position: relative; display: flex; gap: 10px; margin: 14px 0 6px; padding-bottom: 5px; }
+      #boot-flock::after { content: ""; position: absolute; left: -6px; right: -6px; bottom: 4px; height: 1px; background: currentColor; opacity: 0.16; }
+      #boot-flock > span { display: block; width: 26px; height: 26px; transform-origin: 50% 100%; animation: boot-land 520ms cubic-bezier(0.3, 1.35, 0.5, 1) both, boot-hop 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+      #boot-flock > span:nth-child(2) { animation-delay: 80ms, 650ms; }
+      #boot-flock > span:nth-child(3) { animation-delay: 160ms, 780ms; }
+      #boot-flock > span:first-child { animation-delay: 0ms, 520ms; }
+      #boot-flock svg { display: block; width: 100%; height: 100%; }
+      @keyframes boot-land {
+        0% { opacity: 0; transform: translateY(-14px); }
+        100% { opacity: 1; transform: none; }
+      }
+      @keyframes boot-hop {
+        0%, 36%, 100% { transform: none; }
+        12% { transform: translateY(-7px) scale(0.97, 1.05); }
+        24% { transform: translateY(0) scale(1.06, 0.93); }
       }
       @media (prefers-reduced-motion: reduce) {
-        #boot-mark { animation: none; }
+        #boot-flock > span { animation: none; }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-8UcOtENL.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CmYFucrt.css">
+    <script type="module" crossorigin src="/assets/index-C_c8fKAC.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-y-bO90BL.css">
   </head>
   <body>
     <!-- Shown before the bundle has parsed, so the window is never blank.
@@ -79,6 +94,7 @@
     <div id="boot" data-boot>
       <img id="boot-mark" src="/brand/autohand-squad/autohand-squad-mark-dark.webp" alt="" width="56" height="56" decoding="async" />
       <p id="boot-name">Autohand Squad</p>
+      <div id="boot-flock" aria-hidden="true"><span><svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img" aria-hidden="true"><path fill="#3a3b40" d="M30 24L22 4l18 14zM70 24l8-20-18 14z"/><path fill="#9a9ba1" fill-rule="evenodd" d="M50 16c22 0 38 14 38 34 0 22-16 40-38 40S12 72 12 50c0-20 16-34 38-34zM34.4 46a2.6 5 0 1 0 5.2 0a2.6 5 0 1 0 -5.2 0zM60.4 46a2.6 5 0 1 0 5.2 0a2.6 5 0 1 0 -5.2 0z"/><path fill="#2b2c30" d="M14 66c10 6 22 9 36 9s26-3 36-9c-5 14-19 24-36 24S19 80 14 66z"/><path fill="#26272b" d="M44 50h12c4 0 7 4 7 8 0 5-4 9-8 10 1-4-1-7-4-8h-7z"/></svg></span><span><svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img" aria-hidden="true"><path fill="#8b6a4a" fill-rule="evenodd" d="M46 14c18 0 32 14 34 32 2 20-10 44-34 44S10 72 12 52C14 30 28 14 46 14zM37.6 41a2.4 4.6 0 1 0 4.8 0a2.4 4.6 0 1 0 -4.8 0zM52.6 41a2.4 4.6 0 1 0 4.8 0a2.4 4.6 0 1 0 -4.8 0z"/><path fill="none" stroke="#d6bd8c" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" d="M66 50c10 4 20 15 26 31"/></svg></span><span><svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img" aria-hidden="true"><path fill="#f08aa6" fill-rule="evenodd" d="M50 14c21 0 36 15 36 36 0 22-15 40-36 40S14 72 14 50c0-21 15-36 36-36zM35.4 40a2.6 5 0 1 0 5.2 0a2.6 5 0 1 0 -5.2 0zM57.4 40a2.6 5 0 1 0 5.2 0a2.6 5 0 1 0 -5.2 0z"/><path fill="#f7ece6" d="M44 46c8-3 18-2 22 4 3 4 3 9 1 14l-7-1c1-4 0-7-3-9-3-2-7-3-13-3z"/><path fill="#1f2024" d="M67 64c-1 4-3 7-6 9-1-3-1-7 0-10z"/></svg></span></div>
       <p id="boot-status">Waking the squad…</p>
     </div>
     <div id="root"></div>
@@ -89,11 +105,19 @@
         var mode = JSON.parse(localStorage.getItem("autohandSquad.v1.theme") || "{}").mode;
         if (mode === "light" || mode === "dark") document.getElementById("boot").dataset.mode = mode;
       } catch (error) {}
+      // The dark mark was painted on the light splash too, nearly invisible.
+      try {
+        var bootMode = document.getElementById("boot").dataset.mode;
+        if (bootMode ? bootMode === "light" : matchMedia("(prefers-color-scheme: light)").matches) {
+          document.getElementById("boot-mark").src = "/brand/autohand-squad/autohand-squad-mark-light.webp";
+        }
+      } catch (error) {}
       // The menu-bar popover attaches to an existing Squad runtime. It does
       // not launch a second squad or repeat the main-window startup surface.
       if (location.pathname === "/quick-chat") {
         document.getElementById("boot-mark").remove();
         document.getElementById("boot-name").remove();
+        document.getElementById("boot-flock").remove();
         document.getElementById("boot-status").textContent = "Connecting to Squad…";
         document.getElementById("boot").dataset.compact = "true";
       }
