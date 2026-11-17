@@ -38,7 +38,7 @@ list to the section for that version.
 - A new sign-in screen: the Squad mark and name, one line, a perch of the squad's birds that land, glance and hop (and pass a hop along while your browser is open), Continue with Autohand account or Continue with Apple, and the terms at the foot. The terminal hint is gone: signing in to Squad also signs in the Autohand CLI it comes with.
 - Settings › Updates shows the download on the perch: the kiwi walks along it to the other birds as the real percentage climbs, and the page says your squad keeps working while it downloads.
 - The start-up screen shows three birds on a perch while Squad loads; the mark no longer pulses.
-
+- The README is rewritten for newcomers: what Squad is, who it is for, how to install it and how to build it, with fresh screenshots of today's app in light and dark. The detail it used to carry moved to `docs/guide.md` (using Squad) and `docs/development.md` (building and internals).
 - Birds are now the only built-in avatars. The role portraits, riso prints and skin portraits are gone; a member that had one shows its bird. Pictures you uploaded stay. The member card no longer frames the face in lilac.
 
 - Team Squads are now turned on per person by Autohand. Until they are on for your account, Squad opens your Personal Squad, Settings › Squads lists only that, and the account menu has no Switch Squad…. If you were in a team Squad when they are turned off, Squad moves you to your Personal Squad; your team's data stays where it is and your team choice comes back when they are on again. When they are turned on, your teams appear in Settings › Squads without restarting.

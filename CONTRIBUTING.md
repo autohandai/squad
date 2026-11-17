@@ -25,7 +25,7 @@ or [`help wanted`](https://github.com/autohandai/squad/issues?q=is%3Aissue%20sta
 
 ## Set up the project
 
-You need Git, Node.js 18.17 or newer, Bun 1.3.13, and Rust 1.90 or newer
+You need Git, Node.js 22.13 LTS or 24+, Bun 1.3.13, and Rust 1.90 or newer
 with `rustfmt`. The Autohand CLI is also needed for live agent, chat, run, and
 terminal flows.
 
@@ -86,8 +86,10 @@ when merging.
 - Do not commit generated local state such as `.autohand/`,
   `.codex-artifacts/`, `screenshots/`, generated `release/` artifacts, or
   credentials.
-- Put intentional README media in `docs/assets/readme/`, with useful alt text
-  and no private data.
+- README screenshots in `docs/assets/readme/` are generated from fixture data
+  by `node scripts/capture-readme-screenshots.mjs`; re-run it when a screen
+  shown in the README changes instead of capturing your own app. Other README
+  media also goes there, with useful alt text and no private data.
 
 Agent-assisted contributions are welcome. The contributor remains responsible
 for understanding the change, reviewing every diff, running the relevant
@@ -136,8 +138,9 @@ Generated proof belongs under `.codex-artifacts/` and must not be committed.
 
 ## Documentation responsibilities
 
-- Update [README.md](README.md) for user-facing behavior, routes, setup, or
-  distribution changes.
+- Update [README.md](README.md) for install, setup or distribution changes, and
+  [docs/guide.md](docs/guide.md) or [docs/development.md](docs/development.md)
+  for user-facing behavior, routes, configuration or build changes.
 - Update [SETUP_GUIDE.md](SETUP_GUIDE.md) for development, state, validation,
   or troubleshooting changes.
 - Update [docs/release.md](docs/release.md) for CI, installer, manifest, signing,
