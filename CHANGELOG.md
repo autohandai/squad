@@ -17,6 +17,10 @@ list to the section for that version.
 - **Members can change their own avatar.** Ask one to "pick an owl for yourself" and it can choose any of the 300 birds through Squad's team tools; the change shows everywhere without a reload, with a line under the reply saying what it chose. You can turn this off per member in Permissions (squad_set_avatar).
 - **Continue with Apple** on the sign-in screen. Squad asks autohand.ai to go straight to Sign in with Apple; until the website honours that, the autohand.ai page still gets you there: Sign In to Continue, then Continue with Apple.
 - Install and restart now shows an **Updating Squad** screen while Squad gets ready, installs and reopens, with a few of the squad's birds waiting on a perch. It says what the install stops and what it keeps, and if the install doesn't finish it offers Try again, Back to Squad and Download the latest version.
+- Settings › Connectors has a catalogue from the official MCP Registry, with brand marks: Composio, GitHub, Linear, Notion, Figma, Stripe, Vercel, Supabase, Cloudflare, Atlassian, Context7 and Playwright first, and search across the whole registry. Pick one and press Add: Squad installs it, opens the service's sign-in in your browser when it asks for one, checks its tools and turns it on. No commands to type.
+- Gmail, Google Drive and Google Calendar connectors. Use Squad's own connector with your Google OAuth client (search and read mail, write drafts and send; search and read Drive files; see and add calendar events), or go through Composio with no setup.
+- Custom connector: any MCP server by its address (Squad works out whether it speaks Streamable HTTP or the older SSE, and whether it needs a sign-in), by the command that starts it, or by pasting the "mcpServers" config from its instructions. Check before you add it.
+- Each connector shows one plain status and the one thing that fixes it: Sign in, Test again, Edit, How to install (when Node.js, uv or Docker is missing), or Update to a newer version. Show tools lists what members get.
 
 - Settings › Appearance › Avatars: draw every member's bird Flat (the default), in 3D as a soft glossy toy, or in matte Clay. Same bird and same face in every skin and theme; only the material changes.
 
@@ -43,6 +47,8 @@ list to the section for that version.
 - Settings › Updates shows the download on the perch: the kiwi walks along it to the other birds as the real percentage climbs, and the page says your squad keeps working while it downloads.
 - The start-up screen shows three birds on a perch while Squad loads; the mark no longer pulses.
 - The README is rewritten for newcomers: what Squad is, who it is for, how to install it and how to build it, with fresh screenshots of today's app in light and dark. The detail it used to carry moved to `docs/guide.md` (using Squad) and `docs/development.md` (building and internals).
+- Keys, tokens and sign-ins for connectors are sealed on this computer, with the key in the system keychain where there is one, and are never written into a member's files any more; members start connectors through Squad, which hands over the secrets at launch. Connectors saved before this are sealed the first time Squad reads them.
+- A connector that passes its check is switched on when you add it; one that fails stays off until you fix it.
 - Birds are now the only built-in avatars. The role portraits, riso prints and skin portraits are gone; a member that had one shows its bird. Pictures you uploaded stay. The member card no longer frames the face in lilac.
 
 - Team Squads are now turned on per person by Autohand. Until they are on for your account, Squad opens your Personal Squad, Settings › Squads lists only that, and the account menu has no Switch Squad…. If you were in a team Squad when they are turned off, Squad moves you to your Personal Squad; your team's data stays where it is and your team choice comes back when they are on again. When they are turned on, your teams appear in Settings › Squads without restarting.
@@ -61,7 +67,8 @@ list to the section for that version.
 
 - A picture chosen for a member in Edit Profile went back to the member's default bird the next time Squad opened. The chosen bird now stays.
 - The start-up and sign-in screens follow your light theme: the light start-up screen no longer shows the dark mark, and sign-in no longer opens dark right after a light start-up screen.
-
+- A connector that crashes mid-conversation restarts by itself and the member carries on; a sign-in that expires is renewed instead of failing; a server that forgets the session gets a new one.
+- Removing a connector, signing out of it or changing its address now also signs Squad out at the service.
 - A member's bird no longer shows as an empty grey square in the member profile sidebar, and faces fill their circle everywhere else.
 
 - Squad remembers when each paired phone was last seen across restarts and updates, instead of showing "Not seen since Squad started" while your phone is connected.
