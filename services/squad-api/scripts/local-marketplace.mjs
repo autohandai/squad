@@ -2,7 +2,7 @@
 // A local Squad API with the marketplace, for the website and the desktop to
 // develop against (ADR-0246). The Worker runs in workerd exactly as in the
 // tests; D1 persists under .cloudflare/local-marketplace; migrations and the
-// 200 seeds are applied on start (both idempotent). The Autohand identity
+// seeds (agents, teams, featured) are applied on start (both idempotent). The Autohand identity
 // service is a fixture: `identity-<name>` signs in as <name>, the desktop
 // checks' `fixture…` token as "reliability"; "alice" and "reliability" own
 // the team "Kahu Studio". Nothing here reaches Cloudflare.
@@ -16,12 +16,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
-import { readSeeds, seedStatements, seedTemplates } from "./marketplace-seed.mjs";
+import { allSeedStatements } from "./marketplace-seed.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const args = process.argv.slice(2);
 const port = Number(args.includes("--port") ? args[args.indexOf("--port") + 1] : 8797);
 export const LOCAL_ADMIN_TOKEN = "local-only-marketplace-admin-credential-0000";
+// Website dev servers whose pages may post reports and listing events here;
+// LOCAL_SITE_ORIGINS adds more, comma separated (ADR-0248).
+const siteOrigins = ["https://autohand.ai", "https://www.autohand.ai", "http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8788", ...String(process.env.LOCAL_SITE_ORIGINS || "").split(",").filter(Boolean)].join(",");
 
 const identityFixture = `export default { async fetch(request) {
   const url = new URL(request.url);
@@ -52,7 +55,7 @@ export async function startLocalMarketplace({ port: listen = port, persist = joi
     host: "127.0.0.1", port: listen, resourcePersistencePath: persist,
     workers: [{ name: "squad-api", modules: true, script: bundle.outputFiles[0].text, compatibilityDate: "2026-10-27",
       d1Databases: ["DB", "MARKETPLACE"], r2Buckets: ["MEMORY", "RELEASES"],
-      bindings: { IDENTITY_ORIGIN: "https://api.autohand.ai", WEB_ORIGIN: "http://127.0.0.1:5173", RELEASE_PUBLISHER_TOKEN: "local-only-release-publisher-credential-000", MARKETPLACE_ADMIN_TOKEN: LOCAL_ADMIN_TOKEN },
+      bindings: { IDENTITY_ORIGIN: "https://api.autohand.ai", WEB_ORIGIN: "http://127.0.0.1:5173", RELEASE_PUBLISHER_TOKEN: "local-only-release-publisher-credential-000", MARKETPLACE_ADMIN_TOKEN: LOCAL_ADMIN_TOKEN, MARKETPLACE_SITE_ORIGINS: siteOrigins },
       outboundService: "identity" },
     { name: "identity", modules: true, compatibilityDate: "2026-10-27", script: identityFixture }],
   }));
@@ -60,7 +63,7 @@ export async function startLocalMarketplace({ port: listen = port, persist = joi
   await applyMigrations(await runtime.getD1Database("DB", "squad-api"), "migrations");
   const market = await runtime.getD1Database("MARKETPLACE", "squad-api");
   await applyMigrations(market, "marketplace-migrations");
-  const statements = seed ? seedStatements(await seedTemplates(await readSeeds())) : [];
+  const statements = seed ? await allSeedStatements() : [];
   for (let index = 0; index < statements.length; index += 40) await market.batch(statements.slice(index, index + 40).map(({ sql, params }) => market.prepare(sql).bind(...params)));
   return runtime;
 }

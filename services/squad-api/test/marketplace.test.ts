@@ -7,8 +7,10 @@ import { after, before, test } from "node:test";
 import { readFile, readdir } from "node:fs/promises";
 import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
-import { contentHash, validateAgentTemplate } from "../../../src/lib/marketplace.js";
-import { readSeeds, seedStatements, seedTemplates } from "../scripts/marketplace-seed.mjs";
+import { contentHash, newAttributionId, validateAgentTemplate, validateTeamTemplate } from "../../../src/lib/marketplace.js";
+import { readTeamSeeds } from "../scripts/marketplace-seed.mjs";
+import { installsLabel } from "../src/marketplace.js";
+import { allSeedStatements } from "../scripts/marketplace-seed.mjs";
 
 let runtime: Miniflare; let alice = ""; let bob = ""; let carol = "";
 const ADMIN = "fixture-marketplace-admin-credential-0123456789";
@@ -58,33 +60,42 @@ before(async () => {
     await db.batch(sql.split(";").filter(part => part.trim()).map(part => db.prepare(part)));
   }
   const market = await runtime.getD1Database("MARKETPLACE", "squad-api");
-  const schema = await readFile("marketplace-migrations/0001_marketplace.sql", "utf8");
-  await market.batch(schema.split(";").filter(part => part.replace(/--.*$/gm, "").trim()).map(part => market.prepare(part)));
-  const statements = seedStatements(await seedTemplates(await readSeeds()), "2026-11-17T09:00:00.000Z");
+  for (const name of (await readdir("marketplace-migrations")).filter(name => name.endsWith(".sql")).sort()) {
+    const schema = await readFile(`marketplace-migrations/${name}`, "utf8");
+    await market.batch(schema.split(";").filter(part => part.replace(/--.*$/gm, "").trim()).map(part => market.prepare(part)));
+  }
+  const statements = await allSeedStatements("2026-11-17T09:00:00.000Z");
   for (let index = 0; index < statements.length; index += 50) await market.batch(statements.slice(index, index + 50).map(({ sql, params }) => market.prepare(sql).bind(...params)));
   const session = async (who: string) => String((await call("/v1/auth/exchange", { method: "POST", value: { identityToken: `identity-${who}`, deviceName: who } })).json.data.token);
   alice = await session("alice"); bob = await session("bob"); carol = await session("carol");
 });
 after(async () => { await runtime?.dispose(); });
 
-test("the 200 Autohand seeds are browsable by category, creator and search, with stable pagination", async () => {
+const additions = JSON.parse(await readFile("marketplace-seeds/additions-2026-11.json", "utf8")) as { counts: Record<string, number>; total: number };
+const AGENTS = 200 + additions.total;
+
+test("the Autohand seed agents (200 plus the 2026-11 additions) are browsable by category, creator and search, with stable pagination", async () => {
   const categories = await call("/v1/marketplace/categories");
-  assert.equal(categories.json.data.total, 200);
-  assert.equal(categories.json.data.autohand, 200);
-  assert(categories.json.data.categories.every((category: { count: number }) => category.count === 20), JSON.stringify(categories.json.data.categories));
+  assert.equal(categories.json.data.total, AGENTS);
+  assert.equal(categories.json.data.autohand, AGENTS);
+  assert.equal(categories.json.data.teams, (await readTeamSeeds()).length);
+  for (const category of categories.json.data.categories) assert.equal(category.count, 20 + additions.counts[category.id], category.id);
   const seen = new Set<string>(); let cursor = ""; let pages = 0;
   do {
     const page = await call(`/v1/marketplace/agents?limit=37${cursor ? `&cursor=${cursor}` : ""}`);
-    assert.equal(page.status, 200); assert.equal(page.json.data.total, 200);
-    for (const agent of page.json.data.agents) { assert(!seen.has(agent.id), `duplicate ${agent.id}`); seen.add(agent.id); }
+    assert.equal(page.status, 200); assert.equal(page.json.data.total, AGENTS);
+    for (const agent of page.json.data.agents) { assert(!seen.has(agent.id), `duplicate ${agent.id}`); assert.equal(agent.kind, "agent"); seen.add(agent.id); }
     cursor = page.json.data.nextCursor || ""; pages += 1;
   } while (cursor && pages < 20);
-  assert.equal(seen.size, 200);
+  assert.equal(seen.size, AGENTS);
   const first = (await call("/v1/marketplace/agents?limit=1")).json.data.agents[0];
   assert.deepEqual(Object.keys(first.creator), ["kind", "name"]);
   assert.equal(first.creator.name, "Autohand Squad team"); assert.equal(first.createdAt, "2026-11-17T09:00:00.000Z");
-  assert.equal((await call("/v1/marketplace/agents?category=finance&limit=50")).json.data.total, 20);
-  assert.equal((await call("/v1/marketplace/agents?q=autohand%20squad%20team")).json.data.total, 200);
+  assert.equal((await call("/v1/marketplace/agents?category=finance&limit=50")).json.data.total, 20 + additions.counts.finance);
+  assert.equal((await call("/v1/marketplace/agents?q=autohand%20squad%20team")).json.data.total, AGENTS);
+  assert.equal((await call("/v1/marketplace/agents?q=autohand%20squad%20team&kind=all")).json.data.total, AGENTS + (await readTeamSeeds()).length);
+  // Public rows carry a coarse installs label, never exact counters.
+  assert.equal(first.installsLabel, ""); assert.equal(first.adds, undefined); assert.equal(first.installs, undefined);
   const flaky = await call("/v1/marketplace/agents?q=flaky");
   assert(flaky.json.data.agents.some((agent: { name: string }) => agent.name === "Cedric"));
   assert.equal((await call("/v1/marketplace/agents?q=%25")).json.data.total, 0, "LIKE wildcards are literal");
@@ -126,7 +137,8 @@ test("a template downloads with a hash that recomputes, counts one add per netwo
   assert.equal(fetched.json.data.contentHash, fetched.json.data.agent.contentHash);
   await call(`/v1/marketplace/agents/${id}/template`, { ip: "203.0.113.7" });
   await call(`/v1/marketplace/agents/${id}/template`, { ip: "203.0.113.8" });
-  assert.equal((await call(`/v1/marketplace/agents/${id}`)).json.data.agent.adds, 2);
+  const stats = (await adminCall(`/v1/marketplace/admin/agents?q=payroll`)).json.data.agents.find((item: { id: string }) => item.id === id).stats;
+  assert.equal(stats.downloads, 2);
   assert.equal((await call(`/v1/marketplace/agents/${id}/template?version=2`, { ip: "203.0.113.9" })).status, 400);
   const responses = [];
   for (let index = 0; index < 61; index += 1) responses.push((await call(`/v1/marketplace/agents/${id}/template`, { ip: "203.0.113.50" })).status);
@@ -218,8 +230,12 @@ test("five reporters hide a listing; admins moderate, feature, remove and every 
   const reports = await adminCall("/v1/marketplace/admin/reports");
   assert.equal(reports.json.data.reports.filter((item: { listingId: string }) => item.listingId === id).length, 5);
   for (const item of reports.json.data.reports.filter((entry: { listingId: string }) => entry.listingId === id)) assert.equal((await adminCall(`/v1/marketplace/admin/reports/${item.id}`, { method: "PATCH", value: { status: "dismissed", note: "Works as described." } })).status, 200);
-  assert.equal((await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "PATCH", value: { status: "published", featured: true } })).json.data.agent.status, "published");
-  assert.equal((await call("/v1/marketplace/agents?limit=1")).json.data.agents[0].id, id, "featured sorts first");
+  const restored = (await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "PATCH", value: { status: "published", featured: true } })).json.data.agent;
+  assert.equal(restored.status, "published");
+  const featuredNow = (await call("/v1/marketplace/featured")).json.data.featured;
+  assert.equal(featuredNow.at(-1).id, id, "a newly featured listing joins the end of the featured row");
+  assert.equal(restored.featuredRank, featuredNow.length);
+  assert((await call("/v1/marketplace/agents?limit=1")).json.data.agents[0].featured, "featured sorts first");
   assert.equal((await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "PATCH", value: { status: "hidden" } })).json.error?.code, "reason_required");
   assert.equal((await adminCall(`/v1/marketplace/admin/agents/${id}`, { method: "DELETE", value: { reason: "Duplicate of another agent." } })).json.data.status, "removed");
   assert.equal((await call(`/v1/marketplace/agents/${id}/template`, { ip: "10.9.9.9" })).status, 404);
@@ -229,4 +245,118 @@ test("five reporters hide a listing; admins moderate, feature, remove and every 
   for (const action of ["report.created", "listing.hidden", "report.dismissed", "listing.restored", "listing.featured", "listing.removed"]) assert(events.includes(action), `${action} in ${events}`);
   const audit = JSON.stringify((await adminCall("/v1/marketplace/admin/audit")).json.data);
   assert(!audit.includes("10.0.0.") && !audit.includes("example.test"), "the audit trail holds no IPs or member emails");
+});
+
+test("installs are shown publicly only as a floor from ten", () => {
+  assert.deepEqual([0, 9, 10, 49, 50, 99, 100, 499, 500, 999, 1000, 4999, 5000, 80000].map(installsLabel), ["", "", "10+", "10+", "50+", "50+", "100+", "100+", "500+", "500+", "1k+", "1k+", "5k+", "5k+"]);
+});
+
+test("team templates list, preview and download as whole teams", async () => {
+  const teams = await call("/v1/marketplace/agents?kind=team&limit=50");
+  assert.equal(teams.json.data.total, (await readTeamSeeds()).length);
+  const review = teams.json.data.agents.find((item: { name: string }) => item.name === "Code review desk");
+  assert.equal(review.kind, "team"); assert.equal(review.members, 4); assert.equal(review.role, "Team of 4");
+  assert.deepEqual(review.faces, ["kea", ...review.faces.slice(1)]); assert.equal(review.faces.length, 4);
+  assert((await call("/v1/marketplace/agents?q=code%20review%20desk")).json.data.agents.every((item: { kind: string }) => item.kind === "agent"), "agent lists stay agents");
+  assert((await call("/v1/marketplace/agents?kind=team&q=boris")).json.data.agents.some((item: { id: string }) => item.id === review.id), "a team is found by its members");
+  const detail = await call(`/v1/marketplace/agents/${review.id}`);
+  assert.equal(detail.json.data.preview.lead, "Alder");
+  assert.deepEqual(detail.json.data.preview.members.map((member: { name: string }) => member.name), ["Alder", "Boris", "Anika", "Basil"]);
+  assert.deepEqual(detail.json.data.preview.channels, [{ name: "reviews", members: 4 }]);
+  assert.equal(detail.json.data.preview.instructions, undefined);
+  const fetched = await call(`/v1/marketplace/agents/${review.id}/template`, { ip: "203.0.113.70" });
+  const valid = validateTeamTemplate(fetched.json.data.document);
+  assert(valid.ok, valid.ok ? "" : valid.error);
+  assert.equal(await contentHash(valid.document), fetched.json.data.contentHash);
+  assert.equal(validateAgentTemplate(fetched.json.data.document).ok, false, "an agent-only client refuses a team template");
+});
+
+test("a team template is published, refused when it carries more than people, and keeps its kind on update", async () => {
+  const member = (name: string, bird = "tui") => ({ ...document(name).members[0], key: name.toLowerCase(), name, look: { avatar: `/avatars/birds/${bird}.webp`, employeeType: "" } });
+  const team = (extra: Record<string, unknown> = {}) => ({ ...document("Night shift"), team: { name: "Night shift", description: "Two members who cover the evening.", lead: "Rua", exportedAt: "", app: "" },
+    members: [member("Rua"), member("Tama", "kea")], channels: [{ name: "night", visibility: "public", section: "", members: ["Rua", "Tama"] }], ...extra });
+  const teamListing = { ...listing, tagline: "Two members who cover the evening queue." };
+  assert.equal((await call("/v1/marketplace/agents", { method: "POST", session: carol, key: "t-one", value: { owner: { kind: "user" }, creatorName: "Carol", kind: "team", listing: teamListing, document: { ...team(), members: [member("Rua")] } } })).json.error?.code, "template_invalid");
+  const withRoutine = team({ routines: [{ title: "Nightly", member: "Rua", instructions: "Check.", kind: "weekdays", time: "21:00" }] });
+  assert.match((await call("/v1/marketplace/agents", { method: "POST", session: carol, key: "t-routine", value: { owner: { kind: "user" }, creatorName: "Carol", kind: "team", listing: teamListing, document: withRoutine } })).json.error?.message || "", /no place for routines/);
+  const leaky = team(); leaky.members[1] = { ...leaky.members[1], notes: "password: hunter2-very-secret" } as typeof leaky.members[1];
+  assert.equal((await call("/v1/marketplace/agents", { method: "POST", session: carol, key: "t-leak", value: { owner: { kind: "user" }, creatorName: "Carol", kind: "team", listing: teamListing, document: leaky } })).json.error?.code, "template_secrets");
+  const created = await call("/v1/marketplace/agents", { method: "POST", session: carol, key: "t-ok", value: { owner: { kind: "user" }, creatorName: "Carol", kind: "team", listing: teamListing, document: team() } });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  assert.equal(created.json.data.agent.kind, "team"); assert.equal(created.json.data.agent.members, 2);
+  assert.deepEqual(created.json.data.agent.faces, ["tui", "kea"]);
+  const id = created.json.data.agent.id;
+  // The kind is fixed: an update must still be a team.
+  assert.equal((await call(`/v1/marketplace/agents/${id}`, { method: "PUT", session: carol, key: "t-agent", value: { baseVersion: 1, creatorName: "Carol", listing: teamListing, document: document("Solo") } })).json.error?.code, "template_invalid");
+  const bigger = team(); bigger.members.push(member("Mere", "kiwi")); bigger.channels[0].members.push("Mere");
+  const updated = await call(`/v1/marketplace/agents/${id}`, { method: "PUT", session: carol, key: "t-v2", value: { baseVersion: 1, creatorName: "Carol", listing: teamListing, document: bigger } });
+  assert.equal(updated.status, 200, JSON.stringify(updated.json)); assert.equal(updated.json.data.agent.members, 3); assert.equal(updated.json.data.agent.kind, "team");
+});
+
+test("the home read holds the featured row in order, every category's first agents and the teams", async () => {
+  const home = await call("/v1/marketplace/home?per=4");
+  assert.equal(home.status, 200); assert.match(home.headers.get("cache-control") || "", /public/);
+  const data = home.json.data;
+  const counts = new Map((await call("/v1/marketplace/categories")).json.data.categories.map((category: { id: string; count: number }) => [category.id, category.count]));
+  assert.equal(data.sections.length, 10);
+  for (const section of data.sections) {
+    assert.equal(section.agents.length, 4, section.id);
+    assert(section.agents.every((agent: { category: string; kind: string }) => agent.category === section.id && agent.kind === "agent"));
+    assert.equal(section.count, counts.get(section.id), section.id);
+  }
+  assert(data.teams.length >= 4 && data.teams.every((item: { kind: string }) => item.kind === "team"));
+  const seeded = JSON.parse(await readFile("marketplace-seeds/featured.json", "utf8")).featured as string[];
+  assert.deepEqual(data.featured.slice(0, seeded.length).map((item: { name: string }) => item.name), ["Abner", "Code review desk", "Callum", "Farah", "Hiring loop", "Noemi", "Imani", "Caleb"]);
+  assert.equal((await call("/v1/marketplace/home?per=40")).status, 400);
+});
+
+test("admins reorder the featured row, and re-seeding leaves their order alone", async () => {
+  const before = (await call("/v1/marketplace/featured")).json.data.featured.map((item: { id: string }) => item.id);
+  const reordered = await adminCall("/v1/marketplace/admin/featured", { method: "PUT", value: { ids: [before[2], before[0]] } });
+  assert.equal(reordered.status, 200, JSON.stringify(reordered.json));
+  const after = (await call("/v1/marketplace/featured")).json.data.featured.map((item: { id: string }) => item.id);
+  assert.deepEqual(after.slice(0, 3), [before[2], before[0], before[1]]);
+  assert.equal((await adminCall("/v1/marketplace/admin/featured", { method: "PUT", value: { ids: ["zzzzzzzzzzzz"] } })).json.error?.code, "not_featured");
+  assert.equal((await call("/v1/marketplace/admin/featured", { method: "PUT", value: { ids: [before[0]] } })).status, 401);
+  const market = await runtime.getD1Database("MARKETPLACE", "squad-api");
+  const statements = await allSeedStatements("2026-11-18T09:00:00.000Z");
+  for (let index = 0; index < statements.length; index += 50) await market.batch(statements.slice(index, index + 50).map(({ sql, params }) => market.prepare(sql).bind(...params)));
+  assert.deepEqual((await call("/v1/marketplace/featured")).json.data.featured.map((item: { id: string }) => item.id).slice(0, 3), after.slice(0, 3));
+});
+
+test("listing events count once per network per day, join a website click to its install, and stay anonymous", async () => {
+  const id = (await call("/v1/marketplace/agents?q=sales%20call%20scorer")).json.data.agents[0].id;
+  const event = (value: Record<string, unknown>, ip = "198.51.100.40", origin?: string) => call(`/v1/marketplace/agents/${id}/events`, { method: "POST", value, ip, headers: origin ? { origin } : {} });
+  // The website sends views and clicks from the visitor's browser.
+  const preflight = await call(`/v1/marketplace/agents/${id}/events`, { method: "OPTIONS", headers: { origin: "https://autohand.ai" } });
+  assert.equal(preflight.status, 204); assert.equal(preflight.headers.get("access-control-allow-origin"), "https://autohand.ai");
+  assert.equal((await event({ type: "view" }, "198.51.100.40", "https://evil.example")).status, 403);
+  const view = await event({ type: "view" }, "198.51.100.40", "https://autohand.ai");
+  assert.equal(view.status, 202); assert.equal(view.json.data.counted, true);
+  assert.equal((await event({ type: "view" }, "198.51.100.40", "https://autohand.ai")).json.data.counted, false, "a reload is not a second view");
+  await event({ type: "view" }, "198.51.100.41", "https://autohand.ai");
+  const attribution = newAttributionId();
+  assert.match(attribution, /^[a-z0-9]{20}$/);
+  assert.equal((await event({ type: "add_click", source: "website", attribution }, "198.51.100.40", "https://autohand.ai")).status, 202);
+  // Squad reports the install after the import succeeded, with the id the link carried.
+  assert.equal((await event({ type: "install", source: "website-link", attribution, version: 1 }, "198.51.100.200")).status, 202);
+  assert.equal((await event({ type: "install", source: "in-app" }, "198.51.100.201")).status, 202);
+  assert.equal((await event({ type: "install", source: "in-app", attribution: newAttributionId() }, "198.51.100.202")).status, 202, "an unknown attribution counts the install, joins nothing");
+  assert.equal((await event({ type: "download" })).status, 400);
+  assert.equal((await event({ type: "view", email: "a@b.c" })).status, 400, "nothing but the event fields");
+  assert.equal((await event({ type: "view", attribution: "short" })).status, 400);
+  assert.equal((await call("/v1/marketplace/agents/zzzzzzzzzzzz/events", { method: "POST", value: { type: "view" } })).status, 404);
+  const row = (await adminCall("/v1/marketplace/admin/agents?q=sales%20call%20scorer")).json.data.agents.find((item: { id: string }) => item.id === id);
+  assert.deepEqual(row.stats, { views: 2, addClicks: 1, downloads: 0, installs: 3, attributedInstalls: 1 });
+  const stats = (await adminCall(`/v1/marketplace/admin/stats?days=7&listing=${id}`)).json.data;
+  assert.deepEqual(stats.totals, { views: 2, addClicks: 1, downloads: 0, installs: 3 });
+  assert.deepEqual(stats.attribution, { clicks: 1, installs: 1 });
+  assert.equal(stats.daily.length, 1);
+  assert.equal((await adminCall("/v1/marketplace/admin/stats?days=7")).json.data.top[0].id, id);
+  const market = await runtime.getD1Database("MARKETPLACE", "squad-api");
+  const stored = JSON.stringify((await market.prepare("SELECT * FROM listing_event_seen").all()).results) + JSON.stringify((await market.prepare("SELECT * FROM attributions").all()).results);
+  assert(!stored.includes("198.51.100"), "no address is stored");
+  const burst = [];
+  for (let index = 0; index < 121; index += 1) burst.push((await event({ type: "view" }, "198.51.100.99")).status);
+  assert.equal(burst.at(-1), 429);
 });

@@ -60,7 +60,7 @@ export default {
     const requestId = crypto.randomUUID(); const url = new URL(request.url);
     const origin = request.headers.get("origin");
     const publicRelease = request.method === "GET" && (/^\/v1\/releases\/(stable|nightly)\/manifest$/.test(url.pathname) || url.pathname === "/schemas/squad-backup-v1.json" || isPublicMarketplaceRead(request.method, url.pathname));
-    const siteReport = isSiteReport(request.method, url.pathname, origin);
+    const siteReport = isSiteReport(request.method, url.pathname, origin, env.MARKETPLACE_SITE_ORIGINS);
     let response: Response;
     try {
       requireValue(!origin || origin === env.WEB_ORIGIN || publicRelease || siteReport, 403, "origin_denied", "This browser origin is not allowed.");

@@ -27,6 +27,9 @@ export default defineConfig({
       RELEASE_PUBLISHER_TOKEN: bindings.secret(),
       // Held only by the website's admin functions (ADR-0246).
       MARKETPLACE_ADMIN_TOKEN: bindings.secret(),
+      // Browser origins whose pages may send reports and listing events
+      // straight to the API (ADR-0246, ADR-0248), comma separated.
+      MARKETPLACE_SITE_ORIGINS: bindings.text("https://autohand.ai,https://www.autohand.ai"),
     },
   },
 });
