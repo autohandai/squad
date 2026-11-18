@@ -36,12 +36,12 @@ export async function createMobileService({ directory, computerName, assertCurre
   const savedPresence = await readPersistentJson(presenceFile, {}).catch(() => ({}));
   for (const [id, seen] of Object.entries(savedPresence && typeof savedPresence === 'object' ? savedPresence : {})) {
     if (state.devices[id] && typeof seen?.at === 'string' && Number.isFinite(Date.parse(seen.at))) {
-      const entry = { at: seen.at, via: seen.via === 'relay' ? 'relay' : 'local' };
+      const entry = { at: seen.at, via: ['relay', 'icloud'].includes(seen.via) ? seen.via : 'local' };
       lastSeen.set(id, entry); persisted.set(id, entry);
     }
   }
   function notePresence(id, via) {
-    const entry = { at: new Date(now()).toISOString(), via: via === 'relay' ? 'relay' : 'local' };
+    const entry = { at: new Date(now()).toISOString(), via: ['relay', 'icloud'].includes(via) ? via : 'local' };
     lastSeen.set(id, entry);
     const before = persisted.get(id);
     if (before && before.via === entry.via && Date.parse(entry.at) - Date.parse(before.at) < PRESENCE_WRITE_MS) return;

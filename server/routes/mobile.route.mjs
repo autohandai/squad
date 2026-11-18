@@ -25,6 +25,8 @@ export async function handle(req, res, url, ctx) {
     else if (url.pathname === '/api/mobile/pair' && req.method === 'POST') data = await mobile.offer();
     else if (url.pathname === '/api/mobile/approve' && req.method === 'POST') data = await mobile.approve(await ctx.readBody(req));
     else if (url.pathname === '/api/mobile/reject' && req.method === 'POST') data = await mobile.reject();
+    // Phase 1 numbers for ADR-0255: helper counters and request age on arrival.
+    else if (url.pathname === '/api/mobile/icloud/measurements' && req.method === 'GET') data = mobile.icloudMeasurements();
     // Team decisions from a phone the Squad window carries out (ADR-0252).
     else if (url.pathname === '/api/mobile/team-decisions' && req.method === 'GET') data = mobile.teamDecisions();
     else if (url.pathname === '/api/mobile/team-decisions/claim' && req.method === 'POST') data = await mobile.claimTeam(await ctx.readBody(req));

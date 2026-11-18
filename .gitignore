@@ -36,3 +36,7 @@ src-tauri/gen/
 # symlinks used by lane worktrees (dir patterns above do not match symlinks)
 /node_modules
 /vendor
+
+# iCloud helper build outputs (ADR-0255)
+native/icloud-helper/.build/
+src-tauri/helpers/
