@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { CHANNEL_NOTIFICATION_MODES } from '../../src/lib/channel-notifications.js';
 import { isGroupChat } from '../../src/lib/group-chats.js';
+import { detectRecurringWork } from '../../src/lib/work-plans.js';
 
 const text = (maxLength = 2000) => ({ type: 'string', minLength: 1, maxLength });
 const id = () => text(200);
@@ -9,7 +10,8 @@ const revision = { type: 'integer', minimum: 0 };
 const mode = { type: 'string', enum: ['allow', 'ask', 'block'] };
 const policies = { type: 'array', maxItems: 200, items: { type: 'object', properties: { id: id(), mode }, required: ['id', 'mode'], additionalProperties: false } };
 const schedule = {
-  type: 'object', additionalProperties: false, required: ['kind', 'timeZone'],
+  type: 'object', additionalProperties: false, required: ['kind'],
+  description: 'Omit timeZone to use this computer\'s zone, which is the person\'s.',
   properties: {
     kind: { type: 'string', enum: ['once', 'weekdays', 'interval', 'monthly', 'yearly', 'cron'] },
     timeZone: text(100), time: text(5), date: text(10),
@@ -21,8 +23,10 @@ const schedule = {
   },
 };
 const tool = (name, description, properties, required = [], readOnly = false) => ({ name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false }, annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, openWorldHint: ['send_channel_message', 'run_routine'].includes(name) } });
+const trigger = { type: 'string', enum: ['schedule', 'webhook'], description: 'schedule (default) runs on the clock; webhook runs when its secret URL on this computer\'s bridge receives a POST, with the JSON body passed to the member as data.' };
+const when = { type: 'string', minLength: 1, maxLength: 300, description: 'The schedule in the person\'s words ("every weekday at 9am", "every day at 7:30pm", "every 2 hours", "every Monday morning", "end of every month"), read by Squad\'s own recurring-work reader. Use schedule instead for one-off dates or anything it cannot read.' };
 const member = { member_id: id(), expected_revision: revision };
-const routineFields = { title: text(160), instructions: text(20000), workspace: text(1000), schedule, enabled: { type: 'boolean' }, max_run_minutes: { type: 'integer', minimum: 1, maximum: 1440 } };
+const routineFields = { title: text(160), instructions: text(20000), workspace: text(1000), trigger, schedule, when, enabled: { type: 'boolean' }, max_run_minutes: { type: 'integer', minimum: 1, maximum: 1440 } };
 const profileFields = { name: text(60), role: text(80), description: { type: 'string', maxLength: 600 }, responsibilities: { type: 'string', maxLength: 600, description: 'Alias of the saved description. Do not send both.' }, instructions: { type: 'string', maxLength: 1200 }, personality: { type: 'string', maxLength: 600 } };
 const skillIds = { type: 'array', maxItems: 32, items: text(500) };
 const memoryTexts = { type: 'array', maxItems: 100, items: text(500), description: 'Profile memories only; does not replace shared, project or conversation memory.' };
@@ -54,12 +58,15 @@ export const MANAGEMENT_TOOLS = [
   tool('convert_group_chat', 'Convert a group into an explicitly public or private channel. Retains its ID, members, messages and threads. Optional name renames it; request_id makes conversion replay safe without overwriting later edits.', { group_id: id(), visibility: { type: 'string', enum: ['public', 'private'] }, name: text(80), request_id: text(128) }, ['group_id', 'visibility']),
   tool('delete_group_chat', 'Delete a group chat and its messages/threads from this Squad. Refuses if it has already been converted to a channel. Existing member profiles and their direct conversations are preserved.', { group_id: id() }, ['group_id']),
   tool('send_channel_message', 'Post into a channel/group thread and optionally dispatch the explicitly named channel members. Omit member_ids to publish only. Replies persist in the thread even if this MCP client disconnects. Returns per-member run receipts/errors for wait_for_reply.', { channel_id: id(), thread_id: id(), text: text(20000), member_ids: ids() }, ['channel_id', 'text']),
-  tool('list_routines', 'Read scheduled routines, pause/enabled state, next occurrences and recent runs; optionally filter by member.', { member_id: id() }, [], true),
-  tool('get_routine', 'Read one routine and its run history.', { routine_id: id() }, ['routine_id'], true),
-  tool('preview_routine', 'Validate an explicit IANA-timezone schedule and show its next three occurrences without saving or running it.', { schedule }, ['schedule'], true),
-  tool('create_routine', 'Save a routine for an existing member. Disabled by default; enabled:true explicitly schedules it. Uses the member workspace unless overridden. Does not run it immediately.', { member_id: id(), ...routineFields }, ['member_id', 'title', 'instructions', 'schedule']),
-  tool('update_routine', 'Edit a routine or set enabled:false/true to pause/resume scheduling. Preserves unmentioned fields, member ownership and history; does not stop an active run.', { routine_id: id(), ...routineFields }, ['routine_id']),
-  tool('run_routine', 'Explicitly run a saved routine now using its saved member, workspace and permissions. Returns a run receipt; refuses overlap with an already active run.', { routine_id: id() }, ['routine_id']),
+  tool('list_routines', 'Read saved automations (routines): trigger, schedule in words, pause/enabled state, next occurrences, webhook URL and recent runs; optionally filter by member.', { member_id: id() }, [], true),
+  tool('get_routine', 'Read one automation (routine), its webhook URL when it has one, and its run history.', { routine_id: id() }, ['routine_id'], true),
+  tool('preview_routine', 'Check a schedule (explicit, or `when` in the person\'s words) and show it in words with its next three occurrences, without saving or running it. Omitted timeZone means this computer\'s.', { schedule, when }, [], true),
+  tool('create_routine', 'Save an automation (routine) for an existing member. A request such as "remind me every day at 9am to stretch" or "every Monday, summarise open PRs" is a routine: pass `when` (or `schedule`), instructions written as what the member does each run, and enabled:true, because the person\'s direct request authorizes it. Without enabled:true it is saved paused. Times use this computer\'s timezone unless schedule.timeZone says otherwise. trigger "webhook" instead creates a secret URL that starts it; the receipt carries webhook.url. Uses the member workspace unless overridden. Never runs it immediately. Confirm back in plain words: what, when (the receipt\'s description and timezone) and the next run.', { member_id: id(), ...routineFields }, ['member_id', 'title', 'instructions']),
+  tool('update_routine', 'Edit an automation, switch its trigger between schedule and webhook, or set enabled:false/true to pause/resume. Preserves unmentioned fields, member ownership, history and the webhook URL; does not stop an active run.', { routine_id: id(), ...routineFields }, ['routine_id']),
+  tool('run_routine', 'Explicitly run a saved automation now using its saved member, workspace and permissions, through the same path as a scheduled or webhook start. Returns a run receipt; refuses overlap with an already active run.', { routine_id: id() }, ['routine_id']),
+  tool('delete_routine', 'Delete a saved automation and its run history. Requires confirm_delete:true. Its webhook URL stops working; an active run is not stopped.', { routine_id: id(), confirm_delete: { type: 'boolean', enum: [true] } }, ['routine_id', 'confirm_delete']),
+  tool('rotate_routine_webhook', 'Give a webhook automation a new secret URL. The previous URL stops working at once; services that call it need the new one from the receipt.', { routine_id: id() }, ['routine_id']),
+  tool('revoke_routine_webhook', 'Turn off a webhook automation\'s URL without deleting the automation. Calls answer 404 until rotate_routine_webhook issues a new URL.', { routine_id: id() }, ['routine_id']),
 ];
 
 export function createManagementTools(bridge, legacy) {
@@ -78,7 +85,7 @@ export function createManagementTools(bridge, legacy) {
     if (!channel) throw Object.assign(new Error('Channel not found.'), { status: 404 });
     return { channel, state };
   }
-  const routineBody = args => Object.fromEntries(Object.entries(args).filter(([key]) => !['member_id', 'routine_id', 'max_run_minutes'].includes(key)).concat(args.max_run_minutes !== undefined ? [['maxRunMinutes', args.max_run_minutes]] : []));
+  const routineBody = args => Object.fromEntries(Object.entries(withWhen(args)).filter(([key]) => !['member_id', 'routine_id', 'max_run_minutes', 'when'].includes(key)).concat(args.max_run_minutes !== undefined ? [['maxRunMinutes', args.max_run_minutes]] : []));
 
   return {
     create_member: args => bridge.post('/api/control-plane/members', args),
@@ -176,8 +183,13 @@ export function createManagementTools(bridge, legacy) {
     },
     list_routines: ({ member_id } = {}) => bridge.get(`/api/routines${member_id ? `?memberId=${encodeURIComponent(member_id)}` : ''}`),
     get_routine: ({ routine_id }) => bridge.get(`/api/routines/${encodeURIComponent(routine_id)}`),
-    preview_routine: ({ schedule }) => bridge.post('/api/routines/preview', { schedule }),
+    preview_routine: (args = {}) => {
+      const { schedule: resolved } = withWhen(args);
+      if (!resolved) throw new Error('Provide schedule or when.');
+      return bridge.post('/api/routines/preview', { schedule: resolved });
+    },
     async create_routine({ member_id, ...args }) {
+      if ((args.trigger || 'schedule') === 'schedule' && !args.schedule && !args.when) throw new Error('Provide schedule or when for a scheduled automation, or trigger:"webhook".');
       const current = await profile(member_id);
       return bridge.post('/api/routines', { ...routineBody(args), memberId: member_id, workspace: args.workspace || current.workspace, enabled: args.enabled === true });
     },
@@ -186,7 +198,28 @@ export function createManagementTools(bridge, legacy) {
       return bridge.patch(`/api/routines/${encodeURIComponent(routine_id)}`, routineBody(args));
     },
     run_routine: ({ routine_id }) => bridge.post(`/api/routines/${encodeURIComponent(routine_id)}/run`, {}),
+    async delete_routine({ routine_id, confirm_delete }) {
+      if (confirm_delete !== true) throw new Error('Confirm deletion with confirm_delete:true. This removes the automation and its run history.');
+      await bridge.delete(`/api/routines/${encodeURIComponent(routine_id)}`);
+      return { id: routine_id, deleted: true };
+    },
+    rotate_routine_webhook: ({ routine_id }) => bridge.post(`/api/routines/${encodeURIComponent(routine_id)}/webhook/rotate`, {}),
+    revoke_routine_webhook: ({ routine_id }) => bridge.delete(`/api/routines/${encodeURIComponent(routine_id)}/webhook`),
   };
+}
+
+/**
+ * `when` in the person's words becomes an explicit schedule through the same
+ * reader the chat offer and the New automation draft fallback use
+ * (detectRecurringWork, ADR-0125/0138); no second parser. An explicit
+ * schedule wins. The timezone stays empty so the bridge applies this
+ * computer's zone.
+ */
+export function withWhen(args = {}) {
+  if (args.schedule || !args.when) return args;
+  const found = detectRecurringWork(String(args.when));
+  if (!found?.schedule) throw new Error(`Could not read a schedule from "${String(args.when).slice(0, 120)}". Send schedule explicitly, for example {"kind":"weekdays","days":[0,1,2,3,4,5,6],"time":"09:00"}.`);
+  return { ...args, schedule: found.schedule };
 }
 
 export const MEMBER_MANAGEMENT_NAMES = Object.freeze(['create_member', 'get_member_profile', 'update_member_profile', 'set_member_workspace', 'list_skills', 'set_member_skills', 'set_member_memories', 'list_routines', 'create_routine', 'update_routine']);

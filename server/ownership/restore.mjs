@@ -233,7 +233,7 @@ export function planRestore(input, { owner, staged }) {
         for(const key of ['reason','preview','reply','note'])if(String(run[key]||'').trim()!==normalized[key])throw fail('A routine run exceeds this Squad version’s text limits. No history was truncated.');
       }
       const routineId=fresh('routine');
-      routines.push({...pick(routine,['title','instructions','model','maxRunMinutes','source','createdAt','updatedAt','lastRunAt']),schedule:strict.schedule,id:routineId,memberId:id,enabled:false,nextAt:null,proposalId:'',
+      routines.push({...pick(routine,['title','instructions','model','maxRunMinutes','source','createdAt','updatedAt','lastRunAt']),...(routine.trigger==='webhook'?{trigger:'webhook',webhook:null}:{}),schedule:strict.schedule,id:routineId,memberId:id,enabled:false,nextAt:null,proposalId:'',
         workspace:workspaces.get(routine.workspace)||'',destination:routine.destination?.channelId&&channelIds.has(routine.destination.channelId)?{channelId:mapped(channelIds,routine.destination.channelId),threadId:mapped(threadIds,routine.destination.threadId),parentMessageId:mapped(channelMessageIds,routine.destination.parentMessageId)}:null,
         runs:list(routine.runs).map(run=>({...pick(run,['trigger','scheduledFor','queuedAt','startedAt','finishedAt','reason','preview','reply','note']),id:fresh('rrun'),routineId,
           status:['running','queued'].includes(run.status)?'interrupted':run.status,dispatch:'',memberRunId:'',claimedAt:null}))});

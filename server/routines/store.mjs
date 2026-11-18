@@ -5,11 +5,14 @@
 // file; the route owns timing and dispatch.
 //
 // Shapes
-//   routine   { id, memberId, title, instructions, workspace, model, enabled, schedule,
-//               maxRunMinutes, source: editor|chat, proposalId, nextAt, lastRunAt, runs,
-//               createdAt, updatedAt }
-//   run       { id, routineId, trigger: schedule|manual, scheduledFor, queuedAt, startedAt,
-//               finishedAt, status, dispatch: bridge|app|"", memberRunId, reason, preview, note }
+//   routine   { id, memberId, title, instructions, workspace, model, enabled,
+//               trigger: schedule|webhook, schedule, webhook, maxRunMinutes,
+//               source: editor|chat, proposalId, nextAt, lastRunAt, runs, createdAt, updatedAt }
+//   webhook   { token, createdAt, rotatedAt, revokedAt, lastCalledAt, calls } (ADR-0254;
+//               bridge-owned, never taken from a client)
+//   run       { id, routineId, trigger: schedule|manual|webhook, scheduledFor, queuedAt, startedAt,
+//               finishedAt, status, dispatch: bridge|app|"", memberRunId, reason, preview, note,
+//               payload }
 //   status    queued | running | completed | failed | stopped | skipped | missed | interrupted
 //   proposal  { id, type: "schedule", memberId, workspace, requestId, digest, title,
 //               instructions, schedule, status: proposed|confirmed|declined|failed, message,
@@ -19,6 +22,7 @@ import { randomUUID } from "node:crypto";
 
 import { readPersistentJson, writePersistentJson } from "../persistent-json.mjs";
 import { normalizeSchedule, MAX_RUN_MINUTES } from "./schedule.mjs";
+import { WEBHOOK_PAYLOAD_CHARS, normalizeWebhook } from "./webhook.mjs";
 
 export const STORE_FILE = "routines.json";
 export const RUN_STATUSES = ["queued", "running", "completed", "failed", "stopped", "skipped", "missed", "interrupted"];
@@ -27,6 +31,7 @@ export const PROPOSAL_STATUSES = ["proposed", "confirmed", "declined", "failed"]
 export const MAX_RUNS_KEPT = 40;
 export const MAX_TITLE = 120;
 export const MAX_INSTRUCTIONS = 12000;
+export const TRIGGERS = ["schedule", "webhook"];
 
 function text(value, max = 4000) {
   return String(value ?? "").trim().slice(0, max);
@@ -55,7 +60,7 @@ export function normalizeRun(input, routineId = "") {
   return {
     id: text(source.id, 80) || createRunId(),
     routineId: text(source.routineId, 80) || routineId,
-    trigger: source.trigger === "manual" ? "manual" : "schedule",
+    trigger: ["manual", "webhook"].includes(source.trigger) ? source.trigger : "schedule",
     scheduledFor: iso(source.scheduledFor),
     queuedAt: iso(source.queuedAt),
     startedAt: iso(source.startedAt),
@@ -70,6 +75,9 @@ export function normalizeRun(input, routineId = "") {
     reply: text(source.reply, 12000),
     // A note the work plan attaches (ADR-0124): "Marked done by the member".
     note: text(source.note, 400),
+    // The JSON a webhook call delivered (ADR-0254), bounded, so an app
+    // dispatch and the run history carry what the member was given.
+    payload: text(source.payload, WEBHOOK_PAYLOAD_CHARS + 80),
   };
 }
 
@@ -86,7 +94,9 @@ export function normalizeRoutine(input, { now = new Date().toISOString(), defaul
     workspace: text(source.workspace, 1000),
     model: text(source.model, 120),
     enabled: source.enabled !== false,
+    trigger: TRIGGERS.includes(source.trigger) ? source.trigger : "schedule",
     schedule: normalizeSchedule(source.schedule, { defaultTimeZone }),
+    webhook: normalizeWebhook(source.webhook),
     maxRunMinutes: Number.isFinite(minutes) && minutes > 0 ? Math.min(Math.round(minutes), MAX_RUN_MINUTES) : 0,
     source: source.source === "chat" ? "chat" : "editor",
     proposalId: text(source.proposalId, 120),
@@ -128,8 +138,8 @@ export function normalizeProposal(input, { now = new Date().toISOString() } = {}
 export function routineInputFrom(body, existing = null, { now, defaultTimeZone } = {}) {
   const source = body && typeof body === "object" ? body : {};
   const merged = existing
-    ? { ...existing, ...pick(source, ["title", "instructions", "workspace", "model", "enabled", "schedule", "maxRunMinutes"]), id: existing.id, memberId: existing.memberId, runs: existing.runs, createdAt: existing.createdAt, source: existing.source, proposalId: existing.proposalId, updatedAt: now }
-    : { ...pick(source, ["memberId", "title", "instructions", "workspace", "model", "enabled", "schedule", "maxRunMinutes", "legacyAutomationId"]), runs: [], createdAt: now, updatedAt: now, source: "editor" };
+    ? { ...existing, ...pick(source, ["title", "instructions", "workspace", "model", "enabled", "trigger", "schedule", "maxRunMinutes"]), id: existing.id, memberId: existing.memberId, runs: existing.runs, createdAt: existing.createdAt, source: existing.source, proposalId: existing.proposalId, webhook: existing.webhook, updatedAt: now }
+    : { ...pick(source, ["memberId", "title", "instructions", "workspace", "model", "enabled", "trigger", "schedule", "maxRunMinutes", "legacyAutomationId"]), runs: [], createdAt: now, updatedAt: now, source: "editor", webhook: null };
   return normalizeRoutine(merged, { now, defaultTimeZone });
 }
 

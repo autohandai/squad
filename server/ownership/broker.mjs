@@ -420,6 +420,9 @@ export function createOwnershipBroker({ rootDir, serviceRoot, configPath, host =
       || (path.startsWith('/api/computer-use/') && req.headers['x-squad-computer-token'])
       // A member engine's connector launcher (ADR-0244); the worker checks the token.
       || ((path === '/api/connectors/runtime' || path === '/api/connectors/runtime/report') && req.headers['x-squad-connector-token'])
+      // A routine's webhook URL carries its own secret; the worker checks it
+      // in constant time against the selected owner's routines (ADR-0254).
+      || (path.startsWith('/api/routines/hooks/') && req.method === 'POST')
       // The sign-in page redirects the person's browser here; the single-use
       // state in the query is what the worker checks (ADR-0244).
       || (path === '/api/connectors/oauth/callback' && req.method === 'GET' && new URL(req.url, 'http://local').searchParams.has('state'));

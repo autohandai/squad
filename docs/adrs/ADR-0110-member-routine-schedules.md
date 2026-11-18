@@ -164,3 +164,12 @@ without replay, delete. `bun run check:workflow-recovery` and
 `bun run check:workflows` prove the shared scheduler and executor still pass;
 `check:agent-channel-actions` and `check:run-channel-actions` cover the
 action protocol change. Results are in the lane report.
+
+## Addendum (2026-11-18, ADR-0254)
+
+A routine now carries `trigger: schedule | webhook`. A webhook routine is
+never fired by `tickRoutines` (its `nextAt` is cleared) and starts through
+`startRoutineRun` with `trigger: "webhook"` when its secret URL is called;
+runs record `trigger: schedule | manual | webhook` and a bounded `payload`.
+A routine saved without a timezone now takes this computer's zone rather
+than UTC.

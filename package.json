@@ -210,6 +210,8 @@
     "check:collaboration:live": "node scripts/check-collaboration-live.mjs",
     "check:workflow-recovery": "node scripts/check-workflow-recovery.mjs",
     "check:routines": "node scripts/check-routines.mjs",
+    "check:routine-webhooks": "node scripts/check-routine-webhooks.mjs",
+    "check:automations:browser": "node scripts/check-automations-browser.mjs",
     "check:automation-replies": "node scripts/check-automation-replies.mjs",
     "check:natural-automations": "node scripts/check-natural-automations.mjs",
     "check:natural-automations:browser": "node scripts/check-natural-automations.mjs --browser",

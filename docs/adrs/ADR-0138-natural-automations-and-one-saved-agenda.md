@@ -93,3 +93,14 @@ separate session so they cannot replace an interactive conversation.
 Verification results are recorded in
 `docs/reports/natural-squad-workflows-2026-10.md`; do not infer native release
 or installed-app proof from a source test.
+
+## Addendum (2026-11-18, ADR-0254)
+
+"Browser records retain event/webhook configuration" described a Webhook
+trigger whose URL no route answered. Webhook is now a bridge routine trigger
+with a real, secret, rate-limited URL, projected into every Automations view
+like a schedule; only legacy Event records remain browser-only and unrun.
+The operator MCP's `create_routine` now accepts the person's words (`when`)
+and defaults to this computer's timezone, but keeps its paused default
+unless `enabled: true`; its description tells an agent that a direct request
+authorizes enabling, matching this record's decision for chat.

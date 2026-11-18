@@ -36,6 +36,16 @@ function portableConversation(value) {
 }
 
 /** A passive reader: no repair, migration, scheduling, provider probe or write. */
+
+// A webhook routine's URL secret (ADR-0254) never leaves this computer in a
+// backup or export, including cloud backups; a restored webhook routine
+// comes back with its URL off until the person makes a new one.
+function withoutWebhookSecret(routine) {
+  if (!routine?.webhook) return routine;
+  const { token: _secret, ...webhook } = routine.webhook;
+  return { ...routine, webhook: { ...webhook, token: '' } };
+}
+
 export class OwnedAgentRepository {
   constructor(context, { assertCurrent = () => {} } = {}) {
     if (!context.owner || !context.actor) throw Error('An owned repository requires verified read access.');
@@ -202,7 +212,7 @@ export class OwnedAgentRepository {
       const skills = list(profile.skills).map(skill => typeof skill === 'string' ? { id: skill } : object(skill));
       const retained=object(restoredSource.agents?.[id]);
       await addRetained(id,this.context.appRoot,join(home,'portable-files'),retained.files,files);
-      agents.push({ id, profile, memories, conversations, routines: list(routines.routines).filter(routine => routine.memberId === id), skills, files,
+      agents.push({ id, profile, memories, conversations, routines: list(routines.routines).filter(routine => routine.memberId === id).map(withoutWebhookSecret), skills, files,
         extensions: { ...object(retained.extensions), 'ai.autohand.squad': { ...object(retained.extensions?.['ai.autohand.squad']), artifactRecords, attachmentRecords, managedWorkspaces: managedWorkspaceRecords, memorySources, memoryLibrary:personalLibrary },
           ...(retained.sourceId ? {'ai.autohand.squad.restoredSource':memberProvenance(retained,restoredSource.sourceOwner)}:{}) } });
       omissions.push({ path: `members/${id}/runtime`, reason: 'Provider credentials, engine sessions, MCP capabilities and runtime configuration are excluded.' });
