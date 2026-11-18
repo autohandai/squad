@@ -124,20 +124,46 @@ export function scheduleFromDraft(draft) {
   }
 }
 
-/** The routine record to send with an automation (title, instructions, workspace, model, schedule). */
+/**
+ * The routine record to send with an automation (title, instructions,
+ * workspace, model, trigger, schedule). A webhook automation (ADR-0254) is a
+ * bridge routine with no schedule that fires; a "Manual only" schedule has no
+ * bridge routine.
+ */
 export function routinePayloadFromAutomation(automation, draft = automation?.routine) {
-  const schedule = scheduleFromDraft(draft);
-  if (!schedule) return null;
-  return {
+  const base = {
     memberId: automation.agentId,
     title: automation.name,
     instructions: automation.prompt || automation.description,
     workspace: automation.workspace || "",
     model: automation.model && automation.model !== "auto" ? automation.model : "",
     enabled: automation.status !== "paused",
-    schedule,
     maxRunMinutes: Number(draft?.maxRunMinutes) || 0,
   };
+  if (automation?.triggerType === "webhook") {
+    const kept = scheduleFromDraft(draft);
+    return { ...base, trigger: "webhook", ...(kept ? { schedule: kept } : {}) };
+  }
+  const schedule = scheduleFromDraft(draft);
+  if (!schedule) return null;
+  return { ...base, trigger: "schedule", schedule };
+}
+
+/**
+ * The trigger in words for a row or a draft preview: the bridge's own
+ * description when there is a record ("Every day at 09:00"), "When its
+ * webhook is called", or the schedule kind without arithmetic.
+ */
+export function automationTriggerWords(automation) {
+  if (automation?.triggerType === "webhook") return "When its webhook is called";
+  if (automation?.record?.description) return automation.record.description;
+  return scheduleKindLabel(scheduleFromDraft(automation?.routine));
+}
+
+/** A curl command that calls a webhook URL with a small JSON body. */
+export function webhookCurlExample(url) {
+  if (!url) return "";
+  return `curl -X POST '${url}' \\\n  -H 'content-type: application/json' \\\n  -d '{"event":"example","detail":"anything your service sends"}'`;
 }
 
 /** A short label for a schedule without calendar arithmetic ("Weekdays", "Every 15 minutes"). */
@@ -190,6 +216,8 @@ export function routineNextLabel(routine, locale = undefined) {
   if (!routine) return "";
   if (!routine.enabled) return "Paused";
   if (routine.activeRun) return routine.activeRun.status === "queued" ? "Waiting for Squad to open" : "Running now";
+  // A webhook routine has no next time; say whether its URL can start it (ADR-0254).
+  if (routine.trigger === "webhook") return routine.webhook?.active === false ? "URL turned off" : "Waits for its webhook";
   // "Done" only for a once routine that ran; one saved after its time never did.
   if (!routine.nextAt) return routine.schedule?.kind === "once" ? (routine.lastRun || (routine.runs || []).length ? "Done" : "Its time has passed; it never ran") : "No upcoming run";
   return `Next ${formatInZone(routine.nextAt, routine.schedule?.timeZone, locale)}`;
@@ -216,4 +244,13 @@ export const REPEAT_WORK_MARKER = "Set up repeating work yourself.";
 
 export function scheduleActionInstruction(timeZone = browserTimeZone()) {
   return `${REPEAT_WORK_MARKER} A request to remind, automate, do work later or repeat authorizes creating a real Automation in this turn. Do not ask for approval again. Use squad_schedule when available, otherwise the action below. Infer the current conversation as the destination, this turn's folder and the person's timezone; ask one short question only when a necessary detail truly cannot be inferred. "Say hi every 2 minutes" means an interval of exactly 2 minutes. For an unsolicited suggestion (such as noticing repeated requests) or an explicit request for a draft, use mode "propose"; those wait for review. For requested work use the default mode "create". To schedule, include one line exactly like: SQUAD_ACTION: {"type":"schedule","title":"Morning report","instructions":"what to do each time and where to report the result","schedule":{"kind":"weekdays","days":[1,2,3,4,5],"time":"09:00"},"timezone":"${timeZone}"}. Kinds: once {"kind":"once","date":"YYYY-MM-DD","time":"HH:MM"}; weekdays {"kind":"weekdays","days":[0-6, 0 is Sunday],"time":"HH:MM"}; interval {"kind":"interval","everyMinutes":1-1440}; monthly {"kind":"monthly","day":1-31 or "last","time":"HH:MM"}; yearly {"kind":"yearly","month":1-12,"day":1-31,"time":"HH:MM"}; cron {"kind":"cron","cron":"minute hour day-of-month month day-of-week"}. Always include an IANA timezone; use ${timeZone} unless the person says otherwise. Squad saves and enables requested work under the member's saved permissions. Report the saved receipt: confirmed means scheduled, proposed means awaiting review. Never invent a confirmation requirement or a blocked task.`;
+}
+
+/** "Last run completed Tue 18 Nov, 09:00", or "" before the first run. */
+export function routineLastRunLabel(routine, locale = undefined) {
+  const run = routine?.lastRun;
+  if (!run) return "";
+  const at = run.finishedAt || run.startedAt;
+  const how = run.trigger === "webhook" ? " via webhook" : run.trigger === "manual" ? " by hand" : "";
+  return `Last run ${runStatusWord(run.status).toLowerCase()}${how}${at ? `, ${formatInZone(at, routine.schedule?.timeZone, locale)}` : ""}`;
 }

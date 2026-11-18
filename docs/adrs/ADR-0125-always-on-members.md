@@ -243,3 +243,11 @@ Run on 2026-10-14 in the lane worktree:
   `check:work-plans` (72), `check:harness`, `check:chats`,
   `check:goal-bridge`, `check:member-goals`, `check:reliability`,
   `check:execution-panel:browser`: all pass.
+
+## Addendum (2026-11-18, ADR-0254)
+
+The New Automation dialog no longer puts the old form under "Fill in by
+hand". A draft reads back as sentences (When, Runs as, Runs in, Each run)
+with one Edit details that turns the same rows into controls; "Or set it up
+yourself" opens those rows empty. The member's engine still drafts and Save
+still creates.

@@ -28,6 +28,7 @@ import { VaultSettings } from "@/components/settings/VaultSettings";
 import { vaultNeedsYouRows } from "@/lib/vault";
 import { RoutineSchedule } from "@/components/members/RoutineSchedule";
 import { AutomationPlainEnglish } from "@/components/members/AutomationPlainEnglish";
+import { AutomationWebhook } from "@/components/members/AutomationWebhook";
 import { AccountAvatar } from "@/components/account/AccountAvatar";
 import { MemberReplyThread, useMemberThreadSummaries } from "@/components/chat/MemberReplyThread";
 import { automationAgenda, reconcileAutomationReplies } from "@/lib/automation-agenda";
@@ -37,7 +38,7 @@ import { AgendaLine } from "@/components/chat/AgendaLine";
 import { RoutineRunList, RoutineRunRow } from "@/components/members/RoutineRunRow";
 import { TeamMemorySection } from "@/components/members/TeamMemorySection";
 import { RoutineProposalCard } from "@/components/members/RoutineProposalCard";
-import { browserTimeZone, routineDraft, routineDraftFromAutomation, routinePayloadFromAutomation, scheduleActionInstruction, scheduleKindLabel, taskActionInstruction } from "@/lib/routines";
+import { browserTimeZone, formatInZone, routineDraft, routineDraftFromAutomation, routinePayloadFromAutomation, scheduleActionInstruction, scheduleFromDraft, scheduleKindLabel, taskActionInstruction } from "@/lib/routines";
 import { AppInformation } from "@/components/app-info/AppInformation";
 import { JoinProposal } from "@/components/channels/JoinProposal";
 import { PresenceLine, presenceFromMessages } from "@/components/channels/PresenceLine";
@@ -254,6 +255,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Table,
   TableBody,
@@ -1980,13 +1982,6 @@ function defaultProviderSettings(reason = "") {
 }
 
 const AUTOMATION_MODELS = ["auto", "gpt-5", "gpt-5-mini", "claude-sonnet", "local"];
-const AUTOMATION_TRIGGER_TYPES = [
-  { id: "schedule", label: "Schedule", description: "Run the project task on a schedule", icon: CalendarClock },
-  { id: "event", label: "Event", description: "Trigger from Git repository events", icon: GitBranch },
-  { id: "webhook", label: "Webhook", description: "Trigger from webhook or API calls", icon: Webhook },
-];
-const AUTOMATION_EVENT_SOURCES = ["GitHub", "GitLab", "Bitbucket"];
-const AUTOMATION_EVENT_TYPES = ["pull_request.opened", "pull_request.updated", "push", "issue_comment.created"];
 const AUTOMATION_SCHEDULE_FREQUENCIES = [
   { id: "daily", label: "Daily" },
   { id: "weekdays", label: "Weekdays" },
@@ -9091,7 +9086,7 @@ function App() {
   // Keep the bridge routine in step with a member automation: a schedule
   // creates or updates it, "Manual only" or a deleted automation removes it.
   async function syncAutomationRoutine(automation) {
-    const payload = automation.triggerType === "schedule" ? routinePayloadFromAutomation(automation) : null;
+    const payload = ["schedule", "webhook"].includes(automation.triggerType) ? routinePayloadFromAutomation(automation) : null;
     if (!payload) {
       if (automation.routineId) await api(`/api/routines/${encodeURIComponent(automation.routineId)}`, { method: "DELETE" });
       await loadRoutines().catch(() => {});
@@ -15142,17 +15137,24 @@ function Conversation({
     setTaskPanelOpen(true);
   }
 
-  async function saveAutomation(draft) {
-    let saved = buildAutomationFromDraft(draft, null, agent, defaultWorkspace);
+  // The Execution panel's New automation and its rows open this same
+  // editor; a row passes its automation, so Save edits rather than adds.
+  async function saveAutomation(draft, { keepOpen = false } = {}) {
+    const existing = automationSeed?.id ? automationSeed : null;
+    let saved = buildAutomationFromDraft(draft, existing, agent, defaultWorkspace);
     if (onRoutineSync) {
       try {
         saved = await onRoutineSync(saved);
       } catch (error) {
-        throw new Error(`The schedule was not saved on the bridge: ${error.message}`);
+        throw new Error(`The automation was not saved on the bridge: ${error.message}`);
       }
     }
-    setAutomations((current) => [saved, ...current]);
-    setAutomationFormOpen(false);
+    setAutomations((current) => (current.some((item) => item.id === saved.id) ? current.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...current]));
+    if (!keepOpen) {
+      setAutomationFormOpen(false);
+      setAutomationSeed(null);
+    }
+    return saved;
   }
 
   // Goal 09: launch a recipe through the shared launch flow (onStart =
@@ -15828,6 +15830,8 @@ function Conversation({
             setAutomations={setAutomations}
             onRoutineSync={onRoutineSync}
             runAutomation={runAutomation}
+            onNewAutomation={() => { setAutomationSeed(null); setAutomationFormOpen(true); }}
+            onEditAutomation={(automation) => { setAutomationSeed(automation); setAutomationFormOpen(true); }}
             activeTab={panelTab}
             setActiveTab={setPanelTab}
             focusRunId={focusRunId}
@@ -21413,15 +21417,15 @@ function AutomationsPage({
     setFormOpen(true);
   }
 
-  async function saveAutomation(draft) {
+  async function saveAutomation(draft, { keepOpen = false } = {}) {
     let saved = buildAutomationFromDraft(draft, editingAutomation, agent, defaultWorkspace);
     setRoutineError("");
     if (onRoutineSync) {
       try {
         saved = await onRoutineSync(saved);
       } catch (error) {
-        setRoutineError(`The schedule was not saved on the bridge: ${error.message}`);
-        return;
+        setRoutineError(`The automation was not saved on the bridge: ${error.message}`);
+        return null;
       }
     }
     setAutomations((current) => {
@@ -21431,11 +21435,13 @@ function AutomationsPage({
       }
       return [saved, ...current];
     });
+    if (keepOpen) return saved;
     setFormOpen(false);
     setEditingAutomation(null);
     if (automationId) {
       navigate(automationDetailPath(agent.id, saved.id));
     }
+    return saved;
   }
 
   async function deleteAutomation(automation) {
@@ -21585,7 +21591,7 @@ function AutomationCard({ automation, routine = null, agent, navigate, onEdit, o
         onClick={() => navigate(automationDetailPath(agent.id, automation.id))}
       >
         <span className="block truncate text-base font-semibold">{automation.name}</span>
-        <span className="mt-1 block text-sm text-muted-foreground">{routine?.description ? `${routine.description} · ${routine.schedule?.timeZone || ""}` : automationScheduleLabel(automation, locale)}</span>
+        <span className="mt-1 block text-sm text-muted-foreground">{routine?.description ? (routine.trigger === "webhook" ? routine.description : `${routine.description} · ${routine.schedule?.timeZone || ""}`) : automationScheduleLabel(automation, locale)}</span>
         {routine ? <RoutineRunRow routine={routine} locale={locale} compact className="mt-1" /> : null}
       </button>
       <div className="flex items-center justify-between gap-4">
@@ -21667,6 +21673,15 @@ function AutomationDetailView({
 }) {
   const [runStarting, setRunStarting] = useState(false);
   const history = Array.isArray(automation.runHistory) ? automation.runHistory : [];
+  // Rotate and Turn off answer with the new state at once; the routines
+  // poll catches up on its own.
+  const [webhookNow, setWebhookNow] = useState(null);
+  useEffect(() => { setWebhookNow(null); }, [routine?.webhook?.path, routine?.webhook?.active]);
+  const webhook = webhookNow || routine?.webhook || null;
+  async function changeWebhook(method, suffix) {
+    const record = await api(`/api/routines/${encodeURIComponent(automation.routineId)}/webhook${suffix}`, { method, ...(method === "POST" ? { body: "{}" } : {}) });
+    setWebhookNow(record?.webhook || null);
+  }
 
   async function runNow() {
     setRunStarting(true);
@@ -21746,14 +21761,23 @@ function AutomationDetailView({
             />
             <AutomationDetailField
               label="Automations"
-              value={routine?.description ? `${routine.description} · ${routine.schedule?.timeZone || ""}${routine.maxRunMinutes ? ` · stops after ${routine.maxRunMinutes} min` : ""}` : automationScheduleLabel(automation, locale)}
+              value={routine?.description ? `${routine.description}${routine.trigger === "webhook" ? "" : ` · ${routine.schedule?.timeZone || ""}`}${routine.maxRunMinutes ? ` · stops after ${routine.maxRunMinutes} min` : ""}` : automationScheduleLabel(automation, locale)}
               icon={automation.triggerType === "event" ? GitBranch : automation.triggerType === "webhook" ? Webhook : Clock3}
             />
             {automation.triggerType === "event" ? (
               <AutomationDetailField label="Linked Repository" value={automation.linkedRepository || "No linked Git repository"} icon={FolderGit2} />
             ) : null}
             {automation.triggerType === "webhook" ? (
-              <AutomationDetailField label="Webhook Endpoint" value={automation.webhookPath} icon={Webhook} />
+              <div>
+                <div className="text-sm font-semibold uppercase tracking-normal text-muted-foreground">Webhook</div>
+                <AutomationWebhook
+                  className="mt-4"
+                  webhook={automation.routineId ? webhook : null}
+                  memberName={agent.name}
+                  onRotate={automation.routineId ? () => changeWebhook("POST", "/rotate") : undefined}
+                  onRevoke={automation.routineId ? () => changeWebhook("DELETE", "") : undefined}
+                />
+              </div>
             ) : null}
           </div>
 
@@ -21861,34 +21885,115 @@ function previewRoutineOnBridge(schedule) {
   return api("/api/routines/preview", { method: "POST", body: JSON.stringify({ schedule }) });
 }
 
+// One label-and-control row of the Automations editor: the same 150px label
+// column as the Schedule rows (RoutineSchedule), so the whole editor reads
+// as one divider list rather than a stack of boxed fields.
+function AutomationEditorRow({ label, hint, htmlFor, children, align = "start", testId }) {
+  const Label = htmlFor ? "label" : "div";
+  return (
+    <div className={cn("grid gap-1.5 py-3 sm:grid-cols-[150px_minmax(0,1fr)] sm:gap-4", align === "center" ? "sm:items-center" : "sm:items-start")} data-testid={testId}>
+      <Label {...(htmlFor ? { htmlFor } : {})} className="text-sm text-muted-foreground sm:pt-1.5">
+        <span className="block">{label}</span>
+        {hint ? <span className="mt-0.5 block text-xs text-muted-foreground/80">{hint}</span> : null}
+      </Label>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+const AUTOMATION_TRIGGER_CHOICES = [
+  { id: "schedule", label: "On a schedule" },
+  { id: "webhook", label: "When a webhook is called" },
+];
+
+/**
+ * New automation / Edit automation (ADR-0125, redesigned in ADR-0254).
+ *
+ * New: one question in plain words first. The member drafts it; the draft
+ * reads back as sentences (when, who, where, what) with one Edit that turns
+ * those same rows into controls. "Set it up yourself" opens the same rows
+ * empty. Editing an existing automation opens the rows as controls. The
+ * trigger is a schedule or a webhook; a webhook's URL appears once it is
+ * saved, and a new webhook automation stays open after Save to show it.
+ *
+ * onSave(draft, { keepOpen }) returns the saved automation (with routineId).
+ */
 function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, workspaces, previewRoutine = previewRoutineOnBridge, open, onOpenChange, onSave, saveError = "" }) {
   const [draft, setDraft] = useState(() => automationDraftFrom(automation, agent, defaultWorkspace));
-  const workspaceChoices = workspaceOptions(workspaces, draft.workspace, runtime);
-  const projectChoices = normalizeAgentProjects(agent?.projects, agent?.workspace, workspaces);
-  const descriptionLength = draft.description.length;
-  const isValid = draft.name.trim() && draft.description.trim() && draft.workspace.trim();
-  // Plain English first (ADR-0125): a new automation starts from one
-  // sentence the member's engine drafts; the old fields sit under "Fill in
-  // by hand". Editing an existing automation opens the fields directly.
   const isNew = !automation?.id;
+  const memberName = agent?.name || "The member";
+  const engine = harnessLabel(harnessForAgent(agent).id);
   const [plainText, setPlainText] = useState("");
   const [plainAnswer, setPlainAnswer] = useState("");
   const [plain, setPlain] = useState({ status: "idle" });
-  const [handOpen, setHandOpen] = useState(!isNew);
+  const [manual, setManual] = useState(!isNew);
+  const [editing, setEditing] = useState(!isNew);
+  const [otherFolder, setOtherFolder] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [webhook, setWebhook] = useState(null);
+  const [created, setCreated] = useState(null);
+  const [summary, setSummary] = useState({ description: "", next: "" });
   const drafted = plain.status === "proposed" || plain.status === "read-from-words";
+  const showDetails = !isNew || drafted || manual;
+  const routineId = created?.routineId || automation?.routineId || "";
+
+  const folderChoices = useMemo(() => {
+    const projects = normalizeAgentProjects(agent?.projects, agent?.workspace, workspaces);
+    const seen = new Set();
+    const list = [];
+    for (const item of [...projects, ...workspaceOptions(workspaces, draft.workspace, runtime)]) {
+      const path = normalizePath(item?.path);
+      if (!path || seen.has(path)) continue;
+      seen.add(path);
+      list.push({ path, label: item.label || item.name || workspaceLabel(path, workspaces) || path, project: projects.some((project) => normalizePath(project.path) === path) });
+    }
+    return list.slice(0, 40);
+  }, [agent?.projects, agent?.workspace, workspaces, draft.workspace, runtime]);
+
+  const missing = [!draft.name.trim() && "a name", !draft.description.trim() && "what it does", !draft.workspace.trim() && "a folder"].filter(Boolean);
+  const isValid = missing.length === 0;
 
   useEffect(() => {
-    if (open) {
-      setDraft(automationDraftFrom(automation, agent, defaultWorkspace));
-      const seeded = !automation?.id && automation;
-      setPlainText(seeded ? String(automation.description || automation.prompt || "") : "");
-      setPlainAnswer("");
-      setPlain(seeded ? { status: "proposed", seeded: true } : { status: "idle" });
-      setHandOpen(Boolean(automation?.id));
-    }
-  }, [agent, automation, defaultWorkspace, open]);
+    if (!open) return;
+    setDraft(automationDraftFrom(automation, agent, defaultWorkspace));
+    const seeded = !automation?.id && automation;
+    setPlainText(seeded ? String(automation.description || automation.prompt || "") : "");
+    setPlainAnswer("");
+    setPlain(seeded ? { status: "proposed", seeded: true } : { status: "idle" });
+    setManual(Boolean(automation?.id));
+    setEditing(Boolean(automation?.id));
+    setOtherFolder(false);
+    setError("");
+    setCreated(null);
+    setWebhook(automation?.webhook || automation?.record?.webhook || null);
+    // Keyed on the member's id: the member object changes with presence and
+    // would reset a half-written automation or the "webhook is ready" view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent?.id, automation, defaultWorkspace, open]);
+
+  // An existing webhook automation reads its URL from the bridge.
+  useEffect(() => {
+    if (!open || !routineId || draft.triggerType !== "webhook") return undefined;
+    let cancelled = false;
+    api(`/api/routines/${encodeURIComponent(routineId)}`).then((record) => { if (!cancelled) setWebhook(record?.webhook || null); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open, routineId, draft.triggerType]);
+
+  // The read-only draft shows the rule in the bridge's words and the next run.
+  const draftSchedule = draft.triggerType === "schedule" ? scheduleFromDraft(draft.routine) : null;
+  const draftScheduleKey = JSON.stringify(draftSchedule);
+  useEffect(() => {
+    if (!open || editing || !draftSchedule) { setSummary({ description: "", next: "" }); return undefined; }
+    let cancelled = false;
+    previewRoutine(draftSchedule).then((result) => {
+      if (cancelled) return;
+      const next = Array.isArray(result?.next) && result.next[0] ? formatInZone(result.next[0], result.timeZone || draftSchedule.timeZone) : "";
+      setSummary({ description: result?.description || "", next });
+    }).catch(() => { if (!cancelled) setSummary({ description: "", next: "" }); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing, draftScheduleKey, previewRoutine]);
 
   async function draftFromPlainText() {
     const text = plainText.trim();
@@ -21914,9 +22019,11 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
         triggerType: "schedule",
         routine: routineDraft({ ...(proposal.schedule || {}), timeZone: proposal.timeZone || proposal.schedule?.timeZone }, { maxRunMinutes: current.routine?.maxRunMinutes }),
       }));
+      setEditing(false);
+      setManual(false);
       setPlain({ status: result?.status || "proposed", reply: result?.reply || "" });
-    } catch (error) {
-      setPlain({ status: "error", error: error?.message || "Could not draft it." });
+    } catch (problem) {
+      setPlain({ status: "error", error: problem?.message || "Could not draft it." });
     }
   }
 
@@ -21924,293 +22031,256 @@ function AutomationFormDialog({ agent, automation, defaultWorkspace, runtime, wo
     setDraft((current) => ({ ...current, ...patch }));
   }
 
-  async function submit(event) {
-    event.preventDefault();
-    if (!isValid || saving) return;
-    setError(""); setSaving(true);
-    try { await onSave(draft); }
-    catch (problem) { setError(problem.message); }
-    finally { setSaving(false); }
+  function chooseFolder(value) {
+    if (value === "__other") {
+      setOtherFolder(true);
+      return;
+    }
+    setOtherFolder(false);
+    const choice = folderChoices.find((item) => item.path === value);
+    updateDraft({ workspace: value, workspaceSource: choice?.project ? "project" : "local" });
   }
+
+  async function submit(event) {
+    event?.preventDefault();
+    if (!isValid || saving) return;
+    setError("");
+    setSaving(true);
+    const keepOpen = isNew && draft.triggerType === "webhook";
+    try {
+      const saved = await onSave(draft, { keepOpen });
+      if (keepOpen && saved?.routineId) {
+        const record = await api(`/api/routines/${encodeURIComponent(saved.routineId)}`).catch(() => null);
+        setCreated({ routineId: saved.routineId, name: saved.name || draft.name });
+        setWebhook(record?.webhook || null);
+      } else if (keepOpen && saved) {
+        onOpenChange(false);
+      }
+    } catch (problem) {
+      setError(problem.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function rotateWebhook() {
+    const record = await api(`/api/routines/${encodeURIComponent(routineId)}/webhook/rotate`, { method: "POST", body: "{}" });
+    setWebhook(record?.webhook || null);
+  }
+
+  async function revokeWebhook() {
+    const record = await api(`/api/routines/${encodeURIComponent(routineId)}/webhook`, { method: "DELETE" });
+    setWebhook(record?.webhook || null);
+  }
+
+  const folderLabel = workspaceLabel(draft.workspace, workspaces) || workspaceName(draft.workspace) || "";
+  const folderSelectValue = otherFolder ? "__other" : folderChoices.some((item) => item.path === normalizePath(draft.workspace)) ? normalizePath(draft.workspace) : "";
+  const title = created ? "Your webhook is ready" : isNew ? "New automation" : "Edit automation";
+  const description = created
+    ? `POST JSON to this URL to start “${created.name}”. ${memberName} gets the body as context.`
+    : isNew
+      ? `${memberName} will run it with ${engine}, on this computer.`
+      : `${memberName} runs it with ${engine}. Changes apply from the next run.`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent closeLabel="Close" className="max-h-[88svh] overflow-hidden rounded-md border-border bg-background p-0 sm:max-w-[760px]">
-        <DialogHeader className="sr-only">
-          <DialogTitle>{automation?.id ? "Edit Automation" : "New Automation"}</DialogTitle>
-          <DialogDescription>Configure a local Autohand automation.</DialogDescription>
-        </DialogHeader>
-
-        <form className="flex max-h-[88svh] flex-col" onSubmit={submit}>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
-            <h2 className="text-xl font-semibold tracking-normal">{automation?.id ? "Edit Automation" : "New Automation"}</h2>
+      <DialogContent closeLabel="Close" className="max-h-[88svh] gap-0 overflow-hidden rounded-md border-border bg-background p-0 sm:max-w-[680px]" data-testid="automation-dialog">
+        <form
+          className="flex max-h-[88svh] flex-col"
+          onSubmit={submit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.defaultPrevented && showDetails && !created) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
+        >
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-5 sm:px-6">
+            <DialogHeader className="gap-1 pr-8 text-left">
+              <DialogTitle className="text-lg font-semibold tracking-normal">{title}</DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">{description}</DialogDescription>
+            </DialogHeader>
             {error || saveError ? <p role="alert" className="mt-3 text-sm text-destructive">{error || saveError}</p> : null}
 
-            {isNew ? (
-              <div className="mt-5 grid gap-4">
-                <AutomationPlainEnglish
-                  memberName={agent?.name || "The member"}
-                  engineLabel={harnessLabel(harnessForAgent(agent).id)}
-                  text={plainText}
-                  onTextChange={setPlainText}
-                  answer={plainAnswer}
-                  onAnswerChange={setPlainAnswer}
-                  state={plain}
-                  onDraft={draftFromPlainText}
-                />
-                {drafted ? (
-                  <section className="grid gap-3 border-t border-border/70 pt-4" data-testid="automation-draft">
-                    {handOpen ? (
-                      <p className="text-sm text-muted-foreground">Drafted: <span className="text-foreground">{draft.name}</span>. Adjust it in the fields below.</p>
-                    ) : (
-                      <>
-                        <label className="grid gap-1.5">
-                          <span className="text-xs font-medium text-muted-foreground">Name</span>
-                          <Input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} className="h-9 text-sm" />
-                        </label>
-                        <label className="grid gap-1.5">
-                          <span className="text-xs font-medium text-muted-foreground">Each run, {agent?.name || "the member"} will</span>
-                          <Textarea value={draft.description} onChange={(event) => updateDraft({ description: event.target.value.slice(0, 10000) })} className="min-h-[64px] resize-y text-sm" />
-                        </label>
-                        <div className="grid gap-1">
-                          <span className="text-xs font-medium text-muted-foreground">Schedule</span>
-                          <RoutineSchedule value={draft.routine} onChange={(routine) => updateDraft({ routine })} preview={previewRoutine} />
-                        </div>
-                      </>
-                    )}
-                    <p className="text-xs leading-5 text-muted-foreground">
-                      {plain.status === "read-from-words" ? `${agent?.name || "The member"} did not propose a schedule; this one was read from your words. ` : ""}
-                      Runs in {workspaceLabel(draft.workspace, workspaces) || "the member's folder"}. Nothing runs until you save.
-                    </p>
+            {created ? (
+              <div className="mt-5 border-t border-border/70 pt-4">
+                <AutomationWebhook webhook={webhook} memberName={memberName} onRotate={rotateWebhook} onRevoke={revokeWebhook} />
+              </div>
+            ) : (
+              <>
+                {isNew ? (
+                  <div className="mt-5">
+                    <AutomationPlainEnglish
+                      memberName={memberName}
+                      engineLabel={engine}
+                      text={plainText}
+                      onTextChange={setPlainText}
+                      answer={plainAnswer}
+                      onAnswerChange={setPlainAnswer}
+                      state={plain}
+                      onDraft={draftFromPlainText}
+                      autoFocus
+                    />
+                    {!showDetails ? (
+                      <button
+                        type="button"
+                        className="mt-3 inline-flex w-fit items-center gap-1 text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                        onClick={() => { setManual(true); setEditing(true); }}
+                        data-testid="automation-manual"
+                      >
+                        Or set it up yourself, including a webhook trigger
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {showDetails && !editing ? (
+                  <section className="mt-5 border-t border-border/70 pt-4" data-testid="automation-draft" aria-label="Draft">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs text-muted-foreground">{plain.status === "read-from-words" ? "Read from your words" : `Drafted by ${memberName}`}</p>
+                        <h3 className="mt-0.5 text-base font-medium text-foreground">{draft.name || "Untitled automation"}</h3>
+                      </div>
+                      <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs text-muted-foreground" onClick={() => setEditing(true)} data-testid="automation-draft-edit">
+                        <PencilLine data-icon="inline-start" />
+                        Edit details
+                      </Button>
+                    </div>
+                    <dl className="mt-2 divide-y divide-border/60 text-sm">
+                      <div className="grid gap-1 py-2.5 sm:grid-cols-[150px_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-muted-foreground">When</dt>
+                        <dd className="min-w-0 text-foreground" data-testid="automation-draft-when">
+                          {draft.triggerType === "webhook" ? "When its webhook is called" : summary.description || scheduleKindLabel(draftSchedule)}
+                          {draftSchedule ? <span className="text-muted-foreground"> · {draftSchedule.timeZone}</span> : null}
+                          {summary.next ? <span className="block text-xs text-muted-foreground">Next: {summary.next}</span> : null}
+                        </dd>
+                      </div>
+                      <div className="grid gap-1 py-2.5 sm:grid-cols-[150px_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-muted-foreground">Runs as</dt>
+                        <dd className="flex min-w-0 items-center gap-2 text-foreground"><AgentAvatar agent={agent} className="size-5" />{memberName}<span className="text-muted-foreground">· {engine}</span></dd>
+                      </div>
+                      <div className="grid gap-1 py-2.5 sm:grid-cols-[150px_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-muted-foreground">Runs in</dt>
+                        <dd className="min-w-0 text-foreground">{folderLabel || "Choose a folder"}{draft.workspace ? <span className="block truncate font-mono text-xs text-muted-foreground">{draft.workspace}</span> : null}</dd>
+                      </div>
+                      <div className="grid gap-1 py-2.5 sm:grid-cols-[150px_minmax(0,1fr)] sm:gap-4">
+                        <dt className="text-muted-foreground">Each run</dt>
+                        <dd className="min-w-0 whitespace-pre-wrap text-foreground">{draft.description}</dd>
+                      </div>
+                    </dl>
                   </section>
                 ) : null}
-                <button
-                  type="button"
-                  className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-                  aria-expanded={handOpen}
-                  onClick={() => setHandOpen((value) => !value)}
-                >
-                  <ChevronDown className={cn("size-3.5 transition-transform", !handOpen && "-rotate-90")} aria-hidden="true" />
-                  Fill in by hand
-                </button>
-              </div>
-            ) : null}
 
-            {handOpen ? <div className="mt-5 grid gap-5">
-              <label className="grid gap-2">
-                <span className="text-sm font-semibold text-muted-foreground">Name <span className="text-primary">*</span></span>
-                <Input
-                  value={draft.name}
-                  onChange={(event) => updateDraft({ name: event.target.value })}
-                  placeholder="Give this automation a name"
-                  className="h-10 text-sm"
-                />
-              </label>
-
-              <section className="grid gap-3">
-                <div className="text-sm font-semibold text-muted-foreground">Workspace source <span className="text-primary">*</span></div>
-                <ToggleGroup
-                  type="single"
-                  value={draft.workspaceSource}
-                  onValueChange={(value) => {
-                    if (!value) return;
-                    const nextWorkspace = value === "project" ? projectChoices[0]?.path || draft.workspace : draft.workspace || defaultWorkspace;
-                    updateDraft({ workspaceSource: value, workspace: nextWorkspace || "" });
-                  }}
-                  variant="outline"
-                  className="w-fit gap-1 rounded-md bg-muted p-1"
-                  spacing={1}
-                >
-                  <ToggleGroupItem value="local" className="h-8 px-3 text-sm">Local Directory</ToggleGroupItem>
-                  <ToggleGroupItem value="project" className="h-8 px-3 text-sm">Project</ToggleGroupItem>
-                </ToggleGroup>
-
-                <div className="rounded-md bg-muted/70 p-3">
-                  {draft.workspaceSource === "project" ? (
-                    <Select value={draft.workspace} onValueChange={(workspace) => updateDraft({ workspace })}>
-                      <SelectTrigger className="h-10 w-full bg-background text-sm">
-                        <FolderGit2 className="size-4 text-muted-foreground" />
-                        <SelectValue placeholder="Select a project" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectLabel>Projects</SelectLabel>
-                          {(projectChoices.length ? projectChoices : workspaceChoices).map((item) => (
-                            <SelectItem key={item.path} value={item.path}>
-                              {item.label || workspaceLabel(item.path, workspaces)}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2">
-                      <Input
-                        value={draft.workspace}
-                        onChange={(event) => updateDraft({ workspace: event.target.value })}
-                        placeholder={defaultWorkspace || "Choose a local directory"}
-                        className="h-10 bg-background text-sm"
-                      />
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="h-10 w-10"
-                            onClick={() => updateDraft({ workspace: defaultWorkspace || workspaceChoices[0]?.path || draft.workspace })}
-                            aria-label="Use default directory"
-                          >
-                            <Folder />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Use default directory</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              <section className="grid gap-2">
-                <label className="text-sm font-semibold text-muted-foreground" htmlFor="automation-description">
-                  Automation Description <span className="text-primary">*</span>
-                </label>
-                <div className="overflow-hidden rounded-md border border-input bg-background">
-                  <Textarea
-                    id="automation-description"
-                    value={draft.description}
-                    onChange={(event) => updateDraft({ description: event.target.value.slice(0, 10000) })}
-                    placeholder="Tell this squad member what to do when the automation runs."
-                    className="min-h-[136px] resize-y border-0 bg-transparent p-3 text-sm shadow-none focus-visible:ring-0"
-                  />
-                  <div className="flex flex-col gap-2 border-t bg-muted/35 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-                    <span className="text-xs text-muted-foreground">{formatLocalizedNumber(descriptionLength, DEFAULT_LOCALE)} / 10000</span>
-                    <Select value={draft.model} onValueChange={(model) => updateDraft({ model })}>
-                      <SelectTrigger className="h-9 w-full bg-background text-sm sm:w-56">
-                        <SelectValue placeholder="Select a model" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectLabel>Model</SelectLabel>
-                          {AUTOMATION_MODELS.map((model) => (
-                            <SelectItem key={model} value={model}>
-                              {model}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </section>
-
-              <section className="grid gap-3">
-                <div className="text-sm font-semibold text-muted-foreground">Trigger <span className="text-primary">*</span></div>
-                <div className="grid gap-2 rounded-md border bg-muted/35 p-2 md:grid-cols-3">
-                  {AUTOMATION_TRIGGER_TYPES.map((trigger) => {
-                    const Icon = trigger.icon;
-                    const active = draft.triggerType === trigger.id;
-                    return (
-                      <button
-                        key={trigger.id}
-                        type="button"
-                        aria-pressed={active}
-                        className={cn(
-                          "grid min-h-16 grid-cols-[28px_minmax(0,1fr)] items-center gap-3 rounded-md border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40",
-                          active ? "border-foreground bg-background text-foreground" : "border-border/80 bg-card/65 text-muted-foreground hover:text-foreground"
-                        )}
-                        onClick={() => updateDraft({ triggerType: trigger.id })}
+                {showDetails && editing ? (
+                  <section className={cn("divide-y divide-border/60", isNew && "mt-5 border-t border-border/70")} data-testid="automation-fields" aria-label="Details">
+                    <AutomationEditorRow label="Name" htmlFor="automation-name" align="center">
+                      <Input id="automation-name" value={draft.name} onChange={(event) => updateDraft({ name: event.target.value.slice(0, 120) })} placeholder="Morning signup summary" className="h-9 text-sm" />
+                    </AutomationEditorRow>
+                    <AutomationEditorRow label="Starts" align="center">
+                      <RadioGroup
+                        value={draft.triggerType}
+                        onValueChange={(triggerType) => updateDraft({ triggerType })}
+                        className="flex flex-wrap gap-x-5 gap-y-2"
+                        aria-label="How it starts"
+                        data-testid="automation-trigger"
                       >
-                        <Icon className="size-4" />
-                        <span className="min-w-0">
-                          <span className="block text-sm font-semibold">{trigger.label}</span>
-                          <span className="mt-1 block text-xs leading-4 text-muted-foreground">{trigger.description}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-
-              {draft.triggerType === "schedule" ? (
-                <section className="grid gap-1">
-                  <div className="text-sm font-semibold text-muted-foreground">Schedule</div>
-                  <RoutineSchedule value={draft.routine} onChange={(routine) => updateDraft({ routine })} preview={previewRoutine} />
-                </section>
-              ) : null}
-
-              {draft.triggerType === "event" ? (
-                <section className="grid gap-3">
-                  <label className="grid gap-2">
-                    <span className="text-sm font-semibold text-muted-foreground">Event source</span>
-                    <Select value={draft.eventSource} onValueChange={(eventSource) => updateDraft({ eventSource })}>
-                      <SelectTrigger className="h-10 w-full text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectLabel>Source</SelectLabel>
-                          {AUTOMATION_EVENT_SOURCES.map((source) => (
-                            <SelectItem key={source} value={source}>
-                              {source}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </label>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="grid gap-2">
-                      <span className="text-sm font-semibold text-muted-foreground">Repository event</span>
-                      <Select value={draft.eventType} onValueChange={(eventType) => updateDraft({ eventType })}>
-                        <SelectTrigger className="h-10 w-full text-sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            <SelectLabel>Event</SelectLabel>
-                            {AUTOMATION_EVENT_TYPES.map((eventType) => (
-                              <SelectItem key={eventType} value={eventType}>
-                                {eventType}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </label>
-                    <label className="grid gap-2">
-                      <span className="text-sm font-semibold text-muted-foreground">Linked repository</span>
-                      <Input
-                        value={draft.linkedRepository}
-                        onChange={(event) => updateDraft({ linkedRepository: event.target.value })}
-                        placeholder="No linked Git repository"
-                        className="h-10 text-sm"
+                        {[...AUTOMATION_TRIGGER_CHOICES, ...(draft.triggerType === "event" ? [{ id: "event", label: "On a repository event" }] : [])].map((choice) => (
+                          <label key={choice.id} className={cn("inline-flex cursor-pointer items-center gap-2 text-sm", draft.triggerType === choice.id ? "font-medium text-foreground" : "text-muted-foreground")}>
+                            <RadioGroupItem value={choice.id} />
+                            {choice.label}
+                          </label>
+                        ))}
+                      </RadioGroup>
+                    </AutomationEditorRow>
+                    {draft.triggerType === "schedule" ? (
+                      <RoutineSchedule value={draft.routine} onChange={(routine) => updateDraft({ routine })} preview={previewRoutine} />
+                    ) : null}
+                    {draft.triggerType === "webhook" ? (
+                      <AutomationEditorRow label="URL" hint="POST JSON to start it">
+                        <AutomationWebhook webhook={routineId ? webhook : null} memberName={memberName} onRotate={routineId ? rotateWebhook : undefined} onRevoke={routineId ? revokeWebhook : undefined} />
+                      </AutomationEditorRow>
+                    ) : null}
+                    {draft.triggerType === "event" ? (
+                      <AutomationEditorRow label="Event" hint="Squad does not run these">
+                        <p className="text-sm text-muted-foreground">{draft.eventSource}: {String(draft.eventType || "").replaceAll("_", " ")}{draft.linkedRepository ? ` · ${draft.linkedRepository}` : ""}. Choose a schedule or a webhook to have it run.</p>
+                      </AutomationEditorRow>
+                    ) : null}
+                    <AutomationEditorRow label="Runs in" hint={`${memberName}'s folder`}>
+                      <div className="grid gap-2">
+                        <Select value={folderSelectValue} onValueChange={chooseFolder}>
+                          <SelectTrigger className="h-9 w-full text-sm *:data-[slot=select-value]:flex-1 *:data-[slot=select-value]:text-left" aria-label="Folder">
+                            <Folder className="size-4 text-muted-foreground" />
+                            <SelectValue placeholder="Choose a folder" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectLabel>Folders</SelectLabel>
+                              {folderChoices.map((item) => (
+                                <SelectItem key={item.path} value={item.path}>{item.label}</SelectItem>
+                              ))}
+                              <SelectItem value="__other">Another folder…</SelectItem>
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        {otherFolder || (draft.workspace && !folderSelectValue) ? (
+                          <Input value={draft.workspace} onChange={(event) => updateDraft({ workspace: event.target.value, workspaceSource: "local" })} placeholder={defaultWorkspace || "/path/to/folder"} aria-label="Folder path" spellCheck={false} className="h-9 font-mono text-xs" autoFocus={otherFolder} />
+                        ) : draft.workspace ? (
+                          <p className="truncate font-mono text-xs text-muted-foreground">{draft.workspace}</p>
+                        ) : null}
+                      </div>
+                    </AutomationEditorRow>
+                    <AutomationEditorRow label={`Each run, ${memberName} will`} htmlFor="automation-description">
+                      <Textarea
+                        id="automation-description"
+                        value={draft.description}
+                        onChange={(event) => updateDraft({ description: event.target.value.slice(0, 10000) })}
+                        placeholder="Pull yesterday's signups and post a three-line summary here."
+                        className="min-h-[96px] resize-y text-sm"
                       />
-                    </label>
-                  </div>
-                </section>
-              ) : null}
-
-              {draft.triggerType === "webhook" ? (
-                <section className="grid gap-2">
-                  <span className="text-sm font-semibold text-muted-foreground">Webhook/API endpoint</span>
-                  <Input
-                    value={draft.webhookPath}
-                    onChange={(event) => updateDraft({ webhookPath: event.target.value })}
-                    className="h-10 font-mono text-xs"
-                  />
-                </section>
-              ) : null}
-            </div> : null}
+                      {draft.description.length > 8000 ? <p className="mt-1 text-xs text-muted-foreground">{formatLocalizedNumber(draft.description.length, DEFAULT_LOCALE)} of 10,000 characters</p> : null}
+                    </AutomationEditorRow>
+                    {harnessForAgent(agent).id === "autohand" ? (
+                      <AutomationEditorRow label="Model" align="center">
+                        <Select value={draft.model} onValueChange={(model) => updateDraft({ model })}>
+                          <SelectTrigger className="h-9 w-full text-sm sm:w-48" aria-label="Model">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectLabel>Model</SelectLabel>
+                              {AUTOMATION_MODELS.map((model) => (
+                                <SelectItem key={model} value={model}>{model === "auto" ? "Member's default" : model}</SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                      </AutomationEditorRow>
+                    ) : null}
+                  </section>
+                ) : null}
+              </>
+            )}
           </div>
 
-          <DialogFooter className="border-t bg-background/95 px-5 py-3 backdrop-blur sm:px-6">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!isValid || saving}>
-              {saving ? "Saving…" : "Save"}
-            </Button>
+          <DialogFooter className="flex-row items-center justify-between gap-3 border-t px-5 py-3 sm:justify-between sm:px-6">
+            <p className="min-w-0 truncate text-xs text-muted-foreground" aria-live="polite">
+              {created ? "You can copy it again from Automations." : showDetails ? (isValid ? (isNew ? "Nothing runs until you save." : "") : `Add ${missing.join(", ")}.`) : ""}
+            </p>
+            <div className="flex shrink-0 items-center gap-2">
+              {created ? (
+                <Button type="button" onClick={() => onOpenChange(false)}>Done</Button>
+              ) : (
+                <>
+                  <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+                  {showDetails ? (
+                    <Button type="submit" disabled={!isValid || saving} data-testid="automation-save">
+                      {saving ? <Spinner /> : null}
+                      {saving ? "Saving…" : isNew ? "Create automation" : "Save changes"}
+                    </Button>
+                  ) : null}
+                </>
+              )}
+            </div>
           </DialogFooter>
         </form>
       </DialogContent>

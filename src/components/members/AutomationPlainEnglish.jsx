@@ -11,12 +11,12 @@ import { Textarea } from "@/components/ui/textarea";
  *
  *   state   { status: idle|drafting|question|proposed|read-from-words|error, question, error, reply }
  */
-export function AutomationPlainEnglish({ memberName = "The member", engineLabel = "", text, onTextChange, answer = "", onAnswerChange, state = { status: "idle" }, onDraft, copy = {} }) {
+export function AutomationPlainEnglish({ memberName = "The member", engineLabel = "", text, onTextChange, answer = "", onAnswerChange, state = { status: "idle" }, onDraft, copy = {}, autoFocus = false }) {
   const drafting = state.status === "drafting";
   const canDraft = Boolean(String(text || "").trim()) && !drafting;
   return (
     <section className="grid gap-2" data-testid="automation-plain-english">
-      <label className="text-sm font-semibold text-foreground" htmlFor="automation-plain-english">
+      <label className="text-sm font-medium text-foreground" htmlFor="automation-plain-english">
         {copy.automationPlainLabel || "What should happen, and when?"}
       </label>
       <Textarea
@@ -30,7 +30,8 @@ export function AutomationPlainEnglish({ memberName = "The member", engineLabel 
           }
         }}
         placeholder={copy.automationPlainPlaceholder || "Every weekday at 8am, pull yesterday's signups and post a short summary here."}
-        className="min-h-[88px] resize-y text-sm"
+        autoFocus={autoFocus}
+        className="min-h-[96px] resize-y text-sm leading-6"
       />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">
@@ -38,8 +39,9 @@ export function AutomationPlainEnglish({ memberName = "The member", engineLabel 
             <span className="inline-flex items-center gap-1.5"><Spinner className="size-3.5" />{(copy.automationDrafting || "{name} is drafting it…").replace("{name}", memberName)}</span>
           ) : (copy.automationPlainHint || "{name} turns this into a schedule{engine}. Nothing runs until you save.").replace("{name}", memberName).replace("{engine}", engineLabel ? ` with ${engineLabel}` : "")}
         </p>
-        <Button type="button" size="sm" variant={state.status === "proposed" || state.status === "read-from-words" ? "outline" : "default"} disabled={!canDraft} onClick={() => onDraft?.()}>
+        <Button type="button" size="sm" variant={state.status === "proposed" || state.status === "read-from-words" ? "ghost" : "default"} disabled={!canDraft} onClick={() => onDraft?.()} aria-keyshortcuts="Meta+Enter Control+Enter" data-testid="automation-draft-button">
           {state.status === "idle" || state.status === "error" ? copy.automationDraft || "Draft it" : copy.automationDraftAgain || "Draft again"}
+          <kbd className="ml-1 hidden font-sans text-[11px] opacity-60 sm:inline">⌘↵</kbd>
         </Button>
       </div>
       {state.status === "error" ? <p className="text-sm text-destructive">{state.error}</p> : null}

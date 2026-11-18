@@ -26,6 +26,7 @@ import { GroupLabel, TextTabs } from "./bits";
  *   workPlan     { tasks, create(input), update(id, patch), remove(id) } — the
  *                member's own plan on the bridge (ADR-0124)
  *   onAskMember  (text) => void, sends a chat message to the member
+ *   onNewAutomation / onEditAutomation  open the Automations editor (ADR-0254)
  */
 export function ExecutionPanel({
   agents = [],
@@ -36,6 +37,8 @@ export function ExecutionPanel({
   setAutomations,
   onRoutineSync,
   runAutomation,
+  onNewAutomation,
+  onEditAutomation,
   activeTab = "runs",
   setActiveTab,
   focusRunId = "",
@@ -142,6 +145,10 @@ export function ExecutionPanel({
               setAutomations={setAutomations}
               onRoutineSync={onRoutineSync}
               runAutomation={runAutomation}
+              onNewAutomation={onNewAutomation}
+              onEditAutomation={onEditAutomation}
+              onRunStarted={() => setActiveTab?.("runs")}
+              memberName={activeAgent?.name || ""}
               copy={copy}
               scheduleLabel={format.schedule}
               workspaceName={format.workspaceName}
