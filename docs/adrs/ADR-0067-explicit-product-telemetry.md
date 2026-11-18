@@ -40,3 +40,23 @@ check succeeded. Capturing that actual `updates/check` action with the installed
 PostHog configuration and trusted runtime identity returned
 `ingestionAccepted: true`. This establishes live ingestion acceptance, not
 dashboard indexing or every frontend event's delivery.
+
+## Addendum, 18 November 2026: release builds carry the key
+
+Until now only local builds were configured: `stage-desktop.mjs` read the
+public key and host from this checkout's `.env`, and the release workflow
+passed neither, so every downloaded build shipped `PRODUCT_TELEMETRY.json` as
+`{}` and sent nothing (which is also why ADR-0253's marketplace funnel had no
+data from installed apps). The release workflow now passes the repository
+variables `AUTOHAND_SQUAD_POSTHOG_KEY` and `AUTOHAND_SQUAD_POSTHOG_HOST` to
+the desktop staging step and to the web bundle, which stages them with
+`node scripts/stage-product-telemetry.mjs release/web-staging`. Both values
+are public ingestion settings (a `phc_` project key and
+`https://us.i.posthog.com`), so they are variables, not secrets; they were
+set from the same `.env` the local builds use. Running the script against a
+temporary folder wrote an enabled config; `check:product-telemetry` passed.
+
+Not yet proven: no release has run with them, because GitHub Actions is
+currently refusing to start jobs on this account ("account is locked due to a
+billing issue", every run since 17 November). The first release after that is
+cleared is the evidence; until then this is configuration only.

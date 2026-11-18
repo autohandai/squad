@@ -207,11 +207,15 @@ jobs:
           AUTOHAND_SQUAD_GOOGLE_CLIENT_ID: ${{ vars.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID }}
           AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET: ${{ secrets.AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET }}
           AUTOHAND_SQUAD_GITHUB_CLIENT_ID: ${{ vars.AUTOHAND_SQUAD_GITHUB_CLIENT_ID }}
+          # Public PostHog ingestion settings (ADR-0067); unset ships telemetry off.
+          AUTOHAND_SQUAD_POSTHOG_KEY: ${{ vars.AUTOHAND_SQUAD_POSTHOG_KEY }}
+          AUTOHAND_SQUAD_POSTHOG_HOST: ${{ vars.AUTOHAND_SQUAD_POSTHOG_HOST }}
         run: |
           mkdir -p release/web/runtime release/web-staging
           web_asset="autohand-squad-web-${{ needs.setup.outputs.version }}.tar.gz"
           cp -R dist server server.mjs package.json bun.lock README.md release/web-staging/
           node scripts/stage-connector-clients.mjs release/web-staging
+          node scripts/stage-product-telemetry.mjs release/web-staging
           # The bridge imports shared modules from src/lib (workflows, member
           # profiles); the portable and installer packagers require them.
           mkdir -p release/web-staging/src
@@ -581,6 +585,8 @@ jobs:
           AUTOHAND_SQUAD_GOOGLE_CLIENT_ID: ${{ vars.AUTOHAND_SQUAD_GOOGLE_CLIENT_ID }}
           AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET: ${{ secrets.AUTOHAND_SQUAD_GOOGLE_CLIENT_SECRET }}
           AUTOHAND_SQUAD_GITHUB_CLIENT_ID: ${{ vars.AUTOHAND_SQUAD_GITHUB_CLIENT_ID }}
+          AUTOHAND_SQUAD_POSTHOG_KEY: ${{ vars.AUTOHAND_SQUAD_POSTHOG_KEY }}
+          AUTOHAND_SQUAD_POSTHOG_HOST: ${{ vars.AUTOHAND_SQUAD_POSTHOG_HOST }}
         run: AUTOHAND_CODESIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" NODE_RUNTIME_PATH="$(node -p 'process.execPath')" bun run desktop:stage
 
       - name: Build desktop bundles

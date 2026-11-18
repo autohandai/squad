@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { telemetryHost } from "../server/product-telemetry.mjs";
 
 /** Public ingestion configuration only; never copy a full .env into the app. */
@@ -17,4 +18,12 @@ export async function stageProductTelemetry({ rootDir, runtimeDir, env = process
   const enabled = Boolean(key && host);
   await writeFile(join(runtimeDir, "PRODUCT_TELEMETRY.json"), `${JSON.stringify(enabled ? { key, host } : {}, null, 2)}\n`);
   return { enabled };
+}
+
+// CLI for the release workflow's web bundle: stage into the given runtime folder.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const runtimeDir = process.argv[2];
+  if (!runtimeDir) { console.error("usage: stage-product-telemetry.mjs <runtime-dir>"); process.exit(2); }
+  const { enabled } = await stageProductTelemetry({ rootDir: resolve(fileURLToPath(new URL("..", import.meta.url))), runtimeDir });
+  console.log(`Product telemetry ${enabled ? "enabled" : "off (no public PostHog key and host)"} in ${runtimeDir}`);
 }
