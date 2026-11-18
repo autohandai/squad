@@ -263,3 +263,9 @@ contract.
   showed role text running into the next featured tile and team faces
   overlapping row titles; fixed with a full-width text block and a two-face
   stack in rows).
+
+## Addendum, 19 November 2026: adds from a phone
+
+A listing added from a paired phone (ADR-0256) is recorded with `via: "phone"`
+and Squad's funnel source `phone`; the anonymous install count to the
+marketplace API sends `in-app` until the API accepts `phone`.

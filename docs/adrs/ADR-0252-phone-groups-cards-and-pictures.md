@@ -113,3 +113,9 @@ the body, as the sending window shows it.
   that steady activity kept pushing the write back until the stop. Not
   proven beyond that observation and not changed here; a bounded max-wait on
   the debounce is the obvious follow-up.
+
+## Addendum, 19 November 2026: contract 0.5
+
+The marketplace on the phone (ADR-0256) reuses this ADR's handoff: a decision
+recorded in the mobile card store, carried out by the window on
+`mobile.decisions`, settled with the outcome the phone shows.

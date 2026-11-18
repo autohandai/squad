@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- The marketplace on Squad for iPhone: your phone browses agents and teams through this computer, and an agent or team you add there is added to this Squad by the Squad window, with the same checks as adding it here.
 - **Start an automation from a webhook.** Choose "When a webhook is called" and Squad gives the automation a private URL with a copyable example. Each call starts one run (never two at once, up to 10 a minute), and you can make a new URL or turn it off at any time. The URL is on your computer; to call it from the internet, use the tunnel you already run.
 - **New automation and Run now in the Execution panel.** The Automations tab lists each automation with when it runs next and how its last run went, Run now (which then shows the run in Runs) and a New automation button, also on the empty tab. Click a name to edit it.
 - **Agents can manage automations through Squad's MCP server.** They can list, create, change, run and delete them, make and rotate webhook URLs, and write the schedule in plain words ("every weekday at 9am"), which Squad reads in your own timezone. Ask a member "remind me every day at 9am to stretch" and it saves the reminder and tells you when it will next run.
