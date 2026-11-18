@@ -164,6 +164,13 @@ export async function createMobileController(ctx) {
       await adapter.settleTeam(value);
       return { decisions: adapter.teamDecisions() };
     },
+    // Marketplace adds a phone decided; the Squad window carries them out (ADR-0256).
+    marketplaceRequests: () => ({ requests: adapter.marketplacePending() }),
+    claimMarketplace: async input => ({ claimed: await adapter.claimMarketplace(z.object({ requestID: z.string().min(3).max(300) }).strict().parse(input).requestID) }),
+    settleMarketplace: async input => {
+      const value = z.object({ requestID: z.string().min(3).max(300), state: z.enum(['done', 'failed']), result: z.string().max(300).optional() }).strict().parse(input);
+      return { request: await adapter.settleMarketplace(value), requests: adapter.marketplacePending() };
+    },
     close,
   };
 }

@@ -10,6 +10,7 @@ import { normalizeModelRouting, primaryRoute, routeKey } from '../../src/lib/mod
 import { isGroupChat } from '../../src/lib/group-chats.js';
 import { needsResponderPick, resolveMentions, resolveResponderRecipients } from '../../src/lib/channel-responders.js';
 import { PERMISSION_DECISIONS, permissionCard, permissionOutcome, scheduleCard, teamCard } from './cards.mjs';
+import { createPhoneMarketplace } from './marketplace.mjs';
 
 const AVATAR_BYTES = 512 * 1024;
 const PICTURE = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/;
@@ -28,6 +29,10 @@ const memberID = z.object({ memberID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._
 /** The phone uses the same roster, transcripts and durable queue as MCP/CLI. */
 export function createMobileAdapter({ origin, computerID, version, computerName = hostname(), assignTask, announcements, rootDir = '', cards = null, emit = () => {} }) {
   const bridge = createBridgeClient(origin), tools = createTools(bridge);
+  // The marketplace (contract 0.5, ADR-0256): reads through this computer,
+  // an Add the Squad window carries out.
+  const marketplace = createPhoneMarketplace({ bridge, cards, emit,
+    canWrite: async () => { const context = await bridge.get('/api/ownership/context'); return Boolean(context?.canWrite) && context.state === 'ready'; } });
   // The 256 px renders the menu bar reads (scripts/build-bird-cast.mjs);
   // the installed app serves dist/, a checkout also has public/.
   const birdDirs = rootDir ? [join(rootDir, 'dist', 'avatars', 'birds', '256'), join(rootDir, 'public', 'avatars', 'birds', '256')] : [];
@@ -167,7 +172,7 @@ export function createMobileAdapter({ origin, computerID, version, computerName 
             lastMessageAt: last?.createdAt || null, preview: last ? { author: last.role === 'user' ? 'You' : last.authorName || last.agentId || 'Member', text: clip(last.body, 140) } : null };
         }).sort((a, b) => String(b.lastMessageAt || b.createdAt).localeCompare(String(a.lastMessageAt || a.createdAt))).slice(0, 50);
         return { computer: { id: computerID, name: computerName, version, connectedAt: new Date().toISOString() },
-          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards'] : [])],
+          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards'] : []), 'marketplace'],
           ...(context.actor ? { account: { id: context.actor.id, name: context.actor.name || '', email: context.actor.email || '' } } : {}),
           members: members.map(row => {
             const remote = (Array.isArray(remotes) ? remotes : remotes?.members || []).find(remote => remote.memberId === row.id);
@@ -289,9 +294,14 @@ export function createMobileAdapter({ origin, computerID, version, computerName 
         const { cardID, action } = z.object({ cardID: z.string().min(3).max(300), action: z.string().regex(/^[a-z_]{1,40}$/) }).strict().parse(parameters);
         return { card: await decide(cardID, action) };
       }
+      if (marketplace.commands.includes(command)) return marketplace.execute(command, parameters, { deviceID, requestID });
       throw Error('This action is unavailable from a phone.');
   }
   return {
+    /** Marketplace adds a phone decided, for the Squad window (ADR-0256). */
+    marketplacePending: () => marketplace.pending(),
+    claimMarketplace: requestID => marketplace.claim(requestID),
+    settleMarketplace: value => marketplace.settle(value),
     assertCurrent: () => bridge.get('/api/ownership/context'),
     execute,
     /** Team decisions the Squad window has not carried out yet (ADR-0252). */

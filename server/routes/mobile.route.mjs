@@ -29,6 +29,9 @@ export async function handle(req, res, url, ctx) {
     else if (url.pathname === '/api/mobile/team-decisions' && req.method === 'GET') data = mobile.teamDecisions();
     else if (url.pathname === '/api/mobile/team-decisions/claim' && req.method === 'POST') data = await mobile.claimTeam(await ctx.readBody(req));
     else if (url.pathname === '/api/mobile/team-decisions' && req.method === 'POST') data = await mobile.settleTeam(await ctx.readBody(req));
+    else if (url.pathname === '/api/mobile/marketplace-requests' && req.method === 'GET') data = mobile.marketplaceRequests();
+    else if (url.pathname === '/api/mobile/marketplace-requests/claim' && req.method === 'POST') data = await mobile.claimMarketplace(await ctx.readBody(req));
+    else if (url.pathname === '/api/mobile/marketplace-requests' && req.method === 'POST') data = await mobile.settleMarketplace(await ctx.readBody(req));
     else if (url.pathname.startsWith('/api/mobile/devices/') && req.method === 'DELETE') data = await mobile.revoke(url.pathname.slice('/api/mobile/devices/'.length));
     else return false;
     ctx.json(res, 200, { success: true, data });

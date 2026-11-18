@@ -412,7 +412,7 @@ import { UpdateConsentNotice } from "@/components/account/UpdateConsentNotice";
 import { SquadAnnouncements } from "@/components/account/SquadAnnouncements";
 import { UpdatesSettings } from "@/components/settings/UpdatesSettings";
 import { UPDATE_BUSY_PHASES, updateView } from "@/lib/update-status";
-import { identifySquadTelemetry, recordSignInStarted, recordMemberCreated, recordMemberUsed, recordFeatureUsed } from "@/lib/product-telemetry";
+import { identifySquadTelemetry, recordSignInStarted, recordMemberCreated, recordMemberUsed, recordFeatureUsed, recordMarketplaceEvent } from "@/lib/product-telemetry";
 import { getNativeNotificationClient } from "@/lib/native-notifications";
 import { applySharedConversationEvent, conversationEventForSharing } from "@/lib/shared-conversations";
 import { formatDuration } from "@/lib/duration";
@@ -6257,6 +6257,35 @@ function App() {
       }
     }
   };
+  // A marketplace agent or team added from a paired phone (ADR-0256). The
+  // person saw its skills and what it may touch on the phone and tapped Add;
+  // this window carries it out through the same verified template and import
+  // as the desktop's Add (members only ever created here, ADR-0077), records
+  // the receipt with source "phone" and reports the outcome the phone shows.
+  const mobileMarketplaceRef = useRef(null);
+  mobileMarketplaceRef.current = async () => {
+    let requests = [];
+    try { requests = (await api("/api/mobile/marketplace-requests")).requests || []; } catch { return; }
+    for (const request of requests) {
+      const settle = (state, result) => api("/api/mobile/marketplace-requests", { method: "POST", body: JSON.stringify({ requestID: request.requestID, state, result }) }).catch(() => {});
+      try { if (!(await api("/api/mobile/marketplace-requests/claim", { method: "POST", body: JSON.stringify({ requestID: request.requestID }) })).claimed) continue; } catch { continue; }
+      try {
+        const fresh = await api("/api/marketplace/fetch", { method: "POST", body: JSON.stringify({ id: request.listingId }) });
+        const team = fresh.kind === "team";
+        const added = await addFromMarketplace({ document: fresh.document, receipt: {
+          source: "marketplace", listingId: request.listingId, grokId: "", version: fresh.version, contentHash: fresh.contentHash,
+          creator: fresh.agent?.creator?.name || "", kind: team ? "team" : "agent", via: "phone",
+        } });
+        recordMarketplaceEvent("marketplace_add_succeeded", { listing_id: request.listingId, listing_kind: team ? "team" : "agent", version: fresh.version, source: "phone", action: "add", members: added?.members || 1 });
+        const lead = agents.find((agent) => agent.id === added?.memberId)?.name || request.name;
+        await settle("done", team ? `Added ${request.name} to your Squad: ${added?.members || 1} members, led by ${lead}.` : `Added ${request.name} to your Squad.`);
+      } catch (error) {
+        const message = String(error?.message || error || "Nothing was added.");
+        recordMarketplaceEvent("marketplace_add_failed", { listing_id: request.listingId, source: "phone", reason: /offline|reach/i.test(message) ? "unavailable" : /checksum|match/i.test(message) ? "checksum" : "failed" });
+        await settle("failed", message);
+      }
+    }
+  };
   // One owned stream per window leaves HTTP/1 connection slots for saves and
   // prompts when another window is open. Notifications carry no secret data;
   // every reload still checks the captured ownership generation.
@@ -6273,7 +6302,7 @@ function App() {
     source.addEventListener("channels.changed",onChanged);
     source.addEventListener("notifications.settings.changed", () => void loadNotificationSettings().catch(() => {}));
     source.addEventListener("vault.changed",()=>void vaultRequests.reload());
-    source.addEventListener("mobile.decisions", () => void mobileTeamDecisionsRef.current?.());
+    source.addEventListener("mobile.decisions", () => { void mobileTeamDecisionsRef.current?.(); void mobileMarketplaceRef.current?.(); });
     if(relayConfig.enabled) {
       source.addEventListener("relay.message", onChanged);
       source.addEventListener("relay.channel", onChanged);

@@ -10,7 +10,7 @@ const digest = value => createHash('sha256').update(JSON.stringify(stable(value)
 // A QR's `endpoint` (with `relayToken` for the relay) is its first route;
 // `routes` names the other direct routes the computer serves (ADR-0228).
 const routeListSchema = z.array(z.object({ kind: z.enum(['local', 'tunnel']), endpoint: z.string() }).strict()).max(2);
-const RECEIPTED = ['message', 'delegate', 'group.message', 'card.act'];
+const RECEIPTED = ['message', 'delegate', 'group.message', 'card.act', 'marketplace.add'];
 const deny = () => Object.assign(Error('This device is not connected. Pair it again in Squad.'), { status: 401 });
 
 /** Owner-scoped device credentials. No native OS grants or general API proxy. */
@@ -80,7 +80,7 @@ export async function createMobileService({ directory, computerName, assertCurre
         await afterRevoke(packet.peerID);
         return respond({ ok: true, data: { removed: true } });
       }
-      if (!['snapshot', 'conversation', 'message', 'delegate', 'tasks', 'announcements', 'announcement.act', 'avatar', 'group.conversation', 'group.message', 'card.act'].includes(command.command)) throw Error('This action is unavailable from a phone.');
+      if (!['snapshot', 'conversation', 'message', 'delegate', 'tasks', 'announcements', 'announcement.act', 'avatar', 'group.conversation', 'group.message', 'card.act', 'marketplace.home', 'marketplace.list', 'marketplace.listing', 'marketplace.requests', 'marketplace.add'].includes(command.command)) throw Error('This action is unavailable from a phone.');
       if (command.command === 'snapshot') {
         // Routes travel only inside this device's authenticated reply (ADR-0228).
         const data = await execute(command.command, parameters, { deviceID: packet.peerID, requestID: packet.requestID });

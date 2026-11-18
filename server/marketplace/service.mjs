@@ -144,7 +144,7 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
       memberId,
       memberIds,
       action: input.action === "update" ? "update" : "add",
-      via: ["website-link", "in-app", "link"].includes(input.via) ? input.via : "in-app",
+      via: ["website-link", "in-app", "link", "phone"].includes(input.via) ? input.via : "in-app",
       at: new Date(now()).toISOString(),
     };
     if (source === "marketplace" && !entry.listingId) throw fail("Say which marketplace agent was added.");
@@ -164,6 +164,9 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
   /** Tell the marketplace an install happened. Never fails the import. */
   async function reportInstall({ id, version, via, attribution } = {}) {
     if (!LISTING_ID.test(String(id || ""))) return { sent: false };
+    // The marketplace API does not know "phone" yet (squad-api EVENT_SOURCES);
+    // a phone add counts as in-app there, and keeps "phone" in the receipt
+    // and in Squad's own funnel event (ADR-0256).
     const body = { type: "install", source: ["website-link", "in-app", "link"].includes(via) ? via : "in-app" };
     if (ATTRIBUTION_ID.test(String(attribution || ""))) body.attribution = attribution;
     if (Number.isInteger(version) && version > 0) body.version = version;

@@ -19,7 +19,7 @@ const surfaces = new Set(["dm", "channel", "goal", "handoff", "automation"]);
 // only. No names, search text, instructions or member content.
 export const MARKETPLACE_EVENTS = new Set(["marketplace_opened", "marketplace_listing_viewed", "marketplace_add_started", "marketplace_add_succeeded", "marketplace_add_failed"]);
 const marketplaceEntries = new Set(["directory", "minified", "command", "route", "link", "member_form"]);
-const marketplaceSources = new Set(["website-link", "in-app", "link", "grok"]);
+const marketplaceSources = new Set(["website-link", "in-app", "link", "grok", "phone"]);
 const marketplaceActions = new Set(["add", "update", "another"]);
 const marketplaceReasons = new Set(["offline", "rate_limited", "not_found", "checksum", "invalid", "unavailable", "failed"]);
 
