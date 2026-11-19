@@ -1,6 +1,6 @@
 # ADR-0267: Members label email by urgency and reply under the person's rules; an address changes once
 
-Status: accepted, not yet deployed (2026-11-20)
+Status: accepted, deployed 2026-11-20
 
 ## Context
 
@@ -91,3 +91,16 @@ Write. Without the token, replies answer "not switched on yet".
   - an API token limited to Email Sending Write, stored as the Worker
     secret `EMAIL_SENDING_TOKEN`;
   - a deploy with `SQUAD_EMAIL_SENDING=1`.
+
+## Deployed
+
+Approved by the owner on 20 Nov 2026 ("you have permission for acting on my
+behalf"). Three production steps:
+
+- Migration 0005 applied to `squad-control-plane`.
+- Token `squad-api email replies (ADR-0267)` created: account-owned, Email
+  Sending Write only, id 52d88643…. It went straight into the Worker secret
+  `EMAIL_SENDING_TOKEN` through `wrangler secret put` on standard input and
+  was never printed or written to disk.
+- Squad API version 97c298c9 deployed with `SQUAD_EMAIL_SENDING=1`;
+  `/health` returned 200.

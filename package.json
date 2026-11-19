@@ -217,7 +217,7 @@
     "check:routine-webhooks": "node scripts/check-routine-webhooks.mjs",
     "check:member-controls:browser": "node scripts/check-member-controls-browser.mjs",
     "check:dictation:browser": "node scripts/check-dictation-browser.mjs",
-    "check:agent-mail": "node scripts/check-agent-mail.mjs && node scripts/check-email-routines.mjs",
+    "check:agent-mail": "node scripts/check-agent-mail.mjs && node scripts/check-email-routines.mjs && node scripts/check-email-replies.mjs",
     "check:automations:browser": "node scripts/check-automations-browser.mjs",
     "check:automation-replies": "node scripts/check-automation-replies.mjs",
     "check:natural-automations": "node scripts/check-natural-automations.mjs",
