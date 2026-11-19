@@ -19,7 +19,7 @@ test('account destinations and Settings keep their place and the unsent chat', a
   await page.getByRole('button', { name: 'Open account menu', exact: true }).click();
   const menu = page.getByRole('menu');
   const items = (await menu.getByRole('menuitem').allTextContents()).map(text => text.trim());
-  expect(items.slice(0, 4)).toEqual(['Inbox', 'Settings', 'About', 'Licenses and agreements']);
+  expect(items.slice(0, 4)).toEqual(['Inbox', 'Marketplace', 'Connectors', 'Settings']);
   expect(items).not.toContain('Analytics'); expect(items).not.toContain('Memory');
   await menu.getByRole('menuitem', { name: 'Settings', exact: true }).click();
   const sections = page.getByTestId('settings-sections');

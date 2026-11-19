@@ -17,7 +17,9 @@ const { ChannelStream } = module.exports;
 const agent = { id: "eva", name: "Eva" };
 const rootMessage = { id: "question", channelId: "general", threadId: "thread-a", role: "user", body: "Please check the build.", createdAt: "2026-10-19T08:00:00Z" };
 const reply = (id, patch = {}) => ({ id, channelId: "general", threadId: "thread-a", parentMessageId: "question", role: "agent", agentId: "eva", authorName: "Eva", body: "The build passed.", status: "complete", createdAt: "2026-10-19T08:02:00Z", ...patch });
-const render = (messages, replyMode = "thread") => renderToStaticMarkup(React.createElement(ChannelStream, { channel: { id: "general", name: "general", replyMode }, messages, agents: [agent] }));
+// Threads show only with Settings › Chat › Reply in threads on (ADR-0238);
+// "thread" renders here with it on, "channel" with the channel set inline.
+const render = (messages, replyMode = "thread") => renderToStaticMarkup(React.createElement(ChannelStream, { channel: { id: "general", name: "general", replyMode }, messages, agents: [agent], threadedReplies: replyMode === "thread" }));
 
 const pending = reply("pending", { status: "loading", body: "Eva is typing..." });
 let html = render([rootMessage, pending]);
