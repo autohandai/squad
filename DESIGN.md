@@ -429,3 +429,4 @@
 - An empty capability page (connectors, skills) invites: say what the member can already use, then offer what it could use with one action each.
 - Suggestions lead with what the member can do now (stopped work, recent work, connected tools) before role templates, and change over time.
 - Features limited to some accounts (agent email: autohand.ai) are invisible to everyone else: no row, no explanation (ADR-0262 revised).
+- A member's sections start with Home, Communications, Permissions: who it is, how to reach it, what it may do (ADR-0266). One setting lives on one page.

@@ -929,7 +929,7 @@ const UI_COPY_BY_LANGUAGE = {
       connector: "Connectors",
       history: "History",
       home: "Home",
-      im: "Messaging",
+      im: "Communications",
       memory: "Memory",
       permissions: "Permissions",
       project: "Projects",
@@ -1199,7 +1199,7 @@ const UI_COPY_BY_LANGUAGE = {
     sectionLabels: {
       connector: "Connector",
       home: "Hjem",
-      im: "IM",
+      im: "Kommunikation",
       memory: "Hukommelse",
       permissions: "Tilladelse",
       project: "Projekt",
@@ -1361,7 +1361,7 @@ const UI_COPY_BY_LANGUAGE = {
     sectionLabels: {
       connector: "Conector",
       home: "Inicio",
-      im: "IM",
+      im: "Comunicaciones",
       memory: "Memoria",
       permissions: "Permiso",
       project: "Proyecto",
@@ -1523,7 +1523,7 @@ const UI_COPY_BY_LANGUAGE = {
     sectionLabels: {
       connector: "Connecteur",
       home: "Accueil",
-      im: "IM",
+      im: "Communications",
       memory: "Mémoire",
       permissions: "Autorisation",
       project: "Projet",
@@ -1685,7 +1685,7 @@ const UI_COPY_BY_LANGUAGE = {
     sectionLabels: {
       connector: "Conector",
       home: "Início",
-      im: "IM",
+      im: "Comunicações",
       memory: "Memória",
       permissions: "Permissão",
       project: "Projeto",
@@ -1861,7 +1861,7 @@ const UI_COPY_BY_LANGUAGE = {
     sectionLabels: {
       connector: "Connettore",
       home: "Home",
-      im: "IM",
+      im: "Comunicazioni",
       memory: "Memoria",
       permissions: "Permesso",
       project: "Progetto",
@@ -2040,7 +2040,7 @@ const UI_COPY_BY_LANGUAGE = {
     sectionLabels: {
       connector: "コネクター",
       home: "ホーム",
-      im: "IM",
+      im: "コミュニケーション",
       memory: "メモリ",
       permissions: "権限",
       project: "プロジェクト",
@@ -2219,7 +2219,7 @@ const UI_COPY_BY_LANGUAGE = {
     sectionLabels: {
       connector: "커넥터",
       home: "홈",
-      im: "IM",
+      im: "커뮤니케이션",
       memory: "메모리",
       permissions: "권한",
       project: "프로젝트",
@@ -2401,7 +2401,7 @@ const UI_COPY_BY_LOCALE = {
     sectionLabels: {
       connector: "连接器",
       home: "主页",
-      im: "IM",
+      im: "沟通",
       memory: "记忆",
       permissions: "权限",
       project: "项目",

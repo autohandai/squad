@@ -61,6 +61,15 @@ try {
   await until(() => browser.evaluate("document.body.innerText.includes('Manage the team')"), 'Team on the Permissions page', 30000);
   await shoot('permissions-page');
 
+  // Communications (ADR-0266): one view, right after Home, then Permissions.
+  await browser.navigate(`${bridge.origin}/squad-members/${eva.id}/im`);
+  await until(() => browser.evaluate("document.body.innerText.includes('Direct conversation')"), 'Communications page', 30000);
+  const nav = await browser.evaluate("[...document.querySelectorAll('nav a, nav button, aside a, aside button')].map(item => item.innerText.trim()).filter(text => ['Home','Communications','Permissions','Projects','Messaging'].includes(text))");
+  assert.deepEqual(nav.slice(0, 4), ['Home', 'Communications', 'Permissions', 'Projects'], `member sections in order: ${nav}`);
+  assert.ok(!nav.includes('Messaging'), 'Messaging is gone');
+  assert.ok(!(await browser.evaluate("document.body.innerText.includes('Email')")), 'no email row outside autohand.ai');
+  await shoot('communications');
+
   // Connectors: what the member can use, then connectors to connect.
   await browser.navigate(`${bridge.origin}/squad-members/${eva.id}/connector`);
   await until(() => browser.evaluate("!!document.querySelector('[data-testid=member-connectors]')"), 'member Connectors page', 30000);
@@ -71,7 +80,7 @@ try {
   await until(() => browser.evaluate("!!document.querySelector('[role=dialog]')"), 'the install dialog opens', 20000);
   await shoot('connect-dialog');
   assert.deepEqual(browser.errors, []);
-  console.log('PASS member controls: To lists members with presence and channels and opens a channel; Permissions tab turns Manage the team on and off in the bridge; Team leads the Permissions page, no email row outside autohand.ai; member Connectors offer connectors and Connect opens the install dialog.');
+  console.log('PASS member controls: To lists members with presence and channels and opens a channel; Permissions tab turns Manage the team on and off in the bridge; Team leads the Permissions page; Communications follows Home with no email row outside autohand.ai; member Connectors offer connectors and Connect opens the install dialog.');
 } finally {
   await browser?.close();
   await bridge.close();

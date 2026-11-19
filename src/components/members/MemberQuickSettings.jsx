@@ -16,7 +16,16 @@ import { managesTeam, withTeamManagement } from "@/lib/permission-policy";
  * - Connectors: what it can use, and where to connect more.
  * - Computer Use: the current grant, set on the Permissions page.
  */
-export function MemberQuickSettings({ agent, api, updateAgent, navigate, sections = ["team", "email", "connectors", "computer"], showMoreLink = true }) {
+/**
+ * Communications (ADR-0266): every way to reach the member, in one view. Its
+ * direct conversation, and for accounts allowed agent email (autohand.ai),
+ * its address with the name before the @ editable.
+ */
+export function MemberCommunications({ agent, api, navigate }) {
+  return <MemberQuickSettings agent={agent} api={api} navigate={navigate} sections={["chat", "email"]} showMoreLink={false} />;
+}
+
+export function MemberQuickSettings({ agent, api, updateAgent, navigate, sections = ["team", "connectors", "computer"], showMoreLink = true }) {
   const [mail, setMail] = useState({ loaded: false, allowed: false, signedIn: false, address: "", domain: "" });
   const [localPart, setLocalPart] = useState("");
   const [mailBusy, setMailBusy] = useState(false);
@@ -73,6 +82,14 @@ export function MemberQuickSettings({ agent, api, updateAgent, navigate, section
       {sections.includes("team") ? (
         <Row title="Manage the team" detail={`Let ${agent.name} create members and change any member’s setup, its own included. Off, it asks you first.`}>
           <Switch checked={team} onCheckedChange={setTeam} disabled={!updateAgent} aria-label={`Let ${agent.name} manage the team`} data-testid="manage-team-switch" />
+        </Row>
+      ) : null}
+
+      {sections.includes("chat") ? (
+        <Row title="Direct conversation" detail={`Message ${agent.name} from Squad here or on your iPhone. Replies, files and decisions stay in the chat.`}>
+          <Button type="button" variant="ghost" size="sm" onClick={() => navigate?.(`/conversations/new?member=${encodeURIComponent(agent.id)}`)}>
+            Open chat<ArrowRight data-icon="inline-end" />
+          </Button>
         </Row>
       ) : null}
 

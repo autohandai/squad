@@ -393,7 +393,7 @@ import { AttachmentButton, AttachmentList, useAttachments } from "@/components/c
 import { HarnessModelSelect } from "@/components/members/HarnessModelSelect";
 import { MemberFallbacks } from "@/components/members/MemberFallbacks";
 import { MemberConnectors } from "@/components/members/MemberConnectors";
-import { MemberQuickSettings } from "@/components/members/MemberQuickSettings";
+import { MemberCommunications, MemberQuickSettings } from "@/components/members/MemberQuickSettings";
 import { useEngineInUse } from "@/components/members/useEngineInUse";
 import { PairPhoneDialog } from "@/components/shell/PairPhoneDialog";
 import { fallbackLabel, initialMemberExecution, normalizeModelRouting } from "@/lib/model-routing";
@@ -2000,8 +2000,11 @@ const AUTOMATION_SCHEDULE_FREQUENCIES = [
   { id: "manual", label: "Manual only" },
 ];
 
+// Home, then how to reach the member and what it may do (ADR-0266), then the rest.
 const MEMBER_SECTIONS = [
   { id: "home", label: "Home", icon: CircleUserRound },
+  { id: "im", label: "Communications", icon: MessageSquareText },
+  { id: "permissions", label: "Permissions", icon: ShieldAlert },
   { id: "project", label: "Projects", icon: Folders },
   { id: "triggers", label: "Automations", icon: Clock3 },
   { id: "task", label: "Tasks", icon: CalendarCheck2 },
@@ -2012,8 +2015,6 @@ const MEMBER_SECTIONS = [
   { id: "harness", label: "Harness", icon: Cpu },
   { id: "skill", label: "Skills", icon: Sparkles },
   { id: "connector", label: "Connectors", icon: Unplug },
-  { id: "im", label: "Messaging", icon: MessageSquareText },
-  { id: "permissions", label: "Permissions", icon: ShieldAlert },
 ];
 
 const CUSTOM_ROLE_TEMPLATE = {
@@ -22925,6 +22926,19 @@ function SquadMemberSectionPage({
     connector: `${agent.name} has no connector tools of their own. Shared connectors are in Settings → Connectors.`,
   }[section] || "Nothing here yet.";
 
+  // Communications (ADR-0266): every way to reach the member in one place,
+  // its direct conversation and, for accounts allowed agent email, its address.
+  if (section === "im") {
+    return (
+      <div className="min-h-screen bg-background">
+        <PageTitle title={sectionLabel} />
+        <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
+          <MemberCommunications agent={agent} api={api} navigate={navigate} />
+        </div>
+      </div>
+    );
+  }
+
   // Connectors list what the member can use and what to connect next (ADR-0265).
   if (section === "connector") {
     return (
@@ -23708,7 +23722,7 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
             accounts allowed it (the row hides itself otherwise). */}
         <section aria-labelledby="member-team-email-heading">
           <h2 id="member-team-email-heading" className="mb-1 text-base font-semibold">Team</h2>
-          <MemberQuickSettings agent={agent} api={api} updateAgent={updateAgent} navigate={navigate} sections={["team", "email"]} showMoreLink={false} />
+          <MemberQuickSettings agent={agent} api={api} updateAgent={updateAgent} navigate={navigate} sections={["team"]} showMoreLink={false} />
         </section>
         <ComputerUsePermissions key={agent.id} member={agent} api={api} />
         {/* Flat, as the other member pages. This was a bordered card holding
