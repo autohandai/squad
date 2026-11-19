@@ -428,3 +428,4 @@
 - A permission a person understands in one sentence gets one switch (Manage the team), with the underlying rules still visible on the full page. Quick settings are divider rows: title, one sentence, one control.
 - An empty capability page (connectors, skills) invites: say what the member can already use, then offer what it could use with one action each.
 - Suggestions lead with what the member can do now (stopped work, recent work, connected tools) before role templates, and change over time.
+- Features limited to some accounts (agent email: autohand.ai) are invisible to everyone else: no row, no explanation (ADR-0262 revised).

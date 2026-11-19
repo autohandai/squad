@@ -1,6 +1,7 @@
 // Product defaults, independent of the build machine and of any demo squad.
 import { roleTemplates } from './member-profiles.js';
 import { needsOf, suggestRoles, NEED_HELP } from './squad-recruiting.js';
+import { withTeamManagement } from './permission-policy.js';
 
 export const GENERAL_CHANNEL_ID = 'channel_general';
 
@@ -35,5 +36,8 @@ export function chiefOfStaffMember(id, profiles, now = new Date().toISOString())
     launch: { mode: 'prompt', policy: 'yes', model: '', dryRun: false },
     stats: { activeDays: 0, automations: 0, tasks: 0, projects: profiles.length },
     tools: [{ name: 'Autohand CLI', policy: 'restricted', status: 'isolated' }],
+    // Chief of Staff builds and tunes the team, so Manage the team starts on;
+    // the person can turn it off in its Permissions (ADR-0265).
+    permissions: withTeamManagement({}, true),
   };
 }

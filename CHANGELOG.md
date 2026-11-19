@@ -12,6 +12,8 @@ list to the section for that version.
 
 ### Changed
 
+- On accounts signed in with @autohand.ai, every member now gets an email address from its name automatically, and you can change the name before @code.autohandai.com in its Permissions. Other accounts see nothing about email.
+- Chief of Staff starts with Manage the team on; you can turn it off.
 - "Needs you" is gone everywhere: the menu-bar menu says "Open Inbox" and "3 things in your Inbox", and the Inbox page leads with "Waiting on you".
 - New member and New team say that marketplace agents and teams show there once the marketplace opens, instead of leaving an empty space.
 
@@ -106,6 +108,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Dictation works again: pressing the mic and then Stop puts your words in the message instead of saying "Dictation is not listening."
 - The marketplace no longer tells you to check your connection when it simply isn't open yet.
 - Inbox's first tab is called Needs you again.
 - Asking the Chief of Staff to create a member with long instructions no longer fails with "longer than 1200 characters". The first part is saved as the member's instructions and the rest as labelled memories, in order, and the Chief of Staff tells you it did that.

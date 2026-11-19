@@ -381,7 +381,7 @@ import { JumpToLatest } from "@/components/chat/JumpToLatest";
 import { KeyboardShortcuts, openKeyboardShortcuts } from "@/components/shell/KeyboardShortcuts";
 import { isHiddenStopped, useHiddenStopped } from "@/lib/hidden-stopped";
 import { LEGACY_SQUAD_MEMBER_ID_PREFIXES, SQUAD_MEMBER_ID_PREFIX, createSquadMemberId, normalizeSquadMemberId, rememberRemovedAgent, removedIdSet, memberIdFromRoute, mergeSeedAgents } from "@/lib/member-roster";
-import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, SQUAD_UNREACHABLE_TOOLS, builtInPoliciesForRank, managedToolPolicies } from "@/lib/permission-policy";
+import { BUILT_IN_TOOL_POLICY_GROUPS, DEFAULT_BUILT_IN_TOOL_POLICIES, MERGE_BLOCKED_TOOLS, SQUAD_UNREACHABLE_TOOLS, builtInPoliciesForRank, managedToolPolicies, withTeamManagement } from "@/lib/permission-policy";
 import { looksLikeCredential } from "@/lib/secret-scan";
 import { suggestionsFor } from "@/lib/member-suggestions";
 import { introductionFor } from "@/lib/member-introduction";
@@ -9220,7 +9220,8 @@ function App() {
       skillSource: draft.skillSource || AUTOHAND_SKILLS_REGISTRY_URL,
       launch: { mode: "prompt", policy: "yes", model: "", dryRun: false },
       // An imported member starts where it can only ask (ADR-0106).
-      permissions: options.ladderLevel ? normalizePermissionState({ ...createDefaultPermissionState(), ...permissionPresetForAutonomyLadder(options.ladderLevel) }) : createDefaultPermissionState(),
+      // A Chief of Staff starts with Manage the team on (ADR-0265); it can be turned off.
+      permissions: ((base) => draft.employeeType === "chief-of-staff" ? normalizePermissionState(withTeamManagement(base, true)) : base)(options.ladderLevel ? normalizePermissionState({ ...createDefaultPermissionState(), ...permissionPresetForAutonomyLadder(options.ladderLevel) }) : createDefaultPermissionState()),
       modelAssignment: { mode: "inherit" },
       stats: { activeDays: 0, automations: 0, tasks: 0, projects: projects.length },
       memory: ["Created from Autohand Squad.", `Autohand Skills Source: ${AUTOHAND_SKILLS_REGISTRY_URL}`],
@@ -23703,9 +23704,10 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
     <div className="min-h-screen bg-background">
       <PageTitle title={localizedSectionLabel("permissions", copy)} />
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
-        {/* The quick switches first (ADR-0265): manage the team and email. */}
+        {/* The quick switches first (ADR-0265): manage the team, and email for
+            accounts allowed it (the row hides itself otherwise). */}
         <section aria-labelledby="member-team-email-heading">
-          <h2 id="member-team-email-heading" className="mb-1 text-base font-semibold">Team and email</h2>
+          <h2 id="member-team-email-heading" className="mb-1 text-base font-semibold">Team</h2>
           <MemberQuickSettings agent={agent} api={api} updateAgent={updateAgent} navigate={navigate} sections={["team", "email"]} showMoreLink={false} />
         </section>
         <ComputerUsePermissions key={agent.id} member={agent} api={api} />

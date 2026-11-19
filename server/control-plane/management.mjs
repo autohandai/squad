@@ -38,7 +38,7 @@ export const MANAGEMENT_TOOLS = [
   tool('give_feedback', 'Send Autohand feedback about Squad (something confusing, missing or slow). Same path and limits as report_bug. Tell the person you sent it.', feedbackFields, ['summary']),
   tool('create_member', 'Create a real saved Squad member in the selected owner. Limits: name 60, role 80, description 600, instructions 1200 (longer instructions are split into profile memories automatically), personality 600, each memory 500, at most 100 memories. Selects a ready default engine and saves up to four connected engine fallbacks with their default models and reasoning; an explicit engine is preserved. A stable request_id makes retries idempotent. Saves profile, catalog skill selections and initial profile memories without launching work, granting broad permissions or enabling routines. Workspace is optional; no folder is created implicitly.', { request_id: text(128), ...profileFields, skills: skillIds, memories: memoryTexts, workspace: text(1000), engine: text(200) }, ['request_id', 'name', 'role']),
   tool('get_member_email', 'Read whether this Squad account may give members email addresses (only accounts on allowed domains, autohand.ai today) and the member\'s address if it has one. Read-only.', { member_id: id() }, ['member_id'], true),
-  tool('register_member_email', 'Give a member its own email address on code.autohandai.com. Mail sent there starts the member\'s "When an email arrives" automation and its summary lands in the person\'s direct messages. Only call after the person said yes to the offer from create_member (email_offer) or asked for it. Refused for accounts outside the allowed domains. local_part is optional (defaults to the member\'s name, e.g. thiago@code.autohandai.com).', { member_id: id(), local_part: { type: 'string', minLength: 2, maxLength: 30, pattern: '^[a-z0-9][a-z0-9.-]*[a-z0-9]$' } }, ['member_id']),
+  tool('register_member_email', 'Change a member\'s email address on code.autohandai.com (the part before the @), or give it one if it has none. Accounts on allowed domains (autohand.ai today) give every member an address from its name automatically; use this when the person asks for a different one. Refused for accounts outside the allowed domains.', { member_id: id(), local_part: { type: 'string', minLength: 2, maxLength: 30, pattern: '^[a-z0-9][a-z0-9.-]*[a-z0-9]$' } }, ['member_id']),
   tool('remove_member_email', 'Remove a member\'s email address. Mail to it is refused from then on; the address is not given to anyone else. Requires confirm_remove:true.', { member_id: id(), confirm_remove: { type: 'boolean', enum: [true] } }, ['member_id', 'confirm_remove']),
   tool('get_member_profile', 'Read a member\'s saved name, personality, operating instructions, skills, folders and abilities, with its revision and available ability IDs. Operator access.', { member_id: id() }, ['member_id'], true),
   tool('get_member_computer_use', 'Read an existing member\'s saved Computer Use scope and OS readiness. Read-only; does not grant access or show OS prompts. Enabling requires explicit native confirmation in Squad.', { member_id: id() }, ['member_id'], true),
@@ -94,16 +94,19 @@ export function createManagementTools(bridge, legacy) {
   }
   const routineBody = args => Object.fromEntries(Object.entries(withWhen(args)).filter(([key]) => !['member_id', 'routine_id', 'max_run_minutes', 'when'].includes(key)).concat(args.max_run_minutes !== undefined ? [['maxRunMinutes', args.max_run_minutes]] : []));
 
-  // After naming a member, an account allowed agent email gets a suggestion
-  // to offer (ADR-0262). Squad API checks the domain; any failure means no offer.
-  async function emailOffer(created) {
+  // A new member of an account allowed agent email (autohand.ai) gets an
+  // address from its name at once (ADR-0262 revised). Squad API checks the
+  // domain; any failure means no address, and creation still succeeds.
+  async function emailFor(created) {
     const memberId = created?.id || created?.member?.id;
     const name = created?.name || created?.member?.name;
     if (!memberId || !name || created?.created === false) return null;
     try {
-      const { offer } = await bridge.get(`/api/mail/offer?${new URLSearchParams({ memberId, name })}`);
-      if (!offer?.address) return null;
-      return { address: offer.address, local_part: offer.localPart, ask: `Before moving on, ask the person in one warm, short line whether ${name} should get its own inbox at ${offer.address} (emails there land in ${name}'s chat as a summary). If they say yes, call register_member_email; if no, drop it.` };
+      const status = await bridge.get(`/api/mail/members/${encodeURIComponent(memberId)}`);
+      if (!status?.allowed) return null;
+      const saved = status.mailbox ? { mailbox: status.mailbox } : await bridge.post(`/api/mail/members/${encodeURIComponent(memberId)}`, { memberName: name });
+      const address = saved.mailbox?.address || saved.address;
+      return address ? { address, tell_the_person: `Mention in one line that ${name} has its own inbox at ${address}; it can be changed in its Permissions.` } : null;
     } catch { return null; }
   }
 
@@ -117,8 +120,8 @@ export function createManagementTools(bridge, legacy) {
         ? await bridge.post('/api/control-plane/members', { ...args, instructions: fit.instructions, ...(fit.blocks.length ? { memories: memoriesWith(fit.blocks, args.memories || []) } : {}) })
         : await bridge.post('/api/control-plane/members', args);
       const result = fit?.split ? { ...created, instructionsSplit: fit.split } : created;
-      const offer = await emailOffer(created);
-      return offer ? { ...result, email_offer: offer } : result;
+      const email = await emailFor(created);
+      return email ? { ...result, email } : result;
     },
     async get_member_email({ member_id }) {
       await profile(member_id);
@@ -127,8 +130,12 @@ export function createManagementTools(bridge, legacy) {
     },
     async register_member_email({ member_id, local_part }) {
       const current = await profile(member_id);
-      const created = await bridge.post(`/api/mail/members/${encodeURIComponent(member_id)}`, { memberName: current.name || member_id, ...(local_part ? { localPart: local_part } : {}) });
-      return { member_id, address: created.address, tell_the_person: `Done: ${current.name || 'the member'} now has ${created.address}. Email sent there arrives in its chat as a short summary; the "When an email arrives" automation can be paused or edited in Automations.` };
+      const status = await bridge.get(`/api/mail/members/${encodeURIComponent(member_id)}`);
+      const saved = status.mailbox && local_part
+        ? await bridge.patch(`/api/mail/members/${encodeURIComponent(member_id)}`, { localPart: local_part })
+        : await bridge.post(`/api/mail/members/${encodeURIComponent(member_id)}`, { memberName: current.name || member_id, ...(local_part ? { localPart: local_part } : {}) });
+      const address = saved.mailbox?.address || saved.address;
+      return { member_id, address, tell_the_person: `${current.name || 'The member'}’s address is ${address}. Email sent there arrives in its chat as a short summary.` };
     },
     async remove_member_email({ member_id }) {
       await profile(member_id);

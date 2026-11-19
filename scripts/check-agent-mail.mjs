@@ -20,8 +20,11 @@ function fakeApi({ allowed = true } = {}) {
     if (pathname === "/v1/mailboxes/suggest") { const local = searchParams.get("name").toLowerCase(); return json({ localPart: local, address: `${local}@code.autohandai.com` }); }
     if (pathname === "/v1/mailboxes" && method === "POST") {
       const local = body.localPart || body.memberName.toLowerCase();
+      const held = state.mailboxes.find(item => item.memberId === body.memberId);
+      if (held) return json({ mailbox: held, created: false });
+      if (state.taken?.includes(local)) return json({ code: "mail_address_taken", message: "That address belongs to someone else. Choose another." }, 409);
       const mailbox = { address: `${local}@code.autohandai.com`, localPart: local, memberId: body.memberId, memberName: body.memberName };
-      state.mailboxes.push(mailbox); return json(mailbox, 201);
+      state.mailboxes.push(mailbox); return json({ mailbox, created: true }, 201);
     }
     if (pathname.startsWith("/v1/mailboxes/") && method === "DELETE") { state.mailboxes = state.mailboxes.filter(item => item.localPart !== decodeURIComponent(pathname.split("/")[3])); return json({}); }
     if (pathname === "/v1/mail/pending") return json({ messages: state.pending.filter(item => !state.delivered.includes(item.id)) });
@@ -64,6 +67,26 @@ const ctx = { mobileRelayIdentity: () => ({ token: "identity-fixture" }), emit: 
     await mail.remove("m-thiago");
     assert.equal((await mail.forMember("m-thiago")).mailbox, null, "removing drops the address");
   } finally { mail.stop(); }
+}
+
+{
+  // Automatic addresses and changing one (ADR-0262 revised).
+  const api = fakeApi();
+  api.state.taken = ["taken"];
+  const roster = [{ id: "m-ana", name: "Ana" }, { id: "m-leo", name: "Leo" }];
+  const mail = createAgentMail(ctx, { fetchImpl: api.fetchImpl, baseUrl: "https://squad.example.test", deliver: async () => ({}), members: async () => roster });
+  try {
+    assert.equal(await mail.ensureAll(), 2, "every member without an address gets one");
+    assert.deepEqual(api.state.mailboxes.map(item => item.address).sort(), ["ana@code.autohandai.com", "leo@code.autohandai.com"]);
+    assert.equal(await mail.ensureAll(), 0, "nothing is assigned twice");
+    await mail.rename("m-ana", "ana.growth");
+    assert.equal((await mail.forMember("m-ana")).mailbox.address, "ana.growth@code.autohandai.com", "the person can change the name before the @");
+    await assert.rejects(mail.rename("m-leo", "taken"), error => error.code === "mail_address_taken");
+    assert.equal((await mail.forMember("m-leo")).mailbox.address, "leo@code.autohandai.com", "a refused change keeps the old address");
+    await assert.rejects(mail.rename("m-leo", "-bad"), error => error.code === "mail_address_invalid");
+  } finally { mail.stop(); }
+  const outside = createAgentMail(ctx, { fetchImpl: fakeApi({ allowed: false }).fetchImpl, baseUrl: "https://squad.example.test", deliver: async () => ({}), members: async () => roster });
+  assert.equal(await outside.ensureAll(), 0, "an account outside the allowed domains gets no addresses");
 }
 
 {

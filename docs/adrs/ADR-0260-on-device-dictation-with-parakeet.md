@@ -86,3 +86,23 @@ as "Please summarize the open pool requests and remind me at 9.".
   pipeline fault.
 - This exercises `transcribe` on a file. The microphone prompt and `listen`
   still need a person at the Mac.
+
+## Fixed 20 Nov 2026: Stop said "Dictation is not listening."
+
+Reported from the signed app. The bridge itself was fine: on this Mac,
+`POST /api/dictation/start` then `/stop` returned text. The cause was in
+`VoiceInputButton`. The effect meant to cancel a recording when the
+composer goes away was declared with `[support, state]` as dependencies, so
+React ran its cleanup on every state change. Moving from "starting" to
+"listening" therefore cancelled the recording that had just started, and the
+next press of Stop found no session.
+
+The cleanup now runs only on unmount, and reads the state through refs.
+
+`scripts/check-dictation-browser.mjs` (new) drives Dictate → Stop dictation
+against a real bridge with a stand-in helper and expects the words in the
+composer. It fails on the old button ("the mic is listening timed out") and
+passes on the fix. Writing it also showed a separate race: a click before
+the page has asked whether on-device voice exists uses the browser's own
+speech service. The check waits for that answer; a person clicking in the
+first moments after opening a chat can still hit it.

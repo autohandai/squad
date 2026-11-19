@@ -103,3 +103,13 @@ Igor, 20 Nov 2026, with screenshots of Slack and Codync:
   page. An entry beyond it is reached through All connectors.
 - Notifications per member (Codync's first switch) was not added. Squad's
   notification settings are per channel and per Squad.
+
+## Amended 20 Nov 2026
+
+- Chief of Staff starts with **Manage the team on**, both from first run
+  (`chiefOfStaffMember`) and when made from the Chief of Staff role. The
+  person can turn it off ("a chief of staff comes with this option on by
+  default configurable").
+- The Email row follows ADR-0262 revised: shown only to autohand.ai
+  accounts, with the address already assigned and the name before the @
+  editable. The Permissions page heading is "Team".

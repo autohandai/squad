@@ -18,7 +18,11 @@ const fail = (message, status = 400, code = "") => Object.assign(new Error(messa
  * is an automation ("When an email arrives at …") with run history, a pause
  * switch and the reply in the member's direct messages.
  */
-export function createAgentMail(ctx, { fetchImpl = fetch, baseUrl = squadApiUrl(), now = () => Date.now(), deliver } = {}) {
+/**
+ * `members()` lists the Squad's current members ({ id, name }); every one
+ * without an address gets one from its name automatically (ADR-0262 revised).
+ */
+export function createAgentMail(ctx, { fetchImpl = fetch, baseUrl = squadApiUrl(), now = () => Date.now(), deliver, members = async () => [] } = {}) {
   const publicApi = createSquadApi({ baseUrl, fetchImpl });
   let session = null;
   let timer = null;
@@ -84,6 +88,54 @@ export function createAgentMail(ctx, { fetchImpl = fetch, baseUrl = squadApiUrl(
     return created;
   }
 
+  /**
+   * A new address for a member, chosen by the person (the part before the
+   * @). The old one is given back first, because a member holds one address;
+   * if the new one is refused, the old one is taken back, so the member is
+   * never left without one.
+   */
+  async function rename(memberId, localPart) {
+    const wanted = String(localPart || "").trim().toLowerCase().replace(/@.*$/, "");
+    if (!/^[a-z0-9][a-z0-9.-]{0,28}[a-z0-9]$/.test(wanted) || wanted.includes("..")) throw fail("Use 2–30 letters, numbers, dots or dashes.", 400, "mail_address_invalid");
+    const { mailbox } = await forMember(memberId);
+    if (!mailbox) throw fail("This member has no email address yet.", 404, "mailbox_not_found");
+    if (mailbox.localPart === wanted) return { mailbox, created: false };
+    await request(`/v1/mailboxes/${encodeURIComponent(mailbox.localPart)}`, { method: "DELETE" });
+    try {
+      const created = await request("/v1/mailboxes", { method: "POST", body: { memberId, memberName: mailbox.memberName || memberId, localPart: wanted } });
+      ctx.emit?.("mail.changed", { memberId });
+      return created;
+    } catch (error) {
+      await request("/v1/mailboxes", { method: "POST", body: { memberId, memberName: mailbox.memberName || memberId, localPart: mailbox.localPart } }).catch(() => {});
+      throw error;
+    }
+  }
+
+  /** Gives every member without an address one from its name. Returns how many were made. */
+  let ensuring = null;
+  async function ensureAll(current = null) {
+    if (ensuring) return ensuring;
+    ensuring = (async () => {
+      const state = current || await status().catch(() => null);
+      if (!state?.allowed) return 0;
+      const held = new Set(state.mailboxes.map(item => item.memberId));
+      let made = 0;
+      for (const member of await members().catch(() => [])) {
+        if (!member?.id || !member?.name || held.has(member.id)) continue;
+        try {
+          await request("/v1/mailboxes", { method: "POST", body: { memberId: member.id, memberName: member.name } });
+          made += 1;
+        } catch (error) {
+          ctx.logEvent?.(ctx.SEVERITY?.WARN, `no address for member ${member.id}: ${error?.message || error}`, { "event.name": "mail.assign.failed", "autohand.member.id": member.id });
+          if (error.code === "mail_limit") break;
+        }
+      }
+      if (made) ctx.emit?.("mail.changed", {});
+      return made;
+    })().finally(() => { ensuring = null; });
+    return ensuring;
+  }
+
   async function remove(memberId) {
     const { mailbox } = await forMember(memberId);
     if (!mailbox) throw fail("This member has no email address.", 404, "mailbox_not_found");
@@ -96,8 +148,10 @@ export function createAgentMail(ctx, { fetchImpl = fetch, baseUrl = squadApiUrl(
   async function poll() {
     if (polling) return polling;
     polling = (async () => {
-      const current = await status().catch(() => null);
-      if (!current?.allowed || !current.mailboxes.length) return 0;
+      let current = await status().catch(() => null);
+      if (!current?.allowed) return 0;
+      if (await ensureAll(current)) current = await status();
+      if (!current.mailboxes.length) return 0;
       const pending = await request("/v1/mail/pending");
       let started = 0;
       for (const message of pending.messages || []) {
@@ -129,5 +183,5 @@ export function createAgentMail(ctx, { fetchImpl = fetch, baseUrl = squadApiUrl(
 
   function stop() { if (timer) clearInterval(timer); timer = null; }
 
-  return { status, forMember, offer, register, remove, poll, schedule, stop, get lastStatus() { return lastStatus; } };
+  return { status, forMember, offer, register, rename, ensureAll, remove, poll, schedule, stop, get lastStatus() { return lastStatus; } };
 }

@@ -18,6 +18,7 @@ import { managesTeam, withTeamManagement } from "@/lib/permission-policy";
  */
 export function MemberQuickSettings({ agent, api, updateAgent, navigate, sections = ["team", "email", "connectors", "computer"], showMoreLink = true }) {
   const [mail, setMail] = useState({ loaded: false, allowed: false, signedIn: false, address: "", domain: "" });
+  const [localPart, setLocalPart] = useState("");
   const [mailBusy, setMailBusy] = useState(false);
   const [mailError, setMailError] = useState("");
   const [connectors, setConnectors] = useState(null);
@@ -27,8 +28,16 @@ export function MemberQuickSettings({ agent, api, updateAgent, navigate, section
 
   const loadMail = useCallback(async () => {
     try {
-      const data = await api(`/api/mail/members/${encodeURIComponent(agent.id)}`);
-      setMail({ loaded: true, allowed: Boolean(data?.allowed), signedIn: Boolean(data?.signedIn), address: data?.mailbox?.address || "", domain: data?.domain || "" });
+      let data = await api(`/api/mail/members/${encodeURIComponent(agent.id)}`);
+      // Accounts allowed agent email give every member an address from its
+      // name automatically (ADR-0262 revised); a member seen without one gets it now.
+      if (data?.allowed && !data.mailbox) {
+        await api("/api/mail/assign", { method: "POST" }).catch(() => {});
+        data = await api(`/api/mail/members/${encodeURIComponent(agent.id)}`);
+      }
+      const address = data?.mailbox?.address || "";
+      setMail({ loaded: true, allowed: Boolean(data?.allowed), signedIn: Boolean(data?.signedIn), address, domain: data?.domain || "" });
+      setLocalPart(address.split("@")[0] || "");
     } catch { setMail((current) => ({ ...current, loaded: true })); }
   }, [api, agent.id]);
 
@@ -43,10 +52,10 @@ export function MemberQuickSettings({ agent, api, updateAgent, navigate, section
     updateAgent?.(agent.id, { permissions: withTeamManagement(agent.permissions, on), updatedAt: new Date().toISOString() });
   }
 
-  async function registerEmail() {
+  async function saveAddress() {
     setMailBusy(true); setMailError("");
     try {
-      await api(`/api/mail/members/${encodeURIComponent(agent.id)}`, { method: "POST", body: JSON.stringify({ memberName: agent.name }) });
+      await api(`/api/mail/members/${encodeURIComponent(agent.id)}`, { method: "PATCH", body: JSON.stringify({ localPart }) });
       await loadMail();
     } catch (error) { setMailError(error?.message || String(error)); }
     finally { setMailBusy(false); }
@@ -67,27 +76,30 @@ export function MemberQuickSettings({ agent, api, updateAgent, navigate, section
         </Row>
       ) : null}
 
-      {sections.includes("email") ? (
-        <Row
-          title="Email"
-          detail={mail.address
-            ? `Mail sent here arrives in ${agent.name}’s chat as a summary. Pause or edit it in Automations.`
-            : mail.allowed
-              ? `Give ${agent.name} its own inbox, so people and services can email it directly.`
-              : !mail.loaded ? "Checking…"
-                : mail.signedIn ? "Members get an email address on accounts signed in with @autohand.ai."
-                  : "Sign in to Autohand to give members an email address."}
-        >
-          {mail.address ? (
-            <Button type="button" variant="ghost" size="sm" onClick={copyAddress} aria-label={`Copy ${mail.address}`}>
-              <span className="max-w-48 truncate font-mono text-xs">{copied ? "Copied" : mail.address}</span><Copy data-icon="inline-end" />
-            </Button>
-          ) : mail.allowed ? (
-            <Button type="button" variant="outline" size="sm" disabled={mailBusy} onClick={registerEmail} data-testid="member-email-register">
-              {mailBusy ? "Creating…" : "Create address"}
-            </Button>
-          ) : null}
-          {mailError ? <p className="mt-1 text-xs text-destructive" role="alert">{mailError}</p> : null}
+      {/* Only accounts allowed agent email (autohand.ai) ever see this row. */}
+      {sections.includes("email") && mail.allowed && mail.address ? (
+        <Row title="Email" detail={`Mail sent here arrives in ${agent.name}’s chat as a summary. Change the name before the @ if you like.`}>
+          <div className="flex items-center gap-1">
+            <input
+              aria-label={`${agent.name}’s email name`}
+              data-testid="member-email-local"
+              className="w-36 rounded-md border border-input bg-transparent px-2 py-1 text-right font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={localPart}
+              maxLength={30}
+              disabled={mailBusy}
+              onChange={(event) => setLocalPart(event.target.value.toLowerCase().replace(/[^a-z0-9.-]/g, ""))}
+              onKeyDown={(event) => { if (event.key === "Enter" && localPart !== mail.address.split("@")[0]) void saveAddress(); }}
+            />
+            <span className="font-mono text-xs text-muted-foreground">@{mail.domain || mail.address.split("@")[1]}</span>
+          </div>
+          <div className="mt-1 flex gap-1">
+            {localPart && localPart !== mail.address.split("@")[0] ? (
+              <Button type="button" size="sm" variant="outline" disabled={mailBusy || localPart.length < 2} onClick={saveAddress} data-testid="member-email-save">{mailBusy ? "Saving…" : "Save"}</Button>
+            ) : (
+              <Button type="button" variant="ghost" size="sm" onClick={copyAddress} aria-label={`Copy ${mail.address}`}>{copied ? "Copied" : "Copy"}<Copy data-icon="inline-end" /></Button>
+            )}
+          </div>
+          {mailError ? <p className="mt-1 max-w-56 text-right text-xs text-destructive" role="alert">{mailError}</p> : null}
         </Row>
       ) : null}
 

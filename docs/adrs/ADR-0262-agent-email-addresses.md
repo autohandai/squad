@@ -104,3 +104,38 @@ marketplace or letting the service deploy without it.
   New member form, only through the MCP offer.
 - An end-to-end delivery with a real inbound email has not been observed
   yet; it needs an @autohand.ai account to register a member's address.
+
+## Revised 20 Nov 2026: automatic, editable, invisible to other accounts
+
+Igor, on the Email row ADR-0265 had added: "that's not what i asked … set an
+email for the agent based on their name automatically they get one assigned
+but i can edit later their email via @code.autohandai.com and this feature
+of email is only available if you're connected in an account from
+@autohand.ai so, no needed to show this for avg joe."
+
+The first design, an offer that Chief of Staff makes in chat and the person
+accepts, was the wrong shape. The person wanted the address to simply exist.
+
+- **Automatic.** For an allowed account the mail loop (every minute, and
+  `POST /api/mail/assign`) gives every member without an address one from
+  its name (`ensureAll`). `create_member` assigns it at creation and returns
+  `email.address` with a one-line note to mention, instead of `email_offer`.
+- **Editable.** `PATCH /api/mail/members/:id { localPart }` (`rename`):
+  - gives the old address back, then takes the new one;
+  - if the new one is refused (taken, invalid), retakes the old one, which
+    Squad API allows because an account may reuse its own addresses;
+  - is exposed as `register_member_email` with `local_part`.
+- **Invisible otherwise.** The Email row in a member's quick settings
+  appears only when the account is allowed and the member has an address.
+  For anyone else nothing about email is shown, not even an explanation.
+- No Squad API change or deploy was needed.
+
+Checked by `check-agent-mail`:
+- every member gets one address, never twice;
+- a rename succeeds;
+- a refused rename keeps the old address;
+- an invalid name is refused;
+- an account outside the domain gets none.
+
+`check-member-controls-browser` asserts that a non-autohand.ai account sees
+no Email row.

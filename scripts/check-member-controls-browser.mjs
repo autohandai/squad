@@ -46,7 +46,8 @@ try {
   await browser.navigate(`${bridge.origin}/conversations/new?member=${eva.id}&panel=permissions`);
   await until(() => browser.evaluate("!!document.querySelector('[data-testid=member-quick-settings]')"), 'Permissions tab', 30000);
   const quick = await browser.evaluate("document.querySelector('[data-testid=member-quick-settings]').innerText");
-  for (const words of ['Manage the team', 'Email', 'Connectors', 'Computer Use']) assert.ok(quick.includes(words), `quick settings show ${words}`);
+  for (const words of ['Manage the team', 'Connectors', 'Computer Use']) assert.ok(quick.includes(words), `quick settings show ${words}`);
+  assert.ok(!quick.includes('Email'), 'an account outside autohand.ai never sees the email row');
   await shoot('execution-permissions');
   const saved = async () => (await bridge.api('/api/channels')).data.agentChannelAccess[eva.id]?.agent?.permissions?.builtInPolicies || {};
   await browser.evaluate("document.querySelector('[data-testid=manage-team-switch]').click()");
@@ -57,7 +58,7 @@ try {
 
   // Permissions page leads with Team and email.
   await browser.navigate(`${bridge.origin}/squad-members/${eva.id}/permissions`);
-  await until(() => browser.evaluate("document.body.innerText.includes('Team and email')"), 'Team and email on the Permissions page', 30000);
+  await until(() => browser.evaluate("document.body.innerText.includes('Manage the team')"), 'Team on the Permissions page', 30000);
   await shoot('permissions-page');
 
   // Connectors: what the member can use, then connectors to connect.
@@ -70,7 +71,7 @@ try {
   await until(() => browser.evaluate("!!document.querySelector('[role=dialog]')"), 'the install dialog opens', 20000);
   await shoot('connect-dialog');
   assert.deepEqual(browser.errors, []);
-  console.log('PASS member controls: To lists members with presence and channels and opens a channel; Permissions tab turns Manage the team on and off in the bridge; Team and email lead the Permissions page; member Connectors offer connectors and Connect opens the install dialog.');
+  console.log('PASS member controls: To lists members with presence and channels and opens a channel; Permissions tab turns Manage the team on and off in the bridge; Team leads the Permissions page, no email row outside autohand.ai; member Connectors offer connectors and Connect opens the install dialog.');
 } finally {
   await browser?.close();
   await bridge.close();

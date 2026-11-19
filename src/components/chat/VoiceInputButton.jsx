@@ -55,7 +55,14 @@ export function VoiceInputButton({ value = "", onValueChange, disabled = false, 
   }, [notice]);
 
   // Leaving the composer mid-recording discards it rather than leaving the mic on.
-  useEffect(() => () => { if (support === "autohand" && state !== "idle") void cancelVoice().catch(() => {}); }, [support, state]);
+  // Only on unmount: with `state` as a dependency this cleanup ran on every
+  // state change, so "starting" → "listening" cancelled the recording it had
+  // just started and Stop answered "Dictation is not listening." (20 Nov 2026).
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const supportRef = useRef(support);
+  supportRef.current = support;
+  useEffect(() => () => { if (supportRef.current === "autohand" && stateRef.current !== "idle") void cancelVoice().catch(() => {}); }, []);
 
   if (support === "none") return null;
 
