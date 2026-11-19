@@ -139,3 +139,27 @@ Checked by `check-agent-mail`:
 
 `check-member-controls-browser` asserts that a non-autohand.ai account sees
 no Email row.
+
+## End to end, 20 Nov 2026
+
+For testing, `MAIL_ACCOUNT_EMAILS` lets single accounts in by exact address
+outside `MAIL_ACCOUNT_DOMAINS`. It holds only `igorcosta@gmail.com`, at the
+owner's request ("give a waiver on igorcosta@gmail.com me so i can test").
+Squad API version e73f0959 carries it. A test in `mailboxes.test.ts` covers
+it: the listed account in any case, not the rest of its domain, and nobody
+without the list.
+
+Then, on the owner's Mac with the installed app:
+
+1. `POST /api/mail/assign` returned `made: 2`: Chief of Staff →
+   `chief.of.staff@code.autohandai.com`, Tatiana →
+   `tatiana@code.autohandai.com`.
+2. `cf email-sending send` from `squad-test@code.autohandai.com` to Tatiana
+   was queued.
+3. The Mac collected it. "Emails to tatiana@code.autohandai.com" ran once,
+   status `completed`, with the reply "Got it — this is a test email, not a
+   real request. **Who:** Squad email test … **What:** An end-to-end check
+   that my inbox works."
+
+That replaces "not observed end to end" in the consequences above. Remove
+the exception when testing is done.
