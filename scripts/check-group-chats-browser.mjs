@@ -20,6 +20,14 @@ try {
   ` });
   const members = ['Eva', 'Noah'].map(name => ({ id: 'group-' + name.toLowerCase(), name, role: 'Reviewer', status: 'online', workspace: process.cwd(), projects: [{ path: process.cwd() }], harness: { id: 'codex' }, permissions: {} }));
   await seedOwnedBrowserFixture(bridge, browser, { members });
+  // New message's To field (ADR-0265): type a name, choose it from the list.
+  const options = "[...document.querySelectorAll('[role=option]')]";
+  const pick = async (name) => {
+    await browser.fill('input[aria-label="To"]', name);
+    const match = `${options}.find(option => option.textContent.trim().startsWith(${JSON.stringify(name)}))`;
+    await until(() => browser.evaluate(`!!${match}`), `${name} offered in To`);
+    await browser.evaluate(`${match}.click()`);
+  };
   await browser.navigate(bridge.origin + '/squad');
   // The names can render before the sidebar mounts; wait for the DM plus too.
   await until(() => browser.evaluate("document.body.textContent.includes('Eva') && document.body.textContent.includes('Noah') && !!document.querySelector('button[aria-label=\"New message\"],button[aria-label=\"Add a member or team\"]')"), 'owned member directory and DM plus', 30000);
@@ -27,8 +35,9 @@ try {
   await until(() => browser.evaluate("!!document.querySelector('[data-testid=conversation-composer]')"), 'DM plus opens the inline recipient composer');
   assert.equal(await browser.evaluate("!!document.querySelector('[role=dialog]')"), false);
   assert.equal(Object.keys((await bridge.api('/api/channels')).data.agentChannelAccess).length, 2, 'opening the composer does not create a placeholder member');
-  await browser.click('Select Eva');
-  await browser.click('Select Noah');
+  await pick('Eva');
+  await pick('Noah');
+  assert.equal(await browser.evaluate("document.querySelectorAll('[data-testid=recipient-chip]').length"), 2, 'both recipients are chips in To');
   await browser.fill('#message-group-name', 'Release reviewers');
   await browser.screenshot('.codex-artifacts/group-chats/recipients-desktop.png');
   await browser.click('Create group chat');
@@ -78,15 +87,16 @@ try {
   await until(() => browser.evaluate("!!document.querySelector('button[aria-label=\"New message\"]')"), 'message action after conversion');
   await browser.click('New message');
   await until(() => browser.evaluate("!!document.querySelector('[data-testid=conversation-composer]')"), 'second recipient composer');
-  await browser.fill('input[aria-label="Search recipients"]', 'Noah');
-  assert.equal(await browser.evaluate("document.querySelector('[aria-label=Recipients]').innerText.includes('Eva')"), false, 'search narrows the recipient list');
-  await browser.click('Select Noah');
+  await browser.fill('input[aria-label="To"]', 'Noah');
+  await until(() => browser.evaluate(`${options}.length > 0`), 'To offers matches');
+  assert.equal(await browser.evaluate(`${options}.some(option => option.textContent.includes('Eva'))`), false, 'typing narrows the list');
+  await pick('Noah');
   await browser.click('Open chat');
   await until(() => browser.evaluate("new URLSearchParams(location.search).get('member') === 'group-noah'"), 'existing direct conversation selected');
   assert.equal(Object.keys((await bridge.api('/api/channels')).data.agentChannelAccess).length, 2, 'opening an existing direct chat never creates another member');
   await browser.navigate(bridge.origin + '/messages/new');
   await until(() => browser.evaluate("!!document.querySelector('[data-testid=conversation-composer]')"), 'temporary group composer');
-  await browser.click('Select Eva'); await browser.click('Select Noah');
+  await pick('Eva'); await pick('Noah');
   await browser.fill('#message-group-name', 'Temporary group'); await browser.click('Create group chat');
   await until(() => browser.evaluate("location.pathname.startsWith('/channels/group-')"), 'temporary group created');
   const temporaryId = await browser.evaluate("decodeURIComponent(location.pathname.split('/').pop())");

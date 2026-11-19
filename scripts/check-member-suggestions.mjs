@@ -89,3 +89,22 @@ assert.equal(readableSkill(null), "");
 assert.equal(readableSkill({ id: "cost-review" }), "cost review", "an id works when there is no name");
 
 console.log("check-member-suggestions: ok");
+
+// --- what the member can do now leads (ADR-0265) ----------------------------
+{
+  const chief = { name: "Chief of Staff", role: "Chief of Staff", workspace: "/x/squad-test" };
+  const bare = suggestionsFor(chief, { day: 0 });
+  assert.match(bare[0], /Propose a team|connect/i, "a Chief of Staff with nothing around it offers to build the team or connect tools");
+  const busy = suggestionsFor(chief, { day: 0, connectors: [{ name: "Gmail" }], squad: ["Chief of Staff", "Tatiana", "Eva"],
+    recentWork: [{ title: "Ship the pricing page", status: "failed", memberName: "Tatiana" }, { title: "Weekly metrics", status: "completed", memberName: "Eva" }] });
+  assert.match(busy[0], /Ship the pricing page.*didn’t finish for Tatiana/, "failed work leads");
+  assert.ok(busy.some((ask) => /Weekly metrics/.test(ask)), "recent work is followed up");
+  assert.equal(new Set(busy).size, busy.length, "no repeats");
+  const withMail = suggestionsFor({ role: "Assistant" }, { day: 0, connectors: [{ name: "Gmail" }] });
+  assert.match(withMail[0], /unread email/, "a connector turns into something to ask for");
+  const monday = suggestionsFor(chief, { day: 1, connectors: [{ name: "Gmail" }, { name: "GitHub" }], squad: ["Tatiana", "Eva"] });
+  const tuesday = suggestionsFor(chief, { day: 2, connectors: [{ name: "Gmail" }, { name: "GitHub" }], squad: ["Tatiana", "Eva"] });
+  assert.notDeepEqual(monday, tuesday, "the list changes from day to day");
+  assert.ok(monday.join(" ").includes("Tatiana and Eva"), "names read as a sentence");
+  console.log("check-member-suggestions: context ok");
+}

@@ -1,3 +1,4 @@
+import { MemberQuickSettings } from "@/components/members/MemberQuickSettings";
 import { useEffect, useState } from "react";
 
 import { SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -50,6 +51,9 @@ export function ExecutionPanel({
   handoffRetryMode = "checkpoint",
   AgentAvatar,
   api,
+  // For the Permissions tab (ADR-0265).
+  updateAgent,
+  navigate,
   format = {},
   onCreateHandoff,
   onCancelHandoff,
@@ -72,6 +76,8 @@ export function ExecutionPanel({
     { id: "runs", label: copy.runs || "Runs" },
     { id: "tasks", label: copy.tasks || "Tasks" },
     { id: "automations", label: copy.automations || "Automations" },
+    // The member's quick settings (ADR-0265): manage the team, email, connectors.
+    ...(activeAgent && updateAgent ? [{ id: "permissions", label: copy.permissions || "Permissions" }] : []),
   ];
 
   function openTaskHandoff(task, handoff = null) {
@@ -139,6 +145,10 @@ export function ExecutionPanel({
                 silentEmpty={Boolean(workPlan)}
               />
             </>
+          ) : activeTab === "permissions" && activeAgent ? (
+            <div className="pt-4">
+              <MemberQuickSettings agent={activeAgent} api={api} updateAgent={updateAgent} navigate={navigate} />
+            </div>
           ) : activeTab === "automations" ? (
             <AutomationList
               automations={automations}

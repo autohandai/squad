@@ -17,6 +17,10 @@ list to the section for that version.
 
 ### Added
 
+- New message has a "To:" field like Slack's: type a name or #channel and pick from a list with faces and presence.
+- Each member has quick settings in the Execution panel's new Permissions tab, and at the top of their Permissions page: Manage the team (let them create members and change any member's setup), their email address, connectors and Computer Use.
+- A member's Connectors page lists the connectors Squad supports with Connect, which opens the install for that one.
+- "Try asking" suggestions now come from what the member can do: work that stopped, recent work to follow up (the whole squad's for Chief of Staff), and your connected mail, calendar, GitHub and others. They change from day to day.
 - Squad for iPhone can show an Inbox (decisions waiting on you, answered right there, and replies that stopped) and send Give feedback, Report a bug and automatic problem reports through Squad on your computer, labelled as from the phone.
 - Members can have their own email address, such as `thiago@code.autohandai.com`, for accounts signed in with an @autohand.ai email. When Chief of Staff creates a member it asks whether that member should get one. Email sent there arrives in the member's chat as a short summary, through a "When an email arrives" automation you can pause or edit in Automations. The address shows on the member's profile card.
 - In a chat with a member, type /delete or press ⌘⇧⌫ (Ctrl+Shift+Backspace on Windows and Linux) to remove them; Squad asks first.

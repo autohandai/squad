@@ -345,6 +345,15 @@ export function ConnectorsSettings({ api, className }) {
     for (const item of catalogue.items) { if (item.catalogId) map.set(item.catalogId, item); map.set(item.name, item); }
     return map;
   }, [catalogue.items]);
+  // `?install=<catalogId or name>`: a member's Connectors page sends people
+  // straight to one entry's install dialog (ADR-0265).
+  const wanted = useRef(typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("install") || "");
+  useEffect(() => {
+    if (!wanted.current || !catalogue.items.length) return;
+    const entry = byCatalogId.get(wanted.current);
+    wanted.current = "";
+    if (entry && !entry.installed) setInstalling(entry);
+  }, [catalogue.items, byCatalogId]);
   const entryFor = (connector) => byCatalogId.get(connector.catalogId) || byCatalogId.get(connector.registry?.name) || (connector.kind === "google" ? byCatalogId.get({ gmail: "gmail", drive: "google-drive", calendar: "google-calendar" }[connector.google?.product]) : null);
 
   async function run(id, action, operation) {

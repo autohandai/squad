@@ -530,3 +530,31 @@ export function managedToolPolicies(policies = {}, { connectors = [] } = {}) {
   }
   return rows;
 }
+
+// "Manage the team" (ADR-0265): one switch for the tools that create members
+// and change any member's setup, its own included. On sets them to allow;
+// off returns them to ask, the default. Folder overrides win over the
+// member's base rules, so the switch writes every one of them too.
+export const MANAGE_TEAM_TOOLS = Object.freeze([
+  "squad_create_member", "squad_get_member_profile", "squad_update_member_profile", "squad_set_member_workspace",
+  "squad_list_skills", "squad_set_member_skills", "squad_set_member_memories", "squad_get_member_email", "squad_register_member_email",
+]);
+
+function teamRules(policies = {}) {
+  return MANAGE_TEAM_TOOLS.map((tool) => policies?.[tool] ?? DEFAULT_BUILT_IN_TOOL_POLICIES[tool] ?? "ask");
+}
+
+/** True when every team tool is allowed in the base rules and in every folder override that sets them. */
+export function managesTeam(permissions = {}) {
+  const scopes = [permissions?.builtInPolicies, ...Object.values(permissions?.workspaceOverrides || {}).map((override) => override?.builtInPolicies).filter(Boolean)];
+  return teamRules(scopes[0]).every((mode) => mode === "allow") && scopes.slice(1).every((policies) => teamRules(policies).every((mode) => mode === "allow"));
+}
+
+/** The member's permissions with the team tools allowed (on) or back to ask (off), everywhere. */
+export function withTeamManagement(permissions = {}, on) {
+  const mode = on ? "allow" : "ask";
+  const set = (policies = {}) => ({ ...policies, ...Object.fromEntries(MANAGE_TEAM_TOOLS.map((tool) => [tool, mode])) });
+  const overrides = Object.fromEntries(Object.entries(permissions?.workspaceOverrides || {}).map(([key, override]) =>
+    [key, override?.builtInPolicies ? { ...override, builtInPolicies: set(override.builtInPolicies) } : override]));
+  return { ...permissions, builtInPolicies: set(permissions?.builtInPolicies), workspaceOverrides: overrides };
+}

@@ -215,6 +215,7 @@
     "check:workflow-recovery": "node scripts/check-workflow-recovery.mjs",
     "check:routines": "node scripts/check-routines.mjs",
     "check:routine-webhooks": "node scripts/check-routine-webhooks.mjs",
+    "check:member-controls:browser": "node scripts/check-member-controls-browser.mjs",
     "check:agent-mail": "node scripts/check-agent-mail.mjs && node scripts/check-email-routines.mjs",
     "check:automations:browser": "node scripts/check-automations-browser.mjs",
     "check:automation-replies": "node scripts/check-automation-replies.mjs",

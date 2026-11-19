@@ -392,6 +392,8 @@ import { PromptTextarea } from "@/components/chat/PromptTextarea";
 import { AttachmentButton, AttachmentList, useAttachments } from "@/components/chat/Attachments";
 import { HarnessModelSelect } from "@/components/members/HarnessModelSelect";
 import { MemberFallbacks } from "@/components/members/MemberFallbacks";
+import { MemberConnectors } from "@/components/members/MemberConnectors";
+import { MemberQuickSettings } from "@/components/members/MemberQuickSettings";
 import { useEngineInUse } from "@/components/members/useEngineInUse";
 import { PairPhoneDialog } from "@/components/shell/PairPhoneDialog";
 import { fallbackLabel, initialMemberExecution, normalizeModelRouting } from "@/lib/model-routing";
@@ -6789,7 +6791,7 @@ function App() {
   const requestedPanel = useMemo(() => {
     const params = new URLSearchParams(route.split("?")[1] || "");
     const panel = String(params.get("panel") || "");
-    if (!["runs", "tasks", "automations"].includes(panel)) return null;
+    if (!["runs", "tasks", "automations", "permissions"].includes(panel)) return null;
     return { tab: panel, runId: String(params.get("run") || "") };
   }, [route]);
   // The section list, ?section= links and the old #settings-<id> anchors all
@@ -10450,7 +10452,7 @@ function App() {
                 }
               />
             ) : routePath === "/messages/new" ? (
-              <ConversationComposer agents={agents} api={api} avatarStyle={avatarStyle} onOpenListing={openMarketplaceListing} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} onStart={startConversation} onCancel={() => navigate(squadDirectoryPath())} />
+              <ConversationComposer agents={agents} channels={channels.filter(channel => !isGroupChat(channel))} presenceFor={entryFor} onOpenChannel={(channel) => navigate(channelsPath(channel.id))} api={api} avatarStyle={avatarStyle} onOpenListing={openMarketplaceListing} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} onStart={startConversation} onCancel={() => navigate(squadDirectoryPath())} />
             ) : routePath === "/memory" ? (
               <Suspense fallback={<p className="px-8 py-8 text-sm text-muted-foreground">Opening memory…</p>}><MemoryPage api={api} navigate={navigate} onSettings={() => openSettings("memory")} /></Suspense>
             ) : isSquadDirectory ? (
@@ -14163,11 +14165,29 @@ function AgentAvatar({ agent, large = false, className }) {
 }
 
 
-function ConversationWelcome({ agent, copy, onPrompt, briefing = null }) {
-  // Built from this member's own role, skills and workspace. The same three
-  // frontend prompts used to be offered to everyone, so a data engineer was
-  // invited to check a component for responsive issues (ADR-0032).
-  const suggestions = useMemo(() => suggestionsFor(agent), [agent]);
+function ConversationWelcome({ agent, agents = [], copy, onPrompt, briefing = null }) {
+  // Built from this member's own role, skills and workspace (ADR-0032), and
+  // since ADR-0265 from what it can do now: its recent work (the whole
+  // squad's for Chief of Staff) and the connectors every member can use.
+  const [context, setContext] = useState({});
+  useEffect(() => {
+    let live = true;
+    const chief = /chief of staff/i.test(`${agent?.role || ""} ${agent?.name || ""}`);
+    Promise.all([
+      api("/api/connectors").then((data) => (data?.connectors || []).filter((item) => item.enabled && !item.managed && !item.builtin)).catch(() => []),
+      api("/api/runs").catch(() => []),
+    ]).then(([connectors, runs]) => {
+      if (!live) return;
+      const names = new Map((agents || []).map((member) => [member.id, member.name]));
+      const recentWork = (Array.isArray(runs) ? runs : [])
+        .filter((run) => (chief ? names.has(run.agentId) : run.agentId === agent?.id) && run.title && !run.automationDraft)
+        .slice(0, 6)
+        .map((run) => ({ title: run.title, status: run.status, memberName: names.get(run.agentId) || "" }));
+      setContext({ connectors, recentWork, squad: (agents || []).filter((member) => !member.archived).map((member) => member.name) });
+    });
+    return () => { live = false; };
+  }, [agent?.id, agents]);
+  const suggestions = useMemo(() => suggestionsFor(agent, context), [agent, context]);
   const roleLabel = localizedRole(agent, copy);
 
   const description = String(agent?.description || agent?.instructions || "").trim();
@@ -15689,7 +15709,7 @@ function Conversation({
                 </div>
               </>
             ) : (
-              <ConversationWelcome agent={agent} copy={copy} onPrompt={chooseSuggestion} briefing={briefing} />
+              <ConversationWelcome agent={agent} agents={agents} copy={copy} onPrompt={chooseSuggestion} briefing={briefing} />
             )}
           </div>
         </ScrollArea>
@@ -15959,6 +15979,8 @@ function Conversation({
             handoffRetryMode={handoffRetryMode}
             AgentAvatar={AgentAvatar}
             api={api}
+            updateAgent={updateAgent}
+            navigate={(path) => { setTaskPanelOpen(false); navigate(path); }}
             format={executionPanelFormat}
             onCreateHandoff={onCreateHandoff}
             onCancelHandoff={onCancelHandoff}
@@ -22902,6 +22924,18 @@ function SquadMemberSectionPage({
     connector: `${agent.name} has no connector tools of their own. Shared connectors are in Settings → Connectors.`,
   }[section] || "Nothing here yet.";
 
+  // Connectors list what the member can use and what to connect next (ADR-0265).
+  if (section === "connector") {
+    return (
+      <div className="min-h-screen bg-background">
+        <PageTitle title={sectionLabel} />
+        <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
+          <MemberConnectors agent={agent} api={api} navigate={navigate} ownTools={rows} />
+        </div>
+      </div>
+    );
+  }
+
   // A flat list, as the other member pages: this was a card with a second
   // title, its own Back to chat, a grid of boxed tiles, and a footer with
   // Open CLI and a primary Home.
@@ -23669,6 +23703,11 @@ function AgentPermissionsPage({ agent, runtime, workspaces = [], navigate, openT
     <div className="min-h-screen bg-background">
       <PageTitle title={localizedSectionLabel("permissions", copy)} />
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
+        {/* The quick switches first (ADR-0265): manage the team and email. */}
+        <section aria-labelledby="member-team-email-heading">
+          <h2 id="member-team-email-heading" className="mb-1 text-base font-semibold">Team and email</h2>
+          <MemberQuickSettings agent={agent} api={api} updateAgent={updateAgent} navigate={navigate} sections={["team", "email"]} showMoreLink={false} />
+        </section>
         <ComputerUsePermissions key={agent.id} member={agent} api={api} />
         {/* Flat, as the other member pages. This was a bordered card holding
             an icon tile, a 2xl "Agent permissions" title, three boxed count

@@ -159,6 +159,7 @@ jobs:
       - name: Check MCP member management in the app
         run: |
           node scripts/check-member-management-browser.mjs
+          node scripts/check-member-controls-browser.mjs
           node scripts/check-member-default-routing-browser.mjs
           bun run check:group-chats:browser
           bun run check:channel-lifecycle:browser

@@ -423,3 +423,8 @@
 - Composers end with the mic then the send button. Send is a filled circle: foreground with an up-arrow when ready, muted when empty, the stop square while a reply runs. No paper-plane icons (ADR-0261).
 
 - The word is Inbox everywhere a person reads it (window, sidebar, menus, menu bar, the page itself); "Needs you" is retired (ADR-0264). A feature that is not live says so in one quiet line wherever its content would appear, never an empty space.
+
+- Choosing who to message is a "To:" field with a live list (face, name, presence, role; channels as #name), never a checkbox list (ADR-0265).
+- A permission a person understands in one sentence gets one switch (Manage the team), with the underlying rules still visible on the full page. Quick settings are divider rows: title, one sentence, one control.
+- An empty capability page (connectors, skills) invites: say what the member can already use, then offer what it could use with one action each.
+- Suggestions lead with what the member can do now (stopped work, recent work, connected tools) before role templates, and change over time.
