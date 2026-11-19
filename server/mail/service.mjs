@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { createSquadApi, squadApiUrl } from "../squad-cloud/client.mjs";
 
 export const MAIL_POLL_MS = 60_000;
+export const NOT_ALLOWED_RECHECK_MS = 10 * 60_000;
 
 const fail = (message, status = 400, code = "") => Object.assign(new Error(message), { status, ...(code ? { code } : {}) });
 
@@ -28,6 +29,8 @@ export function createAgentMail(ctx, { fetchImpl = fetch, baseUrl = squadApiUrl(
   let timer = null;
   let polling = null;
   let lastStatus = null;
+  // An account outside agent email is asked again only every ten minutes.
+  let notAllowedUntil = 0;
 
   function identity() {
     let current;
@@ -149,8 +152,10 @@ export function createAgentMail(ctx, { fetchImpl = fetch, baseUrl = squadApiUrl(
   async function poll() {
     if (polling) return polling;
     polling = (async () => {
+      if (notAllowedUntil > now()) return 0;
       let current = await status().catch(() => null);
-      if (!current?.allowed) return 0;
+      if (!current?.allowed) { notAllowedUntil = now() + NOT_ALLOWED_RECHECK_MS; return 0; }
+      notAllowedUntil = 0;
       if (await ensureAll(current)) current = await status();
       if (!current.mailboxes.length) return 0;
       const pending = await request("/v1/mail/pending");

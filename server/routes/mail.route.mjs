@@ -18,9 +18,11 @@ export async function init(ctx) {
   const mail = serviceFor(ctx);
   // Start collecting only for an account that holds an address; a later
   // registration starts it too. Never blocks boot.
-  // Only an account allowed agent email (autohand.ai) starts the minute loop,
-  // which also gives every member without an address one from its name.
-  mail.status().then(current => { if (current.allowed) mail.schedule(); }).catch(() => {});
+  // The minute loop always runs: at boot the owner's sign-in may not be ready,
+  // and a status read then would leave mail waiting until someone opened
+  // Communications (20 Nov 2026). Each pass checks the account itself; an
+  // account outside agent email is asked again only every ten minutes.
+  mail.schedule();
 }
 
 const MEMBER = /^\/api\/mail\/members\/([^/]+)$/;

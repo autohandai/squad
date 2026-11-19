@@ -113,6 +113,20 @@ const ctx = { mobileRelayIdentity: () => ({ token: "identity-fixture" }), emit: 
 }
 
 {
+  // The loop runs for every account; one outside agent email is asked at most every ten minutes.
+  let clock = 1_000_000;
+  let calls = 0;
+  const api = fakeApi({ allowed: false });
+  const counting = async (url, init) => { if (new URL(url).pathname === "/v1/mailboxes") calls += 1; return api.fetchImpl(url, init); };
+  const mail = createAgentMail(ctx, { fetchImpl: counting, baseUrl: "https://squad.example.test", now: () => clock, deliver: async () => ({}) });
+  await mail.poll(); await mail.poll();
+  assert.equal(calls, 1, "not asked again within ten minutes");
+  clock += 10 * 60_000 + 1;
+  await mail.poll();
+  assert.equal(calls, 2, "asked again after ten minutes");
+}
+
+{
   const signedOut = createAgentMail({ ...ctx, mobileRelayIdentity: () => null }, { fetchImpl: () => { throw new Error("no network when signed out"); }, deliver: async () => ({}) });
   assert.deepEqual(await signedOut.status(), { signedIn: false, allowed: false, domain: "", mailboxes: [] }, "signed out reads as not allowed, without a network call");
   assert.equal(await signedOut.offer("m-1", "Nova"), null);

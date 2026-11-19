@@ -163,3 +163,33 @@ Then, on the owner's Mac with the installed app:
 
 That replaces "not observed end to end" in the consequences above. Remove
 the exception when testing is done.
+
+## Fixed 20 Nov 2026: mail waited until someone opened Communications
+
+In the live reply test an email to Tatiana sat in Squad API for five
+minutes. The minute loop had not started: `mail.route.mjs` read the
+account's status once at boot and only scheduled the loop if it was
+allowed. At boot the owner's sign-in was not ready yet, so the read said
+"not allowed" and the loop never started. Opening a member's Communications
+(which calls `/api/mail/assign`) was the only other thing that started it.
+
+The loop now always runs. Each pass asks Squad API whether the account is
+allowed, and an account outside agent email is asked again only every ten
+minutes (`NOT_ALLOWED_RECHECK_MS`).
+
+Checked in `check-agent-mail`: two passes within ten minutes ask once, a
+pass after ten minutes asks again.
+
+The same test proved replies end to end:
+1. Chief of Staff (`charlie@`) emailed Tatiana. Tatiana's run labelled it
+   "Urgency: normal".
+2. Her rules were the defaults (Normal → just tell me), so she did not
+   reply. A rule written straight to the bridge had been overwritten by the
+   app's own copy of the member. Rules set in Communications go through that
+   copy.
+3. A reply sent through `/api/mail/reply` went out from
+   `tatiana@code.autohandai.com` to `charlie@` as "Re: Quick question about
+   the launch checklist". A second reply to the same email was refused
+   (`mail_already_replied`).
+4. Chief of Staff's email run received the reply, labelled it "Urgency:
+   low" and summarised it.
