@@ -1,13 +1,39 @@
 {
-  "originHash" : "874273c781e5fb5dc93ccb623a2e03157f3b40c6e1d12e06357ec42120e150fb",
+  "originHash" : "70859e478b5cb44a963b56d5ef33485ad0bb480333cc0424c4d123eb7ac97abd",
   "pins" : [
     {
       "identity" : "fluidaudio",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/FluidInference/FluidAudio.git",
       "state" : {
-        "revision" : "c8b41f98eae668794dd0083bbe028fe7e6585051",
-        "version" : "0.18.3"
+        "revision" : "87a39dfe4068fef0f1c69bfe704b2b3ef4fbc5bc",
+        "version" : "0.15.8"
+      }
+    },
+    {
+      "identity" : "mlx-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ml-explore/mlx-swift",
+      "state" : {
+        "revision" : "dc43e62d7055353c7f99fa071a4e71d29dfddc44",
+        "version" : "0.31.4"
+      }
+    },
+    {
+      "identity" : "swift-numerics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-numerics",
+      "state" : {
+        "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+        "version" : "1.1.1"
+      }
+    },
+    {
+      "identity" : "voice",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/autohandai/voice.git",
+      "state" : {
+        "revision" : "b9ac2978646aae716fc6e56fde42165fc87a31c1"
       }
     }
   ],
