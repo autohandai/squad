@@ -63,7 +63,7 @@ list to the section for that version.
 ### Changed
 
 - The Marketplace is a page now, like Inbox but wider, instead of a window over the app. Links and the menu open it there.
-- New member suggests agents from the marketplace that fit what you type, and New team suggests ready-made teams, plus your own templates and team files.
+- New Squad member and New message › New member suggest agents from the marketplace that fit what you type, and New team suggests ready-made teams, plus your own templates and team files.
 - The send button is a filled circle with an arrow, matching the stop button; the mic sits right next to it, and dictation uses Autohand Voice.
 - Agents and teams you import never mention where they were imported from.
 - Recipes now come from your own work: Squad suggests a request you keep making to the same member, and the Chief of Staff saves the ones worth keeping. The list is Saved, Spotted in your work, then the old starters; the Inbox button is called Recipes.

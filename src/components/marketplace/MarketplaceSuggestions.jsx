@@ -8,8 +8,9 @@ import { BirdFace, TeamFaces } from "@/components/marketplace/MarketplaceDialog"
  * everywhere else. A marketplace that is unreachable or not live yet shows
  * nothing here; this is a suggestion, never a blocker.
  */
-export function MarketplaceSuggestions({ api, query = "", kind = "agent", avatarStyle, onOpen, title }) {
+export function MarketplaceSuggestions({ api, query = "", kind = "agent", avatarStyle, onOpen, title, showClosed = false, onBrowse }) {
   const [items, setItems] = useState(null);
+  const [closed, setClosed] = useState(false);
   useEffect(() => {
     let live = true;
     const text = query.trim();
@@ -23,14 +24,23 @@ export function MarketplaceSuggestions({ api, query = "", kind = "agent", avatar
           const home = await api("/api/marketplace/home");
           listings = (kind === "team" ? home?.teams : home?.featured?.filter((item) => item.kind !== "team")) || [];
         }
-        if (live) setItems(listings.slice(0, 4));
-      } catch {
-        if (live) setItems([]);
+        if (live) { setItems(listings.slice(0, 4)); setClosed(false); }
+      } catch (error) {
+        if (live) { setItems([]); setClosed(/isn't open yet/i.test(String(error?.message || ""))); }
       }
     }, text.length >= 3 ? 350 : 0);
     return () => { live = false; clearTimeout(timer); };
   }, [api, query, kind]);
-  if (!items?.length) return null;
+  // Where the marketplace is the main way in (New Squad member), say plainly
+  // that it is not open yet instead of showing nothing (ADR-0261).
+  if (!items?.length) {
+    if (!showClosed || !closed) return null;
+    return (
+      <p className="text-xs text-muted-foreground" data-testid={`marketplace-suggestions-${kind}-closed`}>
+        Agents from the marketplace show here once it opens.{onBrowse ? <> <button type="button" className="underline-offset-4 hover:text-foreground hover:underline" onClick={onBrowse}>Marketplace</button></> : null}
+      </p>
+    );
+  }
   return (
     <section aria-labelledby={`marketplace-suggestions-${kind}`} data-testid={`marketplace-suggestions-${kind}`} className="space-y-1">
       <h3 id={`marketplace-suggestions-${kind}`} className="text-xs font-medium text-muted-foreground">

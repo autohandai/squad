@@ -93,3 +93,13 @@ bridge turned that into the offline sentence.
 - Squad's helper now builds Autohand Voice's package, which also resolves
   mlx-swift and llama.cpp's prebuilt framework (not linked into the helper).
   A change in Autohand Voice reaches Squad only when the pin moves.
+
+## Addendum, 19 November 2026: New Squad member
+
+The owner's screenshot of New Squad member showed no marketplace at all: the
+suggestions had gone to New message › New member and New team only. The main
+member page now has the same "Featured in the marketplace" / "From the
+marketplace" list (driven by "Describe the role"), above the ready-made roles.
+Because this page is where people most expect it, while the marketplace is not
+live it says "Agents from the marketplace show here once it opens." with a
+link to the Marketplace page, instead of showing nothing.

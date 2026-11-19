@@ -32,6 +32,7 @@ import { AutomationWebhook } from "@/components/members/AutomationWebhook";
 import { AccountAvatar } from "@/components/account/AccountAvatar";
 import { LiquidGlassSetting } from "@/components/settings/LiquidGlassSetting";
 import { SendButton } from "@/components/chat/SendButton";
+import { MarketplaceSuggestions } from "@/components/marketplace/MarketplaceSuggestions";
 import { spotRecipes } from "@/lib/recipe-observations";
 import { MemberReplyThread, useMemberThreadSummaries } from "@/components/chat/MemberReplyThread";
 import { automationAgenda, reconcileAutomationReplies } from "@/lib/automation-agenda";
@@ -10673,6 +10674,9 @@ function App() {
               </div>
             ) : isCreate ? (
               <CreateAgent
+                onOpenListing={openMarketplaceListing}
+                onBrowseMarketplace={() => openMarketplace("member_form")}
+                avatarStyle={avatarStyle}
                 key={`${requestedWorkspace || fallbackWorkspace || "member-creation"}:${new URLSearchParams(route.split("?")[1] || "").get("role") || ""}`}
                 initialTemplateId={new URLSearchParams(route.split("?")[1] || "").get("role") || ""}
                 copy={localeCopy}
@@ -20350,7 +20354,7 @@ function buildCustomRoleInstructions(templateDraft) {
     .join("\n\n");
 }
 
-function CreateAgent({ onCreate, onCancel, defaultWorkspace, defaultWorkspaceSetup, workspaceRoot, initialTemplateId = "", existingMemberIds = [], harnesses = [], harnessesLoading = false, onRefreshHarnesses, presets = [], copy: copyText = getLocaleCopy(DEFAULT_LOCALE) }) {
+function CreateAgent({ onCreate, onCancel, defaultWorkspace, defaultWorkspaceSetup, workspaceRoot, initialTemplateId = "", existingMemberIds = [], harnesses = [], harnessesLoading = false, onRefreshHarnesses, presets = [], copy: copyText = getLocaleCopy(DEFAULT_LOCALE), onOpenListing, onBrowseMarketplace, avatarStyle }) {
   const creationOwner=currentOwnership();
   const creationStorageKey = `${STORAGE_KEYS.memberCreation}:${defaultWorkspace || ""}${initialTemplateId ? `:${initialTemplateId}` : ""}`;
   const unassignedCreationKey = `${STORAGE_KEYS.memberCreation}:${initialTemplateId ? `:${initialTemplateId}` : ""}`;
@@ -20817,6 +20821,13 @@ function CreateAgent({ onCreate, onCancel, defaultWorkspace, defaultWorkspaceSet
             ) : null}
           </p>
         </section>
+
+        {/* Someone may already have built this member (ADR-0261). */}
+        {onOpenListing ? (
+          <section className="flex flex-col" data-testid="create-member-marketplace">
+            <MarketplaceSuggestions api={api} kind="agent" avatarStyle={avatarStyle} query={roleWish} onOpen={onOpenListing} showClosed onBrowse={onBrowseMarketplace} />
+          </section>
+        ) : null}
 
         {/* Picking from a list is the fallback for when you already know the
             title, so it is a disclosure rather than a wall of cards competing
