@@ -63,7 +63,7 @@ try {
   // Add records a decision for the window; nothing is installed here.
   const { request } = await market.execute('marketplace.add', { id: agent.id }, { deviceID: 'd1', requestID: 'r1' });
   assert.equal(request.state, 'requested');
-  assert.match(request.result, /Keep Squad open/);
+  assert.match(request.result, /confirm it in Squad on your computer/, 'by default the person confirms on the computer');
   assert.equal(events, 1, 'the window is told to look');
   assert.deepEqual(market.pending().map(item => item.listingId), [agent.id]);
   assert.equal((await market.execute('marketplace.listing', { id: agent.id })).request.state, 'requested', 'the listing shows its add in progress');
@@ -95,7 +95,27 @@ try {
   assert.match(service, /RECEIPTED = \[[^\]]*'marketplace\.add'/);
   for (const command of market.commands) assert.ok(service.includes(`'${command}'`), `${command} is routed`);
 
-  console.log('check-mobile-marketplace: ok (shaping, counts, search, detail with what an agent may use, read-only refusal, add as a window decision with claim and settle, calm failures, receipts)');
+  // "Confirm phone adds on this computer": on by default, an add waits for the
+  // person in the Squad window; off, the window adds it as decided on the phone.
+  assert.equal((await market.execute('marketplace.home', {})).confirmsOnComputer, true, 'confirmation on the computer is the default');
+  const confirmed = (await market.execute('marketplace.add', { id: agent.id }, { deviceID: 'd1', requestID: 'r2' })).request;
+  assert.match(confirmed.result, /confirm it in Squad on your computer/);
+  assert.equal(market.pending().find(item => item.requestID === confirmed.id).confirm, true);
+  assert.equal(await market.claim(confirmed.id), true);
+  const declined = await market.settle({ requestID: confirmed.id, state: 'failed', result: 'Not added: it was closed in Squad on your computer.' });
+  assert.equal(declined.state, 'failed');
+  let confirm = false;
+  const silent = createPhoneMarketplace({ bridge, cards, canWrite: async () => true, confirmOnComputer: () => confirm });
+  assert.equal((await silent.execute('marketplace.home', {})).confirmsOnComputer, false);
+  const direct = (await silent.execute('marketplace.add', { id: agent.id }, { deviceID: 'd1', requestID: 'r3' })).request;
+  assert.match(direct.result, /Keep Squad open/);
+  assert.equal(silent.pending().find(item => item.requestID === direct.id).confirm, false);
+  const controller = await readFile(new URL('../server/mobile/controller.mjs', import.meta.url), 'utf8');
+  assert.match(controller, /confirmPhoneAdds: z\.boolean\(\)\.default\(true\)/, 'the saved preference defaults to confirming');
+  const route = await readFile(new URL('../server/routes/mobile.route.mjs', import.meta.url), 'utf8');
+  assert.match(route, /\/api\/mobile\/preferences' && req\.method === 'PUT'/);
+
+  console.log('check-mobile-marketplace: ok (shaping, counts, search, detail with what an agent may use, read-only refusal, add as a window decision with claim and settle, calm failures, receipts, confirmation on the computer by default and the silent add when turned off)');
 } finally {
   await rm(dir, { recursive: true, force: true });
 }

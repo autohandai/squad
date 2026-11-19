@@ -71,3 +71,37 @@ does not show a second dialog, the same rule as team cards (ADR-0252).
 - Installs from phones are counted as `in-app` by the marketplace API until
   it learns `phone` and is deployed (production change, not made).
 - Publishing, reporting and updating an installed listing stay on the Mac.
+
+## Amendment, 19 November 2026: confirm phone adds on the computer, on by default
+
+The first version made the tap on the phone the only consent, following team
+cards. Reviewed with the owner, the trade-off was stated plainly: anyone
+holding a paired phone could add agents to the Squad. The owner asked for it
+to be configurable, confirming on the computer by default.
+
+- **Settings › Computers › "Confirm phone adds on this computer"**, on by
+  default, saved in its own `preferences.json` beside the phone connection
+  config (changing it never restarts the phone routes); `PUT
+  /api/mobile/preferences`, reported in `/api/mobile/status`.
+- **On:** an add from the phone opens the desktop's own marketplace review for
+  that listing in the Squad window, with "Requested from your phone. Read it,
+  then add it here, or close this to decline." Nothing is added until the
+  person adds it there; closing the review settles the phone's request as
+  "Not added: it was closed in Squad on your computer." One review at a time;
+  a claim is held 30 minutes for a review instead of two.
+- **Off:** the behaviour above (the window adds it as decided on the phone).
+- The phone is told which: `marketplace.home` carries `confirmsOnComputer`,
+  and the waiting line reads "Waiting for you to confirm it in Squad on your
+  computer."
+
+Evidence: `check-mobile-marketplace.mjs` now asserts the default is on (the
+saved schema defaults to `true`), the waiting text and `confirm` flag, a
+decline settling as failed, and the silent path when the preference is off;
+`check:mobile`, `check:jsx`, `build` pass. The phone's UI flow passed with the
+new wording (squad-mobile ADR-0009 amendment).
+
+Not done: the window does not bring itself to the front or post a
+notification when a phone asks, so a review waits until the person opens
+Squad; there is no browser check that drives a phone request through the
+review dialog (the dialog's add path itself is covered by
+`check:marketplace:browser`).

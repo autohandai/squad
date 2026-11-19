@@ -97,7 +97,7 @@ export function requestView(entry) {
  * The phone-facing commands. `bridge` is this computer's owned API; `cards`
  * the persistent decision store (entries of kind "marketplace").
  */
-export function createPhoneMarketplace({ bridge, cards, canWrite = async () => true, emit = () => {} }) {
+export function createPhoneMarketplace({ bridge, cards, canWrite = async () => true, emit = () => {}, confirmOnComputer = () => true }) {
   const read = async path => { try { return await bridge.get(path); } catch (error) { throw failure(error); } };
   const entries = () => (cards ? cards.entries().filter(entry => entry.kind === 'marketplace') : []);
 
@@ -105,7 +105,7 @@ export function createPhoneMarketplace({ bridge, cards, canWrite = async () => t
     if (command === 'marketplace.home') {
       z.object({}).strict().parse(parameters || {});
       const [home, writable] = await Promise.all([read('/api/marketplace/home'), canWrite().catch(() => false)]);
-      return phoneHome(home, { canAdd: Boolean(cards) && writable });
+      return { ...phoneHome(home, { canAdd: Boolean(cards) && writable }), confirmsOnComputer: confirmOnComputer() };
     }
     if (command === 'marketplace.list') {
       const value = z.object({
@@ -143,7 +143,13 @@ export function createPhoneMarketplace({ bridge, cards, canWrite = async () => t
       const entry = await cards.set(cardID, {
         kind: 'marketplace', listingId: id, listingKind: agent.kind === 'team' ? 'team' : 'agent', name: text(agent.name, 80),
         version: Number.isInteger(agent.version) ? agent.version : 0, contentHash: String(agent.contentHash || ''),
-        state: 'requested', result: 'Waiting for Squad on your computer to add it. Keep Squad open there.',
+        // With "Confirm phone adds on this Mac" on (the default), the window
+        // opens the desktop's own review and nothing is added until the
+        // person confirms there; off, the window adds it as decided here.
+        confirm: confirmOnComputer(),
+        state: 'requested', result: confirmOnComputer()
+          ? 'Waiting for you to confirm it in Squad on your computer.'
+          : 'Waiting for Squad on your computer to add it. Keep Squad open there.',
         desktopApplied: false, decidedAt: new Date().toISOString(), source: 'phone',
       });
       emit('mobile.decisions.changed');
@@ -157,12 +163,13 @@ export function createPhoneMarketplace({ bridge, cards, canWrite = async () => t
     execute,
     /** Adds the window has not carried out yet. */
     pending: () => entries().filter(entry => entry.desktopApplied === false && entry.state === 'requested')
-      .map(entry => ({ requestID: entry.id, listingId: entry.listingId, kind: entry.listingKind, name: entry.name, version: entry.version, contentHash: entry.contentHash })),
+      .map(entry => ({ requestID: entry.id, listingId: entry.listingId, kind: entry.listingKind, name: entry.name, version: entry.version, contentHash: entry.contentHash, confirm: entry.confirm !== false })),
     /** One window carries an add out; another is refused for two minutes. */
     async claim(requestID) {
       const entry = cards?.get(requestID);
       if (!entry || entry.kind !== 'marketplace' || entry.desktopApplied !== false) return false;
-      if (entry.claimedAt && Date.now() - Date.parse(entry.claimedAt) < 120_000) return false;
+      // A review open on the Mac can take a while; hold it longer than a silent add.
+      if (entry.claimedAt && Date.now() - Date.parse(entry.claimedAt) < (entry.confirm === false ? 120_000 : 30 * 60_000)) return false;
       await cards.set(requestID, { claimedAt: new Date().toISOString() });
       return true;
     },

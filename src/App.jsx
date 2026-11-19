@@ -5625,6 +5625,11 @@ function App() {
     if (!memberId) throw new Error(receipt.kind === "team" ? "This team could not be added. Nothing was changed." : "This agent could not be added. Nothing was changed.");
     const memberIds = members.map((member) => member.id).filter(Boolean);
     await api("/api/marketplace/imports", { method: "POST", body: JSON.stringify({ ...receipt, memberId, memberIds: memberIds.length ? memberIds : Object.values(build?.memberIds || {}), action: "add" }) }).catch(() => {});
+    const phone = phoneAddRef.current;
+    if (phone && phone.listingId === receipt.listingId) {
+      phoneAddRef.current = null;
+      void phone.settle("done", receipt.kind === "team" ? `Added ${phone.name} to your Squad: ${memberIds.length || 1} members.` : `Added ${phone.name} to your Squad.`);
+    }
     return { memberId, members: memberIds.length || 1 };
   }
   async function updateFromMarketplace({ document, receipt }) {
@@ -6263,12 +6268,25 @@ function App() {
   // as the desktop's Add (members only ever created here, ADR-0077), records
   // the receipt with source "phone" and reports the outcome the phone shows.
   const mobileMarketplaceRef = useRef(null);
+  const phoneAddRef = useRef(null);
   mobileMarketplaceRef.current = async () => {
     let requests = [];
     try { requests = (await api("/api/mobile/marketplace-requests")).requests || []; } catch { return; }
     for (const request of requests) {
       const settle = (state, result) => api("/api/mobile/marketplace-requests", { method: "POST", body: JSON.stringify({ requestID: request.requestID, state, result }) }).catch(() => {});
+      // "Confirm phone adds on this Mac" (on by default): one review at a
+      // time, in the desktop's own dialog; nothing is added until the person
+      // adds it there, and closing it declines.
+      if (request.confirm && phoneAddRef.current) continue;
       try { if (!(await api("/api/mobile/marketplace-requests/claim", { method: "POST", body: JSON.stringify({ requestID: request.requestID }) })).claimed) continue; } catch { continue; }
+      if (request.confirm) {
+        phoneAddRef.current = { ...request, settle };
+        pendingMarketplaceLink.request = null;
+        setMarketplaceEntry("link");
+        setMarketplaceRequest({ listing: request.kind === "team" ? "team" : "agent", id: request.listingId, via: "phone", requestedFrom: "your phone" });
+        setMarketplaceOpen(true);
+        continue;
+      }
       try {
         const fresh = await api("/api/marketplace/fetch", { method: "POST", body: JSON.stringify({ id: request.listingId }) });
         const team = fresh.kind === "team";
@@ -10263,7 +10281,11 @@ function App() {
         open={marketplaceOpen}
         onOpenChange={(open) => {
           setMarketplaceOpen(open);
-          if (!open) { setMarketplaceRequest(null); pendingMarketplaceLink.request = null; }
+          if (!open) {
+            setMarketplaceRequest(null); pendingMarketplaceLink.request = null;
+            const phone = phoneAddRef.current;
+            if (phone) { phoneAddRef.current = null; void phone.settle("failed", "Not added: it was closed in Squad on your computer."); }
+          }
         }}
         api={api}
         agents={agents}

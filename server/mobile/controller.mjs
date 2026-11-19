@@ -49,6 +49,11 @@ export async function createMobileController(ctx) {
   let config = migrateSavedConfiguration(saved);
   if (saved !== defaults && 'mode' in saved) await writePersistentJson(file, config);
   let server = null, relay = null, error = '', transition = Promise.resolve(), adapter;
+  // Phone preferences, kept apart from the connection config so changing one
+  // never restarts the phone routes (ADR-0256 amendment).
+  const preferencesFile = join(directory, 'preferences.json');
+  const preferenceSchema = z.object({ confirmPhoneAdds: z.boolean().default(true) });
+  let preferences = preferenceSchema.parse(await readPersistentJson(preferencesFile, {}).catch(() => ({})));
   const localEndpoint = () => server?.listening && config.local && localAddress() ? `http://${localAddress()}:${server.address().port}` : '';
   const tunnelEndpoint = () => server?.listening && config.tunnel && config.endpoint ? config.endpoint : '';
   /** Every route this computer serves right now, most direct first. */
@@ -81,7 +86,7 @@ export async function createMobileController(ctx) {
     afterRevoke: id => relay?.revoke(id),
   });
   const cards = await createCardStore({ directory });
-  adapter = createMobileAdapter({ origin: ctx.ownedBrokerOrigin, computerID: service.computerID, version: ctx.packageMetadata.version, assignTask: assignMemberTask, announcements: ctx.announcements,
+  adapter = createMobileAdapter({ preferences: () => preferences, origin: ctx.ownedBrokerOrigin, computerID: service.computerID, version: ctx.packageMetadata.version, assignTask: assignMemberTask, announcements: ctx.announcements,
     rootDir: ctx.rootDir || '', cards, emit: name => emitBridgeEvent(name, {}) });
   const listening = () => routes().some(route => route.connected);
   async function close() {
@@ -113,7 +118,7 @@ export async function createMobileController(ctx) {
     const list = routes();
     // `endpoint` stays for older callers: the route an older phone would get.
     const primary = list.find(route => route.kind === 'relay' && route.connected) || list.find(route => route.kind !== 'relay') || list[0];
-    return { ...service.status(), config, listening: listening(), routes: list, endpoint: primary?.endpoint || '', error: error || relay?.status().error || '' };
+    return { ...service.status(), config, preferences, listening: listening(), routes: list, endpoint: primary?.endpoint || '', error: error || relay?.status().error || '' };
   };
   return {
     status,
@@ -163,6 +168,11 @@ export async function createMobileController(ctx) {
       const value = z.object({ receiptId: z.string().min(1).max(200), state: z.enum(['done', 'failed', 'declined']), result: z.string().max(300).optional(), runId: z.string().max(200).optional() }).strict().parse(input);
       await adapter.settleTeam(value);
       return { decisions: adapter.teamDecisions() };
+    },
+    preferences: async input => {
+      preferences = preferenceSchema.parse({ ...preferences, ...z.object({ confirmPhoneAdds: z.boolean() }).partial().strict().parse(input) });
+      await writePersistentJson(preferencesFile, preferences);
+      return status();
     },
     // Marketplace adds a phone decided; the Squad window carries them out (ADR-0256).
     marketplaceRequests: () => ({ requests: adapter.marketplacePending() }),

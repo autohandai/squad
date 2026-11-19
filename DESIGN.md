@@ -406,3 +406,5 @@
 
 - Members created through Squad MCP use the current owner’s ordinary directory and profile controls. Management tools keep saved Allow / Ask / Block rules, including unattended work; Ask uses the existing question card with operation-specific consent, expires without changing data, and never silently becomes Allow. Creating a member saves its configuration without an artificial greeting, launched task or enabled automation.
 - Export collision names preserve the extension and UTF-8 filename limit so a successful native save always yields a receipt the UI can acknowledge. Existing files are never overwritten.
+
+- An agent or team added from a paired phone opens the normal marketplace review in the Squad window with one plain line above it ("Requested from your phone. Read it, then add it here, or close this to decline."). Settings › Computers › "Confirm phone adds on this computer" is on by default; its description says what happens in the current state (ADR-0256).

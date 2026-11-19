@@ -27,11 +27,11 @@ const clip = (text, limit) => { const value = String(text || '').replace(/\s+/g,
 
 const memberID = z.object({ memberID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/) });
 /** The phone uses the same roster, transcripts and durable queue as MCP/CLI. */
-export function createMobileAdapter({ origin, computerID, version, computerName = hostname(), assignTask, announcements, rootDir = '', cards = null, emit = () => {} }) {
+export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: true }), origin, computerID, version, computerName = hostname(), assignTask, announcements, rootDir = '', cards = null, emit = () => {} }) {
   const bridge = createBridgeClient(origin), tools = createTools(bridge);
   // The marketplace (contract 0.5, ADR-0256): reads through this computer,
   // an Add the Squad window carries out.
-  const marketplace = createPhoneMarketplace({ bridge, cards, emit,
+  const marketplace = createPhoneMarketplace({ bridge, cards, emit, confirmOnComputer: () => preferences().confirmPhoneAdds !== false,
     canWrite: async () => { const context = await bridge.get('/api/ownership/context'); return Boolean(context?.canWrite) && context.state === 'ready'; } });
   // The 256 px renders the menu bar reads (scripts/build-bird-cast.mjs);
   // the installed app serves dist/, a checkout also has public/.

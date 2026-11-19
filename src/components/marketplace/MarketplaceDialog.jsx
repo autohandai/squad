@@ -110,7 +110,7 @@ export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy =
   useEffect(() => {
     if (!open) return;
     setTab("explore");
-    setSelected(request ? { kind: "marketplace", listingKind: request.listing === "team" ? "team" : "agent", id: request.id, version: request.version, sha256: request.sha256, attribution: request.attribution, via: request.attribution ? "website-link" : "link" } : null);
+    setSelected(request ? { kind: "marketplace", listingKind: request.listing === "team" ? "team" : "agent", id: request.id, version: request.version, sha256: request.sha256, attribution: request.attribution, via: request.via || (request.attribution ? "website-link" : "link"), requestedFrom: request.requestedFrom || "" } : null);
     recordMarketplaceEvent("marketplace_opened", { entry: request ? "link" : entry });
   }, [open, request, entry]);
 
@@ -598,6 +598,11 @@ function AgentDetail({ entry, api, agents, copy, avatarStyle, onBack, onDone, on
       </DialogHeader>
 
       <div className="flex min-w-0 flex-col text-sm" data-testid="marketplace-detail">
+        {entry.requestedFrom ? (
+          <p className="pb-3 text-sm text-muted-foreground" data-testid="marketplace-phone-request">
+            {(copy.marketplaceFromPhone || "Requested from {phone}. Read it, then add it here, or close this to decline.").replace("{phone}", entry.requestedFrom)}
+          </p>
+        ) : null}
         {listing ? (
           <p className="border-b border-border/60 pb-2 text-xs text-muted-foreground">
             {listing.categoryLabel} · {(copy.addedOn || "Added {date}").replace("{date}", addedDate(listing.createdAt))} · {copy.version || "version"} {listing.version}
