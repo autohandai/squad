@@ -38,6 +38,8 @@ export default defineConfig({
       // domains may give members addresses (comma separated).
       MAIL_DOMAIN: bindings.text("code.autohandai.com"),
       MAIL_ACCOUNT_DOMAINS: bindings.text("autohand.ai"),
+      // Exact accounts let in outside those domains, for testing (ADR-0262).
+      MAIL_ACCOUNT_EMAILS: bindings.text("igorcosta@gmail.com"),
       // Local parts other workers already own through their own routing
       // rules on the domain (checked 2026-11-19); Squad never assigns them.
       MAIL_RESERVED: bindings.text("noah,support,igor,steve,james,luiz.moore,lucia,robert,po-review"),

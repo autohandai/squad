@@ -53,6 +53,15 @@ test("addresses come from names and avoid reserved ones", () => {
   assert.equal(validLocalPart("-bad"), false);
 });
 
+test("a single account can be let in for testing, exactly", async () => {
+  const { mailAllowed } = await import("../src/mailboxes.ts");
+  const env = { MAIL_ACCOUNT_DOMAINS: "autohand.ai", MAIL_ACCOUNT_EMAILS: "igorcosta@gmail.com" } as any;
+  assert.equal(mailAllowed(env, { email: "IgorCosta@Gmail.com" }), true, "the listed account, any case");
+  assert.equal(mailAllowed(env, { email: "someone@gmail.com" }), false, "not the rest of its domain");
+  assert.equal(mailAllowed(env, { email: "igor@autohand.ai" }), true, "the domain rule still holds");
+  assert.equal(mailAllowed({ MAIL_ACCOUNT_DOMAINS: "autohand.ai" } as any, { email: "igorcosta@gmail.com" }), false, "nobody is let in without the list");
+});
+
 test("only accounts on autohand.ai can give members addresses", async () => {
   const outside = await call("/v1/mailboxes", "GET", undefined, bob);
   assert.equal(outside.json.data.allowed, false);

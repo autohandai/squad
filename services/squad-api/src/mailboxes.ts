@@ -20,14 +20,18 @@ const DAILY_LIMIT = 200;
 const RESERVED = new Set(["abuse", "admin", "administrator", "hostmaster", "info", "mailer-daemon", "noreply", "no-reply", "postmaster", "root", "security", "support", "webmaster", "hello", "squad", "autohand", "team", "billing", "help"]);
 const LOCAL_PART = /^[a-z0-9](?:[a-z0-9.-]{0,28}[a-z0-9])?$/;
 
-type Bindings = Pick<Env, "DB"> & { MAIL_DOMAIN?: string; MAIL_ACCOUNT_DOMAINS?: string; MAIL_RESERVED?: string };
+type Bindings = Pick<Env, "DB"> & { MAIL_DOMAIN?: string; MAIL_ACCOUNT_DOMAINS?: string; MAIL_ACCOUNT_EMAILS?: string; MAIL_RESERVED?: string };
 const mailDomain = (env: Bindings) => (env.MAIL_DOMAIN || MAIL_DOMAIN_DEFAULT).toLowerCase();
 const accountDomains = (env: Bindings) => (env.MAIL_ACCOUNT_DOMAINS || MAIL_ACCOUNT_DOMAINS_DEFAULT).split(",").map(item => item.trim().toLowerCase()).filter(Boolean);
 
 /** Whether this signed-in account may give its members addresses. */
+/** Single accounts let in outside the domains, for testing (comma separated, exact). */
+const accountEmails = (env: Bindings) => (env.MAIL_ACCOUNT_EMAILS || "").split(",").map(item => item.trim().toLowerCase()).filter(Boolean);
+
 export function mailAllowed(env: Bindings, user: Pick<Principal, "email">): boolean {
-  const domain = String(user.email || "").toLowerCase().split("@")[1] || "";
-  return accountDomains(env).includes(domain);
+  const email = String(user.email || "").trim().toLowerCase();
+  const domain = email.split("@")[1] || "";
+  return accountDomains(env).includes(domain) || (Boolean(email) && accountEmails(env).includes(email));
 }
 
 /** "Thiago Álvarez" → "thiago.alvarez". */
