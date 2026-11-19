@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@autohand/squad-portable": "file:../../packages/squad-portable",
+    "postal-mime": "4.2.1",
     "zod": "4.6.6"
   },
   "devDependencies": {

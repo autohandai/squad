@@ -645,9 +645,13 @@ export function isPublicMarketplaceRead(method: string, path: string): boolean {
 }
 
 /** Routes needing no Squad session: public reads, reports, admin. */
+/** Unbound before launch: every marketplace route is "not found". */
+const unopened = (env: Env) => !(env as { MARKETPLACE?: unknown }).MARKETPLACE;
+
 export async function publicMarketplaceRoutes(request: Request, env: Env, url: URL): Promise<Response | null> {
   const path = url.pathname;
   if (!path.startsWith("/v1/marketplace/")) return null;
+  if (unopened(env)) throw new ApiError(404, "route_not_found", "Squad API route not found.");
   if (path.startsWith("/v1/marketplace/admin/")) {
     const actor = await admin(request, env);
     if (path === "/v1/marketplace/admin/agents" && request.method === "GET") return adminList(env, url);
@@ -681,6 +685,7 @@ export async function publicMarketplaceRoutes(request: Request, env: Env, url: U
 export async function publisherMarketplaceRoutes(request: Request, env: Env, user: Principal, url: URL): Promise<Response | null> {
   const path = url.pathname;
   if (!path.startsWith("/v1/marketplace/")) return null;
+  if (unopened(env)) throw new ApiError(404, "route_not_found", "Squad API route not found.");
   if (path === "/v1/marketplace/mine" && request.method === "GET") return mine(request, env, user);
   if (path === "/v1/marketplace/agents" && request.method === "POST") return publish(request, env, user);
   const agent = path.match(AGENT);
@@ -690,6 +695,7 @@ export async function publisherMarketplaceRoutes(request: Request, env: Env, use
 }
 
 export async function cleanMarketplace(env: Env): Promise<void> {
+  if (unopened(env)) return;
   const now = new Date().toISOString();
   await env.MARKETPLACE.batch([
     env.MARKETPLACE.prepare("DELETE FROM rate_limits WHERE expires_at<?").bind(now),

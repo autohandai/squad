@@ -10,6 +10,7 @@ import { agentRoutes } from "./agents.js";
 import { availableOwners } from "./owners.js";
 import { backupJsonSchema } from "@autohand/squad-portable";
 import { mobileRelayRoutes, publicMobileRelay } from "./mobile-relay.js";
+import { cleanAgentMail, mailboxRoutes, receiveAgentMail } from "./mailboxes.js";
 import { cleanMarketplace, isPublicMarketplaceRead, isSiteReport, publicMarketplaceRoutes, publisherMarketplaceRoutes } from "./marketplace.js";
 export { MobileRelay } from "./mobile-relay.js";
 
@@ -24,6 +25,7 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   const publishing = await publisherMarketplaceRoutes(request, env, user, url); if (publishing) return publishing;
   const relay = await mobileRelayRoutes(request, env, user, url, ctx); if (relay) return relay;
   if (url.pathname === "/v1/owners" && request.method === "GET") return ok({ owners: await availableOwners(request, env, user) });
+  const mail = await mailboxRoutes(request, env, user, url); if (mail) return mail;
   const agents = await agentRoutes(request, env, user, url); if (agents) return agents;
   if (url.pathname === "/v1/me" && request.method === "GET") return ok({ id: user.id, issuer:user.issuer,subject:user.subject,email: user.email, displayName: user.displayName });
   if (url.pathname === "/v1/auth/session" && request.method === "DELETE") {
@@ -96,5 +98,13 @@ export default {
       env.DB.prepare("DELETE FROM owned_exports WHERE expires_at<? AND retained_at IS NULL").bind(now),
     ]);
     await cleanMarketplace(env);
+    await cleanAgentMail(env);
+  },
+  // Email Routing for the agent mail domain (ADR-0262): keep it for the member,
+  // or bounce it with a reason.
+  async email(message, env): Promise<void> {
+    const raw = await new Response(message.raw).arrayBuffer();
+    const result = await receiveAgentMail(env, { to: message.to, from: message.from, raw });
+    if (!result.stored) message.setReject(result.reason);
   },
 } satisfies ExportedHandler<Env>;

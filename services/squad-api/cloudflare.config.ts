@@ -18,8 +18,11 @@ export default defineConfig({
     env: {
       DB: bindings.d1({ name: "squad-control-plane", id: env.SQUAD_API_DATABASE_ID }),
       // Public listings in their own database (ADR-0246): read-heavy public
-      // traffic and its restores stay apart from accounts and memory.
-      MARKETPLACE: bindings.d1({ name: "squad-marketplace", id: env.SQUAD_MARKETPLACE_DATABASE_ID }),
+      // traffic and its restores stay apart from accounts and memory. Bound
+      // only when its ID is set, so the service deploys before the
+      // marketplace launches; unbound, every marketplace route answers 404
+      // and the desktop says the marketplace isn't open yet (ADR-0262).
+      ...(env.SQUAD_MARKETPLACE_DATABASE_ID ? { MARKETPLACE: bindings.d1({ name: "squad-marketplace", id: env.SQUAD_MARKETPLACE_DATABASE_ID }) } : {}),
       MEMORY: bindings.r2({ name: "squad-memory" }),
       RELEASES: bindings.r2({ name: "squad-releases" }),
       IDENTITY_ORIGIN: bindings.text("https://api.autohand.ai"),
@@ -30,6 +33,13 @@ export default defineConfig({
       // Browser origins whose pages may send reports and listing events
       // straight to the API (ADR-0246, ADR-0253), comma separated.
       MARKETPLACE_SITE_ORIGINS: bindings.text("https://autohand.ai,https://www.autohand.ai"),
+      // Agent email (ADR-0262): the routed domain, and which sign-in email
+      // domains may give members addresses (comma separated).
+      MAIL_DOMAIN: bindings.text("code.autohandai.com"),
+      MAIL_ACCOUNT_DOMAINS: bindings.text("autohand.ai"),
+      // Local parts other workers already own through their own routing
+      // rules on the domain (checked 2026-11-19); Squad never assigns them.
+      MAIL_RESERVED: bindings.text("noah,support,igor,steve,james,luiz.moore,lucia,robert,po-review"),
     },
   },
 });
