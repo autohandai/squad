@@ -20,6 +20,7 @@
 //
 // Storage: `~/.autohand/squad/routines.json` via server/routines/store.mjs.
 
+import { emailPolicyLines, normalizeEmailPolicy } from "../../src/lib/email-policy.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
@@ -170,7 +171,10 @@ function emailRunPrompt(routine, run) {
     String(email.text || "(no readable text)").replace(/```/g, "ˋˋˋ"),
     "```",
     "",
-    "Your reply is delivered to the person in your direct messages, so write it to them. Squad cannot send email yet, so never say you replied to the sender.",
+    `This email's id is ${email.id || "unknown"}.`,
+    ...emailPolicyLines(email.policy),
+    "",
+    "Your message is delivered to the person in your direct messages, so write it to them: who wrote, what they want, what you did or suggest. Only say you replied if squad_reply_email returned sent.",
   ].join("\n");
 }
 
@@ -937,7 +941,9 @@ export async function triggerEmailRoutine(ctx, { memberId, address, email }) {
     routine = store.replaceRoutine({ ...draft, mailAddress, webhook: null, nextAt: null });
   }
   if (!routine.enabled) return { skipped: "paused", routineId: routine.id };
-  const payload = JSON.stringify({ from: email.from, fromName: email.fromName || "", subject: email.subject || "", receivedAt: email.receivedAt || "", text: String(email.text || "").slice(0, EMAIL_PAYLOAD_CHARS) });
+  // The member's rules travel with the email (ADR-0267): what it may do at each urgency.
+  const policy = normalizeEmailPolicy(known.get(memberId)?.agent?.emailPolicy);
+  const payload = JSON.stringify({ id: email.id || "", from: email.from, fromName: email.fromName || "", subject: email.subject || "", receivedAt: email.receivedAt || "", policy, text: String(email.text || "").slice(0, EMAIL_PAYLOAD_CHARS) });
   const started = await startRoutineRun(ctx, routine, { trigger: "email", scheduledFor: now, now, known, payload });
   store.replaceRoutine(started);
   await store.save();

@@ -125,6 +125,8 @@ export const BUILT_IN_TOOL_POLICY_GROUPS = [
       ["squad_list_recipes", "allow"],
       ["squad_report_bug", "allow"],
       ["squad_give_feedback", "allow"],
+      // Governed by the member's email rules (ADR-0267), not by this switch.
+      ["squad_reply_email", "allow"],
       ["squad_propose_team", "allow"],
       ["squad_read_chat", "allow"],
       ["squad_publish_artifact", "allow"],

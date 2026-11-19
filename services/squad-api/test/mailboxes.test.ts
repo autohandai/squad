@@ -26,9 +26,14 @@ before(async () => {
   runtime = new Miniflare(convertV4MiniflareOptions({ workers: [{ name: apiName, modules: true, script: bundle.outputFiles[0].text,
     compatibilityDate: "2026-10-27", d1Databases: ["DB", "MARKETPLACE"], r2Buckets: ["MEMORY", "RELEASES"],
     durableObjects: { MOBILE_RELAYS: { className: "MobileRelay", useSQLite: true } },
-    bindings: { IDENTITY_ORIGIN: "https://api.autohand.ai", WEB_ORIGIN: "https://squad.example.test", RELEASE_PUBLISHER_TOKEN: "fixture", MAIL_DOMAIN: "code.autohandai.com", MAIL_ACCOUNT_DOMAINS: "autohand.ai", MAIL_RESERVED: "igor,noah" },
+    bindings: { IDENTITY_ORIGIN: "https://api.autohand.ai", WEB_ORIGIN: "https://squad.example.test", RELEASE_PUBLISHER_TOKEN: "fixture", MAIL_DOMAIN: "code.autohandai.com", MAIL_ACCOUNT_DOMAINS: "autohand.ai", EMAIL_SENDING_TOKEN: "fixture-token", CF_ACCOUNT_ID: "fixture-account", MAIL_RESERVED: "igor,noah" },
     outboundService: "mail-identity-fixture",
-  }, { name: "mail-identity-fixture", modules: true, compatibilityDate: "2026-10-27", script: `export default {fetch(request) {
+  }, { name: "mail-identity-fixture", modules: true, compatibilityDate: "2026-10-27", script: `export default {async fetch(request) {
+    if(new URL(request.url).pathname.endsWith('/email/sending/send')){
+      if(request.headers.get('authorization')!=='Bearer fixture-token')return Response.json({success:false,errors:[{message:'bad token'}]},{status:403});
+      const sent=await request.json();
+      return Response.json({success:true,result:{message_id:'sent|'+sent.from.address+'|'+sent.to[0].address+'|'+sent.subject+'|'+(sent.headers?.['In-Reply-To']||''),delivered:[sent.to[0].address],permanent_bounces:[]}});
+    }
     const who=request.headers.get('authorization')?.replace('Bearer identity-','');
     if(!['alice','bob'].includes(who))return Response.json({success:false},{status:401});
     return Response.json({success:true,profile:{id:who,email:who==='alice'?'igor@autohand.ai':'bob@example.test',name:who,status:'active'}});
@@ -115,4 +120,42 @@ test("marketplace routes are not found until the marketplace database is bound",
   await assert.rejects(publicMarketplaceRoutes(new Request("https://x/v1/marketplace/home"), bare, new URL("https://x/v1/marketplace/home")), (error: any) => error.status === 404);
   await assert.rejects(publisherMarketplaceRoutes(new Request("https://x/v1/marketplace/mine"), bare, { id: "u" } as any, new URL("https://x/v1/marketplace/mine")), (error: any) => error.status === 404);
   await cleanMarketplace(bare);
+});
+
+test("an address changes once, to one that is free (ADR-0267)", async () => {
+  await call("/v1/mailboxes", "POST", { memberId: "m-rua", memberName: "Rua" });
+  await call("/v1/mailboxes", "POST", { memberId: "m-kai", memberName: "Kai" });
+  const free = (await call("/v1/mailboxes/available?localPart=rua.growth")).json.data;
+  assert.deepEqual(free, { available: true, reason: "available" });
+  assert.equal((await call("/v1/mailboxes/available?localPart=kai")).json.data.reason, "in_use", "a member of this account holds it");
+  assert.equal((await call("/v1/mailboxes/available?localPart=postmaster")).json.data.reason, "reserved");
+  assert.equal((await call("/v1/mailboxes/available?localPart=-x")).json.data.reason, "invalid");
+  const taken = await call("/v1/mailboxes/rua/rename", "POST", { localPart: "kai" });
+  assert.equal(taken.status, 409); assert.equal(taken.json.error.code, "mail_address_in_use");
+  const renamed = await call("/v1/mailboxes/rua/rename", "POST", { localPart: "rua.growth" });
+  assert.equal(renamed.status, 200, JSON.stringify(renamed.json));
+  assert.equal(renamed.json.data.mailbox.address, "rua.growth@code.autohandai.com");
+  assert.equal(renamed.json.data.mailbox.canRename, false);
+  assert.equal(renamed.json.data.mailbox.renamedFrom, "rua@code.autohandai.com");
+  const second = await call("/v1/mailboxes/rua.growth/rename", "POST", { localPart: "rua.ops" });
+  assert.equal(second.status, 409); assert.equal(second.json.error.code, "mail_rename_used", "only once");
+  const old = await receiveAgentMail(await env(), { to: "rua@code.autohandai.com", from: "x@y.z", raw: mail("rua@code.autohandai.com", "hi", "hi") });
+  assert.equal(old.stored, false, "the old address stops receiving");
+  assert.equal((await call("/v1/mailboxes/available?localPart=rua.ops", "GET", undefined, bob)).status, 403, "outside the allowed domains nothing is answered");
+});
+
+test("a member replies once to the person who wrote, from its own address (ADR-0267)", async () => {
+  await call("/v1/mailboxes", "POST", { memberId: "m-mia", memberName: "Mia" });
+  assert.equal((await receiveAgentMail(await env(), { to: "mia@code.autohandai.com", from: "ana@customer.example", raw: mail("mia@code.autohandai.com", "Invoice March", "Where is my invoice?") })).stored, true);
+  const email = (await call("/v1/mail/pending")).json.data.messages.find((item: any) => item.memberId === "m-mia");
+  const wrongMember = await call(`/v1/mail/${email.id}/reply`, "POST", { memberId: "m-kai", text: "Hi" });
+  assert.equal(wrongMember.status, 403, "only the addressed member replies");
+  const sent = await call(`/v1/mail/${email.id}/reply`, "POST", { memberId: "m-mia", text: "Hi Ana, it is attached. Mia" });
+  assert.equal(sent.status, 200, JSON.stringify(sent.json));
+  assert.deepEqual([sent.json.data.to, sent.json.data.from], ["ana@customer.example", "mia@code.autohandai.com"], "to the sender, from the member");
+  const row = await (await env()).DB.prepare("SELECT reply_id FROM agent_mail WHERE id=?").bind(email.id).first();
+  assert.match(String(row.reply_id), /^sent\|mia@code\.autohandai\.com\|ana@customer\.example\|Re: Invoice March\|<.+@customer\.example>$/, "threaded as a reply");
+  const twice = await call(`/v1/mail/${email.id}/reply`, "POST", { memberId: "m-mia", text: "again" });
+  assert.equal(twice.status, 409); assert.equal(twice.json.error.code, "mail_already_replied", "one reply per email");
+  assert.equal((await call(`/v1/mail/${email.id}/reply`, "POST", { memberId: "m-mia", text: "x" }, bob)).status, 403, "another account cannot reply");
 });

@@ -43,6 +43,10 @@ export default defineConfig({
       // Local parts other workers already own through their own routing
       // rules on the domain (checked 2026-11-19); Squad never assigns them.
       MAIL_RESERVED: bindings.text("noah,support,igor,steve,james,luiz.moore,lucia,robert,po-review"),
+      // Replies (ADR-0267) go through Cloudflare Email Sending with a token
+      // scoped to it; without one, replies answer "not switched on yet".
+      CF_ACCOUNT_ID: bindings.text(env.CLOUDFLARE_ACCOUNT_ID || ""),
+      ...(env.SQUAD_EMAIL_SENDING ? { EMAIL_SENDING_TOKEN: bindings.secret() } : {}),
     },
   },
 });

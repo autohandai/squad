@@ -31,6 +31,11 @@ export async function handle(req, res, url, ctx) {
   const send = (status, data) => { ctx.json(res, status, { success: true, data }); return true; };
   try {
     if (url.pathname === '/api/mail' && req.method === 'GET') return send(200, await mail.status());
+    if (url.pathname === '/api/mail/available' && req.method === 'GET') return send(200, await mail.available(url.searchParams.get('localPart') || ''));
+    if (url.pathname === '/api/mail/reply' && req.method === 'POST') {
+      const body = await ctx.readBody(req);
+      return send(200, await mail.reply({ emailId: String(body?.emailId || ''), memberId: String(body?.memberId || ''), text: String(body?.text || '') }));
+    }
     if (url.pathname === '/api/mail/assign' && req.method === 'POST') { const made = await mail.ensureAll(); mail.schedule(); return send(200, { made }); }
     if (url.pathname === '/api/mail/offer' && req.method === 'GET') {
       return send(200, { offer: await mail.offer(url.searchParams.get('memberId') || '', url.searchParams.get('name') || '') });

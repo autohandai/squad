@@ -26,6 +26,19 @@ function fakeApi({ allowed = true } = {}) {
       const mailbox = { address: `${local}@code.autohandai.com`, localPart: local, memberId: body.memberId, memberName: body.memberName };
       state.mailboxes.push(mailbox); return json({ mailbox, created: true }, 201);
     }
+    const renameMatch = pathname.match(/^\/v1\/mailboxes\/([^/]+)\/rename$/);
+    if (renameMatch && method === "POST") {
+      const box = state.mailboxes.find(item => item.localPart === decodeURIComponent(renameMatch[1]));
+      if (!box) return json({ code: "mailbox_not_found", message: "not found" }, 404);
+      if (box.renamedFrom) return json({ code: "mail_rename_used", message: "This member's address was already changed once." }, 409);
+      if (state.taken?.includes(body.localPart) || state.mailboxes.some(item => item.localPart === body.localPart)) return json({ code: "mail_address_taken", message: "That address is taken. Choose another." }, 409);
+      Object.assign(box, { renamedFrom: box.address, localPart: body.localPart, address: `${body.localPart}@code.autohandai.com`, canRename: false });
+      return json({ mailbox: box, created: true });
+    }
+    if (pathname === "/v1/mailboxes/available") {
+      const local = searchParams.get("localPart");
+      return json(state.taken?.includes(local) ? { available: false, reason: "taken" } : { available: true, reason: "available" });
+    }
     if (pathname.startsWith("/v1/mailboxes/") && method === "DELETE") { state.mailboxes = state.mailboxes.filter(item => item.localPart !== decodeURIComponent(pathname.split("/")[3])); return json({}); }
     if (pathname === "/v1/mail/pending") return json({ messages: state.pending.filter(item => !state.delivered.includes(item.id)) });
     const done = pathname.match(/^\/v1\/mail\/([^/]+)\/delivered$/);
@@ -83,7 +96,9 @@ const ctx = { mobileRelayIdentity: () => ({ token: "identity-fixture" }), emit: 
     assert.equal((await mail.forMember("m-ana")).mailbox.address, "ana.growth@code.autohandai.com", "the person can change the name before the @");
     await assert.rejects(mail.rename("m-leo", "taken"), error => error.code === "mail_address_taken");
     assert.equal((await mail.forMember("m-leo")).mailbox.address, "leo@code.autohandai.com", "a refused change keeps the old address");
-    await assert.rejects(mail.rename("m-leo", "-bad"), error => error.code === "mail_address_invalid");
+    await assert.rejects(mail.rename("m-ana", "ana.ops"), error => error.code === "mail_rename_used", "an address changes once");
+    assert.deepEqual(await mail.available("taken"), { available: false, reason: "taken" });
+    assert.deepEqual(await mail.available("leo.ops"), { available: true, reason: "available" });
   } finally { mail.stop(); }
   const outside = createAgentMail(ctx, { fetchImpl: fakeApi({ allowed: false }).fetchImpl, baseUrl: "https://squad.example.test", deliver: async () => ({}), members: async () => roster });
   assert.equal(await outside.ensureAll(), 0, "an account outside the allowed domains gets no addresses");

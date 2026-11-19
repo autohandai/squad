@@ -607,6 +607,14 @@ const team = createTeamService({
   memoryLibrary: () => memoryLibrary,
   artifacts,
   ownedData,
+  // Email replies (ADR-0267): sent through this bridge's /api/mail/reply, under the member's rules.
+  replyEmail: async ({ memberId, emailId, text }) => {
+    const response = await ownedBrokerRequest('/api/mail/reply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ memberId, emailId, text }), signal: AbortSignal.timeout(30_000) });
+    const envelope = await response.json();
+    if (!response.ok || !envelope.success) throw new Error(envelope.error || 'The reply could not be sent.');
+    return envelope.data;
+  },
+  emailPolicyFor: async (memberId) => (await agentChannelActions.memberAccess(memberId).catch(() => null))?.agent?.emailPolicy,
   manageMembers: createSquadManagement({
     actions: () => agentChannelActions,
     askPerson: ({ memberId, ...input }) => personQuestions.ask({ ...input, agentId: memberId }),

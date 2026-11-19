@@ -88,27 +88,28 @@ export function createAgentMail(ctx, { fetchImpl = fetch, baseUrl = squadApiUrl(
     return created;
   }
 
+  /** Whether the name before the @ is free for this account (ADR-0267). */
+  async function available(localPart) {
+    return request(`/v1/mailboxes/available?${new URLSearchParams({ localPart: String(localPart || "").trim().toLowerCase() })}`);
+  }
+
   /**
-   * A new address for a member, chosen by the person (the part before the
-   * @). The old one is given back first, because a member holds one address;
-   * if the new one is refused, the old one is taken back, so the member is
-   * never left without one.
+   * The person's one change of a member's address (ADR-0267). Squad API does
+   * it in one step and refuses a second change.
    */
   async function rename(memberId, localPart) {
     const wanted = String(localPart || "").trim().toLowerCase().replace(/@.*$/, "");
-    if (!/^[a-z0-9][a-z0-9.-]{0,28}[a-z0-9]$/.test(wanted) || wanted.includes("..")) throw fail("Use 2–30 letters, numbers, dots or dashes.", 400, "mail_address_invalid");
     const { mailbox } = await forMember(memberId);
     if (!mailbox) throw fail("This member has no email address yet.", 404, "mailbox_not_found");
     if (mailbox.localPart === wanted) return { mailbox, created: false };
-    await request(`/v1/mailboxes/${encodeURIComponent(mailbox.localPart)}`, { method: "DELETE" });
-    try {
-      const created = await request("/v1/mailboxes", { method: "POST", body: { memberId, memberName: mailbox.memberName || memberId, localPart: wanted } });
-      ctx.emit?.("mail.changed", { memberId });
-      return created;
-    } catch (error) {
-      await request("/v1/mailboxes", { method: "POST", body: { memberId, memberName: mailbox.memberName || memberId, localPart: mailbox.localPart } }).catch(() => {});
-      throw error;
-    }
+    const saved = await request(`/v1/mailboxes/${encodeURIComponent(mailbox.localPart)}/rename`, { method: "POST", body: { localPart: wanted } });
+    ctx.emit?.("mail.changed", { memberId });
+    return saved;
+  }
+
+  /** Sends a member's reply to the person who wrote (ADR-0267). */
+  async function reply({ emailId, memberId, text }) {
+    return request(`/v1/mail/${encodeURIComponent(emailId)}/reply`, { method: "POST", body: { memberId, text } });
   }
 
   /** Gives every member without an address one from its name. Returns how many were made. */
@@ -183,5 +184,5 @@ export function createAgentMail(ctx, { fetchImpl = fetch, baseUrl = squadApiUrl(
 
   function stop() { if (timer) clearInterval(timer); timer = null; }
 
-  return { status, forMember, offer, register, rename, ensureAll, remove, poll, schedule, stop, get lastStatus() { return lastStatus; } };
+  return { status, forMember, offer, register, rename, available, reply, ensureAll, remove, poll, schedule, stop, get lastStatus() { return lastStatus; } };
 }

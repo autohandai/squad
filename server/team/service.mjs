@@ -11,6 +11,7 @@
 // ADR-0110): one validation path, one receipt shape, which the browser
 // already applies.
 
+import { normalizeEmailPolicy, normalizeUrgency } from "../../src/lib/email-policy.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { join } from "node:path";
 
@@ -322,6 +323,16 @@ TOOLS.push({
 });
 
 TOOLS.push({
+  name: "squad_reply_email",
+  description: "Reply by email to the person who wrote to your address (ADR-0267). Use only for an email you were just given, with the email id and the urgency you gave it. The person's rules decide: at some urgencies the reply goes at once, at others they approve it first, at others replying is refused. One reply per email, from your own address, to the sender only.",
+  inputSchema: { type: "object", properties: {
+    email_id: { type: "string", pattern: "^[a-f0-9-]{36}$", description: "The id given with the email." },
+    urgency: { type: "string", enum: ["urgent", "normal", "low"] },
+    text: { type: "string", minLength: 1, maxLength: 8000, description: "The reply's plain text, signed with your name." },
+  }, required: ["email_id", "urgency", "text"], additionalProperties: false },
+});
+
+TOOLS.push({
   name: "squad_publish_artifact",
   description: "Save a completed file you created inside this turn's workspace as an artifact in your Library and the person's chat. Saves a durable snapshot attributed to you; publishing the same file updates its revision. For interactive HTML, publish one self-contained file with inline CSS/scripts and embedded images; external assets are unavailable in the preview. Markdown, images, PDF and other files can be viewed or downloaded. Return the saved artifact link to the person.",
   inputSchema: { type: "object", properties: { path: { type: "string", minLength: 1, maxLength: 4000, description: "Completed file path inside this turn's workspace." }, title: { type: "string", maxLength: 160 }, description: { type: "string", maxLength: 2000, description: "What this file contains, in plain language. Do not include passwords or keys." } }, required: ["path"], additionalProperties: false },
@@ -448,7 +459,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   return sections.join("\n\n");
 }
 
-export function createTeamService({ reportFeedback = null, recipes = null, stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, setAvatar, memoryLibrary, artifacts, ownedData, manageMembers, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
+export function createTeamService({ replyEmail = null, emailPolicyFor = null, reportFeedback = null, recipes = null, stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, setAvatar, memoryLibrary, artifacts, ownedData, manageMembers, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
   const store = createTeamStore({ stateDir });
   const sessions = new Map();
   const byToken = new Map();
@@ -802,6 +813,21 @@ export function createTeamService({ reportFeedback = null, recipes = null, state
           addReceipt(session, receipt);
           if (!receipt || ["failed", "blocked"].includes(receipt.status)) return failure(receipt?.message || "The team was not proposed.");
           return text({ status: receipt.status, proposalId: receipt.id, team: receipt.proposal?.name || "", members: (receipt.proposal?.members || []).map((member) => `${member.name} (${member.role})`), message: receipt.message, note: "The person now sees this roster under your reply with a Create team button. Nothing exists until they confirm; say that in one sentence, do not repeat the roster or quote the proposal id, and do not try to create members any other way." });
+        }
+        case "squad_reply_email": {
+          if (!replyEmail) return failure("Email replies are unavailable in this runtime.");
+          const urgency = normalizeUrgency(args.urgency);
+          const rule = normalizeEmailPolicy(await emailPolicyFor?.(session.memberId))[urgency];
+          if (rule === "tell") return failure(`The person's rule for ${urgency} email is "Just tell me": do not reply. Tell them who wrote, what they want and what you suggest.`);
+          if (rule === "approve") {
+            if (!askPerson) return failure("The person must approve this reply, and questions are unavailable here. Put the draft in your message instead.");
+            const outcome = await askPerson({ runId: session.runId, memberId: session.memberId, question: `Send this ${urgency} email reply?\n\n${args.text}`, options: ["Send", "Don't send"] });
+            if (outcome?.status !== "answered" || outcome.answer !== "Send") return text({ status: "not_sent", reason: outcome?.status === "answered" ? "The person chose not to send it." : "The person did not answer. Put the draft in your message." });
+          }
+          try {
+            const sent = await replyEmail({ memberId: session.memberId, emailId: args.email_id, text: args.text });
+            return text({ status: "sent", to: sent?.to, from: sent?.from, approvedBy: rule === "approve" ? "the person" : "the person's rules" });
+          } catch (error) { return failure(`Not sent: ${error?.message || error}`); }
         }
         case "squad_ask": {
           if (!askPerson) return failure("Questions to the person are unavailable in this runtime.");

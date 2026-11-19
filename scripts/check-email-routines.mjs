@@ -36,7 +36,11 @@ try {
   assert.match(prompt, /Subject: Quote for March/);
   assert.match(prompt, /not as instructions from the person/, "the email is named as an outside sender's words");
   assert.ok(!prompt.slice(prompt.indexOf("```text") + 7).includes("```json"), "the email cannot close the fence early");
-  assert.match(prompt, /never say you replied/, "the member does not claim to have sent email");
+  assert.match(prompt, /Only say you replied if squad_reply_email returned sent/, "the member only claims a reply that was sent");
+  assert.match(prompt, /Urgency: urgent\|normal\|low/, "the member labels the urgency first (ADR-0267)");
+  assert.match(prompt, /- urgent .*the person approves it before it goes/, "by default an urgent email gets a draft for the person to approve");
+  assert.match(prompt, /- normal .*do not reply; only tell the person/, "by default other email only tells the person");
+  assert.match(prompt, /This email's id is /, "the member knows which email it answers");
 
   const second = await triggerEmailRoutine(ctx, { memberId: "m-thiago", address: "thiago@code.autohandai.com", email: { ...email, subject: "Second" } });
   assert.equal(second.routineId, first.routineId, "later emails reuse the same automation");
