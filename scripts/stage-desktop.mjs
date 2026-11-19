@@ -19,6 +19,7 @@ import { stageAppInfo } from './stage-app-info.mjs';
 import { stageProductTelemetry } from './stage-product-telemetry.mjs';
 import { stageConnectorClients } from './stage-connector-clients.mjs';
 import { stageComputerUse } from './stage-computer-use.mjs';
+import { stageVoiceHelper } from './stage-voice-helper.mjs';
 import { stageClaudeSdk } from './stage-claude-sdk.mjs';
 import { stageRuntimeSources } from './lib/stage-runtime-sources.mjs';
 import { releaseSigningIdentity, signMacCode } from './lib/macos-signing.mjs';
@@ -127,6 +128,7 @@ async function stageRuntime() {
   const selectedNodeVersion = nodeProbe.stdout.trim();
   await writeFile(join(runtimeDir, 'DESKTOP_RUNTIME.json'), `${JSON.stringify({ stagedAt: new Date().toISOString(), triple, appVersion: appPackage.version, cliVersion: info.version, node: selectedNodeVersion }, null, 2)}\n`);
   await stageComputerUse({ rootDir, runtimeDir, hostPath: process.env.AUTOHAND_SQUAD_COMPUTER_USE_HOST || join(rootDir, 'vendor', 'computer-use', 'Autohand Computer Use.app') });
+  await stageVoiceHelper({ rootDir, runtimeDir });
   await stageAppInfo({ rootDir, runtimeDir, nodeVersion: selectedNodeVersion });
   await stageProductTelemetry({ rootDir, runtimeDir });
   await stageConnectorClients({ runtimeDir, envFile: join(rootDir, '.env') });

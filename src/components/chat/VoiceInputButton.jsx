@@ -4,6 +4,7 @@ import { Mic, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DESKTOP_DICTATION_HINT, composeDictation, createDictation, dictationSupport, recognitionClass } from "@/lib/voice-input";
+import { appendSpoken, cancelVoice, prepareVoice, startVoice, stopVoice, voiceStatus } from "@/lib/autohand-voice";
 
 const NOTICE_MS = 8000;
 
@@ -18,7 +19,16 @@ const NOTICE_MS = 8000;
  * listening, because WKWebView never starts recognition there.
  */
 export function VoiceInputButton({ value = "", onValueChange, disabled = false, control: Control = Button, size = "icon-sm", className, lang, copy = {}, noticeClassName }) {
-  const support = useMemo(() => dictationSupport(), []);
+  const browserSupport = useMemo(() => dictationSupport(), []);
+  // Autohand Voice (ADR-0260): this computer records and transcribes on-device
+  // with Parakeet. When the bridge offers it, it is the mic everywhere.
+  const [onDevice, setOnDevice] = useState(null);
+  useEffect(() => {
+    let live = true;
+    voiceStatus().then((status) => { if (live) setOnDevice(status?.available ? status : false); });
+    return () => { live = false; };
+  }, []);
+  const support = onDevice ? "autohand" : browserSupport;
   const [state, setState] = useState("idle");
   const [notice, setNotice] = useState(null);
   const dictation = useRef(null);
@@ -44,6 +54,9 @@ export function VoiceInputButton({ value = "", onValueChange, disabled = false, 
     return () => clearTimeout(timer);
   }, [notice]);
 
+  // Leaving the composer mid-recording discards it rather than leaving the mic on.
+  useEffect(() => () => { if (support === "autohand" && state !== "idle") void cancelVoice().catch(() => {}); }, [support, state]);
+
   if (support === "none") return null;
 
   const listening = state === "listening";
@@ -51,7 +64,41 @@ export function VoiceInputButton({ value = "", onValueChange, disabled = false, 
   const startLabel = copy.dictate || "Dictate";
   const stopLabel = copy.stopDictation || "Stop dictation";
 
+  async function toggleOnDevice() {
+    if (state === "transcribing" || state === "starting") return;
+    if (state === "listening") {
+      setState("transcribing");
+      try {
+        const { text } = await stopVoice();
+        latest.current.onValueChange?.(appendSpoken(latest.current.value, text));
+        if (!text) setNotice({ text: copy.heardNothing || "Nothing was heard.", tone: "muted" });
+      } catch (failure) { setNotice({ text: failure.message, tone: "error" }); }
+      setState("idle");
+      return;
+    }
+    setNotice(null);
+    let status = onDevice;
+    if (!status.modelReady) {
+      // One-time download of the Parakeet model, with progress.
+      try {
+        status = await prepareVoice();
+        while (!status.modelReady && !status.prepareError) {
+          setNotice({ text: `Downloading Autohand Voice (Parakeet) · ${Math.round((status.preparing?.fraction || 0) * 100)}%`, tone: "muted", sticky: true });
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          status = await voiceStatus({ fresh: true });
+        }
+        setOnDevice(status);
+        if (status.prepareError) { setNotice({ text: status.prepareError, tone: "error" }); return; }
+        setNotice(null);
+      } catch (failure) { setNotice({ text: failure.message, tone: "error" }); return; }
+    }
+    setState("starting");
+    try { await startVoice(); setState("listening"); }
+    catch (failure) { setState("idle"); setNotice({ text: failure.message, tone: "error" }); }
+  }
+
   function toggle() {
+    if (support === "autohand") { void toggleOnDevice(); return; }
     if (support === "desktop") {
       setNotice({ text: DESKTOP_DICTATION_HINT, tone: "muted" });
       return;
@@ -65,7 +112,8 @@ export function VoiceInputButton({ value = "", onValueChange, disabled = false, 
     dictation.current?.start();
   }
 
-  const statusText = listening ? copy.listening || "Listening…" : starting ? copy.startingDictation || "Starting…" : "";
+  const transcribing = state === "transcribing";
+  const statusText = listening ? copy.listening || "Listening…" : starting ? copy.startingDictation || "Starting…" : transcribing ? copy.transcribing || "Writing it down…" : "";
 
   return (
     <>
@@ -80,6 +128,7 @@ export function VoiceInputButton({ value = "", onValueChange, disabled = false, 
         className={cn("rounded-full", listening && "text-primary hover:text-primary", className)}
         onClick={toggle}
         data-dictation-state={support === "desktop" ? "desktop" : state}
+        data-dictation-engine={support === "autohand" ? "parakeet" : support}
       >
         {listening ? <Square className="size-3.5 fill-current" /> : <Mic className={cn("size-4", starting && "animate-pulse")} />}
       </Control>

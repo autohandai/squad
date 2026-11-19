@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- Autohand Voice: the mic in every composer, Quick Chat included, now records and turns your words into text on this Mac with Parakeet, without sending audio anywhere. The first time, it downloads the voice model once.
 - Agents can report a bug or send feedback to Autohand themselves when something in Squad breaks while they work (labelled with who sent it, never with a screenshot or your email, at most five an hour), and tell you they did.
 - The marketplace on Squad for iPhone: your phone browses agents and teams through this computer. When you add one on your phone, Squad here opens it for you to review and add, and your phone shows the outcome. Turn off Settings › Computers › "Confirm phone adds on this computer" to let phone adds go straight in.
 - **Start an automation from a webhook.** Choose "When a webhook is called" and Squad gives the automation a private URL with a copyable example. Each call starts one run (never two at once, up to 10 a minute), and you can make a new URL or turn it off at any time. The URL is on your computer; to call it from the internet, use the tunnel you already run.

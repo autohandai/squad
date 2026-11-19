@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Merged into the app's Info.plist by Tauri. Dictation (ADR-0260). -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Squad records your voice only while you dictate, and turns it into text on this Mac.</string>
+</dict>
+</plist>
