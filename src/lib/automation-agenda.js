@@ -50,7 +50,7 @@ export function reconcileAutomationReplies(conversations, routines = [], { now =
     const since = Math.max(now - recentMs, Date.parse(startedAt[routine.memberId] || '') || 0);
     const additions = (routine.runs || []).filter(run => run.status === 'completed' && run.reply?.trim() && !ids.has(`automation-result-${run.id}`) && (Date.parse(run.finishedAt || '') || 0) >= since).map(run => ({
       id: `automation-result-${run.id}`, role: 'agent', status: 'complete', body: run.reply,
-      source: 'automation', routineId: routine.id, runtimeId: run.memberRunId,
+      source: 'automation', routineId: routine.id, routineTitle: routine.title, runtimeId: run.memberRunId,
       startedAt: run.startedAt, completedAt: run.finishedAt, createdAt: run.finishedAt,
       time: new Date(run.finishedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
       workspace: routine.workspace,

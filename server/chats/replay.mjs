@@ -48,3 +48,26 @@ export function conversationReplay(history, options = {}) {
     "</squad_conversation_replay>",
   ].join("\n");
 }
+
+/**
+ * Messages that reached the chat from outside the member's live engine
+ * session (ADR-0268): an automation's result (a routine, a webhook, an
+ * email), which runs in a session of its own and is then posted here. A warm
+ * session never saw them, so the person's "reply to that" landed on a member
+ * with no idea what "that" was. The browser marks them `outside` with their
+ * id; each live session is told about each one once.
+ */
+export function unseenOutside(history, seen = new Set()) {
+  return (Array.isArray(history) ? history : []).filter((row) => row?.outside && row?.id && !seen.has(row.id) && String(row.body || "").trim());
+}
+
+export function outsideMessagesBlock(rows) {
+  const items = (Array.isArray(rows) ? rows : []).slice(-6).map((row) => ({ from: row.source || "your automation", said: clean(row.body, REPLAY_TURN_CHARS) }));
+  if (!items.length) return "";
+  return [
+    "<squad_posted_in_this_chat>",
+    "Since your last turn these were posted in this conversation by your own automations, which run in sessions of their own. They are yours: treat them as things you already told the person. The person's next message may refer to them.",
+    JSON.stringify(items),
+    "</squad_posted_in_this_chat>",
+  ].join("\n");
+}

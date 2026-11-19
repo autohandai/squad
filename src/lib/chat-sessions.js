@@ -62,7 +62,13 @@ export function restoreConversationEvent(memberId, chat, at = new Date().toISOSt
 
 /** Replay both sides when a saved or merged chat starts a fresh engine session. */
 export function conversationContextMessages(messages) {
-  return (messages || []).filter(message => !message.superseded && (message.role === "user" || (message.role === "agent" && message.status === "complete"))).slice(-12).map(message => ({ role: message.role, body: String(message.body || "").slice(-2400) }));
+  return (messages || []).filter(message => !message.superseded && (message.role === "user" || (message.role === "agent" && message.status === "complete"))).slice(-12).map(message => ({
+    role: message.role,
+    body: String(message.body || "").slice(-2400),
+    // Posted by an automation from a session of its own (ADR-0268): the live
+    // session is told about it before the person's next message.
+    ...(message.routineId || message.automationId ? { id: String(message.id || ""), outside: true, source: message.routineTitle || message.automationName || "your automation" } : {}),
+  }));
 }
 
 /** "3 turns · Claude Code · 2h ago" */

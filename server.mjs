@@ -7,7 +7,7 @@ import { PermissionApprovalError, PermissionApprovals } from "./server/permissio
 import { ChangeBatches } from "./server/change-batches.mjs";
 import { ENGINE_CLEANUP_MS, withDeadline } from "./server/deadline.mjs";
 import { PersonQuestionError, PersonQuestions } from "./server/questions.mjs";
-import { conversationReplay } from "./server/chats/replay.mjs";
+import { conversationReplay, outsideMessagesBlock, unseenOutside } from "./server/chats/replay.mjs";
 import { createConversationChanges } from "./server/chats/admission.mjs";
 import { replyFailure } from "./server/sdk-events.mjs";
 import { HarnessLoginManager } from "./server/harness/login.mjs";
@@ -412,6 +412,9 @@ const changeBatches = new ChangeBatches({ log: (message) => logEvent(SEVERITY.WA
 // A session created by warm-up or after a close has not, so the first prompt
 // on it replays the recent conversation (ADR-0161).
 const primedSessions = new WeakSet();
+// Ids of chat messages posted from outside a member's chat session (its
+// automations' results) that the member has already been told about (ADR-0268).
+const outsideSeenByMember = new Map();
 async function sdkSessionPool() {
   if (!sdkSessions) {
     const { AutohandSDK } = await loadAgentSdk();
@@ -8248,7 +8251,17 @@ async function executeChatTurn(payload, { stream, signal, startedAt = Date.now()
   const nudge = takeAutomationNudge(payload);
   if (nudge) run.automationNudge = { kind: nudge.kind, phrase: nudge.phrase };
   try {
-    const turn = { ...payload, _computerUseWorkId: workId, ...(nudge ? { prompt: `${String(payload.prompt || "").trim()}\n\n${automationNudgeLine(nudge)}` } : {}) };
+    // What the member's automations posted in this chat from sessions of their
+    // own (ADR-0268): told once, before the person's next message, whatever
+    // engine answers, so "reply to that" has a "that".
+    const memberKey = sanitizeAgentId(payload.agent?.id || payload.agentId || "member");
+    const seenOutside = outsideSeenByMember.get(memberKey) || new Set();
+    outsideSeenByMember.set(memberKey, seenOutside);
+    const unseen = payload.ephemeralSession ? [] : unseenOutside(payload.conversationContext, seenOutside);
+    for (const row of unseen) seenOutside.add(row.id);
+    const outside = outsideMessagesBlock(unseen);
+    const basePrompt = outside ? `${outside}\n\n${String(payload.prompt || "").trim()}` : payload.prompt;
+    const turn = { ...payload, prompt: basePrompt, _computerUseWorkId: workId, ...(nudge ? { prompt: `${String(basePrompt || "").trim()}\n\n${automationNudgeLine(nudge)}` } : {}) };
     const result = await fallbackRouter.execute(turn, {
       stream: delayedDone, signal: runSignal,
       history: Array.isArray(payload.conversationContext) ? payload.conversationContext.slice(-12).map(message => ({ role: String(message.role || ''), body: String(message.body || '').slice(-2400) })) : [],
