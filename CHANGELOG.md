@@ -60,6 +60,7 @@ list to the section for that version.
 - Your phone now works at home and away without pairing again. Computers settings lets Same Wi-Fi and From anywhere (Autohand’s relay) run at the same time, alongside your own tunnel. A phone paired on one of them learns the others from your computer and switches by itself: the same network when it can, the relay everywhere else.
 ### Changed
 
+- Recipes now come from your own work: Squad suggests a request you keep making to the same member, and the Chief of Staff saves the ones worth keeping. The list is Saved, Spotted in your work, then the old starters; the Inbox button is called Recipes.
 - Quick Chat's message box now looks and works like the main window's, with the same round send button.
 - On Macs with Liquid Glass (macOS 26 and later), the sidebar sits on Liquid Glass. Turn it off in Settings › Appearance › Liquid Glass sidebar.
 - Needs you is now called Inbox everywhere: the sidebar, the page, search, Settings and the View menu.

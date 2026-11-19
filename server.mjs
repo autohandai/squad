@@ -31,6 +31,7 @@ import { createConnectorRuntime } from "./server/connectors/runtime.mjs";
 import { FEATURED as FEATURED_CONNECTORS } from "./server/connectors/catalog.mjs";
 import { autohandServersFor, claudeMcpConfig, codexConfigArgs, connectorInstructions, connectorsAllowed, mergeAutohandMcp } from "./server/connectors/inject.mjs";
 import { VAULT_MCP_SERVER_NAME, createVaultService } from "./server/vault/service.mjs";
+import { recipeStoreFor } from "./server/recipes/store.mjs";
 import { AUTOHAND_TEAM_WAIT_SECONDS, TEAM_MCP_SERVER_NAME, createTeamService, teamMessagePrompt } from "./server/team/service.mjs";
 import { createSquadManagement } from './server/team/member-management.mjs';
 import { createMemoryService } from "./server/memory/service.mjs";
@@ -598,6 +599,7 @@ bridgeEvents.on("member.stopped", ({ memberId }) => vault.closeMember(memberId))
 const artifacts = createArtifactService({ stateDir: squadStateDir, members: teamMembers, emit: emitBridgeEvent });
 const team = createTeamService({
   reportFeedback: (input) => submitAgentFeedback(input),
+  recipes: recipeStoreFor(squadStateDir),
   stateDir: squadStateDir,
   rootDir,
   bridgeUrl: privateOwnerContext.publicUrl,

@@ -31,6 +31,7 @@ import { AutomationPlainEnglish } from "@/components/members/AutomationPlainEngl
 import { AutomationWebhook } from "@/components/members/AutomationWebhook";
 import { AccountAvatar } from "@/components/account/AccountAvatar";
 import { LiquidGlassSetting } from "@/components/settings/LiquidGlassSetting";
+import { spotRecipes } from "@/lib/recipe-observations";
 import { MemberReplyThread, useMemberThreadSummaries } from "@/components/chat/MemberReplyThread";
 import { automationAgenda, reconcileAutomationReplies } from "@/lib/automation-agenda";
 import { normalizeChannelGoal } from "@/lib/channel-goals";
@@ -19789,8 +19790,9 @@ function RecipeLaunchDialog({
   useEffect(() => {
     if (!open || !recipe) return;
     const roleMatch = candidates.find((agent) => recipe.roleId && recipe.roleId === agentRoleId(agent));
-    setAgentId(defaultAgentId || roleMatch?.id || candidates[0]?.id || "");
-    setPrompt("");
+    // A saved or spotted recipe names its member and carries its request.
+    setAgentId((recipe.memberId && agents.some((agent) => agent.id === recipe.memberId) ? recipe.memberId : "") || defaultAgentId || roleMatch?.id || candidates[0]?.id || "");
+    setPrompt(recipe.prompt || "");
   }, [open, recipe, defaultAgentId]);
 
   if (!recipe) return null;
@@ -19879,9 +19881,48 @@ function RecipeCatalogDialog({
 }) {
   const text = recipeCopy(copy);
   const [selected, setSelected] = useState(null);
+  const [saved, setSaved] = useState([]);
+  const [spotted, setSpotted] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [savingId, setSavingId] = useState("");
+  const [startersOpen, setStartersOpen] = useState(false);
 
-  function pick(recipe) {
-    setSelected(recipe);
+  // Recipes come from this Squad's own work (ADR-0259): what the Chief of
+  // Staff (or the person) saved, and what Squad spots being asked for again
+  // and again in run history. The built-in starters come last.
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const [list, runs] = await Promise.all([api("/api/recipes"), api("/api/runs").catch(() => [])]);
+      const savedRecipes = Array.isArray(list?.recipes) ? list.recipes : [];
+      setSaved(savedRecipes);
+      const direct = (Array.isArray(runs) ? runs : []).filter((run) => !run.channel && !["routine", "automation", "team"].includes(run.kind));
+      setSpotted(spotRecipes(direct.map((run) => ({ agentId: run.agentId, prompt: run.personPrompt || run.prompt, startedAt: run.startedAt, recipeId: run.recipeId })), {
+        members: agents.map((agent) => ({ id: agent.id, name: agent.name })),
+        known: savedRecipes.map((recipe) => recipe.prompt),
+      }));
+    } catch (failure) {
+      setError(failure?.message || "Recipes could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  }, [agents]);
+  useEffect(() => { if (open) void load(); }, [open, load]);
+
+  async function save(recipe) {
+    setSavingId(recipe.id); setError("");
+    try {
+      await api("/api/recipes", { method: "POST", body: JSON.stringify({ name: recipe.name, prompt: recipe.prompt, description: recipe.description, memberId: recipe.memberId, evidence: recipe.description, source: "spotted" }) });
+      await load();
+    } catch (failure) { setError(failure?.message || "The recipe could not be saved."); }
+    finally { setSavingId(""); }
+  }
+  async function remove(recipe) {
+    setSavingId(recipe.id); setError("");
+    try { await api(`/api/recipes/${encodeURIComponent(recipe.id)}`, { method: "DELETE" }); await load(); }
+    catch (failure) { setError(failure?.message || "The recipe could not be removed."); }
+    finally { setSavingId(""); }
   }
 
   function handleLaunch(payload) {
@@ -19889,6 +19930,18 @@ function RecipeCatalogDialog({
     onOpenChange?.(false);
     onLaunch?.(payload);
   }
+
+  const memberName = (id) => agents.find((agent) => agent.id === id)?.name || "";
+  const savedLine = (recipe) => [recipe.memberId ? `Runs as ${memberName(recipe.memberId) || "a removed member"}` : "", recipe.savedBy ? `saved by ${recipe.savedBy}` : "", recipe.evidence].filter(Boolean).join(" · ");
+  const Row = ({ recipe, detail, action }) => (
+    <div className="flex items-start gap-3 py-3">
+      <button type="button" onClick={() => setSelected(recipe)} className="min-w-0 flex-1 text-left outline-none focus-visible:underline" data-testid="recipe-row">
+        <span className="block text-sm font-medium text-foreground">{recipe.name}</span>
+        <span className="mt-0.5 block text-sm leading-6 text-muted-foreground">{detail}</span>
+      </button>
+      {action}
+    </div>
+  );
 
   return (
     <>
@@ -19901,25 +19954,37 @@ function RecipeCatalogDialog({
             </DialogTitle>
             <DialogDescription>{text.catalogDescription}</DialogDescription>
           </DialogHeader>
-          <div className="divide-y">
-            {recipes.map((recipe) => {
-              const level = autonomyLadderLevelMeta(recipe.permissionLevel);
-              const role = recipe.roleId ? roleTemplates.find((template) => template.id === recipe.roleId) : null;
-              return (
-                <button
-                  key={recipe.id}
-                  type="button"
-                  onClick={() => pick(recipe)}
-                  className="flex w-full flex-col items-start gap-1.5 px-6 py-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:bg-muted/40"
-                >
-                  <div className="flex w-full flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-foreground">{recipe.name}</span>
-                    <span className="text-xs text-muted-foreground">Level {level.rank}: {level.label} · {role ? formatCopy(text.forRole, { role: role.title }) : text.general}</span>
-                  </div>
-                  <p className="text-sm leading-6 text-muted-foreground">{recipe.description}</p>
-                </button>
-              );
-            })}
+          <div className="space-y-6 px-6 py-5">
+            {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+            <section aria-labelledby="recipes-saved" data-testid="recipes-saved">
+              <h3 id="recipes-saved" className="text-sm font-semibold">Saved</h3>
+              {saved.length ? (
+                <div className="divide-y divide-border/60">{saved.map((recipe) => (
+                  <Row key={recipe.id} recipe={recipe} detail={[recipe.description, savedLine(recipe)].filter(Boolean).join(" ")}
+                    action={<Button type="button" variant="ghost" size="sm" disabled={savingId === recipe.id} onClick={() => remove(recipe)} aria-label={`Remove ${recipe.name}`}>Remove</Button>} />
+                ))}</div>
+              ) : <p className="mt-1 text-sm text-muted-foreground">None yet. When you keep asking for the same work, the Chief of Staff saves it here, or save a suggestion below.</p>}
+            </section>
+            <section aria-labelledby="recipes-spotted" data-testid="recipes-spotted">
+              <h3 id="recipes-spotted" className="text-sm font-semibold">Spotted in your work</h3>
+              {loading && !spotted.length ? <p className="mt-1 text-sm text-muted-foreground">Looking at recent requests…</p> : spotted.length ? (
+                <div className="divide-y divide-border/60">{spotted.map((recipe) => (
+                  <Row key={recipe.id} recipe={recipe} detail={recipe.description}
+                    action={<Button type="button" variant="outline" size="sm" disabled={savingId === recipe.id} onClick={() => save(recipe)}>Save</Button>} />
+                ))}</div>
+              ) : <p className="mt-1 text-sm text-muted-foreground">Nothing yet. A request you make three times on different days shows up here.</p>}
+            </section>
+            <section aria-labelledby="recipes-starters">
+              <button type="button" id="recipes-starters" className="flex items-center gap-1 text-sm font-semibold" aria-expanded={startersOpen} onClick={() => setStartersOpen((value) => !value)}>
+                <ChevronRight className={cn("size-3.5 transition-transform", startersOpen && "rotate-90")} aria-hidden="true" />
+                Starters
+              </button>
+              {startersOpen ? (
+                <div className="divide-y divide-border/60">{recipes.map((recipe) => (
+                  <Row key={recipe.id} recipe={recipe} detail={recipe.description} />
+                ))}</div>
+              ) : null}
+            </section>
           </div>
         </DialogContent>
       </Dialog>

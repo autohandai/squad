@@ -248,6 +248,22 @@ const FEEDBACK_PROPERTIES = {
   detail: { type: "string", maxLength: 8000, description: "What you were doing, what you expected, what happened, exact error text. No secrets, tokens or the person's private content." },
   includeDiagnostics: { type: "boolean", description: "Attach this computer's sanitised diagnostics (default true)." },
 };
+// Recipes from observed work (ADR-0259): the Chief of Staff, or any member,
+// saves a repeated request so the person can run it again from Recipes.
+TOOLS.push({
+  name: "squad_save_recipe",
+  description: "Save repeatable work as a recipe under Recipes, when you notice the person asking for the same kind of work again (not for one-off work). name: 3-6 words. prompt: the request a member runs, written so it works again next time. member_id: who should run it (from squad_team). evidence: what you noticed, e.g. 'asked Tatiana for the weekly churn summary 4 times since 3 Nov'. Saving the same prompt for the same member updates it. Tell the person in one line.",
+  inputSchema: { type: "object", properties: {
+    name: { type: "string", minLength: 3, maxLength: 80 }, prompt: { type: "string", minLength: 8, maxLength: 4000 },
+    description: { type: "string", maxLength: 400, description: "When to use it, in one sentence." },
+    member_id: { type: "string", maxLength: 160 }, evidence: { type: "string", maxLength: 400 },
+  }, required: ["name", "prompt"], additionalProperties: false },
+}, {
+  name: "squad_list_recipes",
+  description: "List the recipes saved in this Squad (name, member, request, who saved it and why), so you do not save the same one twice.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+});
+
 TOOLS.push({
   name: "squad_report_bug",
   description: "Report a bug in Autohand Squad, its tools or an engine to Autohand, without asking the person first, when you hit one: a Squad tool that errors when it should not, a crash, wrong data, something that blocks the work. Not for mistakes in your own work or the person's project. Sends a sanitised report with diagnostics and no screenshot; at most five an hour from this computer and never the same one twice in an hour. Tell the person in one line that you reported it.",
@@ -403,6 +419,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
     "- squad_team lists teammates; squad_message asks one and returns their reply (squad_replies collects late ones).",
     "- When the person says teach the team, share what you learned, tell everyone or pass this on, call squad_teach with the reusable lesson in this turn. It saves team knowledge and actually messages the teammates. Report queued/running/replied states accurately; a promise in chat is not a delivery.",
     "- squad_get_profile reads your saved profile; squad_set_profile changes name, role, description, instructions, personality and skills. A verbal promise does not change Squad.",
+    "- When the person keeps asking for the same kind of work (you see it in their requests, channels or tasks), save it once with squad_save_recipe: a short name, the request a member should run, which member, and in evidence what you noticed. It appears under Recipes for anyone to run again. squad_list_recipes shows what is saved; do not save one-off work.",
     "- squad_avatars lists the birds Squad draws; squad_set_avatar changes your own avatar to one when the person asks. Confirm only after its receipt.",
     "- squad_models reads connected engines and their supported model IDs. squad_set_fallbacks updates your ordered fallbacks only when the person enabled Let this member manage fallbacks; never claim the list changed without its saved receipt.",
     "- squad_channels and squad_channel_messages read your channels; squad_post_channel publishes a message there; squad_create_channel uses your existing creation permission.",
@@ -431,7 +448,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   return sections.join("\n\n");
 }
 
-export function createTeamService({ reportFeedback = null, stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, setAvatar, memoryLibrary, artifacts, ownedData, manageMembers, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
+export function createTeamService({ reportFeedback = null, recipes = null, stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, setAvatar, memoryLibrary, artifacts, ownedData, manageMembers, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
   const store = createTeamStore({ stateDir });
   const sessions = new Map();
   const byToken = new Map();
@@ -585,6 +602,19 @@ export function createTeamService({ reportFeedback = null, stateDir, rootDir, br
         return text(await manageMembers(name, args, operation, assertCurrent));
       }
       switch (name) {
+        case "squad_save_recipe": {
+          if (!recipes) throw new TeamError("Recipes are unavailable in this runtime.");
+          const roster = await members();
+          if (args.member_id && !roster.some((member) => member.id === args.member_id && !member.removed)) throw new TeamError("That member is not in this Squad. Use an id from squad_team.");
+          const savedBy = roster.find((member) => member.id === session.memberId)?.name || "A Squad member";
+          const role = String(roster.find((member) => member.id === session.memberId)?.role || "");
+          const recipe = await recipes.save({ name: args.name, prompt: args.prompt, description: args.description, memberId: args.member_id || null, evidence: args.evidence, savedBy, source: /chief of staff/i.test(role) ? "chief-of-staff" : "member" });
+          return text({ recipe, note: "Saved under Recipes. Tell the person in one line." });
+        }
+        case "squad_list_recipes": {
+          if (!recipes) throw new TeamError("Recipes are unavailable in this runtime.");
+          return text({ recipes: (await recipes.list()).map(({ id, name, prompt, memberId, savedBy, evidence }) => ({ id, name, prompt, memberId, savedBy, evidence })) });
+        }
         case "squad_report_bug":
         case "squad_give_feedback": {
           if (!reportFeedback) throw new TeamError("Reporting to Autohand is unavailable in this runtime.");

@@ -412,3 +412,5 @@
 - The attention page is Inbox (sidebar, title, search, menus); its first tab "Needs you" filters what waits on the person. The account menu order is Inbox, Marketplace, Connectors, Settings · About, Licenses, Keyboard shortcuts · Report a bug, Give feedback · Sign out (ADR-0258).
 
 - Quick Chat's composer is the main composer at a smaller size: rounded card, round ghost attach and mic, a 32px round primary send that becomes Stop; no permanent hint line. On macOS with Liquid Glass the default-skin sidebar sits on native glass (Settings › Appearance › Liquid Glass sidebar, on by default); the main column stays opaque (ADR-0258).
+
+- Recipes is one dialog with three sections in this order: Saved (name, what it does, who runs it, who saved it and why; Remove), Spotted in your work (the evidence sentence and Save), and Starters collapsed at the bottom. Rows are dividers, not cards (ADR-0259).
