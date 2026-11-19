@@ -25,7 +25,9 @@ try {
   const member = { id: "attachment-fixture", name: "Iris", role: "Assistant", workspace: process.cwd(), projects: [{ path: process.cwd() }], permissions: { permissionMode: "unrestricted" }, harness: { id: "autohand" } };
   assert.equal((await bridge.api("/api/agents/provision", "POST", { agentId: member.id, agent: member, workspace: process.cwd() })).success, true);
   browser = await startBrowser();
-  const context=await seedOwnedBrowserFixture(bridge,browser,{members:[member]});
+  // The channel step checks a follow-up in the reply thread, so threads are on
+  // (Settings › Chat › Reply in threads, off by default since ADR-0238).
+  const context=await seedOwnedBrowserFixture(bridge,browser,{members:[member],storage:{'autohandSquad.v1.chatSettings':JSON.stringify({threadedReplies:true})}});
   const messagesStorageKey=`autohandSquad.owner.v1.${context.storageKey}.${encodeURIComponent('autohandSquad.v1.messages')}`;
   await browser.send("Page.addScriptToEvaluateOnNewDocument", { source: `
     window.attachmentUploads = 0;
