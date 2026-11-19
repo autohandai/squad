@@ -1,3 +1,4 @@
+import { INSTRUCTIONS_INPUT_LIMIT, INSTRUCTIONS_LIMIT, fitInstructions, isContinuation, memoriesWith, replaceContinuations } from './instruction-blocks.mjs';
 import { randomUUID } from 'node:crypto';
 import { CHANNEL_NOTIFICATION_MODES } from '../../src/lib/channel-notifications.js';
 import { isGroupChat } from '../../src/lib/group-chats.js';
@@ -27,12 +28,12 @@ const trigger = { type: 'string', enum: ['schedule', 'webhook'], description: 's
 const when = { type: 'string', minLength: 1, maxLength: 300, description: 'The schedule in the person\'s words ("every weekday at 9am", "every day at 7:30pm", "every 2 hours", "every Monday morning", "end of every month"), read by Squad\'s own recurring-work reader. Use schedule instead for one-off dates or anything it cannot read.' };
 const member = { member_id: id(), expected_revision: revision };
 const routineFields = { title: text(160), instructions: text(20000), workspace: text(1000), trigger, schedule, when, enabled: { type: 'boolean' }, max_run_minutes: { type: 'integer', minimum: 1, maximum: 1440 } };
-const profileFields = { name: text(60), role: text(80), description: { type: 'string', maxLength: 600 }, responsibilities: { type: 'string', maxLength: 600, description: 'Alias of the saved description. Do not send both.' }, instructions: { type: 'string', maxLength: 1200 }, personality: { type: 'string', maxLength: 600 } };
+const profileFields = { name: text(60), role: text(80), description: { type: 'string', maxLength: 600 }, responsibilities: { type: 'string', maxLength: 600, description: 'Alias of the saved description. Do not send both.' }, instructions: { type: 'string', maxLength: INSTRUCTIONS_INPUT_LIMIT, description: `How the member works. Up to ${INSTRUCTIONS_LIMIT} characters are saved as its instructions; anything longer is kept, not refused: Squad cuts at a paragraph or sentence and saves the rest, in order, as profile memories of up to 500 characters labelled "Operating instructions, continued (n/m)", and the reply says so. Put the essentials first.` }, personality: { type: 'string', maxLength: 600 } };
 const skillIds = { type: 'array', maxItems: 32, items: text(500) };
 const memoryTexts = { type: 'array', maxItems: 100, items: text(500), description: 'Profile memories only; does not replace shared, project or conversation memory.' };
 
 export const MANAGEMENT_TOOLS = [
-  tool('create_member', 'Create a real saved Squad member in the selected owner. Selects a ready default engine and saves up to four connected engine fallbacks with their default models and reasoning; an explicit engine is preserved. A stable request_id makes retries idempotent. Saves profile, catalog skill selections and initial profile memories without launching work, granting broad permissions or enabling routines. Workspace is optional; no folder is created implicitly.', { request_id: text(128), ...profileFields, skills: skillIds, memories: memoryTexts, workspace: text(1000), engine: text(200) }, ['request_id', 'name', 'role']),
+  tool('create_member', 'Create a real saved Squad member in the selected owner. Limits: name 60, role 80, description 600, instructions 1200 (longer instructions are split into profile memories automatically), personality 600, each memory 500, at most 100 memories. Selects a ready default engine and saves up to four connected engine fallbacks with their default models and reasoning; an explicit engine is preserved. A stable request_id makes retries idempotent. Saves profile, catalog skill selections and initial profile memories without launching work, granting broad permissions or enabling routines. Workspace is optional; no folder is created implicitly.', { request_id: text(128), ...profileFields, skills: skillIds, memories: memoryTexts, workspace: text(1000), engine: text(200) }, ['request_id', 'name', 'role']),
   tool('get_member_profile', 'Read a member\'s saved name, personality, operating instructions, skills, folders and abilities, with its revision and available ability IDs. Operator access.', { member_id: id() }, ['member_id'], true),
   tool('get_member_computer_use', 'Read an existing member\'s saved Computer Use scope and OS readiness. Read-only; does not grant access or show OS prompts. Enabling requires explicit native confirmation in Squad.', { member_id: id() }, ['member_id'], true),
   tool('revoke_member_computer_use', 'Turn off Computer Use for an existing member. Revokes its current grant and stops verification recording; later work receives no Computer Use instructions or managed tools. Existing connected tools recheck the grant. Cannot enable access; leaves other members unchanged.', { member_id: id() }, ['member_id']),
@@ -88,7 +89,12 @@ export function createManagementTools(bridge, legacy) {
   const routineBody = args => Object.fromEntries(Object.entries(withWhen(args)).filter(([key]) => !['member_id', 'routine_id', 'max_run_minutes', 'when'].includes(key)).concat(args.max_run_minutes !== undefined ? [['maxRunMinutes', args.max_run_minutes]] : []));
 
   return {
-    create_member: args => bridge.post('/api/control-plane/members', args),
+    async create_member(args) {
+      if (args.instructions === undefined) return bridge.post('/api/control-plane/members', args);
+      const fit = fitInstructions(args.instructions);
+      const created = await bridge.post('/api/control-plane/members', { ...args, instructions: fit.instructions, ...(fit.blocks.length ? { memories: memoriesWith(fit.blocks, args.memories || []) } : {}) });
+      return fit.split ? { ...created, instructionsSplit: fit.split } : created;
+    },
     get_member_profile: ({ member_id }) => profile(member_id),
     async get_member_computer_use({ member_id }) {
       await profile(member_id);
@@ -100,7 +106,15 @@ export function createManagementTools(bridge, legacy) {
       const grant = await bridge.delete('/api/computer-use/grant', { memberId: member_id });
       return { member_id, enabled: false, grant, requires_native_confirmation: true };
     },
-    update_member_profile: ({ member_id, expected_revision, ...patch }) => patchMember(member_id, patch, expected_revision),
+    async update_member_profile({ member_id, expected_revision, ...patch }) {
+      if (patch.instructions === undefined) return patchMember(member_id, patch, expected_revision);
+      const fit = fitInstructions(patch.instructions);
+      const current = await profile(member_id);
+      const hadBlocks = (current.memories || []).some(item => isContinuation(item?.text ?? item));
+      const next = { ...patch, instructions: fit.instructions, ...(fit.blocks.length || hadBlocks ? { memories: replaceContinuations(current.memories || [], fit.blocks) } : {}) };
+      const saved = await bridge.patch(`/api/control-plane/members/${encodeURIComponent(member_id)}`, { ...next, expectedRevision: expected_revision ?? current.revision });
+      return fit.split ? { ...saved, instructionsSplit: fit.split } : saved;
+    },
     set_member_abilities: ({ member_id, expected_revision, ...abilities }) => patchMember(member_id, { abilities }, expected_revision),
     async set_member_workspace({ member_id, workspace, directories, expected_revision }) {
       const current = await profile(member_id);

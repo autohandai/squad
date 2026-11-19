@@ -83,6 +83,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Asking the Chief of Staff to create a member with long instructions no longer fails with "longer than 1200 characters". The first part is saved as the member's instructions and the rest as labelled memories, in order, and the Chief of Staff tells you it did that.
 - Downloaded builds now send Squad's product usage events (ADR-0067) like local builds do; they shipped with analytics switched off because the release didn't carry the PostHog settings. The same rules apply: no prompts, files or names, and Do Not Track is honoured.
 - **Webhook automations now actually run.** The Webhook trigger used to show an address that nothing answered. A webhook automation now gets its own private URL on this computer: anything that POSTs JSON to it starts the member, with the body as context.
 - Quitting Squad no longer takes ten seconds and force-stops it when a folder such as Desktop is waiting on a macOS permission prompt or on iCloud Drive. Squad also no longer looks inside Desktop, Documents and Downloads when it lists your projects; add a project kept there with Add folder.
