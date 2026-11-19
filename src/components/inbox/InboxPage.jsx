@@ -222,7 +222,7 @@ export function InboxPage({ onMarkAllRead, ...props }) {
         <div>
           <h1 className="flex items-center gap-2 text-lg font-semibold">
             <Inbox className="size-4 text-muted-foreground" aria-hidden="true" />
-            {copy.workNeedsYou || "Needs you"}
+            {copy.inbox || "Inbox"}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">{copy.inboxDescription || "Decisions, unread replies, and work that stopped."}</p>
         </div>

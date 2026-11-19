@@ -421,3 +421,5 @@
 
 - The Marketplace is a main-column page with Inbox's header (icon and title, one-line description) in a wider 6xl column; it is never a dialog. Suggestions under New member and New team are quiet divider rows headed "Featured in the marketplace", "From the marketplace" or "Ready-made teams" and open the listing on that page (ADR-0261).
 - Composers end with the mic then the send button. Send is a filled circle: foreground with an up-arrow when ready, muted when empty, the stop square while a reply runs. No paper-plane icons (ADR-0261).
+
+- The word is Inbox everywhere a person reads it (window, sidebar, menus, menu bar, the page itself); "Needs you" is retired (ADR-0264). A feature that is not live says so in one quiet line wherever its content would appear, never an empty space.

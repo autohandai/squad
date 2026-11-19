@@ -17209,7 +17209,7 @@ function MissionControlPage({
         </header>
 
         <div className="flex flex-wrap gap-5 border-y border-border/70" role="group" aria-label="Work view">
-          {[["needs-you", copy.workNeedsYou || "Needs you"], ["in-progress", copy.inProgress || "In progress"], ["all", copy.allWork || "All work"]].map(([id, label]) => (
+          {[["needs-you", copy.waitingOnYou || "Waiting on you"], ["in-progress", copy.inProgress || "In progress"], ["all", copy.allWork || "All work"]].map(([id, label]) => (
             <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)} className={cn("border-b-2 py-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring", view === id ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
               {label}
               {id === "needs-you" && attentionCount ? <span className="ml-2 text-xs text-muted-foreground">{attentionCount}</span> : null}

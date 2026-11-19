@@ -80,7 +80,7 @@ export function NewTeamDialog({ open, onOpenChange, agents = [], roleTemplates =
           {/* Start from a team someone already built, or your own (ADR-0261). */}
           {api || onOpenTemplates ? (
             <div className="space-y-2 border-t border-border/60 py-3" data-testid="new-team-starts">
-              {api && onOpenListing ? <MarketplaceSuggestions api={api} kind="team" avatarStyle={avatarStyle} query={objective} onOpen={(listing) => { onOpenChange?.(false); onOpenListing(listing); }} /> : null}
+              {api && onOpenListing ? <MarketplaceSuggestions api={api} kind="team" showClosed avatarStyle={avatarStyle} query={objective} onOpen={(listing) => { onOpenChange?.(false); onOpenListing(listing); }} /> : null}
               {onOpenTemplates ? (
                 <button type="button" className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline" onClick={() => { onOpenChange?.(false); onOpenTemplates(); }}>
                   {copy.teamFromTemplate || "Start from a template or your own team file…"}

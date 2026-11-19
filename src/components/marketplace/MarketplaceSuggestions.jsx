@@ -31,13 +31,13 @@ export function MarketplaceSuggestions({ api, query = "", kind = "agent", avatar
     }, text.length >= 3 ? 350 : 0);
     return () => { live = false; clearTimeout(timer); };
   }, [api, query, kind]);
-  // Where the marketplace is the main way in (New Squad member), say plainly
-  // that it is not open yet instead of showing nothing (ADR-0261).
+  // Say plainly that the marketplace is not open yet instead of showing
+  // nothing (ADR-0261; New message and New team too since ADR-0264).
   if (!items?.length) {
     if (!showClosed || !closed) return null;
     return (
       <p className="text-xs text-muted-foreground" data-testid={`marketplace-suggestions-${kind}-closed`}>
-        Agents from the marketplace show here once it opens.{onBrowse ? <> <button type="button" className="underline-offset-4 hover:text-foreground hover:underline" onClick={onBrowse}>Marketplace</button></> : null}
+        {kind === "team" ? "Teams" : "Agents"} from the marketplace show here once it opens.{onBrowse ? <> <button type="button" className="underline-offset-4 hover:text-foreground hover:underline" onClick={onBrowse}>Marketplace</button></> : null}
       </p>
     );
   }

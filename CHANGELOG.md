@@ -10,6 +10,11 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Changed
+
+- "Needs you" is gone everywhere: the menu-bar menu says "Open Inbox" and "3 things in your Inbox", and the Inbox page leads with "Waiting on you".
+- New member and New team say that marketplace agents and teams show there once the marketplace opens, instead of leaving an empty space.
+
 ### Added
 
 - Squad for iPhone can show an Inbox (decisions waiting on you, answered right there, and replies that stopped) and send Give feedback, Report a bug and automatic problem reports through Squad on your computer, labelled as from the phone.

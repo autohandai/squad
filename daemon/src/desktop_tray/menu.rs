@@ -694,14 +694,11 @@ fn needs_you_rows(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Vec<Row> {
                 .collect();
             sub.push(Row::separator());
             sub.push(
-                Row::item("needs-you", "Open Needs you")
+                Row::item("needs-you", "Open Inbox")
                     .shortcut("CmdOrCtrl+1")
-                    .help("Opens everything waiting on you in Squad."),
+                    .help("Opens your Inbox in Squad: everything waiting on you."),
             );
-            vec![
-                Row::submenu("needs-you-list", format!("{count} things need you"), sub)
-                    .art(Art::NeedsYou),
-            ]
+            vec![Row::submenu("needs-you-list", things_need_you(count), sub).art(Art::NeedsYou)]
         }
     }
 }
@@ -1364,8 +1361,8 @@ pub fn attention_count(inputs: &MenuInputs<'_>) -> usize {
 
 fn things_need_you(count: usize) -> String {
     match count {
-        1 => "1 thing needs you".to_string(),
-        count => format!("{count} things need you"),
+        1 => "1 thing in your Inbox".to_string(),
+        count => format!("{count} things in your Inbox"),
     }
 }
 
@@ -1815,7 +1812,7 @@ mod tests {
         });
         let rows = plan_menu(&fixture.inputs());
         let needs = &rows[1];
-        assert_eq!(needs.text, "2 things need you");
+        assert_eq!(needs.text, "2 things in your Inbox");
         assert_eq!(needs.art, Some(Art::NeedsYou));
         assert_eq!(
             texts(sub(needs)),
@@ -1823,7 +1820,7 @@ mod tests {
                 "Noah is asking: Should the retry budget cover webhooks f…",
                 "Eva needs approval: push to main",
                 "---",
-                "Open Needs you",
+                "Open Inbox",
             ]
         );
         assert_eq!(sub(needs)[3].shortcut, Some("CmdOrCtrl+1"));
@@ -2071,7 +2068,7 @@ mod tests {
         let inputs = fixture.inputs();
         let rows = plan_menu(&inputs);
         let speech = status_item_speech(&inputs, &rows);
-        assert_eq!(speech.label, "Autohand Squad, 1 thing needs you");
+        assert_eq!(speech.label, "Autohand Squad, 1 thing in your Inbox");
         assert_eq!(speech.value, "2 working, 2 ready");
         assert!(speech.help.contains("Quick chat"));
 
@@ -2145,7 +2142,7 @@ mod tests {
         });
         assert_eq!(
             announcement(&seen, &fixture.inputs()).as_deref(),
-            Some("Squad: 2 things need you")
+            Some("Squad: 2 things in your Inbox")
         );
         // Stopped services show no needs-you row, so nothing is announced.
         fixture.model.daemon_running = false;

@@ -82,8 +82,8 @@ for (const [skin, theme] of [['default', 'light'], ['default', 'dark'], ['paper'
     await page.getByRole('button', { name: 'Pin', exact: true }).click();
     await expect(top.getByRole('listitem')).toHaveCount(2);
 
-    // Essentials: Needs you, one list of conversations with previews, search, new, settings.
-    await expect(sidebar.getByRole('navigation', { name: 'Workspace', exact: true }).getByRole('button', { name: /Needs you/ })).toBeVisible();
+    // Essentials: Inbox, one list of conversations with previews, search, new, settings.
+    await expect(sidebar.getByRole('navigation', { name: 'Workspace', exact: true }).getByRole('button', { name: /Inbox/ })).toBeVisible();
     const conversations = sidebar.getByRole('navigation', { name: 'Conversations', exact: true });
     await expect(conversations.getByRole('button', { name: /^Iris,/ })).toContainText('Two comments on the sidebar PR.');
     await expect(conversations.getByRole('button', { name: 'Group chat: Launch crew', exact: true })).toBeVisible();

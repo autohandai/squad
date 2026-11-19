@@ -70,3 +70,19 @@ dictation engine. The helper now uses its `AutohandVoiceCore` library and
 `LocalSpeechRecognizer` (same Parakeet v3 model and cache) rather than
 FluidAudio directly; see ADR-0261 for the evidence. The mic now sits beside
 the send button.
+
+## Evidence in the signed app (19 Nov 2026)
+
+The helper inside the installed, Developer ID–signed app
+(`/Applications/Autohand Squad.app/Contents/Resources/runtime/vendor/squad-voice/squad-voice`,
+TeamIdentifier J59GX2DRN2) transcribed a 3.5 s clip spoken by `say -v
+Samantha` ("Please summarise the open pull requests and remind me at nine")
+as "Please summarize the open pool requests and remind me at 9.".
+
+- The first run took 23.6 s. A second process took 0.52 s, so the compiled
+  model is kept by macOS between processes. Only a Mac's first dictation
+  pays the cost.
+- "pool" for "pull" is the synthetic voice and an ambiguous word, not a
+  pipeline fault.
+- This exercises `transcribe` on a file. The microphone prompt and `listen`
+  still need a person at the Mac.
