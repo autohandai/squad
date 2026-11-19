@@ -31,7 +31,7 @@ export const PROPOSAL_STATUSES = ["proposed", "confirmed", "declined", "failed"]
 export const MAX_RUNS_KEPT = 40;
 export const MAX_TITLE = 120;
 export const MAX_INSTRUCTIONS = 12000;
-export const TRIGGERS = ["schedule", "webhook"];
+export const TRIGGERS = ["schedule", "webhook", "email"];
 
 function text(value, max = 4000) {
   return String(value ?? "").trim().slice(0, max);
@@ -60,7 +60,7 @@ export function normalizeRun(input, routineId = "") {
   return {
     id: text(source.id, 80) || createRunId(),
     routineId: text(source.routineId, 80) || routineId,
-    trigger: ["manual", "webhook"].includes(source.trigger) ? source.trigger : "schedule",
+    trigger: ["manual", "webhook", "email"].includes(source.trigger) ? source.trigger : "schedule",
     scheduledFor: iso(source.scheduledFor),
     queuedAt: iso(source.queuedAt),
     startedAt: iso(source.startedAt),
@@ -97,6 +97,8 @@ export function normalizeRoutine(input, { now = new Date().toISOString(), defaul
     trigger: TRIGGERS.includes(source.trigger) ? source.trigger : "schedule",
     schedule: normalizeSchedule(source.schedule, { defaultTimeZone }),
     webhook: normalizeWebhook(source.webhook),
+    // An email routine's address on code.autohandai.com (ADR-0262).
+    mailAddress: text(source.mailAddress, 200).toLowerCase(),
     maxRunMinutes: Number.isFinite(minutes) && minutes > 0 ? Math.min(Math.round(minutes), MAX_RUN_MINUTES) : 0,
     source: source.source === "chat" ? "chat" : "editor",
     proposalId: text(source.proposalId, 120),
@@ -138,8 +140,8 @@ export function normalizeProposal(input, { now = new Date().toISOString() } = {}
 export function routineInputFrom(body, existing = null, { now, defaultTimeZone } = {}) {
   const source = body && typeof body === "object" ? body : {};
   const merged = existing
-    ? { ...existing, ...pick(source, ["title", "instructions", "workspace", "model", "enabled", "trigger", "schedule", "maxRunMinutes"]), id: existing.id, memberId: existing.memberId, runs: existing.runs, createdAt: existing.createdAt, source: existing.source, proposalId: existing.proposalId, webhook: existing.webhook, updatedAt: now }
-    : { ...pick(source, ["memberId", "title", "instructions", "workspace", "model", "enabled", "trigger", "schedule", "maxRunMinutes", "legacyAutomationId"]), runs: [], createdAt: now, updatedAt: now, source: "editor", webhook: null };
+    ? { ...existing, ...pick(source, ["title", "instructions", "workspace", "model", "enabled", "trigger", "schedule", "maxRunMinutes"]), id: existing.id, mailAddress: existing.mailAddress, memberId: existing.memberId, runs: existing.runs, createdAt: existing.createdAt, source: existing.source, proposalId: existing.proposalId, webhook: existing.webhook, updatedAt: now }
+    : { ...pick(source, ["memberId", "title", "instructions", "workspace", "model", "enabled", "trigger", "schedule", "maxRunMinutes", "legacyAutomationId", "mailAddress"]), runs: [], createdAt: now, updatedAt: now, source: "editor", webhook: null };
   return normalizeRoutine(merged, { now, defaultTimeZone });
 }
 

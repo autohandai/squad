@@ -140,6 +140,8 @@ export function routinePayloadFromAutomation(automation, draft = automation?.rou
     enabled: automation.status !== "paused",
     maxRunMinutes: Number(draft?.maxRunMinutes) || 0,
   };
+  // An email automation (ADR-0262) keeps its trigger; the bridge keeps its address.
+  if (automation?.triggerType === "email") return { ...base, trigger: "email" };
   if (automation?.triggerType === "webhook") {
     const kept = scheduleFromDraft(draft);
     return { ...base, trigger: "webhook", ...(kept ? { schedule: kept } : {}) };
@@ -156,6 +158,7 @@ export function routinePayloadFromAutomation(automation, draft = automation?.rou
  */
 export function automationTriggerWords(automation) {
   if (automation?.triggerType === "webhook") return "When its webhook is called";
+  if (automation?.triggerType === "email") return automation?.record?.description || "When an email arrives";
   if (automation?.record?.description) return automation.record.description;
   return scheduleKindLabel(scheduleFromDraft(automation?.routine));
 }
@@ -218,6 +221,7 @@ export function routineNextLabel(routine, locale = undefined) {
   if (routine.activeRun) return routine.activeRun.status === "queued" ? "Waiting for Squad to open" : "Running now";
   // A webhook routine has no next time; say whether its URL can start it (ADR-0254).
   if (routine.trigger === "webhook") return routine.webhook?.active === false ? "URL turned off" : "Waits for its webhook";
+  if (routine.trigger === "email") return "Waits for email";
   // "Done" only for a once routine that ran; one saved after its time never did.
   if (!routine.nextAt) return routine.schedule?.kind === "once" ? (routine.lastRun || (routine.runs || []).length ? "Done" : "Its time has passed; it never ran") : "No upcoming run";
   return `Next ${formatInZone(routine.nextAt, routine.schedule?.timeZone, locale)}`;
@@ -251,6 +255,6 @@ export function routineLastRunLabel(routine, locale = undefined) {
   const run = routine?.lastRun;
   if (!run) return "";
   const at = run.finishedAt || run.startedAt;
-  const how = run.trigger === "webhook" ? " via webhook" : run.trigger === "manual" ? " by hand" : "";
+  const how = run.trigger === "webhook" ? " via webhook" : run.trigger === "email" ? " by email" : run.trigger === "manual" ? " by hand" : "";
   return `Last run ${runStatusWord(run.status).toLowerCase()}${how}${at ? `, ${formatInZone(at, routine.schedule?.timeZone, locale)}` : ""}`;
 }

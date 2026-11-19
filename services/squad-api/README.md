@@ -168,6 +168,20 @@ node scripts/marketplace-seed.mjs --check                 # validate every seed
 node scripts/marketplace-seed.mjs --batches <folder>      # cf d1 query --batch files
 ```
 
+## Agent email
+
+Members of accounts on `MAIL_ACCOUNT_DOMAINS` (`autohand.ai`) can hold an
+address on `MAIL_DOMAIN` (`code.autohandai.com`)
+([ADR-0262](../../docs/adrs/ADR-0262-agent-email-addresses.md)). The
+`autohandai.com` zone's Email Routing catch-all sends to this worker; literal
+rules for other teams' addresses win over it, and each of those names must be
+listed in `MAIL_RESERVED` so Squad never hands it out. Migration
+`0004_agent_mailboxes.sql` holds addresses and waiting mail.
+
+The marketplace binding and `MARKETPLACE_ADMIN_TOKEN` are only required when
+`SQUAD_MARKETPLACE_DATABASE_ID` is set; without it, every marketplace route
+answers 404.
+
 ## Deployment and release publication
 
 The target account must own `autohand.ai`. Create **new Squad-owned resources**:

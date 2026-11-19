@@ -37,6 +37,9 @@ export const MANAGEMENT_TOOLS = [
   tool('report_bug', 'Report a bug in Autohand Squad to Autohand when one blocks the work (a Squad tool erroring when it should not, a crash, wrong data). Sends the same sanitised report as Report a bug in the app, labelled as from an agent, with diagnostics and no screenshot; at most five an hour from this computer and never the same one twice in an hour. Tell the person you reported it.', feedbackFields, ['summary']),
   tool('give_feedback', 'Send Autohand feedback about Squad (something confusing, missing or slow). Same path and limits as report_bug. Tell the person you sent it.', feedbackFields, ['summary']),
   tool('create_member', 'Create a real saved Squad member in the selected owner. Limits: name 60, role 80, description 600, instructions 1200 (longer instructions are split into profile memories automatically), personality 600, each memory 500, at most 100 memories. Selects a ready default engine and saves up to four connected engine fallbacks with their default models and reasoning; an explicit engine is preserved. A stable request_id makes retries idempotent. Saves profile, catalog skill selections and initial profile memories without launching work, granting broad permissions or enabling routines. Workspace is optional; no folder is created implicitly.', { request_id: text(128), ...profileFields, skills: skillIds, memories: memoryTexts, workspace: text(1000), engine: text(200) }, ['request_id', 'name', 'role']),
+  tool('get_member_email', 'Read whether this Squad account may give members email addresses (only accounts on allowed domains, autohand.ai today) and the member\'s address if it has one. Read-only.', { member_id: id() }, ['member_id'], true),
+  tool('register_member_email', 'Give a member its own email address on code.autohandai.com. Mail sent there starts the member\'s "When an email arrives" automation and its summary lands in the person\'s direct messages. Only call after the person said yes to the offer from create_member (email_offer) or asked for it. Refused for accounts outside the allowed domains. local_part is optional (defaults to the member\'s name, e.g. thiago@code.autohandai.com).', { member_id: id(), local_part: { type: 'string', minLength: 2, maxLength: 30, pattern: '^[a-z0-9][a-z0-9.-]*[a-z0-9]$' } }, ['member_id']),
+  tool('remove_member_email', 'Remove a member\'s email address. Mail to it is refused from then on; the address is not given to anyone else. Requires confirm_remove:true.', { member_id: id(), confirm_remove: { type: 'boolean', enum: [true] } }, ['member_id', 'confirm_remove']),
   tool('get_member_profile', 'Read a member\'s saved name, personality, operating instructions, skills, folders and abilities, with its revision and available ability IDs. Operator access.', { member_id: id() }, ['member_id'], true),
   tool('get_member_computer_use', 'Read an existing member\'s saved Computer Use scope and OS readiness. Read-only; does not grant access or show OS prompts. Enabling requires explicit native confirmation in Squad.', { member_id: id() }, ['member_id'], true),
   tool('revoke_member_computer_use', 'Turn off Computer Use for an existing member. Revokes its current grant and stops verification recording; later work receives no Computer Use instructions or managed tools. Existing connected tools recheck the grant. Cannot enable access; leaves other members unchanged.', { member_id: id() }, ['member_id']),
@@ -91,15 +94,45 @@ export function createManagementTools(bridge, legacy) {
   }
   const routineBody = args => Object.fromEntries(Object.entries(withWhen(args)).filter(([key]) => !['member_id', 'routine_id', 'max_run_minutes', 'when'].includes(key)).concat(args.max_run_minutes !== undefined ? [['maxRunMinutes', args.max_run_minutes]] : []));
 
+  // After naming a member, an account allowed agent email gets a suggestion
+  // to offer (ADR-0262). Squad API checks the domain; any failure means no offer.
+  async function emailOffer(created) {
+    const memberId = created?.id || created?.member?.id;
+    const name = created?.name || created?.member?.name;
+    if (!memberId || !name || created?.created === false) return null;
+    try {
+      const { offer } = await bridge.get(`/api/mail/offer?${new URLSearchParams({ memberId, name })}`);
+      if (!offer?.address) return null;
+      return { address: offer.address, local_part: offer.localPart, ask: `Before moving on, ask the person in one warm, short line whether ${name} should get its own inbox at ${offer.address} (emails there land in ${name}'s chat as a summary). If they say yes, call register_member_email; if no, drop it.` };
+    } catch { return null; }
+  }
+
   const feedback = kind => ({ summary, detail, reporter, include_diagnostics }) => bridge.post('/api/feedback/agent', { kind, summary, detail, reporter: reporter || 'An MCP client', includeDiagnostics: include_diagnostics });
   return {
     report_bug: feedback('bug'),
     give_feedback: feedback('feedback'),
     async create_member(args) {
-      if (args.instructions === undefined) return bridge.post('/api/control-plane/members', args);
-      const fit = fitInstructions(args.instructions);
-      const created = await bridge.post('/api/control-plane/members', { ...args, instructions: fit.instructions, ...(fit.blocks.length ? { memories: memoriesWith(fit.blocks, args.memories || []) } : {}) });
-      return fit.split ? { ...created, instructionsSplit: fit.split } : created;
+      const fit = args.instructions === undefined ? null : fitInstructions(args.instructions);
+      const created = fit
+        ? await bridge.post('/api/control-plane/members', { ...args, instructions: fit.instructions, ...(fit.blocks.length ? { memories: memoriesWith(fit.blocks, args.memories || []) } : {}) })
+        : await bridge.post('/api/control-plane/members', args);
+      const result = fit?.split ? { ...created, instructionsSplit: fit.split } : created;
+      const offer = await emailOffer(created);
+      return offer ? { ...result, email_offer: offer } : result;
+    },
+    async get_member_email({ member_id }) {
+      await profile(member_id);
+      const status = await bridge.get(`/api/mail/members/${encodeURIComponent(member_id)}`);
+      return { member_id, allowed: Boolean(status.allowed), address: status.mailbox?.address || null, domain: status.domain || null };
+    },
+    async register_member_email({ member_id, local_part }) {
+      const current = await profile(member_id);
+      const created = await bridge.post(`/api/mail/members/${encodeURIComponent(member_id)}`, { memberName: current.name || member_id, ...(local_part ? { localPart: local_part } : {}) });
+      return { member_id, address: created.address, tell_the_person: `Done: ${current.name || 'the member'} now has ${created.address}. Email sent there arrives in its chat as a short summary; the "When an email arrives" automation can be paused or edited in Automations.` };
+    },
+    async remove_member_email({ member_id }) {
+      await profile(member_id);
+      return bridge.delete(`/api/mail/members/${encodeURIComponent(member_id)}`);
     },
     get_member_profile: ({ member_id }) => profile(member_id),
     async get_member_computer_use({ member_id }) {
@@ -242,7 +275,7 @@ export function withWhen(args = {}) {
   return { ...args, schedule: found.schedule };
 }
 
-export const MEMBER_MANAGEMENT_NAMES = Object.freeze(['create_member', 'get_member_profile', 'update_member_profile', 'set_member_workspace', 'list_skills', 'set_member_skills', 'set_member_memories', 'list_routines', 'create_routine', 'update_routine']);
+export const MEMBER_MANAGEMENT_NAMES = Object.freeze(['create_member', 'get_member_email', 'register_member_email', 'get_member_profile', 'update_member_profile', 'set_member_workspace', 'list_skills', 'set_member_skills', 'set_member_memories', 'list_routines', 'create_routine', 'update_routine']);
 export const GROUP_MANAGEMENT_NAMES = Object.freeze(['list_group_chats', 'get_group_chat', 'create_group_chat', 'convert_group_chat', 'delete_group_chat']);
 export const MANAGED_MANAGEMENT_NAMES = Object.freeze([...MEMBER_MANAGEMENT_NAMES, ...GROUP_MANAGEMENT_NAMES]);
 export const MANAGED_MANAGEMENT_TOOLS = MANAGEMENT_TOOLS.filter(tool => MANAGED_MANAGEMENT_NAMES.includes(tool.name)).map(tool => ({ ...tool, name: `squad_${tool.name}`, description: `${tool.description} Uses this member's saved management permission; ask mode needs the person's bounded confirmation in Squad.` }));

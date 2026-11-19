@@ -18,7 +18,7 @@ export function automationAgenda(local = [], routines = []) {
       target: routine.workspace,
       model: routine.model || 'auto',
       workspaceSource: previous?.workspaceSource || 'local',
-      triggerType: routine.trigger === 'webhook' ? 'webhook' : 'schedule',
+      triggerType: ['webhook', 'email'].includes(routine.trigger) ? routine.trigger : 'schedule',
       webhook: routine.webhook || null,
       routine: routineDraft(routine.schedule, { maxRunMinutes: routine.maxRunMinutes }),
       schedule: routine.description || scheduleKindLabel(routine.schedule),

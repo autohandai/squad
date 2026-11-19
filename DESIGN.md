@@ -329,6 +329,8 @@
 
 ## Member Profile
 
+- A member's email address (ADR-0262) is one plain row, "Email", in the profile card, shown only when it has one. The offer to create one is a single warm line from Chief of Staff in chat, never a form field or banner, and never shown to accounts that cannot hold one.
+
 - Saved project aliases inside the home remain valid selections. Resolve their physical root for identity and containment without rewriting their displayed path or workspace-specific permission keys. Never recreate a missing legacy folder or use an alias to escape the home boundary.
 
 - History is a divider list grouped by day with underlined text filters (All / Messages / Runs / Edits / Shell / Handoffs / Approvals), a ghost Load more, and one outline Export button. Rows are icon + sentence + a muted meta line (kind · time · links); failures use the destructive colour on the text only. No cards, no badges.

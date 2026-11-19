@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- Members can have their own email address, such as `thiago@code.autohandai.com`, for accounts signed in with an @autohand.ai email. When Chief of Staff creates a member it asks whether that member should get one. Email sent there arrives in the member's chat as a short summary, through a "When an email arrives" automation you can pause or edit in Automations. The address shows on the member's profile card.
 - In a chat with a member, type /delete or press ⌘⇧⌫ (Ctrl+Shift+Backspace on Windows and Linux) to remove them; Squad asks first.
 - Autohand Voice: the mic in every composer, Quick Chat included, now records and turns your words into text on this Mac with Parakeet, without sending audio anywhere. The first time, it downloads the voice model once.
 - Agents can report a bug or send feedback to Autohand themselves when something in Squad breaks while they work (labelled with who sent it, never with a screenshot or your email, at most five an hour), and tell you they did.

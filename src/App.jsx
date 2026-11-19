@@ -2713,7 +2713,7 @@ function createAutomationId() {
 
 function normalizeAutomationCopy(automation, defaultAgentId = "") {
   const createdAt = automation?.createdAt || new Date().toISOString();
-  const triggerType = ["schedule", "event", "webhook"].includes(automation?.triggerType)
+  const triggerType = ["schedule", "event", "webhook", "email"].includes(automation?.triggerType)
     ? automation.triggerType
     : "schedule";
   return {
@@ -19576,6 +19576,14 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
   const description = agent.description || brainCardForAgent(agent).purpose;
   const headingId = `member-preview-${agent.id}`;
   const changeAvatar = useContext(AvatarChangeContext);
+  // Its address on code.autohandai.com, when it has one (ADR-0262). Only
+  // autohand.ai accounts can hold one; for others this stays empty.
+  const [emailAddress, setEmailAddress] = useState("");
+  useEffect(() => {
+    let live = true;
+    api(`/api/mail/members/${encodeURIComponent(agent.id)}`).then(data => { if (live) setEmailAddress(data?.mailbox?.address || ""); }).catch(() => {});
+    return () => { live = false; };
+  }, [agent.id]);
 
   return (
     <PopoverContent
@@ -19613,6 +19621,7 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
           [copy.workspace || "Workspace", workspace],
           [copy.profilePreviewModel || "Model", model],
           ["Runs with", harnessLabel(harnessForAgent(agent).id)],
+          ["Email", emailAddress],
         ].filter(([, value]) => value).map(([label, value]) => (
           <div key={label} className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3">
             <dt className="text-muted-foreground">{label}</dt>
@@ -21780,7 +21789,7 @@ function AutomationCard({ automation, routine = null, agent, navigate, onEdit, o
         onClick={() => navigate(automationDetailPath(agent.id, automation.id))}
       >
         <span className="block truncate text-base font-semibold">{automation.name}</span>
-        <span className="mt-1 block text-sm text-muted-foreground">{routine?.description ? (routine.trigger === "webhook" ? routine.description : `${routine.description} · ${routine.schedule?.timeZone || ""}`) : automationScheduleLabel(automation, locale)}</span>
+        <span className="mt-1 block text-sm text-muted-foreground">{routine?.description ? (["webhook", "email"].includes(routine.trigger) ? routine.description : `${routine.description} · ${routine.schedule?.timeZone || ""}`) : automationScheduleLabel(automation, locale)}</span>
         {routine ? <RoutineRunRow routine={routine} locale={locale} compact className="mt-1" /> : null}
       </button>
       <div className="flex items-center justify-between gap-4">
@@ -21950,7 +21959,7 @@ function AutomationDetailView({
             />
             <AutomationDetailField
               label="Automations"
-              value={routine?.description ? `${routine.description}${routine.trigger === "webhook" ? "" : ` · ${routine.schedule?.timeZone || ""}`}${routine.maxRunMinutes ? ` · stops after ${routine.maxRunMinutes} min` : ""}` : automationScheduleLabel(automation, locale)}
+              value={routine?.description ? `${routine.description}${["webhook", "email"].includes(routine.trigger) ? "" : ` · ${routine.schedule?.timeZone || ""}`}${routine.maxRunMinutes ? ` · stops after ${routine.maxRunMinutes} min` : ""}` : automationScheduleLabel(automation, locale)}
               icon={automation.triggerType === "event" ? GitBranch : automation.triggerType === "webhook" ? Webhook : Clock3}
             />
             {automation.triggerType === "event" ? (
