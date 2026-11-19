@@ -28,8 +28,9 @@ export default defineConfig({
       IDENTITY_ORIGIN: bindings.text("https://api.autohand.ai"),
       WEB_ORIGIN: bindings.text("https://squad.autohand.ai"),
       RELEASE_PUBLISHER_TOKEN: bindings.secret(),
-      // Held only by the website's admin functions (ADR-0246).
-      MARKETPLACE_ADMIN_TOKEN: bindings.secret(),
+      // Held only by the website's admin functions (ADR-0246). Required only
+      // with the marketplace database; admin routes refuse without it.
+      ...(env.SQUAD_MARKETPLACE_DATABASE_ID ? { MARKETPLACE_ADMIN_TOKEN: bindings.secret() } : {}),
       // Browser origins whose pages may send reports and listing events
       // straight to the API (ADR-0246, ADR-0253), comma separated.
       MARKETPLACE_SITE_ORIGINS: bindings.text("https://autohand.ai,https://www.autohand.ai"),
