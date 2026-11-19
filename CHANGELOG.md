@@ -20,6 +20,8 @@ list to the section for that version.
 
 ### Added
 
+- Email rules for each member: it labels every email Urgent, Normal or Low, and you choose for each whether it replies on its own, asks you first (Send / Don't send in the chat) or just tells you. Replies go only to the sender, once per email, from the member's address.
+- Change a member's email address once, with a live check that the new name is free.
 - New message has a "To:" field like Slack's: type a name or #channel and pick from a list with faces and presence.
 - Each member has quick settings in the Execution panel's new Permissions tab, and at the top of their Permissions page: Manage the team (let them create members and change any member's setup), their email address, connectors and Computer Use.
 - A member's Connectors page lists the connectors Squad supports with Connect, which opens the install for that one.
