@@ -6,9 +6,7 @@
 
 pub mod menu;
 
-use crate::account_usage::{
-    fetch_account_usage_blocking, parse_rfc3339_unix, AccountUsage,
-};
+use crate::account_usage::{fetch_account_usage_blocking, parse_rfc3339_unix, AccountUsage};
 use crate::cli::{local_json_request_for_context, stack_daemon_config, web_port_for};
 use crate::config::{read_autohand_user_auth, resolve_config, ConfigOverrides, SquadConfig};
 use crate::daemon::StatusResponse;
@@ -192,14 +190,7 @@ pub fn load_desktop_tray_model(
         .as_ref()
         .is_some_and(|context| !still_current(paths, context))
     {
-        return build_model(
-            &config,
-            &AccountSession::default(),
-            None,
-            None,
-            None,
-            None,
-        );
+        return build_model(&config, &AccountSession::default(), None, None, None, None);
     }
     model
 }
@@ -355,7 +346,10 @@ mod tests {
         assert!(model.signed_in);
         assert_eq!(model.email.as_deref(), Some("me@example.com"));
         assert_eq!(
-            model.usage.as_ref().map(|usage| usage.display_name.as_str()),
+            model
+                .usage
+                .as_ref()
+                .map(|usage| usage.display_name.as_str()),
             Some("Autohand Code Max")
         );
         assert!(!model.daemon_running);

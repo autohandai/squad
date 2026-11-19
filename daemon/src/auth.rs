@@ -134,7 +134,9 @@ pub async fn run_browser_device_login(config: &SquadConfig, source: &str) -> Res
     )?;
     let authorization_url = with_provider_hint(
         authorization_url,
-        std::env::var("AUTOHAND_SQUAD_LOGIN_PROVIDER").ok().as_deref(),
+        std::env::var("AUTOHAND_SQUAD_LOGIN_PROVIDER")
+            .ok()
+            .as_deref(),
     );
     let timeout = Duration::from_secs(init_body.expires_in.unwrap_or(DEFAULT_AUTH_TIMEOUT_SECS));
     let poll_interval = Duration::from_secs(

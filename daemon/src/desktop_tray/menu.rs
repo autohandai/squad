@@ -64,7 +64,10 @@ pub enum Art {
     Comb(Vec<Cell>),
     /// The headroom mark: percent *left*, or None when unknown or loading.
     Headroom(Option<u8>),
-    Avatar { member_id: String, badge: Badge },
+    Avatar {
+        member_id: String,
+        badge: Badge,
+    },
     NeedsYou,
 }
 
@@ -684,14 +687,21 @@ fn needs_you_rows(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Vec<Row> {
         0 => Vec::new(),
         1 => vec![row(items[0])],
         count => {
-            let mut sub: Vec<Row> = items.iter().take(NEEDS_YOU_LIMIT).map(|item| row(item)).collect();
+            let mut sub: Vec<Row> = items
+                .iter()
+                .take(NEEDS_YOU_LIMIT)
+                .map(|item| row(item))
+                .collect();
             sub.push(Row::separator());
             sub.push(
                 Row::item("needs-you", "Open Needs you")
                     .shortcut("CmdOrCtrl+1")
                     .help("Opens everything waiting on you in Squad."),
             );
-            vec![Row::submenu("needs-you-list", format!("{count} things need you"), sub).art(Art::NeedsYou)]
+            vec![
+                Row::submenu("needs-you-list", format!("{count} things need you"), sub)
+                    .art(Art::NeedsYou),
+            ]
         }
     }
 }
@@ -846,7 +856,10 @@ fn powers(inputs: &MenuInputs<'_>, members: &[MemberRow], engine: &str) -> Power
         working: false,
         on_fallback: Vec::new(),
     };
-    for member in members.iter().filter(|member| member.presence != Presence::Offline) {
+    for member in members
+        .iter()
+        .filter(|member| member.presence != Presence::Offline)
+    {
         let Some(engines) = inputs.engines.get(&member.id) else {
             continue;
         };
@@ -946,7 +959,8 @@ fn headroom_row(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Option<Row> {
             2
         }
     });
-    let in_use = |powers: &Powers| !known || !powers.primary.is_empty() || !powers.backup.is_empty();
+    let in_use =
+        |powers: &Powers| !known || !powers.primary.is_empty() || !powers.backup.is_empty();
 
     let mut sub = Vec::new();
     for (engine, powers) in &sections {
@@ -960,7 +974,11 @@ fn headroom_row(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Option<Row> {
         if let Some(error) = &engine.error {
             sub.push(Row::label(
                 format!("error:{}", engine.id),
-                format!("Couldn't reach {}: {}", engine.name, cut(error, SUBJECT_CHARS)),
+                format!(
+                    "Couldn't reach {}: {}",
+                    engine.name,
+                    cut(error, SUBJECT_CHARS)
+                ),
             ));
         }
         if engine.windows.is_empty() && engine.error.is_none() {
@@ -1001,7 +1019,9 @@ fn headroom_row(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Option<Row> {
         .iter()
         .filter(|(_, powers)| in_use(powers))
         .collect();
-    let any_windows = sections.iter().any(|(engine, _)| !engine.windows.is_empty());
+    let any_windows = sections
+        .iter()
+        .any(|(engine, _)| !engine.windows.is_empty());
     if !any_windows {
         let failed = sections.iter().any(|(engine, _)| engine.error.is_some());
         let text = if failed {
@@ -1073,7 +1093,11 @@ fn headroom_row(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Option<Row> {
                     .iter()
                     .map(|(_, fallback)| fallback.as_str())
                     .collect();
-                let who: Vec<String> = powers.on_fallback.iter().map(|(name, _)| name.clone()).collect();
+                let who: Vec<String> = powers
+                    .on_fallback
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect();
                 let on = if fallbacks.len() == 1 {
                     format!("on {}", powers.on_fallback[0].1)
                 } else {
@@ -1086,7 +1110,10 @@ fn headroom_row(inputs: &MenuInputs<'_>, members: &[MemberRow]) -> Option<Row> {
             (text, Some(0))
         }
         several => {
-            let first = several.iter().filter_map(|(engine, _)| back_at(engine)).min();
+            let first = several
+                .iter()
+                .filter_map(|(engine, _)| back_at(engine))
+                .min();
             (
                 match first {
                     Some(at) => format!(
@@ -1254,7 +1281,12 @@ pub fn when(at: u64, clock: &Clock) -> String {
         if target.year == now.year {
             format!("{} {}", MONTHS[target.month as usize - 1], target.day)
         } else {
-            format!("{} {}, {}", MONTHS[target.month as usize - 1], target.day, target.year)
+            format!(
+                "{} {}, {}",
+                MONTHS[target.month as usize - 1],
+                target.day,
+                target.year
+            )
         }
     }
 }
@@ -1348,7 +1380,10 @@ pub fn status_item_speech(inputs: &MenuInputs<'_>, rows: &[Row]) -> StatusSpeech
     } else {
         format!("Autohand Squad, {}", things_need_you(count))
     };
-    let header = rows.first().map(|row| row.text.as_str()).unwrap_or_default();
+    let header = rows
+        .first()
+        .map(|row| row.text.as_str())
+        .unwrap_or_default();
     let value = match header.strip_prefix("Squad · ") {
         Some(state) => spoken(state),
         None if header == "Squad is stopped" => "Stopped".to_string(),
@@ -1406,7 +1441,10 @@ pub fn announcement(seen: &HashSet<String>, inputs: &MenuInputs<'_>) -> Option<S
                 .find(|member| member.id == item.member_id)
                 .map(|member| member.name.as_str())
                 .unwrap_or("A member");
-            Some(format!("Squad: {}", needs_sentence(name, item, SPOKEN_CHARS)))
+            Some(format!(
+                "Squad: {}",
+                needs_sentence(name, item, SPOKEN_CHARS)
+            ))
         }
         several => Some(format!("Squad: {}", things_need_you(several.len()))),
     }
@@ -1518,7 +1556,12 @@ mod tests {
             let leo = member("leo", "Leo", "online", false);
             let mut members = vec![leo, mia, chief, eva, noah];
             for index in 0..4 {
-                members.push(member(&format!("m{index}"), &format!("Extra {index}"), "offline", false));
+                members.push(member(
+                    &format!("m{index}"),
+                    &format!("Extra {index}"),
+                    "offline",
+                    false,
+                ));
             }
             let mut engines_map = HashMap::new();
             engines_map.insert("noah".into(), engines("claude", &["codex"]));
@@ -1539,8 +1582,16 @@ mod tests {
                 }],
                 breaks: ["leo".to_string()].into_iter().collect(),
                 harnesses: vec![
-                    harness("claude", "Claude Code", vec![("This week", Some(12), "2026-11-20T20:00:00Z")]),
-                    harness("codex", "Codex", vec![("This week", Some(80), "2026-11-21T05:00:00Z")]),
+                    harness(
+                        "claude",
+                        "Claude Code",
+                        vec![("This week", Some(12), "2026-11-20T20:00:00Z")],
+                    ),
+                    harness(
+                        "codex",
+                        "Codex",
+                        vec![("This week", Some(80), "2026-11-21T05:00:00Z")],
+                    ),
                 ],
             }
         }
@@ -1573,7 +1624,9 @@ mod tests {
     }
 
     fn find<'a>(rows: &'a [Row], id: &str) -> &'a Row {
-        rows.iter().find(|row| row.id == id).unwrap_or_else(|| panic!("no row {id}"))
+        rows.iter()
+            .find(|row| row.id == id)
+            .unwrap_or_else(|| panic!("no row {id}"))
     }
     fn sub(row: &Row) -> &[Row] {
         match &row.kind {
@@ -1625,7 +1678,10 @@ mod tests {
         assert_eq!(rows[3].id, "member:gen:noah");
         assert_eq!(
             rows[3].art,
-            Some(Art::Avatar { member_id: "noah".into(), badge: Badge::Working })
+            Some(Art::Avatar {
+                member_id: "noah".into(),
+                badge: Badge::Working
+            })
         );
         assert_eq!(find(&rows, "headroom").art, Some(Art::Headroom(Some(12))));
     }
@@ -1653,7 +1709,10 @@ mod tests {
         );
         let heading = &sub(find(&rows, "headroom"))[0];
         assert!(!heading.enabled, "headings are labels");
-        assert!(sub(find(&rows, "headroom"))[1].enabled, "window rows keep full contrast");
+        assert!(
+            sub(find(&rows, "headroom"))[1].enabled,
+            "window rows keep full contrast"
+        );
     }
 
     #[test]
@@ -1670,11 +1729,26 @@ mod tests {
         }
         let rows = plan_menu(&fixture.inputs());
         let all = texts(&rows);
-        assert!(all.contains(&"Noah · On Codex until Claude Code resets 4:10 pm".to_string()), "{all:?}");
-        assert!(all.contains(&"Mia · Stopped: Claude Code limit reached".to_string()), "{all:?}");
-        assert!(all.contains(&"Claude Code out until 4:10 pm · Noah on Codex ▸".to_string()), "{all:?}");
+        assert!(
+            all.contains(&"Noah · On Codex until Claude Code resets 4:10 pm".to_string()),
+            "{all:?}"
+        );
+        assert!(
+            all.contains(&"Mia · Stopped: Claude Code limit reached".to_string()),
+            "{all:?}"
+        );
+        assert!(
+            all.contains(&"Claude Code out until 4:10 pm · Noah on Codex ▸".to_string()),
+            "{all:?}"
+        );
         let noah_row = rows.iter().find(|row| row.id == "member:gen:noah").unwrap();
-        assert_eq!(noah_row.art, Some(Art::Avatar { member_id: "noah".into(), badge: Badge::Fallback }));
+        assert_eq!(
+            noah_row.art,
+            Some(Art::Avatar {
+                member_id: "noah".into(),
+                badge: Badge::Fallback
+            })
+        );
         assert_eq!(find(&rows, "headroom").art, Some(Art::Headroom(Some(0))));
     }
 
@@ -1697,7 +1771,8 @@ mod tests {
         fixture.engines.get_mut("chief").unwrap().primary = "claude".into();
         assert_eq!(row(&fixture), "Plenty of headroom");
         let rows = plan_menu(&fixture.inputs());
-        assert!(texts(sub(find(&rows, "headroom"))).contains(&"Autohand Code Free · not used by anyone".to_string()));
+        assert!(texts(sub(find(&rows, "headroom")))
+            .contains(&"Autohand Code Free · not used by anyone".to_string()));
         assert!(texts(sub(find(&rows, "headroom"))).contains(&"Upgrade plan…".to_string()));
     }
 
@@ -1718,7 +1793,10 @@ mod tests {
         let rows = plan_menu(&fixture.inputs());
         let headroom = find(&rows, "headroom");
         assert_eq!(headroom.text, "Headroom unavailable");
-        assert_eq!(sub(headroom)[1].text, "Couldn't reach Autohand Code: HTTP 503");
+        assert_eq!(
+            sub(headroom)[1].text,
+            "Couldn't reach Autohand Code: HTTP 503"
+        );
 
         let mut inputs = fixture.inputs();
         inputs.show_usage = false;
@@ -1731,7 +1809,8 @@ mod tests {
         fixture.needs.push(NeedsYouItem {
             member_id: "noah".into(),
             kind: NeedsKind::Question,
-            subject: "Should the retry budget cover webhooks from the staging environment too?".into(),
+            subject: "Should the retry budget cover webhooks from the staging environment too?"
+                .into(),
             at: "2026-11-17T01:00:00Z".into(),
         });
         let rows = plan_menu(&fixture.inputs());
@@ -1757,7 +1836,9 @@ mod tests {
         let rows = plan_menu(&fixture.inputs());
         assert_eq!(rows[0].text, "Squad is stopped");
         assert_eq!(rows[1].text, "Start services");
-        assert!(rows.iter().all(|row| !row.id.starts_with("member:") && row.id != "headroom"));
+        assert!(rows
+            .iter()
+            .all(|row| !row.id.starts_with("member:") && row.id != "headroom"));
         assert_eq!(texts(sub(find(&rows, "services")))[0], "Stopped");
 
         let loading = DesktopTrayModel::default();
@@ -1767,8 +1848,14 @@ mod tests {
         assert_eq!(rows[0].text, "Squad · connecting…");
         assert_eq!(rows[0].art, Some(Art::Comb(vec![Cell::Unknown])));
         assert_eq!(texts(sub(find(&rows, "services")))[0], "Starting…");
-        assert_eq!(texts(sub(find(&rows, "account"))), vec!["Checking account…"]);
-        assert!(rows.iter().all(|row| row.id != "login"), "not signed out, only unknown");
+        assert_eq!(
+            texts(sub(find(&rows, "account"))),
+            vec!["Checking account…"]
+        );
+        assert!(
+            rows.iter().all(|row| row.id != "login"),
+            "not signed out, only unknown"
+        );
 
         let mut signed_out = fixture.model.clone();
         signed_out.signed_in = false;
@@ -1795,7 +1882,12 @@ mod tests {
         let rows = plan_menu(&fixture.inputs());
         assert_eq!(
             texts(sub(find(&rows, "account"))),
-            vec!["Signed in as me@example.com", "Autohand Code Free", "Manage plan…", "Sign out"]
+            vec![
+                "Signed in as me@example.com",
+                "Autohand Code Free",
+                "Manage plan…",
+                "Sign out"
+            ]
         );
         assert_eq!(
             texts(sub(find(&rows, "services"))),
@@ -1811,7 +1903,13 @@ mod tests {
         );
         assert_eq!(
             texts(sub(find(&rows, "help"))),
-            vec!["Check for updates…", "Report a bug…", "Give feedback…", "---", "About Autohand Squad"]
+            vec![
+                "Check for updates…",
+                "Report a bug…",
+                "Give feedback…",
+                "---",
+                "About Autohand Squad"
+            ]
         );
     }
 
@@ -1821,13 +1919,29 @@ mod tests {
         fixture.needs.clear();
         fixture.breaks.clear();
         fixture.model.members[0].queued = 3; // Leo, ready
-        let noah = fixture.model.members.iter_mut().find(|member| member.id == "noah").unwrap();
+        let noah = fixture
+            .model
+            .members
+            .iter_mut()
+            .find(|member| member.id == "noah")
+            .unwrap();
         noah.queued = 2;
         let rows = plan_menu(&fixture.inputs());
         let all = texts(&rows);
-        assert!(all.contains(&"Leo · Ready · 3 queued".to_string()), "{all:?}");
-        assert!(all.contains(&"Noah · Working on Checkout tests for the new payme… · 2 more queued".to_string()), "{all:?}");
-        assert!(all.contains(&"Squad · 2 working, 3 ready".to_string()), "{all:?}");
+        assert!(
+            all.contains(&"Leo · Ready · 3 queued".to_string()),
+            "{all:?}"
+        );
+        assert!(
+            all.contains(
+                &"Noah · Working on Checkout tests for the new payme… · 2 more queued".to_string()
+            ),
+            "{all:?}"
+        );
+        assert!(
+            all.contains(&"Squad · 2 working, 3 ready".to_string()),
+            "{all:?}"
+        );
     }
 
     #[test]
@@ -1837,9 +1951,15 @@ mod tests {
         assert_eq!(when(at("2026-11-20T20:00:00Z"), &clock), "Sat 9:00 am");
         assert_eq!(when(at("2026-12-09T00:00:00Z"), &clock), "Dec 9");
         assert_eq!(when(at("2027-01-09T00:00:00Z"), &clock), "Jan 9, 2027");
-        let h24 = Clock { hour12: false, ..clock };
+        let h24 = Clock {
+            hour12: false,
+            ..clock
+        };
         assert_eq!(when(at("2026-11-17T03:10:00Z"), &h24), "16:10");
-        let relative = Clock { utc_offset: None, ..clock };
+        let relative = Clock {
+            utc_offset: None,
+            ..clock
+        };
         assert_eq!(when(at("2026-11-17T03:10:00Z"), &relative), "in 2h 10m");
         assert_eq!(since(at("2026-11-16T20:12:00Z"), &clock), "9:12 am");
         assert_eq!(since(at("2026-11-15T20:12:00Z"), &clock), "Mon 9:12 am");
@@ -1900,7 +2020,10 @@ mod tests {
             ]
         );
         // The screen keeps the cut versions.
-        assert_eq!(rows[1].text, "Eva needs approval: push the release branch to main and tag…");
+        assert_eq!(
+            rows[1].text,
+            "Eva needs approval: push the release branch to main and tag…"
+        );
         assert!(titles(&rows).iter().all(|title| !title.contains('·')));
         assert_eq!(rows[0].help.as_deref(), Some("Opens the Squad window."));
         assert_eq!(
@@ -1970,7 +2093,10 @@ mod tests {
         let mut away = Fixture::typical();
         away.model.signed_in = false;
         let inputs = away.inputs();
-        assert_eq!(status_item_speech(&inputs, &plan_menu(&inputs)).value, "signed out");
+        assert_eq!(
+            status_item_speech(&inputs, &plan_menu(&inputs)).value,
+            "signed out"
+        );
     }
 
     #[test]
@@ -1979,9 +2105,15 @@ mod tests {
         let inputs = fixture.inputs();
         let noah = member_item_speech(&inputs, "noah").unwrap();
         assert_eq!(noah.label, "Noah");
-        assert_eq!(noah.value, "Working on Checkout tests for the new payment flow");
+        assert_eq!(
+            noah.value,
+            "Working on Checkout tests for the new payment flow"
+        );
         assert_eq!(noah.help, "Opens Quick Chat with Noah.");
-        assert_eq!(member_item_speech(&inputs, "eva").unwrap().value, "Waiting for you");
+        assert_eq!(
+            member_item_speech(&inputs, "eva").unwrap().value,
+            "Waiting for you"
+        );
         assert!(member_item_speech(&inputs, "nobody").is_none());
     }
 
