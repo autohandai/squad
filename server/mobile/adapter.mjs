@@ -81,6 +81,47 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
     }
     return byTurn;
   }
+  // The phone's Inbox (contract 0.6, ADR-0263): decisions waiting on the
+  // person across every member, each as the same card the chat shows so it
+  // can be answered in place, and replies that stopped in the last two days.
+  // Unread replies are worked out on the phone from what it has opened.
+  const STOPPED_WINDOW_MS = 48 * 3600_000;
+  async function inbox() {
+    const [{ members }, pending, proposals, runs] = await Promise.all([
+      tools.list_members(),
+      bridge.get('/api/chat/permissions').then(data => data?.pending || []).catch(() => []),
+      bridge.get('/api/routines/proposals').then(data => data?.proposals || []).catch(() => []),
+      bridge.get('/api/runs').catch(() => []),
+    ]);
+    const names = new Map(members.map(row => [row.id, row.name]));
+    const decisions = [];
+    for (const request of pending) {
+      const memberName = names.get(request.agentId);
+      if (!memberName) continue;
+      const id = `permission:${request.requestId}`;
+      let entry = cards.get(id);
+      if (!entry) entry = await cards.set(id, { kind: 'permission', state: 'seen', runId: request.runId, memberId: request.agentId, title: `${memberName} asks to use ${request.tool}`, detail: request.description });
+      decisions.push({ memberID: request.agentId, memberName, at: request.createdAt || request.requestedAt || '', card: permissionCard(request, entry, memberName) });
+    }
+    for (const proposal of proposals) {
+      if (proposal.status !== 'proposed' || !names.has(proposal.memberId)) continue;
+      decisions.push({ memberID: proposal.memberId, memberName: names.get(proposal.memberId), at: proposal.createdAt || '', card: scheduleCard(proposal) });
+    }
+    const now = Date.now(), seen = new Set(), stopped = [];
+    for (const run of Array.isArray(runs) ? runs : runs?.runs || []) {
+      if (!['failed', 'stopped', 'blocked', 'error'].includes(run.status) || !names.has(run.agentId)) continue;
+      const at = run.finishedAt || run.updatedAt || run.startedAt || '';
+      if (at && now - Date.parse(at) > STOPPED_WINDOW_MS) continue;
+      // One row per member and question: asking again after a failure is one thing to look at.
+      const key = `${run.agentId}\n${String(run.title || run.prompt || '').slice(0, 120)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      stopped.push({ memberID: run.agentId, memberName: names.get(run.agentId), title: String(run.title || 'A reply').slice(0, 160), status: run.status === 'error' ? 'failed' : run.status,
+        reason: String(run.error || run.reason || '').slice(0, 300), at });
+      if (stopped.length >= 20) break;
+    }
+    return { decisions: decisions.sort((a, b) => String(b.at).localeCompare(String(a.at))), stopped };
+  }
   async function decide(cardID, action) {
     const [kind, ...rest] = String(cardID).split(':');
     if (kind === 'permission') {
@@ -172,7 +213,7 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
             lastMessageAt: last?.createdAt || null, preview: last ? { author: last.role === 'user' ? 'You' : last.authorName || last.agentId || 'Member', text: clip(last.body, 140) } : null };
         }).sort((a, b) => String(b.lastMessageAt || b.createdAt).localeCompare(String(a.lastMessageAt || a.createdAt))).slice(0, 50);
         return { computer: { id: computerID, name: computerName, version, connectedAt: new Date().toISOString() },
-          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards'] : []), 'marketplace'],
+          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards', 'inbox'] : []), 'marketplace', 'feedback'],
           ...(context.actor ? { account: { id: context.actor.id, name: context.actor.name || '', email: context.actor.email || '' } } : {}),
           members: members.map(row => {
             const remote = (Array.isArray(remotes) ? remotes : remotes?.members || []).find(remote => remote.memberId === row.id);
@@ -293,6 +334,18 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
       if (command === 'card.act' && cards) {
         const { cardID, action } = z.object({ cardID: z.string().min(3).max(300), action: z.string().regex(/^[a-z_]{1,40}$/) }).strict().parse(parameters);
         return { card: await decide(cardID, action) };
+      }
+      if (command === 'inbox' && cards) {
+        z.object({}).strict().parse(parameters);
+        return inbox();
+      }
+      if (command === 'feedback.send') {
+        const input = z.object({ kind: z.enum(['bug', 'feedback']), summary: z.string().min(8).max(200), detail: z.string().max(8000).optional(),
+          automatic: z.boolean().optional(), appVersion: z.string().max(40).optional(), device: z.string().max(80).optional() }).strict().parse(parameters);
+        const about = [input.appVersion && `Squad for iPhone ${input.appVersion}`, input.device].filter(Boolean).join(' · ');
+        return bridge.post('/api/feedback/agent', { kind: input.kind, summary: input.summary,
+          detail: [input.detail || '', about ? `(${about})` : ''].filter(Boolean).join('\n\n'),
+          reporter: input.automatic ? 'Squad for iPhone, automatically' : 'the person in Squad for iPhone', via: input.automatic ? 'phone-automatic' : 'phone' });
       }
       if (marketplace.commands.includes(command)) return marketplace.execute(command, parameters, { deviceID, requestID });
       throw Error('This action is unavailable from a phone.');

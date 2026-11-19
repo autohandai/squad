@@ -5381,14 +5381,19 @@ async function submitAgentFeedback(input = {}) {
   const detail = String(input.detail || "").trim().slice(0, 8000);
   if (summary.length < 8) throw Object.assign(new Error("Say what happened in one sentence (at least 8 characters)."), { status: 400 });
   const reporter = String(input.reporter || "An agent").replace(/\s+/g, " ").trim().slice(0, 80);
+  // Agents, a person on the phone and the phone's automatic reports each
+  // have their own hourly allowance, so one cannot use up another's.
+  const via = ["phone", "phone-automatic"].includes(input.via) ? input.via : "agent";
+  const limit = via === "phone" ? 10 : 5;
   const now = Date.now();
   while (agentFeedbackSent.length && now - agentFeedbackSent[0].at > 3600_000) agentFeedbackSent.shift();
   const key = createHash("sha256").update(`${kind}\n${summary}\n${detail}`).digest("hex");
   if (agentFeedbackSent.some((entry) => entry.key === key)) return { sent: false, duplicate: true, note: "The same report was already sent in the last hour; it was not sent again." };
-  if (agentFeedbackSent.length >= 5) throw Object.assign(new Error("Five reports were sent from this computer in the last hour. Tell the person instead; they can use Report a bug."), { status: 429 });
-  const description = `[${kind === "bug" ? "Bug" : "Feedback"} reported by ${reporter} through the Squad MCP]\n\n${summary}${detail ? `\n\n${detail}` : ""}`;
-  const result = await submitSquadFeedback({ kind, description, route: "/agent", includeScreenshot: false, includeDiagnostics: input.includeDiagnostics !== false, allowContact: false });
-  agentFeedbackSent.push({ key, at: now });
+  if (agentFeedbackSent.filter((entry) => (entry.via || "agent") === via).length >= limit) throw Object.assign(new Error(via === "phone" ? "Ten reports were sent from this phone in the last hour. Try again later." : "Five reports were sent from this computer in the last hour. Tell the person instead; they can use Report a bug."), { status: 429 });
+  const channel = via === "agent" ? "through the Squad MCP" : "from Squad for iPhone";
+  const description = `[${kind === "bug" ? "Bug" : "Feedback"} reported by ${reporter} ${channel}]\n\n${summary}${detail ? `\n\n${detail}` : ""}`;
+  const result = await submitSquadFeedback({ kind, description, route: via === "agent" ? "/agent" : "/phone", includeScreenshot: false, includeDiagnostics: input.includeDiagnostics !== false, allowContact: false });
+  agentFeedbackSent.push({ key, at: now, via });
   return { sent: true, id: result?.id || null, note: "Sent to Autohand with this computer's sanitised diagnostics and no screenshot. Tell the person in one line." };
 }
 

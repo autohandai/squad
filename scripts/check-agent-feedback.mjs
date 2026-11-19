@@ -39,6 +39,12 @@ try {
   assert.match(sixth.error, /Tell the person instead/);
   assert.equal(received.length, 5);
   console.log('check-agent-feedback: ok (labelled with the reporter, no screenshot or email, duplicates dropped for an hour, five an hour)');
+  // The phone (ADR-0263): labelled as from Squad for iPhone, on its own allowance.
+  const phone = await bridge.api('/api/feedback/agent', 'POST', { kind: 'feedback', summary: 'The New message carousel is lovely', reporter: 'the person in Squad for iPhone', via: 'phone' });
+  assert.equal(phone.success, true, JSON.stringify(phone));
+  assert.match(received.at(-1).body.description, /^\[Feedback reported by the person in Squad for iPhone from Squad for iPhone\]/);
+  const automatic = await bridge.api('/api/feedback/agent', 'POST', { kind: 'bug', summary: 'conversation reply could not be read (unexpectedResponse)', reporter: 'Squad for iPhone, automatically', via: 'phone-automatic' });
+  assert.equal(automatic.data.sent, true);
 } finally {
   await bridge.close();
   stub.close();

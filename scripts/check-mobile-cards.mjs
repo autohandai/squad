@@ -160,7 +160,22 @@ try {
   assert.ok(card, `schedule card under the reply: ${JSON.stringify(turn)}`);
   assert.equal(card.state, 'pending'); assert.equal(card.title, 'Proposed automation · Morning check');
   assert.deepEqual(card.actions.map(action => action.id), ['confirm', 'decline']);
+  // The Inbox (contract 0.6, ADR-0263) lists the same waiting card, answerable in place.
+  snapshot = (await request('snapshot')).data;
+  for (const capability of ['inbox', 'feedback']) assert.ok(snapshot.capabilities.includes(capability), `advertises ${capability}`);
+  let box = await request('inbox');
+  assert.equal(box.ok, true, box.error);
+  const waiting = box.data.decisions.find(row => row.card.id === card.id);
+  assert.ok(waiting, `the Inbox lists the proposed automation: ${JSON.stringify(box.data)}`);
+  assert.equal(waiting.memberID, member.id); assert.equal(waiting.card.state, 'pending');
+  assert.ok(Array.isArray(box.data.stopped), 'stopped replies are listed');
+  assert.equal((await request('inbox', { extra: true })).ok, false, 'the Inbox takes no parameters');
   assert.equal((await request('card.act', { cardID: card.id, action: 'decline' })).data.card.state, 'declined');
+  box = await request('inbox');
+  assert.ok(!box.data.decisions.some(row => row.card.id === card.id), 'a decided automation leaves the Inbox');
+  // Feedback from the phone is validated on the computer before anything is sent.
+  assert.equal((await request('feedback.send', { kind: 'bug', summary: 'short' })).ok, false, 'a summary under 8 characters is refused');
+  assert.equal((await request('feedback.send', { kind: 'praise', summary: 'Something long enough' })).ok, false, 'only bug or feedback');
   assert.equal((await request('card.act', { cardID: card.id, action: 'confirm' })).data.card.state, 'declined', 'no second effect');
   assert.equal((await bridge.api(`/api/routines/proposals?memberId=${member.id}`)).data.proposals[0].status, 'declined', 'the Mac sees the same decision');
 

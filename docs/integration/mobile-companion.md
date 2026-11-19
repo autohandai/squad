@@ -81,6 +81,8 @@ for access checks, resource limits, leases and metadata retained by the relay.
 | `announcements` | optional `appVersion` | sanitized iOS-targeted announcements |
 | `announcement.act` | `id`, `action` seen/dismiss, optional `step` | acknowledged action |
 | `device.disconnect` | none | key revoked |
+| `inbox` (0.6, capability `inbox`) | none | `decisions` (each with `memberID`, `memberName`, `at` and the same `card` a chat shows, answered with `card.act`) and `stopped` (failed or stopped replies from the last 48 hours, one per member and question) |
+| `feedback.send` (0.6, capability `feedback`) | `kind` bug/feedback, `summary` (8–200), optional `detail`, `automatic`, `appVersion`, `device` | the computer's feedback receipt; sent to Autohand labelled "from Squad for iPhone", 10 an hour from a person and 5 automatic, duplicates dropped for an hour |
 
 The confirmation code is the first big-endian uint32 of
 HMAC-SHA256(pair key, `computerID:pairingID:deviceID:<base64 device key>`), modulo
