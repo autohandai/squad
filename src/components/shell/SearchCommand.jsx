@@ -173,7 +173,7 @@ export function SearchCommand({
   const counts = useMemo(() => typeCounts(results), [results]);
 
   const pages = [
-    { id: "work", label: copy.needsYou || "Needs you", icon: Inbox, value: "page needs you inbox work mission control squad board attention activity", go: onNavigate.missionControl },
+    { id: "work", label: copy.needsYou || "Inbox", icon: Inbox, value: "page needs you inbox work mission control squad board attention activity", go: onNavigate.missionControl },
     { id: "agents", label: copy.squad || "Squad", icon: Bot, value: "page squad agents directory members team", go: onNavigate.agents },
     { id: "settings", label: copy.settings || "Settings", icon: Settings, value: "page settings", go: onNavigate.settings },
     onNavigate.marketplace ? { id: "marketplace", label: copy.marketplaceTitle || "Marketplace", icon: Store, value: "page marketplace agents browse add install publish grok templates", go: onNavigate.marketplace } : null,

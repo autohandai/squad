@@ -241,6 +241,23 @@ const TOOLS = [
   },
 ];
 
+// Telling Autohand when something breaks (ADR-0258). Same sanitised path as
+// the app's Report a bug; labelled with the member; rate-limited per computer.
+const FEEDBACK_PROPERTIES = {
+  summary: { type: "string", minLength: 8, maxLength: 200, description: "One sentence: what went wrong, or what to improve." },
+  detail: { type: "string", maxLength: 8000, description: "What you were doing, what you expected, what happened, exact error text. No secrets, tokens or the person's private content." },
+  includeDiagnostics: { type: "boolean", description: "Attach this computer's sanitised diagnostics (default true)." },
+};
+TOOLS.push({
+  name: "squad_report_bug",
+  description: "Report a bug in Autohand Squad, its tools or an engine to Autohand, without asking the person first, when you hit one: a Squad tool that errors when it should not, a crash, wrong data, something that blocks the work. Not for mistakes in your own work or the person's project. Sends a sanitised report with diagnostics and no screenshot; at most five an hour from this computer and never the same one twice in an hour. Tell the person in one line that you reported it.",
+  inputSchema: { type: "object", properties: FEEDBACK_PROPERTIES, required: ["summary"], additionalProperties: false },
+}, {
+  name: "squad_give_feedback",
+  description: "Send Autohand feedback about Squad: something confusing, missing or slower than it should be, noticed while working or said by the person. Same limits as squad_report_bug. Tell the person in one line that you sent it.",
+  inputSchema: { type: "object", properties: FEEDBACK_PROPERTIES, required: ["summary"], additionalProperties: false },
+});
+
 TOOLS.push({
   name: "squad_propose_team",
   description: "Propose new Squad members as a team for the person to confirm. For direct creation use squad_create_member under your saved management permission. Autohand Code's create_team/add_teammate start processes inside your own session and never make a Squad member. Squad shows the roster under your reply with a Create team button; nothing is created until the person confirms. Describe each member's role and what they own; names and skills are optional.",
@@ -414,7 +431,7 @@ export function teamInstructions({ memory = [], memberId = "", depth = 0 } = {})
   return sections.join("\n\n");
 }
 
-export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, setAvatar, memoryLibrary, artifacts, ownedData, manageMembers, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
+export function createTeamService({ reportFeedback = null, stateDir, rootDir, bridgeUrl, nodePath = process.execPath, members, isBusy, deliver, runAction, assignTask, getProfile, getWorkPlan, getModels, setFallbacks, setAvatar, memoryLibrary, artifacts, ownedData, manageMembers, channels = {}, chats = null, askPerson = null, emit = () => {} }) {
   const store = createTeamStore({ stateDir });
   const sessions = new Map();
   const byToken = new Map();
@@ -568,6 +585,12 @@ export function createTeamService({ stateDir, rootDir, bridgeUrl, nodePath = pro
         return text(await manageMembers(name, args, operation, assertCurrent));
       }
       switch (name) {
+        case "squad_report_bug":
+        case "squad_give_feedback": {
+          if (!reportFeedback) throw new TeamError("Reporting to Autohand is unavailable in this runtime.");
+          const reporter = (await members()).find((member) => member.id === session.memberId)?.name || "A Squad member";
+          return text(await reportFeedback({ ...args, kind: name === "squad_report_bug" ? "bug" : "feedback", reporter }));
+        }
         case "squad_member_data":
         case "squad_member_files": {
           if (!ownedData) throw new TeamError("Owned member data is unavailable in this runtime.");

@@ -151,6 +151,8 @@ import {
   Workflow,
   X,
   Zap,
+  Store,
+  Plug,
 } from "lucide-react";
 import {
   extensionRows,
@@ -5594,6 +5596,10 @@ function App() {
     setMarketplaceRequest(null);
     setMarketplaceOpen(true);
   }
+  // The account menu lives outside this component's props; it reaches the
+  // marketplace through AccountContext (ADR-0258).
+  const openMarketplaceRef = useRef(null);
+  openMarketplaceRef.current = openMarketplace;
   useEffect(() => {
     const [path, query = ""] = route.split("?");
     if (path === "/marketplace" || path === "/marketplace/") {
@@ -6994,7 +7000,7 @@ function App() {
       const channel = channels.find((item) => item.id === channelIdFromRoute(route));
       page = channel ? `#${channel.name}` : "Channels";
     } else if (path === SQUAD_DIRECTORY_ROUTE) page = "Squad";
-    else if (isWorkRoute(path)) page = "Needs you";
+    else if (isWorkRoute(path)) page = "Inbox";
     else if (path.startsWith("/settings")) page = "Settings";
     else if (path.startsWith("/conversations") || path.startsWith(MEMBER_ROUTE_PREFIX)) {
       const id = new URLSearchParams(route.split("?")[1] || "").get("member") || (path.match(/^\/squad-members\/([^/]+)/)?.[1] ?? "");
@@ -7026,7 +7032,7 @@ function App() {
     }
   }
   const accountContextValue = useMemo(
-    () => ({ profile: accountProfile, signOut, signingOut, openFeedback, openAppInfo, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult, upgradeApp, installUpdate, cancelUpdate, openReleasePage }),
+    () => ({ profile: accountProfile, signOut, signingOut, openFeedback, openAppInfo, openMarketplaceFromMenu: () => openMarketplaceRef.current?.("command"), updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult, upgradeApp, installUpdate, cancelUpdate, openReleasePage }),
     // signOut / openFeedback are stable closures over state setters and route.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [accountProfile, signingOut, route, updates, updatesChecking, updatesUpgrading, updatesError, updatesUpgradeResult]
@@ -13239,7 +13245,7 @@ function CollapsedSidebarRail({
                 isMissionControl && "bg-accent text-foreground"
               )}
               onClick={() => navigate(missionControlPath())}
-              aria-label={`${copy.needsYou || "Needs you"}${inboxCount ? `, ${inboxCount} waiting` : ""}`}
+              aria-label={`${copy.needsYou || "Inbox"}${inboxCount ? `, ${inboxCount} waiting` : ""}`}
               aria-current={isMissionControl ? "page" : undefined}
             >
               <Inbox className="size-4" />
@@ -13250,7 +13256,7 @@ function CollapsedSidebarRail({
               ) : null}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{copy.needsYou || "Needs you"}</TooltipContent>
+          <TooltipContent>{copy.needsYou || "Inbox"}</TooltipContent>
         </Tooltip>
 
         <Tooltip>
@@ -13720,7 +13726,7 @@ function AccountMenuButton({
   placement = "top-end",
   triggerClassName,
 }) {
-  const { profile, signOut, signingOut, openFeedback, openAppInfo } = useContext(AccountContext);
+  const { profile, signOut, signingOut, openFeedback, openAppInfo, openMarketplaceFromMenu } = useContext(AccountContext);
   const [open, setOpen] = useState(false);
   // Switching Squads is offered only when there is a choice (ADR-0234); the
   // current Squad's name then sits quietly under the email.
@@ -13777,12 +13783,16 @@ function AccountMenuButton({
           </div>
           <DropdownMenuSeparator />
           {/* Plain links: a › here promised a submenu that never opened. */}
+          {/* Where you go (Inbox, Marketplace, Connectors, Settings), then
+              about the app, then telling us something, then signing out. */}
           <AccountMenuItem icon={Inbox} label={copy.inbox || "Inbox"} onClick={() => choose(onMissionControl)} />
+          {openMarketplaceFromMenu ? <AccountMenuItem icon={Store} label={copy.marketplaceTitle || "Marketplace"} onClick={() => choose(openMarketplaceFromMenu)} /> : null}
+          <AccountMenuItem icon={Plug} label={copy.connectors || "Connectors"} onClick={() => choose(() => onSettings?.("connectors"))} />
           <AccountMenuItem icon={Settings} label={copy.settings} onClick={() => choose(onSettings)} />
           {squadChoice ? <AccountMenuItem icon={ArrowLeftRight} label="Switch Squad…" onClick={() => choose(() => onSettings?.("squads"))} /> : null}
+          <DropdownMenuSeparator />
           {openAppInfo ? <AccountMenuItem icon={BookOpen} label={copy.about || "About"} onClick={() => choose(() => openAppInfo("about"))} /> : null}
           {openAppInfo ? <AccountMenuItem icon={FileText} label={copy.licensesAndAgreements || "Licenses and agreements"} onClick={() => choose(() => openAppInfo("licenses"))} /> : null}
-          <DropdownMenuSeparator />
           <AccountMenuItem icon={Keyboard} label="Keyboard shortcuts" onClick={() => choose(openKeyboardShortcuts)} />
           {openFeedback ? (
             <>
@@ -17100,7 +17110,7 @@ function MissionControlPage({
           <div className="min-w-0">
             <h1 className="flex items-center gap-2 text-lg font-semibold">
               <Inbox className="size-4 text-muted-foreground" aria-hidden="true" />
-              {copy.needsYou || "Needs you"}
+              {copy.needsYou || "Inbox"}
             </h1>
             {/* Each part of the summary goes to what it counts: the section
                 below, or In progress for "working". */}
@@ -17142,7 +17152,7 @@ function MissionControlPage({
         </header>
 
         <div className="flex flex-wrap gap-5 border-y border-border/70" role="group" aria-label="Work view">
-          {[["needs-you", copy.needsYou || "Needs you"], ["in-progress", copy.inProgress || "In progress"], ["all", copy.allWork || "All work"]].map(([id, label]) => (
+          {[["needs-you", copy.needsYou || "Inbox"], ["in-progress", copy.inProgress || "In progress"], ["all", copy.allWork || "All work"]].map(([id, label]) => (
             <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)} className={cn("border-b-2 py-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring", view === id ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
               {label}
               {id === "needs-you" && attentionCount ? <span className="ml-2 text-xs text-muted-foreground">{attentionCount}</span> : null}
@@ -25419,7 +25429,7 @@ function SettingsPage({
     { id: "vault", label: copy.vault || "Vault" },
     { id: "improvement", label: copy.selfImprovement || "Self-improvement" },
     { id: "handoff", label: copy.handoffRetryPolicy },
-    { id: "mission-control", label: copy.needsYou || "Needs you" },
+    { id: "mission-control", label: copy.needsYou || "Inbox" },
     { id: "runtime", label: copy.runtimeBridge },
     { id: "computers", label: "Computers" },
     { id: "relay", label: copy.relay || "Relay" },
@@ -25912,14 +25922,14 @@ function SettingsPage({
     ),
     "mission-control": () => (
       <>
-        <SettingsSectionHeader title={copy.needsYou || "Needs you"} description={missionControlDetail} />
+        <SettingsSectionHeader title={copy.needsYou || "Inbox"} description={missionControlDetail} />
         <a
           href={missionControlPath()}
           className="grid gap-3 rounded-md px-2 py-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
           onClick={(event) => handleLocalNavigation(event, missionControlPath())}
         >
           <span className="min-w-0">
-            <span className="block font-medium">{copy.openNeedsYou || "Open Needs you"}</span>
+            <span className="block font-medium">{copy.openNeedsYou || "Open Inbox"}</span>
             <span className="mt-1 block truncate text-sm text-muted-foreground">Review active work, queue, and run evidence.</span>
           </span>
           <Badge variant={counts.permissionWarnings ? "destructive" : "secondary"} className="w-fit rounded-md px-1.5">

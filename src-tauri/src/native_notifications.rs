@@ -61,7 +61,7 @@ pub(crate) async fn squad_notification_test(
         #[cfg(target_os = "macos")]
         {
             if permission(false)? != "granted" { return Err("Allow notifications for Autohand Squad in macOS System Settings first.".into()); }
-            macos::submit("squad-test", "Autohand Squad", "Your test notification is ready. Click to open Needs you.", "/work", &owned)?;
+            macos::submit("squad-test", "Autohand Squad", "Your test notification is ready. Click to open Inbox.", "/work", &owned)?;
             Ok(serde_json::json!({"posted":true,"method":"macos-user-notifications","message":"macOS accepted the test notification. Banner display follows your notification settings and Focus mode."}))
         }
         #[cfg(not(target_os = "macos"))]

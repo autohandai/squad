@@ -597,6 +597,7 @@ bridgeEvents.on("member.stopped", ({ memberId }) => vault.closeMember(memberId))
 // reached by every member through one managed MCP server on any engine.
 const artifacts = createArtifactService({ stateDir: squadStateDir, members: teamMembers, emit: emitBridgeEvent });
 const team = createTeamService({
+  reportFeedback: (input) => submitAgentFeedback(input),
   stateDir: squadStateDir,
   rootDir,
   bridgeUrl: privateOwnerContext.publicUrl,
@@ -5366,6 +5367,29 @@ function normalizeScreenshotForSubmit(screenshot) {
   };
 }
 
+// Bug reports and feedback an agent files through the Squad MCP (ADR-0258):
+// the same sanitised submission as the app's Report a bug, labelled with the
+// member, never with a screenshot or the person's email. At most five an
+// hour from this computer, and the same text once an hour, so a looping agent
+// cannot flood Autohand or the person's name with reports.
+const agentFeedbackSent = [];
+async function submitAgentFeedback(input = {}) {
+  const kind = input.kind === "feedback" ? "feedback" : "bug";
+  const summary = String(input.summary || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const detail = String(input.detail || "").trim().slice(0, 8000);
+  if (summary.length < 8) throw Object.assign(new Error("Say what happened in one sentence (at least 8 characters)."), { status: 400 });
+  const reporter = String(input.reporter || "An agent").replace(/\s+/g, " ").trim().slice(0, 80);
+  const now = Date.now();
+  while (agentFeedbackSent.length && now - agentFeedbackSent[0].at > 3600_000) agentFeedbackSent.shift();
+  const key = createHash("sha256").update(`${kind}\n${summary}\n${detail}`).digest("hex");
+  if (agentFeedbackSent.some((entry) => entry.key === key)) return { sent: false, duplicate: true, note: "The same report was already sent in the last hour; it was not sent again." };
+  if (agentFeedbackSent.length >= 5) throw Object.assign(new Error("Five reports were sent from this computer in the last hour. Tell the person instead; they can use Report a bug."), { status: 429 });
+  const description = `[${kind === "bug" ? "Bug" : "Feedback"} reported by ${reporter} through the Squad MCP]\n\n${summary}${detail ? `\n\n${detail}` : ""}`;
+  const result = await submitSquadFeedback({ kind, description, route: "/agent", includeScreenshot: false, includeDiagnostics: input.includeDiagnostics !== false, allowContact: false });
+  agentFeedbackSent.push({ key, at: now });
+  return { sent: true, id: result?.id || null, note: "Sent to Autohand with this computer's sanitised diagnostics and no screenshot. Tell the person in one line." };
+}
+
 async function submitSquadFeedback(input = {}) {
   const id = String(input.id || randomUUID());
   const kind = normalizeFeedbackKind(input.kind);
@@ -9184,6 +9208,15 @@ async function handleApi(req, res, url) {
       json(res, 200, { success: true, data: { screenshot, diagnostics } });
     } catch (error) {
       json(res, 400, { success: false, error: error.message });
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/feedback/agent" && req.method === "POST") {
+    try {
+      json(res, 200, { success: true, data: await submitAgentFeedback(await readBody(req)) });
+    } catch (error) {
+      json(res, error.status || 502, { success: false, error: error.message });
     }
     return true;
   }

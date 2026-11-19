@@ -487,7 +487,7 @@ fn build_app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         ],
     )?;
 
-    let inbox = item("inbox", "Needs you", Some("CmdOrCtrl+1"))?;
+    let inbox = item("inbox", "Inbox", Some("CmdOrCtrl+1"))?;
     let agents = item("agents", "Agents", Some("CmdOrCtrl+2"))?;
     let channels = item("channels", "Channels", Some("CmdOrCtrl+3"))?;
     // ⌘K and ⌘B are handled by the page itself (they work in the browser

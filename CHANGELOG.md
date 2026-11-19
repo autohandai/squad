@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- Agents can report a bug or send feedback to Autohand themselves when something in Squad breaks while they work (labelled with who sent it, never with a screenshot or your email, at most five an hour), and tell you they did.
 - The marketplace on Squad for iPhone: your phone browses agents and teams through this computer. When you add one on your phone, Squad here opens it for you to review and add, and your phone shows the outcome. Turn off Settings › Computers › "Confirm phone adds on this computer" to let phone adds go straight in.
 - **Start an automation from a webhook.** Choose "When a webhook is called" and Squad gives the automation a private URL with a copyable example. Each call starts one run (never two at once, up to 10 a minute), and you can make a new URL or turn it off at any time. The URL is on your computer; to call it from the internet, use the tunnel you already run.
 - **New automation and Run now in the Execution panel.** The Automations tab lists each automation with when it runs next and how its last run went, Run now (which then shows the run in Runs) and a New automation button, also on the empty tab. Click a name to edit it.
@@ -59,6 +60,8 @@ list to the section for that version.
 - Your phone now works at home and away without pairing again. Computers settings lets Same Wi-Fi and From anywhere (Autohand’s relay) run at the same time, alongside your own tunnel. A phone paired on one of them learns the others from your computer and switches by itself: the same network when it can, the relay everywhere else.
 ### Changed
 
+- Needs you is now called Inbox everywhere: the sidebar, the page, search, Settings and the View menu.
+- The account menu starts with Inbox, Marketplace and Connectors, then About, then Report a bug and Give feedback.
 - **The New automation window reads like a note, not a form.** Describe what should happen and when; the member drafts it and it reads back in sentences (when, who, where, what it does), with the next run. Edit details turns those same lines into fields, and "set it up yourself" starts from them empty. No more asterisks, grey boxes or trigger cards.
 - Birds are no longer grouped by country in the picture picker; it is one grid of birds you can search by name.
 - A new sign-in screen: the Squad mark and name, one line, a perch of the squad's birds that land, glance and hop (and pass a hop along while your browser is open), Continue with Autohand account or Continue with Apple, and the terms at the foot. The terminal hint is gone: signing in to Squad also signs in the Autohand CLI it comes with.

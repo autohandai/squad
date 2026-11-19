@@ -32,7 +32,10 @@ const profileFields = { name: text(60), role: text(80), description: { type: 'st
 const skillIds = { type: 'array', maxItems: 32, items: text(500) };
 const memoryTexts = { type: 'array', maxItems: 100, items: text(500), description: 'Profile memories only; does not replace shared, project or conversation memory.' };
 
+const feedbackFields = { summary: { type: 'string', minLength: 8, maxLength: 200, description: 'One sentence: what went wrong, or what to improve.' }, detail: { type: 'string', maxLength: 8000, description: 'What happened, what was expected, exact error text. No secrets.' }, reporter: { type: 'string', maxLength: 80, description: 'Who is reporting (the agent or client name).' }, include_diagnostics: { type: 'boolean' } };
 export const MANAGEMENT_TOOLS = [
+  tool('report_bug', 'Report a bug in Autohand Squad to Autohand when one blocks the work (a Squad tool erroring when it should not, a crash, wrong data). Sends the same sanitised report as Report a bug in the app, labelled as from an agent, with diagnostics and no screenshot; at most five an hour from this computer and never the same one twice in an hour. Tell the person you reported it.', feedbackFields, ['summary']),
+  tool('give_feedback', 'Send Autohand feedback about Squad (something confusing, missing or slow). Same path and limits as report_bug. Tell the person you sent it.', feedbackFields, ['summary']),
   tool('create_member', 'Create a real saved Squad member in the selected owner. Limits: name 60, role 80, description 600, instructions 1200 (longer instructions are split into profile memories automatically), personality 600, each memory 500, at most 100 memories. Selects a ready default engine and saves up to four connected engine fallbacks with their default models and reasoning; an explicit engine is preserved. A stable request_id makes retries idempotent. Saves profile, catalog skill selections and initial profile memories without launching work, granting broad permissions or enabling routines. Workspace is optional; no folder is created implicitly.', { request_id: text(128), ...profileFields, skills: skillIds, memories: memoryTexts, workspace: text(1000), engine: text(200) }, ['request_id', 'name', 'role']),
   tool('get_member_profile', 'Read a member\'s saved name, personality, operating instructions, skills, folders and abilities, with its revision and available ability IDs. Operator access.', { member_id: id() }, ['member_id'], true),
   tool('get_member_computer_use', 'Read an existing member\'s saved Computer Use scope and OS readiness. Read-only; does not grant access or show OS prompts. Enabling requires explicit native confirmation in Squad.', { member_id: id() }, ['member_id'], true),
@@ -88,7 +91,10 @@ export function createManagementTools(bridge, legacy) {
   }
   const routineBody = args => Object.fromEntries(Object.entries(withWhen(args)).filter(([key]) => !['member_id', 'routine_id', 'max_run_minutes', 'when'].includes(key)).concat(args.max_run_minutes !== undefined ? [['maxRunMinutes', args.max_run_minutes]] : []));
 
+  const feedback = kind => ({ summary, detail, reporter, include_diagnostics }) => bridge.post('/api/feedback/agent', { kind, summary, detail, reporter: reporter || 'An MCP client', includeDiagnostics: include_diagnostics });
   return {
+    report_bug: feedback('bug'),
+    give_feedback: feedback('feedback'),
     async create_member(args) {
       if (args.instructions === undefined) return bridge.post('/api/control-plane/members', args);
       const fit = fitInstructions(args.instructions);

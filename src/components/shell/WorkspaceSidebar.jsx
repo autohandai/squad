@@ -338,7 +338,7 @@ export function WorkspaceSidebar({
             <ul className="grid grid-cols-4 gap-x-1 gap-y-3">{top.members.map(memberTile)}</ul>
           </nav> : null}
           <nav className="flex flex-col gap-0.5 border-t border-border/60 pt-2" aria-label="Workspace">
-            <NavRow icon={Inbox} label={copy.needsYou || 'Needs you'} active={active.kind === 'work'} onClick={onNavigate.inbox}
+            <NavRow icon={Inbox} label={copy.needsYou || 'Inbox'} active={active.kind === 'work'} onClick={onNavigate.inbox}
               trailing={<UnreadCount count={inboxCount} testId="needs-you-count" />} />
           </nav>
           <nav className="mt-1 flex flex-col gap-0.5" aria-label="Conversations">
@@ -350,7 +350,7 @@ export function WorkspaceSidebar({
         <nav className="flex flex-col gap-0.5" aria-label="Workspace">
           <NavRow
             icon={Inbox}
-            label={copy.needsYou || "Needs you"}
+            label={copy.needsYou || "Inbox"}
             active={active.kind === "work"}
             onClick={onNavigate.inbox}
             trailing={<UnreadCount count={inboxCount} testId="needs-you-count" />}

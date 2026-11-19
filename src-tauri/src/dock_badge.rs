@@ -48,7 +48,7 @@ pub(crate) fn invalidate_scope() {
 
 fn validate_request(label: &str, caller: &Url, bridge: &Url, count: u32) -> Result<(), String> {
     if label != MAIN_WINDOW {
-        return Err("The Needs you badge is managed by Squad's main window.".into());
+        return Err("The Inbox badge is managed by Squad's main window.".into());
     }
     if caller.origin() != bridge.origin()
         || !caller.username().is_empty()
@@ -57,7 +57,7 @@ fn validate_request(label: &str, caller: &Url, bridge: &Url, count: u32) -> Resu
         return Err("The badge request is not from the local Squad app.".into());
     }
     if count > MAX_ATTENTION_COUNT {
-        return Err("The Needs you count exceeds the supported badge range.".into());
+        return Err("The Inbox count exceeds the supported badge range.".into());
     }
     Ok(())
 }

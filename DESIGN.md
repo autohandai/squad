@@ -408,3 +408,5 @@
 - Export collision names preserve the extension and UTF-8 filename limit so a successful native save always yields a receipt the UI can acknowledge. Existing files are never overwritten.
 
 - An agent or team added from a paired phone opens the normal marketplace review in the Squad window with one plain line above it ("Requested from your phone. Read it, then add it here, or close this to decline."). Settings › Computers › "Confirm phone adds on this computer" is on by default; its description says what happens in the current state (ADR-0256).
+
+- The attention page is Inbox (sidebar, title, search, menus); its first tab "Needs you" filters what waits on the person. The account menu order is Inbox, Marketplace, Connectors, Settings · About, Licenses, Keyboard shortcuts · Report a bug, Give feedback · Sign out (ADR-0258).
