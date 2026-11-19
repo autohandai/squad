@@ -19,6 +19,10 @@ pub(crate) struct Preferences {
     /// A dot on the Squad menu-bar icon (and a VoiceOver announcement) while
     /// a question or approval waits. On by default (ADR-0249).
     pub menu_bar_attention_dot: bool,
+    /// The main window's sidebar over native Liquid Glass where macOS has it
+    /// (NSGlassEffectView, macOS 26+); Sidebar vibrancy otherwise. On by
+    /// default (ADR-0258).
+    pub sidebar_liquid_glass: bool,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -28,6 +32,7 @@ impl Default for Preferences {
             quick_chat_show_usage: true,
             quick_chat_appearance: "glass".into(),
             menu_bar_attention_dot: true,
+            sidebar_liquid_glass: true,
         }
     }
 }
@@ -214,6 +219,9 @@ pub(crate) fn apply(
     let prefs = read();
     if let Some(window) = app.get_webview_window(quick_chat::QUICK_CHAT_WINDOW) {
         crate::quick_chat_appearance::apply(&window, shell, &prefs);
+    }
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        crate::main_window_material::apply(&window, shell, &prefs);
     }
     let main = lock(&shell.tray).clone();
     if cfg!(target_os = "macos") {
@@ -416,8 +424,12 @@ pub(crate) async fn squad_refresh_quick_chat(
             if !crate::native_scope_current(Some(&context)) {
                 return;
             }
+            let prefs = read();
             if let Some(window) = handle.get_webview_window(quick_chat::QUICK_CHAT_WINDOW) {
-                crate::quick_chat_appearance::apply(&window, &state, &read());
+                crate::quick_chat_appearance::apply(&window, &state, &prefs);
+            }
+            if let Some(window) = handle.get_webview_window(MAIN_WINDOW) {
+                crate::main_window_material::apply(&window, &state, &prefs);
             }
         })
         .map_err(|error| error.to_string())?;

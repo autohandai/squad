@@ -60,6 +60,8 @@ list to the section for that version.
 - Your phone now works at home and away without pairing again. Computers settings lets Same Wi-Fi and From anywhere (Autohand’s relay) run at the same time, alongside your own tunnel. A phone paired on one of them learns the others from your computer and switches by itself: the same network when it can, the relay everywhere else.
 ### Changed
 
+- Quick Chat's message box now looks and works like the main window's, with the same round send button.
+- On Macs with Liquid Glass (macOS 26 and later), the sidebar sits on Liquid Glass. Turn it off in Settings › Appearance › Liquid Glass sidebar.
 - Needs you is now called Inbox everywhere: the sidebar, the page, search, Settings and the View menu.
 - The account menu starts with Inbox, Marketplace and Connectors, then About, then Report a bug and Give feedback.
 - **The New automation window reads like a note, not a form.** Describe what should happen and when; the member drafts it and it reads back in sentences (when, who, where, what it does), with the next run. Edit details turns those same lines into fields, and "set it up yourself" starts from them empty. No more asterisks, grey boxes or trigger cards.

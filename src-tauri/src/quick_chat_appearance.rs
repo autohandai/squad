@@ -10,7 +10,7 @@ pub(crate) enum Material {
 }
 
 impl Material {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::LiquidGlass => "liquid-glass",
             Self::Vibrancy => "vibrancy",

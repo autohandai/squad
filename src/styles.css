@@ -847,3 +847,5 @@ html[data-quick-chat="true"][data-quick-chat-appearance="glass"] [data-testid="m
   .menu-bar-preview .mb-popover, .menu-bar-preview .mb-type { animation: none; opacity: 1; transform: none; clip-path: none; }
   .phone-hint .phone-hint-out, .phone-hint .phone-hint-in { animation: none; opacity: 1; transform: none; }
 }
+/* Quick Chat over Liquid Glass: the composer card lets the glass through, like the panel (ADR-0258). */
+html[data-quick-chat="true"][data-quick-chat-appearance="glass"] .quick-chat-composer-card { background: color-mix(in srgb, var(--card) 70%, transparent); }

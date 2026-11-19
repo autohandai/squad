@@ -40,6 +40,7 @@ mod native_notifications;
 #[cfg(all(test, target_os = "macos"))]
 mod ownership_test_support;
 mod quick_chat;
+mod main_window_material;
 mod quick_chat_appearance;
 mod quick_chat_preferences;
 mod system_reset;
@@ -73,6 +74,7 @@ struct Shell {
     popup_anchor: Mutex<Option<String>>,
     member_portraits: Mutex<std::collections::HashMap<String, u64>>,
     quick_chat_material: Mutex<Option<quick_chat_appearance::Material>>,
+    main_window_material: Mutex<Option<quick_chat_appearance::Material>>,
     /// Claude Code and Codex readings; None until the first read finishes.
     harness_usage: Mutex<Option<Vec<quick_chat_preferences::HarnessUsage>>>,
     /// Needs-you items, breaks, engines and the phone, read from the bridge.
@@ -151,6 +153,7 @@ fn main() {
                 popup_anchor: Mutex::new(None),
                 member_portraits: Mutex::new(std::collections::HashMap::new()),
                 quick_chat_material: Mutex::new(None),
+                main_window_material: Mutex::new(None),
                 harness_usage: Mutex::new(None),
                 tray_extras: Mutex::new(tray_bridge::TrayExtras::default()),
                 portrait_cache: Mutex::new(std::collections::HashMap::new()),
@@ -185,6 +188,14 @@ fn main() {
                     // Composers upload browser File objects. Tauri's native
                     // handler consumes OS file drops before HTML5 receives them.
                     .disable_drag_drop_handler()
+                    .on_page_load({
+                        let shell = shell.clone();
+                        move |webview, payload| {
+                            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                                main_window_material::republish(&webview, &shell);
+                            }
+                        }
+                    })
                     .inner_size(1280.0, 840.0)
                     .min_inner_size(960.0, 640.0)
                     .user_agent(&user_agent)
@@ -216,15 +227,9 @@ fn main() {
             let window = builder.build()?;
             #[cfg(target_os = "macos")]
             {
-                use window_vibrancy::{
-                    apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState,
-                };
-                let _ = apply_vibrancy(
-                    &window,
-                    NSVisualEffectMaterial::Sidebar,
-                    Some(NSVisualEffectState::FollowsWindowActiveState),
-                    None,
-                );
+                // Liquid Glass behind the sidebar where macOS has it, Sidebar
+                // vibrancy otherwise (ADR-0258). Settings can switch it later.
+                main_window_material::apply(&window, &shell, &quick_chat_preferences::read());
             }
             #[cfg(target_os = "windows")]
             {

@@ -30,6 +30,7 @@ import { RoutineSchedule } from "@/components/members/RoutineSchedule";
 import { AutomationPlainEnglish } from "@/components/members/AutomationPlainEnglish";
 import { AutomationWebhook } from "@/components/members/AutomationWebhook";
 import { AccountAvatar } from "@/components/account/AccountAvatar";
+import { LiquidGlassSetting } from "@/components/settings/LiquidGlassSetting";
 import { MemberReplyThread, useMemberThreadSummaries } from "@/components/chat/MemberReplyThread";
 import { automationAgenda, reconcileAutomationReplies } from "@/lib/automation-agenda";
 import { normalizeChannelGoal } from "@/lib/channel-goals";
@@ -15374,23 +15375,41 @@ function Conversation({
           <ContextWarningLine gauge={contextGauge} copy={copy} className="mb-2" />
           {blockedWorkspace ? <p className="mb-2 text-xs text-destructive">Choose a project folder for {agent.name} in Squad before sending work.</p> : null}
           {launchWarnings.length ? <p className="mb-2 text-xs text-muted-foreground">{launchWarnings.map((warning) => warning.detail).join(" ")}</p> : null}
-          <InputGroup className="h-auto flex-col items-stretch border-border bg-transparent shadow-none focus-within:border-ring/60 has-[[data-slot=input-group-control]:focus-visible]:ring-0 dark:bg-transparent" aria-label={`Message ${agent.name}`}>
-            <AttachmentList files={attachmentDraft.entries} onRemove={attachmentDraft.remove} onRetry={attachmentDraft.retry} className="px-2 pt-2" />
+          {/* The main window's composer, sized for Quick Chat (ADR-0258): the
+              same card, field and round send button, so the two feel like one
+              app. The key hint shows only while the field is focused and empty. */}
+          <div className="quick-chat-composer-card flex flex-col rounded-2xl border border-border bg-card shadow-xs transition-[border-color,box-shadow] focus-within:border-ring/60 focus-within:shadow-sm" role="group" aria-label={`Message ${agent.name}`}>
+            <AttachmentList files={attachmentDraft.entries} onRemove={attachmentDraft.remove} onRetry={attachmentDraft.retry} className="px-3 pt-2" />
             {mentionOpen ? <MentionPicker items={mentionItems} loading={mentionLoading} error={mentionError} selectedIndex={mentionIndex} onSelect={selectMentionItem} /> : null}
-            <PromptTextarea control={InputGroupTextarea} ref={promptRef} value={prompt} onDraft={updatePrompt} onKeyDown={handlePromptKeyDown} placeholder={formatCopy(copy.talkToPlaceholder, { name: agent.name })} aria-label={formatCopy(copy.talkToPlaceholder, { name: agent.name })} aria-describedby="quick-chat-composer-hint" className="max-h-24 min-h-11 resize-none px-3 py-2 text-sm leading-5 md:text-sm" />
-            <InputGroupAddon align="block-end" className="gap-2 px-2 pb-2 pt-0" onClick={event => { if (!event.target.closest("button")) promptRef.current?.focus(); }}>
-              <InputGroupText id="quick-chat-composer-hint" className="min-w-0 flex-1 text-xs" title="Shift+Enter starts a new line">
-                {chatSending && !isGoalRunning(currentGoal) ? "Enter to queue" : "Enter to send"}
-                <span className="sr-only">. Shift+Enter starts a new line.</span>
-              </InputGroupText>
-              <AttachmentButton compact onFiles={attachmentDraft.addFiles} disabled={blockedWorkspace} />
-              <VoiceInputButton control={InputGroupButton} size="icon-sm" value={prompt} onValueChange={(next) => updatePrompt(next)} disabled={blockedWorkspace} copy={copy} noticeClassName="max-w-[10rem]" />
-              {chatSending && canSubmitDraft ? <InputGroupButton type="submit" variant="ghost" size="icon-sm" aria-label={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup} title={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup}><Send className="size-4" /></InputGroupButton> : null}
-              <InputGroupButton type={chatSending ? "button" : "submit"} variant={chatSending ? "ghost" : "default"} size="icon-sm" className="shrink-0 rounded-md" disabled={!chatSending && (!canSubmitDraft || blockedWorkspace)} aria-label={chatSending ? copy.stopChatResponse : copy.sendChatMessage} title={chatSending ? copy.stopChatResponse : copy.sendChatMessage} onClick={chatSending ? stopActiveChat : undefined}>
+            <div className="relative">
+              <PromptTextarea ref={promptRef} value={prompt} onDraft={updatePrompt} onKeyDown={handlePromptKeyDown} placeholder={formatCopy(copy.talkToPlaceholder, { name: agent.name })} aria-label={formatCopy(copy.talkToPlaceholder, { name: agent.name })} aria-describedby="quick-chat-composer-hint" className="peer max-h-32 min-h-[2.75rem] resize-none border-0 bg-transparent px-3.5 pb-1 pt-3 text-[15px] leading-6 shadow-none focus-visible:ring-0" />
+              <p id="quick-chat-composer-hint" className="pointer-events-none hidden px-3.5 pb-1 text-[11px] text-muted-foreground peer-placeholder-shown:peer-focus:block">
+                {chatSending && !isGoalRunning(currentGoal) ? "Enter queues" : "Enter sends"} · Shift Enter for a new line
+              </p>
+            </div>
+            <div className="flex min-w-0 items-center gap-1.5 px-2 pb-2" onClick={event => { if (!event.target.closest("button")) promptRef.current?.focus(); }}>
+              <AttachmentButton onFiles={attachmentDraft.addFiles} disabled={blockedWorkspace} />
+              <VoiceInputButton value={prompt} onValueChange={(next) => updatePrompt(next)} disabled={blockedWorkspace} copy={copy} noticeClassName="max-w-[12rem]" />
+              {chatSending && canSubmitDraft ? (
+                <Button type="submit" variant="ghost" size="icon-sm" className="rounded-full" aria-label={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup} title={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup}>
+                  <Send />
+                </Button>
+              ) : null}
+              <Button
+                type={chatSending ? "button" : "submit"}
+                size="icon-lg"
+                variant={chatSending ? "secondary" : "default"}
+                className={cn("ml-auto size-8 shrink-0 rounded-full", chatSending && "bg-foreground text-background hover:bg-foreground/90 hover:text-background")}
+                disabled={!chatSending && (!canSubmitDraft || blockedWorkspace)}
+                aria-label={chatSending ? copy.stopChatResponse : copy.sendChatMessage}
+                title={chatSending ? copy.stopChatResponse : copy.sendChatMessage}
+                onClick={chatSending ? stopActiveChat : undefined}
+                data-testid="quick-chat-send"
+              >
                 {chatSending ? <Square className="size-3.5 fill-current" /> : <Send className="size-4" />}
-              </InputGroupButton>
-            </InputGroupAddon>
-          </InputGroup>
+              </Button>
+            </div>
+          </div>
         </form>
       </div>
     );
@@ -25586,6 +25605,8 @@ function SettingsPage({
               })}
             </ToggleGroup>
           </div>
+
+          <LiquidGlassSetting api={api} />
 
           <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
             <div className="min-w-0">

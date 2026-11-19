@@ -61,3 +61,33 @@ The owner, on 19 November 2026:
   one-line notice the agent is told to give.
 - The cap is per computer and in memory; it resets when Squad restarts.
 - Older checks and ADRs still say "Needs you" for the page; they are history.
+
+## Addendum, 19 November 2026: Quick Chat composer and Liquid Glass sidebar
+
+The owner: the Quick Chat composer "doesn't look and feel like the main
+window, which should be a better send button", and the sidebar should use
+Liquid Glass on macOS 27 (27.2.1, "Golden Gate").
+
+- **Quick Chat composer.** It was an `InputGroup` with a hint line, square
+  icon buttons and a 28px square send button that read as disabled until
+  typing. It now uses the main composer's grammar at Quick Chat's size: the
+  rounded card with a soft shadow, the same field, round ghost attach and
+  mic, and a 32px round primary send button that becomes a filled Stop while
+  a reply runs; the key hint shows only while the field is focused and empty.
+  Over Quick Chat's glass the card is 70% opaque so the glass shows through.
+- **Liquid Glass sidebar.** The main window was already transparent with
+  Sidebar vibrancy behind the default skin's transparent sidebar.
+  `src-tauri/src/main_window_material.rs` now puts native Liquid Glass there
+  instead when the Mac has `NSGlassEffectView` (macOS 26 and later) and
+  Settings › Appearance › "Liquid Glass sidebar" is on (`sidebarLiquidGlass`
+  in the Squad's `settings.json`, on by default), using the same
+  `window_vibrancy::apply_liquid_glass` path Quick Chat uses. Otherwise, and
+  on every earlier macOS, it is the Sidebar vibrancy as before. The page is
+  told `data-window-material` and `data-liquid-glass-available` on every page
+  load; the setting appears only where Liquid Glass exists. Changing it
+  re-applies through the existing settings refresh, without a restart.
+
+Not proven yet: no screenshot of the main window over Liquid Glass exists at
+the time of writing; `cargo check` passes and the change is verified in the
+signed build installed after this lane (see below). Skins that paint their
+own sidebar keep it painted, so they look the same either way.

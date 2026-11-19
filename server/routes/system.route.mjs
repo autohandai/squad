@@ -55,7 +55,7 @@ export async function handle(req, res, url, ctx) {
   if (url.pathname === "/api/system/settings" && (req.method === "PUT" || req.method === "POST")) {
     const body = await ctx.readBody(req);
     if (!body || typeof body !== "object" || Array.isArray(body)) { ctx.json(res, 400, { success: false, error: "Settings must be an object." }); return true; }
-    const invalid = ["autoCheckUpdates", "autoDownloadUpdates", "quickChatEnabled", "quickChatShowUsage", "menuBarAttentionDot"].find(key => key in body && typeof body[key] !== "boolean");
+    const invalid = ["autoCheckUpdates", "autoDownloadUpdates", "quickChatEnabled", "quickChatShowUsage", "menuBarAttentionDot", "sidebarLiquidGlass"].find(key => key in body && typeof body[key] !== "boolean");
     if ("quickChatAppearance" in body && !["glass", "solid"].includes(body.quickChatAppearance)) {
       ctx.json(res, 400, { success: false, error: "Choose glass or solid for Quick Chat appearance." }); return true;
     }
