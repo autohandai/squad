@@ -692,7 +692,9 @@ mod tests {
 /// Writes every drawing, and the rows of a typical menu, for a visual check:
 /// `TRAY_ART_DIR=<dir> cargo test -- --ignored tray_art_writes_previews`.
 /// `scripts`-free on purpose: the composite is made from these files.
-#[cfg(test)]
+// Renders the macOS menu-bar art to PNGs; `image` is a macOS-only
+// dependency, so this never builds where CI checks the shell on Linux.
+#[cfg(all(test, target_os = "macos"))]
 mod preview {
     use super::*;
     use autohand_squad_runtime::desktop_tray::menu::{
