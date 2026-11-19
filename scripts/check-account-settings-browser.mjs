@@ -92,8 +92,11 @@ try {
   await until(() => browser.evaluate(`document.activeElement?.getAttribute('role')==='menuitem'`), 'keyboard focuses first action');
   await key('Home','Home',36);
   await until(() => browser.evaluate(`document.activeElement?.textContent.trim()==='Inbox'`), 'first keyboard action');
-  await key('ArrowDown','ArrowDown',40);
-  await until(() => browser.evaluate(`document.activeElement?.textContent.trim()==='Settings'`), 'keyboard reaches Settings');
+  // Then where you go, in order (ADR-0258): Marketplace, Connectors, Settings.
+  for (const next of ['Marketplace', 'Connectors', 'Settings']) {
+    await key('ArrowDown','ArrowDown',40);
+    await until(() => browser.evaluate(`document.activeElement?.textContent.trim()===${JSON.stringify(next)}`), `keyboard reaches ${next}`);
+  }
   await key('Enter','Enter',13);
   await until(() => browser.evaluate(`location.pathname==='/settings'`), 'keyboard Settings selection');
   await browser.click('Back from Settings'); await ready();
