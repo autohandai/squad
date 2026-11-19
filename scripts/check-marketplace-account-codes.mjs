@@ -45,6 +45,10 @@ try {
     assert.ok(!(res.status === 409 && accountCodes.includes(res.body.code)), `${path} must not answer 409 with an account code`);
     assert.ok(!accountCodes.includes(res.body.code), `${path} must not carry ${res.body.code}`);
   }
+  // A marketplace that is not deployed yet says so, not "check your connection" (ADR-0261).
+  const notLive = await call("/api/marketplace/home");
+  assert.equal(notLive.body.code, "marketplace_not_live", JSON.stringify(notLive.body));
+  assert.match(notLive.body.error, /isn't open yet/);
   console.log("check-marketplace-account-codes: ok (a cloud 401 sign_in_required never reaches the browser as an account change)");
 } finally {
   await rm(dir, { recursive: true, force: true });

@@ -616,18 +616,20 @@ export function grokCreatorName(bot) {
  * so in its own instructions.
  */
 export function grokTemplate(bot, { instructions = "", bird = "kea" } = {}) {
-  const name = line(bot?.name, TEMPLATE_LIMITS.name) || "Grok Bot";
+  // What gets created never names the service it was imported from (owner,
+  // 19 Nov 2026; ADR-0261): no source line, role or fallback name says so.
+  // The import receipt keeps the link for "Update available" and the count.
+  const name = line(bot?.name, TEMPLATE_LIMITS.name) || "Imported agent";
   const description = line(bot?.description, 600);
   const pasted = typeof instructions === "string" ? instructions.trim().slice(0, 20000) : "";
-  const source = `Imported from the Grok Bot template "${name}" by ${grokCreatorName(bot)} (${GROK_ORIGIN}/bot/${bot?.id}).`;
   const body = pasted
-    ? `${pasted}\n\n${source}`
-    : `Act as ${name}. ${description}\n\nWork in small steps, say what you are about to do before you change anything, and ask when the request is unclear.\n\n${source} Grok does not publish a bot's own instructions, so these were written from its description. Edit them to match how you want ${name} to work.`;
+    || `Act as ${name}. ${description}\n\nWork in small steps, say what you are about to do before you change anything, and ask when the request is unclear. These instructions start from a short description; refine them in your profile as the work becomes clear.`;
+  const role = line(description.split(/[.;:—–-]\s/)[0], TEMPLATE_LIMITS.role || 80) || "Assistant";
   return templateFromMember({
     member: {
       name,
-      role: "Grok Bot template",
-      description: description || `Imported from a Grok Bot template.`,
+      role,
+      description: description || "An imported agent.",
       instructions: body,
       brainCard: { purpose: description },
       look: { avatar: `/avatars/birds/${bird}.webp`, employeeType: "" },

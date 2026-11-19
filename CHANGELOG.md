@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- In a chat with a member, type /delete or press ⌘⇧⌫ (Ctrl+Shift+Backspace on Windows and Linux) to remove them; Squad asks first.
 - Autohand Voice: the mic in every composer, Quick Chat included, now records and turns your words into text on this Mac with Parakeet, without sending audio anywhere. The first time, it downloads the voice model once.
 - Agents can report a bug or send feedback to Autohand themselves when something in Squad breaks while they work (labelled with who sent it, never with a screenshot or your email, at most five an hour), and tell you they did.
 - The marketplace on Squad for iPhone: your phone browses agents and teams through this computer. When you add one on your phone, Squad here opens it for you to review and add, and your phone shows the outcome. Turn off Settings › Computers › "Confirm phone adds on this computer" to let phone adds go straight in.
@@ -61,6 +62,10 @@ list to the section for that version.
 - Your phone now works at home and away without pairing again. Computers settings lets Same Wi-Fi and From anywhere (Autohand’s relay) run at the same time, alongside your own tunnel. A phone paired on one of them learns the others from your computer and switches by itself: the same network when it can, the relay everywhere else.
 ### Changed
 
+- The Marketplace is a page now, like Inbox but wider, instead of a window over the app. Links and the menu open it there.
+- New member suggests agents from the marketplace that fit what you type, and New team suggests ready-made teams, plus your own templates and team files.
+- The send button is a filled circle with an arrow, matching the stop button; the mic sits right next to it, and dictation uses Autohand Voice.
+- Agents and teams you import never mention where they were imported from.
 - Recipes now come from your own work: Squad suggests a request you keep making to the same member, and the Chief of Staff saves the ones worth keeping. The list is Saved, Spotted in your work, then the old starters; the Inbox button is called Recipes.
 - Quick Chat's message box now looks and works like the main window's, with the same round send button.
 - On Macs with Liquid Glass (macOS 26 and later), the sidebar sits on Liquid Glass. Turn it off in Settings › Appearance › Liquid Glass sidebar.
@@ -90,6 +95,8 @@ list to the section for that version.
 
 ### Fixed
 
+- The marketplace no longer tells you to check your connection when it simply isn't open yet.
+- Inbox's first tab is called Needs you again.
 - Asking the Chief of Staff to create a member with long instructions no longer fails with "longer than 1200 characters". The first part is saved as the member's instructions and the rest as labelled memories, in order, and the Chief of Staff tells you it did that.
 - Downloaded builds now send Squad's product usage events (ADR-0067) like local builds do; they shipped with analytics switched off because the release didn't carry the PostHog settings. The same rules apply: no prompts, files or names, and Do Not Track is honoured.
 - **Webhook automations now actually run.** The Webhook trigger used to show an address that nothing answered. A webhook automation now gets its own private URL on this computer: anything that POSTs JSON to it starts the member, with the body as context.

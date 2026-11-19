@@ -5,9 +5,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MarketplaceSuggestions } from "@/components/marketplace/MarketplaceSuggestions";
 
 /** Choosing recipients never provisions a member or starts work. */
-export function ConversationComposer({ agents = [], renderAvatar, onStart, onCancel }) {
+export function ConversationComposer({ agents = [], renderAvatar, onStart, onCancel, api, avatarStyle, onOpenListing }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState([]);
   const [groupName, setGroupName] = useState("");
@@ -50,6 +51,7 @@ export function ConversationComposer({ agents = [], renderAvatar, onStart, onCan
             <div className="space-y-2"><Label htmlFor="message-new-role">Role</Label><Input id="message-new-role" value={newMember.role} maxLength={80} placeholder="e.g. Release reviewer" disabled={pending} onChange={event => setNewMember({ ...newMember, role: event.target.value })} /></div>
             <div className="space-y-2"><Label htmlFor="message-new-description">What should they help with?</Label><Textarea id="message-new-description" value={newMember.description} maxLength={600} disabled={pending} onChange={event => setNewMember({ ...newMember, description: event.target.value })} /></div>
             <p className="text-xs text-muted-foreground">Squad chooses a connected harness and available fallbacks. You can review their profile and permissions before sending work.</p>
+            {api && onOpenListing ? <MarketplaceSuggestions api={api} kind="agent" avatarStyle={avatarStyle} onOpen={onOpenListing} query={[newMember.role, newMember.description].filter(Boolean).join(" ")} /> : null}
           </>
         ) : (
           <>

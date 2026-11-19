@@ -31,6 +31,7 @@ import { AutomationPlainEnglish } from "@/components/members/AutomationPlainEngl
 import { AutomationWebhook } from "@/components/members/AutomationWebhook";
 import { AccountAvatar } from "@/components/account/AccountAvatar";
 import { LiquidGlassSetting } from "@/components/settings/LiquidGlassSetting";
+import { SendButton } from "@/components/chat/SendButton";
 import { spotRecipes } from "@/lib/recipe-observations";
 import { MemberReplyThread, useMemberThreadSummaries } from "@/components/chat/MemberReplyThread";
 import { automationAgenda, reconcileAutomationReplies } from "@/lib/automation-agenda";
@@ -155,6 +156,7 @@ import {
   Zap,
   Store,
   Plug,
+  ListPlus,
 } from "lucide-react";
 import {
   extensionRows,
@@ -1368,6 +1370,8 @@ const SQUAD_DIRECTORY_ROUTE = "/squad";
 const CHANNELS_ROUTE = "/channels";
 const INBOX_ROUTE = "/inbox";
 const AGENTS_ROUTE = "/agents";
+// The marketplace is a page in the main column, like Inbox (ADR-0261).
+const MARKETPLACE_ROUTE = "/marketplace";
 const SEARCH_SHORTCUT_LABEL =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘K" : "Ctrl K";
 
@@ -5586,17 +5590,26 @@ function App() {
   // at start-up: the route is consumed on the first load, and the next load
   // (after "Verifying your Squad…") must still open the agent.
   const [marketplaceRequest, setMarketplaceRequest] = useState(() => pendingMarketplaceLink.request);
-  const [marketplaceOpen, setMarketplaceOpen] = useState(() => Boolean(pendingMarketplaceLink.request));
   const [publishMember, setPublishMember] = useState(null);
   // Browsing opens the same dialog over whatever page is showing, so the
   // person keeps their place (ADR-0246, entry points).
   // Where it was opened from goes to product telemetry (ADR-0253): a string
   // from ⌘K or the route, the directory otherwise (menus pass click events).
   const [marketplaceEntry, setMarketplaceEntry] = useState(() => (pendingMarketplaceLink.request ? "link" : "directory"));
+  const [marketplaceVisit, setMarketplaceVisit] = useState(0);
   function openMarketplace(entry) {
+    setMarketplaceVisit((count) => count + 1);
     setMarketplaceEntry(typeof entry === "string" ? entry : "directory");
     setMarketplaceRequest(null);
-    setMarketplaceOpen(true);
+    pendingMarketplaceLink.request = null;
+    navigate(MARKETPLACE_ROUTE);
+  }
+  // A listing chosen from a suggestion (New member, New team) opens on the
+  // Marketplace page, where Add works as everywhere else (ADR-0261).
+  function openMarketplaceListing(listing) {
+    setMarketplaceEntry("member_form");
+    setMarketplaceRequest({ listing: listing.kind === "team" ? "team" : "agent", id: listing.id, via: "in-app" });
+    navigate(MARKETPLACE_ROUTE);
   }
   // The account menu lives outside this component's props; it reaches the
   // marketplace through AccountContext (ADR-0258).
@@ -5604,21 +5617,23 @@ function App() {
   openMarketplaceRef.current = openMarketplace;
   useEffect(() => {
     const [path, query = ""] = route.split("?");
-    if (path === "/marketplace" || path === "/marketplace/") {
-      window.history.replaceState({ squadOwnership: currentOwnership()?.storageKey }, "", SQUAD_DIRECTORY_ROUTE);
-      setRoute(SQUAD_DIRECTORY_ROUTE);
-      openMarketplace("route");
-      return;
+    // Leaving the page drops a link's listing and declines a phone's add.
+    if (path !== MARKETPLACE_ROUTE && !path.startsWith("/marketplace/")) {
+      if (marketplaceRequest) { setMarketplaceRequest(null); pendingMarketplaceLink.request = null; }
+      const phone = phoneAddRef.current;
+      if (phone) { phoneAddRef.current = null; void phone.settle("failed", "Not added: it was closed in Squad on your computer."); }
     }
+    if (path === "/marketplace/") { navigate(MARKETPLACE_ROUTE); return; }
     if (!path.startsWith("/marketplace/agents/") && !path.startsWith("/marketplace/teams/")) return;
+    // A link opens that listing on the Marketplace page.
     const request = requestFromAppRoute(path, query);
-    window.history.replaceState({ squadOwnership: currentOwnership()?.storageKey }, "", SQUAD_DIRECTORY_ROUTE);
-    setRoute(SQUAD_DIRECTORY_ROUTE);
-    if (!request) return;
+    window.history.replaceState({ squadOwnership: currentOwnership()?.storageKey }, "", MARKETPLACE_ROUTE);
+    setRoute(MARKETPLACE_ROUTE);
+    // A malformed link opens the page with no listing, and forgets an older one.
+    if (!request) { pendingMarketplaceLink.request = null; setMarketplaceRequest(null); return; }
     pendingMarketplaceLink.request = request;
     setMarketplaceEntry("link");
     setMarketplaceRequest(request);
-    setMarketplaceOpen(true);
   }, [route]);
   // A team template goes through the same addTeam as Import team: every
   // member untrusted, the channels created among them (ADR-0253). The
@@ -6292,7 +6307,7 @@ function App() {
         pendingMarketplaceLink.request = null;
         setMarketplaceEntry("link");
         setMarketplaceRequest({ listing: request.kind === "team" ? "team" : "agent", id: request.listingId, via: "phone", requestedFrom: "your phone" });
-        setMarketplaceOpen(true);
+        navigate(MARKETPLACE_ROUTE);
         continue;
       }
       try {
@@ -10094,6 +10109,7 @@ function App() {
   const isCreate = isCreateMemberRoute(route);
   const isExtensions = routePath.startsWith("/extensions");
   const isMissionControl = isWorkRoute(routePath);
+  const isMarketplace = routePath === MARKETPLACE_ROUTE;
   const isSquadDirectory = routePath === SQUAD_DIRECTORY_ROUTE || routePath === AGENTS_ROUTE;
   const isChannels = routePath === CHANNELS_ROUTE || routePath.startsWith(`${CHANNELS_ROUTE}/`);
   const isOnboarding = routePath === ONBOARDING_ROUTE;
@@ -10159,6 +10175,7 @@ function App() {
         <QuickChatPanel api={api} member={member} chatPath={member ? memberChatPath(member.id) : "/squad"}>
           <QuickChatMemberPicker members={agents} activeMemberId={member?.id} entryFor={entryFor} copy={localeCopy} onSelect={(id) => navigate(`/quick-chat?member=${encodeURIComponent(id)}`)} renderAvatar={(item, className) => <AgentAvatar agent={item} className={className} />} />
           {member ? <Conversation
+            onRequestDelete={() => setPendingMemberDelete(member)}
             promptByAgent={chatDraftsByAgent} setPromptByAgent={setChatDraftsByAgent}
             compact agent={member} agents={agents} messages={messagesByAgent[member.id] || []}
             runtime={runtime} workspaces={workspaces} runs={runsForMember(runs, member)} providerSettings={providerSettings}
@@ -10284,26 +10301,10 @@ function App() {
         pendingNames={pendingTeamMemberNames}
         copy={localeCopy}
         onAddTeam={addTeamFromProposal}
-      />
-      <MarketplaceDialog
-        open={marketplaceOpen}
-        onOpenChange={(open) => {
-          setMarketplaceOpen(open);
-          if (!open) {
-            setMarketplaceRequest(null); pendingMarketplaceLink.request = null;
-            const phone = phoneAddRef.current;
-            if (phone) { phoneAddRef.current = null; void phone.settle("failed", "Not added: it was closed in Squad on your computer."); }
-          }
-        }}
         api={api}
-        agents={agents}
-        copy={localeCopy}
         avatarStyle={avatarStyle}
-        request={marketplaceRequest}
-        entry={marketplaceEntry}
-        onAdd={addFromMarketplace}
-        onUpdate={updateFromMarketplace}
-        onOpenMember={(id) => navigate(memberChatPath(id))}
+        onOpenListing={openMarketplaceListing}
+        onOpenTemplates={() => setTemplatesOpen(true)}
       />
       <PublishAgentDialog
         open={Boolean(publishMember)}
@@ -10448,7 +10449,7 @@ function App() {
                 }
               />
             ) : routePath === "/messages/new" ? (
-              <ConversationComposer agents={agents} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} onStart={startConversation} onCancel={() => navigate(squadDirectoryPath())} />
+              <ConversationComposer agents={agents} api={api} avatarStyle={avatarStyle} onOpenListing={openMarketplaceListing} renderAvatar={(agent, className) => <AgentAvatar agent={agent} className={className} />} onStart={startConversation} onCancel={() => navigate(squadDirectoryPath())} />
             ) : routePath === "/memory" ? (
               <Suspense fallback={<p className="px-8 py-8 text-sm text-muted-foreground">Opening memory…</p>}><MemoryPage api={api} navigate={navigate} onSettings={() => openSettings("memory")} /></Suspense>
             ) : isSquadDirectory ? (
@@ -10525,6 +10526,27 @@ function App() {
                 onRunWorkflowNow={runWorkflowNow}
                 onApproveWorkflowRun={(run) => decideWorkflowRun(run, "approve")}
                 onDeclineWorkflowRun={(run) => decideWorkflowRun(run, "decline")}
+              />
+            ) : isMarketplace ? (
+              <MarketplaceDialog
+                variant="page"
+                visit={marketplaceVisit}
+                open
+                onOpenChange={() => {}}
+                api={api}
+                agents={agents}
+                copy={localeCopy}
+                avatarStyle={avatarStyle}
+                request={marketplaceRequest}
+                entry={marketplaceEntry}
+                onAdd={addFromMarketplace}
+                onUpdate={updateFromMarketplace}
+                onOpenMember={(id) => navigate(memberChatPath(id))}
+                onRequestDismissed={() => {
+                  setMarketplaceRequest(null); pendingMarketplaceLink.request = null;
+                  const phone = phoneAddRef.current;
+                  if (phone) { phoneAddRef.current = null; void phone.settle("failed", "Not added: it was closed in Squad on your computer."); }
+                }}
               />
             ) : isMissionControl ? (
               <MissionControlPage
@@ -10711,6 +10733,7 @@ function App() {
               </section>
             ) : (
               <Conversation
+                onRequestDelete={() => activeAgent && setPendingMemberDelete(activeAgent)}
                 promptByAgent={chatDraftsByAgent}
                 setPromptByAgent={setChatDraftsByAgent}
                 agent={activeAgent}
@@ -14186,6 +14209,7 @@ function ConversationWelcome({ agent, copy, onPrompt, briefing = null }) {
 }
 
 function Conversation({
+  onRequestDelete,
   promptByAgent,
   setPromptByAgent,
   compact = false,
@@ -15061,6 +15085,20 @@ function Conversation({
   // Slash commands the app owns work on every engine; Autohand Code commands
   // pass through to the CLI; other engines get a plain answer instead of a
   // silent no-op.
+  // ⌘⇧⌫ on macOS, Ctrl+Shift+Backspace (or Delete) elsewhere: remove the
+  // member whose chat is open, after confirmation (ADR-0261).
+  useEffect(() => {
+    if (!onRequestDelete) return undefined;
+    const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
+    const onKey = (event) => {
+      if (!event.shiftKey || !(mac ? event.metaKey : event.ctrlKey) || !["Backspace", "Delete"].includes(event.key)) return;
+      event.preventDefault();
+      onRequestDelete();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onRequestDelete]);
+
   function handleSlashCommand(command) {
     const harnessId = harnessForAgent(agent).id;
     switch (command.name) {
@@ -15086,6 +15124,11 @@ function Conversation({
       }
       case "new":
         startFreshChat();
+        return true;
+      // Remove this member, after the same confirmation as the member menu (ADR-0261).
+      case "delete":
+        if (onRequestDelete) onRequestDelete();
+        else postLocalNote("Remove members from the Squad page here.");
         return true;
       case "help":
         postLocalNote(composerHelpText(harnessId));
@@ -15390,25 +15433,21 @@ function Conversation({
             </div>
             <div className="flex min-w-0 items-center gap-1.5 px-2 pb-2" onClick={event => { if (!event.target.closest("button")) promptRef.current?.focus(); }}>
               <AttachmentButton onFiles={attachmentDraft.addFiles} disabled={blockedWorkspace} />
-              <VoiceInputButton value={prompt} onValueChange={(next) => updatePrompt(next)} disabled={blockedWorkspace} copy={copy} noticeClassName="max-w-[12rem]" />
+              <span className="ml-auto" aria-hidden="true" />
+              <VoiceInputButton value={prompt} onValueChange={(next) => updatePrompt(next)} disabled={blockedWorkspace} copy={copy} noticeClassName="max-w-[12rem]" noticeFirst />
               {chatSending && canSubmitDraft ? (
                 <Button type="submit" variant="ghost" size="icon-sm" className="rounded-full" aria-label={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup} title={isGoalRunning(currentGoal) ? copy.sendChatMessage : copy.queueFollowup}>
-                  <Send />
+                  <ListPlus />
                 </Button>
               ) : null}
-              <Button
-                type={chatSending ? "button" : "submit"}
-                size="icon-lg"
-                variant={chatSending ? "secondary" : "default"}
-                className={cn("ml-auto size-8 shrink-0 rounded-full", chatSending && "bg-foreground text-background hover:bg-foreground/90 hover:text-background")}
-                disabled={!chatSending && (!canSubmitDraft || blockedWorkspace)}
-                aria-label={chatSending ? copy.stopChatResponse : copy.sendChatMessage}
-                title={chatSending ? copy.stopChatResponse : copy.sendChatMessage}
+              <SendButton
+                size="sm"
+                sending={chatSending}
+                disabled={!canSubmitDraft || blockedWorkspace}
+                label={chatSending ? copy.stopChatResponse : copy.sendChatMessage}
                 onClick={chatSending ? stopActiveChat : undefined}
                 data-testid="quick-chat-send"
-              >
-                {chatSending ? <Square className="size-3.5 fill-current" /> : <Send className="size-4" />}
-              </Button>
+              />
             </div>
           </div>
         </form>
@@ -15856,38 +15895,32 @@ function Conversation({
               </Popover>
 
                 <AttachmentButton onFiles={attachmentDraft.addFiles} disabled={blockedWorkspace} />
-                <VoiceInputButton value={prompt} onValueChange={(next) => updatePrompt(next)} disabled={blockedWorkspace} copy={copy} noticeClassName="max-w-[16rem]" />
 
-                {chatSending && canSubmitDraft ? (
+                {/* The mic sits beside send (ADR-0261). */}
+                <div className="ml-auto flex min-w-0 items-center gap-1.5">
+                  <VoiceInputButton value={prompt} onValueChange={(next) => updatePrompt(next)} disabled={blockedWorkspace} copy={copy} noticeClassName="max-w-[16rem]" noticeFirst />
+                  {chatSending && canSubmitDraft ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button type="submit" variant="ghost" size="icon-sm" className="rounded-full" aria-label={copy.queueFollowup}>
+                          <ListPlus />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{copy.queueFollowup} · ⌘↩ sends now and interrupts</TooltipContent>
+                    </Tooltip>
+                  ) : null}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button type="submit" variant="ghost" size="icon-sm" className="rounded-full" aria-label={copy.queueFollowup}>
-                        <Send />
-                      </Button>
+                      <SendButton
+                        sending={chatSending}
+                        disabled={!canSubmitDraft || blockedWorkspace}
+                        label={chatSending ? copy.stopChatResponse : copy.sendChatMessage}
+                        onClick={chatSending ? stopActiveChat : undefined}
+                      />
                     </TooltipTrigger>
-                    <TooltipContent>{copy.queueFollowup} · ⌘↩ sends now and interrupts</TooltipContent>
+                    <TooltipContent>{chatSending ? copy.stopChatResponse : copy.sendChatMessage}</TooltipContent>
                   </Tooltip>
-                ) : null}
-
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type={chatSending ? "button" : "submit"}
-                      size="icon-lg"
-                      variant={chatSending ? "secondary" : "default"}
-                      className={cn(
-                        "ml-auto size-9 rounded-full",
-                        chatSending && "bg-foreground text-background hover:bg-foreground/90 hover:text-background"
-                      )}
-                      disabled={chatSending ? false : !canSubmitDraft || blockedWorkspace}
-                      aria-label={chatSending ? copy.stopChatResponse : copy.sendChatMessage}
-                      onClick={chatSending ? stopActiveChat : undefined}
-                    >
-                      {chatSending ? <Square className="size-4 fill-current" /> : <Send />}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>{chatSending ? copy.stopChatResponse : copy.sendChatMessage}</TooltipContent>
-                </Tooltip>
+                </div>
               </div>
             </div>
           </div>
@@ -17172,7 +17205,7 @@ function MissionControlPage({
         </header>
 
         <div className="flex flex-wrap gap-5 border-y border-border/70" role="group" aria-label="Work view">
-          {[["needs-you", copy.needsYou || "Inbox"], ["in-progress", copy.inProgress || "In progress"], ["all", copy.allWork || "All work"]].map(([id, label]) => (
+          {[["needs-you", copy.workNeedsYou || "Needs you"], ["in-progress", copy.inProgress || "In progress"], ["all", copy.allWork || "All work"]].map(([id, label]) => (
             <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)} className={cn("border-b-2 py-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring", view === id ? "border-foreground font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
               {label}
               {id === "needs-you" && attentionCount ? <span className="ml-2 text-xs text-muted-foreground">{attentionCount}</span> : null}

@@ -120,12 +120,12 @@ const skill = { name: "release-checklist", description: "Checks a release.", tex
   assert.equal(parseGrokBotPage("<html><title>Not found</title></html>", id), null);
   const starter = validateAgentTemplate(grokTemplate(bot));
   assert.ok(starter.ok, starter.error);
-  assert.equal(starter.document.members[0].role, "Grok Bot template");
-  assert.match(starter.document.members[0].instructions, /by a Grok Bot user \(https:\/\/x\.ai\/bot\/Zq3Lk9TestBot_01\)/);
-  assert.match(starter.document.members[0].instructions, /Grok does not publish a bot's own instructions/);
+  // What is created never names where it was imported from (ADR-0261).
+  assert.doesNotMatch(JSON.stringify(starter.document), /grok|x\.ai/i);
+  assert.ok(starter.document.members[0].role && starter.document.members[0].role !== "Grok Bot template");
   const pasted = validateAgentTemplate(grokTemplate({ ...bot, sharerName: "Mere" }, { instructions: "You plan tides first, weather second." }));
   assert.match(pasted.document.members[0].instructions, /^You plan tides first/);
-  assert.match(pasted.document.members[0].instructions, /by Mere/);
+  assert.doesNotMatch(JSON.stringify(pasted.document), /grok|x\.ai|Mere/i, "the pasted instructions are kept as they are, with no source line");
 }
 
 // --- team templates and attribution (ADR-0253) ------------------------------------

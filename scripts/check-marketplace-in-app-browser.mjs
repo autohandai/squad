@@ -42,12 +42,14 @@ async function press(selector, label = "") {
   assert.ok(box, `nothing to press at ${selector} ${label}`);
   for (const type of ["mousePressed", "mouseReleased"]) await browser.send("Input.dispatchMouseEvent", { type, x: box.x, y: box.y, button: "left", clickCount: 1 });
 }
-const dialogOpen = () => until(() => browser.evaluate(`!!document.querySelector('[data-testid=marketplace-dialog]')`), "the Marketplace dialog");
+const dialogOpen = () => until(() => browser.evaluate(`!!document.querySelector('[data-testid=marketplace-page]')`), "the Marketplace page");
 const homeShows = () => until(() => browser.evaluate(`document.querySelectorAll('[data-testid=marketplace-featured] li').length >= 4 && document.querySelectorAll('[data-testid^=marketplace-section-]').length === 11`), "the first screen: Featured, Teams and ten categories", 20000);
 const listShows = (count) => until(() => browser.evaluate(`document.querySelectorAll('[data-testid=marketplace-list] li').length === ${count}`), `${count} rows`, 20000);
+// The marketplace is a page (ADR-0261): leaving it is going back to the directory.
 async function closeDialog() {
-  await browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-dialog] button')].filter((button) => button.innerText.trim() === 'Close').at(-1).click()`);
-  await until(() => browser.evaluate(`!document.querySelector('[data-testid=marketplace-dialog]')`), "Marketplace closed");
+  await browser.evaluate(`document.querySelector('[data-testid=marketplace-detail]') && [...document.querySelectorAll('[data-testid=marketplace-page] button')].find((button) => /^Marketplace$|^Back$/.test(button.innerText.trim()))?.click()`);
+  await browser.evaluate(`history.pushState({}, "", "/squad"); dispatchEvent(new PopStateEvent("popstate"))`);
+  await until(() => browser.evaluate(`!document.querySelector('[data-testid=marketplace-page]') && !!document.querySelector('[aria-label="Team actions"]')`), "back on the directory", 30000);
 }
 // Waits for the row the search should find, not just for any list: the
 // previous result can still be on screen while the debounced search runs.
@@ -56,7 +58,7 @@ async function search(text, expect = "") {
   if (expect) await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].length === 1 && document.querySelector('[data-testid=marketplace-list] li').innerText.includes(${JSON.stringify(expect)})`), `search ${text}`, 20000);
 }
 // A category word with whatever count it carries now ("All201" after a publish).
-const pill = (label) => browser.evaluate(`(() => { const item = [...document.querySelectorAll('[data-testid=marketplace-dialog] [role=tablist] button')].find((element) => element.innerText.trim().replace(/[0-9]+$/, '').trim() === ${JSON.stringify(label)}); if (!item) throw new Error('no pill ' + ${JSON.stringify(label)}); item.click(); })()`);
+const pill = (label) => browser.evaluate(`(() => { const item = [...document.querySelectorAll('[data-testid=marketplace-page] [role=tablist] button')].find((element) => element.innerText.trim().replace(/[0-9]+$/, '').trim() === ${JSON.stringify(label)}); if (!item) throw new Error('no pill ' + ${JSON.stringify(label)}); item.click(); })()`);
 const receipts = async () => (await bridge.api("/api/marketplace/imports")).data.imports;
 async function viewport(width, theme, layout, skin) {
   await browser.send("Emulation.setDeviceMetricsOverride", { width, height: width < 600 ? 844 : 860, deviceScaleFactor: 1, mobile: width < 600 });
@@ -111,7 +113,7 @@ try {
   await pill("All");
   await homeShows();
   await search("autohand squad team");
-  await until(() => browser.evaluate(`/Autohand Squad team/.test(document.querySelector('[data-testid=marketplace-list] li')?.innerText || '') && document.querySelector('[data-testid=marketplace-dialog]').innerText.includes('371')`), "search by creator finds agents and teams");
+  await until(() => browser.evaluate(`/Autohand Squad team/.test(document.querySelector('[data-testid=marketplace-list] li')?.innerText || '') && document.querySelector('[data-testid=marketplace-page]').innerText.includes('371')`), "search by creator finds agents and teams");
   await search("phoebe", "Phoebe by Autohand Squad team");
   const row = await browser.evaluate(`document.querySelector('[data-testid=marketplace-list] li').innerText`);
   assert.match(row, /Phoebe by Autohand Squad team/); assert.match(row, /Added \d{1,2} \w{3} 20\d\d/);
@@ -213,7 +215,7 @@ try {
   await until(() => has("[data-testid=marketplace-detail]", "Abner"), "Abner's page under GPC");
   await new Promise((resolve) => setTimeout(resolve, 800));
   assert.equal((await telemetry()).length, quiet, "no marketplace events under Global Privacy Control");
-  await browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-dialog] button')].find((button) => button.innerText.trim() === 'Back').click()`);
+  await browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-page] button')].find((button) => button.innerText.trim() === 'Back').click()`);
   await closeDialog();
 
   // 3. Minified layout, Grut skin, dark: More → Marketplace… → a category → detail.
@@ -241,7 +243,7 @@ try {
   await browser.navigate(`${bridge.origin}/marketplace`);
   await dialogOpen();
   await homeShows();
-  assert.equal(await browser.evaluate("location.pathname"), "/squad");
+  assert.equal(await browser.evaluate("location.pathname"), "/marketplace");
   assert.equal(await browser.evaluate("document.documentElement.scrollWidth <= innerWidth"), true, "no sideways scroll on a phone");
   await new Promise((resolve) => setTimeout(resolve, 500));
   await browser.screenshot(`${artifact}/minified-paper-phone-home.png`);

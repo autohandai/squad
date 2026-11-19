@@ -1,8 +1,9 @@
 // squad-voice: on-device dictation for Autohand Squad (ADR-0260).
 //
-// Records from the microphone with AVAudioEngine and transcribes with NVIDIA
-// Parakeet TDT v3 on the Neural Engine, through FluidAudio. Nothing leaves the
-// computer. The Squad bridge runs it and speaks JSON lines over stdio:
+// Records from the microphone with AVAudioEngine and transcribes with Autohand
+// Voice's recognizer (AutohandVoiceCore: NVIDIA Parakeet TDT v3 on the Neural
+// Engine through FluidAudio). Nothing leaves the computer. The Squad bridge
+// runs it and speaks JSON lines over stdio:
 //
 //   squad-voice status            → {"modelReady":bool,"modelDirectory":"…"}
 //   squad-voice prepare           → {"event":"progress","fraction":0.42} … {"event":"ready"}
@@ -13,7 +14,7 @@
 //
 // Any failure is {"event":"error","code":"…","message":"…"} and exit 1.
 import AVFoundation
-import FluidAudio
+import AutohandVoiceCore
 import Foundation
 
 func emit(_ object: [String: Any]) {
@@ -27,23 +28,15 @@ func fail(_ code: String, _ message: String) -> Never {
     exit(1)
 }
 
-let version: AsrModelVersion = .v3
-let modelDirectory = AsrModels.defaultCacheDirectory(for: version)
+let variant = SpeechModelVariant.v3
+let modelDirectory = variant.cacheDirectory
+let recognizer = LocalSpeechRecognizer(modelVersion: variant.rawValue)
 
-func modelReady() -> Bool { AsrModels.modelsExist(at: modelDirectory, version: version) }
+func modelReady() -> Bool { ((try? ModelCacheInspector.storageBytes(at: modelDirectory)) ?? 0) > 50_000_000 }
 
-func loadManager() async throws -> AsrManager {
-    guard modelReady() else { fail("model_missing", "The Parakeet model is not on this computer yet. Download it in Settings › Voice.") }
-    let models = try await AsrModels.downloadAndLoad(version: version)
-    let manager = AsrManager(config: .default)
-    try await manager.loadModels(models)
-    return manager
-}
-
-func transcribe(_ url: URL, with manager: AsrManager) async throws -> String {
-    var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
-    let result = try await manager.transcribe(url, decoderState: &state)
-    return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+func transcribe(_ url: URL) async throws -> String {
+    guard modelReady() else { fail("model_missing", "The Parakeet model is not on this computer yet. Download it from the mic in Squad.") }
+    return try await recognizer.transcribe(file: url).finalText().trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 func microphoneAllowed() async -> Bool {
@@ -72,8 +65,9 @@ func listen() async {
     guard await microphoneAllowed() else {
         fail("microphone_denied", "Microphone access is off for Autohand Squad. Turn it on in System Settings › Privacy & Security › Microphone.")
     }
-    let manager: AsrManager
-    do { manager = try await loadManager() } catch { fail("model_load", "The Parakeet model could not be loaded: \(error.localizedDescription)") }
+    guard modelReady() else { fail("model_missing", "The Parakeet model is not on this computer yet. Download it from the mic in Squad.") }
+    // Load while the person speaks, so stopping is fast.
+    let warm = Task { try? await recognizer.prepare() }
 
     let engine = AVAudioEngine()
     let input = engine.inputNode
@@ -98,7 +92,8 @@ func listen() async {
     engine.stop()
     if command == "cancel" { emit(["event": "cancelled"]); return }
     do {
-        let text = try await transcribe(recording, with: manager)
+        _ = await warm.value
+        let text = try await transcribe(recording)
         emit(["event": "text", "text": text])
     } catch {
         fail("transcribe", "Transcription failed: \(error.localizedDescription)")
@@ -108,10 +103,10 @@ func listen() async {
 let arguments = Array(CommandLine.arguments.dropFirst())
 switch arguments.first {
 case "status":
-    emit(["modelReady": modelReady(), "modelDirectory": modelDirectory.path, "model": "parakeet-tdt-0.6b-v3"])
+    emit(["modelReady": modelReady(), "modelDirectory": modelDirectory.path, "model": "parakeet-tdt-0.6b-v3", "engine": "autohand-voice"])
 case "prepare":
     do {
-        _ = try await AsrModels.download(version: version) { progress in
+        try await recognizer.prepare { progress in
             emit(["event": "progress", "fraction": progress.fractionCompleted])
         }
         emit(["event": "ready"])
@@ -123,8 +118,7 @@ case "listen":
 case "transcribe":
     guard arguments.count >= 2 else { fail("usage", "squad-voice transcribe <audio file>") }
     do {
-        let manager = try await loadManager()
-        emit(["event": "text", "text": try await transcribe(URL(fileURLWithPath: arguments[1]), with: manager)])
+        emit(["event": "text", "text": try await transcribe(URL(fileURLWithPath: arguments[1]))])
     } catch {
         fail("transcribe", "Transcription failed: \(error.localizedDescription)")
     }

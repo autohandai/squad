@@ -49,6 +49,10 @@ export function grokOrigin(value = process.env.AUTOHAND_SQUAD_GROK_ORIGIN || GRO
 }
 
 const offlineMessage = "The marketplace could not be reached. Check your connection and retry.";
+// The Squad API answered but has no marketplace yet (production before the
+// marketplace rollout answers 401 sign_in_required to the public routes).
+// That is not the person's connection, so it is not said to be (ADR-0261).
+const notLiveMessage = "The Squad marketplace isn't open yet. Your connection is fine; it opens when the marketplace goes live.";
 
 export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUrl(), grok = grokOrigin(), now = () => Date.now() } = {}) {
   const publicApi = createSquadApi({ baseUrl, fetchImpl });
@@ -83,6 +87,7 @@ export function createMarketplace(ctx, { fetchImpl = fetch, baseUrl = squadApiUr
       if (error?.status && error.status < 500 && error.status !== 429 && error.status !== 401 && error.status !== 403 && !ACCOUNT_CODES.has(error?.code)) throw cloudFailure(error, offlineMessage);
       const entry = listCache.get(key) || (await persisted()).entries[key];
       if (entry) return { ...entry.data, offline: true, fetchedAt: entry.fetchedAt };
+      if (error?.status === 401 || error?.status === 404 || ACCOUNT_CODES.has(error?.code)) throw fail(notLiveMessage, 503, "marketplace_not_live");
       throw fail(offlineMessage, 503, "marketplace_offline");
     }
   }

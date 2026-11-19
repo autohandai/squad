@@ -13,6 +13,7 @@ export const APP_COMMANDS = [
   { name: "workspace", args: "<path>", description: "Switch the working folder", scope: "app" },
   { name: "skills", args: "", description: "List the skills installed for this member", scope: "app" },
   { name: "run", args: "<shell command>", description: "Run a shell command in the workspace (same as !)", scope: "app" },
+  { name: "delete", args: "", description: "Remove this member from the Squad (asks first; ⌘⇧⌫ / Ctrl+Shift+Backspace)", scope: "app" },
   { name: "help", args: "", description: "Show composer syntax and available commands", scope: "app" },
 ];
 

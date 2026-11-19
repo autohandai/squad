@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronLeft, ExternalLink, Flag, Link2, RotateCw, Search } from "lucide-react";
+import { Check, ChevronLeft, ExternalLink, Flag, Link2, RotateCw, Search, Store } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -56,7 +56,8 @@ const subtitle = (listing, copy) => (listing?.kind === "team" ? teamLine(listing
  * which opens straight on that listing. `entry` says where the dialog was
  * opened from, for product telemetry only.
  */
-export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy = {}, avatarStyle, request = null, entry = "directory", onAdd, onUpdate, onOpenMember }) {
+export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy = {}, avatarStyle, request = null, entry = "directory", onAdd, onUpdate, onOpenMember, variant = "dialog", onRequestDismissed, visit = 0 }) {
+  const page = variant === "page";
   const [tab, setTab] = useState("explore");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
@@ -141,7 +142,18 @@ export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy =
     if (!open || tab !== "explore" || homeMode) return undefined;
     const timer = setTimeout(() => void load(), query ? 250 : 0);
     return () => clearTimeout(timer);
-  }, [open, tab, load, query, homeMode]);
+  }, [open, tab, load, query, homeMode, visit]);
+  // On the page (ADR-0261) each new opening (menu, ⌘K, overflow) is a fresh
+  // visit, as reopening the dialog was: back to the first screen, read again.
+  useEffect(() => {
+    if (!page || !visit) return;
+    if (!request) setSelected(null);
+    homeRequested.current = false;
+    setHome(null);
+    void loadHome();
+    api("/api/marketplace/categories").then(setCategories).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visit]);
 
   const pills = useMemo(() => [
     { id: "all", label: copy.marketplaceAll || "All", count: categories ? categories.total + (categories.teams || 0) : undefined },
@@ -154,8 +166,10 @@ export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy =
   const viewAll = (id) => { setQuery(""); setCategory(id); };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100svh-4rem)] overflow-y-auto sm:max-w-3xl" data-testid="marketplace-dialog">
+    <Dialog open={open} onOpenChange={onOpenChange} modal={!page}>
+      {/* A page in the main column (ADR-0261), or the old dialog. The page keeps
+          Radix's Dialog root only for the title and description context. */}
+      <MarketplaceShell page={page} data-testid={page ? "marketplace-page" : "marketplace-dialog"}>
         {selected ? (
           <AgentDetail
             key={`${selected.kind}:${selected.id || selected.url}`}
@@ -164,16 +178,19 @@ export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy =
             agents={agents}
             copy={copy}
             avatarStyle={avatarStyle}
-            onBack={() => setSelected(null)}
-            onDone={() => onOpenChange?.(false)}
+            onBack={() => { if (selected?.via !== "in-app") onRequestDismissed?.(); setSelected(null); }}
+            onDone={() => (page ? setSelected(null) : onOpenChange?.(false))}
             onAdd={onAdd}
             onUpdate={onUpdate}
-            onOpenMember={(id) => { onOpenChange?.(false); onOpenMember?.(id); }}
+            onOpenMember={(id) => { if (!page) onOpenChange?.(false); onOpenMember?.(id); }}
           />
         ) : (
           <>
-            <DialogHeader>
-              <DialogTitle className="text-xl">{copy.marketplaceTitle || "Marketplace"}</DialogTitle>
+            <DialogHeader className={page ? "gap-1 text-left" : undefined}>
+              <DialogTitle className={page ? "flex items-center gap-2 text-lg font-semibold" : "text-xl"}>
+                {page ? <Store className="size-4 text-muted-foreground" aria-hidden="true" /> : null}
+                {copy.marketplaceTitle || "Marketplace"}
+              </DialogTitle>
               <DialogDescription>{copy.marketplaceDescriptionV2 || "Agents and whole teams, published by people and the Autohand Squad team. Read one, then add it to your squad."}</DialogDescription>
             </DialogHeader>
             <div className="flex min-w-0 flex-col text-sm">
@@ -238,12 +255,14 @@ export function MarketplaceDialog({ open, onOpenChange, api, agents = [], copy =
               {tab === "link" ? <FromLink api={api} copy={copy} onOpen={(target) => setSelected({ ...target, listing: null, listingKind: target.listing === "team" ? "team" : "agent", via: target.kind === "grok" ? "grok" : "link" })} /> : null}
               {tab === "published" ? <Published api={api} copy={copy} avatarStyle={avatarStyle} /> : null}
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => onOpenChange?.(false)}>{copy.close || "Close"}</Button>
-            </DialogFooter>
+            {page ? null : (
+              <DialogFooter>
+                <Button variant="outline" onClick={() => onOpenChange?.(false)}>{copy.close || "Close"}</Button>
+              </DialogFooter>
+            )}
           </>
         )}
-      </DialogContent>
+      </MarketplaceShell>
     </Dialog>
   );
 }
@@ -271,7 +290,7 @@ function SkeletonRows({ count = 6 }) {
 }
 
 /** A team's faces, lead first, overlapping a little. */
-function TeamFaces({ faces = [], style, size = "size-7", max = 4 }) {
+export function TeamFaces({ faces = [], style, size = "size-7", max = 4 }) {
   const shown = faces.slice(0, max);
   return (
     <span className="flex shrink-0 -space-x-2" aria-hidden="true">
@@ -719,5 +738,15 @@ function AgentDetail({ entry, api, agents, copy, avatarStyle, onBack, onDone, on
         </Button>
       </DialogFooter>
     </>
+  );
+}
+
+/** The dialog's content box, or the page column (Inbox's width and rhythm). */
+function MarketplaceShell({ page, children, ...props }) {
+  if (!page) return <DialogContent className="max-h-[calc(100svh-4rem)] overflow-y-auto sm:max-w-3xl" {...props}>{children}</DialogContent>;
+  return (
+    <div className="min-h-screen bg-background text-foreground" {...props}>
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 lg:px-10 lg:py-8">{children}</div>
+    </div>
   );
 }

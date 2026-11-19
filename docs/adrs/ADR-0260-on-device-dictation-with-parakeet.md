@@ -62,3 +62,11 @@ built-in for transcriptions."
   fetches FluidAudio and its prebuilt text-normalisation framework.
 - Not yet run end to end in the signed app with the microphone prompt; this
   ADR is amended with that run.
+
+## Amendment, 19 November 2026: the helper is Autohand Voice
+
+The owner pointed at the Autohand Voice project (autohandai/voice) as the
+dictation engine. The helper now uses its `AutohandVoiceCore` library and
+`LocalSpeechRecognizer` (same Parakeet v3 model and cache) rather than
+FluidAudio directly; see ADR-0261 for the evidence. The mic now sits beside
+the send button.

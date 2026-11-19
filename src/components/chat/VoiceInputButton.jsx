@@ -18,7 +18,7 @@ const NOTICE_MS = 8000;
  * In the macOS shell the button explains the Mac's own dictation instead of
  * listening, because WKWebView never starts recognition there.
  */
-export function VoiceInputButton({ value = "", onValueChange, disabled = false, control: Control = Button, size = "icon-sm", className, lang, copy = {}, noticeClassName }) {
+export function VoiceInputButton({ value = "", onValueChange, disabled = false, control: Control = Button, size = "icon-sm", className, lang, copy = {}, noticeClassName, noticeFirst = false }) {
   const browserSupport = useMemo(() => dictationSupport(), []);
   // Autohand Voice (ADR-0260): this computer records and transcribes on-device
   // with Parakeet. When the bridge offers it, it is the mic everywhere.
@@ -115,8 +115,23 @@ export function VoiceInputButton({ value = "", onValueChange, disabled = false, 
   const transcribing = state === "transcribing";
   const statusText = listening ? copy.listening || "Listening…" : starting ? copy.startingDictation || "Starting…" : transcribing ? copy.transcribing || "Writing it down…" : "";
 
+  const noticeNode = (
+    <>
+      {statusText ? (
+        <span className={cn("inline-flex items-center gap-1.5 text-xs text-primary", noticeClassName)} aria-live="polite">
+          <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
+          {statusText}
+        </span>
+      ) : notice ? (
+        <span className={cn("min-w-0 truncate text-xs", notice.tone === "error" ? "text-destructive" : "text-muted-foreground", noticeClassName)} role={notice.tone === "error" ? "alert" : "status"} title={notice.text}>
+          {notice.text}
+        </span>
+      ) : null}
+    </>
+  );
   return (
     <>
+      {noticeFirst ? noticeNode : null}
       <Control
         type="button"
         variant="ghost"
@@ -132,16 +147,7 @@ export function VoiceInputButton({ value = "", onValueChange, disabled = false, 
       >
         {listening ? <Square className="size-3.5 fill-current" /> : <Mic className={cn("size-4", starting && "animate-pulse")} />}
       </Control>
-      {statusText ? (
-        <span className={cn("inline-flex items-center gap-1.5 text-xs text-primary", noticeClassName)} aria-live="polite">
-          <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden="true" />
-          {statusText}
-        </span>
-      ) : notice ? (
-        <span className={cn("min-w-0 truncate text-xs", notice.tone === "error" ? "text-destructive" : "text-muted-foreground", noticeClassName)} role={notice.tone === "error" ? "alert" : "status"} title={notice.text}>
-          {notice.text}
-        </span>
-      ) : null}
+      {noticeFirst ? null : noticeNode}
     </>
   );
 }

@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { OBJECTIVE_LIMIT, proposalProblems, proposeTeam, updateProposal } from "@/lib/team-builder";
 import { cn } from "@/lib/utils";
 import { readableSkill } from "@/lib/member-suggestions";
+import { MarketplaceSuggestions } from "@/components/marketplace/MarketplaceSuggestions";
 
 /**
  * New team (ADR-0118): one question, the team's primary objective, and the
@@ -16,7 +17,7 @@ import { readableSkill } from "@/lib/member-suggestions";
  * proposal can be changed before Add team. Adding is non-blocking: the
  * dialog closes at once and the directory shows each member being prepared.
  */
-export function NewTeamDialog({ open, onOpenChange, agents = [], roleTemplates = [], pendingNames = [], copy = {}, onAddTeam }) {
+export function NewTeamDialog({ open, onOpenChange, agents = [], roleTemplates = [], pendingNames = [], copy = {}, onAddTeam, api, avatarStyle, onOpenListing, onOpenTemplates }) {
   const [objective, setObjective] = useState("");
   const [name, setName] = useState("");
   const [edits, setEdits] = useState({});
@@ -76,6 +77,17 @@ export function NewTeamDialog({ open, onOpenChange, agents = [], roleTemplates =
               data-testid="new-team-objective"
             />
           </label>
+          {/* Start from a team someone already built, or your own (ADR-0261). */}
+          {api || onOpenTemplates ? (
+            <div className="space-y-2 border-t border-border/60 py-3" data-testid="new-team-starts">
+              {api && onOpenListing ? <MarketplaceSuggestions api={api} kind="team" avatarStyle={avatarStyle} query={objective} onOpen={(listing) => { onOpenChange?.(false); onOpenListing(listing); }} /> : null}
+              {onOpenTemplates ? (
+                <button type="button" className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline" onClick={() => { onOpenChange?.(false); onOpenTemplates(); }}>
+                  {copy.teamFromTemplate || "Start from a template or your own team file…"}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <label className="flex flex-col gap-1.5 border-t border-border/60 py-3 sm:flex-row sm:items-center sm:gap-6">
             <span className="shrink-0 text-muted-foreground sm:w-[160px]">{copy.teamName || "Team name"}</span>
             <Input value={name || proposal?.name || ""} maxLength={80} onChange={(event) => setName(event.target.value)} placeholder={proposal ? "" : copy.teamNamePlaceholder || "Optional"} className="h-8" disabled={!proposal} />

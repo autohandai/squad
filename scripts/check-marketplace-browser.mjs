@@ -61,11 +61,11 @@ try {
   await until(() => browser.evaluate(`!!document.querySelector('[data-testid=open-marketplace]')`), "Marketplace… in the overflow");
   await browser.evaluate(`document.querySelector('[data-testid=open-marketplace]').click()`);
   await until(() => browser.evaluate(`document.querySelectorAll('[data-testid=marketplace-featured] li').length >= 4`), "the first screen with Featured", 20000);
-  assert.match(await text("[data-testid=marketplace-dialog]"), /All\s*371/);
+  assert.match(await text("[data-testid=marketplace-page]"), /All\s*371/);
   assert.match(await text("[data-testid=marketplace-section-engineering] li"), /by Autohand Squad team/);
   await new Promise((resolve) => setTimeout(resolve, 500));
   await browser.screenshot(`${artifact}/explore.png`);
-  await clickIn("[data-testid=marketplace-dialog]", "Finance36");
+  await clickIn("[data-testid=marketplace-page]", "Finance36");
   await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].length === 24 && document.querySelector('[data-testid=marketplace-list]').innerText.includes('Finance')`), "Finance category");
   await browser.fill('[data-testid=marketplace-search]', "payroll");
   await until(() => browser.evaluate(`[...document.querySelectorAll('[data-testid=marketplace-list] li')].some((row) => row.innerText.includes('Phoebe by Autohand Squad team')) && [...document.querySelectorAll('[data-testid=marketplace-list] li')].every((row) => /payroll/i.test(row.innerText) || row.dataset.kind === 'agent')`), "search finds Phoebe");
@@ -74,12 +74,14 @@ try {
   // An agent's page, then Add to squad ------------------------------------------------
   await clickIn("[data-testid=marketplace-list]", "View Phoebe");
   await until(() => browser.evaluate(`document.querySelector('[data-testid=marketplace-detail]')?.innerText.includes('payroll-run-bridge')`), "Phoebe's page with skills");
-  const detail = await text("[data-testid=marketplace-dialog]");
+  const detail = await text("[data-testid=marketplace-page]");
   assert.match(detail, /Payroll variance checker · by Autohand Squad team/); assert.match(detail, /Added \d{1,2} \w{3} 20\d\d/); assert.match(detail, /Ask level with its skills switched off/);
   await browser.screenshot(`${artifact}/detail.png`);
   await browser.evaluate(`document.querySelector('[data-testid=marketplace-add]').click()`);
-  await until(() => browser.evaluate(`!document.querySelector('[data-testid=marketplace-dialog]')`), "Add closes the dialog");
+  // On the page (ADR-0261) Add returns to the marketplace instead of closing a dialog.
+  await until(() => browser.evaluate(`!document.querySelector('[data-testid=marketplace-detail]') && !!document.querySelector('[data-testid=marketplace-page]')`), "Add returns to the marketplace");
   await until(async () => (await memberNames()).includes("Phoebe"), "Phoebe joins the squad and is recorded", 60000);
+  await browser.navigate(`${bridge.origin}/squad`);
   await until(() => browser.evaluate(`document.body.innerText.includes('Phoebe')`), "Phoebe in the directory", 30000);
   await browser.screenshot(`${artifact}/added.png`);
 
@@ -87,7 +89,7 @@ try {
   const phoebe = (await bridge.api("/api/marketplace/agents?q=payroll")).data.agents.find((agent) => agent.name === "Phoebe");
   await browser.navigate(`${bridge.origin}/marketplace/agents/${phoebe.id}?sha256=${phoebe.contentHash}`);
   await until(() => browser.evaluate(`document.querySelector('[data-testid=marketplace-existing]')?.innerText.includes('Already in your squad as Phoebe, at this version')`), "the link opens Phoebe and knows she is here", 30000);
-  assert.equal(await browser.evaluate("location.pathname"), "/squad", "the route hands over to the directory");
+  assert.equal(await browser.evaluate("location.pathname"), "/marketplace", "the link opens on the Marketplace page");
   assert.equal(await browser.evaluate(`!!document.querySelector('[data-testid=marketplace-update]')`), false, "no Update for the same version");
   await browser.screenshot(`${artifact}/deep-link-existing.png`);
   await browser.evaluate(`document.querySelector('[data-testid=marketplace-add]').click()`);
@@ -99,23 +101,25 @@ try {
   await until(() => browser.evaluate(`document.querySelector('[data-testid=marketplace-error]')?.innerText.includes('different version')`), "a stale or tampered link is refused", 30000);
   assert.equal(await browser.evaluate(`document.querySelector('[data-testid=marketplace-add]').disabled`), true);
   await browser.screenshot(`${artifact}/deep-link-refused.png`);
-  await press('[data-testid=marketplace-dialog] button', "Back");
+  await press('[data-testid=marketplace-page] button', "Back");
 
   // A malformed route opens nothing ------------------------------------------------------
   await browser.navigate(`${bridge.origin}/marketplace/agents/${phoebe.id}?next=/settings`);
-  await until(() => browser.evaluate(`location.pathname === "/squad" && !!document.querySelector('[aria-label="Team actions"]')`), "malformed route returns to the directory", 30000);
-  assert.equal(await browser.evaluate(`!!document.querySelector('[data-testid=marketplace-dialog]')`), false);
+  await until(() => browser.evaluate(`location.pathname === "/marketplace" && !!document.querySelector('[data-testid=marketplace-page]')`), "a malformed link opens the marketplace, no listing", 30000);
+  assert.equal(await browser.evaluate(`!!document.querySelector('[data-testid=marketplace-detail]')`), false);
+  await browser.navigate(`${bridge.origin}/squad`);
+  await until(() => browser.evaluate(`!!document.querySelector('[aria-label="Team actions"]')`), "directory again", 30000);
 
   // A Grok Bot link -------------------------------------------------------------------------
   await press('[aria-label="Team actions"]');
   await until(() => browser.evaluate(`!!document.querySelector('[data-testid=open-marketplace]')`), "overflow again");
   await browser.evaluate(`document.querySelector('[data-testid=open-marketplace]').click()`);
-  await until(() => browser.evaluate(`!!document.querySelector('[data-testid=marketplace-dialog]')`), "dialog");
-  await clickIn("[data-testid=marketplace-dialog]", "From a link");
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid=marketplace-page]')`), "dialog");
+  await clickIn("[data-testid=marketplace-page]", "From a link");
   await browser.fill('[aria-label="Link"]', "https://x.ai/bot/FixtureBot0001");
-  await clickIn("[data-testid=marketplace-dialog]", "Open");
-  await until(() => browser.evaluate(`document.querySelector('[data-testid=marketplace-dialog]')?.innerText.includes('Grok Bot template by a Grok Bot user')`), "Grok Bot template page", 20000);
-  assert.match(await text("[data-testid=marketplace-dialog]"), /not its instructions/);
+  await clickIn("[data-testid=marketplace-page]", "Open");
+  await until(() => browser.evaluate(`document.querySelector('[data-testid=marketplace-page]')?.innerText.includes('Grok Bot template by a Grok Bot user')`), "Grok Bot import page", 20000);
+  assert.match(await text("[data-testid=marketplace-page]"), /not its instructions/);
   assert.match(await text("[data-testid=marketplace-third-party]"), /not by Autohand/);
   await browser.screenshot(`${artifact}/grok.png`);
   await browser.fill('[aria-label="Paste the bot\'s instructions (optional)"]', "You plan tides first and weather second.");
@@ -143,6 +147,9 @@ try {
   await until(() => browser.evaluate(`!document.querySelector('[data-testid=publish-dialog]') && !document.querySelector('[role=dialog]')`), "the publish dialog closes");
 
   // Offline: the last list stays readable, and says so ---------------------------------------------
+  // The marketplace is a page (ADR-0261): go back to the directory first.
+  await browser.navigate(`${bridge.origin}/squad`);
+  await until(() => browser.evaluate(`!!document.querySelector('[aria-label="Team actions"]')`), "directory before offline", 30000);
   await api.dispose();
   await press('[aria-label="Team actions"]');
   await until(() => browser.evaluate(`!!document.querySelector('[data-testid=open-marketplace]')`), "overflow offline");
@@ -154,7 +161,7 @@ try {
   api = await startLocalMarketplace({ port: apiPort, persist, seed: false });
   await browser.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
   await browser.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }] });
-  await clickIn("[data-testid=marketplace-dialog]", "Retry");
+  await clickIn("[data-testid=marketplace-page]", "Retry");
   await until(() => browser.evaluate(`!document.querySelector('[data-testid=marketplace-offline]') && document.querySelectorAll('[data-testid=marketplace-featured] li').length >= 4`), "online again", 20000);
   assert.equal(await browser.evaluate("document.documentElement.scrollWidth <= innerWidth"), true, "no sideways scroll at phone width");
   await browser.screenshot(`${artifact}/explore-phone.png`);

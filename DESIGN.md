@@ -416,3 +416,6 @@
 - Recipes is one dialog with three sections in this order: Saved (name, what it does, who runs it, who saved it and why; Remove), Spotted in your work (the evidence sentence and Save), and Starters collapsed at the bottom. Rows are dividers, not cards (ADR-0259).
 
 - The mic is one ghost button: tap to listen (it becomes a stop square with "Listening…"), tap to stop ("Writing it down…"), and the words are appended to the draft. A first-use model download shows one progress line beside it; problems are one sentence there, never a dialog (ADR-0260).
+
+- The Marketplace is a main-column page with Inbox's header (icon and title, one-line description) in a wider 6xl column; it is never a dialog. Suggestions under New member and New team are quiet divider rows headed "Featured in the marketplace", "From the marketplace" or "Ready-made teams" and open the listing on that page (ADR-0261).
+- Composers end with the mic then the send button. Send is a filled circle: foreground with an up-arrow when ready, muted when empty, the stop square while a reply runs. No paper-plane icons (ADR-0261).
