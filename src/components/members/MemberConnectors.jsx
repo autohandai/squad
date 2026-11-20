@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { ArrowRight, Check } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { usesConnectors, withConnectors } from "@/lib/permission-policy";
 import { ConnectorLogo } from "@/components/settings/connectors/ConnectorLogo";
 
 /**
@@ -11,7 +13,7 @@ import { ConnectorLogo } from "@/components/settings/connectors/ConnectorLogo";
  * supports with Connect, which opens Settings › Connectors on that entry.
  * An empty page used to say only "has no connector tools of their own".
  */
-export function MemberConnectors({ agent, api, navigate, ownTools = [] }) {
+export function MemberConnectors({ agent, api, navigate, updateAgent, ownTools = [] }) {
   const [state, setState] = useState({ connected: [], suggestions: [], loaded: false, error: "" });
 
   useEffect(() => {
@@ -27,13 +29,31 @@ export function MemberConnectors({ agent, api, navigate, ownTools = [] }) {
     return () => { live = false; };
   }, [api]);
 
+  // Connectors are added once for everyone, but each member uses them only
+  // with the person's permission (mcp.connectors = allow, ADR-0107). Without
+  // it they never reach the member, whatever this page lists (ADR-0269).
+  const allowed = usesConnectors(agent.permissions);
+  const setAllowed = (on) => updateAgent?.(agent.id, { permissions: withConnectors(agent.permissions, on), updatedAt: new Date().toISOString() });
+
   const open = (item) => navigate?.(`/settings/connectors?install=${encodeURIComponent(item.catalogId || item.name)}`);
 
   return (
     <div className="flex flex-col gap-8" data-testid="member-connectors">
       <section>
-        <h2 className="text-sm font-semibold">What {agent.name} can use</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Connectors you add are shared: every member can use them.</p>
+        <div className="flex items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold">What {agent.name} can use</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {allowed
+                ? `${agent.name} can use the connectors you’ve added, from its next message.`
+                : `Connectors are added once for the whole squad, but ${agent.name} uses them only with your permission. It can’t use any yet.`}
+            </p>
+          </div>
+          <label className="flex shrink-0 items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Let {agent.name} use connectors</span>
+            <Switch checked={allowed} onCheckedChange={setAllowed} disabled={!updateAgent} aria-label={`Let ${agent.name} use connectors`} data-testid="member-connectors-switch" />
+          </label>
+        </div>
         <div className="mt-3 divide-y divide-border/70 border-y border-border/70">
           {ownTools.map((tool) => (
             <div key={tool.label} className="flex items-baseline gap-3 py-2.5 text-sm">
@@ -44,8 +64,13 @@ export function MemberConnectors({ agent, api, navigate, ownTools = [] }) {
           {state.connected.map((item) => (
             <div key={item.id} className="flex items-center gap-3 py-2.5 text-sm">
               <ConnectorLogo logo={item.logo} icon={item.icon} iconDark={item.iconDark} name={item.name} size={24} />
-              <span className="min-w-0 flex-1 truncate font-medium">{item.name}</span>
-              <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground"><Check className="size-3.5" aria-hidden="true" />Connected</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{item.name}</span>
+                {item.url || item.command ? <span className="block truncate font-mono text-xs text-muted-foreground">{item.url || item.command}</span> : null}
+              </span>
+              <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground" data-testid="member-connector-state">
+                {allowed ? <><Check className="size-3.5" aria-hidden="true" />{agent.name} can use it</> : `Off for ${agent.name}`}
+              </span>
             </div>
           ))}
           {state.loaded && !ownTools.length && !state.connected.length ? (

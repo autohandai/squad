@@ -111,6 +111,7 @@ list to the section for that version.
 
 ### Fixed
 
+- A member's Connectors page no longer says "every member can use them": it shows whether that member may use connectors, with a switch to let it, and each connector's address.
 - A member now remembers what its own automations posted in your chat: after an email summary or a scheduled result, "reply" or "do that" refers to it instead of being answered as a new conversation.
 - Dictation works again: pressing the mic and then Stop puts your words in the message instead of saying "Dictation is not listening."
 - The marketplace no longer tells you to check your connection when it simply isn't open yet.

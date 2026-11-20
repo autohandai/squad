@@ -75,12 +75,20 @@ try {
   await until(() => browser.evaluate("!!document.querySelector('[data-testid=member-connectors]')"), 'member Connectors page', 30000);
   await until(() => browser.evaluate("document.querySelectorAll('[data-testid=member-connector-suggestion]').length > 0"), 'connectors offered to connect', 30000);
   await shoot('member-connectors');
+  // Connectors reach a member only with its permission (ADR-0269): the page says so and the switch sets it.
+  assert.ok(await browser.evaluate("document.querySelector('[data-testid=member-connectors]').innerText.includes('uses them only with your permission')"), 'the page says the member cannot use connectors yet');
+  const modes = async () => (await bridge.api('/api/channels')).data.agentChannelAccess[eva.id]?.agent?.permissions?.modes || {};
+  await browser.evaluate("document.querySelector('[data-testid=member-connectors-switch]').click()");
+  await until(async () => (await modes())['mcp.connectors'] === 'allow', 'Let Eva use connectors reaches the bridge as mcp.connectors = allow');
+  await until(() => browser.evaluate("document.querySelector('[data-testid=member-connectors]').innerText.includes('can use the connectors you’ve added')"), 'the page says it can');
+  await browser.evaluate("document.querySelector('[data-testid=member-connectors-switch]').click()");
+  await until(async () => (await modes())['mcp.connectors'] === 'ask', 'off returns it to ask');
   await browser.evaluate("document.querySelector('[data-testid=member-connector-suggestion] button').click()");
   await until(() => browser.evaluate("location.pathname.includes('/settings') && location.search.includes('install=')"), 'Connect opens Settings › Connectors on that entry');
   await until(() => browser.evaluate("!!document.querySelector('[role=dialog]')"), 'the install dialog opens', 20000);
   await shoot('connect-dialog');
   assert.deepEqual(browser.errors, []);
-  console.log('PASS member controls: To lists members with presence and channels and opens a channel; Permissions tab turns Manage the team on and off in the bridge; Team leads the Permissions page; Communications follows Home with no email row outside autohand.ai; member Connectors offer connectors and Connect opens the install dialog.');
+  console.log('PASS member controls: To lists members with presence and channels and opens a channel; Permissions tab turns Manage the team on and off in the bridge; Team leads the Permissions page; Communications follows Home with no email row outside autohand.ai; member Connectors say whether the member may use them, the switch sets mcp.connectors, offer connectors, and Connect opens the install dialog.');
 } finally {
   await browser?.close();
   await bridge.close();

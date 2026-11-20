@@ -560,3 +560,17 @@ export function withTeamManagement(permissions = {}, on) {
     [key, override?.builtInPolicies ? { ...override, builtInPolicies: set(override.builtInPolicies) } : override]));
   return { ...permissions, builtInPolicies: set(permissions?.builtInPolicies), workspaceOverrides: overrides };
 }
+
+// Connectors reach a member only when its "mcp.connectors" mode is allow
+// (ADR-0107, server/connectors/inject.mjs reads the base modes). One switch
+// sets it, in the base rules and every folder override (ADR-0269).
+export function usesConnectors(permissions = {}) {
+  return permissions?.modes?.["mcp.connectors"] === "allow";
+}
+
+export function withConnectors(permissions = {}, on) {
+  const mode = on ? "allow" : "ask";
+  const overrides = Object.fromEntries(Object.entries(permissions?.workspaceOverrides || {}).map(([key, override]) =>
+    [key, override?.modes ? { ...override, modes: { ...override.modes, "mcp.connectors": mode } } : override]));
+  return { ...permissions, modes: { ...(permissions?.modes || {}), "mcp.connectors": mode }, workspaceOverrides: overrides };
+}

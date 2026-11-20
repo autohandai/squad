@@ -22945,7 +22945,7 @@ function SquadMemberSectionPage({
       <div className="min-h-screen bg-background">
         <PageTitle title={sectionLabel} />
         <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
-          <MemberConnectors agent={agent} api={api} navigate={navigate} ownTools={rows} />
+          <MemberConnectors agent={agent} api={api} navigate={navigate} updateAgent={updateAgent} ownTools={rows} />
         </div>
       </div>
     );

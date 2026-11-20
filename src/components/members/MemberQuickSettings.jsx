@@ -3,7 +3,7 @@ import { ArrowRight, Copy } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { managesTeam, withTeamManagement } from "@/lib/permission-policy";
+import { managesTeam, usesConnectors, withConnectors, withTeamManagement } from "@/lib/permission-policy";
 import { EMAIL_ACTIONS, URGENCY_LEVELS, normalizeEmailPolicy } from "@/lib/email-policy";
 import { cn } from "@/lib/utils";
 
@@ -207,13 +207,18 @@ export function MemberQuickSettings({ agent, api, updateAgent, navigate, section
       {sections.includes("connectors") ? (
         <Row
           title="Connectors"
-          detail={connectors === null ? "Checking…" : connectors.length
-            ? `Can use ${connectors.map((item) => item.name).slice(0, 3).join(", ")}${connectors.length > 3 ? ` and ${connectors.length - 3} more` : ""}.`
-            : "Nothing connected yet. Connect mail, calendar or code so it can do more on its own."}
+          detail={connectors === null ? "Checking…" : !usesConnectors(agent.permissions)
+            ? (connectors.length ? `Off for ${agent.name}. Turn on to let it use ${connectors.map((item) => item.name).slice(0, 3).join(", ")}.` : `Off for ${agent.name}, and nothing is connected yet.`)
+            : connectors.length
+              ? `Can use ${connectors.map((item) => item.name).slice(0, 3).join(", ")}${connectors.length > 3 ? ` and ${connectors.length - 3} more` : ""}.`
+              : "Nothing connected yet. Connect mail, calendar or code so it can do more on its own."}
         >
-          <Button type="button" variant="ghost" size="sm" onClick={() => navigate?.(`${base}/connector`)}>
-            {connectors?.length ? "Manage" : "Connect"}<ArrowRight data-icon="inline-end" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <Switch checked={usesConnectors(agent.permissions)} onCheckedChange={(on) => updateAgent?.(agent.id, { permissions: withConnectors(agent.permissions, on), updatedAt: new Date().toISOString() })} disabled={!updateAgent} aria-label={`Let ${agent.name} use connectors`} data-testid="quick-connectors-switch" />
+            <Button type="button" variant="ghost" size="sm" onClick={() => navigate?.(`${base}/connector`)}>
+              {connectors?.length ? "Manage" : "Connect"}<ArrowRight data-icon="inline-end" />
+            </Button>
+          </div>
         </Row>
       ) : null}
 
