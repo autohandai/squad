@@ -20,6 +20,7 @@ list to the section for that version.
 
 ### Added
 
+- Connect your Cloudflare account: Cloudflare's official servers (the whole account API, Observability, Workers Bindings and Builds, DNS Analytics, Radar and Docs) are in Connectors, and you sign in on Cloudflare's own page.
 - Email rules for each member: it labels every email Urgent, Normal or Low, and you choose for each whether it replies on its own, asks you first (Send / Don't send in the chat) or just tells you. Replies go only to the sender, once per email, from the member's address.
 - Change a member's email address once, with a live check that the new name is free.
 - New message has a "To:" field like Slack's: type a name or #channel and pick from a list with faces and presence.

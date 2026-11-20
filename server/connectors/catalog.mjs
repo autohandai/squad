@@ -32,6 +32,51 @@ export const GOOGLE_ENTRIES = [
 
 export const COMPOSIO_REGISTRY_NAME = 'io.github.ComposioHQ/composio';
 
+/**
+ * Cloudflare's official MCP servers (ADR-0270), hosted by Cloudflare. Each
+ * signs in with the person's own Cloudflare account through MCP OAuth with
+ * dynamic client registration and PKCE (checked 20 Nov 2026: every one but
+ * the docs answers 401 with resource metadata and offers /register), so
+ * Squad needs no client id of its own. The account-wide server comes first.
+ */
+export const CLOUDFLARE_ENTRIES = [
+  { id: 'cloudflare', title: 'Cloudflare', url: 'https://mcp.cloudflare.com/mcp', description: 'Your Cloudflare account through Cloudflare’s own API: Workers, DNS, zones, R2, D1, KV and more. Sign in with Cloudflare.' },
+  { id: 'cloudflare-observability', title: 'Cloudflare Observability', url: 'https://observability.mcp.cloudflare.com/mcp', description: 'Logs and analytics for your Workers, to find what broke and why.' },
+  { id: 'cloudflare-bindings', title: 'Cloudflare Workers Bindings', url: 'https://bindings.mcp.cloudflare.com/mcp', description: 'Build on Workers with storage, AI and compute: KV, R2, D1, Hyperdrive and Workers AI.' },
+  { id: 'cloudflare-builds', title: 'Cloudflare Workers Builds', url: 'https://builds.mcp.cloudflare.com/mcp', description: 'See and debug your Workers builds.' },
+  { id: 'cloudflare-dns-analytics', title: 'Cloudflare DNS Analytics', url: 'https://dns-analytics.mcp.cloudflare.com/mcp', description: 'DNS performance and settings for your zones.' },
+  { id: 'cloudflare-radar', title: 'Cloudflare Radar', url: 'https://radar.mcp.cloudflare.com/mcp', description: 'Internet traffic, outages and URL scans from Cloudflare Radar.' },
+  { id: 'cloudflare-docs', title: 'Cloudflare Docs', url: 'https://docs.mcp.cloudflare.com/mcp', description: 'Search Cloudflare’s documentation. No sign-in, and no access to your account.', noSignIn: true },
+];
+
+export function cloudflareEntry(catalogId) {
+  return CLOUDFLARE_ENTRIES.find((entry) => entry.id === catalogId) || null;
+}
+
+/** A Cloudflare entry as a catalogue row, in the same shape as registry rows. */
+export function cloudflareListing(entry, { installed = [] } = {}) {
+  const match = installed.find((item) => item.kind === 'url' && String(item.url || '').replace(/\/+$/, '') === entry.url);
+  return {
+    name: `squad/${entry.id}`,
+    catalogId: entry.id,
+    title: entry.title,
+    description: entry.description,
+    version: '',
+    website: 'https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/',
+    logo: 'cloudflare',
+    icon: '',
+    iconDark: '',
+    featured: true,
+    squad: true,
+    installed: Boolean(match),
+    installedId: match?.id || '',
+    tools: [],
+    options: [
+      { id: 'cloudflare', kind: 'remote', label: entry.noSignIn ? 'Hosted by Cloudflare' : 'Sign in with Cloudflare', detail: entry.url, runs: 'hosted', transport: 'http', available: true, needs: '', inputs: [] },
+    ],
+  };
+}
+
 /** A Google entry as a catalogue row, in the same shape as registry rows. */
 export function googleListing(entry, { installed = [], googleClientReady = false } = {}) {
   const match = installed.find((item) => item.kind === 'google' && item.google?.product === entry.product);

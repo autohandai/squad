@@ -21,7 +21,7 @@ import { probeHttp, probeStdio } from '../connectors/probe.mjs';
 import { boundedError } from '../connectors/framing.mjs';
 import { connectorHealth } from '../connectors/health.mjs';
 import { buildDefinition, compareVersions, listing, packageReference } from '../connectors/registry.mjs';
-import { COMPOSIO_REGISTRY_NAME, FEATURED, GOOGLE_ENTRIES, googleEntry, googleListing } from '../connectors/catalog.mjs';
+import { CLOUDFLARE_ENTRIES, COMPOSIO_REGISTRY_NAME, FEATURED, GOOGLE_ENTRIES, cloudflareEntry, cloudflareListing, googleEntry, googleListing } from '../connectors/catalog.mjs';
 import { findExecutable, guiSafePath } from '../harness/discovery.mjs';
 
 export const name = 'connectors';
@@ -178,7 +178,9 @@ async function catalogue(ctx, url) {
   try { page = await ctx.connectorRegistry.browse({ search, cursor, installed, runtimes }); }
   catch (error) { page = { items: [], nextCursor: null, source: 'offline', notice: error.message }; }
   void checkUpdates(ctx, { onlyIfDue: true }).catch(() => {});
-  return { ...page, items: [...google, ...page.items] };
+  // Cloudflare's official servers (ADR-0270) after Google's, before the registry.
+  const cloudflare = !cursor ? CLOUDFLARE_ENTRIES.filter((entry) => !search || `${entry.title} ${entry.description} cloudflare`.toLowerCase().includes(search.toLowerCase())).map((entry) => cloudflareListing(entry, { installed })) : [];
+  return { ...page, items: [...google, ...cloudflare, ...page.items] };
 }
 
 let lastUpdateCheck = 0;
@@ -235,8 +237,16 @@ async function install(ctx, input) {
   const catalogId = String(input?.catalogId || '');
   const option = String(input?.option || '');
   const google = googleEntry(catalogId);
+  const cloudflare = cloudflareEntry(catalogId);
   let result;
-  if (google && option === 'google') {
+  if (cloudflare) {
+    // A hosted Cloudflare server: sign in with Cloudflare through MCP OAuth (ADR-0270).
+    const definition = { name: cloudflare.title, kind: 'url', url: cloudflare.url, transport: 'http', headers: [], description: cloudflare.description };
+    const found = await ctx.connectorOAuth.discover(definition.url, {}).catch(() => ({ required: false }));
+    definition.oauthRequired = found.required === true;
+    result = await store.install(definition, { catalogId: cloudflare.id });
+    if (definition.oauthRequired && !result.connector.oauth) await store.setOAuth(result.connector.id, {}, (next) => { next.mode = 'dcr'; next.status = 'signed-out'; });
+  } else if (google && option === 'google') {
     result = await store.install({ kind: 'google', product: google.product, name: google.title, description: google.description }, { catalogId });
   } else {
     const registryName = google && option === 'composio' ? COMPOSIO_REGISTRY_NAME : String(input?.name || '');
