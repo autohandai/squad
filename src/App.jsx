@@ -51,7 +51,7 @@ import { DEFAULT_SKIN_ID, SKINS, SKIN_VAR_DEFAULTS, isSkinId, memberAvatar, skin
 import { LAYOUTS, LAYOUT_STORAGE_KEY, isLayoutId, resolveLayoutId } from "@/lib/layouts";
 import { LayoutGlyph } from "@/components/onboarding/LayoutStep";
 import { blobForMember, blobSvg } from "@/lib/blob-avatar";
-import { birdFromAvatar } from "@/lib/bird-cast";
+import { birdFromAvatar, paintedAvatarSrc } from "@/lib/bird-cast";
 import { AVATAR_STYLES, DEFAULT_AVATAR_STYLE, birdFaceSvg, isAvatarStyle } from "@/lib/bird-faces";
 import { REACTION_ACTIONS, reactionFlowDraft, reactionName } from "@/lib/reactions";
 import { presenceFor, presenceMeta } from "@/lib/presence-states";
@@ -14131,6 +14131,15 @@ function AgentAvatar({ agent, large = false, className }) {
   // (ADR-0240). What adapts is the tile: the skin's muted surface and avatar
   // corner (data-slot="avatar" picks up --skin-avatar-radius), light or dark.
   // The eyes are holes, so they take the tile's colour in either theme.
+  // A painted 3D or clay picture, when one is installed for this bird (ADR-0271).
+  const painted = face.kind === "blob" && face.bird ? paintedAvatarSrc(face.bird, avatarStyle, large ? 512 : 256) : "";
+  if (painted) {
+    return (
+      <span data-slot="avatar" data-bird={face.bird} data-painted={avatarStyle} className={cn("member-face inline-block shrink-0 overflow-hidden rounded-full bg-muted", large ? "size-24" : "size-8", className)}>
+        <img src={painted} alt={agent?.name || "Squad member"} className="size-full object-cover" draggable={false} />
+      </span>
+    );
+  }
   if (face.kind === "blob") {
     return (
       <span

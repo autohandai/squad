@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Changed
 
+- The 3D and Clay avatar styles now show painted pictures for the 26 New Zealand, Brazilian and American birds instead of a filter over the drawn face. Other birds keep the drawn face until their pictures are made.
 - A member's Messaging page is now Communications, right after Home and followed by Permissions. It holds the direct conversation and, on autohand.ai accounts, the member's email address.
 - On accounts signed in with @autohand.ai, every member now gets an email address from its name automatically, and you can change the name before @code.autohandai.com in its Permissions. Other accounts see nothing about email.
 - Chief of Staff starts with Manage the team on; you can turn it off.

@@ -36,3 +36,6 @@ src-tauri/gen/
 # symlinks used by lane worktrees (dir patterns above do not match symlinks)
 /node_modules
 /vendor
+
+# Bird art masters (1024px PNG, ADR-0271): kept on the machine, never committed
+assets/characters/

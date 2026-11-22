@@ -53,12 +53,28 @@ const BIRD_SET = new Set(BIRD_IDS);
 // unlisted bird keeps the member's own picture. scripts/build-bird-cast.mjs
 // rewrites this list when it installs art.
 export const INSTALLED_ART = {
-  clay: [],
+  flat: [],
+  '3d': ['kiwi', 'tui', 'kea', 'kereru', 'pukeko', 'ruru', 'fantail', 'takahe', 'kakapo', 'kotare', 'tucano', 'araraazul', 'bemtevi', 'sabia', 'beijaflor', 'queroquero', 'harpia', 'joaodebarro', 'baldeagle', 'cardinal', 'bluejay', 'robin', 'roadrunner', 'puffin', 'flamingo', 'chickadee'],
+  clay: ['kiwi', 'tui', 'kea', 'kereru', 'pukeko', 'ruru', 'fantail', 'takahe', 'kakapo', 'kotare', 'tucano', 'araraazul', 'bemtevi', 'sabia', 'beijaflor', 'queroquero', 'harpia', 'joaodebarro', 'baldeagle', 'cardinal', 'bluejay', 'robin', 'roadrunner', 'puffin', 'flamingo', 'chickadee'],
 };
+
+/**
+ * The painted picture for a bird in a style (ADR-0271), or '' when none is
+ * installed and the drawn face with that style's filter is shown instead.
+ * Painted 3D art lives in /avatars/birds-3d, never over the flat faces in
+ * /avatars/birds that the menu bar and the iPhone read.
+ */
+export function paintedAvatarSrc(bird, style, size = 256) {
+  if (!['flat', '3d', 'clay'].includes(style) || !(INSTALLED_ART[style] || []).includes(bird)) return '';
+  // Painted flat birds replace the drawn faces' files in /avatars/birds, so the
+  // menu bar and the iPhone show the same picture as the app.
+  const folder = style === 'flat' ? 'birds' : style === '3d' ? 'birds-3d' : 'clay';
+  return `/avatars/${folder}/${size === 512 ? '' : `${size}/`}${bird}.webp`;
+}
 
 /** The bird behind an avatar URL, or '' when the avatar is not a cast bird. */
 export function birdFromAvatar(src) {
-  const match = /^\/avatars\/(?:birds|clay)\/(?:\d+\/)?([a-z]+)\.(?:webp|png|jpg)$/i.exec(String(src || ''));
+  const match = /^\/avatars\/(?:birds|birds-3d|clay)\/(?:\d+\/)?([a-z]+)\.(?:webp|png|jpg)$/i.exec(String(src || ''));
   return match && BIRD_SET.has(match[1].toLowerCase()) ? match[1].toLowerCase() : '';
 }
 
