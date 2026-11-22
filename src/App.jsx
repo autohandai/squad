@@ -533,6 +533,7 @@ const STORAGE_KEYS = {
   theme: "autohandSquad.v1.theme",
   skin: "autohandSquad.v1.skin",
   layout: LAYOUT_STORAGE_KEY,
+  avatarStyle: "autohandSquad.v1.avatarStyle",
   inboxReadAt: "autohandSquad.v1.inboxReadAt",
   channelProposals: "autohandSquad.v1.channelProposals",
   workflowTriggers: "autohandSquad.v1.workflowTriggers",
@@ -4636,7 +4637,9 @@ function App() {
   const [skinId, setSkinId] = useState(readSkinId);
   const [layoutId, setLayoutId] = useState(readLayoutId);
   const [avatarStyle, setAvatarStyle] = useState(() => {
-    try { const stored = ownedLocalStorage.getItem(STORAGE_KEYS.avatarStyle); return isAvatarStyle(stored) ? stored : DEFAULT_AVATAR_STYLE; } catch { return DEFAULT_AVATAR_STYLE; }
+    // Before ADR-0271 STORAGE_KEYS had no avatarStyle, so the choice was saved
+    // under the key "undefined"; read that once so nobody loses their style.
+    try { const stored = ownedLocalStorage.getItem(STORAGE_KEYS.avatarStyle) ?? ownedLocalStorage.getItem("undefined"); return isAvatarStyle(stored) ? stored : DEFAULT_AVATAR_STYLE; } catch { return DEFAULT_AVATAR_STYLE; }
   });
   const changeAvatarStyle = useCallback((next) => {
     if (!isAvatarStyle(next)) return;
@@ -10446,6 +10449,8 @@ function App() {
                 onRefreshSetup={refreshSetup}
                 layout={layoutId}
                 onLayoutChange={changeLayout}
+                avatarStyle={avatarStyle}
+                onAvatarStyleChange={changeAvatarStyle}
                 brand={
                   <>
                     <BrandMark theme="dark" className="size-9 dark:hidden" />

@@ -10,6 +10,14 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Added
+
+- Onboarding asks which avatar style your squad uses (Flat, 3D or Clay) right after the layout, with a large preview of the birds in each style.
+
+### Fixed
+
+- The avatar style you choose is now saved under its own name; before, it was stored under an empty key that other settings could overwrite.
+
 ### Changed
 
 - The 3D and Clay avatar styles now show painted pictures for the 26 New Zealand, Brazilian and American birds instead of a filter over the drawn face. Other birds keep the drawn face until their pictures are made.

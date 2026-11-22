@@ -8,9 +8,10 @@ import { menuBarAvailableHere } from "@/components/settings/QuickChatPreferences
 import { MenuBarStep } from "@/components/onboarding/MenuBarStep";
 import { PhoneStep } from "@/components/onboarding/PhoneStep";
 import { LayoutStep } from "@/components/onboarding/LayoutStep";
+import { AvatarStep } from "@/components/onboarding/AvatarStep";
 import { cn } from "@/lib/utils";
 
-const STEP_LABELS = { folders: "Work folders", layout: "Layout", "menu-bar": "Menu bar", phone: "iPhone" };
+const STEP_LABELS = { folders: "Work folders", layout: "Layout", avatars: "Avatars", "menu-bar": "Menu bar", phone: "iPhone" };
 const BIRDS = [{ key: "bird-kea", name: "Chief of Staff", bird: "kea" }, { key: "bird-tui", name: "Tūī", bird: "tui" }, { key: "bird-ruru", name: "Ruru", bird: "ruru" }];
 const birdAvatar = bird => className => <img src={`/avatars/birds/${bird}.webp`} alt="" className={cn("object-cover", className)} decoding="async" />;
 
@@ -27,11 +28,12 @@ const memberFolders = member => [...new Set([member?.workspace, ...(member?.proj
 
 /** First install creates one coordinator. Review edits an existing member’s
  * folders; analysis only suggests specialists for explicit creation. */
-export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces = [], onboardingState, updateOnboardingState, api, loginRequestStatus = '', onRequestLogin, onRefreshAccount, onRefreshRuntime, providerReady, onOpenProviders, renderTemplateAvatar, renderMemberAvatar, onStart, onSaveWorkspaces, onRefreshMembers, onContinue, onReviewSuggestion, setupSnapshot, setupError, onRefreshSetup, brand, layout = 'full', onLayoutChange }) {
+export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces = [], onboardingState, updateOnboardingState, api, loginRequestStatus = '', onRequestLogin, onRefreshAccount, onRefreshRuntime, providerReady, onOpenProviders, renderTemplateAvatar, renderMemberAvatar, onStart, onSaveWorkspaces, onRefreshMembers, onContinue, onReviewSuggestion, setupSnapshot, setupError, onRefreshSetup, brand, layout = 'full', onLayoutChange, avatarStyle = 'flat', onAvatarStyleChange }) {
   const existing = ['completed', 'existing'].includes(setupSnapshot?.status);
-  // One guided flow: work folders, the layout (ADR-0233), then (macOS app only)
+  // One guided flow: work folders, the layout (ADR-0233), the avatar style
+  // (ADR-0271), then (macOS app only)
   // the menu bar, then a phone.
-  const [steps] = useState(() => ['folders', 'layout', ...(menuBarAvailableHere() ? ['menu-bar'] : []), 'phone']);
+  const [steps] = useState(() => ['folders', 'layout', 'avatars', ...(menuBarAvailableHere() ? ['menu-bar'] : []), 'phone']);
   const [step, setStep] = useState(() => steps.includes(onboardingState.lastStep) ? onboardingState.lastStep : 'folders');
   // Whether the squad was created in this run, so finishing opens #general like before.
   const [startedHere, setStartedHere] = useState(false);
@@ -169,6 +171,7 @@ export function FirstRun({ runtime, agents = [], remoteByMember = {}, workspaces
       <header className="flex items-center gap-3">{brand}<div className="min-w-0 flex-1"><div className="text-sm font-semibold">Autohand Squad</div><div className="text-xs text-muted-foreground">Onboarding</div></div>{exit}</header>
       <nav className="mt-8" aria-label="Onboarding progress"><StepProgress steps={steps} step={step} /></nav>
       {step === 'layout' ? <div key="layout" className="mt-6 onboarding-step-enter"><LayoutStep layout={layout} onChange={onLayoutChange} members={previewMembers} onBack={!startedHere ? () => go(before('layout')) : null} onContinue={() => go(after('layout'))} /></div>
+      : step === 'avatars' ? <div key="avatars" className="mt-6 onboarding-step-enter"><AvatarStep avatarStyle={avatarStyle} onChange={onAvatarStyleChange} onBack={() => go(before('avatars'))} onContinue={() => go(after('avatars'))} /></div>
       : step === 'menu-bar' ? <div key="menu-bar" className="mt-6 onboarding-step-enter"><MenuBarStep api={api} members={previewMembers} onBack={before('menu-bar') && (before('menu-bar') !== 'folders' || !startedHere) ? () => go(before('menu-bar')) : null} onContinue={() => go(after('menu-bar'))} /></div>
       : step === 'phone' ? <div key="phone" className="mt-6 onboarding-step-enter"><PhoneStep api={api} member={lead} onBack={before('phone') && (before('phone') !== 'folders' || !startedHere) ? () => go(before('phone')) : null} onPaired={() => updateOnboardingState({ phonePairing: 'paired' })} onSkip={outcome => finish(outcome)} onFinish={() => finish('paired')} /></div>
       : <div key="folders" className="onboarding-step-enter">

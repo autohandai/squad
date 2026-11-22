@@ -42,6 +42,11 @@ iPhone read that folder as the flat face.
 - **The website marketplace** takes the flat SVGs through
   `scripts/export-bird-faces.mjs`. A bird without a traced SVG gets its drawn
   face, so the export always writes all 300 files.
+- **Onboarding asks for the style** ("on the onboarding ask this question which
+  style of the avatars they want to use"). Step 3, Avatars, comes after Layout
+  and before the menu bar. Four birds are shown large in the chosen style;
+  hovering over a style previews it. The choice saves at once to the same
+  store Settings › Appearance uses. Flat stays the default.
 
 ## Evidence
 
@@ -63,6 +68,14 @@ iPhone read that folder as the flat face.
   Installing 3D would have replaced the flat faces that the menu bar and the
   iPhone show. Writing 3d into its own folder is what made it safe to ship the
   styles separately.
+- Building the onboarding step showed that `STORAGE_KEYS` never had an
+  `avatarStyle` entry. Every style choice since ADR-0240 was saved under the
+  key `"undefined"`, and it only came back because the same undefined key was
+  used to read it. It now has its own key, and the old key is read once as a
+  fallback so nobody loses their choice.
+- `e2e/onboarding-steps.spec.mjs` walks the new step: 3D shows four painted
+  pictures and saves, then Flat saves. 5 tests passed and 1 was skipped
+  (compact dark).
 
 ## Consequences
 
@@ -74,5 +87,6 @@ iPhone read that folder as the flat face.
   shows the drawn flat faces, so it never mixes drawn and painted flat birds.
 - The masters live on one machine. Losing them means regenerating, and a new
   generation will not match the old pictures exactly.
+- Onboarding has five steps on the Mac, and four on the web.
 - Each style that gets installed adds about 1–2 MB of WebP to the app per 26
   birds.

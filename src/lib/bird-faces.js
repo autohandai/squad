@@ -270,9 +270,9 @@ function escapeXml(value) {
 // face, so a style never changes which bird or which face, only the material,
 // and needs no image file. The eye holes become shallow pits under the light.
 export const AVATAR_STYLES = [
-  { id: 'flat', label: 'Flat', description: 'Drawn cartoon faces. The default.' },
-  { id: '3d', label: '3D', description: 'The same faces as soft, glossy toys.' },
-  { id: 'clay', label: 'Clay', description: 'The same faces in handmade matte clay.' },
+  { id: 'flat', label: 'Flat', description: 'Simple, flat faces. The default.' },
+  { id: '3d', label: '3D', description: 'Soft, toy-like portraits.' },
+  { id: 'clay', label: 'Clay', description: 'Handmade clay portraits.' },
 ];
 export const DEFAULT_AVATAR_STYLE = 'flat';
 export function isAvatarStyle(value) { return AVATAR_STYLES.some(style => style.id === value); }

@@ -85,15 +85,24 @@ const FLAT_BRIEF = [
   'Square 1:1. Head and upper neck only, no body, centred, with the face and identifying features inside the central 80% so they survive a circular avatar crop; nothing touches the edges; generous even space around the bird. Perfectly plain pure white (#FFFFFF) background.',
 ].join(' ');
 
+// A composed bird (bird-species.js) described from its real colours.
+function composedSpecies(bird) {
+  const composed = COMPOSED_BY_ID.get(bird);
+  if (!composed) return '';
+  const { spec } = composed;
+  return `a ${composed.label}: use this real species' true colours (main colour around ${spec.body}${spec.beak ? `, beak ${spec.beak[1]}` : ''}${(spec.marks || []).map(([mark, colour]) => `, ${mark} ${colour}`).join('')}${spec.crest ? `, ${spec.crest[0]} ${spec.crest[1]}` : ''}) and its most recognisable head shape, beak, crest and face markings`;
+}
+
 export function promptFor(style, bird) {
   if (style === 'flat') {
-    const composed = COMPOSED_BY_ID.get(bird);
-    const fromSpec = composed ? `a ${composed.label}: use this real species' true colours (main colour around ${composed.spec.body}${composed.spec.beak ? `, beak ${composed.spec.beak[1]}` : ''}${(composed.spec.marks || []).map(([mark, colour]) => `, ${mark} ${colour}`).join('')}${composed.spec.crest ? `, ${composed.spec.crest[0]} ${composed.spec.crest[1]}` : ''}) and its most recognisable head shape, beak, crest and face markings` : '';
+    const fromSpec = composedSpecies(bird);
     const species = FLAT_SPECIES[bird] || (SPECIES[bird] ? `${SPECIES[bird]}. Keep the species' real colours and its most recognisable head features, simplified into the shared mascot language.` : fromSpec ? `${fromSpec}, simplified into the shared mascot language.` : '');
     if (!species) throw new Error(`unknown bird ${bird}`);
     return `${FLAT_BRIEF} The bird: ${species}`;
   }
-  const species = SPECIES[bird];
+  // The 26 named birds have hand-written lines; the other 274 are described
+  // from their COMPOSED_BIRDS colours, as for flat.
+  const species = SPECIES[bird] || composedSpecies(bird);
   if (!species) throw new Error(`unknown bird ${bird}`);
   if (style === '3d') return [
     `Square character portrait for an app avatar. Original mascot character design: ${species}.`,

@@ -76,14 +76,14 @@ for (const theme of ['light', 'dark']) {
     await expect(page.getByTestId('settings-sections').getByRole('link', { name: 'Onboarding', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Run onboarding again', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Review where your squad works.', exact: true })).toBeVisible();
-    await expect(page.getByTestId('onboarding-progress')).toContainText('Step 1 of 4 · Work folders');
+    await expect(page.getByTestId('onboarding-progress')).toContainText('Step 1 of 5 · Work folders');
     await shoot(page, info, `${theme}-1-work-folders`);
 
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     // ADR-0233: the layout comes next and saves at once to the device store
     // Settings › Appearance reads.
     await expect(page.getByRole('heading', { name: 'Choose your layout.', exact: true })).toBeFocused();
-    await expect(page.getByTestId('onboarding-progress')).toContainText('Step 2 of 4 · Layout');
+    await expect(page.getByTestId('onboarding-progress')).toContainText('Step 2 of 5 · Layout');
     await expect(page.getByRole('radio', { name: /^Full/ })).toBeChecked();
     await shoot(page, info, `${theme}-1b-layout-full`);
     await page.getByText('Minified', { exact: true }).click();
@@ -96,9 +96,23 @@ for (const theme of ['light', 'dark']) {
     await page.getByText('Full', { exact: true }).click();
     expect(await page.evaluate(() => localStorage.getItem('autohandSquad.v1.layout'))).toBe('full');
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    // ADR-0271: the avatar style, saved at once to the store Settings › Appearance reads.
+    await expect(page.getByRole('heading', { name: 'Choose how your squad looks.', exact: true })).toBeFocused();
+    await expect(page.getByTestId('onboarding-progress')).toContainText('Step 3 of 5 · Avatars');
+    await expect(page.getByRole('radio', { name: /^Flat/ })).toBeChecked();
+    await page.getByText('3D', { exact: true }).click();
+    await expect(page.getByRole('radio', { name: /^3D/ })).toBeChecked();
+    await expect(page.getByTestId('onboarding-avatar-style')).toContainText('Saved. Your squad shows 3D avatars now.');
+    expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.endsWith('avatarStyle')).map(key => localStorage.getItem(key)).join())).toBe('3d');
+    await expect(page.getByTestId('avatar-style-preview').locator('img[src*="/avatars/birds-3d/"]')).toHaveCount(4);
+    await page.mouse.move(0, 0);
+    await shoot(page, info, `${theme}-1d-avatars-3d`);
+    await page.getByText('Flat', { exact: true }).click();
+    expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.endsWith('avatarStyle')).map(key => localStorage.getItem(key)).join())).toBe('flat');
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
     const heading = page.getByRole('heading', { name: 'How Squad shows in your menu bar.', exact: true });
     await expect(heading).toBeFocused();
-    await expect(page.getByTestId('onboarding-progress')).toContainText('Step 3 of 4 · Menu bar');
+    await expect(page.getByTestId('onboarding-progress')).toContainText('Step 4 of 5 · Menu bar');
     await expect(page.getByRole('radio', { name: 'One Squad icon' })).toBeChecked();
     await shoot(page, info, `${theme}-2-menu-bar-icon`);
     if (theme === 'light' && info.project.name === 'desktop') {
@@ -119,7 +133,7 @@ for (const theme of ['light', 'dark']) {
 
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Take your squad with you.', exact: true })).toBeFocused();
-    await expect(page.getByTestId('onboarding-progress')).toContainText('Step 4 of 4 · iPhone');
+    await expect(page.getByTestId('onboarding-progress')).toContainText('Step 5 of 5 · iPhone');
     await page.getByRole('button', { name: 'Back', exact: true }).click();
     await expect(heading).toBeVisible();
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
@@ -153,11 +167,13 @@ test('on the web there is no menu bar step, and Not now is remembered', async ({
   await resetPhones();
   const context = await prepare(page, { desktop: false });
   await page.goto(fixture.bridge.origin + '/welcome');
-  await expect(page.getByTestId('onboarding-progress')).toContainText('Step 1 of 3 · Work folders');
+  await expect(page.getByTestId('onboarding-progress')).toContainText('Step 1 of 4 · Work folders');
   await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(page.getByTestId('onboarding-progress')).toContainText('Step 2 of 3 · Layout');
+  await expect(page.getByTestId('onboarding-progress')).toContainText('Step 2 of 4 · Layout');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(page.getByTestId('onboarding-progress')).toContainText('Step 3 of 3 · iPhone');
+  await expect(page.getByTestId('onboarding-progress')).toContainText('Step 3 of 4 · Avatars');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(page.getByTestId('onboarding-progress')).toContainText('Step 4 of 4 · iPhone');
   await expect(page.getByText('You can pair a phone later in Settings › Computers.')).toBeVisible();
   await page.getByRole('button', { name: 'Not now', exact: true }).click();
   await expect(page).toHaveURL(fixture.bridge.origin + '/squad');
