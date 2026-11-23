@@ -95,8 +95,8 @@ iPhone read that folder as the flat face.
 - 3D covers all 300 birds since 23 Nov evening (10 MB of WebP; reviewed on
   three contact sheets). The 274 composed birds are described from their
   `COMPOSED_BIRDS` colours with the kiwi and tucano masters of the same style as
-  references. Clay is still being generated; birds without a clay picture show
-  the drawn face with the clay filter until it is installed.
+  references. Clay followed the same way and covers all 300 too (8.7 MB),
+  reviewed on three contact sheets.
 - During that run three image requests hung for 3.5 hours although each ran
   under `timeout 600`. A watchdog now kills any request older than 12 minutes,
   and the missed birds are regenerated in a second pass.

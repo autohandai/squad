@@ -29,7 +29,7 @@ list to the section for that version.
 ### Changed
 
 - Every member's bird has a new face: 300 flat mascots in one geometric style, in the app, the menu bar, the bird picker and the website marketplace.
-- The 3D avatar style now shows a painted picture for every bird; Clay for the New Zealand, Brazilian and American birds so far, with the rest on the way.
+- The 3D and Clay avatar styles now show a painted picture for every one of the 300 birds.
 - A member's Messaging page is now Communications, right after Home and followed by Permissions. It holds the direct conversation and, on autohand.ai accounts, the member's email address.
 - On accounts signed in with @autohand.ai, every member now gets an email address from its name automatically, and you can change the name before @code.autohandai.com in its Permissions. Other accounts see nothing about email.
 - Chief of Staff starts with Manage the team on; you can turn it off.
