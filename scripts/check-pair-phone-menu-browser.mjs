@@ -63,5 +63,22 @@ try {
   await until(() => browser.evaluate(`document.querySelectorAll('[data-testid=switcher-phones] li').length === 1`), 'the unpaired phone leaves the list');
   assert.deepEqual(await browser.evaluate('window.__unpaired'), ['phone-a']);
   assert.deepEqual(browser.errors, []);
-  console.log('PASS: the workspace menu offers Pair iPhone…, which shows a live pairing QR from the real bridge and closes cleanly; it lists paired phones with presence and pairing date, and unpairs one after a confirm.');
+  // The pairing screen (the onboarding iPhone step, also this dialog) shows
+  // the phone already paired before offering another (owner, 23 Nov:
+  // "why don't you show currently the phone paired with").
+  await browser.evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await browser.evaluate(`document.querySelector('[aria-label="Switch workspace"]').click()`);
+  await until(() => browser.evaluate(`[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Pair iPhone…')`), 'Pair iPhone… again');
+  await browser.click('Pair iPhone…');
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid=pair-phone-dialog] [data-testid=phone-step-paired]')`), 'the paired phone shown on the pairing screen', 20000);
+  const pairedText = await browser.evaluate(`document.querySelector('[data-testid=phone-step-paired]').innerText`);
+  assert.ok(pairedText.includes('iPhone') && /Active now|paired/i.test(pairedText), `the paired phone is listed with its state: ${pairedText}`);
+  await browser.screenshot(`${artifact}/pairing-shows-paired-phone.png`);
+  await browser.click('Close');
+
+  // Profile › Harness offers the same failover as the chat's engine menu (ADR-0231).
+  await browser.navigate(`${bridge.origin}/squad-members/${member.id}/harness`);
+  await until(() => browser.evaluate(`!!document.querySelector('section[aria-label=Fallbacks] h2') && document.querySelector('section[aria-label=Fallbacks] h2').textContent.trim() === 'Fallbacks'`), 'Fallbacks on profile › Harness', 30000);
+  await browser.screenshot(`${artifact}/profile-harness-fallbacks.png`);
+  console.log('PASS: the workspace menu offers Pair iPhone…, which shows a live pairing QR from the real bridge and closes cleanly; it lists paired phones with presence and pairing date, and unpairs one after a confirm; the pairing screen shows the phone already paired; profile › Harness offers Fallbacks.');
 } finally { await browser?.close(); await bridge.close(); }
