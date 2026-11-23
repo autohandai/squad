@@ -24,6 +24,9 @@ try{
   assert.equal(calls.length,2);assert.equal(calls[1].agent.harness.id,'autohand','Fallback never rewrites the canonical member');
   assert.deepEqual(calls[1].agent.permissions,payload.agent.permissions);assert.deepEqual(calls[1].attachments,payload.attachments);assert(calls[1].prompt.includes('NZ-42'));assert.equal(calls[1].workspace,payload.workspace);assert.deepEqual(payload,original);
   assert(events.some(row=>row.event==='fallback'&&row.data.to==='codex'));
+  // ADR-0273: a restricted Autohand member keeps --restricted approvals and is
+  // never forced into --dry-run, which refuses read_file and tool_search.
+  assert.equal(calls[0].dryRun,false,'a restricted member is not turned into a dry run');assert.equal(calls[0].access,'','a restricted member keeps the default access');
   await router.reset(payload.agentId);calls.length=0;
   await router.execute(payload,{stream,execute:async turn=>{calls.push(turn);if(turn._routeTarget.harness.id==='autohand')throw Object.assign(new Error('The engine is overloaded'),{status:529});return{reply:'Recovered from overload'};}});
   assert.equal(calls.length,2,'overload switches immediately rather than repeating ten requests');

@@ -48,7 +48,12 @@ export function createFallbackRouter({ stateDir, now = Date.now, cooldownMs = FA
       if (!config.fallbacks.length) return execute(payload, { stream, signal });
       const memberId = String(payload.agentId || payload.agent?.id || '');
       const primary = primaryRoute(payload);
-      const access = payload.access || primary.harness.access || (primary.harness.id === 'autohand' && (payload.policy === 'restricted' || payload.agent?.permissions?.permissionMode === 'restricted') ? 'plan' : '');
+      // Only an explicit plan choice is read-only. A restricted member keeps
+      // Autohand's own --restricted approvals (ADR-0114): turning it into plan
+      // made every fallback-configured member run with --dry-run, where CLI
+      // 0.9.11 refuses read_file, tool_search, web reads and connectors
+      // (ADR-0273).
+      const access = payload.access || primary.harness.access || '';
       const seen = new Set();
       const routes = [primary, ...config.fallbacks].filter(route => { const key=routeKey(route);if(seen.has(key))return false;seen.add(key);return true; });
       const health = await this.health(memberId);
