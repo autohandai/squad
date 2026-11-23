@@ -162,6 +162,7 @@ jobs:
         run: |
           node scripts/check-member-management-browser.mjs
           node scripts/check-member-controls-browser.mjs
+          node scripts/check-pair-phone-menu-browser.mjs
           node scripts/check-dictation-browser.mjs
           node scripts/check-outside-context.mjs
           node scripts/check-member-default-routing-browser.mjs
