@@ -23,6 +23,9 @@ pub(crate) struct Preferences {
     /// (NSGlassEffectView, macOS 26+); Sidebar vibrancy otherwise. On by
     /// default (ADR-0258).
     pub sidebar_liquid_glass: bool,
+    /// Flat, 3D or Clay for member portraits in the menu bar, matching the
+    /// app's avatar style (ADR-0272).
+    pub avatar_style: String,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -33,6 +36,7 @@ impl Default for Preferences {
             quick_chat_appearance: "glass".into(),
             menu_bar_attention_dot: true,
             sidebar_liquid_glass: true,
+            avatar_style: "flat".into(),
         }
     }
 }

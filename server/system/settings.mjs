@@ -7,6 +7,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export const SETTINGS_FILE = "settings.json";
+// The app's avatar style, so the menu bar draws the same portraits (ADR-0272).
+export const AVATAR_STYLES = ["flat", "3d", "clay"];
 
 export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
   quickChatEnabled: true,
@@ -17,6 +19,7 @@ export const DEFAULT_SYSTEM_SETTINGS = Object.freeze({
   sidebarLiquidGlass: true,
   autoCheckUpdates: true,
   autoDownloadUpdates: false,
+  avatarStyle: "flat",
 });
 
 export function settingsPath(squadStateDir) {
@@ -35,13 +38,14 @@ export function normalizeSystemSettings(input) {
     sidebarLiquidGlass: source.sidebarLiquidGlass !== false,
     autoCheckUpdates: typeof source.autoCheckUpdates === "boolean" ? source.autoCheckUpdates : DEFAULT_SYSTEM_SETTINGS.autoCheckUpdates,
     autoDownloadUpdates: source.autoDownloadUpdates === true,
+    avatarStyle: AVATAR_STYLES.includes(source.avatarStyle) ? source.avatarStyle : "flat",
   };
 }
 
 /** The public shape: known keys only. */
 export function publicSystemSettings(settings) {
   const normalized = normalizeSystemSettings(settings);
-  return { sidebarLiquidGlass: normalized.sidebarLiquidGlass, quickChatAppearance: normalized.quickChatAppearance, quickChatEnabled: normalized.quickChatEnabled, quickChatMenuBarMode: normalized.quickChatMenuBarMode, quickChatShowUsage: normalized.quickChatShowUsage, menuBarAttentionDot: normalized.menuBarAttentionDot, autoCheckUpdates: normalized.autoCheckUpdates, autoDownloadUpdates: normalized.autoDownloadUpdates };
+  return { sidebarLiquidGlass: normalized.sidebarLiquidGlass, quickChatAppearance: normalized.quickChatAppearance, quickChatEnabled: normalized.quickChatEnabled, quickChatMenuBarMode: normalized.quickChatMenuBarMode, quickChatShowUsage: normalized.quickChatShowUsage, menuBarAttentionDot: normalized.menuBarAttentionDot, autoCheckUpdates: normalized.autoCheckUpdates, autoDownloadUpdates: normalized.autoDownloadUpdates, avatarStyle: normalized.avatarStyle };
 }
 
 export async function readSystemSettings(squadStateDir) {
@@ -70,6 +74,7 @@ async function saveSystemSettings(squadStateDir, patch) {
     if (["single", "active-agents"].includes(patch.quickChatMenuBarMode)) next.quickChatMenuBarMode = patch.quickChatMenuBarMode;
     if (typeof patch.autoCheckUpdates === "boolean") next.autoCheckUpdates = patch.autoCheckUpdates;
     if (typeof patch.autoDownloadUpdates === "boolean") next.autoDownloadUpdates = patch.autoDownloadUpdates;
+    if (AVATAR_STYLES.includes(patch.avatarStyle)) next.avatarStyle = patch.avatarStyle;
   }
   const path = settingsPath(squadStateDir);
   await mkdir(dirname(path), { recursive: true });

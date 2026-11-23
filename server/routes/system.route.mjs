@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { countMemoryEntries, systemSummary } from "../system/summary.mjs";
-import { publicSystemSettings, readSystemSettings, writeSystemSettings } from "../system/settings.mjs";
+import { AVATAR_STYLES, publicSystemSettings, readSystemSettings, writeSystemSettings } from "../system/settings.mjs";
 import { revealActionLabel, revealFolder } from "../system/reveal.mjs";
 import { archiveSquadState, readResetProgress, writeResetProgress } from "../system/reset.mjs";
 
@@ -61,6 +61,9 @@ export async function handle(req, res, url, ctx) {
     }
     if ("quickChatMenuBarMode" in body && !["single", "active-agents"].includes(body.quickChatMenuBarMode)) {
       ctx.json(res, 400, { success: false, error: "Choose single or active-agents for the menu bar." }); return true;
+    }
+    if ("avatarStyle" in body && !AVATAR_STYLES.includes(body.avatarStyle)) {
+      ctx.json(res, 400, { success: false, error: "Choose flat, 3d or clay for the avatar style." }); return true;
     }
     if (invalid) {
       ctx.json(res, 400, { success: false, error: `${invalid} must be true or false.` });

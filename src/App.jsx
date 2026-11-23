@@ -4,7 +4,7 @@ import { OwnershipEventSource,ownershipUrl } from "@/lib/ownership-client";
 import { OwnershipBootstrap } from "@/components/account/OwnershipBootstrap";
 import { currentOwnership, ownedBroadcastName, physicalStorageKey } from "@/lib/owned-storage";
 import { QuickChatPanel } from "@/components/chat/QuickChatPanel";
-import { QuickChatPreferences } from "@/components/settings/QuickChatPreferences";
+import { QuickChatPreferences, saveQuickChatSettings } from "@/components/settings/QuickChatPreferences";
 import { BackupSettings } from "@/components/settings/BackupSettings";
 import React, { Fragment, Suspense, createContext, lazy, memo, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useProjectObserver } from "@/lib/use-project-observer";
@@ -2613,6 +2613,24 @@ function readSkinId() {
 
 // A missing layout is resolved once from the skin, so a Grut user keeps the
 // conversation list they chose before layouts existed (ADR-0233).
+// The avatar style is a device preference like the skin, so Quick Chat and
+// every other window follow a change at once (ADR-0272). Before that it was
+// saved per account: under "undefined" (no STORAGE_KEYS entry, ADR-0271) and,
+// for a day, under its own name; either is read once.
+function readAvatarStyle() {
+  try {
+    const stored = ownedLocalStorage.getItem(STORAGE_KEYS.avatarStyle);
+    if (isAvatarStyle(stored)) return stored;
+    const legacy = ownedLocalStorage.getItem("undefined");
+    if (isAvatarStyle(legacy)) return legacy;
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith("autohandSquad.owner.v1.") && key.endsWith(".autohandSquad.v1.avatarStyle") && isAvatarStyle(localStorage.getItem(key))) return localStorage.getItem(key);
+    }
+  } catch { /* storage may be off */ }
+  return DEFAULT_AVATAR_STYLE;
+}
+
 function readLayoutId() {
   try {
     return resolveLayoutId(ownedLocalStorage.getItem(STORAGE_KEYS.layout), ownedLocalStorage.getItem(STORAGE_KEYS.skin));
@@ -4636,25 +4654,36 @@ function App() {
   const [themePreference, setThemePreference] = useState(readThemePreference);
   const [skinId, setSkinId] = useState(readSkinId);
   const [layoutId, setLayoutId] = useState(readLayoutId);
-  const [avatarStyle, setAvatarStyle] = useState(() => {
-    // Before ADR-0271 STORAGE_KEYS had no avatarStyle, so the choice was saved
-    // under the key "undefined"; read that once so nobody loses their style.
-    try { const stored = ownedLocalStorage.getItem(STORAGE_KEYS.avatarStyle) ?? ownedLocalStorage.getItem("undefined"); return isAvatarStyle(stored) ? stored : DEFAULT_AVATAR_STYLE; } catch { return DEFAULT_AVATAR_STYLE; }
-  });
+  const [avatarStyle, setAvatarStyle] = useState(readAvatarStyle);
   const changeAvatarStyle = useCallback((next) => {
     if (!isAvatarStyle(next)) return;
     setAvatarStyle(next);
     try { ownedLocalStorage.setItem(STORAGE_KEYS.avatarStyle, next); } catch { /* storage may be off */ }
   }, []);
+  // The menu bar draws member portraits natively from the bridge's settings
+  // (ADR-0272); keep them in the style this device shows. Only the main window
+  // writes, so Quick Chat never races it.
+  useEffect(() => {
+    if (window.location.pathname.startsWith("/quick-chat")) return;
+    let timer = 0;
+    let cancelled = false;
+    const save = (attempt) => saveQuickChatSettings(api, { avatarStyle }).catch(() => {
+      // The bridge may still be starting at launch.
+      if (!cancelled && attempt < 5) timer = window.setTimeout(() => save(attempt + 1), 3000);
+    });
+    save(0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [avatarStyle]);
   useEffect(() => {
     function readSharedAppearance() {
       const preference = readThemePreference();
       setThemePreference(current => JSON.stringify(current) === JSON.stringify(preference) ? current : preference);
       setSkinId(readSkinId());
       setLayoutId(readLayoutId());
+      setAvatarStyle(readAvatarStyle());
     }
     function onStorage(event) {
-      if (!event.key || [...storageKeysFor("theme"), ...storageKeysFor("skin"), ...storageKeysFor("layout")].includes(event.key)) readSharedAppearance();
+      if (!event.key || [...storageKeysFor("theme"), ...storageKeysFor("skin"), ...storageKeysFor("layout"), ...storageKeysFor("avatarStyle")].includes(event.key)) readSharedAppearance();
     }
     function onVisible() { if (document.visibilityState === "visible") readSharedAppearance(); }
     window.addEventListener("storage", onStorage);

@@ -87,6 +87,7 @@ fn show_popup(app: &AppHandle, shell: &Shell, window: &tauri::WebviewWindow) -> 
 // the shared skin and theme every time it is shown.
 fn reveal_popup(window: &tauri::WebviewWindow) -> Result<(), String> {
     window.show().map_err(|error| error.to_string())?;
+    watch_focus(window.app_handle().clone());
     // Key window first, then tell the page: its composer focus only shows a
     // caret once the panel is key.
     let focused = window.set_focus().map_err(|error| error.to_string());
@@ -112,19 +113,106 @@ pub(crate) fn handle_window_event(window: &tauri::Window, event: &tauri::WindowE
             api.prevent_close();
             let _ = window.hide();
         }
-        tauri::WindowEvent::Focused(false) => {
-            // Selecting another member from the tray briefly moves focus to
-            // the menu. Give that action time to restore focus before hiding.
-            let window = window.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                if window.is_visible().unwrap_or(false) && !window.is_focused().unwrap_or(false) {
-                    let _ = window.hide();
-                }
-            });
-        }
+        tauri::WindowEvent::Focused(false) => watch_focus(window.app_handle().clone()),
         _ => {}
     }
+}
+
+/// A cast bird's painted picture in the app's avatar style (ADR-0271), as a
+/// path under /avatars: `birds/kiwi.webp` in 3D is `birds-3d/kiwi.webp`. None
+/// for flat, for anything that is not a cast bird, or for an unknown style;
+/// the caller falls back to the stored picture when the file is missing.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn styled_avatar(relative: &str, style: &str) -> Option<String> {
+    let folder = match style {
+        "3d" => "birds-3d",
+        "clay" => "clay",
+        _ => return None,
+    };
+    let rest = relative.strip_prefix("birds/")?;
+    let valid = rest.split('/').all(|part| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '.')
+            && part != ".."
+    });
+    valid.then(|| format!("{folder}/{rest}"))
+}
+
+/// How long Quick Chat stays open once the person has moved on (ADR-0272).
+const AWAY_CLOSE: std::time::Duration = std::time::Duration::from_secs(2);
+static FOCUS_WATCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// While Quick Chat is visible, hide it once it has been out of focus for
+/// `AWAY_CLOSE`. The panel does not reliably deliver `Focused(false)` (the
+/// owner saw it stay open after clicking elsewhere), so this polls instead of
+/// trusting one event. A newer watch replaces an older one.
+fn watch_focus(app: AppHandle) {
+    use std::sync::atomic::Ordering;
+    let generation = FOCUS_WATCH.fetch_add(1, Ordering::SeqCst) + 1;
+    std::thread::spawn(move || {
+        let mut away_since: Option<std::time::Instant> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            if FOCUS_WATCH.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            let Some(window) = app.get_webview_window(QUICK_CHAT_WINDOW) else {
+                return;
+            };
+            if !window.is_visible().unwrap_or(false) {
+                return;
+            }
+            if holds_focus(&app, &window) {
+                away_since = None;
+                continue;
+            }
+            if away_since
+                .get_or_insert_with(std::time::Instant::now)
+                .elapsed()
+                >= AWAY_CLOSE
+            {
+                let _ = window.hide();
+                return;
+            }
+        }
+    });
+}
+
+/// Whether the person is still with Quick Chat: it is the key window, or
+/// Squad is the active app with no other Squad window focused (a file picker
+/// or permission sheet Quick Chat opened). Another app, the desktop, or the
+/// main Squad window all count as moving on.
+fn holds_focus(app: &AppHandle, window: &tauri::WebviewWindow) -> bool {
+    if window.is_focused().unwrap_or(true) {
+        return true;
+    }
+    let other_window_focused = app
+        .webview_windows()
+        .values()
+        .any(|other| other.label() != QUICK_CHAT_WINDOW && other.is_focused().unwrap_or(false));
+    !other_window_focused && app_is_active(app)
+}
+
+#[cfg(target_os = "macos")]
+fn app_is_active(app: &AppHandle) -> bool {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let asked = app.run_on_main_thread(move || {
+        let active = objc2::MainThreadMarker::new()
+            .map(|marker| objc2_app_kit::NSApplication::sharedApplication(marker).isActive())
+            .unwrap_or(true);
+        let _ = sender.send(active);
+    });
+    asked.is_err()
+        || receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or(true)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn app_is_active(_app: &AppHandle) -> bool {
+    false
 }
 
 /// Prefer a teammate accepting work. A squad entirely on break still lets a
@@ -477,7 +565,10 @@ pub(crate) struct MemberPortraits {
 /// the 5 s menu refresh decodes a picture only when it changes.
 pub(crate) type PortraitCache = std::collections::HashMap<
     String,
-    (u64, Option<(tauri::image::Image<'static>, std::sync::Arc<Vec<u8>>)>),
+    (
+        u64,
+        Option<(tauri::image::Image<'static>, std::sync::Arc<Vec<u8>>)>,
+    ),
 >;
 
 #[cfg(target_os = "macos")]
@@ -567,6 +658,7 @@ fn member_icon_map(
         return icons;
     };
     let avatar_root = resources.join("runtime/dist/avatars");
+    let style = crate::quick_chat_preferences::read().avatar_style;
     for member in members.iter().take(100) {
         let Some(id) = member.get("id").and_then(|value| value.as_str()) else {
             continue;
@@ -583,6 +675,7 @@ fn member_icon_map(
         let stamp = {
             let mut hash = std::collections::hash_map::DefaultHasher::new();
             avatar.hash(&mut hash);
+            style.hash(&mut hash);
             hash.finish()
         };
         if let Some((cached, entry)) = lock(&shell.portrait_cache).get(id) {
@@ -599,7 +692,9 @@ fn member_icon_map(
             {
                 continue;
             }
-            let Ok(data) = std::fs::read(avatar_root.join(path)) else {
+            let styled = styled_avatar(relative, &style)
+                .and_then(|styled| std::fs::read(avatar_root.join(styled)).ok());
+            let Some(data) = styled.or_else(|| std::fs::read(avatar_root.join(path)).ok()) else {
                 continue;
             };
             data
@@ -705,6 +800,22 @@ mod tests {
         assert_eq!(pixel(11, 7), &[235, 235, 235, 255]);
         assert_eq!(pixel(11, 17), &[235, 235, 235, 255]);
         assert_eq!(pixel(4, 7), &[105, 105, 105, 255]);
+    }
+
+    #[test]
+    fn styled_avatar_maps_cast_birds_only() {
+        assert_eq!(
+            styled_avatar("birds/kiwi.webp", "3d").as_deref(),
+            Some("birds-3d/kiwi.webp")
+        );
+        assert_eq!(
+            styled_avatar("birds/256/tui.webp", "clay").as_deref(),
+            Some("clay/256/tui.webp")
+        );
+        assert_eq!(styled_avatar("birds/kiwi.webp", "flat"), None);
+        assert_eq!(styled_avatar("birds/kiwi.webp", "neon"), None);
+        assert_eq!(styled_avatar("people/ana.webp", "3d"), None);
+        assert_eq!(styled_avatar("birds/../secret", "3d"), None);
     }
 
     #[test]

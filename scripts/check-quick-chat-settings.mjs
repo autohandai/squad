@@ -19,10 +19,16 @@ try {
   assert.equal((await readSystemSettings(dir)).menuBarAttentionDot, true, 'a non-boolean patch is ignored');
   await writeSystemSettings(dir, { menuBarAttentionDot: false });
   assert.equal(publicSystemSettings(await readSystemSettings(dir)).menuBarAttentionDot, false);
+  // The avatar style the menu bar draws with (ADR-0272): flat by default, only a known style is kept.
+  assert.equal(publicSystemSettings(await readSystemSettings(dir)).avatarStyle, 'flat');
+  await writeSystemSettings(dir, { avatarStyle: 'neon' });
+  assert.equal((await readSystemSettings(dir)).avatarStyle, 'flat');
+  await writeSystemSettings(dir, { avatarStyle: 'clay' });
+  assert.equal(publicSystemSettings(await readSystemSettings(dir)).avatarStyle, 'clay');
 } finally { await rm(dir, { recursive: true, force: true }); }
 const bridge = await startBridge({ prepare: async directory => { await mkdir(join(directory, 'squad')); await writeFile(join(directory, 'squad', 'settings.json'), JSON.stringify({ quickChatShowUsage: false })); return {}; } });
 try {
-  for (const body of [{ quickChatEnabled: 'false' }, { quickChatMenuBarMode: 'dock' }, { quickChatShowUsage: 0 }, { quickChatAppearance: 'fake-blur' }, { menuBarAttentionDot: 'off' }, null]) assert.equal((await bridge.api('/api/system/settings', 'PUT', body)).status, 400);
+  for (const body of [{ quickChatEnabled: 'false' }, { quickChatMenuBarMode: 'dock' }, { quickChatShowUsage: 0 }, { quickChatAppearance: 'fake-blur' }, { menuBarAttentionDot: 'off' }, { avatarStyle: 'neon' }, null]) assert.equal((await bridge.api('/api/system/settings', 'PUT', body)).status, 400);
   const saved = await bridge.api('/api/system/settings', 'PUT', { quickChatEnabled: false, quickChatMenuBarMode: 'active-agents', quickChatShowUsage: false, quickChatAppearance: 'solid' });
   assert.equal(saved.data.quickChatEnabled, false);
   assert.deepEqual((await bridge.api('/api/harnesses/usage')).data, { harnesses: [], enabled: false });

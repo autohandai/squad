@@ -16,6 +16,8 @@ list to the section for that version.
 
 ### Fixed
 
+- Quick Chat and the menu-bar portraits now use the avatar style you picked (Flat, 3D or Clay), and Quick Chat follows a change straight away.
+- Quick Chat closes itself 2 seconds after you click somewhere else.
 - The avatar style you choose is now saved under its own name; before, it was stored under an empty key that other settings could overwrite.
 
 ### Changed
