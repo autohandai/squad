@@ -44,6 +44,10 @@ try {
   assert.ok(snapshot.data.capabilities.includes('tasks'));
   assert.ok(snapshot.data.account.id && snapshot.data.account.email);
   assert.equal('token' in snapshot.data.account, false);
+  // Contract 0.7 (ADR-0272): the phone draws members in the computer's avatar style.
+  assert.equal(snapshot.data.appearance?.avatarStyle, 'flat', 'the snapshot carries the default avatar style');
+  assert.equal((await bridge.api('/api/system/settings', 'PUT', { avatarStyle: 'clay' })).success, true);
+  assert.equal((await request('snapshot')).data.appearance?.avatarStyle, 'clay', 'a changed style reaches the phone');
   // Routes (ADR-0228): advertised only inside the device's encrypted reply,
   // naming what this computer serves now. The legacy `{mode}` request above
   // asked for exactly one route, so no relay is advertised or started.

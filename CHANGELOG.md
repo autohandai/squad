@@ -19,6 +19,7 @@ list to the section for that version.
 
 ### Fixed
 
+- Squad for iPhone draws members in the avatar style you picked on the computer.
 - A reply where the engine only described steps without doing them is now shown as failed, so it can be retried.
 - A member set to ask before acting (restricted) with fallback engines can read files, search its tools and fetch pages again; it used to run in a dry-run mode that refused every read.
 - Quick Chat and the menu-bar portraits now use the avatar style you picked (Flat, 3D or Clay), and Quick Chat follows a change straight away.

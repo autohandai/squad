@@ -39,6 +39,10 @@ What the code did:
   `birds/<file>` becomes `birds-3d/<file>` or `clay/<file>` when that file is
   in the bundle, and the stored picture otherwise. The portrait cache key
   includes the style, so a change redraws.
+- **The phone follows too.** The phone host's `snapshot` carries
+  `appearance: { avatarStyle }` (mobile contract 0.7, Squad for iPhone
+  ADR-0014). `check-mobile-host` asserts `flat` by default and `clay` after a
+  change.
 - **Quick Chat closes 2 seconds after the person moves on.** While it is
   visible, a watcher checks every 250 ms. It counts as left when another app
   is active, or when another Squad window (the main window) has focus. When

@@ -194,7 +194,9 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
   async function execute(command, parameters, { deviceID, requestID }) {
       if (command === 'snapshot') {
         z.object({}).strict().parse(parameters);
-        const [{ members }, remotes, context, channels, status] = await Promise.all([tools.list_members(), bridge.get('/api/remote/members'), bridge.get('/api/ownership/context'), bridge.get('/api/channels').catch(() => null), bridge.get('/api/status/snapshot').catch(() => null)]);
+        const [{ members }, remotes, context, channels, status, settings] = await Promise.all([tools.list_members(), bridge.get('/api/remote/members'), bridge.get('/api/ownership/context'), bridge.get('/api/channels').catch(() => null), bridge.get('/api/status/snapshot').catch(() => null), bridge.get('/api/system/settings').catch(() => null)]);
+        // The avatar style the phone mirrors (contract 0.7, ADR-0272).
+        const avatarStyle = ['flat', '3d', 'clay'].includes(settings?.avatarStyle) ? settings.avatarStyle : '';
         // The member's bird (ADR-0243), as the same /avatars/birds/<bird>.webp
         // the menu bar reads; uploaded pictures stay on the computer.
         // A picture the person uploaded travels as `picture:<hash>` (ADR-0252).
@@ -221,7 +223,7 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
               harness: typeof row.harness === 'string' ? row.harness : row.harness?.id || '',
               executionMode: remote ? 'remoteComputer' : 'workspace', computerName: remote?.label || computerName,
               workspace: remote?.workspace || row.lastWorkspace || '', ...(engines.get(row.id) ? { engine: engines.get(row.id) } : {}), ...(avatars.has(row.id) ? { avatar: avatars.get(row.id) } : {}), ...(lastTurns.get(row.id) ? { lastMessageAt: lastTurns.get(row.id) } : {}) };
-          }), ...(channels ? { groups } : {}) };
+          }), ...(channels ? { groups } : {}), ...(avatarStyle ? { appearance: { avatarStyle } } : {}) };
       }
       if (command === 'conversation') {
         const { memberID: id } = memberID.strict().parse(parameters);
