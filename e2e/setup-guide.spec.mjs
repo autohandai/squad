@@ -51,6 +51,9 @@ test('setup guide repairs a saved member folder with explicit default-folder con
   // Saving continues onboarding (ADR-0230): the layout (ADR-0233), then Not now
   // on the phone step finishes it.
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  // Then the avatar style (ADR-0271); Continue keeps Flat.
+  await expect(page.getByTestId('onboarding-avatar-style')).toBeVisible();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('button', { name: 'Not now', exact: true }).click();
   await expect(page).toHaveURL(bridge.origin + '/squad');
   const after = (await bridge.api('/api/channels')).data;
@@ -111,6 +114,9 @@ test('review preserves a Git subfolder alias and its workspace permissions', asy
   // Saving continues onboarding (ADR-0230): the layout (ADR-0233), then Not now
   // on the phone step finishes it.
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  // Then the avatar style (ADR-0271); Continue keeps Flat.
+  await expect(page.getByTestId('onboarding-avatar-style')).toBeVisible();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('button', { name: 'Not now', exact: true }).click();
   await expect(page).toHaveURL(bridge.origin + '/squad');
   const saved = (await bridge.api('/api/channels')).data.agentChannelAccess[member.id].agent;
@@ -170,6 +176,9 @@ test('an earlier save receipt cannot replace a newer streamed workspace', async 
     // This proves the newer revision has reached React before the old reply.
     await expect(page.getByTestId('first-run').getByRole('combobox')).toContainText('Eva updated elsewhere', { timeout: 20000 });
   } finally { releaseSave(); }
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  // Then the avatar style (ADR-0271); Continue keeps Flat.
+  await expect(page.getByTestId('onboarding-avatar-style')).toBeVisible();
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('button', { name: 'Not now', exact: true }).click();
   await expect(page).toHaveURL(bridge.origin + '/squad');

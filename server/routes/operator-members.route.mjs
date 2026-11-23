@@ -192,7 +192,8 @@ export async function handle(req, res, url, ctx) {
       const { expectedRevision: _revision, abilities, skills, memories: memory, voice, ...fields } = body;
       if (!Object.keys(fields).length && abilities === undefined && skills === undefined && memory === undefined && voice === undefined) throw fail('Choose a profile field to change.');
       const patch = Object.keys(fields).length ? validateProfileAction({ op: 'set', ...responsibilities(fields) }).patch : {};
-      next = patchedMemberCopy(access.agent, patch);
+      // A voice-only edit (ADR-0276) leaves every other field exactly as saved.
+      next = Object.keys(patch).length ? patchedMemberCopy(access.agent, patch) : structuredClone(access.agent);
       if (voice !== undefined) next.voice = chosenVoice(voice) || access.agent.voice || '';
       profile = patchedProfileText(access.profile, patch);
       if (memory !== undefined) next.memory = memories(memory);

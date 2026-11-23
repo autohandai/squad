@@ -7296,10 +7296,13 @@ function App() {
     for (const agent of agents) {
       if (!agent?.id || agent.removed || voiceById(agent.voice) || voicesSaved.current.has(agent.id) || !voices.get(agent.id)) continue;
       voicesSaved.current.add(agent.id);
-      void updateAgent(agent.id, { voice: voices.get(agent.id) });
+      const voice = voices.get(agent.id);
+      // Only the voice, through the bridge's revision-checked member edit:
+      // sending the whole member would rewrite fields only the bridge holds.
+      api(`/api/control-plane/members/${encodeURIComponent(agent.id)}`, { method: "PATCH", body: JSON.stringify({ voice, expectedRevision: memberProfileRevision(agent) }) })
+        .then((saved) => setAgents((current) => current.map((item) => (item.id === agent.id && !voiceById(item.voice) ? { ...item, voice, profileRevision: saved?.revision ?? item.profileRevision } : item))))
+        .catch(() => { /* not on the bridge yet, or edited meanwhile: the default still applies, saved next launch */ });
     }
-    // updateAgent is stable enough for a once-per-member save.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents]);
 
   function updateAgent(agentId, patch) {
