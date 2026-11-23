@@ -13,6 +13,7 @@
 
 import { composeFace } from './bird-composer.js';
 import { COMPOSED_BIRDS } from './bird-species.js';
+import { paintedAvatarSrc } from './bird-cast.js';
 
 const ink = { cream: '#f4f1e8' };
 
@@ -300,7 +301,16 @@ const FILTERS = {
 };
 
 /** The bird's face as SVG markup; an unknown bird draws the kiwi. */
-export function birdFaceSvg(bird, { title = '', style = DEFAULT_AVATAR_STYLE } = {}) {
+export function birdFaceSvg(bird, { title = '', style = DEFAULT_AVATAR_STYLE, drawn = false } = {}) {
+  // A painted picture, when one is installed for this bird and style
+  // (ADR-0271), so the picker, marketplace and every other face match the
+  // member's avatar. `drawn` asks for the vector face itself.
+  const painted = drawn ? '' : paintedAvatarSrc(FACES[bird] ? bird : 'kiwi', style, 256);
+  if (painted) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" class="size-full" viewBox="0 0 100 100" role="img"${title ? '' : ' aria-hidden="true"'}>` +
+      (title ? `<title>${escapeXml(title)}</title>` : '') +
+      `<image href="${painted}" width="100" height="100" preserveAspectRatio="xMidYMid slice"/></svg>`;
+  }
   const face = FACES[bird] || FACES.kiwi;
   const eyes = face.eyes.map(point => mark(point, face.eye || [2.6, 5])).join('');
   const label = title ? `<title>${escapeXml(title)}</title>` : '';

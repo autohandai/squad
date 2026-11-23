@@ -4,7 +4,7 @@
 // node scripts/export-bird-faces.mjs <out-dir> [flat|3d|clay]
 //
 // Flat birds with painted art (ADR-0271) use their traced SVG from
-// public/avatars/birds-svg; the rest keep the drawn face, so every bird has a
+// assets/birds-svg; the rest keep the drawn face, so every bird has a
 // file whatever has been generated so far.
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
@@ -15,7 +15,7 @@ import { BIRD_FACE_IDS, birdFaceSvg } from "../src/lib/bird-faces.js";
 
 const [out, style = "flat"] = process.argv.slice(2);
 if (!out) throw new Error("Usage: node scripts/export-bird-faces.mjs <out-dir> [flat|3d|clay]");
-const traced = fileURLToPath(new URL("../public/avatars/birds-svg/", import.meta.url));
+const traced = fileURLToPath(new URL("../assets/birds-svg/", import.meta.url));
 await mkdir(out, { recursive: true });
 let painted = 0;
 for (const bird of BIRD_FACE_IDS) {
@@ -25,7 +25,7 @@ for (const bird of BIRD_FACE_IDS) {
     painted += 1;
     continue;
   }
-  const svg = birdFaceSvg(bird, { style }).replace(' class="size-full"', "").replace(' role="img" aria-hidden="true"', "");
+  const svg = birdFaceSvg(bird, { style, drawn: true }).replace(' class="size-full"', "").replace(' role="img" aria-hidden="true"', "");
   await writeFile(join(out, `${bird}.svg`), `${svg}\n`);
 }
 console.log(`${BIRD_FACE_IDS.length} birds written to ${out} (${painted} painted, ${BIRD_FACE_IDS.length - painted} drawn)`);

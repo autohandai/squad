@@ -27,13 +27,16 @@ iPhone read that folder as the flat face.
 - **Each style has its own folder**:
   - flat replaces the files in `public/avatars/birds/`. The URLs members
     already store, the menu bar and the iPhone pick it up without a rewrite.
-    Flat also writes a vtracer SVG to `public/avatars/birds-svg/` for the
-    website.
+    Each bird stays on its plain white background, trimmed and centred with
+    even padding. Flat also writes a vtracer SVG to `assets/birds-svg/` for
+    the website; that folder is committed but not shipped in the app.
   - 3d goes to `public/avatars/birds-3d/` and clay to `public/avatars/clay/`.
     Neither writes over flat any more.
 - **`INSTALLED_ART` lists, per style, the birds that have a picture.**
-  `paintedAvatarSrc()` returns that picture, and `AgentAvatar` shows it as an
-  image in a round tile. Any other bird keeps its drawn face and the style's
+  `paintedAvatarSrc()` returns that picture. `birdFaceSvg()` wraps it in its
+  SVG, so `AgentAvatar`, the bird picker, the marketplace dialog, Settings ›
+  Appearance and the perch all show the same picture. `{ drawn: true }` still
+  returns the vector face, which the export and the checks need. Any other bird keeps its drawn face and the style's
   filter, so a half-installed style never shows a missing image.
 - **Masters stay out of git.** They are 1024px PNGs in
   `assets/characters/<style>/`: 124 MB for 26 + 26 + 300 birds, measured with
@@ -54,9 +57,12 @@ iPhone read that folder as the flat face.
   is 930 KB of WebP.
 - clay: 26 masters generated with 0 failures, reviewed on a contact sheet and
   installed. That is 676 KB of WebP (`install clay` output).
-- flat: 66 of 300 had been generated after 43 minutes, about 1.5 a minute
-  with three in parallel (master file times 10:33 to 11:16 on 23 Nov). The
-  first 42 were reviewed on a contact sheet and are on-brief.
+- flat: 300 of 300 generated with 0 failures, three at a time, between 10:33
+  and about 13:10 on 23 Nov. All 300 were reviewed on five contact sheets.
+  One, the turaco, was off-model (a ragged outline) and was regenerated.
+  Installed, the set is 4.7 MB of WebP and 9.8 MB of SVG (`du -sh`).
+- `check-skins` now asserts that each installed bird shows its picture in
+  every style and each other bird keeps its drawn face.
 - `check-member-avatar`, `check-skins` (3 styles x 300 birds) and
   `check:bird-picker:browser` pass with the painted styles installed.
 
@@ -68,6 +74,13 @@ iPhone read that folder as the flat face.
   Installing 3D would have replaced the flat faces that the menu bar and the
   iPhone show. Writing 3d into its own folder is what made it safe to ship the
   styles separately.
+- The first flat install made the background transparent with a corner flood
+  fill at 10% fuzz. That took the bald eagle's and the puffin's white heads
+  with it. Comparing the opaque area at 2% and 10% fuzz found 136 of the 300
+  birds losing 4–80% of themselves; normal birds lost under 1%. 2% did not
+  help either: the eagle's face (251,248,246) is within the background's own
+  noise (254,254,253), so it came out speckled. No fuzz separates them, so
+  flat keeps its white. The brief allowed "white/transparent".
 - Building the onboarding step showed that `STORAGE_KEYS` never had an
   `avatarStyle` entry. Every style choice since ADR-0240 was saved under the
   key `"undefined"`, and it only came back because the same undefined key was
@@ -83,8 +96,9 @@ iPhone read that folder as the flat face.
   Brazilian and American cast. The other 274 still show their drawn face with
   the style's filter. Painting them means about 550 more generations, roughly
   six hours on the bridge, and they are not done yet.
-- Flat ships when all 300 are generated and reviewed. Until then the app
-  shows the drawn flat faces, so it never mixes drawn and painted flat birds.
+- Flat faces are white discs on every tile. The old drawn faces let the eyes
+  show the tile colour; in dark mode the flat birds now read as light
+  stickers.
 - The masters live on one machine. Losing them means regenerating, and a new
   generation will not match the old pictures exactly.
 - Onboarding has five steps on the Mac, and four on the web.

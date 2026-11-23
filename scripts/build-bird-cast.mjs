@@ -10,7 +10,7 @@
 // machine and git-ignored (124 MB for three styles). `install` writes 512px and
 // 256px WebP and lists the installed birds in INSTALLED_ART (src/lib/bird-cast.js):
 //   flat  public/avatars/birds/  (replaces the drawn faces at the URLs members
-//         already store) plus a vtracer SVG in public/avatars/birds-svg/
+//         already store) plus a vtracer SVG in assets/birds-svg/
 //   3d    public/avatars/birds-3d/
 //   clay  public/avatars/clay/
 // A bird without an installed picture keeps its drawn face and style filter.
@@ -142,14 +142,18 @@ function install(style) {
   for (const bird of BIRD_IDS) {
     const source = master(style, bird);
     if (!existsSync(source)) { console.log(`skip ${style}/${bird}: no master`); continue; }
-    // The flat set (ADR-0271) is drawn on white: the white around the bird
-    // becomes transparent (enclosed white, the eye cut-outs, stays), the bird
-    // is trimmed and centred with even padding, and an SVG is traced for the
+    // The flat set (ADR-0271) is drawn on white: the bird is trimmed and
+    // centred with even padding on that white, and an SVG is traced for the
     // website. 3D and clay keep their painted backdrops.
     const prepared = style === 'flat' ? join(tmpdir(), `flat-${bird}-${process.pid}.png`) : source;
     if (style === 'flat') {
-      execFileSync('magick', [source, '-alpha', 'set', '-bordercolor', 'white', '-border', '2', '-fill', 'none', '-fuzz', '10%', '-draw', 'color 0,0 floodfill', '-shave', '2x2', '-trim', '+repage', '-gravity', 'center', '-background', 'none', '-extent', '%[fx:max(w,h)*1.16]x%[fx:max(w,h)*1.16]', '-resize', '1024x1024', prepared]);
-      const svg = join(ROOT, 'public/avatars/birds-svg', `${bird}.svg`);
+      // The bird stays on its plain white background (ADR-0271): 136 of the
+      // 300 have white plumage touching it (bald eagle, swans, penguins), so a
+      // flood fill that made the background transparent also cut into the bird.
+      // The white is trimmed away only to centre the bird with even padding;
+      // every place that shows a face crops it to a circle or rounded tile.
+      execFileSync('magick', [source, '-bordercolor', 'white', '-border', '2', '-fuzz', '10%', '-trim', '+repage', '-gravity', 'center', '-background', 'white', '-extent', '%[fx:max(w,h)*1.16]x%[fx:max(w,h)*1.16]', '-resize', '1024x1024', prepared]);
+      const svg = join(ROOT, 'assets/birds-svg', `${bird}.svg`);
       mkdirSync(join(svg, '..'), { recursive: true });
       execFileSync(process.env.VTRACER_PYTHON || 'python3', ['-c', `import vtracer,sys; vtracer.convert_image_to_svg_py(sys.argv[1], sys.argv[2], colormode='color', hierarchical='stacked', mode='spline', filter_speckle=6, color_precision=6, layer_difference=24, corner_threshold=60, length_threshold=4.0, splice_threshold=45, path_precision=2)`, prepared, svg]);
       total += statSync(svg).size;
@@ -193,7 +197,7 @@ async function faces(all = false) {
       // A painted flat bird (ADR-0271) owns its files; the drawn face is only the fallback.
       if (INSTALLED_ART.flat?.includes(bird)) continue;
       const png = join(work, `${bird}.png`);
-      await page.setContent(`<html><body style="margin:0;background:transparent"><div style="width:1024px;height:1024px;padding:82px;box-sizing:border-box">${birdFaceSvg(bird).replace('class="size-full"', 'width="860" height="860"')}</div></body></html>`);
+      await page.setContent(`<html><body style="margin:0;background:transparent"><div style="width:1024px;height:1024px;padding:82px;box-sizing:border-box">${birdFaceSvg(bird, { drawn: true }).replace('class="size-full"', 'width="860" height="860"')}</div></body></html>`);
       await page.screenshot({ path: png, omitBackground: true, clip: { x: 0, y: 0, width: 1024, height: 1024 } });
       for (const size of [512, 256]) {
         const target = served('flat', bird, size);

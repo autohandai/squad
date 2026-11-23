@@ -15,7 +15,7 @@ import {
   blobForMember,
   blobSvg,
 } from "../src/lib/blob-avatar.js";
-import { BIRDS, BIRD_IDS, INSTALLED_ART, birdById, birdForMember, birdFromAvatar, searchBirds, untakenBird } from "../src/lib/bird-cast.js";
+import { BIRDS, BIRD_IDS, INSTALLED_ART, birdById, birdForMember, birdFromAvatar, searchBirds, untakenBird, paintedAvatarSrc } from "../src/lib/bird-cast.js";
 import { COMPOSED_BIRDS } from "../src/lib/bird-species.js";
 import { createHash } from "node:crypto";
 import { AVATAR_STYLES, BIRD_FACE_IDS, DEFAULT_AVATAR_STYLE, birdFaceSvg } from "../src/lib/bird-faces.js";
@@ -143,13 +143,13 @@ assert.equal(birdFromAvatar("/avatars/nz-riso-set-1-01.webp"), "");
 assert.deepEqual([...BIRD_FACE_IDS].sort(), [...BIRD_IDS].sort(), "every cast bird has a shapeless face");
 for (const bird of BIRD_IDS) {
   assert.ok(existsSync(`public/avatars/birds/${bird}.webp`), `the default art for ${bird} is served`);
-  const svg = birdFaceSvg(bird);
+  const svg = birdFaceSvg(bird, { drawn: true });
   assert.ok(svg.startsWith("<svg") && svg.endsWith("</svg>"), `${bird} is not an svg`);
   assert.ok(svg.includes('fill-rule="evenodd"'), `${bird} must punch its eyes out`);
   assert.ok(svg.length < 1600, `${bird} face is ${svg.length} bytes`);
   assert.ok(!svg.includes("NaN") && !svg.includes("undefined"), `${bird} face has a broken number`);
 }
-assert.equal(new Set(BIRD_IDS.map((bird) => birdFaceSvg(bird))).size, BIRD_IDS.length, "every bird has its own face");
+assert.equal(new Set(BIRD_IDS.map((bird) => birdFaceSvg(bird, { drawn: true }))).size, BIRD_IDS.length, "every bird has its own face");
 
 // Ember shows clay only for birds whose clay file is installed: Radix drops an
 // image that 404s, so pointing at missing art would turn a bird into an initial.
@@ -173,7 +173,7 @@ assert.deepEqual(BIRDS.filter(bird => bird.region === "nz").map(bird => bird.id)
 assert.ok(BIRD_IDS.every(id => /^[a-z]+$/.test(id)), "bird ids are lowercase letters (birdFromAvatar reads them from the URL)");
 assert.equal(new Set(BIRD_IDS).size, 300, "bird ids are unique");
 for (const id of BIRD_IDS) assert.equal(birdFromAvatar(`/avatars/birds/${id}.webp`), id, `${id} round-trips through its URL`);
-assert.equal(createHash("sha256").update(BIRD_IDS.slice(0, 26).map(id => birdFaceSvg(id)).join("")).digest("hex"), "4cd1225793251d32a69a04d768cf563062a45a01d08a9eec0dcb0d2f37f0cfb9", "the 26 drawn faces are byte-identical to ADR-0241's");
+assert.equal(createHash("sha256").update(BIRD_IDS.slice(0, 26).map(id => birdFaceSvg(id, { drawn: true })).join("")).digest("hex"), "4cd1225793251d32a69a04d768cf563062a45a01d08a9eec0dcb0d2f37f0cfb9", "the 26 drawn faces are byte-identical to ADR-0241's");
 assert.deepEqual(searchBirds("tui").map(bird => bird.id), ["tui"]);
 assert.ok(searchBirds("owl").every(bird => !["peafowl", "guineafowl"].includes(bird.id)) && searchBirds("owl").some(bird => bird.id === "barnowl"), "search matches the start of a word");
 assert.ok(searchBirds("silvereye").some(bird => bird.id === "silvereye") && searchBirds("kingfisher").some(bird => bird.id === "kotare"), "search knows English names for Māori and Portuguese labels");
@@ -302,12 +302,21 @@ console.log(`check-skins: ok (${SKINS.length} skins, ${BLOB_SHAPES.length * BLOB
 assert.deepEqual(AVATAR_STYLES.map(style => style.id), ["flat", "3d", "clay"]);
 assert.equal(DEFAULT_AVATAR_STYLE, "flat");
 for (const bird of BIRD_IDS) {
-  const flat = birdFaceSvg(bird);
-  assert.equal(birdFaceSvg(bird, { style: "flat" }), flat, "flat is the default drawing");
+  const flat = birdFaceSvg(bird, { drawn: true });
+  assert.equal(birdFaceSvg(bird, { style: "flat", drawn: true }), flat, "flat is the default drawing");
   for (const style of ["3d", "clay"]) {
-    const styled = birdFaceSvg(bird, { style });
+    const styled = birdFaceSvg(bird, { style, drawn: true });
     assert.ok(styled.includes(`filter="url(#squad-bird-${style})"`) && styled.includes(`<filter id="squad-bird-${style}"`), `${bird} ${style} carries its filter`);
     for (const path of flat.match(/<path [^>]*>/g)) assert.ok(styled.includes(path), `${bird} ${style} keeps the flat face's shapes`);
+  }
+}
+// Painted pictures (ADR-0271): a face shows the installed picture for its
+// style, and the drawn face (with the style's filter) for a bird without one.
+for (const style of ["flat", "3d", "clay"]) {
+  for (const bird of BIRD_IDS) {
+    const face = birdFaceSvg(bird, { style });
+    if (INSTALLED_ART[style].includes(bird)) assert.ok(face.includes(`<image href="${paintedAvatarSrc(bird, style, 256)}"`), `${bird} ${style} shows its painted picture`);
+    else assert.ok(!face.includes("<image"), `${bird} ${style} keeps its drawn face`);
   }
 }
 console.log(`check-skins: avatar styles ok (${AVATAR_STYLES.length} styles x ${BIRD_IDS.length} birds)`);
