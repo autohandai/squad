@@ -92,10 +92,14 @@ iPhone read that folder as the flat face.
 
 ## Consequences
 
-- Painted 3D and clay exist for the 26 named birds only: the New Zealand,
-  Brazilian and American cast. The other 274 still show their drawn face with
-  the style's filter. Painting them means about 550 more generations, roughly
-  six hours on the bridge, and they are not done yet.
+- 3D covers all 300 birds since 23 Nov evening (10 MB of WebP; reviewed on
+  three contact sheets). The 274 composed birds are described from their
+  `COMPOSED_BIRDS` colours with the kiwi and tucano masters of the same style as
+  references. Clay is still being generated; birds without a clay picture show
+  the drawn face with the clay filter until it is installed.
+- During that run three image requests hung for 3.5 hours although each ran
+  under `timeout 600`. A watchdog now kills any request older than 12 minutes,
+  and the missed birds are regenerated in a second pass.
 - Flat faces are white discs on every tile. The old drawn faces let the eyes
   show the tile colour; in dark mode the flat birds now read as light
   stickers.
