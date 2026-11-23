@@ -4,7 +4,9 @@ import { Square, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import { bridgeVoiceSettings, getPageReader } from "@/lib/read-aloud";
+import { getPageReader } from "@/lib/read-aloud";
+import { getKaleVoice } from "@/lib/kale-voice";
+import { useMemberVoice } from "@/lib/member-voice-context";
 
 function finished(message) {
   return message?.status !== "loading" && message?.status !== "error" && message?.status !== "stopped";
@@ -15,12 +17,15 @@ function finished(message) {
  * starting this reply stops any other. Props:
  *   text     the reply as markdown; rewritten to the spoken register before it is read
  *   message  { id, status } for identity and for the auto-read transition
- *   api      the app's JSON helper, used once a minute to ask whether the bridge holds an ElevenLabs key
+ *   memberId whose reply it is: its reading voice comes from the squad's voices (ADR-0276)
+ *   voice    an explicit voice instead (Settings samples)
  *   auto     the member's "Read replies aloud" switch: a reply this component saw
  *            arrive is read when it lands; replies already on screen are not
  */
-export function ReadAloudButton({ text = "", message, api, auto = false, lang, className, compact = false, copy = {} }) {
+export function ReadAloudButton({ text = "", message, memberId = "", voice: explicitVoice = "", auto = false, lang, className, compact = false, copy = {} }) {
   const reader = getPageReader();
+  const memberVoice = useMemberVoice(memberId);
+  const voice = explicitVoice || memberVoice;
   const [state, setState] = useState(() => reader.snapshot());
   const requested = useRef(false);
   const sawLoading = useRef(message?.status === "loading");
@@ -31,11 +36,14 @@ export function ReadAloudButton({ text = "", message, api, auto = false, lang, c
     setState(next);
   }), [reader, message?.id]);
 
-  async function speak() {
+  function speak() {
     requested.current = true;
-    const settings = await bridgeVoiceSettings(api);
-    reader.speak({ id: message?.id || "", text, provider: settings?.ready ? "bridge" : "browser", lang: lang || globalThis.navigator?.language || "en-US" });
+    reader.speak({ id: message?.id || "", text, voice, lang: lang || globalThis.navigator?.language || "en-US" });
   }
+
+  // A member that reads its replies aloud loads the model while the reply is
+  // being written, so the first sentence does not wait for it (ADR-0276).
+  useEffect(() => { if (auto && voice) getKaleVoice().warm(voice); }, [auto, voice]);
 
   useEffect(() => {
     if (message?.status === "loading") {
@@ -44,7 +52,7 @@ export function ReadAloudButton({ text = "", message, api, auto = false, lang, c
     }
     if (auto && sawLoading.current && finished(message) && String(text || "").trim()) {
       sawLoading.current = false;
-      void speak();
+      speak();
     }
     // Only the status transition matters; `speak` reads the latest text when it runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -68,12 +76,11 @@ export function ReadAloudButton({ text = "", message, api, auto = false, lang, c
         title={label}
         aria-pressed={speaking}
         className={cn("rounded-md text-muted-foreground hover:text-foreground", (speaking || loading) && "text-primary hover:text-primary", !compact && !mine && "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100")}
-        onClick={() => { if (mine) { requested.current = false; reader.stop(); } else void speak(); }}
+        onClick={() => { if (mine) { requested.current = false; reader.stop(); } else speak(); }}
         data-read-aloud={loading ? "loading" : speaking ? "speaking" : "idle"}
       >
         {loading ? <Spinner className="size-3" /> : speaking ? <Square className="size-2.5 fill-current" /> : <Volume2 className="size-3.5" />}
       </Button>
-      {speaking && state.provider === "bridge" ? <span className="text-[11px] text-muted-foreground">ElevenLabs</span> : null}
       {error ? <span className="min-w-0 truncate text-xs text-muted-foreground" role="status" title={error}>{error}</span> : null}
     </span>
   );

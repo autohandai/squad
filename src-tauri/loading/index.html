@@ -5,94 +5,85 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Autohand Squad</title>
 <style>
-  /* This is the screen you actually see while the app starts. Tauri serves it
-     as the window's frontend while the Rust bootstrap runs on a worker
-     thread, so it is a standalone page: its mark and its typeface sit beside
-     it rather than coming from the app bundle.
+  /* This is the screen you see while the app starts. Tauri serves it as the
+     window's frontend while the Rust bootstrap runs on a worker thread, so it
+     is a standalone page: its mark, birds and typeface sit beside it.
 
-     It is built to match the React start-up screen that follows it, so the
-     handover costs no visible movement. Same background, same mark size, same
-     column, same row rhythm. Only the words change, which is honest, because
-     at that point a different program is reporting. */
+     It is the app's own boot screen (index.html #boot, ADR-0245), drawn here
+     first (ADR-0276): the same background, the mark at 56 px with the liquid
+     ripple of the phone's launch, the name, and the same three birds landing
+     on their perch. The owner found the old checklist page "out of place"
+     next to the screen that follows; now the handover changes only the line
+     of text under the birds. */
   @font-face {
     font-family: "Autohand Sans";
     src: url("assets/AutohandSans-Variable.woff2") format("woff2");
     font-weight: 400 700;
     font-display: block;
   }
-  :root {
-    color-scheme: light dark;
-    --bg: #ffffff;
-    --fg: #171717;
-    --muted: #737373;
-    --line: #dedede;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #000000; --fg: #faf9f5; --muted: #8a8a8a; --line: #242424; }
-  }
+  :root { color-scheme: light dark; --bg: #ffffff; --fg: #171717; --muted: #737373; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0a0a0a; --fg: #fafafa; --muted: #8a8a8a; } }
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); }
-  body {
-    font: 15px/1.6 "Autohand Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
-  main { min-height: 100%; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
-  .column { width: min(20rem, 100%); animation: enter 220ms cubic-bezier(0.4, 0, 0.2, 1) both; }
-  @keyframes enter { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
-  /* "dark" and "light" name the background the mark is drawn for, matching
-     BRAND_MARKS in the app, so the pairing is the same in both places. */
-  .mark { width: 56px; height: 56px; display: block; object-fit: contain; }
+  body { font: 15px/1.6 "Autohand Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  main { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; box-sizing: border-box; text-align: center; }
+  .mark { width: 56px; height: 56px; display: block; object-fit: contain; filter: url(#liquid); }
   .mark.for-dark { display: none; }
   @media (prefers-color-scheme: dark) { .mark.for-dark { display: block; } .mark.for-light { display: none; } }
-  h1 { font-size: 15px; font-weight: 600; margin: 20px 0 2px; letter-spacing: -0.01em; }
-  .lede { margin: 0; font-size: 13px; color: var(--muted); }
-  ul { list-style: none; margin: 20px 0 0; padding: 0; border-top: 1px solid var(--line); }
-  li { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
-  /* Every row is pending, and says so, because nothing here knows otherwise
-     yet: the Rust bootstrap emits no progress to this page. A row that
-     animated as if it had passed would be inventing a fact. */
-  .dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; opacity: 0.45; flex: none; }
-  li:first-child .dot { opacity: 1; animation: pulse 2s ease-in-out infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
-  .tail { margin: 14px 0 0; font-size: 12px; color: var(--muted); min-height: 1.5em; }
+  .name { margin: 2px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  /* The squad on a hairline perch: they land, then a hop passes along them. */
+  .flock { position: relative; display: flex; gap: 10px; margin: 14px 0 6px; padding-bottom: 5px; }
+  .flock::after { content: ""; position: absolute; left: -6px; right: -6px; bottom: 4px; height: 1px; background: currentColor; opacity: 0.16; }
+  .flock img { display: block; width: 26px; height: 26px; border-radius: 50%; transform-origin: 50% 100%;
+    animation: land 520ms cubic-bezier(0.3, 1.35, 0.5, 1) both, hop 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+  .flock img:nth-child(1) { animation-delay: 0ms, 520ms; }
+  .flock img:nth-child(2) { animation-delay: 80ms, 650ms; }
+  .flock img:nth-child(3) { animation-delay: 160ms, 780ms; }
+  @keyframes land { 0% { opacity: 0; transform: translateY(-14px); } 100% { opacity: 1; transform: none; } }
+  @keyframes hop { 0%, 36%, 100% { transform: none; } 12% { transform: translateY(-7px) scale(0.97, 1.05); } 24% { transform: translateY(0) scale(1.06, 0.93); } }
+  .status { margin: 0; font-size: 12px; color: var(--muted); min-height: 1.6em; max-width: 22rem; }
   @media (prefers-reduced-motion: reduce) {
-    .column { animation: none; }
-    li:first-child .dot { animation: none; opacity: 1; }
+    .flock img { animation: none; }
+    .mark { filter: none; }
   }
 </style>
 </head>
 <body>
+<!-- The ripple: slow turbulence displacing the mark by a pixel or two. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="liquid" x="-10%" y="-10%" width="120%" height="120%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.035 0.05" numOctaves="2" seed="7" result="noise">
+      <animate attributeName="baseFrequency" dur="7s" values="0.035 0.05;0.05 0.035;0.035 0.05" repeatCount="indefinite" />
+    </feTurbulence>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.2" xChannelSelector="R" yChannelSelector="G" />
+  </filter>
+</svg>
 <main>
-  <div class="column">
-    <img class="mark for-dark" src="assets/mark-dark.png" alt="" aria-hidden="true" decoding="async" />
-    <img class="mark for-light" src="assets/mark-light.png" alt="" aria-hidden="true" decoding="async" />
-    <h1>Starting Autohand Squad</h1>
-    <p class="lede">Checking the local runtime.</p>
-    <ul>
-      <li><span class="dot" aria-hidden="true"></span>Preflight: state directory, bundled runtime, free ports</li>
-      <li><span class="dot" aria-hidden="true"></span>Starting the daemon and the web bridge</li>
-      <li><span class="dot" aria-hidden="true"></span>Waiting for the bridge to answer</li>
-    </ul>
-    <p class="tail" id="tail" role="status" aria-live="polite"></p>
+  <img class="mark for-dark" src="assets/mark-dark.png" alt="" aria-hidden="true" decoding="async" />
+  <img class="mark for-light" src="assets/mark-light.png" alt="" aria-hidden="true" decoding="async" />
+  <p class="name">Autohand Squad</p>
+  <div class="flock" aria-hidden="true">
+    <img src="assets/bird-eveninggrosbeak.webp" alt="" decoding="async" />
+    <img src="assets/bird-kiwi.webp" alt="" decoding="async" />
+    <img src="assets/bird-silvergull.webp" alt="" decoding="async" />
   </div>
+  <p class="status" id="status" role="status" aria-live="polite">Starting Squad…</p>
 </main>
 <script>
-  // The two things this screen actually knows: how long it has been waiting,
-  // and when the bootstrap gives up. A normal start answers in under a
-  // second, so nothing appears before 1.2s and a healthy launch never flashes
-  // a wait state. Whole seconds, no easing: a number that eases is harder to
-  // read and implies a smoothness this does not have.
+  // What this screen actually knows: how long it has been waiting, and when
+  // the bootstrap gives up. A normal start answers in under a second, so the
+  // count appears only after 1.2s and a healthy launch never flashes it.
   var CEILING = 30;
   var GATE = 1200;
   var PROMISE_AT = 24;
   var started = Date.now();
-  var tail = document.getElementById("tail");
+  var status = document.getElementById("status");
   setInterval(function () {
     var elapsed = Date.now() - started;
     if (elapsed < GATE) return;
     var seconds = Math.floor(elapsed / 1000);
-    tail.textContent = seconds >= PROMISE_AT
-      ? "Waiting " + seconds + "s. If nothing answers by " + CEILING + "s, Autohand Squad will say what it found in the logs."
-      : "Waiting " + seconds + "s. Stops at " + CEILING + ".";
+    status.textContent = seconds >= PROMISE_AT
+      ? "Still starting after " + seconds + "s. If nothing answers by " + CEILING + "s, Squad will say what it found in the logs."
+      : "Starting Squad… " + seconds + "s";
   }, 250);
 </script>
 </body>

@@ -58,7 +58,7 @@
       /* The theme chosen in Settings wins over the system's (set below). */
       #boot[data-mode="light"] { background: #ffffff; color: #171717; }
       #boot[data-mode="dark"] { background: #0a0a0a; color: #fafafa; }
-      #boot-mark { border-radius: 14px; }
+      #boot-mark { border-radius: 14px; filter: url(#boot-liquid); }
       #boot-name { margin: 2px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
       #boot-status { margin: 0; font-size: 12px; opacity: 0.62; }
       /* Three birds of the squad on a hairline perch (ADR-0245): they land,
@@ -70,6 +70,7 @@
       #boot-flock > span:nth-child(2) { animation-delay: 80ms, 650ms; }
       #boot-flock > span:nth-child(3) { animation-delay: 160ms, 780ms; }
       #boot-flock > span:first-child { animation-delay: 0ms, 520ms; }
+      #boot-flock > span { border-radius: 50%; overflow: hidden; }
       #boot-flock svg { display: block; width: 100%; height: 100%; }
       @keyframes boot-land {
         0% { opacity: 0; transform: translateY(-14px); }
@@ -82,6 +83,7 @@
       }
       @media (prefers-reduced-motion: reduce) {
         #boot-flock > span { animation: none; }
+        #boot-mark { filter: none; }
       }
     </style>
   </head>
@@ -89,6 +91,15 @@
     <!-- Shown before the bundle has parsed, so the window is never blank.
          Inline on purpose: anything imported would arrive too late to help.
          React removes it on mount. -->
+    <!-- The mark's liquid ripple, the same as the native start screen's (ADR-0276). -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <filter id="boot-liquid" x="-10%" y="-10%" width="120%" height="120%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.035 0.05" numOctaves="2" seed="7" result="noise">
+          <animate attributeName="baseFrequency" dur="7s" values="0.035 0.05;0.05 0.035;0.035 0.05" repeatCount="indefinite" />
+        </feTurbulence>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.2" xChannelSelector="R" yChannelSelector="G" />
+      </filter>
+    </svg>
     <div id="boot" data-boot>
       <img id="boot-mark" src="/brand/autohand-squad/autohand-squad-mark-dark.webp" alt="" width="56" height="56" decoding="async" />
       <p id="boot-name">Autohand Squad</p>

@@ -1,3 +1,4 @@
+import { memberVoices } from '../../src/lib/member-voice.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
@@ -195,6 +196,9 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
       if (command === 'snapshot') {
         z.object({}).strict().parse(parameters);
         const [{ members }, remotes, context, channels, status, settings] = await Promise.all([tools.list_members(), bridge.get('/api/remote/members'), bridge.get('/api/ownership/context'), bridge.get('/api/channels').catch(() => null), bridge.get('/api/status/snapshot').catch(() => null), bridge.get('/api/system/settings').catch(() => null)]);
+        // Each member's reading voice (contract 0.8, ADR-0276): the same voice
+        // the desktop reads it with, saved or given by the squad.
+        const voices = memberVoices(Object.values(channels?.agentChannelAccess || {}).filter(access => !access.removed && access.agent?.id).map(access => access.agent));
         // The avatar style the phone mirrors (contract 0.7, ADR-0272).
         const avatarStyle = ['flat', '3d', 'clay'].includes(settings?.avatarStyle) ? settings.avatarStyle : '';
         // The member's bird (ADR-0243), as the same /avatars/birds/<bird>.webp
@@ -222,7 +226,7 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
             return { id: row.id, name: row.name || row.id, role: row.role || '', presence: row.presence || 'unknown',
               harness: typeof row.harness === 'string' ? row.harness : row.harness?.id || '',
               executionMode: remote ? 'remoteComputer' : 'workspace', computerName: remote?.label || computerName,
-              workspace: remote?.workspace || row.lastWorkspace || '', ...(engines.get(row.id) ? { engine: engines.get(row.id) } : {}), ...(avatars.has(row.id) ? { avatar: avatars.get(row.id) } : {}), ...(lastTurns.get(row.id) ? { lastMessageAt: lastTurns.get(row.id) } : {}) };
+              workspace: remote?.workspace || row.lastWorkspace || '', ...(engines.get(row.id) ? { engine: engines.get(row.id) } : {}), ...(avatars.has(row.id) ? { avatar: avatars.get(row.id) } : {}), ...(voices.get(row.id) ? { voice: voices.get(row.id) } : {}), ...(lastTurns.get(row.id) ? { lastMessageAt: lastTurns.get(row.id) } : {}) };
           }), ...(channels ? { groups } : {}), ...(avatarStyle ? { appearance: { avatarStyle } } : {}) };
       }
       if (command === 'conversation') {

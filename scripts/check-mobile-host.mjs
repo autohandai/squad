@@ -44,6 +44,8 @@ try {
   assert.ok(snapshot.data.capabilities.includes('tasks'));
   assert.ok(snapshot.data.account.id && snapshot.data.account.email);
   assert.equal('token' in snapshot.data.account, false);
+  // Contract 0.8 (ADR-0276): every member carries the voice the desktop reads it with.
+  assert.ok(snapshot.data.members.length && snapshot.data.members.every((row) => /^[a-z0-9]{2,6}$/.test(row.voice || '')), `members carry voices: ${JSON.stringify(snapshot.data.members.map((row) => row.voice))}`);
   // Contract 0.7 (ADR-0272): the phone draws members in the computer's avatar style.
   assert.equal(snapshot.data.appearance?.avatarStyle, 'flat', 'the snapshot carries the default avatar style');
   assert.equal((await bridge.api('/api/system/settings', 'PUT', { avatarStyle: 'clay' })).success, true);

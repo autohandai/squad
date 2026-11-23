@@ -32,10 +32,24 @@ The router uses only explicit access: the request's, then the engine's.
 approvals, which ask before risky actions instead of refusing reads.
 An explicit plan choice still makes an Autohand fallback a dry run.
 
+### Correction, 24 Nov 2026
+
+The first fix dropped the restricted → plan mapping altogether. That also
+removed the read-only sandbox when a restricted Autohand member fails over to
+Codex or Claude, so a fallback would act without the restriction.
+`check-model-routing-bridge` caught it: "Fallback keeps the restricted access"
+failed because Codex no longer got `read-only`. The router now keeps the
+mapping for other engines, and only an *explicit* plan access (the request's
+or the engine's) turns an Autohand route into `--dry-run`. The Autohand
+engine reads only `dryRun`, not `access`, so a derived plan changes nothing
+there.
+
 ## Evidence
 
-- `scripts/check-model-routing.mjs` now asserts that a restricted Autohand
-  member's turn has `dryRun: false` and no derived access. It fails on the old
+- `scripts/check-model-routing.mjs` asserts that a restricted Autohand
+  member's turn has `dryRun: false` and that its fallback on another engine
+  still gets `access: "plan"`. `check-model-routing-bridge` passes again,
+  with Codex getting `read-only`. It fails on the old
   router ("a restricted member is not turned into a dry run") and passes on the
   new one, together with the existing read-only fallback case.
 

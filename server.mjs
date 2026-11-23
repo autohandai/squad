@@ -82,6 +82,7 @@ import { createModelCatalog } from "./server/harness/model-catalog.mjs";
 import { createFallbackRouter, routingFailure } from "./server/harness/fallback-router.mjs";
 import { normalizeModelRouting } from "./src/lib/model-routing.js";
 import { AUTO_RETRY_MS, admitChat, retryRun } from "./server/routes/queues.route.mjs";
+import { serveVoiceEngine } from "./server/routes/voice.route.mjs";
 import { assignMemberTask } from "./server/routes/work.route.mjs";
 import { personMessageArrived } from "./server/routes/agenda.route.mjs";
 import { buildRecall, collectRecallSources } from "./server/chats/recall.mjs";
@@ -9987,6 +9988,13 @@ server = createServer(async (req, res) => {
       stateDir: squadStateDir,
       startedAt: serverStartedAt,
     });
+    return;
+  }
+  // The reading voice's engine (ADR-0276): pinned, public model files and the
+  // page's worker. No user data, so no ownership header (a Worker cannot send
+  // one) and never the app's index.html fallback.
+  if (url.pathname.startsWith("/voice-engine/")) {
+    if (!(await serveVoiceEngine(req, res, url))) json(res, 405, { success: false, error: "method not allowed" });
     return;
   }
   if (url.pathname.startsWith("/api/")) {

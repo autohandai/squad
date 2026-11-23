@@ -1,12 +1,13 @@
-// Reading a member reply aloud (ADR-0101).
+// Reading a member reply aloud (ADR-0101, ADR-0276).
 //
-// One reader per page: starting a reply stops the one playing. Built-in voices
-// come from window.speechSynthesis; when the bridge holds an ElevenLabs key
-// the reader asks it for audio instead and falls back to the built-in voice
-// if that fails, saying why. Pure factory, so scripts/check-voice.mjs drives
-// it with a fake synthesiser and a fake audio element.
+// One reader per page: starting a reply stops the one playing. Replies are
+// read by kale-tts-1 on this computer, in the member's own voice; only when
+// that engine cannot start does the reader fall back to the browser's built-in
+// voice, saying why. (ElevenLabs is gone, ADR-0276.) Pure factory, so
+// scripts/check-voice.mjs drives it with a fake engine and a fake synthesiser.
 
 import { spokenText, spokenUtterances } from "./spoken-text.js";
+import { getKaleVoice } from "./kale-voice.js";
 
 /** Prefer a local voice for the page language: exact tag, then language prefix, then the default. */
 export function pickVoice(voices = [], lang = "en-US") {
@@ -32,41 +33,26 @@ function errorSentence(error) {
 }
 
 /**
- * createReader({ synthesis, Utterance, fetchAudio, createAudio, lang })
- *   speak({ id, text, provider, lang })  provider "bridge" uses fetchAudio(text) → { url, revoke }
+ * createReader({ kale, synthesis, Utterance, lang })
+ *   speak({ id, text, voice, lang })   kale reads in `voice` (a kale-tts-1 voice id); the built-in voice is the fallback
  *   stop()
- *   subscribe(listener)                  listener({ id, status, error, provider }); returns unsubscribe
- *   snapshot()                           the same shape, now
- *   supported                            true when a built-in voice or a bridge voice exists
+ *   subscribe(listener)                listener({ id, status, error, provider }); returns unsubscribe
+ *   snapshot()                         the same shape, now
+ *   supported                          true when kale or a built-in voice exists
  */
-export function createReader({ synthesis = null, Utterance = null, fetchAudio = null, createAudio = null, lang = "en-US", utterances = spokenUtterances } = {}) {
+export function createReader({ kale = null, synthesis = null, Utterance = null, lang = "en-US", utterances = spokenUtterances } = {}) {
   const listeners = new Set();
   let current = { id: "", status: "idle", error: "", provider: "" };
   let token = 0;
-  let audio = null;
-  let revoke = null;
 
   function emit(next) {
     current = { ...current, ...next };
     for (const listener of listeners) listener(current);
   }
 
-  function clearAudio() {
-    if (audio) {
-      try { audio.pause(); } catch { /* already stopped */ }
-      audio.onended = null;
-      audio.onerror = null;
-      audio = null;
-    }
-    if (revoke) {
-      try { revoke(); } catch { /* nothing to release */ }
-      revoke = null;
-    }
-  }
-
   function stop() {
     token += 1;
-    clearAudio();
+    kale?.stop();
     if (synthesis) {
       try { synthesis.cancel(); } catch { /* nothing playing */ }
     }
@@ -105,7 +91,7 @@ export function createReader({ synthesis = null, Utterance = null, fetchAudio = 
     }
   }
 
-  async function speak({ id = "", text = "", provider = "browser", lang: voiceLang = lang } = {}) {
+  async function speak({ id = "", text = "", voice = "", lang: voiceLang = lang } = {}) {
     stop();
     const myToken = token;
     const spoken = spokenText(text);
@@ -113,22 +99,18 @@ export function createReader({ synthesis = null, Utterance = null, fetchAudio = 
       emit({ id: "", status: "idle", error: "There is nothing to read in this reply.", provider: "" });
       return;
     }
-    if (provider === "bridge" && fetchAudio && createAudio) {
-      emit({ id, status: "loading", error: "", provider: "bridge" });
-      try {
-        const clip = await fetchAudio(spoken);
-        if (myToken !== token) { clip?.revoke?.(); return; }
-        audio = createAudio(clip.url);
-        revoke = clip.revoke || null;
-        audio.onended = () => { if (myToken === token) { clearAudio(); emit({ id: "", status: "idle", provider: "" }); } };
-        audio.onerror = () => { if (myToken === token) { clearAudio(); speakBuiltIn(id, spoken, voiceLang, myToken, "The ElevenLabs clip could not play, so the built-in voice is reading instead."); } };
-        emit({ id, status: "speaking", error: "", provider: "bridge" });
-        await audio.play();
-      } catch (error) {
-        if (myToken !== token) return;
-        clearAudio();
-        speakBuiltIn(id, spoken, voiceLang, myToken, `${errorSentence(error)} The built-in voice is reading instead.`);
-      }
+    if (kale?.supported) {
+      emit({ id, status: "loading", error: "", provider: "kale" });
+      kale.speak({
+        text: spoken,
+        voice,
+        onStart: () => { if (myToken === token) emit({ id, status: "speaking", error: "", provider: "kale" }); },
+        onEnd: () => { if (myToken === token) emit({ id: "", status: "idle", provider: "" }); },
+        onError: (message) => {
+          if (myToken !== token) return;
+          speakBuiltIn(id, spoken, voiceLang, myToken, `${errorSentence(`The Squad voice could not read this: ${message}`)} The built-in voice is reading instead.`);
+        },
+      });
       return;
     }
     speakBuiltIn(id, spoken, voiceLang, myToken);
@@ -142,67 +124,21 @@ export function createReader({ synthesis = null, Utterance = null, fetchAudio = 
       return () => listeners.delete(listener);
     },
     snapshot: () => current,
-    get supported() { return Boolean((synthesis && Utterance) || (fetchAudio && createAudio)); },
+    get supported() { return Boolean(kale?.supported || (synthesis && Utterance)); },
   };
-}
-
-/** Fetch an ElevenLabs clip from the bridge; the key never reaches the browser. */
-export async function fetchBridgeAudio(text, { fetchFn = globalThis.fetch } = {}) {
-  const response = await fetchFn("/api/voice/speak", {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "audio/mpeg" },
-    body: JSON.stringify({ text }),
-  });
-  if (!response.ok) {
-    let message = `The bridge voice failed (${response.status})`;
-    try {
-      const payload = await response.json();
-      if (payload?.error) message = payload.error;
-    } catch { /* not JSON */ }
-    throw new Error(message);
-  }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  return { url, revoke: () => URL.revokeObjectURL(url) };
 }
 
 let pageReader = null;
 
-/** The one reader for this page, built from the browser's own voices and the bridge. */
+/** The one reader for this page: kale-tts-1, with the browser's own voice as the fallback. */
 export function getPageReader() {
   if (pageReader) return pageReader;
   const scope = globalThis.window;
   pageReader = createReader({
+    kale: getKaleVoice(),
     synthesis: scope?.speechSynthesis || null,
     Utterance: scope?.SpeechSynthesisUtterance || null,
-    fetchAudio: typeof globalThis.fetch === "function" ? fetchBridgeAudio : null,
-    createAudio: typeof globalThis.Audio === "function" ? (url) => new Audio(url) : null,
     lang: scope?.navigator?.language || "en-US",
   });
   return pageReader;
-}
-
-const SETTINGS_TTL_MS = 60_000;
-let settingsCache = { at: 0, promise: null };
-
-/**
- * Whether the bridge holds an ElevenLabs key, cached for a minute so a click
- * on the speaker does not wait on a round trip every time. `api` is the app's
- * JSON helper; a failure counts as "not configured".
- */
-export function bridgeVoiceSettings(api, { now = Date.now } = {}) {
-  if (typeof api !== "function") return Promise.resolve(null);
-  const time = now();
-  if (settingsCache.promise && time - settingsCache.at < SETTINGS_TTL_MS) return settingsCache.promise;
-  settingsCache = {
-    at: time,
-    promise: Promise.resolve()
-      .then(() => api("/api/voice/settings"))
-      .catch(() => null),
-  };
-  return settingsCache.promise;
-}
-
-export function resetBridgeVoiceSettings() {
-  settingsCache = { at: 0, promise: null };
 }

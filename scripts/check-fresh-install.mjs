@@ -118,6 +118,9 @@ try {
   // The layout step comes first (ADR-0233); Continue keeps the saved layout.
   await until(() => browser.evaluate(`!!document.querySelector('[data-testid="onboarding-layout"]')`), 'onboarding layout step', 60000);
   await browser.click('Continue');
+  // Then the avatar style (ADR-0271); Continue keeps Flat.
+  await until(() => browser.evaluate(`!!document.querySelector('[data-testid=\"onboarding-avatar-style\"]')`), 'onboarding avatar step', 30000);
+  await browser.click('Continue');
   // Onboarding continues to the phone step (ADR-0230); Not now finishes into #general.
   await until(() => browser.evaluate(`[...document.querySelectorAll('button')].some(item=>item.textContent==='Not now')`), 'onboarding phone step', 60000);
   await browser.click('Not now');

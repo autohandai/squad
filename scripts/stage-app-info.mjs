@@ -183,7 +183,19 @@ export async function stageAppInfo({ rootDir, runtimeDir, nodeVersion }) {
   if (computer?.host) computerNotices.push({ ecosystem: 'Native capability', name: 'Autohand Computer Use permission host', version: computer.version,
     license: 'Apache-2.0', text: await notices(join(runtimeDir, 'vendor', 'computer-use', 'Autohand Computer Use.app', 'Contents', 'Resources')),
     repository: 'https://github.com/autohandai/computer-use', note: `Permission identity ${computer.host.bundleId}; source ${computer.host.sourceCommit}.` });
-  const thirdPartyLicenses = [...npm, ...rust, node, cli, ...fonts, ...computerNotices]
+  // The reading voice (ADR-0276): kale-tts-1 and what ships inside it.
+  const kaleDir = join(runtimeDir, 'vendor', 'kale-tts');
+  const kale = await json(join(kaleDir, 'BUILD_INFO.json'));
+  const voiceNotices = kale ? [
+    { ecosystem: 'Speech model', name: 'kale-tts-1 (nano, tiny)', version: kale.commit.slice(0, 12), license: 'Apache-2.0',
+      text: [await text(join(kaleDir, 'README.md')), await text(join(kaleDir, 'THIRD_PARTY_NOTICES.md'))].filter(Boolean).join('\n\n'),
+      repository: `https://huggingface.co/spaces/${kale.space}`, note: `Pinned to ${kale.space} at ${kale.commit}; every file checked against kale-tts.lock.json. Dataset CC BY 4.0; voices are synthetic.` },
+    { ecosystem: 'Speech model', name: 'onnxruntime-web', version: (await text(join(kaleDir, 'ort', 'VERSION'))).trim() || 'bundled', license: 'MIT',
+      text: await text(join(kaleDir, 'ort', 'LICENSE')), repository: 'https://github.com/microsoft/onnxruntime', note: 'Runs the voice model in the app window.' },
+    { ecosystem: 'Speech model', name: 'dizione', version: 'bundled', license: 'Apache-2.0',
+      text: await text(join(kaleDir, 'frontend', 'dizione', 'LICENSE')), repository: null, note: 'Text rules for numbers and dates in kale-tts-1\'s front end.' },
+  ] : [];
+  const thirdPartyLicenses = [...npm, ...rust, node, cli, ...fonts, ...computerNotices, ...voiceNotices]
     .sort((a, b) => a.ecosystem.localeCompare(b.ecosystem) || a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
   const manifest = { schemaVersion: 1, name: 'Autohand Squad', version: metadata.version, builtAt: new Date().toISOString(), ...readSourceIdentity(rootDir),
     repository: 'autohandai/squad', nodeVersion: selectedNodeVersion, cliVersion: cli.version,

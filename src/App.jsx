@@ -401,6 +401,9 @@ import { fallbackLabel, initialMemberExecution, normalizeModelRouting } from "@/
 import { ATTACHMENT_COUNT_LIMIT, attachmentOnlyPrompt, attachmentReferences } from "@/lib/attachments";
 import { ReadAloudButton } from "@/components/chat/ReadAloudButton";
 import { ReadAloudSetting } from "@/components/chat/ReadAloudSetting";
+import { MemberVoicesContext, useMemberVoice } from "@/lib/member-voice-context";
+import { cachedMemberVoices, voiceById } from "@/lib/member-voice";
+import { VoicePicker } from "@/components/members/VoicePicker";
 import { VoiceInputButton } from "@/components/chat/VoiceInputButton";
 import { VoiceSettings } from "@/components/settings/VoiceSettings";
 import { AgentTaskChecklist, AgentWorkUpdate } from "@/components/chat/AgentTaskChecklist";
@@ -7284,6 +7287,21 @@ function App() {
     openAppInfo("about");
   }, [route]);
 
+  // Members without a saved voice get the one the squad gives them, saved once
+  // so it stays theirs when others join or leave (ADR-0276).
+  const voicesSaved = useRef(new Set());
+  useEffect(() => {
+    if (!agents.length) return;
+    const voices = cachedMemberVoices(agents);
+    for (const agent of agents) {
+      if (!agent?.id || agent.removed || voiceById(agent.voice) || voicesSaved.current.has(agent.id) || !voices.get(agent.id)) continue;
+      voicesSaved.current.add(agent.id);
+      void updateAgent(agent.id, { voice: voices.get(agent.id) });
+    }
+    // updateAgent is stable enough for a once-per-member save.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agents]);
+
   function updateAgent(agentId, patch) {
     // A rename keeps the old name, so "@Max" still reaches the member now
     // called Robert in a DM or a channel (squad_message already did).
@@ -7299,7 +7317,7 @@ function App() {
         return { ...agent, ...patch };
       }));
     };
-    const accessChanged = ["permissions", "projects", "workspace", "name", "description", "instructions", "brainCard", "harness", "skills", "modelAssignment", "modelRouting", "role", "memory", "profileFiles", "avatar"].some(key => key in patch);
+    const accessChanged = ["permissions", "projects", "workspace", "name", "description", "instructions", "brainCard", "harness", "skills", "modelAssignment", "modelRouting", "role", "memory", "profileFiles", "avatar", "voice"].some(key => key in patch);
     if (!accessChanged) { publish(); return Promise.resolve(); }
     const previous = memberAccessWritesRef.current.get(agentId);
     const entry = { member: previous?.member, promise: null };
@@ -10206,7 +10224,7 @@ function App() {
     return (
       <AccountContext.Provider value={accountContextValue}>
       <SkinContext.Provider value={activeSkin}>
-      <AvatarStyleContext.Provider value={avatarStyle}>
+      <AvatarStyleContext.Provider value={avatarStyle}><MemberVoicesContext.Provider value={cachedMemberVoices(agents)}>
       <PresenceContext.Provider value={presenceContextValue}>
       <RemoteMembersContext.Provider value={remoteMembersContextValue}>
       <TooltipProvider>
@@ -10235,7 +10253,7 @@ function App() {
       </TooltipProvider>
       </RemoteMembersContext.Provider>
       </PresenceContext.Provider>
-      </AvatarStyleContext.Provider>
+      </MemberVoicesContext.Provider></AvatarStyleContext.Provider>
       </SkinContext.Provider>
       </AccountContext.Provider>
     );
@@ -10244,7 +10262,7 @@ function App() {
   return (
     <AccountContext.Provider value={accountContextValue}>
     <SkinContext.Provider value={activeSkin}>
-    <AvatarStyleContext.Provider value={avatarStyle}>
+    <AvatarStyleContext.Provider value={avatarStyle}><MemberVoicesContext.Provider value={cachedMemberVoices(agents)}>
     <AvatarChangeContext.Provider value={openAvatarPicker}>
     <LayoutContext.Provider value={layoutId}>
     <PresenceContext.Provider value={presenceContextValue}>
@@ -10955,7 +10973,7 @@ function App() {
     </PresenceContext.Provider>
     </LayoutContext.Provider>
     </AvatarChangeContext.Provider>
-    </AvatarStyleContext.Provider>
+    </MemberVoicesContext.Provider></AvatarStyleContext.Provider>
     </SkinContext.Provider>
     </AccountContext.Provider>
   );
@@ -11882,7 +11900,7 @@ function ChannelsPage({
                   const agentMessage = message.role === "agent" || message.agentId;
                   return (
                     <>
-                      {agentMessage ? <ReadAloudButton compact text={message.body} message={message} api={api} copy={copy} /> : null}
+                      {agentMessage ? <ReadAloudButton compact text={message.body} message={message} memberId={message.agentId || ""} copy={copy} /> : null}
                       <CopyButton text={message.role === "user" ? message.body || "" : withoutRecoveryNotices(message.body || "")} label="Copy message" />
                     </>
                   );
@@ -12885,6 +12903,8 @@ function channelActionMember(agent, workspace = agent.workspace) {
     // An uploaded picture stays on this device: "" tells the bridge the
     // member is not a cast bird, and the device's cache keeps the picture.
     avatar: birdFromAvatar(agent?.avatar) ? agent.avatar : "",
+    // The member's reading voice (ADR-0276) reaches the bridge, MCP and the phone.
+    ...(voiceById(agent?.voice) ? { voice: voiceById(agent.voice).id } : {}),
     squadProfile: buildAgentProfile(agent, workspace),
     channelPoliciesByWorkspace: Object.fromEntries(normalizeAgentProjects(agent.projects, agent.workspace).map(project => [project.path, resolveAgentPermissionsForWorkspace(agent, project.path).builtInPolicies.squad_create_channel || "ask"])),
   };
@@ -16341,7 +16361,7 @@ function AgentResponseMessage({ agent, message, replyAction, computerEvidence = 
           {!compact && message.effectiveModel ? <span className="hidden truncate sm:inline">· {replyModelLabel(message.effectiveModel, providerSummaryLabel)}</span> : null}
           {fallbackLabel(message.routing) ? <span className="truncate text-muted-foreground">· {fallbackLabel(message.routing, { model: false })}</span> : null}
           {message.status === "stopped" ? <span>· Stopped</span> : null}
-          {hasVisibleAnswer && !isError ? <ReadAloudButton text={view.answer} message={message} api={api} auto={Boolean(agent.readAloud)} compact={compact} copy={copy} /> : null}
+          {hasVisibleAnswer && !isError ? <ReadAloudButton text={view.answer} message={message} memberId={agent.id} auto={Boolean(agent.readAloud)} compact={compact} copy={copy} /> : null}
           {hasVisibleAnswer && !isError && !isLoading ? <CopyButton text={view.answer} label="Copy reply" className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" /> : null}
           {replyAction}
         </div>
@@ -21432,6 +21452,7 @@ function profilePatchFor(agent, edit) {
     instructions,
     brainCard: normalizeBrainCard(edit.brainCard === undefined ? agent?.brainCard : edit.brainCard, { ...agent, role, description, instructions, skills }),
     avatar: pick("avatar"),
+    voice: voiceById(pick("voice"))?.id || agent?.voice || "",
     skills,
     skillInstall: skillInstallFromEditedSkills(agent, skills),
     profileFiles,
@@ -21444,6 +21465,7 @@ function profilePatchFor(agent, edit) {
     instructions: nextAgent.instructions,
     brainCard: nextAgent.brainCard,
     avatar: nextAgent.avatar,
+    ...(nextAgent.voice ? { voice: nextAgent.voice } : {}),
     skills: nextAgent.skills,
     skillInstall: nextAgent.skillInstall,
     profileFiles: refreshedProfileFilesForAgent(nextAgent),
@@ -21452,14 +21474,16 @@ function profilePatchFor(agent, edit) {
 }
 
 function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
-  const [draft, setDraft] = useState(() => profileEditDraftFromAgent(agent));
+  // The member's voice as it reads now (ADR-0276): its saved one or the squad's default.
+  const currentVoice = useMemberVoice(agent?.id);
+  const [draft, setDraft] = useState(() => ({ ...profileEditDraftFromAgent(agent), voice: agent?.voice || currentVoice }));
   const [avatarError, setAvatarError] = useState("");
   const skillCount = parseDelimitedList(draft.skillsText).length;
   const isValid = Boolean(draft.name.trim());
 
   useEffect(() => {
     if (!open) return;
-    setDraft(profileEditDraftFromAgent(agent));
+    setDraft({ ...profileEditDraftFromAgent(agent), voice: agent?.voice || currentVoice });
     setAvatarError("");
   }, [agent, open]);
 
@@ -21490,6 +21514,7 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
       instructions: draft.instructions,
       brainCard: draft.brainCard,
       avatar: draft.avatar,
+      voice: draft.voice,
       skills: parseDelimitedList(draft.skillsText),
     }));
     onOpenChange(false);
@@ -21563,6 +21588,12 @@ function AgentProfileEditDialog({ agent, open, onOpenChange, onSave }) {
                   />
                 </Field>
               </div>
+
+              <Field>
+                <FieldLabel>Voice</FieldLabel>
+                <FieldDescription>How {draft.name || agent?.name || "this member"} sounds when replies are read aloud, here and on your iPhone.</FieldDescription>
+                <VoicePicker value={draft.voice} onChange={(voice) => updateDraft({ voice })} memberName={draft.name || agent?.name} />
+              </Field>
 
               <Field>
                 <FieldLabel>Bio</FieldLabel>
@@ -24995,7 +25026,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
 
         <ProfileHarnessSummary agent={agent} harnesses={harnesses} navigate={navigate} />
 
-        <ReadAloudSetting agent={agent} copy={copy} onChange={(checked) => updateAgent?.(agent.id, { readAloud: checked })} />
+        <ReadAloudSetting agent={agent} copy={copy} onChange={(checked) => updateAgent?.(agent.id, { readAloud: checked })} onVoiceChange={(voice) => updateAgent?.(agent.id, { voice, updatedAt: new Date().toISOString() })} />
 
         <BrainCardPanel agent={agent} onEdit={() => setProfileEditOpen(true)} />
 
@@ -26035,9 +26066,9 @@ function SettingsPage({
       <>
         <SettingsSectionHeader
           title={copy.voice || "Voice"}
-          description={copy.voiceDescription || "How replies sound when they are read aloud. The voices built into this computer work without any setup."}
+          description={copy.voiceDescription || "How replies sound when they are read aloud: each member in its own voice, made on this computer."}
         />
-        <VoiceSettings api={api} copy={copy} />
+        <VoiceSettings api={api} agents={agents} navigate={navigate} copy={copy} />
       </>
     ),
     vault: () => (

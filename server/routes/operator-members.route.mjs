@@ -4,6 +4,7 @@ import { isAbsolute, resolve, sep } from 'node:path';
 import { registryFor } from './remote.route.mjs';
 import { memberWithWorkspaces } from '../member-workspaces.mjs';
 import { MEMBER_PROFILE_FIELDS, memberProfileRevision, validateProfileAction } from '../../src/lib/member-shaping.js';
+import { KALE_VOICES, defaultVoiceFor, voiceById } from '../../src/lib/member-voice.js';
 import { BUILT_IN_TOOL_POLICY_GROUPS, builtInPoliciesForRank } from '../../src/lib/permission-policy.js';
 import { cleanMemoryText } from '../team/store.mjs';
 import { projectsWithFolder } from '../../src/lib/folder-access.js';
@@ -39,6 +40,7 @@ function publicProfile(ctx, memberId, agent) {
     role: agent.role || '', description: agent.description || '', instructions: agent.instructions || '',
     responsibilities: agent.description || '', memories: agent.memory || [],
     personality: agent.profileFiles?.find(file => file.section === 'persona')?.content || '',
+    voice: voiceById(agent.voice)?.name || '',
     harness: agent.harness || { id: 'autohand' }, modelRouting: normalizeModelRouting(agent.modelRouting),
     skills: agent.skills || [], projects: agent.projects || [], workspace: workspaceFor(ctx, memberId, agent),
     permissions: agent.permissions || {}, availableAbilities: { capabilities: CAPABILITIES, tools: TOOLS },
@@ -63,10 +65,19 @@ function skillSelections(value) {
   return [...new Set(value)];
 }
 
+/** A voice from the request (name or id), or a refusal that lists the ten (ADR-0276). */
+function chosenVoice(value) {
+  if (value === undefined || value === null || value === '') return '';
+  const voice = voiceById(value);
+  if (!voice) throw fail(`Unknown voice ${String(value).slice(0, 40)}. Choose one of ${KALE_VOICES.map(item => item.name).join(', ')}.`);
+  return voice.id;
+}
+
 async function createMember(ctx, input) {
-  keys(input, ['request_id', 'name', 'role', 'description', 'responsibilities', 'instructions', 'personality', 'skills', 'memories', 'workspace', 'engine']);
+  keys(input, ['request_id', 'name', 'role', 'description', 'responsibilities', 'instructions', 'personality', 'skills', 'memories', 'workspace', 'engine', 'voice']);
   if (typeof input.request_id !== 'string' || !input.request_id.trim() || input.request_id.length > 256) throw fail('Provide a stable request_id for member creation.');
-  const { request_id, workspace = '', engine, skills = [], memories: initialMemory = [], ...fields } = input;
+  const { request_id, workspace = '', engine, skills = [], memories: initialMemory = [], voice: requestedVoice, ...fields } = input;
+  const voice = chosenVoice(requestedVoice);
   const { patch } = validateProfileAction({ op: 'set', ...responsibilities(fields) });
   if (!patch.name || !patch.role) throw fail('A member needs a name and role.');
   if (typeof workspace !== 'string' || (engine !== undefined && (typeof engine !== 'string' || !engine.trim()))) throw fail('Workspace and engine must be text.');
@@ -89,6 +100,10 @@ async function createMember(ctx, input) {
     permissions: { permissionMode: 'restricted', modes: Object.fromEntries(CAPABILITIES.map(id => [id, ['file.read', 'search.text'].includes(id) ? 'allow' : 'block'])), builtInPolicies: builtInPoliciesForRank(1) },
   }, patch);
   agent.skills = skillSelections(skills);
+  // Every new member gets its own voice now (ADR-0276): the one asked for, or
+  // one that fits its name and role and no other member uses yet.
+  const taken = new Set(Object.values(state.agentChannelAccess || {}).filter(item => !item.removed).map(item => voiceById(item.agent?.voice)?.id).filter(Boolean));
+  agent.voice = voice || defaultVoiceFor({ id, name: agent.name, role: agent.role, description: agent.description, personality: fields.personality }, taken);
   await ctx.validateSkillSelections(agent, agent.skills);
   const receipt = await ctx.agentChannelActions.setAccess(id, { agent, creation: { requestHash }, profile: `Name: ${agent.name}\nRole: ${agent.role}\nResponsibilities: ${agent.description || ''}\nOperating instructions: ${agent.instructions || ''}\nBrain card fields for this run:\n` });
   const saved = await accessFor(ctx, id);
@@ -173,11 +188,12 @@ export async function handle(req, res, url, ctx) {
         next = { ...access.agent, projects: projects.filter((item, index) => roots[index] !== path && resolve(item.path) !== displayPath) };
       }
     } else if (!action && req.method === 'PATCH') {
-      keys(body, ['expectedRevision', 'name', 'role', 'description', 'responsibilities', 'instructions', 'personality', 'skills', 'memories', 'abilities']);
-      const { expectedRevision: _revision, abilities, skills, memories: memory, ...fields } = body;
-      if (!Object.keys(fields).length && abilities === undefined && skills === undefined && memory === undefined) throw fail('Choose a profile field to change.');
+      keys(body, ['expectedRevision', 'name', 'role', 'description', 'responsibilities', 'instructions', 'personality', 'skills', 'memories', 'abilities', 'voice']);
+      const { expectedRevision: _revision, abilities, skills, memories: memory, voice, ...fields } = body;
+      if (!Object.keys(fields).length && abilities === undefined && skills === undefined && memory === undefined && voice === undefined) throw fail('Choose a profile field to change.');
       const patch = Object.keys(fields).length ? validateProfileAction({ op: 'set', ...responsibilities(fields) }).patch : {};
       next = patchedMemberCopy(access.agent, patch);
+      if (voice !== undefined) next.voice = chosenVoice(voice) || access.agent.voice || '';
       profile = patchedProfileText(access.profile, patch);
       if (memory !== undefined) next.memory = memories(memory);
       if (abilities !== undefined) {

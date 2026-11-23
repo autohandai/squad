@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { chmod, copyFile, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { stageAppInfo } from './stage-app-info.mjs';
 import { stageProductTelemetry } from './stage-product-telemetry.mjs';
@@ -127,6 +127,7 @@ async function stageRuntime() {
   if (nodeProbe.status !== 0 || !/^v\d+\.\d+\.\d+$/.test(nodeProbe.stdout.trim())) throw new Error('The selected desktop Node runtime did not report its version.');
   const selectedNodeVersion = nodeProbe.stdout.trim();
   await writeFile(join(runtimeDir, 'DESKTOP_RUNTIME.json'), `${JSON.stringify({ stagedAt: new Date().toISOString(), triple, appVersion: appPackage.version, cliVersion: info.version, node: selectedNodeVersion }, null, 2)}\n`);
+  await stageKaleTts(rootDir, runtimeDir);
   await stageComputerUse({ rootDir, runtimeDir, hostPath: process.env.AUTOHAND_SQUAD_COMPUTER_USE_HOST || join(rootDir, 'vendor', 'computer-use', 'Autohand Computer Use.app') });
   await stageVoiceHelper({ rootDir, runtimeDir });
   await stageAppInfo({ rootDir, runtimeDir, nodeVersion: selectedNodeVersion });
@@ -187,3 +188,19 @@ const args = new Set(process.argv.slice(2));
 if (!args.has('--sidecars-only')) await stageRuntime();
 if (!args.has('--runtime-only')) await stageSidecars({ buildRust: !args.has('--no-cargo') });
 if (!existsSync(join(tauriDir, 'icons', 'icon.icns'))) console.warn('Icons are missing: run `npx tauri icon public/icon-1024.png -o src-tauri/icons`.');
+
+// The reading voice (ADR-0276): kale-tts-1, every file checked against
+// kale-tts.lock.json before it ships in runtime/vendor/kale-tts.
+async function stageKaleTts(rootDir, runtimeDir) {
+  const { KALE_FILES, kaleDir } = await import('./fetch-kale-tts.mjs');
+  const lock = JSON.parse(await readFile(join(rootDir, 'kale-tts.lock.json'), 'utf8'));
+  const source = kaleDir(rootDir);
+  const destination = join(runtimeDir, 'vendor', 'kale-tts');
+  for (const file of KALE_FILES) {
+    const bytes = await readFile(join(source, file)).catch(() => { throw new Error(`The reading voice is missing ${file} (${source}); run bun run voice:fetch`); });
+    if (createHash('sha256').update(bytes).digest('hex') !== lock.files?.[file]) throw new Error(`The reading voice file ${file} does not match kale-tts.lock.json; run bun run voice:fetch`);
+    await mkdir(dirname(join(destination, file)), { recursive: true });
+    await copyFile(join(source, file), join(destination, file));
+  }
+  await copyFile(join(source, 'BUILD_INFO.json'), join(destination, 'BUILD_INFO.json')).catch(() => {});
+}

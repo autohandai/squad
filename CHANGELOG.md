@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- Replies are read aloud by a natural voice made on your computer (kale-tts-1), and every member has its own voice: a woman's or man's voice that fits its name and role, chosen automatically and changeable in its profile, Edit profile or through MCP. Settings → Voice lists your squad's voices with a sample of each.
 - A shield beside a member's menu opens its permissions: how it acts (Ask me first, Play it safe, Act on its own), Manage the team, Connectors and Computer Use.
 - A failed reply can be retried from Execution › Runs, and Squad tries it once more on its own after ten minutes (Retry now or Don't retry).
 - Manage connectors opens a side panel over the conversation instead of a separate page.
@@ -28,6 +29,8 @@ list to the section for that version.
 
 ### Changed
 
+- The start screen matches the app: the mark with a gentle liquid ripple and three birds landing on their perch, instead of a list of start-up steps.
+- ElevenLabs is no longer used for read aloud, and a saved ElevenLabs key is deleted: each member now has its own voice, made on your computer.
 - Every member's bird has a new face: 300 flat mascots in one geometric style, in the app, the menu bar, the bird picker and the website marketplace.
 - The 3D and Clay avatar styles now show a painted picture for every one of the 300 birds.
 - A member's Messaging page is now Communications, right after Home and followed by Permissions. It holds the direct conversation and, on autohand.ai accounts, the member's email address.

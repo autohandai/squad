@@ -26,7 +26,7 @@ try{
   assert(events.some(row=>row.event==='fallback'&&row.data.to==='codex'));
   // ADR-0273: a restricted Autohand member keeps --restricted approvals and is
   // never forced into --dry-run, which refuses read_file and tool_search.
-  assert.equal(calls[0].dryRun,false,'a restricted member is not turned into a dry run');assert.equal(calls[0].access,'','a restricted member keeps the default access');
+  assert.equal(calls[0].dryRun,false,'a restricted member is not turned into a dry run on Autohand');assert.equal(calls[1].access,'plan','its fallback on another engine stays read-only');
   await router.reset(payload.agentId);calls.length=0;
   await router.execute(payload,{stream,execute:async turn=>{calls.push(turn);if(turn._routeTarget.harness.id==='autohand')throw Object.assign(new Error('The engine is overloaded'),{status:529});return{reply:'Recovered from overload'};}});
   assert.equal(calls.length,2,'overload switches immediately rather than repeating ten requests');

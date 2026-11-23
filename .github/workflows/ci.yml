@@ -68,6 +68,8 @@ jobs:
 
       - name: Fetch pinned Autohand Code CLI
         run: bun run cli:fetch
+      - name: Fetch the reading voice (kale-tts-1, ADR-0276)
+        run: bun run voice:fetch
 
       - name: Check Autohand SDK
         run: bun run check:sdk
@@ -263,6 +265,8 @@ jobs:
 
       - name: Fetch pinned Autohand Code CLI
         run: bun run cli:fetch
+      - name: Fetch the reading voice (kale-tts-1, ADR-0276)
+        run: bun run voice:fetch
 
       - name: Check Autohand SDK on native target
         run: bun run check:sdk
@@ -378,6 +382,8 @@ jobs:
 
       - name: Fetch pinned Autohand Code CLI
         run: bun run cli:fetch
+      - name: Fetch the reading voice (kale-tts-1, ADR-0276)
+        run: bun run voice:fetch
 
       - name: Prepare pinned Computer Use component
         run: bun run computer-use:fetch
@@ -506,6 +512,8 @@ jobs:
 
       - name: Fetch pinned Autohand Code CLI
         run: bun run cli:fetch
+      - name: Fetch the reading voice (kale-tts-1, ADR-0276)
+        run: bun run voice:fetch
 
       - name: Prepare pinned Computer Use component
         run: bun run computer-use:fetch

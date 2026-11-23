@@ -37,6 +37,7 @@
     "check:portable-backups": "node scripts/check-squad-portable.mjs",
     "cli:fetch": "node scripts/fetch-autohand-cli.mjs",
     "cli:fetch:all": "node scripts/fetch-autohand-cli.mjs --all",
+    "voice:fetch": "node scripts/fetch-kale-tts.mjs",
     "check:sdk": "node scripts/check-agent-sdk.mjs",
     "check:hooks": "node scripts/check-hooks.mjs",
     "check:engine-model:browser": "node scripts/check-engine-model-browser.mjs",

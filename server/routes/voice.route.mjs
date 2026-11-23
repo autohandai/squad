@@ -1,121 +1,81 @@
-// Voice route plug-in (docs/integration/voice.md, ADR-0101).
+// Voice route plug-in (ADR-0276; replaces ADR-0101's ElevenLabs route).
 //
-//   GET    /api/voice/settings   { provider, configured, ready, keyHint, voiceId, voiceName }
-//   PUT    /api/voice/settings   body: { key?, voiceId?, voiceName? }
-//                                 (missing key keeps the stored one; null clears it; a new key is verified first)
-//   DELETE /api/voice/settings   forgets the key and the voice
-//   GET    /api/voice/voices     { voices: [{ id, name, description }] } using the stored key
-//   POST   /api/voice/speak      body: { text } → audio/mpeg bytes
+//   GET /voice-engine/<file>     the vendored kale-tts-1 files (vendor/kale-tts) and
+//                                /voice-engine/squad-worker.mjs, the page's reading worker
+//   GET /api/voice/settings      { engine, model, available, voices: [{ id, name, gender, accent, description }] }
 //
-// The key lives in <squadStateDir>/voice.json with mode 0600 and is never
-// written to a response. `fetchFn` is injectable for scripts/check-voice.mjs.
+// Speech is made on this computer, in the page, from the bundled model; no text
+// leaves the machine and there is no key to keep. An ElevenLabs key saved by an
+// earlier version (<squadStateDir>/voice.json) is deleted on start.
 
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile, rm, stat } from "node:fs/promises";
+import { extname, join, normalize, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { listVoices, normalizeVoiceConfig, publicVoiceConfig, synthesize, verifyKey } from "../voice/elevenlabs.mjs";
+import { KALE_VOICES } from "../../src/lib/member-voice.js";
 
 export const name = "voice";
 
-export function createVoicePlugin({ fetchFn = (...args) => globalThis.fetch(...args), api } = {}) {
-  let ctx = null;
-  let configPath = "";
-  let stored = normalizeVoiceConfig({});
-  const options = () => (api ? { fetchFn, api } : { fetchFn });
+const here = fileURLToPath(new URL(".", import.meta.url));
+export const KALE_MODEL = "kale-tts-1-tiny";
+const TYPES = { ".mjs": "text/javascript; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".wasm": "application/wasm", ".onnx": "application/octet-stream", ".bin": "application/octet-stream", ".tsv": "text/tab-separated-values; charset=utf-8", ".md": "text/markdown; charset=utf-8" };
 
-  async function readConfig() {
-    try {
-      return normalizeVoiceConfig(JSON.parse(await readFile(configPath, "utf8")));
-    } catch {
-      return normalizeVoiceConfig({});
-    }
+export function kaleRoot() {
+  return process.env.AUTOHAND_SQUAD_KALE_DIR ? resolve(process.env.AUTOHAND_SQUAD_KALE_DIR) : resolve(here, "..", "..", "vendor", "kale-tts");
+}
+
+/** The file a /voice-engine/ path names, never outside the engine folder. */
+export function engineFile(pathname, root = kaleRoot()) {
+  let relative = "";
+  try { relative = decodeURIComponent(pathname.slice("/voice-engine/".length)); } catch { return ""; }
+  if (relative === "squad-worker.mjs") return resolve(here, "..", "voice", "kale-worker.mjs");
+  if (!relative || relative.includes("\0")) return "";
+  const file = normalize(join(root, relative));
+  return file.startsWith(root + sep) ? file : "";
+}
+
+/** GET/HEAD /voice-engine/<file>; false for any other method (server.mjs calls it before /api). */
+export async function serveVoiceEngine(req, res, url) {
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  const file = engineFile(url.pathname);
+  const info = file ? await stat(file).catch(() => null) : null;
+  if (!info?.isFile()) { res.writeHead(404, { "content-type": "text/plain" }); res.end("Not found"); return true; }
+  res.writeHead(200, {
+    "content-type": TYPES[extname(file)] || "application/octet-stream",
+    "content-length": info.size,
+    // Pinned files (kale-tts.lock.json): safe to keep for a day.
+    "cache-control": "private, max-age=86400",
+    "x-content-type-options": "nosniff",
+  });
+  if (req.method === "HEAD") { res.end(); return true; }
+  res.end(await readFile(file));
+  return true;
+}
+
+export function createVoicePlugin() {
+  let cleared = false;
+
+  async function forgetElevenLabs(ctx) {
+    if (cleared || !ctx?.squadStateDir) return;
+    cleared = true;
+    await rm(join(ctx.squadStateDir, "voice.json"), { force: true }).catch(() => {});
   }
 
-  async function writeConfig(config) {
-    await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
-    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await chmod(configPath, 0o600).catch(() => {});
-  }
-
-  async function init(context) {
-    ctx = context;
-    configPath = join(ctx.squadStateDir, "voice.json");
-    stored = await readConfig();
-  }
-
-  async function handle(req, res, url, context) {
+  async function handle(req, res, url, ctx) {
+    if (url.pathname.startsWith("/voice-engine/")) return serveVoiceEngine(req, res, url);
     if (!url.pathname.startsWith("/api/voice/")) return false;
-    if (!ctx) await init(context);
-    const json = context.json;
-    const path = url.pathname;
-    const method = req.method;
-
-    if (path === "/api/voice/settings" && method === "GET") {
-      json(res, 200, { success: true, data: publicVoiceConfig(stored) });
+    await forgetElevenLabs(ctx);
+    if (url.pathname === "/api/voice/settings" && req.method === "GET") {
+      const available = Boolean(await stat(join(kaleRoot(), "models", KALE_MODEL, "model.onnx")).catch(() => null));
+      ctx.json(res, 200, { success: true, data: { engine: "kale-tts-1", model: KALE_MODEL, available,
+        voices: KALE_VOICES.map(({ id, name, gender, accent, description }) => ({ id, name, gender, accent, description })) } });
       return true;
     }
-
-    if (path === "/api/voice/settings" && (method === "PUT" || method === "POST")) {
-      try {
-        const payload = await context.readBody(req);
-        const clearing = payload.key === null;
-        const incomingKey = clearing ? "" : String(payload.key || "").trim();
-        const next = normalizeVoiceConfig({
-          key: clearing ? "" : incomingKey || stored.key,
-          voiceId: payload.voiceId !== undefined ? payload.voiceId : clearing ? "" : stored.voiceId,
-          voiceName: payload.voiceName !== undefined ? payload.voiceName : clearing ? "" : stored.voiceName,
-        });
-        let voices = null;
-        if (incomingKey && incomingKey !== stored.key) {
-          ({ voices } = await verifyKey(incomingKey, options()));
-          // A new key starts from its own voice list; a stale voice id would speak with nothing.
-          if (next.voiceId && !voices.some((voice) => voice.id === next.voiceId)) {
-            next.voiceId = "";
-            next.voiceName = "";
-          }
-        }
-        if (next.voiceId && !next.key) throw new Error("Add an ElevenLabs key before choosing a voice.");
-        stored = next;
-        await writeConfig(stored);
-        json(res, 200, { success: true, data: { ...publicVoiceConfig(stored), ...(voices ? { voices } : {}) } });
-      } catch (error) {
-        json(res, 400, { success: false, error: error.message });
-      }
-      return true;
-    }
-
-    if (path === "/api/voice/settings" && method === "DELETE") {
-      stored = normalizeVoiceConfig({});
-      await writeConfig(stored);
-      json(res, 200, { success: true, data: publicVoiceConfig(stored) });
-      return true;
-    }
-
-    if (path === "/api/voice/voices" && method === "GET") {
-      try {
-        json(res, 200, { success: true, data: { voices: await listVoices(stored.key, options()) } });
-      } catch (error) {
-        json(res, stored.key ? 502 : 409, { success: false, error: error.message });
-      }
-      return true;
-    }
-
-    if (path === "/api/voice/speak" && method === "POST") {
-      try {
-        const payload = await context.readBody(req);
-        const clip = await synthesize(payload.text, stored, options());
-        res.writeHead(200, { "content-type": clip.mime, "content-length": clip.bytes.length, "cache-control": "no-store" });
-        res.end(clip.bytes);
-      } catch (error) {
-        json(res, Number(error.status) || 500, { success: false, error: error.message });
-      }
-      return true;
-    }
-
-    return false;
+    ctx.json(res, 404, { success: false, error: "Read aloud now uses the voice built into Squad; there is nothing else to configure." });
+    return true;
   }
 
-  return { init, handle, current: () => publicVoiceConfig(stored) };
+  return { name, init: forgetElevenLabs, handle };
 }
 
 const plugin = createVoicePlugin();
