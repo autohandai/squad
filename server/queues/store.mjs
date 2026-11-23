@@ -81,7 +81,9 @@ export class QueueStore {
       if (!memberId || !record || typeof record !== "object") continue;
       this.members.set(memberId, { paused: Boolean(record.paused), pauseReason: String(record.pauseReason || ""), updatedAt: String(record.updatedAt || "") });
     }
-    for (const memberId of new Set([...interrupted, ...[...this.items.values()].filter((item) => item.status === "queued").map((item) => item.memberId)])) {
+    // A waiting automatic retry (ADR-0274) is not work a person queued, so it
+    // does not pause the member after a restart.
+    for (const memberId of new Set([...interrupted, ...[...this.items.values()].filter((item) => item.status === "queued" && !item.automaticRetry).map((item) => item.memberId)])) {
       const member = this.members.get(memberId) || { paused: false, pauseReason: "", updatedAt: "" };
       if (!member.paused || member.pauseReason !== RESTART_PAUSE_REASON) {
         this.members.set(memberId, { paused: true, pauseReason: RESTART_PAUSE_REASON, updatedAt: this.at() }); changed = true;
@@ -156,6 +158,10 @@ export class QueueStore {
       attachments: attachmentReferences(payload.attachments), status: "queued",
       createdAt: at, updatedAt: at, startedAt: null, finishedAt: null, reply: "", error: "", progress: null,
       launch: privateLaunch(payload),
+      // A retry can wait (ADR-0274): it is not run, and does not hold the
+      // member, until this time.
+      ...(Number.isFinite(Date.parse(payload.notBefore)) ? { notBefore: new Date(payload.notBefore).toISOString() } : {}),
+      ...(payload.retryOfRunId ? { retryOfRunId: String(payload.retryOfRunId).slice(0, 120), automaticRetry: payload.automaticRetry === true } : {}),
     };
     this.items.set(item.id, item);
     try { await this.save(); } catch (error) { this.items.delete(item.id); throw error; }
@@ -222,8 +228,8 @@ export class QueueStore {
     return cleared;
   }
 
-  nextQueued(memberId) {
-    return this.itemsFor(memberId).find((item) => item.status === "queued") || null;
+  nextQueued(memberId, now = Date.now()) {
+    return this.itemsFor(memberId).find((item) => item.status === "queued" && !(Date.parse(item.notBefore) > now)) || null;
   }
 
   runningFor(memberId) {

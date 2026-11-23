@@ -60,7 +60,7 @@ import { appendFile, chmod, copyFile, mkdir, mkdtemp, open, readdir, readFile, r
 import { FolderReadStalled, isProtectedHomeFolder, parkedFolderReads, readFolderWithin, sharedScan } from "./server/workspace-scan.mjs";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { clientClosedReason, stopMessage } from "./server/harness/stop-reason.mjs";
+import { clientClosedReason, engineGaveUp, stopMessage } from "./server/harness/stop-reason.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import process from "node:process";
 import { listLocalSkillPackages, localSkillRootDescriptors, ensureSkillWorkspaceIdentity as ensurePhysicalSkillWorkspaceIdentity, readSkillWorkspaceIdentity as readPhysicalSkillWorkspaceIdentity, readSkillPackage, readSkillFrontmatter, copySkillPackage, writeSkillPackage } from "./server/skills/local.mjs";
@@ -81,7 +81,7 @@ import { proxyBinary } from "./server/remote/proxy.mjs";
 import { createModelCatalog } from "./server/harness/model-catalog.mjs";
 import { createFallbackRouter, routingFailure } from "./server/harness/fallback-router.mjs";
 import { normalizeModelRouting } from "./src/lib/model-routing.js";
-import { admitChat } from "./server/routes/queues.route.mjs";
+import { AUTO_RETRY_MS, admitChat, retryRun } from "./server/routes/queues.route.mjs";
 import { assignMemberTask } from "./server/routes/work.route.mjs";
 import { personMessageArrived } from "./server/routes/agenda.route.mjs";
 import { buildRecall, collectRecallSources } from "./server/chats/recall.mjs";
@@ -4737,7 +4737,10 @@ function runSummary(run) {
     // Interrupted by a restart (ADR-0123): Retry is offered while the launch
     // payload is still held and the run has not been retried yet.
     interrupted: run.interrupted === true,
-    retryable: run.status === "interrupted" && Boolean(run.launch) && !run.retryItemId,
+    // ADR-0274: a failed direct turn too, and a waiting automatic retry can be
+    // run now or cancelled.
+    retryable: ["interrupted", "failed"].includes(run.status) && Boolean(run.launch) && (!run.retryItemId || Boolean(run.autoRetryAt)),
+    autoRetryAt: run.autoRetryAt || "",
     retriedAt: run.retriedAt || "",
     retryItemId: run.retryItemId || "",
     channelActions: run.channelActions || [],
@@ -8447,8 +8450,10 @@ function finishChatRun(run, { result = null, error = null, aborted = false } = {
     // The chat result carries the context manifest (recall layer included);
     // the run shows the same one in the Execution panel.
     if (run.kind !== "run" && result.contextLayers && typeof result.contextLayers === "object") run.contextLayers = result.contextLayers;
-    run.status = result.declined ? "stopped" : "completed";
-    run.exitCode = result.declined ? null : 0;
+    const gaveUp = result.declined ? "" : engineGaveUp(result.reply);
+    run.status = result.declined ? "stopped" : gaveUp ? "failed" : "completed";
+    run.exitCode = result.declined ? null : gaveUp ? 1 : 0;
+    if (gaveUp) appendErrorOnce(run, gaveUp);
   } else {
     const details = error instanceof ChatRuntimeError ? error.details : null;
     if (details?.command) run.command = String(details.command);
@@ -8464,7 +8469,16 @@ function finishChatRun(run, { result = null, error = null, aborted = false } = {
   else run.finishedEventAt = finishedAt; // chat.finished already reaches the audit trail
   appendLog(run, "system", `${run.harness || "member"} reply ${run.status}`);
   run.abortController = null;
-  run.launch = null; // a finished turn is never retried from the Runs tab
+  // A failed direct turn keeps its launch so the Runs tab can retry it, and is
+  // tried once more on its own after ten minutes (ADR-0274). Queue, goal and
+  // routine turns have no launch, so a retry is never retried again.
+  if (run.status === "failed" && run.launch && run.prompt && !run.retryItemId) {
+    retryRun(run, { delayMs: AUTO_RETRY_MS, automatic: true, ctx: { emit: emitBridgeEvent, logEvent, SEVERITY } })
+      .then(() => runHistory.persist())
+      .catch((retryError) => logEvent(SEVERITY.INFO, `run ${run.id} not retried automatically: ${retryError?.message || retryError}`, { "event.name": "run.retry.skipped" }));
+  } else if (run.status !== "failed") {
+    run.launch = null; // a finished turn is never retried from the Runs tab
+  }
   runHistory.persist();
 }
 

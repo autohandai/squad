@@ -12,10 +12,14 @@ list to the section for that version.
 
 ### Added
 
+- A shield beside a member's menu opens its permissions: how it acts (Ask me first, Play it safe, Act on its own), Manage the team, Connectors and Computer Use.
+- A failed reply can be retried from Execution › Runs, and Squad tries it once more on its own after ten minutes (Retry now or Don't retry).
+- Manage connectors opens a side panel over the conversation instead of a separate page.
 - Onboarding asks which avatar style your squad uses (Flat, 3D or Clay) right after the layout, with a large preview of the birds in each style.
 
 ### Fixed
 
+- A reply where the engine only described steps without doing them is now shown as failed, so it can be retried.
 - A member set to ask before acting (restricted) with fallback engines can read files, search its tools and fetch pages again; it used to run in a dry-run mode that refused every read.
 - Quick Chat and the menu-bar portraits now use the avatar style you picked (Flat, 3D or Clay), and Quick Chat follows a change straight away.
 - Quick Chat closes itself 2 seconds after you click somewhere else.

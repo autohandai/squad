@@ -24,6 +24,12 @@ import { COLD_START_WINDOW_MS, LOW_DISK_BYTES, classifyColdStart, engineHome, fr
 import { INTERRUPTED_REASON, historyRecord, runFromRecord } from '../server/runs/history.mjs';
 import { bridgeReturned, bridgeStatusLine, presencePollInterval } from '../src/lib/bridge-status.js';
 import { isErrorReply } from '../src/lib/chief-of-staff.js';
+import { engineGaveUp } from '../server/harness/stop-reason.mjs';
+
+// ADR-0274: the CLI's narrate-only stop is a failure, an ordinary reply is not.
+assert.match(engineGaveUp('The model kept announcing steps instead of executing them through 2 tool-free recoveries. I stopped without marking the task complete so the narrated plan is not mistaken for a finished result.'), /stopped without doing the work/);
+assert.equal(engineGaveUp('Here is what we do for Noda: the model kept announcing steps instead of executing them is a known failure.'), '');
+assert.equal(engineGaveUp(''), '');
 
 // ---------- pure checks ----------
 const out = (over) => ({ events: [], rawStdout: '', rawStderr: '', exitCode: 1, error: 'x', stopped: false, timedOut: false, stalled: false, durationMs: 62, ...over });
@@ -304,7 +310,34 @@ if(!wait){finish();}else{
   await startBridge();
   const kept = (await runsOf('alex')).find((run) => run.id === interrupted.id);
   assert.equal(kept.status, 'interrupted'); assert.equal(kept.retryItemId, retried.data.item.id); assert.equal(kept.retryable, false);
-  console.log('Reliability bridge checks passed: cold start named and retried once, session ids kept, mid-turn crash listed as interrupted, Retry through the queue resumes the session.');
+
+  // 9. ADR-0274: a failed direct turn waits ten minutes and is tried once
+  //    more on its own, without pausing the member; Don't retry cancels it,
+  //    Retry now runs it at once.
+  const failedTurn = async (prompt) => {
+    await chat('alex', prompt).catch(() => null);
+    let found = null;
+    await until(async () => Boolean(found = (await runsOf('alex')).find((run) => run.title.startsWith(prompt) && run.status === 'failed' && run.autoRetryAt)), `${prompt} failed and scheduled a retry`);
+    return found;
+  };
+  const failed = await failedTurn('NOTSIGNEDIN retry-later');
+  const waits = Date.parse(failed.autoRetryAt) - Date.now();
+  assert.ok(waits > 9 * 60_000 && waits <= 10 * 60_000 + 5_000, `the retry waits ten minutes (${waits} ms)`);
+  assert.equal(failed.retryable, true, 'a failed turn offers Retry');
+  const waiting = (await api('/api/queues/alex')).data;
+  const pending = waiting.items.find((item) => item.retryOfRunId === failed.id);
+  assert.equal(pending?.status, 'queued'); assert.equal(pending.automaticRetry, true); assert.equal(pending.notBefore, failed.autoRetryAt);
+  assert.equal(waiting.paused, false, 'a waiting retry does not hold the member');
+  const startsBefore = (await starts('alex')).length;
+  await delay(1500);
+  assert.equal((await starts('alex')).length, startsBefore, 'the retry does not run before its time');
+  assert.equal((await api(`/api/runs/${failed.id}/retry/cancel`, {})).status, 200);
+  assert.equal((await api('/api/queues/alex')).data.items.find((item) => item.id === pending.id).status, 'cancelled', "Don't retry cancels the waiting retry");
+  const retryNow = await failedTurn('NOTSIGNEDIN retry-now');
+  assert.equal((await api(`/api/runs/${retryNow.id}/retry`, {})).status, 201, 'Retry now runs the waiting retry');
+  await until(async () => (await starts('alex')).some((start) => /^NOTSIGNEDIN retry-now/.test(start.prompt || '')) && (await starts('alex')).filter((start) => /^NOTSIGNEDIN retry-now/.test(start.prompt || '')).length >= 2, 'the retried turn started');
+  assert.equal((await api(`/api/runs/${retryNow.id}/retry`, {})).status, 409, 'a run is retried once');
+  console.log('Reliability bridge checks passed: cold start named and retried once, session ids kept, mid-turn crash listed as interrupted, Retry through the queue resumes the session, a failed turn retries itself after ten minutes, Retry now and Don\'t retry.');
 } finally {
   await stopBridge();
   await ownership?.close();

@@ -394,6 +394,7 @@ import { HarnessModelSelect } from "@/components/members/HarnessModelSelect";
 import { MemberFallbacks } from "@/components/members/MemberFallbacks";
 import { MemberConnectors } from "@/components/members/MemberConnectors";
 import { MemberCommunications, MemberQuickSettings } from "@/components/members/MemberQuickSettings";
+import { MemberPermissionsMenu } from "@/components/members/MemberPermissionsMenu";
 import { useEngineInUse } from "@/components/members/useEngineInUse";
 import { PairPhoneDialog } from "@/components/shell/PairPhoneDialog";
 import { fallbackLabel, initialMemberExecution, normalizeModelRouting } from "@/lib/model-routing";
@@ -15681,6 +15682,7 @@ function Conversation({
             <TooltipContent>{runningCount ? `${copy.runsPanel || "Runs"} · ${runningCount} running` : copy.runsPanel || "Runs"}</TooltipContent>
           </Tooltip>
           </> : null}
+          {agent && updateAgent ? <MemberPermissionsMenu agent={agent} api={api} updateAgent={updateAgent} navigate={navigate} /> : null}
           {menu}
         </div>
       </header>

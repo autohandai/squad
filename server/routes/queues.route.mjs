@@ -80,32 +80,70 @@ async function memberQueue(memberId) {
   return { ...queues[memberId], context: gauges[memberId] || null };
 }
 
+/** A failed chat turn waits this long before Squad tries it once more (ADR-0274). */
+export const AUTO_RETRY_MS = 10 * 60 * 1000;
+
 /**
- * `POST /api/runs/:id/retry` (ADR-0123): a chat turn the restart interrupted
- * is sent again, as a queued follow-up with the same prompt and launch
- * payload, so it runs when the member is free and in order with anything
- * else waiting. The run remembers the item it became; a second retry is 409.
+ * Send a chat turn again as a queued follow-up with the same prompt and launch
+ * payload, so it runs when the member is free and in order with anything else
+ * waiting (ADR-0123: a run a restart interrupted; ADR-0274: a failed run, now
+ * or after `delayMs`). The run remembers the item it became; a second retry is
+ * refused. Throws with `status` for the route.
  */
-async function retryInterruptedRun(req, res, runId, ctx) {
-  const run = ctx.runs?.get?.(runId);
-  if (!run) { ctx.json(res, 404, { success: false, error: "run not found" }); return true; }
-  if (run.status !== "interrupted") { ctx.json(res, 409, { success: false, error: "Only a run that a restart interrupted can be retried from here." }); return true; }
-  if (run.retryItemId) { ctx.json(res, 409, { success: false, error: "This run was already retried.", itemId: run.retryItemId }); return true; }
-  if (!run.launch || !run.prompt) { ctx.json(res, 409, { success: false, error: "This run cannot be retried from here: it was a goal, routine, queue or channel turn, which recover on their own." }); return true; }
-  const item = await store.enqueue({ ...run.launch, agentId: run.agentId, text: run.prompt, workspace: run.launch.workspace || run.workspace });
+export async function retryRun(run, { delayMs = 0, automatic = false, ctx = null } = {}) {
+  const refuse = (status, message) => { throw Object.assign(new Error(message), { status }); };
+  if (!store || !dispatcher) refuse(503, "Queues are not ready.");
+  if (!["interrupted", "failed"].includes(run.status)) refuse(409, "Only a run that failed or was interrupted can be retried.");
+  if (!run.launch || !run.prompt) refuse(409, "This run cannot be retried from here: it was a goal, routine, queue or channel turn, which recover on their own.");
+  const existing = run.retryItemId ? store.items.get(run.retryItemId) : null;
+  // A waiting automatic retry can be run now instead.
+  if (existing && existing.status === "queued" && existing.notBefore && !automatic) {
+    delete existing.notBefore;
+    existing.updatedAt = new Date().toISOString();
+    await store.save();
+    dispatcher.schedule();
+    run.autoRetryAt = "";
+    return { item: existing, runId: run.id, ...(await memberQueue(run.agentId)) };
+  }
+  if (run.retryItemId) refuse(409, "This run was already retried.");
+  const notBefore = delayMs > 0 ? new Date(Date.now() + delayMs).toISOString() : undefined;
+  const item = await store.enqueue({ ...run.launch, agentId: run.agentId, text: run.prompt, workspace: run.launch.workspace || run.workspace, retryOfRunId: run.id, automaticRetry: automatic, ...(notBefore ? { notBefore } : {}) });
   run.retryItemId = item.id;
   run.retriedAt = new Date().toISOString();
-  ctx.emit?.("queue.enqueued", { memberId: run.agentId, itemId: item.id, text: item.text.slice(0, 140), retryOfRunId: run.id });
+  run.autoRetryAt = notBefore || "";
+  ctx?.emit?.("queue.enqueued", { memberId: run.agentId, itemId: item.id, text: item.text.slice(0, 140), retryOfRunId: run.id, ...(notBefore ? { notBefore } : {}) });
   dispatcher.schedule();
+  ctx?.logEvent?.(ctx.SEVERITY?.INFO ?? 9, `run ${run.id} retried as queue item ${item.id}${notBefore ? ` at ${notBefore}` : ""}`, { "event.name": "run.retried", "autohand.run.id": run.id, "autohand.member.id": run.agentId, automatic });
   const queue = await memberQueue(run.agentId);
-  ctx.logEvent?.(ctx.SEVERITY?.INFO ?? 9, `run ${run.id} retried as queue item ${item.id}`, { "event.name": "run.retried", "autohand.run.id": run.id, "autohand.member.id": run.agentId });
-  ctx.json(res, 201, { success: true, data: { item, runId: run.id, paused: queue.paused, pauseReason: queue.pauseReason || "" } });
+  return { item, runId: run.id, paused: queue.paused, pauseReason: queue.pauseReason || "", notBefore: notBefore || "" };
+}
+
+/** Cancel a waiting automatic retry. */
+async function cancelRetry(run) {
+  const item = run.retryItemId ? store.items.get(run.retryItemId) : null;
+  if (!item || item.status !== "queued") throw Object.assign(new Error("There is no waiting retry to cancel."), { status: 409 });
+  await dispatcher.cancelItem(item.id);
+  run.retryItemId = "";
+  run.autoRetryAt = "";
+  return { runId: run.id };
+}
+
+async function retryRoute(req, res, runId, action, ctx) {
+  const run = ctx.runs?.get?.(runId);
+  if (!run) { ctx.json(res, 404, { success: false, error: "run not found" }); return true; }
+  try {
+    const data = action === "cancel" ? await cancelRetry(run) : await retryRun(run, { ctx });
+    ctx.persistRuns?.();
+    ctx.json(res, action === "cancel" ? 200 : 201, { success: true, data });
+  } catch (error) {
+    ctx.json(res, error.status || 400, { success: false, error: error.message, ...(run.retryItemId ? { itemId: run.retryItemId } : {}) });
+  }
   return true;
 }
 
 export async function handle(req, res, url, ctx) {
-  const retryMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/retry$/);
-  if (retryMatch && req.method === "POST") return retryInterruptedRun(req, res, decodeURIComponent(retryMatch[1]), ctx);
+  const retryMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/retry(?:\/(cancel))?$/);
+  if (retryMatch && req.method === "POST") return retryRoute(req, res, decodeURIComponent(retryMatch[1]), retryMatch[2] || "", ctx);
   if (!url.pathname.startsWith("/api/queues")) return false;
   if (!store) { ctx.json(res, 503, { success: false, error: "queues are not ready" }); return true; }
   try {

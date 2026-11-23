@@ -15,3 +15,14 @@ export function stopMessage(signal) {
     ? "chat ended because the page that asked for it was closed or reloaded"
     : "chat stopped by the user";
 }
+
+// The Autohand CLI (0.9.11) ends a turn whose model only narrated, with exit
+// code 0 and this as the reply ("…through 2 tool-free recoveries. I stopped
+// without marking the task complete…"). Nothing was done, so the run is a
+// failure, not a completed reply (ADR-0274).
+const GAVE_UP = /^\s*The model kept announcing steps instead of executing them\b/;
+
+/** Why the engine gave up on a turn it reported as finished, or "". */
+export function engineGaveUp(reply) {
+  return GAVE_UP.test(String(reply || "")) ? "The engine stopped without doing the work: the model kept describing steps instead of running them." : "";
+}

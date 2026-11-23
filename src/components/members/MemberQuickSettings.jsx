@@ -1,3 +1,4 @@
+import { MemberConnectorsSheet } from "@/components/members/MemberConnectorsSheet";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, Copy } from "lucide-react";
 
@@ -37,6 +38,7 @@ export function MemberQuickSettings({ agent, api, updateAgent, navigate, section
   const [connectors, setConnectors] = useState(null);
   const [computer, setComputer] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [connectorsOpen, setConnectorsOpen] = useState(false);
   const base = `/squad-members/${encodeURIComponent(agent.id)}`;
 
   const loadMail = useCallback(async () => {
@@ -215,7 +217,7 @@ export function MemberQuickSettings({ agent, api, updateAgent, navigate, section
         >
           <div className="flex items-center gap-2">
             <Switch checked={usesConnectors(agent.permissions)} onCheckedChange={(on) => updateAgent?.(agent.id, { permissions: withConnectors(agent.permissions, on), updatedAt: new Date().toISOString() })} disabled={!updateAgent} aria-label={`Let ${agent.name} use connectors`} data-testid="quick-connectors-switch" />
-            <Button type="button" variant="ghost" size="sm" onClick={() => navigate?.(`${base}/connector`)}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setConnectorsOpen(true)} data-testid="quick-connectors-manage">
               {connectors?.length ? "Manage" : "Connect"}<ArrowRight data-icon="inline-end" />
             </Button>
           </div>
@@ -229,6 +231,8 @@ export function MemberQuickSettings({ agent, api, updateAgent, navigate, section
           </Button>
         </Row>
       ) : null}
+
+      {sections.includes("connectors") ? <MemberConnectorsSheet agent={agent} api={api} navigate={navigate} updateAgent={updateAgent} open={connectorsOpen} onOpenChange={(open) => { setConnectorsOpen(open); if (!open) api("/api/connectors").then((data) => setConnectors((data?.connectors || []).filter((item) => item.enabled && !item.managed))).catch(() => {}); }} /> : null}
 
       {showMoreLink ? (
         <div className="py-3">

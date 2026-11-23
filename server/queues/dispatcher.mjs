@@ -184,7 +184,8 @@ export class QueueDispatcher {
             await this.store.transition(item, { status: "failed", finishedAt: this.at(), error: message });
             // A failure pauses the queue so a person reads the cause before the
             // next follow-up builds on it (ADR-0066's "pause for attention").
-            await this.store.setPaused(memberId, true, error?.reason === "break" ? BREAK_PAUSE_REASON : `The previous follow-up failed: ${message.slice(0, 200)}`);
+            // An automatic retry that fails again just stays failed (ADR-0274).
+            if (!item.automaticRetry || error?.reason === "break") await this.store.setPaused(memberId, true, error?.reason === "break" ? BREAK_PAUSE_REASON : `The previous follow-up failed: ${message.slice(0, 200)}`);
           }
         } else if (controller.signal.aborted && item.status === "cancelled" && !worker.keepQueueRunning && !this.store.memberState(memberId).paused) {
           await this.store.setPaused(memberId, true, STOP_PAUSE_REASON);

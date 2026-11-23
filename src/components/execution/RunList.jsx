@@ -70,20 +70,37 @@ function RunRow({ run, agent, linked, copy, locale, now, AgentAvatar, api, onHan
   const [stopping, setStopping] = useState(false);
   const [retry, setRetry] = useState({ busy: false, note: "" });
   const live = isLiveRun(run);
-  // A turn the restart cut short (ADR-0123): Retry sends the same request
-  // again through the member's queue; the row then says it was retried.
-  const retryable = run.status === "interrupted" && run.retryable !== false && !run.retryItemId && Boolean(api);
+  // A turn the restart cut short (ADR-0123) or that failed (ADR-0274): Retry
+  // sends the same request again through the member's queue. A failed turn is
+  // tried again on its own after ten minutes; until then the row says when,
+  // with Retry now and Don't retry.
+  const nowMs = (now instanceof Date ? now.getTime() : Number(now)) || Date.now();
+  const waitingUntil = run.autoRetryAt && Date.parse(run.autoRetryAt) > nowMs ? run.autoRetryAt : "";
+  const [cancelled, setCancelled] = useState(false);
+  const retryable = ["interrupted", "failed"].includes(run.status) && run.retryable === true && (!run.retryItemId || waitingUntil) && !cancelled && Boolean(api);
 
   async function retryRun() {
     if (!api || retry.busy) return;
     setRetry({ busy: true, note: "" });
     try {
       const data = await api(`/api/runs/${encodeURIComponent(run.id)}/retry`, { method: "POST" });
-      setRetry({ busy: false, note: data?.paused ? copy.retryQueuedPaused || "Queued. The member's queue is paused; resume it to run." : copy.retryQueued || "Queued; it runs when the member is free." });
+      setRetry({ busy: false, done: true, note: data?.paused ? copy.retryQueuedPaused || "Queued. The member's queue is paused; resume it to run." : copy.retryQueued || "Queued; it runs when the member is free." });
     } catch (error) {
       setRetry({ busy: false, note: error?.message || copy.retryFailed || "Could not retry." });
     }
   }
+  async function cancelRetry() {
+    if (!api || retry.busy) return;
+    setRetry({ busy: true, note: "" });
+    try {
+      await api(`/api/runs/${encodeURIComponent(run.id)}/retry/cancel`, { method: "POST" });
+      setCancelled(true);
+      setRetry({ busy: false, note: copy.retryCancelled || "It won't be tried again." });
+    } catch (error) {
+      setRetry({ busy: false, note: error?.message || "Could not cancel the retry." });
+    }
+  }
+  const retryAtLabel = waitingUntil ? new Date(waitingUntil).toLocaleTimeString(locale || undefined, { hour: "numeric", minute: "2-digit" }) : "";
   const statusWord = runStatusWord(run, copy);
   const meta = runMetaParts(run, agent, { copy, linked });
   const title = trimTitle(run.title) || copy.chatRun || "chat reply";
@@ -117,9 +134,14 @@ function RunRow({ run, agent, linked, copy, locale, now, AgentAvatar, api, onHan
               {copy.stop || "Stop"}
             </Button>
           ) : null}
-          {retryable ? (
-            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs text-muted-foreground" onClick={retryRun} disabled={retry.busy}>
-              {copy.retry || "Retry"}
+          {retryable && !retry.done ? (
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs text-muted-foreground" onClick={retryRun} disabled={retry.busy} data-testid="run-retry">
+              {waitingUntil ? copy.retryNow || "Retry now" : copy.retry || "Retry"}
+            </Button>
+          ) : null}
+          {retryable && waitingUntil && !retry.done ? (
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs text-muted-foreground" onClick={cancelRetry} disabled={retry.busy} data-testid="run-retry-cancel">
+              {copy.dontRetry || "Don't retry"}
             </Button>
           ) : null}
           {onHandoff ? (
@@ -145,6 +167,7 @@ function RunRow({ run, agent, linked, copy, locale, now, AgentAvatar, api, onHan
           {statusWord ? <span className={cn(run.status === "failed" ? "text-destructive" : "text-amber-700 dark:text-amber-300")}>{statusWord} · </span> : null}
           {meta.join(" · ")}
         </p>
+        {retryAtLabel && !retry.done && !cancelled ? <p className="mt-0.5 text-xs text-muted-foreground" data-testid="run-retry-at">{(copy.retryAt || "Tries again at {time}").replace("{time}", retryAtLabel)}</p> : null}
         {retry.note ? <p className="mt-0.5 text-xs text-muted-foreground" role="status">{retry.note}</p> : null}
         <RunActivity run={run} copy={copy} api={api} initialOpen={focused} diagnostics={diagnostics} />
       </div>

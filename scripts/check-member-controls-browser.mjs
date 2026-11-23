@@ -56,6 +56,30 @@ try {
   await browser.evaluate("document.querySelector('[data-testid=manage-team-switch]').click()");
   await until(async () => (await saved()).squad_create_member === 'ask', 'Manage the team off asks again');
 
+  // ADR-0274: Manage in the Permissions tab opens the member's connectors in a
+  // side sheet, without leaving the conversation.
+  await browser.evaluate("document.querySelector('[data-testid=quick-connectors-manage]').click()");
+  await until(() => browser.evaluate("!!document.querySelector('[data-testid=member-connectors-sheet] [data-testid=member-connectors]')"), 'Manage opens the connectors sheet', 20000);
+  await until(() => browser.evaluate("document.querySelectorAll('[data-testid=member-connectors-sheet] [data-testid=member-connector-suggestion]').length > 0"), 'the sheet offers connectors', 20000);
+  assert.ok(await browser.evaluate("location.pathname.startsWith('/conversations/new')"), 'the conversation stays open behind the sheet');
+  await shoot('connectors-sheet');
+  await browser.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+  await until(() => browser.evaluate("!document.querySelector('[data-testid=member-connectors-sheet]')"), 'Escape closes the connectors sheet', 10000);
+
+  // ADR-0274: the shield beside the member menu is a quick permissions menu.
+  await browser.navigate(`${bridge.origin}/conversations/new?member=${eva.id}`);
+  await until(() => browser.evaluate("!!document.querySelector('[data-testid=member-permissions-menu]')"), 'the permissions shield in the chat header', 30000);
+  await browser.evaluate("document.querySelector('[data-testid=member-permissions-menu]').click()");
+  await until(() => browser.evaluate("!!document.querySelector('[data-testid=member-permissions-popover] [data-testid=member-quick-settings]')"), 'the quick permissions menu opens', 20000);
+  const menuText = await browser.evaluate("document.querySelector('[data-testid=member-permissions-popover]').innerText");
+  for (const words of ['Ask me first', 'Play it safe', 'Act on its own', 'Manage the team', 'Connectors', 'Computer Use', 'All permissions for Eva']) assert.ok(menuText.includes(words), `the quick menu shows ${words}`);
+  await shoot('permissions-quick-menu');
+  const mode = async () => (await bridge.api('/api/channels')).data.agentChannelAccess[eva.id]?.agent?.permissions?.permissionMode;
+  await browser.evaluate("[...document.querySelectorAll('[data-testid=member-permissions-popover] [role=radio]')].find(item => item.innerText.startsWith('Play it safe')).click()");
+  await until(async () => (await mode()) === 'restricted', 'Play it safe reaches the bridge as restricted');
+  await browser.evaluate("[...document.querySelectorAll('[data-testid=member-permissions-popover] [role=radio]')].find(item => item.innerText.startsWith('Ask me first')).click()");
+  await until(async () => (await mode()) === 'interactive', 'Ask me first returns it to interactive');
+
   // Permissions page leads with Team and email.
   await browser.navigate(`${bridge.origin}/squad-members/${eva.id}/permissions`);
   await until(() => browser.evaluate("document.body.innerText.includes('Manage the team')"), 'Team on the Permissions page', 30000);
@@ -88,7 +112,7 @@ try {
   await until(() => browser.evaluate("!!document.querySelector('[role=dialog]')"), 'the install dialog opens', 20000);
   await shoot('connect-dialog');
   assert.deepEqual(browser.errors, []);
-  console.log('PASS member controls: To lists members with presence and channels and opens a channel; Permissions tab turns Manage the team on and off in the bridge; Team leads the Permissions page; Communications follows Home with no email row outside autohand.ai; member Connectors say whether the member may use them, the switch sets mcp.connectors, offer connectors, and Connect opens the install dialog.');
+  console.log('PASS member controls: To lists members with presence and channels and opens a channel; Permissions tab turns Manage the team on and off in the bridge; Team leads the Permissions page; Communications follows Home with no email row outside autohand.ai; member Connectors say whether the member may use them, the switch sets mcp.connectors, offer connectors, and Connect opens the install dialog; Manage opens a connectors sheet; the header shield is a quick permissions menu that sets how the member acts.');
 } finally {
   await browser?.close();
   await bridge.close();
