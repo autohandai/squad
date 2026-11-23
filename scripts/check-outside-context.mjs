@@ -29,7 +29,7 @@ try {
   const workspace = process.cwd();
   const agent = { id: 'outside-fixture', name: 'Chief of Staff', role: 'Chief of Staff', skills: [], workspace, projects: [{ path: workspace }], permissions: { permissionMode: 'unrestricted' } };
   const base = { agentId: agent.id, agent, workspace, profile: 'Profile' };
-  assert.equal((await bridge.api('/api/agents/provision', 'POST', base)).success, true);
+  { const provisioned = await bridge.api('/api/agents/provision', 'POST', base); assert.equal(provisioned.success, true, JSON.stringify(provisioned)); }
 
   // What the browser sends, built by the app's own function.
   const chat = [

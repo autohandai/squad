@@ -13,6 +13,13 @@ import { join } from 'node:path';
 import { startBridge, startBrowser, until } from './lib/reliability-browser.mjs';
 import { seedOwnedBrowserFixture } from './lib/owned-bridge-fixture.mjs';
 
+// On-device voice is macOS-only by design (server/voice/dictation.mjs; the
+// Linux case is covered by check-dictation.mjs), so CI's Linux runner skips.
+if (process.platform !== 'darwin') {
+  console.log('SKIP dictation browser check: on-device voice is macOS-only.');
+  process.exit(0);
+}
+
 const dir = await mkdtemp(join(tmpdir(), 'squad-voice-stand-in-'));
 const helper = join(dir, 'squad-voice');
 await writeFile(helper, `#!/usr/bin/env node
