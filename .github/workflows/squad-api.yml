@@ -88,6 +88,10 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       SQUAD_API_DATABASE_ID: ${{ vars.SQUAD_API_DATABASE_ID }}
+      # The marketplace's own database and agent email sending (ADR-0246,
+      # ADR-0267); without them a deploy drops those routes.
+      SQUAD_MARKETPLACE_DATABASE_ID: ${{ vars.SQUAD_MARKETPLACE_DATABASE_ID }}
+      SQUAD_EMAIL_SENDING: "1"
       SQUAD_RELEASE_PUBLISHER_TOKEN: ${{ secrets.SQUAD_RELEASE_PUBLISHER_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

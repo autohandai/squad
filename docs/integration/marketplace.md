@@ -282,7 +282,18 @@ Update (new version from the member as it is now) and Unpublish.
 - Hash mismatch, invalid template, removed listing, rate limit: one sentence,
   nothing created.
 
-## Production rollout (needs approval; nothing below has been run)
+## Production rollout
+
+Squad API steps 1–7 were run on 24 Nov 2026 at the owner's request ("release
+the site marketplace"): database `squad-marketplace` (c5df5ea5-d7a7-4bda-8eb4-98d7277f80eb,
+repository variable `SQUAD_MARKETPLACE_DATABASE_ID`), both migrations, the admin
+secret, deploy a2c68db (version 2fe2e5c2), 19 seed batches. Checked:
+`/v1/marketplace/categories` total 350, teams 21, per-category counts as seeded;
+`/featured` 8; `?q=payroll` finds Margot, Phoebe, Isidore; a `/template` returns
+its `contentHash`; the admin list answers with the token and an actor.
+The CI deploy job now passes the marketplace database and email sending.
+
+The steps, for a fresh account:
 
 Squad API (`services/squad-api`, Cloudflare account that owns `autohand.ai`):
 
