@@ -46,6 +46,14 @@ try {
   assert.equal('token' in snapshot.data.account, false);
   // Contract 0.8 (ADR-0276): every member carries the voice the desktop reads it with.
   assert.ok(snapshot.data.members.length && snapshot.data.members.every((row) => /^[a-z0-9]{2,6}$/.test(row.voice || '')), `members carry voices: ${JSON.stringify(snapshot.data.members.map((row) => row.voice))}`);
+  // Contract 0.9 (ADR-0276): the phone changes a member's voice through the computer.
+  assert.ok(snapshot.data.capabilities.includes('voices'), 'the host offers voice changes');
+  const voiced = snapshot.data.members[0];
+  const changed = await request('member.voice', { memberID: voiced.id, voice: 'Magnus' });
+  assert.equal(changed.data?.voice, 'h013f', JSON.stringify(changed));
+  assert.equal((await request('snapshot')).data.members.find((row) => row.id === voiced.id).voice, 'h013f', 'the snapshot carries the new voice');
+  const unknownVoice = await request('member.voice', { memberID: voiced.id, voice: 'Siri' });
+  assert.match(JSON.stringify(unknownVoice), /ten voices/, 'an unknown voice is refused');
   // Contract 0.7 (ADR-0272): the phone draws members in the computer's avatar style.
   assert.equal(snapshot.data.appearance?.avatarStyle, 'flat', 'the snapshot carries the default avatar style');
   assert.equal((await bridge.api('/api/system/settings', 'PUT', { avatarStyle: 'clay' })).success, true);

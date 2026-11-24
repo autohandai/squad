@@ -1,4 +1,4 @@
-import { memberVoices } from '../../src/lib/member-voice.js';
+import { memberVoices, voiceById } from '../../src/lib/member-voice.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
@@ -219,7 +219,7 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
             lastMessageAt: last?.createdAt || null, preview: last ? { author: last.role === 'user' ? 'You' : last.authorName || last.agentId || 'Member', text: clip(last.body, 140) } : null };
         }).sort((a, b) => String(b.lastMessageAt || b.createdAt).localeCompare(String(a.lastMessageAt || a.createdAt))).slice(0, 50);
         return { computer: { id: computerID, name: computerName, version, connectedAt: new Date().toISOString() },
-          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards', 'inbox'] : []), 'marketplace', 'feedback'],
+          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards', 'inbox'] : []), 'marketplace', 'feedback', 'voices'],
           ...(context.actor ? { account: { id: context.actor.id, name: context.actor.name || '', email: context.actor.email || '' } } : {}),
           members: members.map(row => {
             const remote = (Array.isArray(remotes) ? remotes : remotes?.members || []).find(remote => remote.memberId === row.id);
@@ -344,6 +344,18 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
       if (command === 'inbox' && cards) {
         z.object({}).strict().parse(parameters);
         return inbox();
+      }
+      // A member's reading voice, changed from the phone (contract 0.9, ADR-0276):
+      // the same revision-checked edit the desktop's Voice page makes.
+      if (command === 'member.voice') {
+        const { memberID: id, voice } = memberID.extend({ voice: z.string().min(2).max(20) }).strict().parse(parameters);
+        if (!voiceById(voice)) throw Error('Choose one of Squad\'s ten voices.');
+        const context = await bridge.get('/api/ownership/context');
+        if (!context?.canWrite) throw Error('This Squad is read-only here; change the voice on the computer.');
+        await member(id);
+        const profile = await bridge.get(`/api/control-plane/members/${encodeURIComponent(id)}`);
+        const saved = await bridge.patch(`/api/control-plane/members/${encodeURIComponent(id)}`, { voice: voiceById(voice).id, expectedRevision: profile.revision });
+        return { memberID: id, voice: voiceById(saved.voice)?.id || voiceById(voice).id };
       }
       if (command === 'feedback.send') {
         const input = z.object({ kind: z.enum(['bug', 'feedback']), summary: z.string().min(8).max(200), detail: z.string().max(8000).optional(),
