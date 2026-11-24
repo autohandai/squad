@@ -88,8 +88,8 @@ try {
   // Communications (ADR-0266): one view, right after Home, then Permissions.
   await browser.navigate(`${bridge.origin}/squad-members/${eva.id}/im`);
   await until(() => browser.evaluate("document.body.innerText.includes('Direct conversation')"), 'Communications page', 30000);
-  const nav = await browser.evaluate("[...document.querySelectorAll('nav a, nav button, aside a, aside button')].map(item => item.innerText.trim()).filter(text => ['Home','Communications','Permissions','Projects','Messaging'].includes(text))");
-  assert.deepEqual(nav.slice(0, 4), ['Home', 'Communications', 'Permissions', 'Projects'], `member sections in order: ${nav}`);
+  const nav = await browser.evaluate("[...document.querySelectorAll('nav a, nav button, aside a, aside button')].map(item => item.innerText.trim()).filter(text => ['Home','Communications','Permissions','Voice','Projects','Messaging'].includes(text))");
+  assert.deepEqual(nav.slice(0, 5), ['Home', 'Communications', 'Permissions', 'Voice', 'Projects'], `member sections in order: ${nav}`);
   assert.ok(!nav.includes('Messaging'), 'Messaging is gone');
   assert.ok(!(await browser.evaluate("document.body.innerText.includes('Email')")), 'no email row outside autohand.ai');
   await shoot('communications');

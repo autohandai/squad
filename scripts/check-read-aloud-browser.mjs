@@ -29,8 +29,13 @@ try {
   const shoot = async name => { await settle(); await browser.screenshot(join(shots, `${name}.png`)); };
   const saved = async id => (await bridge.api('/api/channels')).data.agentChannelAccess[id]?.agent || {};
 
+  // Home names the voice and leads to the member's Voice page, where it is
+  // changed (24 Nov: "per agent i want a voice control").
   await browser.navigate(`${bridge.origin}/squad-members/voice-eva`);
-  await until(() => browser.evaluate("!!document.querySelector('[data-testid=voice-picker]')"), 'the profile voice picker', 30000);
+  await until(() => browser.evaluate("!!document.querySelector('[data-testid=profile-voice-summary]')"), 'the voice on Home', 30000);
+  assert.ok(await browser.evaluate("[...document.querySelectorAll('aside a, aside button, nav a, nav button')].some(item => item.innerText.trim() === 'Voice')"), 'Voice in the member sidebar');
+  await browser.click('Change voice');
+  await until(() => browser.evaluate("location.pathname === '/squad-members/voice-eva/voice' && !!document.querySelector('[data-testid=voice-picker]')"), 'the member Voice page', 30000);
 
   // 1. The engine, through the bridge: a real sentence from the real model.
   const served = await browser.evaluate(`Promise.all(['/voice-engine/squad-worker.mjs', '/voice-engine/js/kale-tts.mjs', '/voice-engine/ort/ort.wasm.min.mjs', '/voice-engine/models/kale-tts-1-tiny/voices.json'].map(async (path) => { const r = await fetch(path); return path + ' ' + r.status + ' ' + r.headers.get('content-type'); }))`);
@@ -54,7 +59,6 @@ try {
   assert.equal((await saved('voice-eva')).voice, 'd03', 'Eva, a research analyst, reads as Amy');
   assert.equal((await saved('voice-thiago')).voice, 'm3', 'Thiago, a growth marketer, reads as Owen');
   assert.equal(await browser.evaluate("document.querySelector('[data-testid=voice-picker] [role=radio][aria-checked=true]')?.dataset.voice"), 'd03');
-  await browser.evaluate("document.getElementById('profile-voice')?.scrollIntoView({ block: 'center' })");
   await shoot('profile-voice');
 
   // 3. A sample through the page's reader: audio is scheduled in Amy's voice.
@@ -101,7 +105,7 @@ try {
   assert.equal(await browser.evaluate("document.querySelector('[role=dialog] [data-testid=voice-picker] [aria-checked=true]')?.dataset.voice"), 'm3');
   await shoot('edit-profile-voice');
   assert.deepEqual(browser.errors, []);
-  console.log('PASS read aloud: the bridge serves kale-tts-1 and the worker speaks real sentences; Eva and Thiago get fitting voices saved once; the profile sample plays through the reader; a new choice is saved; the member card names the voice with a sample and offers pen and eye icons; Settings > Voice lists the voices with no ElevenLabs; Edit profile offers the voice.');
+  console.log('PASS read aloud: the bridge serves kale-tts-1 and the worker speaks real sentences; Eva and Thiago get fitting voices saved once; each member\'s Voice page (from its sidebar and Home) plays a sample through the reader; a new choice is saved; the member card names the voice with a sample and offers pen and eye icons; Settings > Voice lists the voices with no ElevenLabs; Edit profile offers the voice.');
 } finally {
   await browser?.close();
   await bridge.close();

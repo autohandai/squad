@@ -124,6 +124,18 @@ muted, and the card has a Voice row with a sample. `check-read-aloud-browser`
 opens the card, plays the sample and checks the card's pen and eye icons; it
 now runs in CI.
 
+### Addendum, 24 Nov 2026: a Voice page for each member
+
+"per agent i want a voice control where i can change the voice … i asked this
+before and i didn't get it." The picker sat in the middle of the member's Home
+page, under the harness summary, where it was not found. Each member now has a
+**Voice** page in its sidebar, right after Permissions (Home, Communications,
+Permissions stays as ADR-0266 set it), with the picker, samples and the
+read-aloud switch; Home keeps one line naming the voice with "Change voice",
+and Settings → Voice links to the page. `check-read-aloud-browser` goes
+Home → Change voice → the Voice page; `check-member-controls-browser` pins the
+sidebar order.
+
 ## Consequences
 
 - The app grows by about 117 MB:

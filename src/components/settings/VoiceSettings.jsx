@@ -52,7 +52,7 @@ export function VoiceSettings({ api, agents = [], navigate, copy = {}, className
                     {playing ? <Square className="size-3 fill-current" /> : <Volume2 />}
                   </Button>
                 ) : null}
-                <Button type="button" variant="ghost" size="sm" onClick={() => navigate?.(`/squad-members/${encodeURIComponent(member.id)}#profile-voice`)}>
+                <Button type="button" variant="ghost" size="sm" onClick={() => navigate?.(`/squad-members/${encodeURIComponent(member.id)}/voice`)}>
                   Change<ArrowRight data-icon="inline-end" />
                 </Button>
               </div>

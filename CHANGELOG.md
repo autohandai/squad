@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- Every member has a Voice page in its sidebar, after Permissions, to choose and hear its voice and turn read aloud on.
 - A member's card (click its avatar in the chat header) shows its reading voice with a sample to hear.
 - Replies are read aloud by a natural voice made on your computer (kale-tts-1), and every member has its own voice: a woman's or man's voice that fits its name and role, chosen automatically and changeable in its profile, Edit profile or through MCP. Settings → Voice lists your squad's voices with a sample of each.
 - A shield beside a member's menu opens its permissions: how it acts (Ask me first, Play it safe, Act on its own), Manage the team, Connectors and Computer Use.

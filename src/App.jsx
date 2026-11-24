@@ -2012,6 +2012,8 @@ const MEMBER_SECTIONS = [
   { id: "home", label: "Home", icon: CircleUserRound },
   { id: "im", label: "Communications", icon: MessageSquareText },
   { id: "permissions", label: "Permissions", icon: ShieldAlert },
+  // The member's reading voice and read aloud, a page of its own (ADR-0276).
+  { id: "voice", label: "Voice", icon: SpeakerIcon },
   { id: "project", label: "Projects", icon: Folders },
   { id: "triggers", label: "Automations", icon: Clock3 },
   { id: "task", label: "Tasks", icon: CalendarCheck2 },
@@ -19749,6 +19751,22 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
   );
 }
 
+/** Home: the member's voice in one line, and the way to its Voice page (ADR-0276). */
+function ProfileVoiceSummary({ agent, navigate }) {
+  const voice = voiceById(useMemberVoice(agent.id));
+  return (
+    <section className="flex items-start justify-between gap-4 border-b border-border/75 pb-5" data-testid="profile-voice-summary">
+      <div className="min-w-0">
+        <h3 className="text-base font-semibold">Voice</h3>
+        <p className="mt-1 text-sm text-muted-foreground">{voice ? `${voice.name} · ${voice.description}` : "No voice yet"}{agent.readAloud ? " · reads replies aloud" : ""}</p>
+      </div>
+      <Button type="button" variant="outline" size="sm" onClick={() => navigate(`/squad-members/${encodeURIComponent(agent.id)}/voice`)}>
+        <SpeakerIcon data-icon="inline-start" />Change voice
+      </Button>
+    </section>
+  );
+}
+
 /** The member's reading voice in its card, with a sample (ADR-0276). */
 function MemberPreviewVoice({ agent }) {
   const voice = voiceById(useMemberVoice(agent.id));
@@ -23042,6 +23060,19 @@ function SquadMemberSectionPage({
     connector: `${agent.name} has no connector tools of their own. Shared connectors are in Settings → Connectors.`,
   }[section] || "Nothing here yet.";
 
+  // Voice (ADR-0276): the member's reading voice, with samples, and whether
+  // its replies are read aloud as they land.
+  if (section === "voice") {
+    return (
+      <div className="min-h-screen bg-background">
+        <PageTitle title={sectionLabel} />
+        <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
+          <ReadAloudSetting agent={agent} copy={copy} onChange={(checked) => updateAgent?.(agent.id, { readAloud: checked })} onVoiceChange={(voice) => updateAgent?.(agent.id, { voice, updatedAt: new Date().toISOString() })} />
+        </div>
+      </div>
+    );
+  }
+
   // Communications (ADR-0266): every way to reach the member in one place,
   // its direct conversation and, for accounts allowed agent email, its address.
   if (section === "im") {
@@ -25066,7 +25097,7 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
 
         <ProfileHarnessSummary agent={agent} harnesses={harnesses} navigate={navigate} />
 
-        <ReadAloudSetting agent={agent} copy={copy} onChange={(checked) => updateAgent?.(agent.id, { readAloud: checked })} onVoiceChange={(voice) => updateAgent?.(agent.id, { voice, updatedAt: new Date().toISOString() })} />
+        <ProfileVoiceSummary agent={agent} navigate={navigate} />
 
         <BrainCardPanel agent={agent} onEdit={() => setProfileEditOpen(true)} />
 
