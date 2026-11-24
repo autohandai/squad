@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-11-24
+
+Includes everything from 0.1.22, which was only published as canary builds.
+
 ### Added
 
 - Every member has a Voice page in its sidebar, after Permissions, to choose and hear its voice and turn read aloud on.
@@ -19,32 +23,6 @@ list to the section for that version.
 - A failed reply can be retried from Execution › Runs, and Squad tries it once more on its own after ten minutes (Retry now or Don't retry).
 - Manage connectors opens a side panel over the conversation instead of a separate page.
 - Onboarding asks which avatar style your squad uses (Flat, 3D or Clay) right after the layout, with a large preview of the birds in each style.
-
-### Fixed
-
-- Squad for iPhone draws members in the avatar style you picked on the computer.
-- A reply where the engine only described steps without doing them is now shown as failed, so it can be retried.
-- A member set to ask before acting (restricted) with fallback engines can read files, search its tools and fetch pages again; it used to run in a dry-run mode that refused every read.
-- Quick Chat and the menu-bar portraits now use the avatar style you picked (Flat, 3D or Clay), and Quick Chat follows a change straight away.
-- Quick Chat closes itself 2 seconds after you click somewhere else.
-- The avatar style you choose is now saved under its own name; before, it was stored under an empty key that other settings could overwrite.
-
-### Changed
-
-- The member card's actions are two icons in its top-right corner, a pen to change the avatar and an eye to view the profile, instead of two large buttons.
-- The read-aloud speaker on each reply is always visible instead of appearing only on hover.
-- The start screen matches the app: the mark with a gentle liquid ripple and three birds landing on their perch, instead of a list of start-up steps.
-- ElevenLabs is no longer used for read aloud, and a saved ElevenLabs key is deleted: each member now has its own voice, made on your computer.
-- Every member's bird has a new face: 300 flat mascots in one geometric style, in the app, the menu bar, the bird picker and the website marketplace.
-- The 3D and Clay avatar styles now show a painted picture for every one of the 300 birds.
-- A member's Messaging page is now Communications, right after Home and followed by Permissions. It holds the direct conversation and, on autohand.ai accounts, the member's email address.
-- On accounts signed in with @autohand.ai, every member now gets an email address from its name automatically, and you can change the name before @code.autohandai.com in its Permissions. Other accounts see nothing about email.
-- Chief of Staff starts with Manage the team on; you can turn it off.
-- "Needs you" is gone everywhere: the menu-bar menu says "Open Inbox" and "3 things in your Inbox", and the Inbox page leads with "Waiting on you".
-- New member and New team say that marketplace agents and teams show there once the marketplace opens, instead of leaving an empty space.
-
-### Added
-
 - Connect your Cloudflare account: Cloudflare's official servers (the whole account API, Observability, Workers Bindings and Builds, DNS Analytics, Radar and Docs) are in Connectors, and you sign in on Cloudflare's own page.
 - Email rules for each member: it labels every email Urgent, Normal or Low, and you choose for each whether it replies on its own, asks you first (Send / Don't send in the chat) or just tells you. Replies go only to the sender, once per email, from the member's address.
 - Change a member's email address once, with a live check that the new name is free.
@@ -70,7 +48,6 @@ list to the section for that version.
 - **Squad for iPhone sees your group chats.** Groups you create on the Mac appear in the phone's Recent chats with their members, newest activity first, and you can read and post in them from the phone. Who answers follows the group's own rule, and @mentions pick members, just as on the Mac.
 - **Decisions under a reply reach the phone.** A member's team proposal, a permission question and a proposed automation show on the iPhone with the same buttons. Allow and Create routine take effect at once; Create team is carried out by Squad on your Mac, and the phone says it is waiting until it is done. Folder access and schedule offers are still answered on the Mac.
 - A member's uploaded picture now shows on the iPhone too, not just their bird.
-
 - **300 birds** to choose from for your squad, from around the world, all in the same drawn style as the kiwi: owls, parrots, penguins, kingfishers, hummingbirds, ducks and many more. The New Zealand birds are still the ones new members get first.
 - **Change a member's avatar from where you see them.** Click the face on their profile card, use Change avatar in the chat header's profile card, or pick **Change avatar…** from any member menu. Search the birds by name ("owl", "penguin", "tui"), use the arrow keys, and Save: the new face shows everywhere at once, including the menu bar, and stays after Squad restarts.
 - **Members can change their own avatar.** Ask one to "pick an owl for yourself" and it can choose any of the 300 birds through Squad's team tools; the change shows everywhere without a reload, with a line under the reply saying what it chose. You can turn this off per member in Permissions (squad_set_avatar).
@@ -85,12 +62,9 @@ list to the section for that version.
 - **Add to Squad links.** `squad://app/v1/agent-template?id=…` opens that agent in Squad, including when Squad was closed. A link never adds anything by itself, and a link whose checksum does not match the agent is refused.
 - **Grok Bot templates.** Paste a Grok Bot link (x.ai/bot/…) into Marketplace › From a link to start a member from it. Grok shows a bot's name and description publicly but not its instructions, so the member starts from the description; paste the bot's instructions if you have them. The source and creator stay in its instructions.
 - Settings › Appearance › Avatars: draw every member's bird Flat (the default), in 3D as a soft glossy toy, or in matte Clay. Same bird and same face in every skin and theme; only the material changes.
-
 - Sixteen more birds in the same drawn style: from Brazil the tucano, arara-azul, bem-te-vi, sabiá, beija-flor, quero-quero, harpia and joão-de-barro; from the United States the bald eagle, cardinal, blue jay, robin, roadrunner, puffin, flamingo and chickadee. Pick them in Edit Profile. New Zealand birds stay the default.
-
 - Settings › Chat › **Reply in threads**, off by default. Off, members' replies in groups and channels appear in order in the conversation; on, they gather under the message they answer, as before.
 - The Local menu at the top of the sidebar now lists your paired phones, each with whether it is reaching this computer right now and when it was paired, and lets you unpair one (Unpair, then Confirm).
-
 - Every Squad member is now one of ten New Zealand birds, led by the kiwi, drawn as a simple 2D cartoon face: one soft shape and two eye marks, with a hint of the bird (the kiwi's long beak, the tūī's white tufts, the kea's orange flash). The face is the same in every skin and in light and dark; only the tile behind it follows your skin. The menu bar, Quick Chat and the iPhone show the same faces, and they lead the picture picker in Edit Profile. New members get a bird nobody on the team has yet, unless their role already has one.
 - See which phones are paired and whether each one is reaching your computer right now, on Wi-Fi or from anywhere, in the pairing window and in Settings › Computers. Disconnect an old one right there.
 - Choose a layout: **Full** (everything in the sidebar, as before) or **Minified**, a calm, chat-first Squad. Minified puts your pinned teammates up top as large portraits, then one list of conversations with previews, and shows replies as bubbles. Squad, Memory, new channels and new members are under More (…) and ⌘K. It works with every skin, in light and dark. Pick it during onboarding or any time in Settings › Appearance.
@@ -102,41 +76,39 @@ list to the section for that version.
 - Squad MCP 2.4 adds workspace replacement through both connections, so the app, CLI and other clients can change an existing member’s primary and additional work folders together.
 - Reach your Squad agents from an approved iPhone away from home through an encrypted relay. Enable “Reach from anywhere” in Computers settings, scan the code and approve the matching six digits. Your computer keeps message keys and needs to stay awake with Squad running.
 - Your phone now works at home and away without pairing again. Computers settings lets Same Wi-Fi and From anywhere (Autohand’s relay) run at the same time, alongside your own tunnel. A phone paired on one of them learns the others from your computer and switches by itself: the same network when it can, the relay everywhere else.
-### Changed
-
-- The Marketplace is a page now, like Inbox but wider, instead of a window over the app. Links and the menu open it there.
-- New Squad member and New message › New member suggest agents from the marketplace that fit what you type, and New team suggests ready-made teams, plus your own templates and team files.
-- The send button is a filled circle with an arrow, matching the stop button; the mic sits right next to it, and dictation uses Autohand Voice.
-- Agents and teams you import never mention where they were imported from.
-- Recipes now come from your own work: Squad suggests a request you keep making to the same member, and the Chief of Staff saves the ones worth keeping. The list is Saved, Spotted in your work, then the old starters; the Inbox button is called Recipes.
-- Quick Chat's message box now looks and works like the main window's, with the same round send button.
-- On Macs with Liquid Glass (macOS 26 and later), the sidebar sits on Liquid Glass. Turn it off in Settings › Appearance › Liquid Glass sidebar.
-- Needs you is now called Inbox everywhere: the sidebar, the page, search, Settings and the View menu.
-- The account menu starts with Inbox, Marketplace and Connectors, then About, then Report a bug and Give feedback.
-- **The New automation window reads like a note, not a form.** Describe what should happen and when; the member drafts it and it reads back in sentences (when, who, where, what it does), with the next run. Edit details turns those same lines into fields, and "set it up yourself" starts from them empty. No more asterisks, grey boxes or trigger cards.
-- Birds are no longer grouped by country in the picture picker; it is one grid of birds you can search by name.
-- A new sign-in screen: the Squad mark and name, one line, a perch of the squad's birds that land, glance and hop (and pass a hop along while your browser is open), Continue with Autohand account or Continue with Apple, and the terms at the foot. The terminal hint is gone: signing in to Squad also signs in the Autohand CLI it comes with.
-- Settings › Updates shows the download on the perch: the kiwi walks along it to the other birds as the real percentage climbs, and the page says your squad keeps working while it downloads.
-- The start-up screen shows three birds on a perch while Squad loads; the mark no longer pulses.
-- The README is rewritten for newcomers: what Squad is, who it is for, how to install it and how to build it, with fresh screenshots of today's app in light and dark. The detail it used to carry moved to `docs/guide.md` (using Squad) and `docs/development.md` (building and internals).
-- Keys, tokens and sign-ins for connectors are sealed on this computer, with the key in the system keychain where there is one, and are never written into a member's files any more; members start connectors through Squad, which hands over the secrets at launch. Connectors saved before this are sealed the first time Squad reads them.
-- A connector that passes its check is switched on when you add it; one that fails stays off until you fix it.
-- Birds are now the only built-in avatars. The role portraits, riso prints and skin portraits are gone; a member that had one shows its bird. Pictures you uploaded stay. The member card no longer frames the face in lilac.
-
-- Team Squads are now turned on per person by Autohand. Until they are on for your account, Squad opens your Personal Squad, Settings › Squads lists only that, and the account menu has no Switch Squad…. If you were in a team Squad when they are turned off, Squad moves you to your Personal Squad; your team's data stays where it is and your team choice comes back when they are on again. When they are turned on, your teams appear in Settings › Squads without restarting.
-- Switching between your personal Squad and a team Squad now happens in Settings › Squads, which lists every Squad you belong to, marks the current one and says what switching does. The “Personal Squad ⌄” menu is gone from the sidebar. If you belong to more than one Squad, the account menu names the one you are in and offers Switch Squad….
-- The Setup guide is now called Onboarding, in Settings and on its own screen, and Run onboarding again walks through every step with quiet progress (Step 2 of 3) and Back. Saving work folders moves on to the next step instead of leaving onboarding.
-- The menu-bar menu now shows your squad first: a header with one small hexagon per member, anything waiting on you (a question or an approval, which opens that chat), and up to five members with their portrait and what they are doing ("Noah · Working on checkout tests", "On Codex until Claude Code resets 4:10 pm"). Click a member to open Quick Chat with them. One headroom line says the limit that matters most in words ("Claude Code low · 12% left, resets Fri 9:00 am"); its submenu lists each engine with the members it powers. Account, services and help moved into short submenus. The coloured usage bars and provider marks are gone.
-- Turning on “From anywhere” no longer turns off the local network connection, so a phone paired on your Wi-Fi keeps working. Existing settings upgrade automatically: a computer that used the local network or the relay now keeps both on; a computer set up with your own tunnel stays as it was.
-- Fallbacks now read like Codync's: the Model page says which engine is answering ("Using Codex while Claude Code has reached its usage limit") with Switch back, rows are compact with an In use badge and a … menu, and changes save as you make them. Squad for iPhone shows the same line in that member's chat.
-- The bundled Autohand Code CLI is updated to 0.9.11.
-- Grut is now a skin like the others: cool greys, a blue accent and blob faces. Its conversation list and message bubbles became the Minified layout, which works with every skin. If you were using Grut, Squad switches you to Minified once so nothing you chose disappears; pick Full in Settings › Appearance to go back.
-
-- The account menu now starts with Inbox, Settings, About, and Licenses and agreements. Analytics lives beside Memory in Settings, with Back returning to your conversation and unsent draft.
-- Phone connections keep their computer identity and delivery receipts after a restart. Disconnecting a phone locally also removes its relay access when the computer reconnects.
+- Settings → Computers pairs the native iPhone/iPad companion using a private QR code and matching-code approval. Phones can chat with saved agents, follow canonical task progress and delegate through the same task operation as Squad MCP. Choose the local network, Autohand’s relay or your own secure tunnel; push delivery and VM provisioning remain in progress.
+- Paired phones discover supported commands and the computer's version. Messages and tasks retain retry receipts across restarts, and each phone can be revoked individually.
+- A per-member “Use the computer” switch in Model settings and Permissions. Turning it on asks for native confirmation; turning it off revokes access and removes Computer Use instructions and tools from later work. Operator MCP clients can read the saved scope and revoke it.
+- Right-click and ellipsis actions to rename or delete channels and groups, choose all posts or mentions, or mute and hide a conversation. Hidden channels can be shown again; Settings provides defaults and individual overrides.
+- Squad operator MCP tools can read and change notification preferences, explicitly delete a channel, and read or revoke a member's Computer Use. The tool contract is now 2.3.0; reconnect clients to load the new tools.
+- Channel creation now opens directly in the main view with a name field, current-member avatar selection, visibility and auto mode. Deleting a channel returns to that same creation screen.
+- Private group chats with their own Direct Messages rows. Create one from the inline recipient chooser, delete it, or convert it into a public/private channel while keeping its members and messages. The app and both Squad MCP connections share these operations.
+- Direct Messages → + now lets you search existing members, choose multiple recipients, or explicitly name and describe a new member before opening their chat. Opening the chooser creates nothing; new members receive connected harness defaults and fallbacks without an artificial greeting.
+- New members automatically receive connected fallback engines with their default models and reasoning settings. MCP creation chooses a ready primary when none is specified; Model settings lets you change or remove the saved fallback chain.
+- Agents and connected MCP clients can create saved Squad members and configure their profiles, responsibilities, skill packages, profile memories and routines. Managed tools use the member’s saved permissions and the selected owner.
+- User and Autohand team ownership for Squad data, with account switching isolated from previously saved agents and memories.
+- Portable JSON and YAML backups for agents, memories, conversations, skills, routines and managed files, with checksums and explicit recovery into a selected owner.
+- Settings → Backups previews verified imports into the selected personal or team Squad. Imported agents and routines stay paused; earlier data is preserved separately and interrupted operations recover to a Restart Squad screen.
+- Save retained cloud snapshots for the selected owner, download or preview them for restore, and resolve newer cloud versions explicitly. Read-only teams can download snapshots; account changes cancel in-flight cloud requests.
+- Recover older unowned agents from explicitly chosen local folders or old browser data in Settings → Backups or Squad MCP. Preview first, keep original data, and confirm the destination before importing; different browser and saved conversations are both preserved.
+- Assign work to another agent with Squad MCP: tasks show who sent them and wait in the recipient's queue until they are free.
+- Manage saved chats and reply threads together in History. Merge selected conversations into a new chat while keeping the originals, attachments and work details.
+- Chats without a selected project offer `~/Documents/autohand-desktop/` and ask before creating it, keeping the draft while a folder is chosen.
+- Configure Quick Chat from Settings: keep one Squad menu-bar icon, show individual available-agent avatars, choose Apple glass or Solid, hide usage limits, or disable Quick Chat while agents keep working. Apple Liquid Glass is used on macOS 26+, with native translucency on earlier versions.
+- See connected Claude Code and Codex usage windows, model-specific limits and reset times in Quick Chat and the native menu.
+- Manage Squad agents from MCP: rename them, edit personality and instructions, grant extra project folders, set abilities, and select skills.
+- Create private group chats, edit channel membership and settings, send to selected agents, and read replies even after the MCP client disconnects.
+- Preview, create, edit, pause, resume and manually run agent routines with explicit timezones.
+- Send direct messages to Squad agents from Autohand Code, follow delivery receipts, and read their conversations without interrupting current work. The external Squad MCP also exposes published artifacts and the knowledge library.
 
 ### Fixed
 
+- Squad for iPhone draws members in the avatar style you picked on the computer.
+- A reply where the engine only described steps without doing them is now shown as failed, so it can be retried.
+- A member set to ask before acting (restricted) with fallback engines can read files, search its tools and fetch pages again; it used to run in a dry-run mode that refused every read.
+- Quick Chat and the menu-bar portraits now use the avatar style you picked (Flat, 3D or Clay), and Quick Chat follows a change straight away.
+- Quick Chat closes itself 2 seconds after you click somewhere else.
+- The avatar style you choose is now saved under its own name; before, it was stored under an empty key that other settings could overwrite.
 - A member's Connectors page no longer says "every member can use them": it shows whether that member may use connectors, with a switch to let it, and each connector's address.
 - A member now remembers what its own automations posted in your chat: after an email summary or a scheduled result, "reply" or "do that" refers to it instead of being answered as a new conversation.
 - Dictation works again: pressing the mic and then Stop puts your words in the message instead of saying "Dictation is not listening."
@@ -154,18 +126,14 @@ list to the section for that version.
 - Your signed-in photo is back in the account footer and menu. Since Squads became owned by your account it had been replaced by your initials for everyone.
 - Opening an Add to Squad link while Squad starts up now opens that agent, instead of losing the link; and a marketplace that can't be reached no longer makes Squad reload over and over.
 - **Computer Use said "Not allowed" while System Settings showed Autohand Computer Use switched on.** macOS had kept the permission for an older build of Autohand Computer Use and ignored it for the one installed now. The Permissions page now says so when it can tell, and **Reset macOS permission** clears that old permission and asks macOS again, so you allow it once for the current app. It no longer says you have already granted it when you have not.
-
 - A picture chosen for a member in Edit Profile went back to the member's default bird the next time Squad opened. The chosen bird now stays.
 - The start-up and sign-in screens follow your light theme: the light start-up screen no longer shows the dark mark, and sign-in no longer opens dark right after a light start-up screen.
 - A connector that crashes mid-conversation restarts by itself and the member carries on; a sign-in that expires is renewed instead of failing; a server that forgets the session gets a new one.
 - Removing a connector, signing out of it or changing its address now also signs Squad out at the service.
 - A member's bird no longer shows as an empty grey square in the member profile sidebar, and faces fill their circle everywhere else.
-
 - Squad remembers when each paired phone was last seen across restarts and updates, instead of showing "Not seen since Squad started" while your phone is connected.
-
 - In the Minified layout the chat header is back on the left, as it was before: the member's portrait at the left edge, the status line under the name, and the actions on the right.
 - Members saved without a picture, such as ones made before the bird cast, now show their bird instead of a letter.
-
 - A brief outage of the Autohand account service no longer throws you out of a team Squad. Squad keeps your team open for up to two minutes while it can't check your access, and if it does have to stop, it tries again by itself instead of waiting for Retry.
 - A read-only team page now has an Open Personal Squad button, so you can get back to your own Squad in one click.
 - Old Squads with a long history (a saved conversations file over 8 MB) can be recovered and restored again; the recovery used to refuse them.
@@ -185,7 +153,6 @@ list to the section for that version.
 - Updated the native app and runtime’s TLS dependencies to patched releases, including the runtime’s QUIC transport.
 - Pinned and hidden members keep your choices after reopening Squad, while removed members stay removed.
 - The first Chief of Staff now receives connected fallback engines, and a CLI monthly-quota notice triggers failover instead of appearing as a completed answer.
-
 - Run the setup guide now lets you review an existing member and replace missing work folders. It reuses your saved squad and keeps explicit consent before creating the default Documents folder.
 - An older window can no longer restore a previous primary work folder after another client changes it.
 - Double-clicking the empty desktop titlebar once again enlarges and restores the window. On macOS it follows your Fill, Zoom, Minimize or No Action choice; controls in the titlebar keep their normal actions.
@@ -194,52 +161,17 @@ list to the section for that version.
 - Windows cleanup recognizes a valid receipt written while the operating-system status check was running, while still refusing replacement without matching proof.
 - Artifact release checks verify that the preview receives pointer input before clicking, and use real taps on touch layouts. Slow browser runs no longer mistake a delivered automation command for an interactive preview.
 - Windows process-cleanup checks wait for the durable cleanup receipt before starting a replacement, avoiding a timing-dependent false failure.
-
-### Added
-
-- Settings → Computers pairs the native iPhone/iPad companion using a private QR code and matching-code approval. Phones can chat with saved agents, follow canonical task progress and delegate through the same task operation as Squad MCP. Choose the local network, Autohand’s relay or your own secure tunnel; push delivery and VM provisioning remain in progress.
-- Paired phones discover supported commands and the computer's version. Messages and tasks retain retry receipts across restarts, and each phone can be revoked individually.
-- A per-member “Use the computer” switch in Model settings and Permissions. Turning it on asks for native confirmation; turning it off revokes access and removes Computer Use instructions and tools from later work. Operator MCP clients can read the saved scope and revoke it.
-- Right-click and ellipsis actions to rename or delete channels and groups, choose all posts or mentions, or mute and hide a conversation. Hidden channels can be shown again; Settings provides defaults and individual overrides.
-- Squad operator MCP tools can read and change notification preferences, explicitly delete a channel, and read or revoke a member's Computer Use. The tool contract is now 2.3.0; reconnect clients to load the new tools.
-- Channel creation now opens directly in the main view with a name field, current-member avatar selection, visibility and auto mode. Deleting a channel returns to that same creation screen.
-- Private group chats with their own Direct Messages rows. Create one from the inline recipient chooser, delete it, or convert it into a public/private channel while keeping its members and messages. The app and both Squad MCP connections share these operations.
-- Direct Messages → + now lets you search existing members, choose multiple recipients, or explicitly name and describe a new member before opening their chat. Opening the chooser creates nothing; new members receive connected harness defaults and fallbacks without an artificial greeting.
-- New members automatically receive connected fallback engines with their default models and reasoning settings. MCP creation chooses a ready primary when none is specified; Model settings lets you change or remove the saved fallback chain.
-- Agents and connected MCP clients can create saved Squad members and configure their profiles, responsibilities, skill packages, profile memories and routines. Managed tools use the member’s saved permissions and the selected owner.
-
-- User and Autohand team ownership for Squad data, with account switching isolated from previously saved agents and memories.
-- Portable JSON and YAML backups for agents, memories, conversations, skills, routines and managed files, with checksums and explicit recovery into a selected owner.
-- Settings → Backups previews verified imports into the selected personal or team Squad. Imported agents and routines stay paused; earlier data is preserved separately and interrupted operations recover to a Restart Squad screen.
-- Save retained cloud snapshots for the selected owner, download or preview them for restore, and resolve newer cloud versions explicitly. Read-only teams can download snapshots; account changes cancel in-flight cloud requests.
-- Recover older unowned agents from explicitly chosen local folders or old browser data in Settings → Backups or Squad MCP. Preview first, keep original data, and confirm the destination before importing; different browser and saved conversations are both preserved.
-
-### Changed
-
-- Transient engine failures can retry up to ten times before failover; usage limits and overload switch immediately. Permission waits, uncertain tool actions and Stop still prevent automatic switching.
-- Portable Squad archives need Node 22.13 LTS or 24+ for safe local data locking. Desktop installers continue to bundle their runtime.
-- Reset applies to the selected Squad’s data and keeps its earlier dataset. Completion follows a durable operation receipt instead of waiting for a different process ID.
-- Desktop backup downloads open in your browser, keeping Squad open while you save the verified file.
-
-### Fixed
-
 - Channel notifications notice a new saved post even when it arrives just as the previous scan finishes.
-
 - Computer Use grants in a team Squad stay with the signed-in person who confirmed them. Earlier team grants without a recorded person remain off until confirmed again; the old files are preserved.
 - Channel mentions notify the person only when a saved reply actually addresses them; mentioning another agent no longer creates a personal mention alert. Failed preference saves retain the earlier settings and can be retried.
 - Portable backup restore keeps private groups and converted channels in the right place, with their conversation history and membership intact.
-
 - Older app snapshots cannot silently remove a new group or reverse its conversion into a channel. Deleted groups remain deleted after refresh and restart.
 - Retrying member creation after a lost save response keeps the saved model and fallback choices, including removed fallbacks, without preparing the teammate again.
-
 - MCP teammate messages retain a delivery reference after a fast reply or delivery error, so callers can inspect the saved result.
-
 - A full local cache now shows an actionable startup error and Retry instead of leaving Squad on Loading. Saved conversations remain unchanged.
 - Asking a teammate with `squad_message` and `wait_seconds: 60` now sends the message instead of failing validation. Waits stay within the harness deadline and late replies remain available.
-
 - Hosted sign-in and team access checks reach Autohand's identity service when both services run on Cloudflare Workers.
 - Squad stops retrying undeployed device, feature-flag, heartbeat and telemetry endpoints every minute. Local diagnostics distinguish unsupported services from authentication errors or outages; disabled telemetry no longer produces failure logs.
-
 - Reopening an agent keeps the current chat's start point instead of bringing earlier conversations back into it.
 - Reset from Settings now reaches the owned-data transaction and waits for its completion before reopening Squad. Earlier data remains available for recovery.
 - Windows account changes and data recovery supervise the whole worker process tree, including detached children, before admitting another Squad.
@@ -250,54 +182,69 @@ list to the section for that version.
 - Launching an updated Squad explains when an older bridge must be closed first, preserving its running work instead of reusing its unowned data service.
 - Team proposals show Create team in channel replies and their threads. Saved decisions survive reopening, and older completed replies recover their roster from the original saved run.
 - Failed team creation keeps the proposal available to retry. Consecutive clicks submit one creation, and recovered replies retain a newer save timestamp even when their run finished earlier.
-
-
-## [0.1.22] - 2026-11-10
-
-### Added
-
-- Assign work to another agent with Squad MCP: tasks show who sent them and wait in the recipient's queue until they are free.
-- Manage saved chats and reply threads together in History. Merge selected conversations into a new chat while keeping the originals, attachments and work details.
-- Chats without a selected project offer `~/Documents/autohand-desktop/` and ask before creating it, keeping the draft while a folder is chosen.
-- Configure Quick Chat from Settings: keep one Squad menu-bar icon, show individual available-agent avatars, choose Apple glass or Solid, hide usage limits, or disable Quick Chat while agents keep working. Apple Liquid Glass is used on macOS 26+, with native translucency on earlier versions.
-- See connected Claude Code and Codex usage windows, model-specific limits and reset times in Quick Chat and the native menu.
-
-- Manage Squad agents from MCP: rename them, edit personality and instructions, grant extra project folders, set abilities, and select skills.
-- Create private group chats, edit channel membership and settings, send to selected agents, and read replies even after the MCP client disconnects.
-- Preview, create, edit, pause, resume and manually run agent routines with explicit timezones.
-
-- Send direct messages to Squad agents from Autohand Code, follow delivery receipts, and read their conversations without interrupting current work. The external Squad MCP also exposes published artifacts and the knowledge library.
-
-### Changed
-
-- Update native tray and windowing support and synchronize the desktop build dependencies. Building the native app now requires Rust 1.90 or newer.
-
-- Task actions are visible on touch and keyboard. Delete any plan or launched/handoff task, including completed work, with a confirmation; deleting a running task leaves unrelated work alone.
-- Removed Canvas from agent chats and search. Deliverables use the member's Library; existing canvas files remain available for recovery.
-- Updated the runtime dependency used to verify downloads and saved memory.
-
-### Fixed
-
 - Repeated text exports with long or multilingual names keep valid filenames and show a successful save instead of reporting a false failure.
-
 - Desktop conversation exports now save Markdown and JSON, and channel exports save Markdown, in Downloads. Earlier files are preserved and the app shows the saved filenames or any failure instead of doing nothing.
-
 - Connect to Squad from Autohand Desktop and other MCP clients when launched outside a source checkout. The installed command now locates its bundled `runtime` directory on macOS and Windows.
 - macOS app updates build with one native tray implementation, avoiding the duplicate Objective-C class that blocked newer Squad installers.
-
 - Deleting a task wins over edits or completion already in flight. Merged conversations reopen with large saved work details and include your earlier questions in the next reply's context.
 - Pull requests produce the required Dependabot check through GitHub dependency review.
-
 - Stopping or restarting one Squad instance preserves other running instances and their agents.
 - Desktop builds using a shared Cargo directory package the freshly built runtime instead of stale sidecars from a different directory.
 - Waiting for a queued message through MCP reports a timeout when the final queue check exhausts its deadline, preserving the message receipt for another wait.
-
 - Available bots keep their menu-bar avatars while waiting for work. Paused and offline bots stay out of the menu bar, and older desktop shells report when saved settings need an updated app.
 - Applying Quick Chat's native glass material avoids a WebKit callback deadlock.
-
 - Long replies, code and tables stay readable inside Quick Chat. Its macOS panel now uses native material, system typography and a compact toolbar.
-
 - Existing memory indexes retain the same checksums after the dependency update.
+
+### Changed
+
+- The member card's actions are two icons in its top-right corner, a pen to change the avatar and an eye to view the profile, instead of two large buttons.
+- The read-aloud speaker on each reply is always visible instead of appearing only on hover.
+- The start screen matches the app: the mark with a gentle liquid ripple and three birds landing on their perch, instead of a list of start-up steps.
+- ElevenLabs is no longer used for read aloud, and a saved ElevenLabs key is deleted: each member now has its own voice, made on your computer.
+- Every member's bird has a new face: 300 flat mascots in one geometric style, in the app, the menu bar, the bird picker and the website marketplace.
+- The 3D and Clay avatar styles now show a painted picture for every one of the 300 birds.
+- A member's Messaging page is now Communications, right after Home and followed by Permissions. It holds the direct conversation and, on autohand.ai accounts, the member's email address.
+- On accounts signed in with @autohand.ai, every member now gets an email address from its name automatically, and you can change the name before @code.autohandai.com in its Permissions. Other accounts see nothing about email.
+- Chief of Staff starts with Manage the team on; you can turn it off.
+- "Needs you" is gone everywhere: the menu-bar menu says "Open Inbox" and "3 things in your Inbox", and the Inbox page leads with "Waiting on you".
+- New member and New team say that marketplace agents and teams show there once the marketplace opens, instead of leaving an empty space.
+- The Marketplace is a page now, like Inbox but wider, instead of a window over the app. Links and the menu open it there.
+- New Squad member and New message › New member suggest agents from the marketplace that fit what you type, and New team suggests ready-made teams, plus your own templates and team files.
+- The send button is a filled circle with an arrow, matching the stop button; the mic sits right next to it, and dictation uses Autohand Voice.
+- Agents and teams you import never mention where they were imported from.
+- Recipes now come from your own work: Squad suggests a request you keep making to the same member, and the Chief of Staff saves the ones worth keeping. The list is Saved, Spotted in your work, then the old starters; the Inbox button is called Recipes.
+- Quick Chat's message box now looks and works like the main window's, with the same round send button.
+- On Macs with Liquid Glass (macOS 26 and later), the sidebar sits on Liquid Glass. Turn it off in Settings › Appearance › Liquid Glass sidebar.
+- Needs you is now called Inbox everywhere: the sidebar, the page, search, Settings and the View menu.
+- The account menu starts with Inbox, Marketplace and Connectors, then About, then Report a bug and Give feedback.
+- **The New automation window reads like a note, not a form.** Describe what should happen and when; the member drafts it and it reads back in sentences (when, who, where, what it does), with the next run. Edit details turns those same lines into fields, and "set it up yourself" starts from them empty. No more asterisks, grey boxes or trigger cards.
+- Birds are no longer grouped by country in the picture picker; it is one grid of birds you can search by name.
+- A new sign-in screen: the Squad mark and name, one line, a perch of the squad's birds that land, glance and hop (and pass a hop along while your browser is open), Continue with Autohand account or Continue with Apple, and the terms at the foot. The terminal hint is gone: signing in to Squad also signs in the Autohand CLI it comes with.
+- Settings › Updates shows the download on the perch: the kiwi walks along it to the other birds as the real percentage climbs, and the page says your squad keeps working while it downloads.
+- The start-up screen shows three birds on a perch while Squad loads; the mark no longer pulses.
+- The README is rewritten for newcomers: what Squad is, who it is for, how to install it and how to build it, with fresh screenshots of today's app in light and dark. The detail it used to carry moved to `docs/guide.md` (using Squad) and `docs/development.md` (building and internals).
+- Keys, tokens and sign-ins for connectors are sealed on this computer, with the key in the system keychain where there is one, and are never written into a member's files any more; members start connectors through Squad, which hands over the secrets at launch. Connectors saved before this are sealed the first time Squad reads them.
+- A connector that passes its check is switched on when you add it; one that fails stays off until you fix it.
+- Birds are now the only built-in avatars. The role portraits, riso prints and skin portraits are gone; a member that had one shows its bird. Pictures you uploaded stay. The member card no longer frames the face in lilac.
+- Team Squads are now turned on per person by Autohand. Until they are on for your account, Squad opens your Personal Squad, Settings › Squads lists only that, and the account menu has no Switch Squad…. If you were in a team Squad when they are turned off, Squad moves you to your Personal Squad; your team's data stays where it is and your team choice comes back when they are on again. When they are turned on, your teams appear in Settings › Squads without restarting.
+- Switching between your personal Squad and a team Squad now happens in Settings › Squads, which lists every Squad you belong to, marks the current one and says what switching does. The “Personal Squad ⌄” menu is gone from the sidebar. If you belong to more than one Squad, the account menu names the one you are in and offers Switch Squad….
+- The Setup guide is now called Onboarding, in Settings and on its own screen, and Run onboarding again walks through every step with quiet progress (Step 2 of 3) and Back. Saving work folders moves on to the next step instead of leaving onboarding.
+- The menu-bar menu now shows your squad first: a header with one small hexagon per member, anything waiting on you (a question or an approval, which opens that chat), and up to five members with their portrait and what they are doing ("Noah · Working on checkout tests", "On Codex until Claude Code resets 4:10 pm"). Click a member to open Quick Chat with them. One headroom line says the limit that matters most in words ("Claude Code low · 12% left, resets Fri 9:00 am"); its submenu lists each engine with the members it powers. Account, services and help moved into short submenus. The coloured usage bars and provider marks are gone.
+- Turning on “From anywhere” no longer turns off the local network connection, so a phone paired on your Wi-Fi keeps working. Existing settings upgrade automatically: a computer that used the local network or the relay now keeps both on; a computer set up with your own tunnel stays as it was.
+- Fallbacks now read like Codync's: the Model page says which engine is answering ("Using Codex while Claude Code has reached its usage limit") with Switch back, rows are compact with an In use badge and a … menu, and changes save as you make them. Squad for iPhone shows the same line in that member's chat.
+- The bundled Autohand Code CLI is updated to 0.9.11.
+- Grut is now a skin like the others: cool greys, a blue accent and blob faces. Its conversation list and message bubbles became the Minified layout, which works with every skin. If you were using Grut, Squad switches you to Minified once so nothing you chose disappears; pick Full in Settings › Appearance to go back.
+- The account menu now starts with Inbox, Settings, About, and Licenses and agreements. Analytics lives beside Memory in Settings, with Back returning to your conversation and unsent draft.
+- Phone connections keep their computer identity and delivery receipts after a restart. Disconnecting a phone locally also removes its relay access when the computer reconnects.
+- Transient engine failures can retry up to ten times before failover; usage limits and overload switch immediately. Permission waits, uncertain tool actions and Stop still prevent automatic switching.
+- Portable Squad archives need Node 22.13 LTS or 24+ for safe local data locking. Desktop installers continue to bundle their runtime.
+- Reset applies to the selected Squad’s data and keeps its earlier dataset. Completion follows a durable operation receipt instead of waiting for a different process ID.
+- Desktop backup downloads open in your browser, keeping Squad open while you save the verified file.
+- Update native tray and windowing support and synchronize the desktop build dependencies. Building the native app now requires Rust 1.90 or newer.
+- Task actions are visible on touch and keyboard. Delete any plan or launched/handoff task, including completed work, with a confirmation; deleting a running task leaves unrelated work alone.
+- Removed Canvas from agent chats and search. Deliverables use the member's Library; existing canvas files remain available for recovery.
+- Updated the runtime dependency used to verify downloads and saved memory.
 
 ## [0.1.21] - 2026-11-04
 
@@ -841,7 +788,8 @@ Local review candidate; GitHub publication is pending user confirmation.
 - Installable desktop release pipeline with signed and notarised builds when
   credentials are present.
 
-[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.23...HEAD
+[0.1.23]: https://github.com/autohandai/squad/compare/v0.1.21...v0.1.23
 [0.1.7]: https://github.com/autohandai/squad/compare/v0.1.5...v0.1.7
 [0.1.5]: https://github.com/autohandai/squad/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/autohandai/squad/compare/v0.1.3...v0.1.4
