@@ -69,6 +69,22 @@ try {
   await browser.evaluate("document.querySelector('[data-testid=voice-picker] [data-voice=f06]').click()");
   await until(async () => (await saved('voice-eva')).voice === 'f06', 'Simone saved for Eva', 20000);
 
+  // 4b. The member card (chat header avatar) names the voice with a sample, and
+  //     its actions are a pen and an eye in the top-right corner (24 Nov).
+  await browser.navigate(`${bridge.origin}/conversations/new?member=voice-eva`);
+  await until(() => browser.evaluate("!!document.querySelector('header [data-slot=avatar]')"), 'the chat header', 30000);
+  await browser.evaluate("document.querySelector('header [data-slot=avatar]').closest('button').click()");
+  await until(() => browser.evaluate("!!document.querySelector('[data-testid=member-preview-voice]')"), 'the voice in the member card', 20000);
+  assert.match(await browser.evaluate("document.querySelector('[data-testid=member-preview-voice]').innerText"), /Simone/);
+  assert.ok(await browser.evaluate("!!document.querySelector('[data-testid=member-preview-edit]') && !!document.querySelector('[data-testid=member-preview-view]')"), 'pen and eye in the card');
+  assert.ok(!(await browser.evaluate("[...document.querySelectorAll('[data-slot=popover-content] button')].some(b => /View profile|Change avatar/.test(b.innerText))")), 'no text buttons left in the card');
+  await browser.evaluate(`(() => { window.__started = 0; const start = AudioBufferSourceNode.prototype.start; AudioBufferSourceNode.prototype.start = function (...args) { window.__started += 1; return start.apply(this, args); }; })()`);
+  await browser.evaluate("document.querySelector('[data-testid=member-preview-voice] button').click()");
+  await until(() => browser.evaluate('window.__started > 0'), 'the card plays the voice', 60000);
+  await shoot('member-card');
+  await browser.evaluate("document.querySelector('[data-testid=member-preview-view]').click()");
+  await until(() => browser.evaluate("location.pathname === '/squad-members/voice-eva/home'"), 'the eye opens the profile', 20000);
+
   // 5. Settings > Voice: the squad's voices, no key field.
   await browser.navigate(`${bridge.origin}/settings/voice`);
   await until(() => browser.evaluate("document.querySelectorAll('[data-testid=voice-settings-member]').length === 2"), 'the squad listed in Settings > Voice', 30000);
@@ -85,7 +101,7 @@ try {
   assert.equal(await browser.evaluate("document.querySelector('[role=dialog] [data-testid=voice-picker] [aria-checked=true]')?.dataset.voice"), 'm3');
   await shoot('edit-profile-voice');
   assert.deepEqual(browser.errors, []);
-  console.log('PASS read aloud: the bridge serves kale-tts-1 and the worker speaks real sentences; Eva and Thiago get fitting voices saved once; the profile sample plays through the reader; a new choice is saved; Settings > Voice lists the voices with no ElevenLabs; Edit profile offers the voice.');
+  console.log('PASS read aloud: the bridge serves kale-tts-1 and the worker speaks real sentences; Eva and Thiago get fitting voices saved once; the profile sample plays through the reader; a new choice is saved; the member card names the voice with a sample and offers pen and eye icons; Settings > Voice lists the voices with no ElevenLabs; Edit profile offers the voice.');
 } finally {
   await browser?.close();
   await bridge.close();

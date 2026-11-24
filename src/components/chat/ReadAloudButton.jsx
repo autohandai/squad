@@ -75,7 +75,7 @@ export function ReadAloudButton({ text = "", message, memberId = "", voice: expl
         aria-label={label}
         title={label}
         aria-pressed={speaking}
-        className={cn("rounded-md text-muted-foreground hover:text-foreground", (speaking || loading) && "text-primary hover:text-primary", !compact && !mine && "opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100")}
+        className={cn("rounded-md text-muted-foreground/80 hover:text-foreground", (speaking || loading) && "text-primary hover:text-primary")}
         onClick={() => { if (mine) { requested.current = false; reader.stop(); } else speak(); }}
         data-read-aloud={loading ? "loading" : speaking ? "speaking" : "idle"}
       >

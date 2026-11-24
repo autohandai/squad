@@ -159,6 +159,7 @@ import {
   Plug,
   ListPlus,
 } from "lucide-react";
+import { Eye as EyeIcon, Pencil as PencilIcon, Volume2 as SpeakerIcon } from "lucide-react";
 import {
   extensionRows,
   initialAutomations,
@@ -401,6 +402,7 @@ import { fallbackLabel, initialMemberExecution, normalizeModelRouting } from "@/
 import { ATTACHMENT_COUNT_LIMIT, attachmentOnlyPrompt, attachmentReferences } from "@/lib/attachments";
 import { ReadAloudButton } from "@/components/chat/ReadAloudButton";
 import { ReadAloudSetting } from "@/components/chat/ReadAloudSetting";
+import { getPageReader } from "@/lib/read-aloud";
 import { MemberVoicesContext, useMemberVoice } from "@/lib/member-voice-context";
 import { cachedMemberVoices, voiceById } from "@/lib/member-voice";
 import { VoicePicker } from "@/components/members/VoicePicker";
@@ -19692,7 +19694,7 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
         ) : (
           <AgentAvatar agent={agent} className="size-12 shrink-0" />
         )}
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 id={headingId} className="truncate text-base font-semibold">{agent.name}</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">{localizedRole(agent, copy)}</p>
           <div className="mt-1 text-xs">
@@ -19705,6 +19707,27 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
               </span>
             )}
           </div>
+        </div>
+        {/* Quiet icon actions in the corner (owner, 24 Nov): edit the face, view the profile. */}
+        <div className="-mr-1 -mt-1 flex shrink-0 items-center gap-0.5" data-testid="member-preview-actions">
+          {changeAvatar ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" variant="ghost" size="icon-sm" aria-label={`Change ${agent.name}’s avatar`} onClick={() => changeAvatar(agent.id)} data-testid="member-preview-edit">
+                  <PencilIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Change avatar</TooltipContent>
+            </Tooltip>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-sm" aria-label={`View ${agent.name}’s profile`} onClick={onViewProfile} data-testid="member-preview-view">
+                <EyeIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>View profile</TooltipContent>
+          </Tooltip>
         </div>
       </div>
       {description ? <p className="mt-3 text-sm leading-6 text-muted-foreground">{description}</p> : null}
@@ -19720,19 +19743,33 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
             <dd className="break-words">{value}</dd>
           </div>
         ))}
+        <MemberPreviewVoice agent={agent} />
       </dl>
-      <div className="mt-3 flex gap-2 border-t border-border/60 pt-3">
-        {changeAvatar ? (
-          <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={() => changeAvatar(agent.id)}>
-            Change avatar
-          </Button>
-        ) : null}
-        <Button type="button" variant="outline" size="sm" className="min-w-0 flex-1" onClick={onViewProfile}>
-          View profile
-          <ArrowRight data-icon="inline-end" />
-        </Button>
-      </div>
     </PopoverContent>
+  );
+}
+
+/** The member's reading voice in its card, with a sample (ADR-0276). */
+function MemberPreviewVoice({ agent }) {
+  const voice = voiceById(useMemberVoice(agent.id));
+  const reader = getPageReader();
+  const [state, setState] = useState(() => reader.snapshot());
+  useEffect(() => reader.subscribe(setState), [reader]);
+  if (!voice) return null;
+  const id = `preview-voice-${agent.id}`;
+  const playing = state.id === id && state.status !== "idle";
+  return (
+    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3" data-testid="member-preview-voice">
+      <dt className="text-muted-foreground">Voice</dt>
+      <dd className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate">{voice.name} · {voice.description}</span>
+        <Button type="button" variant="ghost" size="icon-xs" className="-my-1 shrink-0 text-muted-foreground hover:text-foreground"
+          aria-label={playing ? "Stop" : `Hear ${agent.name}’s voice`} title={playing ? "Stop" : `Hear ${agent.name}`}
+          onClick={() => (playing ? reader.stop() : reader.speak({ id, text: `Hi, I'm ${agent.name}. This is how I'll sound when I read my replies to you.`, voice: voice.id }))}>
+          {playing ? <Square className="size-2.5 fill-current" /> : <SpeakerIcon className="size-3.5" />}
+        </Button>
+      </dd>
+    </div>
   );
 }
 

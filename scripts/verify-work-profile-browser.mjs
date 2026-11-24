@@ -275,7 +275,9 @@ async function main() {
     };
     await openAt('[data-slot="avatar"]');
     report.preview = await cdp.evaluate(`(() => { const popover = document.querySelector('[data-slot=popover-content]'); const rect = popover.getBoundingClientRect(); const anchor = document.querySelector(${JSON.stringify(triggerSelector)}).getBoundingClientRect(); return { text: popover.innerText, x: rect.x, y: rect.y, width: rect.width, height: rect.height, anchor: { x: anchor.x, y: anchor.y, bottom: anchor.bottom }, route: location.pathname }; })()`);
-    for (const text of ["Eva", "QA Engineer", "Idle", "Reproduces defects", "Workspace", "Model", "Runs with", "View profile"]) assert(report.preview.text.toLowerCase().includes(text.toLowerCase()), `Preview must contain ${text}`);
+    for (const text of ["Eva", "QA Engineer", "Idle", "Reproduces defects", "Workspace", "Model", "Runs with", "Voice"]) assert(report.preview.text.toLowerCase().includes(text.toLowerCase()), `Preview must contain ${text}`);
+    // The card's actions are two icons in its top-right corner (24 Nov): pen and eye.
+    assert(await cdp.evaluate("!!document.querySelector('[data-slot=popover-content] [data-testid=member-preview-view][aria-label^=View]')"), "Preview offers View profile as an eye icon");
     assert(Math.abs(report.preview.x - report.preview.anchor.x) < 20, "Preview must be anchored by the member");
     assert(report.preview.y >= report.preview.anchor.bottom, "Preview must open below the member");
     assert.equal(report.preview.route, "/conversations/new");
@@ -288,7 +290,7 @@ async function main() {
     await cdp.evaluate(`window.__verifyPresence[${JSON.stringify(agents[0].id)}] = { state: 'working', activeRuns: 2 }`);
     await waitFor(() => cdp.evaluate("document.querySelector('[data-slot=popover-content]')?.innerText.includes('Working')"), "live status changes within open preview", 14000);
     report.livePresenceUpdatesInOpenCard = true;
-    await cdp.evaluate("Array.from(document.querySelector('[data-slot=popover-content]').querySelectorAll('button')).find(button => button.textContent.includes('View profile')).click()");
+    await cdp.evaluate("document.querySelector('[data-slot=popover-content] [data-testid=member-preview-view]').click()");
     await waitFor(() => cdp.evaluate(`location.pathname === '/squad-members/${agents[0].id}/home' && document.querySelector('.app-sidebar')?.innerText.includes('Back to chat')`), "View profile navigation");
     report.profileLogo = await geometry();
     assert.equal(report.profileLogo.y, report.normalLogo.y, "Profile logo must align with normal sidebar logo");

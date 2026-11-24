@@ -115,6 +115,15 @@ What existed:
 - **`check-app-info`** passes with the Kale, onnxruntime-web and dizione
   notices.
 
+### Addendum, 24 Nov 2026: finding the voice
+
+The owner asked "where is the voice I asked for?" after it shipped. The reply
+speaker only appeared on hover, and the member card (click the avatar in the
+chat header) did not mention the voice. The speaker is now always visible,
+muted, and the card has a Voice row with a sample. `check-read-aloud-browser`
+opens the card, plays the sample and checks the card's pen and eye icons; it
+now runs in CI.
+
 ## Consequences
 
 - The app grows by about 117 MB:
