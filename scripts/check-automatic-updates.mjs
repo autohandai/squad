@@ -59,6 +59,11 @@ try {
   await flow.install(); assert.equal(installs, 1, "only an explicit install opens the installer");
   // A failed automatic attempt has a version even if it fails during checking.
   release = { ...release, snapshot: { ...snapshot, latestAllowedVersion: "0.1.18", downloadName: name.replace(version, "0.1.18"), downloadUrl: snapshot.downloadUrl.replaceAll(version, "0.1.18") } };
+  // ADR-0279: the open 0.1.17 installer does not hold back 0.1.18.
+  await automatic.check();
+  await until(async () => { const p = await flow.progress(); return p.phase === "ready" && p.version === "0.1.18"; }, "superseded installer replaced");
+  assert.equal(downloads, 3, "a newer release replaces an older download left in the installer");
+  assert.equal(installs, 1, "the replacement is downloaded, never installed");
   const failureDir = join(directory, "failed");
   let failures = 0;
   const failedFlow = createUpdateFlow({ ...flowOptions, appStateDir: failureDir, fetchImpl: async () => { failures++; throw new Error("Network failed"); } });

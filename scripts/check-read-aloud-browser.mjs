@@ -88,6 +88,15 @@ try {
   await shoot('member-card');
   await browser.evaluate("document.querySelector('[data-testid=member-preview-view]').click()");
   await until(() => browser.evaluate("location.pathname === '/squad-members/voice-eva/home'"), 'the eye opens the profile', 20000);
+  // 4c. The pen opens the profile with Edit Profile open; hovering the face
+  //     in the card shows a pen over it (owner, 26 Nov).
+  await browser.navigate(`${bridge.origin}/conversations/new?member=voice-eva`);
+  await until(() => browser.evaluate("!!document.querySelector('header [data-slot=avatar]')"), 'the chat header again', 30000);
+  await browser.evaluate("document.querySelector('header [data-slot=avatar]').closest('button').click()");
+  await until(() => browser.evaluate("!!document.querySelector('[data-testid=member-preview-avatar] [data-testid=avatar-edit-mark] svg')"), 'a pen over the face in the card', 20000);
+  await browser.evaluate("document.querySelector('[data-testid=member-preview-edit]').click()");
+  await until(() => browser.evaluate("location.pathname === '/squad-members/voice-eva/home' && !location.search.includes('edit') && [...document.querySelectorAll('[role=dialog] h2')].some(h => h.textContent.trim() === 'Edit Profile')"), 'the pen opens the profile with Edit Profile open', 20000);
+  await browser.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
 
   // 5. Settings > Voice: the squad's voices, no key field.
   await browser.navigate(`${bridge.origin}/settings/voice`);

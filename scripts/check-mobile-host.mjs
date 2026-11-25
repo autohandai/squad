@@ -54,6 +54,25 @@ try {
   assert.equal((await request('snapshot')).data.members.find((row) => row.id === voiced.id).voice, 'h013f', 'the snapshot carries the new voice');
   const unknownVoice = await request('member.voice', { memberID: voiced.id, voice: 'Siri' });
   assert.match(JSON.stringify(unknownVoice), /ten voices/, 'an unknown voice is refused');
+  // Contract 0.10 (ADR-0279): the phone reads a member's profile and edits it
+  // through the computer, revision-checked against the desktop's own edits.
+  assert.ok(snapshot.data.capabilities.includes('profiles'), 'the host offers member profiles');
+  const read = await request('member.profile', { memberID: voiced.id });
+  assert.equal(read.ok, true, JSON.stringify(read));
+  assert.equal(read.data.memberID, voiced.id); assert.equal(read.data.canEdit, true);
+  assert.ok(Number.isInteger(read.data.revision) && read.data.limits.instructions > 0 && typeof read.data.harness === 'string');
+  const edited = await request('member.update', { memberID: voiced.id, expectedRevision: read.data.revision, role: 'Phone-edited role', description: 'Edited on the phone.', instructions: 'Answer in short paragraphs.' });
+  assert.equal(edited.ok, true, JSON.stringify(edited));
+  assert.equal(edited.data.role, 'Phone-edited role'); assert.equal(edited.data.instructions, 'Answer in short paragraphs.');
+  assert.ok(edited.data.revision > read.data.revision, 'the edit bumps the profile revision');
+  const onComputer = (await bridge.api(`/api/control-plane/members/${encodeURIComponent(voiced.id)}`)).data;
+  assert.equal(onComputer.role, 'Phone-edited role', 'the computer saved the phone’s edit');
+  assert.equal((await request('snapshot')).data.members.find((row) => row.id === voiced.id).role, 'Phone-edited role', 'the snapshot carries the new role');
+  const stale = await request('member.update', { memberID: voiced.id, expectedRevision: read.data.revision, role: 'Overwrites the newer edit' });
+  assert.match(JSON.stringify(stale), /changed/i, 'an edit made against an older revision is refused');
+  assert.match(JSON.stringify(await request('member.update', { memberID: voiced.id, expectedRevision: edited.data.revision, name: '   ' })), /needs a name/);
+  assert.match(JSON.stringify(await request('member.update', { memberID: voiced.id, expectedRevision: edited.data.revision, avatar: '/x.png' })), /"ok":false/, 'only the profile fields are editable');
+  assert.match(JSON.stringify(await request('member.update', { memberID: voiced.id, expectedRevision: edited.data.revision })), /Change a field/);
   // Contract 0.7 (ADR-0272): the phone draws members in the computer's avatar style.
   assert.equal(snapshot.data.appearance?.avatarStyle, 'flat', 'the snapshot carries the default avatar style');
   assert.equal((await bridge.api('/api/system/settings', 'PUT', { avatarStyle: 'clay' })).success, true);
