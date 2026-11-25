@@ -3,8 +3,26 @@ export const name = "cloud";
 export async function handle(req, res, url, ctx) {
   if (url.pathname !== "/api/cloud" && !url.pathname.startsWith("/api/cloud/")) return false;
   try {
-    if (!ctx.cloud) throw Object.assign(Error("Cloud sync is unavailable in this runtime."), { status: 503 });
     let result;
+    // Member profiles in the Autohand account (ADR-0280).
+    if (url.pathname === "/api/cloud/profiles" || url.pathname.startsWith("/api/cloud/profiles/")) {
+      if (!ctx.profileCloud) throw Object.assign(Error("Profiles in your account are unavailable in this runtime."), { status: 503 });
+      const action = url.pathname.slice("/api/cloud/profiles".length);
+      const body = req.method === "POST" ? await ctx.readBody(req) : {};
+      const id = String(body.id || "");
+      if (["/resolve", "/add", "/remove"].includes(action) && !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(id)) throw Object.assign(Error("Choose a member profile."), { status: 400 });
+      if (action === "" && req.method === "GET") result = await ctx.profileCloud.status();
+      else if (action === "/sync" && req.method === "POST") result = await ctx.profileCloud.sync();
+      else if (action === "/enabled" && req.method === "POST") {
+        if (typeof body.enabled !== "boolean") throw Object.assign(Error("Say whether to keep profiles in your account."), { status: 400 });
+        result = await ctx.profileCloud.setEnabled(body.enabled);
+      } else if (action === "/resolve" && req.method === "POST") result = await ctx.profileCloud.resolve(id, body.choice);
+      else if (action === "/add" && req.method === "POST") result = await ctx.profileCloud.add(id);
+      else if (action === "/remove" && req.method === "POST") result = await ctx.profileCloud.remove(id);
+      else throw Object.assign(Error("Profile sync route not found."), { status: 404 });
+      ctx.json(res, 200, { success: true, data: result }); return true;
+    }
+    if (!ctx.cloud) throw Object.assign(Error("Cloud sync is unavailable in this runtime."), { status: 503 });
     if (url.pathname === "/api/cloud" && req.method === "GET") result = await ctx.cloud.status();
     else if (url.pathname === "/api/cloud/session" && req.method === "POST") result = await ctx.cloud.discover();
     else if (url.pathname === "/api/cloud/tenants" && req.method === "POST") {

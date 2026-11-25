@@ -122,6 +122,17 @@ function installFixtures(data) {
       if (scenario.error) return new Response(JSON.stringify({ success: false, error: "Browser fixture app information unavailable" }), { status: 500, headers: { "content-type": "application/json" } });
       return response({ version: "0.1.5", commitHash: "b".repeat(40), dirty: true, builtAt: "2026-10-01T03:00:00.000Z", metadataSource: "bundled", appExecutableSha256: scenario.noChecksum ? null : "c".repeat(64), appExecutableName: scenario.noChecksum ? null : "Autohand Squad", changelog: "# Changelog\n\nBrowser fixture shipped profile improvements.\n\n## 0.1.5\n\n- Browser fixture release evidence.", security: "# Security policy\n\nBrowser fixture disclosure policy.", license: "MIT License\n\nBrowser fixture project license notice.", thirdPartyLicenses: [{ ecosystem: "npm", name: "browser-fixture-react", version: "19.0.0", license: "MIT", text: "Browser fixture permission notice for React.", repository: "https://github.com/facebook/react", note: null }, { ecosystem: "cargo", name: "browser-fixture-runtime", version: "1.0.0", license: "Apache-2.0", text: "", repository: null, note: "Browser fixture license text was not staged." }], licenseCoverage: ["Browser fixture coverage includes staged dependencies; missing notices are identified explicitly."] });
     }
+    if (url.pathname === "/api/cloud/profiles" || url.pathname.startsWith("/api/cloud/profiles/")) {
+      // Member profiles in the account (ADR-0280).
+      window.__profilesVerify ||= { available: true, enabled: true, ownerKind: "user", lastSyncedAt: data.now, error: "", notes: [],
+        conflicts: [{ id: "member-iris", memberId: "member-iris", name: "Iris", fields: [{ field: "description", label: "Description", local: "Checks releases here", cloud: "Checks releases there" }] }],
+        cloudOnly: [{ id: "member-ada", name: "Ada", role: "Designer", avatar: "kea", updatedAt: data.now }] };
+      const body = JSON.parse(options.body || "{}");
+      if (url.pathname === "/api/cloud/profiles/enabled") window.__profilesVerify.enabled = body.enabled;
+      if (url.pathname === "/api/cloud/profiles/resolve") { window.__profilesResolution = body; window.__profilesVerify.conflicts = []; }
+      if (url.pathname === "/api/cloud/profiles/add") { window.__profilesAdded = body; window.__profilesVerify.cloudOnly = []; }
+      return response(window.__profilesVerify);
+    }
     if (url.pathname === "/api/cloud" || url.pathname.startsWith("/api/cloud/")) {
       window.__cloudVerify ||= { enabled: false, conflicts: [], error: "" };
       window.__cloudTenants ||= [];
@@ -482,6 +493,17 @@ async function main() {
     await cloudButton('Disconnect');
     await waitFor(() => cdp.evaluate("document.querySelector('[data-testid=cloud-sync-settings]').innerText.includes('Choose cloud workspace')"), 'disconnect remains usable');
     report.cloud = { fixtureOnly: true, explicitEnrollment: true, conflictChoice: true };
+    const profileButton = label => cdp.evaluate(`Array.from(document.querySelector('[data-testid=profile-cloud-settings]').querySelectorAll('button')).find(button=>button.textContent.trim()===${JSON.stringify(label)})?.click()`);
+    await waitFor(() => cdp.evaluate("document.querySelector('[data-testid=profile-cloud-settings]')?.innerText.includes('Checks releases there')"), 'both profile versions rendered');
+    assert(await cdp.evaluate("document.querySelector('[data-testid=profile-cloud-settings]').innerText.includes('In your account, not on this computer')"), 'members kept only in the account are listed');
+    await screenshot('cloud-profiles');
+    await profileButton("Use your account's");
+    await waitFor(() => cdp.evaluate("window.__profilesResolution?.choice==='cloud' && window.__profilesResolution.id==='member-iris'"), 'profile conflict resolved with the account version');
+    await profileButton('Add to this computer');
+    await waitFor(() => cdp.evaluate("window.__profilesAdded?.id==='member-ada'"), 'account-only member added');
+    await cdp.evaluate("document.querySelector('[data-testid=profile-cloud-switch]').click()");
+    await waitFor(() => cdp.evaluate("window.__profilesVerify.enabled===false"), 'profiles switch turns off');
+    report.cloudProfiles = { fixtureOnly: true, conflictChoice: true, addFromAccount: true, switch: true };
     // Pointer selection of settings chrome is refused in all skins.
     for(const skin of ['default','soft','grut']) {
       await cdp.evaluate(`localStorage.setItem('autohandSquad.v1.skin',${JSON.stringify(skin)})`); await navigate('/settings/updates');

@@ -12,6 +12,7 @@ list to the section for that version.
 
 ### Added
 
+- **Member profiles live in your Autohand account.** When you're signed in, each member's name, role, description, instructions, personality, skills, bird and voice are kept in your account and follow you to your other computers, and to your phone through either one. Edit a member on one computer and the other picks it up within half a minute. If both changed the same thing, Settings › Cloud sync shows both and lets you keep this computer's or use your account's; nothing is overwritten unseen. Members you have on another computer are listed there with Add to this computer. Folders, permissions, model settings and memories stay on each computer. Turn it off with Keep member profiles in your Autohand account. A Squad owned by a team keeps profiles with the team only after you turn it on.
 - **Change a member's avatar, personality and skills from your iPhone.** In Squad for iPhone, a member's Edit Profile now also picks one of Squad's 300 birds, edits the personality and chooses skills from the ones on this computer. The change is saved here, like an edit made in this window.
 
 ## [0.1.25] - 2026-11-26

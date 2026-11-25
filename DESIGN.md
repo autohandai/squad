@@ -114,6 +114,7 @@
 ## Cloud Sync
 
 - Cloud sync is an optional Settings section with plain team/workspace selectors and an explicit Enable sync action. State the scope as shared team memories, and name the receiving team before upload. Discovery never uploads memories. Show connection status, last successful sync, Sync now and Disconnect as simple rows/actions. Keep local / Use cloud preserves both sides until a person chooses; errors retain local data. Tokens and sync diagnostics stay in the bridge, outside browser state and agent prompts (ADR-0151/0152).
+- Member profiles in the account sit at the top of Settings › Cloud sync as one labelled switch with a sentence that names what travels (name, role, description, instructions, personality, skills, bird, voice) and what stays (folders, permissions, memories). A clash lists the member, then each field as "This computer:" and "Your account:" lines with Keep this computer's / Use your account's; members kept only in the account are divider rows with their bird, Add to this computer and a quiet Remove from account (ADR-0280).
 
 ## Ownership and backups
 
