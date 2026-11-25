@@ -5,7 +5,7 @@ import { createOwnedBridgeFixture, ownedFixtureHeaders, seedOwnedCanonicalFixtur
 // provider is called) has one earlier reply. Headless Chrome opens its chat
 // and expects the header meta line to name Claude, not "Autohand AI / moa";
 // then opens New Automation from the header and expects the plain-English
-// field first with the old fields under "Fill in by hand", drafts one
+// field first with the full fields behind "Or set it up yourself" (or Edit details after a draft), drafts one
 // sentence through the member's engine (the fake answers with a schedule
 // action) and expects the proposal in the schedule control.
 //
@@ -198,24 +198,24 @@ try {
     await cdp.evaluate("document.querySelector('button[aria-label=\"Automation\"]').click()");
     await waitFor(async () => (await dialogText()).includes("What should happen, and when?"), "the plain-English field");
     const first = await dialogText();
-    assert.ok(first.includes("Fill in by hand") && !first.includes("Workspace source") && !first.includes("Automation Description"), `the old fields sit under the disclosure: ${first.slice(0, 400)}`);
+    assert.ok(first.includes("Or set it up yourself") && !(await cdp.evaluate("Boolean(document.querySelector('#automation-name'))")), `the old fields sit under the disclosure: ${first.slice(0, 400)}`);
     assert.ok(/Alex turns this into a schedule with Claude Code/.test(first), "the hint names the member and its engine");
     await shoot(`${theme}-new-automation`, "[role=\"dialog\"]");
     await cdp.evaluate(`(() => { const el = document.querySelector('#automation-plain-english'); const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; setter.call(el, "Every weekday at 8am pull yesterday's signups and post a short summary here."); el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-    await cdp.evaluate("[...document.querySelectorAll('[role=\"dialog\"] button')].find((b) => b.innerText.trim() === 'Draft it').click()");
-    await waitFor(async () => (await dialogText()).includes("Each run, Alex will"), "the drafted proposal", 30000).catch(async (error) => { throw new Error(`${error.message}; dialog: ${JSON.stringify((await dialogText()).slice(0, 1200))}; bridge: ${logs.slice(-1500)}`); });
+    await cdp.evaluate("[...document.querySelectorAll('[role=\"dialog\"] button')].find((b) => b.innerText.trim().startsWith('Draft it')).click()");
+    await waitFor(async () => /Drafted by Alex[\s\S]*Each run/.test(await dialogText()), "the drafted proposal", 30000).catch(async (error) => { throw new Error(`${error.message}; dialog: ${JSON.stringify((await dialogText()).slice(0, 1200))}; bridge: ${logs.slice(-1500)}`); });
     const drafted = await dialogText();
     assert.ok(/Pacific\/Auckland/.test(drafted) && /Mon|Weekdays/.test(drafted), `the schedule control shows the proposal: ${drafted.slice(0, 800)}`);
-    const name = await cdp.evaluate("[...document.querySelectorAll('[data-testid=\"automation-draft\"] input')][0]?.value || ''");
-    assert.equal(name, "Signups summary", "the name came from the member's proposal");
+    assert.ok(/Drafted by Alex\s+Signups summary/.test(drafted), `the name came from the member's proposal: ${drafted.slice(0, 400)}`);
     await shoot(`${theme}-new-automation-drafted`, "[role=\"dialog\"]");
-    await cdp.evaluate("[...document.querySelectorAll('[role=\"dialog\"] button')].find((b) => b.innerText.trim() === 'Fill in by hand').click()");
-    await waitFor(async () => (await dialogText()).includes("Workspace source"), "the hand-filled fields");
-    assert.ok((await dialogText()).includes("Webhook"), "Event and Webhook are still there");
+    // After a draft the proposal is read back (ADR-0254); Edit details opens the full fields.
+    await cdp.evaluate("[...document.querySelectorAll('[role=\"dialog\"] button')].find((b) => b.innerText.trim() === 'Edit details').click()");
+    await waitFor(async () => cdp.evaluate("Boolean(document.querySelector('[role=\"dialog\"] #automation-name'))"), "the hand-filled fields");
+    assert.ok(await cdp.evaluate("Boolean(document.querySelector('[data-testid=\"automation-trigger\"] button[value=\"webhook\"]'))"), "the Webhook trigger is still there");
   }
   const thrown = cdp.events.filter((e) => e.method === "Runtime.exceptionThrown").map((e) => e.params.exceptionDetails?.exception?.description || e.params.exceptionDetails?.text || "exception");
   assert.deepEqual(thrown, [], `uncaught exceptions: ${thrown.join(" | ")}`);
-  console.log(`Always-on browser check passed: the Claude Code member's header names Claude, the reply names Claude · fable, New Automation opens on one plain-English field, the member's engine drafted name and schedule into the editor, and the old fields are under Fill in by hand, in light and dark${shotsDir ? `; screenshots in ${shotsDir}` : ""}.`);
+  console.log(`Always-on browser check passed: the Claude Code member's header names Claude, the reply names Claude · fable, New Automation opens on one plain-English field, the member's engine drafted name and schedule into the editor, the draft reads back and Edit details opens the full fields with the Webhook trigger, in light and dark${shotsDir ? `; screenshots in ${shotsDir}` : ""}.`);
 } catch (error) {
   console.error(`bridge log tail: ${logs.slice(-1500)}`);
   throw error;
