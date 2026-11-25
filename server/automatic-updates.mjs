@@ -14,7 +14,10 @@ export function createAutomaticUpdates({ settings, status, flow, platform, arch,
     const operation = await flow.progress();
     // Ready downloads, failures and cancellations require the person's next
     // decision for this version. No repeated downloads or retry storm.
-    if (!["idle", "complete", "failed", "cancelled"].includes(operation.phase) || operation.version === release.snapshot.latestAllowedVersion) return;
+    // A download of an older release is not a decision about this one
+    // (ADR-0279): a 0.1.23 installer left open blocked 0.1.24.
+    const superseded = ["ready", "installer-open"].includes(operation.phase) && compareUpdateVersions(operation.version, release.snapshot.latestAllowedVersion) === -1;
+    if ((!["idle", "complete", "failed", "cancelled"].includes(operation.phase) && !superseded) || operation.version === release.snapshot.latestAllowedVersion) return;
     // A preference changed while discovery was in flight takes effect now.
     const current = await settings();
     if (!current.autoCheckUpdates || !current.autoDownloadUpdates) return;

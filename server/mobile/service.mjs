@@ -80,7 +80,7 @@ export async function createMobileService({ directory, computerName, assertCurre
         await afterRevoke(packet.peerID);
         return respond({ ok: true, data: { removed: true } });
       }
-      if (!['snapshot', 'conversation', 'message', 'delegate', 'tasks', 'announcements', 'announcement.act', 'avatar', 'group.conversation', 'group.message', 'card.act', 'inbox', 'feedback.send', 'member.voice', 'marketplace.home', 'marketplace.list', 'marketplace.listing', 'marketplace.requests', 'marketplace.add'].includes(command.command)) throw Error('This action is unavailable from a phone.');
+      if (!['snapshot', 'conversation', 'message', 'delegate', 'tasks', 'announcements', 'announcement.act', 'avatar', 'group.conversation', 'group.message', 'card.act', 'inbox', 'feedback.send', 'member.voice', 'member.profile', 'member.update', 'marketplace.home', 'marketplace.list', 'marketplace.listing', 'marketplace.requests', 'marketplace.add'].includes(command.command)) throw Error('This action is unavailable from a phone.');
       if (command.command === 'snapshot') {
         // Routes travel only inside this device's authenticated reply (ADR-0228).
         const data = await execute(command.command, parameters, { deviceID: packet.peerID, requestID: packet.requestID });

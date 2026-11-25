@@ -1,4 +1,4 @@
-import { RotateCw } from "lucide-react";
+import { ArrowDownToLine, RotateCw } from "lucide-react";
 
 import { SquadFlock } from "@/components/brand/SquadFlock";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,7 @@ const STEPS = {
  * and a way back. It never opens for a download: downloads run in the
  * background while the squad keeps working.
  */
-export function UpdateScreen({ updates, operation = {}, error = "", requested = false, onRetry, onOpenReleases, onClose, flockSeed }) {
+export function UpdateScreen({ updates, operation = {}, error = "", requested = false, onRetry, onDownload, onOpenReleases, onClose, flockSeed }) {
   const view = updateView(updates, operation, { error });
   const step = STEPS[view.phase];
   // `requested` covers the moment between the click and the bridge's answer;
@@ -66,7 +66,13 @@ export function UpdateScreen({ updates, operation = {}, error = "", requested = 
           <>
             {view.failure ? <p className="mt-5 text-sm text-destructive [overflow-wrap:anywhere]" role="alert" data-selectable>{view.failure}</p> : null}
             <div className="mt-6 flex flex-wrap justify-center gap-2">
-              <Button onClick={() => onRetry?.()} disabled={!onRetry}><RotateCw data-icon="inline-start" />Try again</Button>
+              {/* Retrying a download a newer release replaced would install
+                  the old version again (ADR-0279): fetch the new one instead. */}
+              {view.superseded && view.downloadable ? (
+                <Button onClick={() => onDownload?.()} disabled={!onDownload}><ArrowDownToLine data-icon="inline-start" />Download {view.latest}</Button>
+              ) : (
+                <Button onClick={() => onRetry?.()} disabled={!onRetry}><RotateCw data-icon="inline-start" />Try again</Button>
+              )}
               <Button variant="ghost" onClick={onClose}>Back to Squad</Button>
             </div>
             <Button variant="link" size="sm" className="mt-3 text-muted-foreground" onClick={onOpenReleases}>Download the latest version</Button>

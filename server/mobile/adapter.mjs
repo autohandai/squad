@@ -9,6 +9,7 @@ import { harnessLabel } from '../../src/lib/harness.js';
 import { birdFromAvatar } from '../../src/lib/bird-cast.js';
 import { normalizeModelRouting, primaryRoute, routeKey } from '../../src/lib/model-routing.js';
 import { isGroupChat } from '../../src/lib/group-chats.js';
+import { PROFILE_LIMITS } from '../../src/lib/member-shaping.js';
 import { needsResponderPick, resolveMentions, resolveResponderRecipients } from '../../src/lib/channel-responders.js';
 import { PERMISSION_DECISIONS, permissionCard, permissionOutcome, scheduleCard, teamCard } from './cards.mjs';
 import { createPhoneMarketplace } from './marketplace.mjs';
@@ -27,6 +28,19 @@ const messageStatus = status => status === 'loading' || status === 'queued' || s
 const clip = (text, limit) => { const value = String(text || '').replace(/\s+/g, ' ').trim(); return value.length > limit ? `${value.slice(0, limit - 1)}…` : value; };
 
 const memberID = z.object({ memberID: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/) });
+/** What the phone shows and edits of a member's profile (contract 0.10). */
+function phoneProfile(id, profile, context) {
+  const skills = (Array.isArray(profile?.skills) ? profile.skills : []).map(skill => typeof skill === 'string' ? skill : skill?.name || skill?.id || '').filter(Boolean).slice(0, 40);
+  return {
+    memberID: id, revision: Number(profile?.revision) || 0,
+    name: String(profile?.name || ''), role: String(profile?.role || ''),
+    description: String(profile?.description || ''), instructions: String(profile?.instructions || ''),
+    personality: clip(profile?.personality, 1200), skills, workspace: String(profile?.workspace || ''),
+    harness: harnessLabel(profile?.harness?.id || 'autohand'), voice: voiceById(profile?.voice)?.id || '',
+    limits: { name: PROFILE_LIMITS.name, role: PROFILE_LIMITS.role, description: PROFILE_LIMITS.description, instructions: PROFILE_LIMITS.instructions },
+    canEdit: Boolean(context?.canWrite),
+  };
+}
 /** The phone uses the same roster, transcripts and durable queue as MCP/CLI. */
 export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: true }), origin, computerID, version, computerName = hostname(), assignTask, announcements, rootDir = '', cards = null, emit = () => {} }) {
   const bridge = createBridgeClient(origin), tools = createTools(bridge);
@@ -219,7 +233,7 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
             lastMessageAt: last?.createdAt || null, preview: last ? { author: last.role === 'user' ? 'You' : last.authorName || last.agentId || 'Member', text: clip(last.body, 140) } : null };
         }).sort((a, b) => String(b.lastMessageAt || b.createdAt).localeCompare(String(a.lastMessageAt || a.createdAt))).slice(0, 50);
         return { computer: { id: computerID, name: computerName, version, connectedAt: new Date().toISOString() },
-          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards', 'inbox'] : []), 'marketplace', 'feedback', 'voices'],
+          capabilities: [...(assignTask ? ['tasks', ...(context.canWrite ? ['delegate'] : [])] : []), ...(announcements ? ['announcements'] : []), ...(rootDir ? ['avatars'] : []), ...(channels ? ['groups'] : []), ...(cards ? ['cards', 'inbox'] : []), 'marketplace', 'feedback', 'voices', 'profiles'],
           ...(context.actor ? { account: { id: context.actor.id, name: context.actor.name || '', email: context.actor.email || '' } } : {}),
           members: members.map(row => {
             const remote = (Array.isArray(remotes) ? remotes : remotes?.members || []).find(remote => remote.memberId === row.id);
@@ -356,6 +370,30 @@ export function createMobileAdapter({ preferences = () => ({ confirmPhoneAdds: t
         const profile = await bridge.get(`/api/control-plane/members/${encodeURIComponent(id)}`);
         const saved = await bridge.patch(`/api/control-plane/members/${encodeURIComponent(id)}`, { voice: voiceById(voice).id, expectedRevision: profile.revision });
         return { memberID: id, voice: voiceById(saved.voice)?.id || voiceById(voice).id };
+      }
+      // A member's profile, read and edited from the phone (contract 0.10,
+      // ADR-0279): the same revision-checked profile the desktop's Edit
+      // Profile saves, in the signed-in owner's Squad on this computer. A
+      // stale revision is refused, so the phone and the desktop never
+      // overwrite each other's edit unseen.
+      if (command === 'member.profile') {
+        const { memberID: id } = memberID.strict().parse(parameters);
+        await member(id);
+        const [profile, context] = await Promise.all([bridge.get(`/api/control-plane/members/${encodeURIComponent(id)}`), bridge.get('/api/ownership/context')]);
+        return phoneProfile(id, profile, context);
+      }
+      if (command === 'member.update') {
+        const text = limit => z.string().max(limit * 2);
+        const input = memberID.extend({ expectedRevision: z.number().int().min(0), name: text(PROFILE_LIMITS.name).optional(), role: text(PROFILE_LIMITS.role).optional(),
+          description: text(PROFILE_LIMITS.description).optional(), instructions: text(PROFILE_LIMITS.instructions).optional() }).strict().parse(parameters);
+        const { memberID: id, expectedRevision, ...fields } = input;
+        if (!Object.keys(fields).length) throw Error('Change a field before saving.');
+        if (fields.name !== undefined && !fields.name.trim()) throw Error('A member needs a name.');
+        const context = await bridge.get('/api/ownership/context');
+        if (!context?.canWrite) throw Error('This Squad is read-only here; edit the profile on the computer.');
+        await member(id);
+        const saved = await bridge.patch(`/api/control-plane/members/${encodeURIComponent(id)}`, { ...fields, expectedRevision });
+        return phoneProfile(id, saved, context);
       }
       if (command === 'feedback.send') {
         const input = z.object({ kind: z.enum(['bug', 'feedback']), summary: z.string().min(8).max(200), detail: z.string().max(8000).optional(),

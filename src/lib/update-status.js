@@ -59,6 +59,11 @@ export function updateView(
     /^[a-f0-9]{64}$/i.test(snapshot.downloadSha256 || "");
   // A receipt for the previous release must yield to the next release.
   const newerThanCancellation = operation.phase === "cancelled" && compareUpdateVersions(operation.version, latest) === -1;
+  // So must a download of it (ADR-0279): a 0.1.23 installer left open kept
+  // "Installer opened · Open installer again" on screen after 0.1.24 shipped,
+  // and opening it again reinstalled the release the fix replaced.
+  const superseded = available && ["ready", "failed", "installer-open"].includes(operation.phase) && compareUpdateVersions(operation.version, latest) === -1;
+  if (superseded) operation = { phase: "idle" };
   if (["complete", "cancelled"].includes(operation.phase) && ((available && (operation.phase === "complete" || newerThanCancellation)) || checking || error || ["check-failed", "offline"].includes(updates?.status))) operation = { phase: "idle" };
   const phase = operation.phase || "idle";
   const busy = UPDATE_BUSY_PHASES.has(phase);
@@ -77,7 +82,9 @@ export function updateView(
     ready: `Version ${operation.version || latest} is ready`,
     installing: "Installing update…",
     restarting: "Reopening Squad…",
-    "installer-open": "Installer opened",
+    // The installer being open is not the update being installed: until the
+    // installed version changes, the release is still what's available.
+    "installer-open": `Version ${operation.version || latest} is available`,
     complete: operation.message || "Update complete",
     cancelled: "Download cancelled",
   };
@@ -108,6 +115,7 @@ export function updateView(
     phase,
     failure,
     preview,
+    superseded,
     title,
     percent: updatePercent(operation),
   };

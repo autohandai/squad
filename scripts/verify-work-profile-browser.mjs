@@ -439,8 +439,8 @@ async function main() {
     await cdp.evaluate("window.__updateVerify.installError='Another update installation is already in progress.'"); await updaterButton('Install update');
     await waitFor(()=>cdp.evaluate("document.querySelector('#settings-updates [role=alert]')?.innerText.includes('already in progress')"),'second install refusal');
     await cdp.evaluate("window.__updateVerify.installError=''"); await updaterButton('Install update');
-    await waitFor(async()=>(await updaterText()).includes('Installer opened'),'system installer');
-    await navigate('/settings/updates'); await waitFor(async()=>(await updaterText()).includes('Installer opened'),'operation survives reload');
+    await waitFor(async()=>(await updaterText()).includes('The system installer is open'),'system installer');
+    await navigate('/settings/updates'); await waitFor(async()=>(await updaterText()).includes('The system installer is open'),'operation survives reload');
     // Retry and unknown-size streams keep bytes but never invent a percentage.
     await cdp.evaluate("localStorage.setItem('workProfileVerify.operation','{\"phase\":\"idle\"}'); localStorage.setItem('workProfileVerify.updateScenario',JSON.stringify({status:'available',upgradeError:'Installer verification failed.'}))");
     await navigate('/settings/updates'); await waitFor(async()=>(await updaterText()).includes('Download update'),'retry scenario');

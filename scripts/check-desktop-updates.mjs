@@ -26,6 +26,17 @@ try {
   assert.equal(updateView({ ...newerRelease, status: "check-failed" }, { phase: "complete", version: "0.1.5" }).title, "Could not check for updates");
   assert.equal(updateView(newerRelease, { phase: "complete", version: "0.1.5" }, { checking: true }).title, "Checking for updates…");
   assert.equal(updateView(newerRelease, { phase: "cancelled", version: "0.1.6" }).title, "Download cancelled");
+  // ADR-0279: an older download left ready, failed or in the open installer
+  // yields to the newer release; the installer for this release still says
+  // the release is available until the installed version changes.
+  const behind = { ...newerRelease, appVersion: "0.1.4" };
+  for (const phase of ["installer-open", "ready", "failed"]) {
+    const stale = updateView(behind, { phase, version: "0.1.5", verified: true, installMode: "installer" });
+    assert.equal(stale.title, "Version 0.1.6 is available", `a ${phase} 0.1.5 download must not hide 0.1.6`);
+    assert.equal(stale.superseded, true); assert.equal(stale.phase, "idle"); assert.equal(stale.downloadable, true);
+  }
+  const openInstaller = updateView(behind, { phase: "installer-open", version: "0.1.6", verified: true, installMode: "installer" });
+  assert.equal(openInstaller.title, "Version 0.1.6 is available"); assert.equal(openInstaller.phase, "installer-open"); assert.equal(openInstaller.superseded, false);
   const daemonAhead = await desktopUpdateStatus({
     squadStateDir: directory, appVersion: "0.1.5", refresh: true,
     readJsonImpl: async path => path.endsWith("daemon.json") ? { url: "http://127.0.0.1:19820" } : null,

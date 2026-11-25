@@ -10444,7 +10444,7 @@ function App() {
           <main className="app-main min-w-0">
             <SquadAnnouncements key={runtime?.account?.email || "signed-out"} api={api} enabled={!isOnboarding && runtime?.account?.signedIn === true} busy={agents.some(agent => entryFor(agent).state === "working")} showErrors={routePath === "/settings/updates"} />
             <UpdateConsentNotice updates={updates} operation={updatesUpgradeResult} onReview={() => openSettings("updates")} hidden={isOnboarding || routePath === "/settings/updates"} />
-            {updateScreen.open ? <UpdateScreen updates={updates} operation={updatesUpgradeResult} error={updatesError} requested={updateScreen.pending} onRetry={() => void installUpdate()} onOpenReleases={openReleasePage} onClose={() => { setUpdateScreen({ open: false, pending: false }); setUpdatesError(""); }} /> : null}
+            {updateScreen.open ? <UpdateScreen updates={updates} operation={updatesUpgradeResult} error={updatesError} requested={updateScreen.pending} onRetry={() => void installUpdate()} onDownload={() => { setUpdateScreen({ open: false, pending: false }); void upgradeApp(); }} onOpenReleases={openReleasePage} onClose={() => { setUpdateScreen({ open: false, pending: false }); setUpdatesError(""); }} /> : null}
             {bridgeLine ? <div role="status" aria-live="polite" data-testid="bridge-status" className="px-6 py-2 text-xs text-muted-foreground">{bridgeLine}</div> : null}
             {exportNotice ? <div role={exportNotice.error ? "alert" : "status"} className={`flex items-start gap-3 px-6 py-2 text-sm ${exportNotice.error ? "text-destructive" : "text-muted-foreground"}`} data-testid="text-export-status">
               <span className="min-w-0 flex-1">{exportNotice.message}</span>
@@ -15579,6 +15579,7 @@ function Conversation({
               model={memberModelLabel}
               copy={copy}
               onViewProfile={() => navigate(memberProfilePath(agent.id, "home"))}
+              onEditProfile={() => navigate(`${memberProfilePath(agent.id, "home")}?edit=profile`)}
             />
           </Popover>
             <div className="chat-header-meta -mt-4 ml-12 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -19656,7 +19657,8 @@ function AgentPhotoCard({ agent, className, compact = false }) {
             onClick={() => changeAvatar(agent.id)}
           >
             {face}
-            <span className="pointer-events-none absolute inset-x-0 bottom-0 rounded-b-sm bg-background/85 py-1 text-center text-xs font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+            <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-1.5 rounded-b-sm bg-background/85 py-1 text-xs font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+              <PencilIcon className="size-3" aria-hidden="true" />
               Change avatar
             </span>
           </button>
@@ -19668,7 +19670,16 @@ function AgentPhotoCard({ agent, className, compact = false }) {
 }
 
 
-function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, model, onViewProfile, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
+/** The pen over a face while it is hovered or focused: the face is the way to change it (ADR-0243). */
+function AvatarEditMark() {
+  return (
+    <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md bg-foreground/45 text-background opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" data-testid="avatar-edit-mark">
+      <PencilIcon className="size-4" />
+    </span>
+  );
+}
+
+function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, model, onViewProfile, onEditProfile, copy = getLocaleCopy(DEFAULT_LOCALE) }) {
   const description = agent.description || brainCardForAgent(agent).purpose;
   const headingId = `member-preview-${agent.id}`;
   const changeAvatar = useContext(AvatarChangeContext);
@@ -19690,8 +19701,10 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
     >
       <div className="flex items-start gap-3">
         {changeAvatar ? (
-          <button type="button" className="shrink-0 rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/60" aria-label={`Change ${agent.name}’s avatar`} title="Change avatar" onClick={() => changeAvatar(agent.id)}>
+          // Hovering the face shows the pen that changes it (owner, 26 Nov).
+          <button type="button" className="group relative shrink-0 rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/60" aria-label={`Change ${agent.name}’s avatar`} title="Change avatar" onClick={() => changeAvatar(agent.id)} data-testid="member-preview-avatar">
             <AgentAvatar agent={agent} className="size-12" />
+            <AvatarEditMark />
           </button>
         ) : (
           <AgentAvatar agent={agent} className="size-12 shrink-0" />
@@ -19710,16 +19723,18 @@ function AgentProfilePreview({ agent, presence, runtimeAvailable, workspace, mod
             )}
           </div>
         </div>
-        {/* Quiet icon actions in the corner (owner, 24 Nov): edit the face, view the profile. */}
+        {/* Quiet icon actions in the corner (owner, 24 Nov): the pen opens the
+            profile with Edit Profile open (owner, 26 Nov: "when i click edit
+            i want to go and check the profile"); the face changes the avatar. */}
         <div className="-mr-1 -mt-1 flex shrink-0 items-center gap-0.5" data-testid="member-preview-actions">
-          {changeAvatar ? (
+          {onEditProfile ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button type="button" variant="ghost" size="icon-sm" aria-label={`Change ${agent.name}’s avatar`} onClick={() => changeAvatar(agent.id)} data-testid="member-preview-edit">
+                <Button type="button" variant="ghost" size="icon-sm" aria-label={`Edit ${agent.name}’s profile`} onClick={onEditProfile} data-testid="member-preview-edit">
                   <PencilIcon />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Change avatar</TooltipContent>
+              <TooltipContent>Edit profile</TooltipContent>
             </Tooltip>
           ) : null}
           <Tooltip>
@@ -25023,6 +25038,16 @@ function Profile({ agent, agents = [], tasks, automations, runtime, workspaces =
   }, [runs, tasks, agent.id, locale]);
   const [workRecordTab, setWorkRecordTab] = useState(initialWorkRecordTab);
   const [profileEditOpen, setProfileEditOpen] = useState(false);
+  // The member card's pen lands here with Edit Profile open (?edit=profile);
+  // the query is dropped so Back and reload show the profile itself.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("edit") !== "profile") return;
+    setProfileEditOpen(true);
+    params.delete("edit");
+    const rest = params.toString();
+    window.history.replaceState(window.history.state, "", window.location.pathname + (rest ? `?${rest}` : "") + window.location.hash);
+  }, [agent.id]);
   // Goal 09: recipe launch from the member profile.
   const [profileRecipeTarget, setProfileRecipeTarget] = useState(null);
 

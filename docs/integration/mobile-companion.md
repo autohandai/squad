@@ -82,6 +82,8 @@ for access checks, resource limits, leases and metadata retained by the relay.
 | `announcement.act` | `id`, `action` seen/dismiss, optional `step` | acknowledged action |
 | `device.disconnect` | none | key revoked |
 | `inbox` (0.6, capability `inbox`) | none | `decisions` (each with `memberID`, `memberName`, `at` and the same `card` a chat shows, answered with `card.act`) and `stopped` (failed or stopped replies from the last 48 hours, one per member and question) |
+| `member.profile` (0.10, capability `profiles`) | `memberID` | `revision`, `name`, `role`, `description`, `instructions`, read-only `personality`, `skills`, `workspace`, `harness`, `voice`, the edit `limits` and `canEdit` |
+| `member.update` (0.10, capability `profiles`) | `memberID`, `expectedRevision`, and any of `name`, `role`, `description`, `instructions` | the saved profile, as `member.profile`; refused when the profile changed since `expectedRevision` (re-read it), when a field is over its limit, or when this Squad is read-only here |
 | `feedback.send` (0.6, capability `feedback`) | `kind` bug/feedback, `summary` (8–200), optional `detail`, `automatic`, `appVersion`, `device` | the computer's feedback receipt; sent to Autohand labelled "from Squad for iPhone", 10 an hour from a person and 5 automatic, duplicates dropped for an hour |
 
 The confirmation code is the first big-endian uint32 of
