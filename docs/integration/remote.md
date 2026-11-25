@@ -151,3 +151,16 @@ them: `--host 0.0.0.0` on a trusted network or a tunnel; the default
 No new bridge events. `chat.finished` and `run.finished` payloads for
 proxied work should carry `transport: "remote"` (the integrator adds it
 where the routes emit them).
+
+## Over SSH (ADR-0282)
+
+Settings › Computers › Over SSH saves `{ user, host, port, identityFile,
+remotePort }` in `<squadStateDir>/computers.json` (0600) and keeps
+`ssh -N -L 127.0.0.1:<localPort>:127.0.0.1:<remotePort>` open for each one
+(`server/computers/ssh.mjs`). A member's Runs on uses
+`http://127.0.0.1:<localPort>` as its bridge URL with a token from that
+computer, so everything above applies unchanged. Routes:
+`GET /api/computers`, `GET /api/computers/account`, `GET /api/computers/ssh/keys`,
+`POST /api/computers/ssh/test`, `POST /api/computers/ssh`,
+`DELETE /api/computers/ssh/:id`. Check: `bun run check:computers` and
+`check:computers:browser`.

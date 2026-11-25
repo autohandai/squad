@@ -182,6 +182,14 @@ export async function mobileRelayRoutes(request: Request, env: Env, user: Princi
       ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at`).bind(roomID, user.id, access.key, input.computerID, input.teamID || null, new Date().toISOString()).run();
     return ok({ roomID }, 201);
   }
+  // Every computer this account has connected through the relay, newest
+  // first (ADR-0282). Names and last-connected times only: no routes, rooms
+  // or device ids leave this list.
+  if (url.pathname === "/v1/mobile-relays" && request.method === "GET") {
+    const rows = (await env.DB.prepare("SELECT computer_id,computer_name,team_id,last_seen_at FROM mobile_relay_routes WHERE principal_id=? ORDER BY last_seen_at DESC LIMIT 50")
+      .bind(user.id).all<{ computer_id: string; computer_name: string; team_id: string | null; last_seen_at: string }>()).results;
+    return ok({ computers: rows.map(row => ({ computerID: row.computer_id, name: row.computer_name || "", team: Boolean(row.team_id), lastSeenAt: row.last_seen_at })) });
+  }
   const match = url.pathname.match(/^\/v1\/mobile-relays\/([a-f0-9]{64})(.*)$/); if (!match) return null;
   const row = await env.DB.prepare("SELECT * FROM mobile_relay_routes WHERE id=? AND principal_id=?").bind(match[1], user.id).first<RouteRow>();
   requireValue(row, 404, "relay_not_found", "Computer relay not found.");
@@ -190,6 +198,11 @@ export async function mobileRelayRoutes(request: Request, env: Env, user: Princi
   const room = ctx.exports.MobileRelay.getByName(row.id), path = match[2];
   if (path === "/host" && request.method === "GET") return room.fetch(new Request("https://relay.internal/host", { headers: { upgrade: request.headers.get("upgrade") || "" } }));
   if (path === "/lease" && request.method === "POST") return ok(await room.renew());
+  if (path === "/name" && request.method === "PUT") {
+    const input = await body(request, z.object({ computerName: z.string().trim().min(1).max(120) }).strict());
+    await env.DB.prepare("UPDATE mobile_relay_routes SET computer_name=? WHERE id=? AND principal_id=?").bind(input.computerName, row.id, user.id).run();
+    return ok({ computerName: input.computerName });
+  }
   if (path === "/devices/sync" && request.method === "POST") {
     const input = await body(request, z.object({ deviceIDs: z.array(z.uuid()).max(20) }).strict());
     return ok(await room.synchronize(input.deviceIDs));

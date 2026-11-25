@@ -672,7 +672,7 @@ const UI_COPY_BY_LANGUAGE = {
     connectorsDescription: "Tools from other apps for your members, through MCP. Connectors come from the official MCP Registry and run on this computer.",
     connectorsOff: "Off",
     connectorsOn: "{count} on",
-    relay: "Relay",
+    relay: "Team relay",
     relayDescription: "Share channels with your team through a relay you host. Nothing is shared until you run one and connect to it.",
     relayHowTo: "No relay yet? Run one on a machine your team can reach: RELAY_TOKENS=\"you:a-secret\" bun run relay. Then put its address and that secret below.",
     remoteAccess: "Remote access",

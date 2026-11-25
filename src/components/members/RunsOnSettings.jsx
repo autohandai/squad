@@ -20,8 +20,10 @@ import { cn } from "@/lib/utils";
  *   onProbe      async ({ url, token, label }) => probe summary; throws with the remote's name on failure
  *   onMintToken  async ({ label }) => { token, url, id, label } — shown once
  *   copy         locale strings (src/locales.js); fallbacks below
+ *   computers    saved places from GET /api/computers ([{ label, url, kind: 'ssh' | 'bridge' }]):
+ *                one click fills the address (ADR-0282); the token still comes from that computer
  */
-export function RunsOnSettings({ remote = null, onSave, onRemove, onProbe, onMintToken, copy = {}, id = "member-runs-on" }) {
+export function RunsOnSettings({ remote = null, onSave, onRemove, onProbe, onMintToken, computers = [], copy = {}, id = "member-runs-on" }) {
   const [mode, setMode] = useState(remote ? "remote" : "local");
   const [url, setUrl] = useState(remote?.url || "");
   const [label, setLabel] = useState(remote?.label || "");
@@ -145,6 +147,26 @@ export function RunsOnSettings({ remote = null, onSave, onRemove, onProbe, onMin
 
       {mode === "remote" ? (
         <div className="flex flex-col gap-3 py-4">
+          {computers.length ? (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-muted-foreground">{copy.runsOnSavedComputers || "Your computers"}</span>
+              <div className="flex flex-wrap gap-1.5" data-testid="runs-on-computers">
+                {computers.map((computer) => (
+                  <Button
+                    key={computer.url}
+                    type="button"
+                    variant={candidate.url === computer.url ? "secondary" : "ghost"}
+                    size="sm"
+                    aria-pressed={candidate.url === computer.url}
+                    onClick={() => { setUrl(computer.url); setLabel(computer.label); setStatus(null); }}
+                  >
+                    {computer.label}
+                    <span className="text-xs text-muted-foreground">{computer.kind === "ssh" ? (copy.runsOnOverSsh || "over SSH") : new URL(computer.url).host}</span>
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_200px]">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`${id}-url`} className="text-xs">

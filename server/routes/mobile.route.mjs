@@ -2,7 +2,8 @@ import { createMobileController } from '../mobile/controller.mjs';
 
 export const name = 'mobile';
 const controllers = new Map();
-function controller(ctx) {
+/** The phone controller for this Squad, shared with Computers (ADR-0282). */
+export function controller(ctx) {
   const key = `${ctx.squadStateDir}:${ctx.ownedHookScope || ''}`;
   if (!controllers.has(key)) {
     const creating = createMobileController(ctx).catch(error => { controllers.delete(key); throw error; });

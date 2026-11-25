@@ -10,10 +10,10 @@ import { join } from 'node:path';
 import { primaryRoute, routeKey } from '../src/lib/model-routing.js';
 
 // A saved 0.1 exclusive mode upgrades to independent routes (ADR-0228).
-assert.deepEqual(migrateSavedConfiguration({ enabled: true, mode: 'local', endpoint: '', port: 29323 }), { enabled: true, local: true, relay: true, tunnel: false, icloud: false, endpoint: '', port: 29323 }, 'a local pairing gains the relay without a new QR');
-assert.deepEqual(migrateSavedConfiguration({ enabled: true, mode: 'relay', endpoint: '', port: 29323 }), { enabled: true, local: true, relay: true, tunnel: false, icloud: false, endpoint: '', port: 29323 }, 'a relay computer listens locally again so phones paired there reconnect');
-assert.deepEqual(migrateSavedConfiguration({ enabled: false, mode: 'tunnel', endpoint: 'https://t.example.test', port: 4000 }), { enabled: false, local: false, relay: false, tunnel: true, icloud: false, endpoint: 'https://t.example.test', port: 4000 }, 'a user-operated tunnel stays exactly as chosen');
-const current = { enabled: true, local: false, relay: true, tunnel: false, icloud: false, endpoint: '', port: 29323 };
+assert.deepEqual(migrateSavedConfiguration({ enabled: true, mode: 'local', endpoint: '', port: 29323 }), { enabled: true, local: true, relay: true, tunnel: false, icloud: false, endpoint: '', port: 29323, relayUrl: '' }, 'a local pairing gains the relay without a new QR');
+assert.deepEqual(migrateSavedConfiguration({ enabled: true, mode: 'relay', endpoint: '', port: 29323 }), { enabled: true, local: true, relay: true, tunnel: false, icloud: false, endpoint: '', port: 29323, relayUrl: '' }, 'a relay computer listens locally again so phones paired there reconnect');
+assert.deepEqual(migrateSavedConfiguration({ enabled: false, mode: 'tunnel', endpoint: 'https://t.example.test', port: 4000 }), { enabled: false, local: false, relay: false, tunnel: true, icloud: false, endpoint: 'https://t.example.test', port: 4000, relayUrl: '' }, 'a user-operated tunnel stays exactly as chosen');
+const current = { enabled: true, local: false, relay: true, tunnel: false, icloud: false, endpoint: '', port: 29323, relayUrl: '' };
 assert.deepEqual(migrateSavedConfiguration(current), current, 'a saved choice of independent routes is kept as is');
 
 const { bridge, member, announcementCalls } = await startMobileFixture({ announcements: [{ id: 'fixture-update', title: 'Fixture update', ctaUrl: 'javascript:alert(1)' }] });
@@ -106,7 +106,10 @@ try {
   assert.equal(snapshot.data.routes[0].endpoint, offer.endpoint);
   const routesConfig = await bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: true, relay: false, tunnel: true, endpoint: 'https://phone-tunnel.example.test', port });
   assert.equal(routesConfig.success, true, routesConfig.error);
-  assert.deepEqual(routesConfig.data.config, { enabled: true, local: true, relay: false, tunnel: true, icloud: false, endpoint: 'https://phone-tunnel.example.test', port });
+  assert.deepEqual(routesConfig.data.config, { enabled: true, local: true, relay: false, tunnel: true, icloud: false, endpoint: 'https://phone-tunnel.example.test', port, relayUrl: '' });
+  // ADR-0282: a relay of one's own must be HTTPS; a PUT that doesn't mention it keeps the chosen one.
+  assert.match(JSON.stringify(await bridge.api('/api/mobile/config', 'PUT', { ...routesConfig.data.config, relayUrl: 'http://relay.example.test' })), /HTTPS address/);
+  assert.equal((await bridge.api('/api/mobile/status')).data.relay.name, 'Squad relay by Autohand', 'the default relay is Autohand’s, by name');
   assert.deepEqual((await request('snapshot')).data.routes, [{ kind: 'local', endpoint: offer.endpoint }, { kind: 'tunnel', endpoint: 'https://phone-tunnel.example.test' }], 'local and a user-operated tunnel serve at once');
   assert.equal((await bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: false, relay: false, tunnel: false, endpoint: '', port })).success, false, 'connections on need at least one route');
   assert.equal((await bridge.api('/api/mobile/config', 'PUT', { enabled: true, local: true, relay: false, tunnel: false, endpoint: '', port })).success, true);
@@ -155,7 +158,7 @@ try {
   await writeFile(join(mobileDir, 'config.json'), JSON.stringify({ enabled: true, mode: 'tunnel', endpoint: 'https://phone-tunnel.example.test', port }));
   await bridge.restart();
   const migrated = (await bridge.api('/api/mobile/status')).data;
-  assert.deepEqual(migrated.config, { enabled: true, local: false, relay: false, tunnel: true, icloud: false, endpoint: 'https://phone-tunnel.example.test', port });
+  assert.deepEqual(migrated.config, { enabled: true, local: false, relay: false, tunnel: true, icloud: false, endpoint: 'https://phone-tunnel.example.test', port, relayUrl: '' });
   assert.equal('mode' in JSON.parse(await readFile(join(mobileDir, 'config.json'), 'utf8')), false, 'the migrated choice is saved');
   assert.deepEqual((await request('snapshot')).data.routes, [{ kind: 'tunnel', endpoint: 'https://phone-tunnel.example.test' }]);
   const retry = await request('delegate', parameters, { id });

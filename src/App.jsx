@@ -359,6 +359,7 @@ import { SquadSyncNotice, squadOwnerKey, useSquadOwners, useSquadOwnership } fro
 import { SquadsSettings } from "@/components/settings/SquadsSettings";
 import { RelaySettings } from "@/components/settings/RelaySettings";
 import { ComputersSettings } from "@/components/settings/ComputersSettings";
+import { RunPlacesSettings } from "@/components/settings/RunPlacesSettings";
 import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
 import { SystemSettings } from "@/components/settings/SystemSettings";
 import { CloudSyncSettings } from "@/components/settings/CloudSyncSettings";
@@ -24879,6 +24880,16 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
   const { remoteByMember, refreshRemoteMembers } = useRemoteMembers();
   const remote = remoteByMember?.[agent.id] || null;
   const remotePath = `/api/remote/members/${encodeURIComponent(agent.id)}`;
+  // Saved computers, one click away in Runs on (ADR-0282).
+  const [runPlaces, setRunPlaces] = useState([]);
+  useEffect(() => {
+    let active = true;
+    api("/api/computers").then((data) => {
+      if (!active) return;
+      setRunPlaces([...(data.ssh || []).map((row) => ({ label: row.label, url: row.localUrl, kind: "ssh" })), ...(data.bridges || []).map((row) => ({ label: row.label, url: row.url, kind: "bridge" }))]);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [agent.id]);
   const [assignment, setAssignment] = useState(() => harnessForAgent(agent));
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -24957,6 +24968,7 @@ function AgentHarnessPage({ agent, harnesses = [], harnessesLoading = false, onR
         </div>
         <RunsOnSettings
           remote={remote}
+          computers={runPlaces}
           copy={copy}
           onProbe={(candidate) => api(`${remotePath}/probe`, { method: "POST", body: JSON.stringify(candidate) })}
           onSave={async (candidate) => {
@@ -25797,7 +25809,7 @@ function SettingsPage({
     { id: "mission-control", label: copy.needsYou || "Inbox" },
     { id: "runtime", label: copy.runtimeBridge },
     { id: "computers", label: "Computers" },
-    { id: "relay", label: copy.relay || "Relay" },
+    { id: "relay", label: copy.relay || "Team relay" },
     { id: "remote-access", label: copy.remoteAccess || "Remote access" },
     { id: "connectors", label: copy.connectors || "Connectors" },
     { id: "memory", label: "Memory" },
@@ -26366,7 +26378,7 @@ function SettingsPage({
     relay: () => (
       <>
         <SettingsSectionHeader
-          title={copy.relay || "Relay"}
+          title={copy.relay || "Team relay"}
           description={copy.relayDescription || "Share channels with your team through a relay you host. Nothing is shared until you run one and connect to it."}
         />
         {/* The feature is unusable without knowing you must host the
@@ -26386,7 +26398,8 @@ function SettingsPage({
         />
       </>
     ),
-    computers: () => <><SettingsSectionHeader title="Computers" description="Connect your iPhone or iPad to the squad working on this computer." /><ComputersSettings api={api} /></>,
+    // Where members run first, then how phones reach this computer (ADR-0282).
+    computers: () => <><SettingsSectionHeader title="Computers" description="Where your members run, and how your phone reaches them." /><RunPlacesSettings api={api} memberCount={(agents || []).length} memberNames={Object.fromEntries((agents || []).map(agent => [agent.id, agent.name]))} /><h2 className="mt-8 text-base font-semibold">Phones</h2><p className="mt-1 text-sm text-muted-foreground">Connect your iPhone or iPad to the squad working on this computer.</p><ComputersSettings api={api} /></>,
     "remote-access": () => (
       <>
         <SettingsSectionHeader

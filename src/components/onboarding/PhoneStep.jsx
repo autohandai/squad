@@ -115,7 +115,7 @@ export function PhoneStep({ api, member, onBack, onSkip, onPaired, onFinish, inD
     <h1 id="phone-heading" tabIndex={-1} className={inDialog ? "text-xl font-semibold tracking-tight" : "text-3xl font-semibold tracking-tight"}>{phase === "paired" ? `${paired?.name || "Your iPhone"} is paired.` : "Take your squad with you."}</h1>
     <p className="mt-3 text-base text-muted-foreground">{phase === "paired"
       ? "Open Squad on your iPhone to chat with your members and hand them work. Disconnect it any time in Settings › Computers."
-      : "Pair your iPhone to chat with your members and hand them work from anywhere. It connects directly on the same Wi-Fi, and through Autohand’s encrypted relay when you’re away."}</p>
+      : "Pair your iPhone to chat with your members and hand them work from anywhere. It connects directly on the same Wi-Fi, and through Squad relay by Autohand, encrypted, when you’re away."}</p>
 
     <div className={`${inDialog ? "mt-6" : "mt-8"} flex flex-col items-center gap-8 sm:flex-row sm:items-start`}>
       <div className="order-2 min-w-0 flex-1 sm:order-1">

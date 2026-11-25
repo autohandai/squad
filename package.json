@@ -243,6 +243,8 @@
     "check:mobile": "node scripts/check-mobile.mjs && node scripts/check-mobile-host.mjs && node scripts/check-mobile-cards.mjs && node scripts/check-mobile-relay.mjs && node scripts/check-mobile-marketplace.mjs && node scripts/check-mobile-icloud.mjs",
     "icloud-helper:build": "node scripts/build-icloud-helper.mjs",
     "check:mobile:browser": "playwright test --config playwright.mobile-companion.config.mjs",
+    "check:computers": "node scripts/check-computers.mjs",
+    "check:computers:browser": "node scripts/check-computers-browser.mjs",
     "check:updates:playwright": "playwright test --config playwright.updates.config.mjs",
     "check:signin-update:browser": "playwright test --config playwright.signin-update.config.mjs",
     "check:updates:browser": "AUTOHAND_VERIFY_UPDATES_ONLY=1 node scripts/verify-work-profile-browser.mjs",

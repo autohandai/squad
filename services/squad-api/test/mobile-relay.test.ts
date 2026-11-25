@@ -360,3 +360,19 @@ test("the production computer client pairs, reconnects with retained credentials
     assert.equal(executions, 1);
   } finally { relay?.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test("an account lists the computers it connected through the relay, by name (ADR-0282)", async () => {
+  const room = await call("/v1/mobile-relays", "POST", { ...registration, computerID: "named-computer" });
+  assert.equal(room.status, 201);
+  const named = await call(`/v1/mobile-relays/${room.json.data.roomID}/name`, "PUT", { computerName: "Studio Mac" });
+  assert.equal(named.status, 200);
+  assert.equal((await call(`/v1/mobile-relays/${room.json.data.roomID}/name`, "PUT", { computerName: "x" }, bob)).status, 404, "another account cannot rename it");
+  assert.equal((await call(`/v1/mobile-relays/${room.json.data.roomID}/name`, "PUT", { computerName: "" })).status, 400);
+  const listed = await runtime.dispatchFetch("https://squad.example.test/v1/mobile-relays", { headers: { authorization: `Bearer ${alice}`, "x-autohand-identity": "identity-alice" } });
+  const body = await listed.json<{ data: { computers: { computerID: string; name: string; team: boolean; lastSeenAt: string }[] } }>();
+  const row = body.data.computers.find(computer => computer.computerID === "named-computer");
+  assert.equal(row?.name, "Studio Mac"); assert.equal(row?.team, false); assert.ok(row?.lastSeenAt);
+  assert.ok(!JSON.stringify(body).includes(room.json.data.roomID), "no relay room id leaves the list");
+  const bobs = await runtime.dispatchFetch("https://squad.example.test/v1/mobile-relays", { headers: { authorization: `Bearer ${bob}`, "x-autohand-identity": "identity-bob" } });
+  assert.ok(!JSON.stringify(await bobs.json()).includes("Studio Mac"), "only the account's own computers");
+});

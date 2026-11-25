@@ -9,9 +9,12 @@ const incomingSchema = z.object({ type: z.literal('packet'), id: z.uuid(), packe
 const credentialSchema = z.object({ token: z.string().min(1), actorID: z.string().min(1), teamID: z.string().optional() });
 
 /** Outbound-only transport. Account credentials never enter a QR or phone packet. */
-export function createMobileRelay({ service, identity, ownerScope, baseUrl = squadApiUrl(), fetchImpl = fetch, connect = connectWebSocket }) {
+export function createMobileRelay({ service, identity, ownerScope, baseUrl = squadApiUrl(), computerName = '', fetchImpl = fetch, connect = connectWebSocket }) {
   const origin = squadApiUrl(baseUrl), abort = new AbortController();
   let stopped = false, socket = null, session = null, roomID = '', lastPong = 0, leaseUntil = 0;
+  // What Settings shows about the relay (ADR-0282): round trip of the last
+  // heartbeat and when the relay last answered.
+  let pingSentAt = 0, latencyMs = null;
   let error = '', retry = null, attempt = 0, connecting = null, heartbeat = null, renewal = null;
   // Grants and revocations run one at a time so a late grant can never
   // re-add a route for a phone that was just revoked.
@@ -75,6 +78,9 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
         method: 'POST', body: { computerID: service.computerID, actorID: credential.actorID, ownerScope, ...(credential.teamID ? { teamID: credential.teamID } : {}) },
       }));
       current(); roomID = registration.roomID;
+      // The computer's name for "Other computers in your account" (ADR-0282).
+      // A relay without this call answers 404; nothing else depends on it.
+      if (computerName) void client.request(`/v1/mobile-relays/${roomID}/name`, { method: 'PUT', body: { computerName: computerName.slice(0, 120) } }).catch(() => {});
       await inOrder(() => control('/devices/sync', 'POST', { deviceIDs: service.status().devices.map(device => device.id) }));
       await grant().catch(() => { /* Retried on the next connection or approval. */ });
       if (current().token !== credential.token) throw Error('The account changed. Reconnect the phone connection.');
@@ -86,7 +92,7 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
         const fail = () => { clearTimeout(timer); reject(Error('The relay connection ended.')); };
         next.once('close', fail);
         next.on('error', () => { next.close(); });
-        next.on('pong', () => { if (socket === next) lastPong = Date.now(); });
+        next.on('pong', () => { if (socket === next) { lastPong = Date.now(); if (pingSentAt) latencyMs = lastPong - pingSentAt; } });
         next.on('message', text => {
           if (stopped || socket !== next) return;
           try {
@@ -118,7 +124,7 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
         try {
           current();
           if (Date.now() - lastPong > 45_000 || leaseUntil <= Date.now()) socket.close();
-          else socket.ping();
+          else { pingSentAt = Date.now(); socket.ping(); }
         } catch { socket.close(); }
       }, 20_000); heartbeat.unref?.();
       renewal = setInterval(() => {
@@ -131,7 +137,13 @@ export function createMobileRelay({ service, identity, ownerScope, baseUrl = squ
         }).catch(() => { if (!stopped && socket === renewing) renewing.close(); });
       }, 5 * 60_000); renewal.unref?.();
     },
-    status: () => ({ connected: Boolean(socket?.open && leaseUntil > Date.now() && Date.now() - lastPong <= 45_000), endpoint: roomID ? `${origin}/mobile/${roomID}` : '', roomID, error }),
+    /** This account's computers on this relay, by name (ADR-0282). */
+    async accountComputers() {
+      const { client } = await api();
+      return z.object({ computers: z.array(z.object({ computerID: z.string(), name: z.string(), team: z.boolean(), lastSeenAt: z.string() })) }).parse(await client.request('/v1/mobile-relays')).computers;
+    },
+    status: () => ({ connected: Boolean(socket?.open && leaseUntil > Date.now() && Date.now() - lastPong <= 45_000), endpoint: roomID ? `${origin}/mobile/${roomID}` : '', roomID, error,
+      origin, latencyMs, lastSeenAt: lastPong ? new Date(lastPong).toISOString() : '' }),
     grant,
     async offer(metadata) {
       if (!socket?.open || leaseUntil <= Date.now()) throw Error('Wait for the relay to connect before pairing a phone.');

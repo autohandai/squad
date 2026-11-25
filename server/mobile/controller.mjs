@@ -9,6 +9,7 @@ import { createMobileAdapter } from './adapter.mjs';
 import { createMobileRelay } from './relay.mjs';
 import { createMobileICloud, resolveICloudHelper } from './icloud.mjs';
 import { pairingURL, validateEndpoint } from './protocol.mjs';
+import { squadApiUrl } from '../squad-cloud/client.mjs';
 import { assignMemberTask } from '../routes/work.route.mjs';
 import { emitBridgeEvent } from '../events.mjs';
 import { createCardStore } from './cards.mjs';
@@ -21,9 +22,26 @@ import { createCardStore } from './cards.mjs';
 const configuration = z.object({
   enabled: z.boolean(), local: z.boolean(), relay: z.boolean(), tunnel: z.boolean(), icloud: z.boolean().default(false),
   endpoint: z.string().max(1000).default(''), port: z.number().int().min(0).max(65535).default(29323),
+  // Empty is Squad relay by Autohand; anything else is the person's own
+  // Squad API deployment (ADR-0282).
+  relayUrl: z.string().max(300).default(''),
 }).strict();
 const legacyConfiguration = z.object({ enabled: z.boolean(), mode: z.enum(['local', 'tunnel', 'relay']), endpoint: z.string().max(1000).default(''), port: z.number().int().min(0).max(65535).default(29323) }).strict();
-const defaults = { enabled: false, local: true, relay: true, tunnel: false, icloud: false, endpoint: '', port: 29323 };
+const defaults = { enabled: false, local: true, relay: true, tunnel: false, icloud: false, endpoint: '', port: 29323, relayUrl: '' };
+/** The relay phones use away from home: Squad's own unless the person chose another (ADR-0282). */
+export const AUTOHAND_RELAY = Object.freeze({ name: 'Squad relay by Autohand', url: squadApiUrl() });
+export function relayOrigin(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  let origin;
+  try { origin = squadApiUrl(text.replace(/\/+$/, '')); } catch { throw Error('Use the relay’s HTTPS address, like https://relay.example.com, with no path.'); }
+  return origin === AUTOHAND_RELAY.url ? '' : origin;
+}
+export function relayDescription(config, live) {
+  const custom = Boolean(config.relayUrl);
+  const url = custom ? config.relayUrl : AUTOHAND_RELAY.url;
+  return { name: custom ? new URL(url).host : AUTOHAND_RELAY.name, url, custom, connected: Boolean(live?.connected), latencyMs: live?.latencyMs ?? null, lastSeenAt: live?.lastSeenAt || '', error: live?.error || '' };
+}
 
 /**
  * A saved 0.1 file had one exclusive `mode`. Upgrading keeps the local listener
@@ -120,7 +138,7 @@ export async function createMobileController(ctx) {
     }
     if (value.relay) {
       if (!ctx.mobileRelayIdentity) throw Error('Update Squad to connect this computer through the relay.');
-      relay = createMobileRelay({ service, identity: ctx.mobileRelayIdentity, ownerScope: scope });
+      relay = createMobileRelay({ service, identity: ctx.mobileRelayIdentity, ownerScope: scope, computerName: hostname(), ...(value.relayUrl ? { baseUrl: value.relayUrl } : {}) });
       await relay.start();
     }
     // Never fails the other routes: a missing or unsigned helper only shows
@@ -136,7 +154,7 @@ export async function createMobileController(ctx) {
     // `endpoint` stays for older callers: the route an older phone would get.
     const primary = list.find(route => route.kind === 'relay' && route.connected) || list.find(hasEndpoint) || list.find(route => route.endpoint);
     const icloudStatus = icloud?.status() || { available: Boolean(icloudHelper), state: 'off', detail: '', connected: false };
-    return { ...service.status(), config, preferences, listening: listening(), routes: list, endpoint: primary?.endpoint || '', icloud: icloudStatus, error: error || relay?.status().error || '' };
+    return { ...service.status(), config, preferences, listening: listening(), routes: list, endpoint: primary?.endpoint || '', icloud: icloudStatus, relay: relayDescription(config, config.relay ? relay?.status() : null), error: error || relay?.status().error || '' };
   };
   return {
     status,
@@ -145,6 +163,8 @@ export async function createMobileController(ctx) {
         const next = requestedConfiguration(input);
         if (next.enabled && !next.local && !next.relay && !next.tunnel) throw Error('Choose at least one way for phones to connect.');
         if (next.icloud && !icloudHelper) throw Error('This build of Squad cannot use iCloud for phones.');
+        // A caller that doesn't mention the relay keeps the one chosen.
+        next.relayUrl = input && typeof input === 'object' && 'relayUrl' in input ? relayOrigin(next.relayUrl) : config.relayUrl;
         if (next.tunnel) {
           next.endpoint = validateEndpoint(next.endpoint);
           if (new URL(next.endpoint).pathname !== '/') throw Error('Use your tunnel’s HTTPS origin without a path.');
@@ -184,6 +204,19 @@ export async function createMobileController(ctx) {
     },
     approve: async input => { const value = z.object({ pairingID: z.uuid(), code: z.string().regex(/^\d{6}$/) }).strict().parse(input); await service.approve(value.pairingID, value.code); icloud?.withdrawOffer(); return status(); },
     reject: async () => { await service.reject(); icloud?.withdrawOffer(); return status(); },
+    /**
+     * Other computers in this account, from the relay (ADR-0282). Needs the
+     * relay on: it is the only place this account's computers are listed.
+     */
+    accountComputers: async () => {
+      if (!config.enabled || !config.relay || !relay) return { available: false, reason: 'Turn on Reach from anywhere to see the other computers in your account.', computers: [] };
+      try {
+        const computers = await relay.accountComputers();
+        return { available: true, reason: '', computers: computers.map(row => ({ ...row, thisComputer: row.computerID === service.computerID })) };
+      } catch (failure) {
+        return { available: false, reason: failure.status === 404 ? 'This relay can’t list your computers yet.' : failure.message, computers: [] };
+      }
+    },
     icloudMeasurements: () => icloud ? icloud.measurements() : { helper: null, requestAgeMs: { count: 0, p50: null, p95: null } },
     revoke: async id => { await service.revoke(z.uuid().parse(id)); return status(); },
     teamDecisions: () => ({ decisions: adapter.teamDecisions() }),

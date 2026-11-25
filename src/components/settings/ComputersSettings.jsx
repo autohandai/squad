@@ -26,16 +26,41 @@ function Row({ label, id, children }) {
 // direct route it was told about and falls back to the relay by itself.
 const ROUTES = [
   { key: 'local', label: 'Same Wi-Fi', detail: 'Phones on this network connect directly to this computer.' },
-  { key: 'relay', label: 'From anywhere', detail: 'Through Autohand’s encrypted relay, without opening a network port. Messages stay encrypted between this computer and your approved phone.' },
+  { key: 'relay', label: 'Reach from anywhere', detail: 'Through {relay}, without opening a network port. Messages stay encrypted between this computer and your approved phone; the relay can’t read them.' },
   { key: 'tunnel', label: 'My secure tunnel', detail: 'Your own HTTPS tunnel forwards only the encrypted phone connection to this computer.' },
   // Shown only when this build carries the iCloud helper (ADR-0255). Last
   // resort after the others; slower, no Autohand server in the path.
   { key: 'icloud', label: 'Through iCloud', detail: 'When Wi-Fi and the relay can’t reach this computer, your phone can go through your own iCloud. Slower. Needs the same Apple Account on both, and the phone must be paired first.', optional: true },
 ];
 const ICLOUD_STATES = { starting: 'Connecting…', ready: 'Ready', noAccount: 'Sign in to iCloud on this Mac', quotaExceeded: 'iCloud storage is full', offline: 'iCloud unreachable', rateLimited: 'iCloud is slowing requests', unentitled: 'Not available in this build', error: 'Unavailable' };
-function routeState(route) {
+/** "Connected · 38 ms" or "Reconnecting · last answered 2 min ago" (ADR-0282). */
+export function relayState(relay, now = Date.now()) {
+  if (!relay) return '';
+  if (relay.connected) return relay.latencyMs == null ? 'Connected' : `Connected · ${relay.latencyMs} ms`;
+  if (!relay.lastSeenAt) return 'Connecting…';
+  const minutes = Math.max(0, Math.round((now - Date.parse(relay.lastSeenAt)) / 60_000));
+  return `Reconnecting · last answered ${minutes < 1 ? 'just now' : minutes === 1 ? '1 min ago' : `${minutes} min ago`}`;
+}
+
+/** The relay phones use away from home, and the way to choose another (ADR-0282). */
+function RelayAddress({ relay, busy, onSave, problem = '' }) {
+  const [open, setOpen] = useState(false), [value, setValue] = useState(relay.custom ? relay.url : '');
+  useEffect(() => { if (!open) setValue(relay.custom ? relay.url : ''); }, [open, relay.custom, relay.url]);
+  const submit = () => void onSave(value.trim()).then(saved => { if (saved) setOpen(false); });
+  return <div data-testid="relay-address" className="mt-2 space-y-2">
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs"><span className="text-muted-foreground">Relay address</span><span className="font-mono [overflow-wrap:anywhere]">{relay.url.replace(/^https:\/\//, '')}</span></div>
+    {/* Not a <form>: this sits inside the routes form, and a nested submit would also save the routes. */}
+    {open ? <div className="space-y-2">
+      <Input aria-label="Relay address" value={value} onChange={event => setValue(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (value.trim()) submit(); } }} placeholder="https://relay.example.com" inputMode="url" spellCheck={false} disabled={busy} className="h-8 font-mono text-xs" />
+      {problem ? <p role="alert" data-testid="relay-problem" className="text-xs text-destructive">{problem}</p> : null}
+      <p className="text-xs leading-5 text-muted-foreground">Your own relay runs Squad’s API (services/squad-api). It checks your Autohand sign-in, so use only one you or your team run. Paired phones learn the new address the next time they reach this computer.</p>
+      <div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" disabled={busy || !value.trim()} onClick={submit}>Use this relay</Button>{relay.custom ? <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => void onSave('').then(saved => { if (saved) setOpen(false); })}>Use Squad relay by Autohand</Button> : null}<Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button></div>
+    </div> : <button type="button" className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline" onClick={() => setOpen(true)}>{relay.custom ? 'Change relay' : 'Use a different relay'}</button>}
+  </div>;
+}
+function routeState(route, relay) {
   if (!route) return '';
-  if (route.kind === 'relay') return route.connected ? 'Connected' : 'Connecting…';
+  if (route.kind === 'relay') return relay ? relayState(relay) : route.connected ? 'Connected' : 'Connecting…';
   if (route.kind === 'icloud') return 'Ready';
   return route.endpoint;
 }
@@ -90,7 +115,7 @@ export function ComputersSettings({ api }) {
     <form className="space-y-4 py-5" onSubmit={event => { event.preventDefault(); configure({ ...routes, endpoint, port: Number(port) }); }}>
       <div><h3 className="text-sm font-medium">How phones reach this computer</h3><p className="mt-1 max-w-lg text-xs leading-5 text-muted-foreground">Turn on more than one. Your phone uses Same Wi-Fi at home and the relay everywhere else, without pairing again.</p></div>
       <ul className="divide-y divide-border/60">{shown.map(route => <li key={route.key} className="flex items-start justify-between gap-6 py-3">
-        <div className="min-w-0"><label htmlFor={`phone-route-${route.key}`} className="text-sm">{route.label}</label><p className="mt-1 max-w-lg text-xs leading-5 text-muted-foreground">{route.detail}</p>{status.config.enabled && status.config[route.key] && live(route.key) ? <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{routeState(live(route.key))}</p> : route.key === 'icloud' && status.config.enabled && status.config.icloud && status.icloud ? <p className="mt-1 text-xs text-muted-foreground">{ICLOUD_STATES[status.icloud.state] || status.icloud.detail}</p> : null}</div>
+        <div className="min-w-0 flex-1"><label htmlFor={`phone-route-${route.key}`} className="text-sm">{route.label}</label><p className="mt-1 max-w-lg text-xs leading-5 text-muted-foreground">{route.detail.replace('{relay}', status.relay?.name || 'Squad relay by Autohand')}</p>{status.config.enabled && status.config[route.key] && live(route.key) ? <p data-testid={`phone-route-state-${route.key}`} className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{routeState(live(route.key), status.relay)}</p> : route.key === 'icloud' && status.config.enabled && status.config.icloud && status.icloud ? <p className="mt-1 text-xs text-muted-foreground">{ICLOUD_STATES[status.icloud.state] || status.icloud.detail}</p> : null}{route.key === 'relay' && routes.relay && status.relay ? <RelayAddress relay={status.relay} busy={busy} problem={error} onSave={async relayUrl => Boolean(await configure({ relayUrl }))} /> : null}</div>
         <Switch id={`phone-route-${route.key}`} checked={routes[route.key]} disabled={busy} onCheckedChange={value => setRoutes(current => ({ ...current, [route.key]: value }))} />
       </li>)}</ul>
       {routes.tunnel ? <Row label="Tunnel address" id="phone-endpoint"><Input id="phone-endpoint" value={endpoint} onChange={event => setEndpoint(event.target.value)} placeholder="https://your-computer.example.com" disabled={busy} /></Row> : null}

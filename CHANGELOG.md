@@ -12,8 +12,15 @@ list to the section for that version.
 
 ### Added
 
+- **Members run on your other computers, over SSH.** Settings › Computers now starts with where your members run: this computer, computers Over SSH, Cloud computers and the other computers in your account. Add a Mac or Linux computer that runs Squad by user and host, with a key from your ~/.ssh or your ssh agent; Test says in one sentence whether Squad answers there. Squad keeps an encrypted SSH connection to it, so nothing is opened to the internet, and each member's Runs on offers it in one click.
+- **Cloud computers (Beta):** New cloud computer lists Hetzner Cloud, DigitalOcean, Amazon Lightsail, Fly.io and your own server, with the steps to set one up in your own account and add it over SSH. Squad doesn't create them for you yet.
+- **Other computers in your account** lists the computers you've connected through the relay, by name and when each last connected.
 - **Member profiles live in your Autohand account.** When you're signed in, each member's name, role, description, instructions, personality, skills, bird and voice are kept in your account and follow you to your other computers, and to your phone through either one. Edit a member on one computer and the other picks it up within half a minute. If both changed the same thing, Settings › Cloud sync shows both and lets you keep this computer's or use your account's; nothing is overwritten unseen. Members you have on another computer are listed there with Add to this computer. Folders, permissions, model settings and memories stay on each computer. Turn it off with Keep member profiles in your Autohand account. A Squad owned by a team keeps profiles with the team only after you turn it on.
 - **Change a member's avatar, personality and skills from your iPhone.** In Squad for iPhone, a member's Edit Profile now also picks one of Squad's 300 birds, edits the personality and chooses skills from the ones on this computer. The change is saved here, like an edit made in this window.
+
+### Changed
+
+- The phone's "From anywhere" is now **Reach from anywhere, through Squad relay by Autohand**, with the relay's address and how it's doing ("Connected · 38 ms", or when it last answered). **Use a different relay** points phones at a relay you or your team run; it must be an HTTPS address. The channel-sharing relay page is now called **Team relay**.
 
 ## [0.1.25] - 2026-11-26
 

@@ -21,7 +21,7 @@ test('a phone pairs only after desktop approval and uses the real member queue',
   await expect(toggle).not.toBeChecked();
   // Routes are independent switches (ADR-0228); the fixture saved Same Wi-Fi only.
   const local = settings.getByRole('switch', { name: 'Same Wi-Fi', exact: true });
-  const anywhere = settings.getByRole('switch', { name: 'From anywhere', exact: true });
+  const anywhere = settings.getByRole('switch', { name: 'Reach from anywhere', exact: true });
   await expect(local).toBeChecked(); await expect(anywhere).not.toBeChecked();
   await expect(settings).toContainText('without opening a network port');
   await local.click(); await anywhere.click();
