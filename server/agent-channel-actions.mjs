@@ -94,10 +94,12 @@ export function createAgentChannelActions({ store, availability, sanitizeId, run
         // A member's own avatar (squad_set_avatar, ADR-0243) is the one field
         // outside the revisioned profile a patch may carry, and only a cast
         // bird: never a URL or image a model chose.
-        const agentAvatar = input.avatarActor === 'agent';
+        // The person choosing a bird from the phone (ADR-0281) is held to the
+        // same shape: a lone cast bird, never a URL or picture.
+        const agentAvatar = input.avatarActor === 'agent' || input.avatarActor === 'person';
         if (input.profilePatch && (typeof input.profilePatch !== 'object' || Array.isArray(input.profilePatch) || Object.keys(input.profilePatch).some(key => !MEMBER_PROFILE_FIELDS.includes(key) && !(agentAvatar && key === 'avatar')))) throw channelError('Profile patch contains an unsupported field.');
         if (agentAvatar && (previous?.removed || !previous?.agent)) throw channelError('This member is no longer available.', 409);
-        if (agentAvatar && (Object.keys(input.profilePatch || {}).join() !== 'avatar' || !birdFromAvatar(input.profilePatch.avatar))) throw channelError('An avatar tool may only set the member\'s own avatar to a Squad bird.', 403);
+        if (agentAvatar && (Object.keys(input.profilePatch || {}).join() !== 'avatar' || !birdFromAvatar(input.profilePatch.avatar))) throw channelError(input.avatarActor === 'person' ? 'Choose one of Squad\'s birds for this avatar.' : 'An avatar tool may only set the member\'s own avatar to a Squad bird.', 403);
         const agentRouting = input.modelRoutingActor === 'agent';
         if (agentRouting && (previous?.removed || !normalizeModelRouting(previous?.agent?.modelRouting).allowAgentChanges || input.profilePatch?.modelRouting?.allowAgentChanges !== true)) throw channelError('The person has not allowed this member to manage fallbacks.', 403);
         if (agentRouting && Object.keys(input.profilePatch || {}).some(key => key !== 'modelRouting')) throw channelError('A fallback tool may only change its fallback configuration.', 403);
