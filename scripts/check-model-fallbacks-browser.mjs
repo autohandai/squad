@@ -70,6 +70,8 @@ try{
   await openRowMenu(1);await menuItem('Move down');
   await until(async()=>(await savedMember()).modelRouting?.fallbacks[0]?.harness.id==='codex','Codex first again');
   assert.equal((await savedMember()).modelRouting.allowAgentChanges,false,'Agent edits start disabled');
+  // The switch is disabled while the Move down save settles; a click then is dropped.
+  await until(()=>browser.evaluate("document.querySelector('[role=switch][aria-label=\"Let this member manage fallbacks\"]')?.disabled===false"),'fallback editor idle after Move down');
   await browser.evaluate("document.querySelector('[role=switch][aria-label=\"Let this member manage fallbacks\"]').click()");await until(()=>browser.evaluate("document.querySelector('[role=switch][aria-label=\"Let this member manage fallbacks\"]')?.getAttribute('aria-checked')==='true'"),'member fallback permission switched on');
   await until(async()=>(await savedMember()).modelRouting.allowAgentChanges===true,'optional agent permission saved');
 
