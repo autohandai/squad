@@ -10,6 +10,8 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.25] - 2026-11-26
+
 ### Added
 
 - **Edit a member's profile from your iPhone.** Squad for iPhone shows a member's profile when you select it, and Edit changes its name, role, description and instructions here on this computer. An edit made on the phone and one made here never overwrite each other unseen: whichever arrives second is asked to look again.
@@ -807,7 +809,8 @@ Local review candidate; GitHub publication is pending user confirmation.
 - Installable desktop release pipeline with signed and notarised builds when
   credentials are present.
 
-[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.24...HEAD
+[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.25...HEAD
+[0.1.25]: https://github.com/autohandai/squad/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/autohandai/squad/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/autohandai/squad/compare/v0.1.21...v0.1.23
 [0.1.7]: https://github.com/autohandai/squad/compare/v0.1.5...v0.1.7
