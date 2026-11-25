@@ -1,4 +1,4 @@
-# ADR-0277: Invite someone into a private chat
+# ADR-0278: Invite someone into a private chat
 
 Status: proposed, 2026-11-24
 
