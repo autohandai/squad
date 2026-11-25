@@ -10,6 +10,8 @@ list to the section for that version.
 
 ## [Unreleased]
 
+## [0.1.24] - 2026-11-25
+
 ### Fixed
 
 - Install and restart works again on macOS while another app (such as Autohand Desktop) is using Squad's MCP server. Before, Squad quietly opened the installer instead of updating in place. Updating from 0.1.22 or 0.1.23 still needs those apps closed first, or the installer.
@@ -792,7 +794,8 @@ Local review candidate; GitHub publication is pending user confirmation.
 - Installable desktop release pipeline with signed and notarised builds when
   credentials are present.
 
-[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.23...HEAD
+[Unreleased]: https://github.com/autohandai/squad/compare/v0.1.24...HEAD
+[0.1.24]: https://github.com/autohandai/squad/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/autohandai/squad/compare/v0.1.21...v0.1.23
 [0.1.7]: https://github.com/autohandai/squad/compare/v0.1.5...v0.1.7
 [0.1.5]: https://github.com/autohandai/squad/compare/v0.1.4...v0.1.5

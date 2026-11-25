@@ -1,6 +1,6 @@
 [package]
 name = "autohand-squad-runtime"
-version = "0.1.23"
+version = "0.1.24"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"
