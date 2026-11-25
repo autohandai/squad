@@ -83,18 +83,60 @@ export async function macUpdateCapability({
       }
       return false;
     }
-    if (
-      rows.some(
-        (row) =>
-          row?.[3].startsWith(`${resolve(app)}/Contents/MacOS/`) &&
-          !owned(Number(row[1])),
-      )
-    )
+    const foreign = rows.filter(
+      (row) =>
+        row?.[3].startsWith(`${resolve(app)}/Contents/MacOS/`) &&
+        !owned(Number(row[1])),
+    );
+    const clients = await externalMcpClients(
+      resolve(app),
+      foreign.map((row) => Number(row[1])),
+    );
+    const blocking = foreign.filter((row) => !clients.has(Number(row[1])));
+    if (blocking.length) {
+      refuse(
+        `another process is running from the app bundle (${blocking.map((row) => `${row[1]} ${row[3]}`).join(", ")})`,
+      );
       return null;
+    }
     return { app: resolve(app), pid: nativePid, services };
-  } catch {
+  } catch (error) {
+    refuse(error?.message || "the check failed");
     return null;
   }
+}
+
+function refuse(reason) {
+  console.warn(
+    `[updates] Install and restart is unavailable, the installer will be opened instead: ${reason}`,
+  );
+}
+
+// Other apps (Autohand Desktop, editors, other agents) that use one of Squad's
+// stdio MCP servers start it with the bundle's own node. Such a process only
+// reaches the bridge over HTTP, has every module loaded, and keeps running
+// across the atomic bundle exchange, so it must not hold Squad on an old
+// version (ADR-0277). Anything else running from the bundle still blocks.
+export function isExternalMcpClient(app, args) {
+  const node = `${app}/Contents/MacOS/node `;
+  const server = `${app}/Contents/Resources/runtime/server/`;
+  if (!args.startsWith(node + server)) return false;
+  const script = args.slice(node.length + server.length).split(" ")[0];
+  return /^(?:[a-z0-9-]+\/)*mcp-server\.mjs$/.test(script);
+}
+
+async function externalMcpClients(app, pids) {
+  if (!pids.length) return new Set();
+  const out = (
+    await run("/bin/ps", ["-o", "pid=,args=", "-p", pids.join(",")])
+  ).stdout;
+  const clients = new Set();
+  for (const line of out.split("\n")) {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (match && isExternalMcpClient(app, match[2]))
+      clients.add(Number(match[1]));
+  }
+  return clients;
 }
 async function plist(app, key, signal) {
   return (
@@ -275,14 +317,17 @@ export async function stopOwnedUpdateServices(plan) {
   }
   const remaining = (await run("/bin/ps", ["-Ao", "pid=,comm="])).stdout
     .split("\n")
-    .map((line) => line.trim().match(/^(\d+)\s+(.+)$/));
-  if (
-    remaining.some(
+    .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
+    .filter(
       (row) =>
         Number(row?.[1]) !== process.pid &&
         row?.[2].startsWith(`${plan.app}/Contents/MacOS/`),
-    )
-  )
+    );
+  const clients = await externalMcpClients(
+    plan.app,
+    remaining.map((row) => Number(row[1])),
+  );
+  if (remaining.some((row) => !clients.has(Number(row[1]))))
     throw Error(
       "A Squad process is still using this app. The current bundle was left in place.",
     );

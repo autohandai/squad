@@ -10,6 +10,10 @@ list to the section for that version.
 
 ## [Unreleased]
 
+### Fixed
+
+- Install and restart works again on macOS while another app (such as Autohand Desktop) is using Squad's MCP server. Before, Squad quietly opened the installer instead of updating in place. Updating from 0.1.22 or 0.1.23 still needs those apps closed first, or the installer.
+
 ## [0.1.23] - 2026-11-24
 
 Includes everything from 0.1.22, which was only published as canary builds.
