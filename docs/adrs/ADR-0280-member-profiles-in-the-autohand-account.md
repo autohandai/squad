@@ -141,3 +141,15 @@ with the bridge's isolated fixture identity.
   requests (screenshot `cloud-profiles.png`).
 - `services/squad-api`: `tsc --noEmit` clean; `npm test` 52 pass, 0 fail.
   `npm run check:team` passes.
+
+## Rollout
+
+26 Nov 2026, at the owner's request ("i autorise you to deploy"): migration
+`0006_member_profiles.sql` applied to the Squad database (f645a0be…) and the
+Worker deployed from aaa72bd (version 60cde614) with the CI job's bindings
+(marketplace database, email sending), from the owner's Mac with `cf`: the
+`Squad API` workflow's deploy job has no Cloudflare token in the repository
+secrets (run 45718861057 failed at "Check deployment configuration").
+Checked afterwards: `/health`, `/v1/marketplace/categories` and the stable
+release manifest still answer; `/v1/users/me/profiles` asks for sign-in.
+Desktops reach it from the first release carrying this ADR (0.1.26).
