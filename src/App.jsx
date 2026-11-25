@@ -362,6 +362,7 @@ import { ComputersSettings } from "@/components/settings/ComputersSettings";
 import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
 import { SystemSettings } from "@/components/settings/SystemSettings";
 import { CloudSyncSettings } from "@/components/settings/CloudSyncSettings";
+import { ProfileCloudSettings } from "@/components/settings/ProfileCloudSettings";
 import { UsageBreakdown } from "@/components/settings/UsageBreakdown";
 import { shouldAutoCheckUpdates } from "@/lib/system-settings";
 import { ConnectorsSettings } from "@/components/settings/ConnectorsSettings";
@@ -26423,7 +26424,7 @@ function SettingsPage({
       </>
     ),
     memory: () => (<><SettingsSectionHeader title="Memory" description="Collect and connect what your squad learns." /><Suspense fallback={<p className="text-sm text-muted-foreground">Loading memory settings…</p>}><MemorySettings api={api} onOpenLibrary={() => navigate("/memory")} /></Suspense></>),
-    cloud: () => (<><SettingsSectionHeader title="Cloud sync" description="Keep shared team memories together." /><CloudSyncSettings api={api} /></>),
+    cloud: () => (<><SettingsSectionHeader title="Cloud sync" description="Keep member profiles and shared team memories together." /><ProfileCloudSettings api={api} /><Separator className="my-8 max-w-xl" /><CloudSyncSettings api={api} /></>),
     backups: () => (<><SettingsSectionHeader title="Backups" description="Portable data for your personal or team Squad."/><BackupSettings api={api} agents={agents} onFlush={onFlushBackup}/></>),
     "quick-chat": () => (<><SettingsSectionHeader title="Quick Chat" description="A conversation from your macOS menu bar." /><QuickChatPreferences api={api} /></>),
     system: () => (

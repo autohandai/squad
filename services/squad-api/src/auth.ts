@@ -18,7 +18,9 @@ export async function authenticate(request: Request, env: Env): Promise<Principa
 export async function verifyIdentity(identityToken: string, env: Env): Promise<z.infer<typeof profileSchema>["profile"]> {
   requireValue(identityToken.length > 0 && identityToken.length <= 8192 && !/[\r\n\0]/.test(identityToken), 401, "identity_required", "Present the current Autohand identity credential.");
   const identityUrl = new URL("/v1/profile", env.IDENTITY_ORIGIN);
-  requireValue(identityUrl.protocol === "https:", 503, "identity_unconfigured", "Identity service must use HTTPS.");
+  // A loopback origin is allowed for local development and the desktop's
+  // isolated checks, as the desktop client allows (server/squad-cloud/client.mjs).
+  requireValue(identityUrl.protocol === "https:" || (identityUrl.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(identityUrl.hostname)), 503, "identity_unconfigured", "Identity service must use HTTPS.");
   let response: Response;
   try { response = await fetch(identityUrl, { headers: { authorization: `Bearer ${identityToken}`, accept: "application/json" }, redirect: "manual", signal: AbortSignal.timeout(8000) }); }
   catch { throw new ApiError(503, "identity_unavailable", "Sign-in is temporarily unavailable. Try again."); }

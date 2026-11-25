@@ -37,6 +37,10 @@ import { createSquadManagement } from './server/team/member-management.mjs';
 import { createMemoryService } from "./server/memory/service.mjs";
 import { createArtifactService } from "./server/artifacts/service.mjs";
 import { createSquadCloud } from "./server/squad-cloud/service.mjs";
+import { createProfileCloud } from "./server/squad-cloud/profiles.mjs";
+import { createBridgeClient } from "./server/control-plane/runtime.mjs";
+import { birdFromAvatar } from "./src/lib/bird-cast.js";
+import { voiceById } from "./src/lib/member-voice.js";
 import { createTeamChannels } from "./server/team/channels.mjs";
 import { createCliBootstrap, createCliProbe } from "./server/runtime/cli-bootstrap.mjs";
 import { STORE_FILE as WORK_STORE_FILE, workStoreFor } from "./server/work/store.mjs";
@@ -694,6 +698,42 @@ const cloud = createSquadCloud({ stateDir: squadStateDir, store: team.store, rea
   return autohandAuthUsable(auth) ? auth.token : "";
 } });
 if (privateOwnerContext.canWrite) cloud.start();
+// Member profiles in the owner's Autohand account (ADR-0280). Saves go through
+// this Squad's own revision-checked member routes, like the phone's do.
+let profileCloudBridge;
+// PERSONALITY.md is "# Personality", "Role: …" and the sentence a person
+// wrote (personalityFileContent); only the sentence travels.
+const personalitySentence = content => String(content || "").split(/\n{2,}/).filter((part, index) => !(index === 0 && part.trim() === "# Personality") && !/^Role: /.test(part.trim())).join("\n\n").trim();
+const profileAvatar = createAvatarSetter({ actions: () => agentChannelActions });
+const profileBridge = () => profileCloudBridge ||= createBridgeClient(privateOwnerContext.publicUrl);
+const profileCloud = createProfileCloud({
+  stateDir: squadStateDir,
+  readIdentityToken: () => { const auth = readAutohandAuth(userConfigPath); return autohandAuthUsable(auth) ? auth.token : ""; },
+  readOwner: () => privateOwnerContext.owner && privateOwnerContext.actor && privateOwnerContext.canWrite
+    ? { kind: privateOwnerContext.owner.kind, id: privateOwnerContext.owner.id, issuer: privateOwnerContext.owner.issuer, actorId: privateOwnerContext.actor.id } : null,
+  members: async () => Object.entries((await readChannelsState())?.agentChannelAccess || {})
+    .filter(([id, access]) => !isUtilityAgent(id) && access?.agent && !access.removed)
+    .map(([id, access]) => ({ id, revision: memberProfileRevision(access.agent), profile: {
+      name: access.agent.name || id, role: access.agent.role, description: access.agent.description, instructions: access.agent.instructions,
+      personality: personalitySentence(access.agent.profileFiles?.find(file => file.section === "persona")?.content),
+      skills: access.agent.skills || [], avatar: birdFromAvatar(access.agent.avatar), voice: voiceById(access.agent.voice)?.name || "",
+    } })),
+  apply: async (id, changes, expectedRevision) => {
+    const { avatar, ...fields } = changes;
+    if (Object.keys(fields).length) await profileBridge().patch(`/api/control-plane/members/${encodeURIComponent(id)}`, { ...fields, expectedRevision });
+    if (avatar) await profileAvatar(id, avatar);
+  },
+  create: async (cloudId, profile) => {
+    const { avatar, skills, voice, ...fields } = profile;
+    const body = { request_id: `cloud-profile:${cloudId}:${Date.now()}`, ...fields, ...(voice ? { voice } : {}) };
+    let created;
+    try { created = await profileBridge().post("/api/control-plane/members", { ...body, skills }); }
+    catch { created = await profileBridge().post("/api/control-plane/members", { ...body, request_id: `${body.request_id}:noskills` }); }
+    if (avatar) await profileAvatar(created.id, avatar).catch(() => {});
+    return created.id;
+  },
+});
+if (privateOwnerContext.canWrite) profileCloud.start();
 const teamWorkRuntimes = new Map();
 bridgeEvents.on("member.stopped", ({ memberId }) => team.closeMember(memberId));
 void team.recover().catch(() => {});
@@ -5783,7 +5823,7 @@ const agentChannelActions = createAgentChannelActions({
   store: channelsStore, availability: memberAvailability, sanitizeId: sanitizeAgentId,
   run: payload => chatOnce(payload),
   reportError: error => console.error("Member/channel operation:", error.message),
-  onProfileChanged: syncSavedMemberProfile,
+  onProfileChanged: memberId => { profileCloud.nudge(); return syncSavedMemberProfile(memberId); },
   onRename: (memberId, { from, to }) => team.renamed(memberId, from, { name: to, role: "" }),
 });
 
@@ -8889,6 +8929,7 @@ function routeContext() {
     memoryLibrary,
     artifacts,
     cloud,
+    profileCloud,
     authorizeComputerUseGrant,
     connectors,
     connectorRegistry,
@@ -9939,6 +9980,7 @@ async function stopAndExitFromSignal(signal) {
   ownershipActive = false;
   memoryLibrary.close();
   await cloud.close();
+  await profileCloud.close();
   await stopManagedRuns(`web server received ${signal}`);
   await drainOwnedEngines();
   // Everything is saved. A folder read still parked in the kernel would hold

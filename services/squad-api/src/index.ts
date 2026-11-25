@@ -7,6 +7,7 @@ import { memoryRoutes } from "./memory.js";
 import { releaseRoutes } from "./releases.js";
 import { idSchema, nameSchema } from "./schema.js";
 import { agentRoutes } from "./agents.js";
+import { profileRoutes } from "./profiles.js";
 import { availableOwners } from "./owners.js";
 import { backupJsonSchema } from "@autohand/squad-portable";
 import { mobileRelayRoutes, publicMobileRelay } from "./mobile-relay.js";
@@ -26,6 +27,7 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   const relay = await mobileRelayRoutes(request, env, user, url, ctx); if (relay) return relay;
   if (url.pathname === "/v1/owners" && request.method === "GET") return ok({ owners: await availableOwners(request, env, user) });
   const mail = await mailboxRoutes(request, env, user, url); if (mail) return mail;
+  const profiles = await profileRoutes(request, env, user, url); if (profiles) return profiles;
   const agents = await agentRoutes(request, env, user, url); if (agents) return agents;
   if (url.pathname === "/v1/me" && request.method === "GET") return ok({ id: user.id, issuer:user.issuer,subject:user.subject,email: user.email, displayName: user.displayName });
   if (url.pathname === "/v1/auth/session" && request.method === "DELETE") {

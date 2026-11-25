@@ -83,6 +83,7 @@
     "check:remote": "node scripts/check-remote.mjs",
     "check:relay": "node scripts/check-relay.mjs",
     "check:remote-access": "node scripts/check-remote-access.mjs",
+    "check:cloud-profiles": "node scripts/check-cloud-profiles.mjs",
     "check:marketplace": "node scripts/check-marketplace.mjs && node services/squad-api/scripts/check-marketplace-seeds.mjs && node scripts/check-marketplace-bridge.mjs",
     "check:marketplace:browser": "node scripts/check-marketplace-browser.mjs && node scripts/check-marketplace-in-app-browser.mjs",
     "check:connectors": "node scripts/check-connectors.mjs",
